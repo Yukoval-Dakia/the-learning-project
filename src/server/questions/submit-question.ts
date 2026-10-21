@@ -57,23 +57,15 @@ import {
 import { encodeDraftRef, parseDraftRef } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 
-// ====================================================================
-// YUK-1468 — submit_question 领域服务（草稿 → 已发布 revision）
-// ====================================================================
+// submit_question: draft (v2 or adapted legacy) → four-layer contract →
+// publishQuestionGroup, the only revision writer. CAS uses expected_draft_version and
+// expected_revision. Content identity matches the legacy supply fingerprint
+// (prompt/reference/choices/rubric, no source or knowledge ids); near-dup uses the same
+// n-gram threshold.
 //
-// 唯一提交闸：草稿（v2 文档或 legacy 适配）→ 契约四层 →
-// publishQuestionGroup（唯一 revision writer）。CAS 双令牌沿用发布侧约定：
-// expected_draft_version（block.version）+ expected_revision（组 current
-// revision）。内容指纹与旧供给链相同（prompt/reference/choices/rubric），
-// 不含 source 与知识点；近似重复用同一 n-gram 阈值。绝不伪造 extraction_hash。
-//
-// 判分准入：提交时没有裁决，新题保持 withheld。question_admission_run 把双解
-// 通过的裁决交给同一决定，通过且知识点仍活着才标 admitted。已经 admitted 的
-// 组只有答案键、参考答案、选项、rubric、评分单元和执行计划都没变时才保留
-// 原证据；这些一变就回到 withheld。
-// 比较前把已存 revision 与新契约都归一到同一草稿编码（旧格式
-// option_set_key / single_choice 与再编码后的 select_key / select 才能对齐）。
-// 回执、准入和练习池跟当前 revision 能不能发出走。
+// New questions stay withheld until an admission verdict exists. An admitted group keeps
+// its evidence only while the scoring layers are unchanged. Stored and new contracts are
+// normalized through the same draft encoding before comparison.
 
 const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -85,8 +77,7 @@ export {
   saveDraftEdit,
   validateDraftEdit,
 } from './edit-question';
-// YUK-1468 — 统一题目写口 facade：capability 侧只经本模块抵达
-// submit/edit/publish/draft-insert 服务（capability→questions 边数守恒审计）。
+// Write facade: capabilities reach submit/edit/publish/draft-insert through this module.
 export { publishQuestionGroupFromRow } from './publisher';
 export { insertSourcedDraft } from './sourced-draft-insert';
 export { sanitizeSourcedMarkup } from './sourced-markup';
@@ -105,33 +96,23 @@ export interface SubmitDraftInput {
   /** 覆盖来源声明（缺省 = 文档 source）。 */
   availability?: 'general_pool' | 'container_only';
   /**
-   * YUK-1568 S3 — 供给链可信系统注入（sourcing_web / jyeoo_fetch candidate
-   * commit seam）。这些是系统侧组装的行投影与来源证据，不是模型文档字段：
-   * candidate 路径的 web_sourced provenance、供给去重身份（flat 内容指纹）与
-   * 路由 provenance 在【同一发布事务】落 question 行，否则 source_verify 的
-   * 确定性来源核对拿不到 extract。仅新组首次提交生效；对已发布组的编辑提交
-   * 携带即拒绝（不静默丢弃系统注入）。
+   * Trusted system injection for sourcing_web / jyeoo_fetch candidates: row projection
+   * and source evidence that land in the same publish transaction, because source_verify
+   * needs extract. Only valid on the first submit of a new group.
    */
   sourced?: {
-    /** 候选的 flat 内容指纹（extraction_hash 裸 hex；与旧 flat 行
-     *  canonical_content_hash 同一身份，dedup 命中口径不变）。 */
+    /** Flat content fingerprint, identical to the legacy canonical_content_hash. */
     canonical_content_hash: string;
-    /** question.created_by（路由身份 ref；与列类型同源——AgentRef jsonb）。 */
+    /** question.created_by (AgentRef jsonb). */
     created_by: (typeof question.$inferInsert)['created_by'];
-    /** question.difficulty（producer 声明难度；缺省列默认 3）。 */
+    /** Producer-declared difficulty; column default is 3. */
     difficulty?: number;
-    /** 并入 question.metadata 的系统侧键（web_sourced / source_ref_kind /
-     *  difficulty_evidence / supply_trace / 路由与候选身份 / hints /
-     *  attribution / demand / 向量近重 hold / markup 标记）。 */
+    /** System keys merged into question.metadata (provenance, supply, attribution). */
     metadata: Record<string, unknown>;
-    /** 供给链 trace（SupplyTraceV1 payload；不透明透传进 verify_dispatch
-     *  intent 行——source_verify 的 supply 账本归属依赖它，与旧 flat 链
-     *  writeVerifyDispatchIntent(supplyTrace) 同口径）。 */
+    /** Supply trace, opaque to this seam; verify_dispatch owns its attribution. */
     supply_trace?: unknown;
-    /** YUK-1568 S3 — 一页一题来源 URL 的终态 claim（onTerminal:'release'
-     *  + KC merge 原语），在【本事务内】与行 INSERT 同锁——并发同 URL 候选
-     *  在 advisory xact lock 上串行化，后到者锁后重查命中既有行。旧 flat
-     *  persist 链同款保护；仅新组首次提交生效。 */
+    /** Terminal claim for a one-page-one-question source URL, serialized with the row
+     * INSERT so concurrent candidates for the same URL cannot both insert. */
     source_claim?: {
       source_url: string;
       actor_ref: 'sourcing' | 'jyeoo_fetch';
@@ -154,7 +135,7 @@ export type SubmitResult =
       revision_ref?: string;
       revision_ordinal?: number;
       publish_status?: PublishQuestionGroupResult['status'];
-      /** per-unit 判分准入结论（ withheld 原因如实给出）。 */
+      /** Per-unit admission outcome with the real withholding reason. */
       per_unit: SubmitUnitOutcome[];
       verify_enqueued?: boolean;
       issues?: { code: string; detail: string; part_id?: string; unit_id?: string }[];
@@ -228,14 +209,14 @@ export interface AdmissionCheckResult {
     | { state: 'withheld'; reason: 'unverified_rules' }
     | { state: 'admitted'; evidence: null };
   per_unit: SubmitUnitOutcome[];
-  /** 组级原因（dead_knowledge_node 等 —— 阻断提交）。 */
+  /** Group-level blockers such as dead_knowledge_node. */
   group_blockers: { code: string; detail: string }[];
 }
 
 /**
- * 判分准入检查。提交不带裁决：可判的 unit 记 verification_pending，整组
- * withheld。question_admission_run 把通过的裁决传进同一决定后，活知识点上
- * 全部 unit admitted 才返回 admitted。死知识点仍是组级 blocker。
+ * Scoring admission check. Submit carries no verdict, so a judgeable group stays
+ * withheld; once question_admission_run supplies passing evidence, a group on live
+ * knowledge nodes can be admitted. Dead knowledge nodes remain group blockers.
  */
 export async function runAdmissionChecks(
   db: Db | Tx,
@@ -259,10 +240,8 @@ const SOURCE_KIND_TO_QUESTION_SOURCE: Record<string, string> = {
   manual: 'manual',
 };
 
-// YUK-1568 S3（R1 F2）—— capability 侧核验（jobs/source_verify）需要与
-// 插入时同一套 revision→flat 权威投影原语；经本 facade 再出口，工具文件
-// （tools/submit-question.ts）对本模块的已登记 import 边复用，不新增
-// capability→questions 债。
+// Re-exported through this facade so source_verify reuses the same authoritative
+// revision→flat projection without adding a capability→questions import edge.
 export { draftCanonicalIdentity, revisionToDraftDocument } from './draft-contract';
 
 export function deriveKind(doc: QuestionDraftDocumentT): string {
@@ -293,10 +272,9 @@ type ScoringRevision = Pick<
 >;
 
 /**
- * 已准入的组，只有判分层原样时才保留证据。答案键、选项、参考答案、rubric、
- * 评分单元都在 scoring_basis / response_spec 里，判分方式在 execution_plan。
- * 题面、展示或材料文本可以变。任一判分层变了，或有 unit 已经不可自动判，
- * 旧证据不再适用，回到 withheld。新题和未准入的组不在这里自动准入。
+ * An admitted group keeps its evidence only while the scoring layers are unchanged.
+ * Prompt, presentation and material text may change; a changed key/rule/executor or a
+ * no-longer-judgeable unit returns the group to withheld. New groups never auto-admit.
  */
 function conversionWithheld(contract: DraftContract, requestId: string): SubmitResult {
   return {
@@ -335,7 +313,7 @@ function admissionForContentEdit(
 ): PublishAdmission {
   if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
   const copied = revision != null && storedScoringCopied(revision, contract);
-  // 原样拷贝已存判分层时，编码摘要里的 human_review 不是这次编辑新引入的。
+  // A verbatim copied scoring layer did not introduce the encoder's human_review.
   if (!copied && checks.per_unit.some((unit) => unit.status === 'withheld')) {
     return checks.admission;
   }
@@ -352,12 +330,10 @@ function admissionForContentEdit(
 }
 
 /**
- * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
- * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
- * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。
- * 即将发布的三层与已存 revision 逐字节相同（题面编辑原样拷贝）时直接算没变，
- * 即使草稿往返本身有损。往返形不成规范契约，或往返丢掉、改写了已存判分字段
- * 且这次发布的层不是那份原件时，视为已变（回 withheld）。
+ * Stored and new revisions may use different encodings (legacy option_set_key/
+ * single_choice versus select_key/select), so run the stored revision through the same
+ * draft round trip before comparing the three layers. Byte-identical published layers
+ * count as unchanged even if the round trip is lossy; an unfaithful trip counts as changed.
  */
 function scoringLayersUnchanged(
   revision: ScoringRevision,
@@ -383,7 +359,7 @@ function scoringLayersUnchanged(
   );
 }
 
-/** 发布 seam 会抛的契约错误，在调用前收成 withheld。withheld 时未准入的模型执行器是允许的。 */
+/** Collect publish-seam contract errors up front; unadmitted model executors are allowed while withheld. */
 function contractBarrierIssues(
   contract: DraftContract,
   presentation: PresentationT | null,
@@ -545,9 +521,8 @@ export async function submitDraftQuestion(
     };
   }
   const expectedRevisionRaw = input.expected_revision;
-  // 校验形状：qrev1:<id>:<digest> 或裸 revision_id；带 ':' 但非 qrev1 或空串
-  // = malformed ⇒ reject（不是 CAS，是请求形状错误）。undefined = 待
-  // doc.base.revision_id 默认填充；null = 期望组尚无已发布 revision。
+  // Shape check: qrev1:<id>:<digest> or a bare revision_id. Malformed values reject;
+  // undefined defers to doc.base.revision_id, null expects no published revision.
   let expectedRevisionId: string | null | undefined;
   if (expectedRevisionRaw === undefined) {
     expectedRevisionId = undefined;
@@ -567,7 +542,7 @@ export async function submitDraftQuestion(
     expectedRevisionId = parseExpectedRevision(expectedRevisionRaw);
   }
 
-  // request_id 幂等：同 id 同内容重放返回同回执，不同内容拒绝。
+  // request_id idempotency: same content replays the receipt, different content rejects.
   const fingerprint = `sha256:${createHash('sha256')
     .update(
       canonicalJson({
@@ -576,18 +551,16 @@ export async function submitDraftQuestion(
         expected_revision: expectedRevisionRaw,
         knowledge_ids: input.knowledge_ids,
         availability: input.availability,
-        // 系统注入的身份部分参与重放绑定（dedup 指纹 / provenance owner /
-        // difficulty）；metadata 是簿记（含 fetched_at/observed_at 等 attempt
-        // 时间戳），跨重试必然漂移，不进指纹——同 request_id 重放须返回同回执。
+        // Identity fields bind the replay; metadata is bookkeeping with timestamps that
+        // drift across retries, so it stays out of the fingerprint.
         sourced:
           input.sourced != null
             ? {
                 canonical_content_hash: input.sourced.canonical_content_hash,
                 created_by: input.sourced.created_by,
                 difficulty: input.sourced.difficulty ?? null,
-                // source_claim 是同 request 派生的确定身份（源 URL + 路由
-                // actor），跨重试不漂移——进指纹；metadata/supply_trace 仍排除
-                // （含 attempt 时间戳）。
+                // source_claim is deterministic (URL + actor), so it participates;
+                // metadata and supply_trace still do not.
                 source_claim:
                   input.sourced.source_claim != null
                     ? {
@@ -602,8 +575,7 @@ export async function submitDraftQuestion(
     .digest('hex')}`;
   const now = ctx.now ?? new Date();
   const out = await db.transaction(async (tx): Promise<SubmitResult> => {
-    // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
-    // 锁内查重放（原 check-then-act 竞态在锁外）。
+    // Serialize same-request_id submissions, then look for a replay inside the lock.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
     const existing = await findSubmitReceipt(tx, requestId);
     if (existing != null) {
@@ -662,10 +634,8 @@ export async function submitDraftQuestion(
     }
     if (input.knowledge_ids != null) doc.knowledge_ids = input.knowledge_ids;
 
-    // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读
-    // 版本）。显式 expected_revision 覆盖；explicit null = 期望尚无版本。
-    // base.revision_id 为 null 表示建草稿时组尚无已发布版本，必须保持 null
-    // 参与比较。`?? undefined` 会把它当成「未钉住」从而关掉 CAS。
+    // Default CAS uses the draft's pinned base revision; explicit expected_revision
+    // overrides it. Keep null distinct from undefined or the CAS turns off.
     const pinnedBaseRevision =
       doc.base == null || doc.base.revision_id === undefined ? undefined : doc.base.revision_id;
     const effectiveExpectedRevision =
@@ -675,13 +645,13 @@ export async function submitDraftQuestion(
     let contract = draftDocumentToContract(doc, groupId);
     const editingExisting = doc.base?.question_id != null || block.imported_question_id != null;
 
-    // 新题的未决转换在读组之前就返回。编辑已发布题要等判分计划：原样拷贝
-    // 已存层时，编码器的转换问题不代表即将发布的契约。
+    // New questions fail fast on conversion issues; edits wait for the scoring plan,
+    // because a verbatim copy of the stored layers may clear them.
     if (!editingExisting && contract.conversion_issues.length > 0) {
       return conversionWithheld(contract, requestId);
     }
 
-    // 组当前状态（CAS + lifecycle 快照；发布 seam 内部复核同一令牌）。
+    // Group state (CAS + lifecycle snapshot); the publish seam rechecks the token.
     const [lifecycle] = await tx
       .select()
       .from(question_group_lifecycle)
@@ -704,7 +674,7 @@ export async function submitDraftQuestion(
       };
     }
 
-    // 判分准入钩子（调用点：dual-solve / calibration lane 在此扩展）。
+    // Admission hook: dual-solve/calibration lanes extend this decision.
     const admission = await runAdmissionChecks(tx, {
       doc,
       unitSummary: contract.unit_summary,
@@ -723,23 +693,22 @@ export async function submitDraftQuestion(
       return withheld;
     }
 
-    // ---- question 工作副本行（投影；revision 才是判分真相） ----
+    // question is the working-copy projection; the revision remains scoring truth.
     const identity = draftCanonicalIdentity(doc);
     const canonicalHash = canonicalQuestionContentHash(identity);
     const structuredProjection = draftDocumentToStructuredQuestion(doc);
     const promptMd = identity.promptMd;
     const referenceMd = identity.referenceMd;
     const choicesMd = identity.choicesMd;
-    // 工作副本行存在与否决定 insert vs update（lifecycle 为空 ≠ 行不存在：
-    // 从未发布过的 legacy 行没有 lifecycle）。
+    // Row presence drives insert vs update; an empty lifecycle does not mean no row.
     const [existingRow] = await tx
       .select({ id: question.id, source: question.source })
       .from(question)
       .where(eq(question.id, groupId))
       .limit(1);
     const isNew = existingRow == null;
-    // 供给链系统注入只对新组首次提交有效；编辑已发布组携带它 = 调用方误用，
-    // 显式冲突拒绝而不是静默丢弃系统注入（sourced-draft-insert 同款纪律）。
+    // System injection is valid only on a new group's first submit; reject misuse
+    // instead of silently dropping it.
     if (input.sourced != null && !isNew) {
       const conflict: SubmitResult = {
         status: 'conflict',
@@ -804,9 +773,8 @@ export async function submitDraftQuestion(
       }
       contract = applied.contract;
     }
-    // 未决转换 ⇒ 不铸 revision。原样拷贝已存层时转换问题已经清掉。
-    // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
-    // 重放这次失败，知识点恢复后 accept 仍 422。
+    // Unresolved conversion means no revision. Withheld results are not receipted:
+    // a deterministic request_id would otherwise replay the failure forever.
     if (contract.conversion_issues.length > 0) {
       return conversionWithheld(contract, requestId);
     }
@@ -838,10 +806,8 @@ export async function submitDraftQuestion(
       ...(presentation != null ? { presentation } : {}),
     }).canonical;
     if (isNew) {
-      // YUK-1568 S3（R1 F3）—— 一页一题来源 URL 的终态 claim 与行 INSERT
-      // 同事务：pg_advisory_xact_lock 持到本事务提交，并发同 URL 候选串行化，
-      // 后到者锁后重查命中本行。复用既有原语（release 终态草稿 + KC merge），
-      // 命中即 duplicate_source 冲突 + 回执（不静默丢 claim）。
+      // Claim the source URL in this transaction so concurrent candidates serialize;
+      // a hit becomes duplicate_source with a receipt rather than a dropped claim.
       if (input.sourced?.source_claim != null) {
         const claimedSource = await claimHttpSourceDuplicate(tx, {
           sourceUrl: input.sourced.source_claim.source_url,
@@ -872,11 +838,9 @@ export async function submitDraftQuestion(
           return conflict;
         }
       }
-      // 供给链注入的 flat 指纹优先于投影身份——与旧 flat 行同一 dedup 口径，
-      // 否则选择题等投影后 reference 变化会丢失对既有行的精确去重命中。
+      // The injected flat fingerprint wins so exact dedup matches legacy flat rows.
       const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
-      // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
-      // 链同语义）；否则插入新行。
+      // Live dedup claim: merge into the canonical-hash holder, else insert.
       const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
         canonicalContentHash: hashForDedup,
         knowledgeIds: doc.knowledge_ids,
@@ -943,17 +907,14 @@ export async function submitDraftQuestion(
         source_ref: doc.source?.ref ?? null,
         draft_status: 'draft',
         structured: structuredProjection,
-        // 供给注入的路由 provenance（SourcingTask 等 system ref）；缺省沿用
-        // submit_question 自身 actor——两种都是可信系统侧写入方。
+        // Sourcing provenance when injected, otherwise submit_question's own system ref.
         created_by:
           input.sourced?.created_by ?? AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
         metadata: {
           draft_block_id: block.id,
           submit_source: doc.source ?? null,
           schema_version: 2,
-          // 系统侧 provenance/供给元数据（web_sourced、difficulty_evidence、
-          // 路由与候选身份、向量近重 hold 等）——同一发布事务落行，
-          // source_verify 的确定性来源核对依赖它。
+          // System provenance/supply metadata; source_verify depends on it.
           ...(input.sourced?.metadata ?? {}),
         },
         created_at: now,
@@ -962,7 +923,7 @@ export async function submitDraftQuestion(
         ...(input.sourced?.difficulty != null ? { difficulty: input.sourced.difficulty } : {}),
       });
     } else {
-      // 编辑已发布题：dedup hash 冲突 ⇒ conflict。
+      // Editing a published question: a hash held by another row is a conflict.
       const hashHolder = await tx
         .select({ id: question.id })
         .from(question)
@@ -977,10 +938,8 @@ export async function submitDraftQuestion(
           request_id: requestId,
         };
       }
-      // 工作副本行 = 「当前已准入 revision」的投影。这次编辑不再可发时，
-      // 内容列保持上一份已准入投影（未验证的新答案不进练习池），并把行标回
-      // draft：练习池只认 draft_status / suspended / withdrawn，不认准入。
-      // 真正 admitted 时才更新内容列。
+      // The row projects the currently admitted revision. Unpublishable edits keep the
+      // previous content and mark the row draft; only admitted edits update content.
       if (effectiveAdmission.state === 'admitted') {
         await tx
           .update(question)
@@ -1008,7 +967,7 @@ export async function submitDraftQuestion(
       }
     }
 
-    // ---- 唯一发布 seam ----
+    // The single publish seam.
     const publishResult = await publishQuestionGroup(tx, {
       group_id: groupId,
       contract: {
@@ -1048,7 +1007,7 @@ export async function submitDraftQuestion(
           (publishResult as { current_revision_id?: string }).current_revision_id)
         : undefined;
 
-    // ---- 草稿终态 + verify outbox（fetch 来源） ----
+    // Draft terminal state + verify outbox for fetched sources.
     const nextBlockVersion = block.version + 1;
     await writeQuestionBlockLifecycleEvent(tx, {
       blockId: block.id,
@@ -1076,7 +1035,7 @@ export async function submitDraftQuestion(
     }
 
     const receipt: SubmitResult = {
-      // 状态判别序：withheld（闸拒） > pending（已提交待验证） > admitted。
+      // Priority: withheld (gate) > pending (awaiting verify) > admitted.
       status:
         effectiveAdmission.state === 'withheld'
           ? 'withheld'
@@ -1109,10 +1068,9 @@ export async function submitDraftQuestion(
     return receipt;
   });
 
-  // verify outbox 派发（事务后；失败留 durable intent，不翻转提交结果）。
-  // 派发按「intent 实发」判别而非 receipt.status：新题 admission 恒 withheld
-  // ⇒ receipt 'withheld'，若按 status==='pending' 门槛，sourced 草稿的 intent
-  // 会挂到下一次 worker 启动 recovery 才发——与供给候选链的即时核验不等价。
+  // Dispatch verify intents after commit; failures leave a durable intent. Dispatch
+  // keys on the emitted intent, not receipt.status: new sourced drafts are withheld
+  // but still need immediate verification, not a delayed worker recover.
   const verifyIntent =
     'verify_enqueued' in out && out.verify_enqueued === true ? out.question_id : null;
   if (verifyIntent != null) {
@@ -1181,8 +1139,8 @@ async function findSubmitReceipt(
   return { fingerprint: payload.fingerprint, receipt: payload.receipt };
 }
 
-/** request_id 认领（锁内调用方须先取 pg_advisory_xact_lock(hashtext(request_id))）。
- * 导出供 candidate/compat 提交路径复用同一 claim 纪律。 */
+/** Claim a request_id after acquiring pg_advisory_xact_lock(hashtext(request_id));
+ * shared with candidate/compat submit paths. */
 export async function claimSubmitRequestId(
   tx: Tx,
   requestId: string,
@@ -1198,7 +1156,7 @@ export async function claimSubmitRequestId(
   return { status: 'reused', existing };
 }
 
-/** 提交回执事件：draft 提交 subject=question_block；candidate 提交 subject=question。 */
+/** Submit receipt event: draft submits target question_block, candidate submits question. */
 export async function writeSubmitReceiptEvent(
   tx: Tx,
   subject: { kind: 'question_block' | 'question'; id: string },

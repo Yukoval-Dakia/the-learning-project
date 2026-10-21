@@ -34,21 +34,14 @@ import {
 } from '@/core/schema/question-draft';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 
-// ====================================================================
-// YUK-1468 — v2 草稿文档 ↔ 评估契约四层
-// ====================================================================
+// v2 draft document ↔ four-layer assessment contract.
 //
-// 提交（submit_question）时草稿直接映射到四层契约：
-//   - materials/parts       → structure（剥掉草稿期的 source_ref/metadata ——
-//                             契约层没有对应字段，不塞进 caption 冒充）；
-//   - unit.response_spec    → response_spec.slots（slot_id 稳定透传）；
-//   - unit.key/reference/rule → scoring_basis.units；
-//   - unit.method           → execution_plan.assignments（模型方法携带
-//                             admitted binding；未准入如实 null ⇒ withhold）。
+// submit_question maps materials/parts to structure, response_spec to slots,
+// key/reference/rule to scoring_basis.units, and method to execution_plan
+// assignments (admitting model methods only when a binding exists).
 //
-// fail-honest：缺 key / 缺 rule / 缺分值 / 缺材料 / 断引用都记入
-// conversion_issues；有 issue 的文档 submit 不铸 revision（发布侧 validators
-// 会抛）——返回 withheld + 逐 unit 原因，由调用方先补全。
+// Missing keys/rules/points/materials or dangling refs become conversion_issues;
+// documents with issues do not mint a revision and are withheld per unit.
 
 /** 提交前的文档级未决项（不混入 normalization 的 ConversionIssue code 词表）。 */
 export interface DraftConversionIssue {
@@ -75,7 +68,7 @@ export interface DraftContract {
   execution_plan: ExecutionPlanT;
   integrity_digest: string;
   conversion_issues: DraftConversionIssue[];
-  /** 逐 unit 的可判性摘要（admission/response 用）。 */
+  /** Per-unit judgeability summary (admission/response). */
   unit_summary: {
     unit_id: string;
     response_class: DraftUnitT['response_class'];
@@ -85,7 +78,7 @@ export interface DraftContract {
   }[];
 }
 
-/** 材料 → 契约 SharedMaterial（剥草稿期字段）。 */
+/** Draft material → contract material (draft-only fields dropped). */
 function contractMaterial(material: DraftMaterialT) {
   return {
     material_id: material.material_id,
@@ -129,7 +122,7 @@ function slotFor(unit: DraftUnitT, partId: string): ResponseSlotT {
       format: spec.format ?? 'text',
       ...(spec.unit_hint != null ? { unit_hint: spec.unit_hint } : {}),
       ...(spec.max_chars != null ? { max_chars: spec.max_chars } : {}),
-      // YUK-1568：声明原样进冻结槽位（参与 integrity digest）；不注入默认值。
+      // Declarations enter the frozen slot verbatim; no defaults are injected.
       ...(spec.answer_shape != null ? { answer_shape: spec.answer_shape } : {}),
     } satisfies BlankSlotT;
   }
@@ -145,7 +138,7 @@ function slotFor(unit: DraftUnitT, partId: string): ResponseSlotT {
 
 interface CriterionBuild {
   criterion: ScoringUnitCriterionT;
-  /** K1 规则只有 select_key/blank_key 判据允许携带。 */
+  /** Only select_key/blank_key criteria may carry a K1 rule. */
   attachRule: boolean;
   issues: DraftConversionIssue[];
 }
@@ -228,8 +221,8 @@ function criterionFor(
         detail: `unit '${unit.unit_id}' numeric equivalent_forms 无契约承载（保持草稿待契约扩展）`,
       });
     }
-    // 契约 tolerance 必填：草稿缺省时按最严 absolute 0 承载并如实报 issue
-    //（issue 已令 publishable=false，编辑方须显式印容差或确认 strict）。
+    // Contract tolerance is required: carry the strictest 0 and report an issue so
+    // the editor must print a tolerance or confirm strict.
     if (key.tolerance == null) {
       issues.push({
         code: 'missing_key',
@@ -252,8 +245,8 @@ function criterionFor(
       issues,
     };
   }
-  // free：答案权威 = reference_md 原文 + rubric（与 normalizer 同语义，
-  // rubric 序列化进 rule statement，绝不冒充 official —— provenance 按答案证据来源）。
+  // Free response: reference + rubric are the answer authority (rubric serialized
+  // into the rule statement); provenance follows the answer evidence source.
   const rubricText = unit.rubric != null ? JSON.stringify(unit.rubric, null, 0) : null;
   const statement = [unit.reference_md ?? null, rubricText].filter(Boolean).join('\n\n');
   if (statement.length === 0) {
@@ -275,9 +268,8 @@ function criterionFor(
 }
 
 /**
- * 已带归一化的草稿带着整段进契约。作者在同一把键上写了 case_sensitive / trim
- * 时，这两项盖过段内的 casefold / trim_outer。两者互相矛盾则记为未决，提交不铸
- * revision。没带归一化的新题仍用当前默认：v1，nfkc 与折叠空白关闭。
+ * A key's explicit case_sensitive/trim override the carried normalization; conflicts
+ * are recorded as issues. Keys without normalization keep the v1 default.
  */
 function blankTextNormalization(
   key: DraftBlankTextKeyT,
@@ -326,7 +318,7 @@ function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
       return {
         kind: 'model_executor',
         task_kind: unit.method.task_kind ?? 'AssessmentRuleJudgeTask',
-        // D17：未声明准入切片 ⇒ null（发布 withhold，绝不执行）。
+        // Missing admission binding → null: withhold at publish, never execute.
         admitted_slice_id: unit.method.binding ?? null,
       };
     case 'human_review':
@@ -335,8 +327,8 @@ function executorFor(unit: DraftUnitT): ExecutorAssignmentT['executor'] {
 }
 
 /**
- * 草稿文档 → 契约四层 + 未决项清单。纯函数（无 IO）。
- * conversion_issues 非空 ⇒ submit 不铸 revision（结构/判分未决）。
+ * Draft document → four-layer contract plus unresolved issues. Pure; a non-empty
+ * issue list means submit will not mint a revision.
  */
 export function draftDocumentToContract(
   doc: QuestionDraftDocumentT,
@@ -462,7 +454,7 @@ export function draftDocumentToContract(
       prompt_md: part.prompt_md,
       ...(part.question_no != null ? { question_no: part.question_no } : {}),
       material_ids: part.material_ids,
-      // YUK-1568：显式 blank_order 原样入 structure（交叉校验在发布 barrier）。
+      // Explicit blank_order enters structure verbatim; the publish barrier validates it.
       ...(part.blank_order != null ? { blank_order: part.blank_order } : {}),
     })),
   });
@@ -489,11 +481,8 @@ export function draftDocumentToContract(
       const executor = executorFor(unit);
       assignments.push({ scoring_unit_ids: [unit.unit_id], executor });
       const executorKind = executor.kind;
-      // YUK-1568（第 2 片）：声明 answer_shape 的 blank 单元由共享比较核心
-      // （blank-answer-compare）判定支持 —— 未实现 notation/未知版本仍
-      // judgeable_today=false 并扣留；已支持声明的可判性回归常规规则
-      //（issues / executor），不再全挡。键与声明的确定性冲突由发布/准入闸
-      //（declaredBlankGradeReadiness / compileDeclaredKey）拒，不在这里猜。
+      // Unsupported answer_shape declarations stay unjudgeable; supported ones return
+      // to the normal issues/executor rules. Conflicts are rejected by the publish gate.
       const declaredShapeRaw =
         unit.response_class === 'blank' &&
         unit.response_spec.kind === 'blank' &&
@@ -555,7 +544,7 @@ export function draftDocumentToContract(
   };
 }
 
-// ---------- published revision → 草稿（编辑已发布题的草稿种子） ----------
+// ---------- published revision → draft (seed for editing a published question) ----------
 
 function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | null {
   switch (slot.kind) {
@@ -583,7 +572,7 @@ function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | n
         ...(slot.format != null ? { format: slot.format } : {}),
         ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
         ...(slot.max_chars != null ? { max_chars: slot.max_chars } : {}),
-        // YUK-1568：冻结声明原样回草稿（draft→contract→draft 往返保字段）。
+        // Frozen declaration returns verbatim so draft→contract→draft keeps the field.
         ...(slot.answer_shape != null ? { answer_shape: slot.answer_shape } : {}),
       };
     case 'open_response':
@@ -612,17 +601,15 @@ function draftSpecFromSlot(slot: ResponseSlotT): DraftUnitT['response_spec'] | n
         })),
       };
     default:
-      // 其余 legacy 槽（text/numeric/matching/...）无法还原成统一类别时留
-      // unmapped 标记。选择题已在上面映成 select。
+      // Legacy slots with no unified category stay unmapped.
       return null;
   }
 }
 
 /**
- * 已发布 revision → v2 草稿（编辑已发布题的草稿种子）。part/unit/material
- * 身份原样保留。选择题（single_choice / multi_choice + option_set_key）映成
- * select 与答案键；其余无法还原的 legacy 槽在 unit.metadata.unmapped_slot_kind
- * 留痕，提交前须改写成统一类别。
+ * Published revision → v2 draft seed. Part/unit/material identities are preserved;
+ * legacy choice slots map to select + key, while other unrepresentable slots leave
+ * `metadata.unmapped_slot_kind` and must be rewritten before submit.
  */
 export function revisionToDraftDocument(
   revision: Pick<
@@ -647,7 +634,7 @@ export function revisionToDraftDocument(
       prompt_md: part.prompt_md,
       ...(part.question_no != null ? { question_no: part.question_no } : {}),
       material_ids: [...part.material_ids],
-      // YUK-1568：冻结 blank_order 原样回草稿（编辑已声明题不丢声明）。
+      // Frozen blank_order returns to the draft so editing keeps the declaration.
       ...(part.blank_order != null ? { blank_order: [...part.blank_order] } : {}),
       units: [],
       metadata: {},
@@ -684,8 +671,7 @@ export function revisionToDraftDocument(
       draft.rule == null &&
       unit.criterion.kind === 'option_set_key'
     ) {
-      // exact_option_set 是集合相等：全中且无错选得满分，否则 0。补一条印出的
-      // 规则，提交侧才不会把已有选择题判成 missing_rule。
+      // Exact option-set grading: all correct and no wrong picks passes, else 0.
       draft.rule = printedLegacyChoiceRule(unit.points);
     }
     if (part != null) {
@@ -723,7 +709,7 @@ export function revisionToDraftDocument(
   };
 }
 
-/** 旧选择题没有 K1 规则对象。集合相等的给分写成显式规则，不靠提交时再猜。 */
+/** Legacy choices have no K1 rule; write the set-equality scoring explicitly. */
 function printedLegacyChoiceRule(points: number | null): NonNullable<DraftUnitT['rule']> {
   const award = points != null && Number.isFinite(points) && points >= 0 ? points : 0;
   return {
@@ -783,12 +769,10 @@ function keyAndReferenceFor(
     };
   }
   if (criterion.kind === 'rule_reference') {
-    // rule statement 里可能序列化着 rubric；如实回填 reference，rubric 不猜解析。
+    // The statement may contain a serialized rubric; return it as reference only.
     return { reference_md: criterion.statement_md };
   }
-  // legacy 判据（option_set_key/text_key/numeric_key/matching_pairs_key/
-  // position_set_key/holistic_level）—— 无统一 key 等价物时把原文放进
-  // reference_md，unit.metadata 需另行标注（由调用方在 metadata.unmapped 处理）。
+  // Legacy criteria have no unified key; callers must mark them in unit metadata.
   return {};
 }
 
@@ -805,8 +789,7 @@ function methodFor(
   if (executor?.kind === 'deterministic') {
     if (executor.comparator === 'set_compare') return { kind: 'set-compare' };
     if (executor.comparator === 'blank_exact') return { kind: 'exact' };
-    // legacy 只读比较器（exact_option_set / numeric_* / matching / position）：
-    // 最接近的统一类别如实回写，原 comparator 留在 unit.metadata 由调用方决定。
+    // Legacy comparators map to the closest unified kind; the original is kept in metadata.
     return { kind: 'exact' };
   }
   if (executor?.kind === 'model_executor') {
@@ -887,9 +870,9 @@ function legacyChoiceUnitFaithful(stored: ScoringUnitT, canonical: ScoringUnitT)
 }
 
 /**
- * 往返必须保住已存判分层。旧选择题改写成 select_key + 印出的集合规则是唯一允许的
- * 表示变化；答案键、选项文本、分值和默认的单选/全选界都要一致。其余任何字段
- * 被丢掉或改写都算判分变了。
+ * The round trip must preserve stored scoring. Legacy choices may only become
+ * select_key + the printed set rule; any other dropped or rewritten field counts as
+ * a scoring change.
  */
 export function scoringRoundTripIsFaithful(
   stored: Pick<PublishedQuestionRevisionT, 'response_spec' | 'scoring_basis' | 'execution_plan'>,
@@ -1066,10 +1049,9 @@ function storedUnitIsUnrepresentable(revision: StoredScoringRevision): boolean {
 }
 
 /**
- * 已存判分层走草稿往返时会不会丢字段，以及这次编辑有没有亲手改判分。
- * 作者没改判分、丢的又是编码器硬写的字段（聚合、空白计零、费用上限、选择界）
- * 时拒绝发布。旧的 rule_reference 一类无法表示的层，题面编辑改为原样拷贝。
- * 作者改了键或题型时放行。作者没碰的单元整份拷回已存判分层，不重新编码。
+ * Decide whether the stored scoring survives the draft round trip and whether the
+ * author touched scoring. Untouched units are copied back verbatim; encoder-only
+ * field loss refuses publish, while unrepresentable legacy layers are preserved.
  */
 export function scoringEditPlan(
   revision: StoredScoringRevision,
@@ -1104,7 +1086,7 @@ function authorPlan(
   loss: 'unrepresentable' | 'field_drop',
 ): ScoringEditPlan {
   const touched = authorTouchedUnitIds(seeded, doc);
-  // 单元集合变了就无法原样拷贝已存层，也不再靠编码器重写后发布。
+  // A changed unit set cannot copy the stored layer verbatim.
   if (touched === 'structure') return SCORING_ROUND_TRIP_LOSSY;
   if (touched.size === 0) {
     return loss === 'field_drop' ? SCORING_ROUND_TRIP_LOSSY : { action: 'preserve' };
@@ -1151,7 +1133,7 @@ function dropsUntouchedSlot(
   return false;
 }
 
-/** 作者改了判分单元时，仍把草稿表达不了的依据字段从已存 revision 原样带回。 */
+/** Carry basis fields the draft cannot express back from the stored revision. */
 export function overlayAuthorScoring<T extends DraftContract>(
   encoded: T,
   stored: Pick<StoredScoringRevision, 'scoring_basis' | 'execution_plan'>,
@@ -1176,8 +1158,8 @@ export function overlayAuthorScoring<T extends DraftContract>(
 }
 
 /**
- * 一个执行器只覆盖这一个单元时，才能把已存 assignment 原样换回去。
- * 共用 assignment 或重复覆盖都无法按单元字节拷贝。
+ * Only a dedicated single-unit assignment can be restored verbatim; shared or
+ * duplicate coverage cannot be copied per unit.
  */
 function dedicatedAssignmentIndex(
   assignments: readonly { scoring_unit_ids: readonly string[] }[],
@@ -1194,8 +1176,8 @@ function dedicatedAssignmentIndex(
 }
 
 /**
- * 作者没碰的单元不走编码器。槽、计分单元和专属执行器都换成已存对象。
- * 槽被改过的单元共用，或执行器不是单单元专属时，返回 null，调用方拒绝发布。
+ * Untouched units bypass the encoder: slots, scoring units and dedicated executors
+ * are replaced with stored objects. Return null when that is unsafe.
  */
 function spliceUntouchedUnits(
   encoded: DraftContract,
@@ -1259,9 +1241,8 @@ function spliceUntouchedUnits(
 }
 
 /**
- * 提交和校验共用这一步。preserve 用已存的三层判分替换编码器产出，题面仍用草稿。
- * author 拷回聚合、空白计零和计划级字段，并把作者没碰的单元原样换回。
- * 换不回去或 refuse 时不发布。
+ * Shared by submit and validation. preserve keeps the stored scoring layers; author
+ * restores plan-level fields and untouched units. refuse/unsafe paths do not publish.
  */
 export function applyScoringEditPlan(
   revision: StoredScoringRevision | null,
@@ -1295,11 +1276,10 @@ export function applyScoringEditPlan(
   return { contract: encoded, plan };
 }
 
-// ---------- 与 question.canonical_content_hash 对齐的内容身份 ----------
+// ---------- content identity aligned with question.canonical_content_hash ----------
 //
-// 旧供给链的指纹只含 prompt / reference / choices / rubric（外加 composite
-// 判别），不含 source、知识点。草稿提交必须投出同一组字段，精确去重才能
-// 跨来源、跨知识点命中已有行。哈希本身由 canonicalQuestionContentHash 计算。
+// The legacy supply fingerprint covers only prompt/reference/choices/rubric (plus the
+// composite flag), never source or knowledge ids, so exact dedup can match across both.
 
 function projectPrompt(doc: QuestionDraftDocumentT): string {
   if (doc.parts.length === 1) return doc.parts[0].prompt_md;
@@ -1348,7 +1328,7 @@ function projectChoices(doc: QuestionDraftDocumentT): string[] | null {
   return unit.response_spec.items.map((item) => item.label_md ?? item.item_id);
 }
 
-/** 供 canonicalQuestionContentHash 使用的内容身份。source 与知识点不参与。 */
+/** Content identity for canonicalQuestionContentHash; source and knowledge ids do not participate. */
 export function draftCanonicalIdentity(doc: QuestionDraftDocumentT): {
   promptMd: string;
   referenceMd: string | null;
