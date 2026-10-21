@@ -1,7 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
 import { loadNoteReaderPage } from '@/capabilities/notes/ui-public';
-import { startNoteAiChangesClient, startNotePageClient } from '../note-page-client';
+import {
+  startNoteAiChangesClient,
+  startNotePageClient,
+  startNoteReferenceSearchClient,
+} from '../note-page-client';
 import { startNoteSaveClient } from '../note-save-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
@@ -24,6 +28,7 @@ function NoteReaderPage() {
           save={startNoteSaveClient}
           readAiChanges={startNoteAiChangesClient}
           undo={startWorkbenchClient.undoAiChange}
+          searchReferences={startNoteReferenceSearchClient}
         />
       </Suspense>
     </StartWorkbenchShell>

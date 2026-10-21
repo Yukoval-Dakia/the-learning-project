@@ -780,6 +780,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff576bd3-b10a-4e3f-9617-6be80abe4df0",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "searchArtifactReferences",
+      "targetModule": "src/capabilities/notes/server/artifact-reference-search.ts",
+      "targetSymbol": "searchArtifactReferences",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-page-reader.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "Notes owns complete reference lookup validation, literal title matching, visibility, exclusion, ordering and limit. Start imports this public owner; api/artifacts-search.ts:1 directly consumes the same implementation for retained HTTP.",
+      "rationale": "One complete reference-search owner for HTTP and Start, without duplicated SQL or HTTP forwarding. This is artifact title lookup, not the question-bank search domain.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-475be1dd-9ef1-4dec-883f-8272e2d37d52",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -1192,6 +1212,16 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1563",
       "owns": "Kernel HTTP error envelope: ApiError typed throw for 4xx custom-provider input failures (invalid slug/URL/env name/protocol, limit reached), serialized uniformly by the route boundary.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/artifact-reference-search.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the canonical API error envelope. Notes owns reference-search validation and selection rules.",
       "date": "2026-10-21"
     }
   ],

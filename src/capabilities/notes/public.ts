@@ -15,6 +15,7 @@ export {
   getArtifactCorrectionState,
   getArtifactCorrectionStates,
 } from './server/artifact-corrections';
+export { searchArtifactReferences } from './server/artifact-reference-search';
 export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
 export type { BacklinksByArtifactType } from './server/block-refs';
 export {
