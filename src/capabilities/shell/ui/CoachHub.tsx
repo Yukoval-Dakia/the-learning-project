@@ -34,10 +34,10 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { CoachCalibrationView } from './CoachCalibrationView';
+import { type CoachCalibrationReader, CoachCalibrationView } from './CoachCalibrationView';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
-import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
+import { type CoachEffectivenessReader, EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number; time_zone: string };
@@ -120,9 +120,13 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
 export default function CoachHub({
   navigate,
   readWeekly = readHttpWeekly,
+  readCalibration,
+  readEffectiveness,
 }: {
   navigate: (to: string) => void;
   readWeekly?: CoachWeeklyReader;
+  readCalibration?: CoachCalibrationReader;
+  readEffectiveness?: CoachEffectivenessReader;
 }) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
   const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
@@ -199,8 +203,16 @@ export default function CoachHub({
         className="coachhub-panel"
       >
         {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
-        {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
-        {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+        {view === 'calibration' && (
+          <CoachCalibrationView navigate={hubGo} readCalibration={readCalibration} />
+        )}
+        {view === 'efficacy' && (
+          <EffectivenessTrendPanel
+            navigate={hubGo}
+            embedded
+            readEffectiveness={readEffectiveness}
+          />
+        )}
       </section>
     </main>
   );
