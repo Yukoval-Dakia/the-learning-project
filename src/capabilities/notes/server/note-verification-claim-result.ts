@@ -1,9 +1,6 @@
-// Result persistence/finalization for the note verification state machine:
-// staging a provider or contract result onto a fenced claim, releasing claims
-// for retry (pre- and post-provider-boundary), deferring or terminalizing
-// ambiguous outcomes, and finalizing a staged result into the artifact.
-// Claim reservation/fencing lives in note-verification-claim-reservation.ts;
-// recovery in note-verification-claim-recovery.ts.
+// Result staging, retry release, ambiguity handling, and finalization. Claims
+// are reserved in note-verification-claim-reservation.ts and recovered in
+// note-verification-claim-recovery.ts.
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';

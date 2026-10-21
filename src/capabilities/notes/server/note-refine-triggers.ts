@@ -9,18 +9,13 @@ import { getNotesBoss, notesBossTransaction } from './boss-port';
 export const NOTE_REFINE_TRIGGER_DEBOUNCE_MS = 60 * 60_000;
 const NOTE_REFINE_DEBOUNCE_TABLE = 'note_refine_debounce';
 
-// M3 (YUK-317, D6)：error_rate 信号已删（内嵌自测链路裁撤）。
-// YUK-358 决定6 (ADR-0040)：dwell 信号已裁（editing presence 不再触发 refine）。
 const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   mark_wrong: 'WAVE6_TRIGGER_MARK_WRONG_ENABLED',
   mastery_change: 'WAVE6_TRIGGER_MASTERY_ENABLED',
   dreaming: 'WAVE6_TRIGGER_DREAMING_ENABLED',
-  // YUK-358 决定7 (ADR-0040)：verify 是 note_verify→refine 的新 trigger，OPT-IN。
+  // Opt-in: verify findings add background AI cost only when enabled.
   verify: 'WAVE6_TRIGGER_VERIFY_ENABLED',
 };
-
-// DEFAULT_ENABLED_BY_KIND 的默认位已在 YUK-1007 迁入 registry codeDefault
-//（WAVE6_TRIGGER_* 键）；此处仅留触发器常量集 + boss 端口面。
 
 export type NoteRefineBossSend = (
   queue: 'note_refine',
@@ -52,9 +47,6 @@ export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // YUK-1007：registry 已把 codeDefault 对齐 DEFAULT_ENABLED_BY_KIND（mark_wrong /
-  // mastery_change / dreaming = true，verify = false）——getConfigFlag 的
-  // DB > env > code-default 分层涵盖原 parseFlag defaultValue 语义。
   const resolved = getConfig(FLAG_BY_KIND[kind], env);
   return resolved === true;
 }
@@ -75,9 +67,9 @@ export async function enqueueNoteRefineTrigger(input: {
   }
   const key = `${input.kind}:${input.artifactId}`;
 
-  // Same hazard class as YUK-239 (STB-5): a bare VITEST key would silently skip
-  // real enqueues if prod ever set it. Route through the central guard (NODE_ENV
-  // === 'test' OR VITEST) — injected bossSend (test fakes) still bypasses the skip.
+  // Central guard (NODE_ENV === 'test' or VITEST) rather than a bare VITEST
+  // check, which would also skip real enqueues if prod set it. An injected
+  // bossSend still bypasses the skip for tests.
   if (!input.bossSend && !shouldEnqueueBackgroundJobs()) {
     return { status: 'skipped:test_env', artifact_id: input.artifactId, kind: input.kind };
   }
@@ -173,15 +165,9 @@ export const enqueueMarkWrongNoteRefine = (input: {
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 
-// YUK-358 决定7 (ADR-0040) — the note_verify→refine bridge. When note_verify
-// returns verdict=needs_review, instead of writing a dead patch-less note_update
-// proposal (deleted), it enqueues a verify-kind refine carrying the verifier
-// summary/issues as context_md. This is flag-gated OPT-IN (default-OFF, see
-// CONFIG_REGISTRY WAVE6_TRIGGER_VERIFY_ENABLED codeDefault) so it does NOT silently add background AI cost. The
-// refine then flows through the NORMAL gate (decideNoteRefineMode +
-// patchTouchesVerifiedBlock) — verify gets ZERO privilege at that gate (red
-// line 1). The debounce key is `verify:${artifactId}`, isolated from the
-// mark_wrong/mastery keys (red line 6).
+// note_verify → refine bridge: needs_review enqueues a verify refine carrying the
+// findings. Opt-in so it does not silently add background cost, and it passes the
+// same gate as every other trigger. Its debounce key is separate from the others.
 export const enqueueVerifyNoteRefine = (input: {
   db?: Db;
   artifactId: string;
@@ -199,26 +185,9 @@ export const enqueueVerifyNoteRefine = (input: {
     evidenceIds: input.triggerEventId ? [input.triggerEventId] : [],
   });
 
-// YUK-358 决定6 (ADR-0040) — enqueueDwellNoteRefine producer RETIRED. Editing
-// presence (the /api/editing-session/heartbeat heartbeat) no longer enqueues a
-// note_refine; it is now a pure presence write feeding the editing_presence DEFER
-// arbitration only. The dwell signal was a low-value AI-cost driver (no concrete
-// learning event behind it). The 3 real-signal producers below (mark_wrong /
-// mastery_change / dreaming) plus the verify bridge (决定7) remain.
-
-// ADR-0040 决定2 — honest rename: the signal was historically labelled
-// `review_success` (a pure pass/fail proxy that reads NO real mastery value). It is
-// renamed to the honest `mastery_change` (the `kind` was already `mastery_change`;
-// the misleading "Review success" context_md label is removed here).
-//
-// PHASE-DEFERRED (ADR-0040 决定2): the trigger STILL fires on outcome===success
-// during the N-week instrumentation window — ZERO behaviour change to WHEN it fires.
-// The p(L)-cross-threshold gating (fire only when the learner's p(L) crosses a
-// threshold) is deferred until that threshold is CHOSEN from telemetry. The threshold
-// is an n=1 magic number; the companion emitMasteryProgressSignal
-// (mastery-progress-signal.ts) reads the real p(L)/Δθ̂ from mastery_state and emits it
-// as `experimental:mastery_progress` events so the threshold can be set after N weeks.
-// Do NOT hardcode a threshold here; do NOT change the trigger CONDITION yet.
+// Fires on a successful attempt during the instrumentation window; gating on a
+// p(L) cross-threshold is deferred until telemetry chooses that threshold. Do not
+// hardcode one here or change the condition.
 export const enqueueMasteryNoteRefine = (input: {
   db?: Db;
   artifactId: string;

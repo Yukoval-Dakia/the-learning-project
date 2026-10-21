@@ -1,47 +1,13 @@
-// ADR-0033 (YUK-306, lane D) — interactive 学习 artifact: the two copilot
-// authoring DomainTools.
+// Copilot authoring tools for interactive artifacts: self-contained HTML stored
+// in attrs, versioned, sandbox-rendered, and opaque to the note block-tree mesh
+// (no body_blocks, cross-links, or FSRS). The backend stores the source opaquely;
+// the render-side sandbox owns security, so validation here is the Zod schema
+// only.
 //
-// D1: 'interactive' is a NEW ArtifactType (semantic kind, format=html) —
-// agent-generated interactive content (e.g. 互动式元素周期表), modeled on
-// Claude Artifacts: persistent, named, versioned, sandbox-rendered.
-// Self-contained and OPAQUE to the note block-tree mesh: body_blocks stays
-// null (the tool_quiz precedent), no cross_link / embedded_check / block_refs
-// participation. Reference, not practice — no FSRS, tool_state stays null.
-//
-// D2: the HTML source lives in artifact.attrs (InteractiveArtifactAttrs —
-// existing jsonb column, NO new column, audit:schema untouched). Cross-turn
-// iteration (v1→v2) reuses the existing artifact.version + history mechanics
-// (body-blocks-edit.ts precedent).
-//
-// D4 (security split): the backend stores the HTML source OPAQUELY. There is
-// deliberately NO sanitizer / linter / HTML inspection here — the render-side
-// sandbox (the UI slice's sandboxed iframe) owns security. Validation at this
-// boundary is the Zod schema only: title required + html size cap.
-//
-// D6: the copilot generates the HTML ITSELF in conversation (Claude Artifacts
-// pattern — the model writes the HTML and passes it as tool input; no separate
-// LLM gen task). Both tools are effect='write' (ADR-0033 D6 explicit: 单用户、
-// 路由守 scope via the surface allowlist、非破坏性创建) and
-// mirrorEvent='when_causal' (write_quiz precedent — evidence-first trail).
-//
-// Rollback / duplication seam (留痕可回滚, ADR-0033): each author/update call
-// persists the full HTML 3× — artifact.attrs + event.payload.args (the
-// when_causal mirror in mcp-bridge.ts writes FULL untruncated args) +
-// tool_call_log.input_json. Rollback for updates rides on the mirror-event
-// args chain: the PRIOR author/update event always holds the v(n-1) html.
-// Acceptable single-user storage cost — do NOT "optimize away" the mirror args
-// payload without replacing this rollback path. archived_at soft-delete covers
-// create-side reversibility.
-//
-// phase-deferred: no per-turn idempotency guard on author_artifact (write-quiz
-// .ts:22-26 same stance — a duplicate create is non-destructive; add a guard
-// only if real usage shows double-writes).
-// phase-deferred: no surfaced URL in the output yet — the render route is the
-// UI slice's seam (ADR-0033 D4); the copilot reports title/id in prose for now.
-// phase-deferred: cross-conversation REdiscovery of an existing interactive
-// artifact (to feed update_artifact) needs a future read tool / the UI slice —
-// out of D6 scope; within a conversation the copilot holds the id from the
-// author_artifact output.
+// Each call persists the HTML three times (attrs, mirror event args, tool log).
+// The prior event's args are the update rollback path: do not drop that payload
+// without replacing it. Deferred: per-turn idempotency, a surfaced URL, and
+// cross-conversation rediscovery.
 
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
@@ -193,22 +159,14 @@ async function validateArtifactContent(
   }
 }
 
-// ---------------------------------------------------------------------------
-// author_artifact — create a new interactive artifact (v0).
-// ---------------------------------------------------------------------------
-
 const AuthorArtifactInputSchema = z.object({
-  // ADR-0032 author-family discriminant. Flat-enum + route-in-execute is the
-  // author_question seed-mode precedent (proposal-tools.ts) — future authorable
-  // types widen this enum and add a branch in execute; the schema stays a flat
-  // ZodObject (mcp-bridge.ts:145 hard-requires `instanceof z.ZodObject`).
+  // Flat enum + branch in execute; the schema must stay a ZodObject because the
+  // MCP bridge checks for one.
   type: z.enum(['interactive']),
   title: z.string().min(1).max(120),
-  // Size cap only. NO sanitizer/linter here: the render-side sandbox owns
-  // security (ADR-0033 D4) — the backend stores the source opaquely.
+  // Size cap only; the sandbox owns security.
   html: z.string().min(1).max(INTERACTIVE_HTML_MAX_CHARS),
-  // Topic-discovery tags (化学节点 ↔ 周期表). Deliberately NO existence check:
-  // a dangling id degrades discovery, it breaks nothing.
+  // A dangling id only degrades discovery, so no existence check.
   knowledge_ids: z.array(z.string().min(1)).optional(),
   summary: z.string().max(500).optional(),
   content_validation: ContentValidationSchema.optional(),
@@ -285,8 +243,7 @@ async function executeAuthorArtifact(
       .returning();
     await emitArtifactCreateEvent(tx, {
       row: artifactRowToCreateSnapshot(insertedArtifact),
-      // provenance: attribute to the REAL caller, not a hardcoded 'agent' (cron → system; the
-      // ToolCallerActor kind can be user/agent/cron/system via the MCP bridge).
+      // Provenance belongs to the real caller (cron is recorded as system).
       actorKind: ctx.callerActor.kind === 'cron' ? 'system' : ctx.callerActor.kind,
       actorRef: ctx.callerActor.ref,
       causedByEventId: ctx.causedByEventId ?? null,
@@ -320,20 +277,13 @@ export const authorArtifactTool: DomainTool<AuthorArtifactInput, AuthorArtifactO
   },
 };
 
-// ---------------------------------------------------------------------------
-// update_artifact — replace the HTML of an EXISTING interactive artifact
-// (version bump + history append; cross-turn v1→v2 iteration).
-// ---------------------------------------------------------------------------
-
-// phase-deferred: html-only on purpose (ADR-0033 D6 — update = version-bump
-// HTML iteration). title/summary/knowledge_ids edits are out of D6 scope; widen
-// this schema when a real retitle/retag need shows up.
+// update_artifact replaces the HTML of an existing interactive artifact.
+// HTML-only on purpose; widen when a real retitle/retag need appears.
 const UpdateArtifactInputSchema = z.object({
   artifact_id: z.string().min(1),
-  // Full replacement document (Claude Artifacts pattern — the model rewrites
-  // the whole HTML). Same cap + same no-sanitizer stance as author_artifact.
+  // Whole-document replacement, same cap and security stance as author_artifact.
   html: z.string().min(1).max(INTERACTIVE_HTML_MAX_CHARS),
-  // Feeds history[].summary_md — the human-readable v1→v2 timeline.
+  // Feeds the human-readable history entry.
   change_summary: z.string().max(300).optional(),
   content_validation: ContentValidationSchema.optional(),
 });
@@ -354,19 +304,10 @@ async function executeUpdateArtifact(
   const validation = await validateArtifactContent(ctx, input.html, input.content_validation);
   const now = new Date();
 
-  // Version + history mechanics follow body-blocks-edit.ts. Two deliberate
-  // deviations for a DomainTool:
-  //   - The MIRROR event (mcp-bridge.ts mirrorEvent='when_causal', minted AFTER execute returns) is
-  //     the observability/rollback trail — kept AS-IS. W3-C1γ ADDS a SEPARATE fold-source event
-  //     (experimental:artifact_lifecycle op='set_attrs') in THIS tx so foldArtifact reproduces the
-  //     attrs(html)+history+version the UPDATE wrote (additive double-write; flag OFF — distinct from
-  //     the mirror, exactly like author_artifact's create event vs its mirror). The history entry
-  //     still omits `event_id` (the lifecycle event id is minted here but correlation stays via
-  //     tool_call_log.mirrored_event_id, unchanged).
-  //   - NO caller-supplied expected_version: the in-tx read supplies it and the
-  //     `WHERE version =` guard still protects against concurrent writers
-  //     (single-user tool — the model shouldn't have to track
-  //     version numbers across turns).
+  // The mirror event remains the rollback/observability trail; this transaction
+  // also writes a fold event so a rebuild reproduces attrs, history, and version.
+  // No caller-supplied expected_version: the in-tx read supplies it, and the
+  // WHERE guard still catches concurrent writers.
   return ctx.db.transaction(async (tx) => {
     const rows = await tx
       .select({
@@ -430,11 +371,8 @@ async function executeUpdateArtifact(
       throw new Error(`update_artifact: artifact ${input.artifact_id} concurrently modified`);
     }
 
-    // W3-C1γ — fold-source set_attrs event (the UPDATE bumped version + pushed a history entry, so
-    // the event carries attrs + history_after + next_version; the reducer replaces all three). Same
-    // tx — a malformed payload rolls back the paired UPDATE (parseEvent barrier). Provenance attributes
-    // to the REAL caller (cron→system, mirror create-event.ts). optOutMemoryIngestion defaults TRUE —
-    // the mirror event already trails the html change; the fold event is plumbing.
+    // Fold event for the attrs + history + version write; the mirror already
+    // trails user-visible activity, so this stays out of memory ingestion.
     await emitArtifactLifecycleEvent(tx, {
       subjectId: input.artifact_id,
       op: 'set_attrs',

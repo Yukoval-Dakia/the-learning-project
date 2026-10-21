@@ -19,8 +19,8 @@ const CONTENT_TYPES = new Set([
   'blockMath',
 ]);
 
-// The current reader/editor uses a source mirror. Derive it from the one model
-// body instead of asking the model to author two potentially conflicting copies.
+// The reader/editor needs a source mirror; derive it from the single model body
+// so the model never authors two potentially conflicting copies.
 export function noteBlockSource(node: Record<string, unknown>): string {
   if (!CONTENT_TYPES.has(String(node.type)))
     throw new Error(`parseNoteGenerateOutput: unsupported generated node ${String(node.type)}`);

@@ -25,12 +25,9 @@ function stableEffectIdentity(attemptEventId: string, artifactId: string) {
 }
 
 /**
- * Reserve the causal effect and enqueue its pg-boss job in one transaction.
- *
- * The causal key deliberately ignores the individual mastery-progress sibling:
- * one successful attempt may emit several KC readings, but it owns only one
- * note-refine effect per target artifact. A replay therefore observes the
- * persisted effect instead of enqueueing after the product debounce expires.
+ * Reserve the effect and enqueue its job atomically. The key ignores individual
+ * KC siblings: one attempt owns one effect per target artifact, so a replay sees
+ * the persisted effect instead of enqueueing again.
  */
 export async function reserveAndEnqueueMasteryRefineEffect(input: {
   tx: Tx;

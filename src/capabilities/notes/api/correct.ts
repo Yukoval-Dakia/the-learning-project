@@ -24,9 +24,6 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     }
 
     const state = await getArtifactCorrectionState(db, artifactId);
-    // Wire shape is Record<string, ArtifactCorrectionStatus>; we flatten the
-    // projection's Map<string, …> here so JSON serializes naturally. Direct
-    // server-side callers of getArtifactCorrectionState still get the Map.
     return Response.json({
       artifact_id: artifactId,
       whole: state.whole,
@@ -45,8 +42,6 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const rawBody = await req.json().catch(() => null);
-    // The route contract derives this payload shape from CorrectArtifactEvent
-    // and carries the same supersede cross-field refinement.
     const parsed = CorrectArtifactBodySchema.safeParse(rawBody);
     if (!parsed.success) {
       throw new ApiError(
@@ -74,8 +69,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     if (correction_kind === 'supersede') {
-      // superRefine already guarantees replacement_artifact_id is present, but
-      // we still need to verify it points at a real artifact.
+      // superRefine guarantees presence; existence still needs a DB check.
       const replacementId = replacement_artifact_id as string;
       const [replacement] = await db
         .select({ id: artifact.id })

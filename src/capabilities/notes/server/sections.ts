@@ -106,9 +106,7 @@ export async function editArtifactSection(
       ...previous,
       body_md: params.nextBodyMd,
       version: previous.version + 1,
-      // C1a (YUK-358) — implicit-on-edit setter: a human edit promotes the
-      // section to user-verified (mirrors replaceNoteSectionBody's attr write),
-      // so the API response + downstream readers see the protected status.
+      // A human edit marks the section verified, so AI proposals cannot replace it.
       user_verified: true,
       source_tier: 'user_verified',
     };
@@ -135,9 +133,8 @@ export async function editArtifactSection(
       ...payload,
     });
 
-    // W3-C1γ — the AFTER body, computed ONCE so the UPDATE and the fold event carry the identical
-    // snapshot (design §5.2 routes section edits through body_blocks_edit — there is NO separate
-    // artifact_section_edit reducer branch; a section edit IS a full-body replace from the fold's POV).
+    // One snapshot for both the row and the event. A section edit is a full-body
+    // replace from the fold's point of view.
     const afterBody = replaceNoteSectionBody(
       row.body_blocks,
       params.sectionId,
@@ -163,12 +160,7 @@ export async function editArtifactSection(
       throw new ApiError('conflict', `artifact ${params.artifactId} concurrently modified`, 409);
     }
 
-    // W3-C1γ — MIGRATE the deltas-only `experimental:artifact_section_edit` onto the self-sufficient
-    // `experimental:body_blocks_edit` carrying the full AFTER body (design §5.2). Same tx — a malformed
-    // payload rolls back the paired UPDATE (parseEvent barrier). event id stays = eventId (pinned in
-    // the history entry). optOutMemoryIngestion:false byte-preserves the prior section-edit outbox
-    // behaviour (a section edit IS a user activity). The section delta `payload` survives on the
-    // history entry above (so the timeline still renders the per-section diff).
+    // Same event as other edits, same tx; keep the section-edit outbox behaviour.
     await emitArtifactBodyBlocksEditEvent(tx, {
       subjectId: params.artifactId,
       eventId,

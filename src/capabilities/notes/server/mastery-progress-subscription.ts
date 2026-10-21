@@ -27,7 +27,6 @@ export async function handleMasteryProgressNoteRefineDelivery(
   delivery: EventSubscriptionDelivery,
   deps: MasteryProgressSubscriptionDeps = {},
 ): Promise<EventSubscriptionOutcome> {
-  // YUK-1007：DB > env > code-default(true)。
   if (!getConfigFlag(SUBSCRIPTION_ENABLED_ENV, deps.env ?? process.env)) {
     return {
       status: 'skipped',
@@ -64,8 +63,8 @@ export async function handleMasteryProgressNoteRefineDelivery(
   }
   if (attempt.action === 'experimental:assessment_attempt') {
     const [anchor] = await db.select().from(event).where(eq(event.id, attemptEventId));
-    // Native participation is neutral; its frozen coordinates, not a legacy
-    // success bit or a freshly edited question, establish the causal identity.
+    // Native participation is neutral; frozen coordinates, not a legacy success
+    // bit or a later edit, establish the causal identity.
     if (!anchor || !(await resolveVerdictsForNativeAttempts(db, [anchor])).has(attemptEventId)) {
       return { status: 'skipped', reason: 'invalid native causal attempt' };
     }
@@ -75,9 +74,8 @@ export async function handleMasteryProgressNoteRefineDelivery(
     return { status: 'skipped', reason: 'question mismatch' };
   }
 
-  // The publisher writes every KC sibling in one batch transaction. Once one
-  // delivery is visible, the complete immutable sibling set is therefore
-  // visible and can be folded into one causal effect per note.
+  // The publisher writes all KC siblings in one batch, so seeing one delivery
+  // means the complete sibling set is visible for one causal fold.
   const siblingRows = await db
     .select()
     .from(event)

@@ -1,14 +1,7 @@
-// YUK-739 — evaluation-semantics audit check, shared by the two audit:profile
-// modes (compile-time `scripts/audit-profile.ts` and DB-assembly
-// `src/server/subjects/audit-profile-db.ts`).
-//
-// Rating/cause semantics declarations are REQUIRED on builtin subjects (fail
-// closed): every cause category must declare its `meta_cause_prior` (explicit
-// null allowed — undeclared is not), and `ratingPolicy.outcomeToRating` must be
-// the complete verdict→rating map over legal FsrsRating values. Custom
-// (non-builtin) subjects may omit them and inherit the neutral fallbacks
-// (universal rating map / null prior), same as pre-YUK-739 trait payloads —
-// their ids are simply not in the builtin floor the audit guards.
+// Shared by both audit:profile modes (compile-time and DB assembly). Builtin
+// subjects fail closed: each cause category must declare meta_cause_prior
+// (explicit null allowed) and ratingPolicy must carry the complete verdict map.
+// Custom subjects may omit both and inherit the neutral fallbacks.
 
 import { FsrsRating } from '@/core/schema/business';
 import { BUILTIN_SUBJECT_IDS } from './builtin-trait-seeds';

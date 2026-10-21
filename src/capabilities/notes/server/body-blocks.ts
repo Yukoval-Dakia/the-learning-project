@@ -218,15 +218,9 @@ export function bodyBlocksToNoteSections(value: unknown): NoteSectionT[] {
 }
 
 /**
- * Locate the block whose `attrs.id === blockId` anywhere in `value`'s tree and
- * return a single-line, whitespace-collapsed text snippet trimmed to `maxLength`
- * (default 120). Returns `null` when the doc is unparseable or no block matches.
- *
- * Server-side counterpart to the UI `nodeText` walker in
- * `src/ui/block-tree/pm.ts` — kept in the server layer so route handlers
- * (YUK-95 Lane-B backlink panel) can derive a context snippet for a source
- * block without importing the client `pm.ts` module. Reuses the same recursive
- * `blockText` extraction used by the block summaries above.
+ * Single-line snippet for the block with this attrs.id, or null when the doc does
+ * not parse or the block is missing. Server-side counterpart to the UI walker, so
+ * route handlers need not import the client editor module.
  */
 export function extractBlockSnippet(
   value: unknown,
@@ -259,20 +253,8 @@ export function extractBlockSnippet(
 }
 
 /**
- * FIX 2 (YUK-95 P5 review) — context snippet for a backlink whose source block is
- * a `crossLinkBlock`. The crossLinkBlock is `atom: true` with NO content, and the
- * L2 index anchors `from_block_id` on the crossLinkBlock's OWN `attrs.id`, so
- * `extractBlockSnippet` (which reads the matched node's text) always returned ''
- * for a real cross-link.
- *
- * Instead we derive a useful "where the link lives" snippet by:
- *   1. preferring the text of the ENCLOSING block (the paragraph / semantic
- *      block that physically contains the crossLinkBlock), then
- *   2. falling back to the cross-link's own `title` attr (always present for both
- *      the manual picker and the nightly worker).
- *
- * Returns `null` only when the doc is unparseable, no crossLinkBlock matches, or
- * neither source yields any text.
+ * Snippet for a backlink whose source is a crossLinkBlock. The node is an empty
+ * atom, so use the enclosing block's text, falling back to the link title.
  */
 export function extractCrossLinkSnippet(
   value: unknown,
@@ -282,21 +264,17 @@ export function extractCrossLinkSnippet(
   const parsed = ArtifactBodyBlocks.safeParse(value);
   if (!parsed.success) return null;
 
-  // Walk the tree tracking the nearest enclosing block whose own text we can
-  // use. `enclosing` is the last ancestor we descended into; the crossLinkBlock
-  // itself is an atom, so its parent is the "where it lives" context.
+  // Track the nearest enclosing block; the link atom itself has no text.
   let result: string | null = null;
   const visit = (node: Record<string, unknown>, enclosing: Record<string, unknown> | null) => {
     if (result !== null) return;
     const attrs = recordOrEmpty(node.attrs);
     if (node.type === 'crossLinkBlock' && attrs.id === fromBlockId) {
-      // 1. enclosing block text (collapsed, trimmed).
       const enclosingText = enclosing ? textExcerpt(enclosing, maxLength) : '';
       if (enclosingText.length > 0) {
         result = enclosingText;
         return;
       }
-      // 2. fall back to the cross-link's own title.
       if (typeof attrs.title === 'string' && attrs.title.trim().length > 0) {
         const title = attrs.title.trim();
         result =
@@ -307,7 +285,6 @@ export function extractCrossLinkSnippet(
     const content = Array.isArray(node.content) ? node.content : [];
     for (const child of content) {
       if (child !== null && typeof child === 'object') {
-        // The current node becomes the enclosing block for its children.
         visit(child as Record<string, unknown>, node);
         if (result !== null) return;
       }
@@ -360,9 +337,7 @@ export function replaceNoteSectionBody(
         : [];
       return {
         ...node,
-        // C1a (YUK-358, ADR-0040 决定1) — implicit-on-edit setter. A human edit
-        // promotes the block to user-verified so the AI must propose, never
-        // silently overwrite it (applyNotePatch's user_verified guard fires).
+        // A human edit marks the block verified so AI must propose.
         attrs: {
           ...recordOrEmpty(node.attrs),
           version,

@@ -264,7 +264,7 @@ function looksLikeMath(interior: string): boolean {
   return true;
 }
 
-/** One forward pass. An unclosed `$` advances one character; a backslash pair advances two. */
+/** One forward pass: an unclosed `$` advances one character, a backslash pair two. */
 function parseInline(input: string): PmNode[] {
   const nodes: PmNode[] = [];
   let last = 0;
