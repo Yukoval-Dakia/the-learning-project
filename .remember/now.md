@@ -1,10 +1,10 @@
 # K1 父接线，2026-10-21
 
-唯一父writer在t3-12b32ff3/feat-yuk-1568-shared-submit-intx-20261021；旧stage1-lead ee4b92bea与原dirty now不写。子线eecf79ada已释放，父正常整合main3d5fa20a得1763d642后接submit-question与Practice工具；parts/draft-contract保持。父保存b9d050acd后普通整合main def2（含已合1925），canonical与logTaskRunId区分、两路created_by与难度说明均保留；下一具体candidate以父提交SHA为准，完整内容/不足见docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
+唯一父writer在t3-12b32ff3/feat-yuk-1568-shared-submit-intx-20261021；旧stage1-lead ee4b92bea与原dirty now不写。子线eecf79ada已释放，父正常整合main3d5fa20a得1763d642后接submit-question与Practice工具；parts/draft-contract保持。父保存b9d050acd后普通整合main def2（含已合1925），canonical与logTaskRunId区分、两路created_by与难度说明均保留；固定组合candidate3116e69eca8f104b73154e9fc83421e04ad476a6；后续仅文档和批准引用修正，完整内容/不足见docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
 
 实际接线：声明候选claim→bind/save→根/真实child→唯一publish+outbox→域及caller回执同commit。去重业务冲突保KCmerge，publish在投影后冲突/TxAbort穿透外层回滚；commit后drain不重放业务。旧无producer指纹与canonical taskRunId保留，#1925 fixed23e归因diff单独封存，未合全PR。父补scope JSON键/null-prototype防局部id分隔符及对象属性歧义。
 
-父frozeninstall/tsrs两配置exit0；首次boundary报两条sourceSize差异，architecture报6转出（已删无consumer一个，剩5已获精确stable_contract批准（d9ca5ad工件），不泛放文件）。最终lint/build/audits/R1/Gate待父提交，不复用子绿。不写测试/断言脚本，不开DB/TEST/provider/部署。原子事务和复合serving真实验收NOT_RUN。
+父frozeninstall/tsrs两配置exit0；首次boundary报两条sourceSize差异，architecture报6转出（已删无consumer一个，剩5已获精确stable_contract批准（d9ca5ad工件），不泛放文件）。组合3116的父tsrs/lint/build/schema与最终boundary/architecture/draft-status全0，181warnings；批准字段URL与consumer声明行号的两次红均留证，登记修正不改audit。唯一R1 stage1-k1-shared-submit-codex-r1-3116e69ec-20261021已运行，Gate待push。不写测试/断言脚本，不开DB/TEST/provider/部署。原子事务和复合serving真实验收NOT_RUN。
 
 Owner2026-10-21取消17分钟等待/timer/advisory等待重跑，保现行门/R1至多R2/exact-head及P0P1裁决，不改1939负责的根规则。ea21发布迁移/协调负责，04/05已接受不重复；清树巡检不阻开发。K1四生产端未齐，K5可独立开发，依赖typed的复合验收待相应产出；1431共用判断后接，1470切换仍待批准。无新runtime/额外writer。
 

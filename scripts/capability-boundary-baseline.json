@@ -569,13 +569,13 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 58
+          "line": 56
         }
       ],
-      "evidence": "src/capabilities/practice/server/tools/submit-question.ts:58 (import),269 and1181 (request fingerprints)",
+      "evidence": "src/server/questions/submit-decision.ts:42 owns the unchanged canonical encoder; Practice tool import statement at56, request fingerprints at285/1201; original approval snapshot recorded specifier lines.",
       "rationale": "existing public canonical request encoding moves true implementation under same owner; preserve old request/replay identity, no new public wrapper function",
       "issue": "YUK-1568",
-      "approval": "/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/coordinator-resume-20261021/k1-five-stable-contract-classification.json SHA256=d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df; coordinator 2026-10-21 exact five ruling",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
       "date": "2026-10-21"
     },
     {
@@ -589,17 +589,13 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 79
-        },
-        {
-          "file": "src/capabilities/practice/jobs/source_verify.ts",
-          "line": 103
+          "line": 78
         }
       ],
-      "evidence": "src/capabilities/practice/server/tools/submit-question.ts:79 (existing re-export); src/capabilities/practice/jobs/source_verify.ts:103 and593 (frozen revision row projection)",
+      "evidence": "src/server/questions/submit-decision.ts:100 owns kind projection; immediate Practice tool re-export statement at78; ultimate source_verify.ts:103/593 freezes row projection. Ultimate consumer is evidence, not a direct facade import.",
       "rationale": "existing stable kind projection contract retains actual verification consumer; not a compatibility shim with planned migration",
       "issue": "YUK-1568",
-      "approval": "/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/coordinator-resume-20261021/k1-five-stable-contract-classification.json SHA256=d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df; coordinator 2026-10-21 exact five ruling",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
       "date": "2026-10-21"
     },
     {
@@ -613,13 +609,13 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 59
+          "line": 56
         }
       ],
-      "evidence": "src/capabilities/practice/server/tools/submit-question.ts:59,293,311",
+      "evidence": "src/server/questions/shared-submit.ts:235 owns receipt replay/conflict check; real Practice tool import statement at56. Existing caller still acquires request lock.",
       "rationale": "existing public request replay/conflict check retained for candidate/compat consumer; caller still owns existing request-lock ordering and this residual burden is not claimed solved",
       "issue": "YUK-1568",
-      "approval": "/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/coordinator-resume-20261021/k1-five-stable-contract-classification.json SHA256=d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df; coordinator 2026-10-21 exact five ruling",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
       "date": "2026-10-21"
     },
     {
@@ -633,13 +629,13 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 66
+          "line": 56
         }
       ],
-      "evidence": "src/capabilities/practice/server/tools/submit-question.ts:66,321",
+      "evidence": "src/server/questions/shared-submit.ts:251 owns canonical receipt event writing; real Practice tool import statement at56; envelope and request identity retained.",
       "rationale": "existing public receipt writing retained for remaining candidate terminal/preflight paths; no new independent publishing/write owner",
       "issue": "YUK-1568",
-      "approval": "/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/coordinator-resume-20261021/k1-five-stable-contract-classification.json SHA256=d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df; coordinator 2026-10-21 exact five ruling",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
       "date": "2026-10-21"
     },
     {
@@ -653,13 +649,13 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 62
+          "line": 56
         }
       ],
-      "evidence": "src/capabilities/practice/server/tools/submit-question.ts:62,946",
+      "evidence": "src/server/questions/shared-submit.ts owns persistDeclaredQuestionGroup outer transaction and post-commit drain; real Practice tool import statement at56, declared call after document/provenance assembly.",
       "rationale": "final shared typed declared-group business operation, owns outer transaction/ID binding/save/submit/caller receipt and drains intent after commit; entry hides sequence rather than forwarding the caller through internal InTx steps",
       "issue": "YUK-1568",
-      "approval": "/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/coordinator-resume-20261021/k1-five-stable-contract-classification.json SHA256=d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df; coordinator 2026-10-21 exact five ruling",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
       "date": "2026-10-21"
     }
   ],

@@ -50,7 +50,9 @@
 
 ## 验证和交付触发
 
-子线 eecf 的 tsc/lint/build/schema/boundary/draft-status 记录属于接线前历史。父 frozen install 0，接线后 tsrs 两配置 0；初次边界审计因工具增长与shared大小记录不符失败，已按实测修正；五站点分类已批准，登记后审计待复核。最终 lint/build/audits、独立 R1 与 exact-head CI 待新 head，不能复用旧绿。
+子线 eecf 的 tsc/lint/build/schema/boundary/draft-status 只属接线前历史。父 `3116e69eca8f104b73154e9fc83421e04ad476a6`（普通组合 main def2）经 heavy 串行 tsrs/typecheck、lint（181 warnings）、build、schema 全0。boundary 首次因审批字段要求 HTTP URL 失败，architecture 后因 consumer specifier 行号而非声明行号失败；原日志保留。已将批准原件持久引用到 YUK-1568 评论 `5ba576b6-03a8-4984-a1a3-566600a51080`，登记真实 import/export statement 行号后 boundary、architecture、draft-status 均0；未改审计逻辑。机器实测 server384/cross36、SCC1、超长12，均未增加。最后差量只有文档和批准登记，无产品源码差量。
+
+唯一独立 R1：`stage1-k1-shared-submit-codex-r1-3116e69ec-20261021`，Codex gpt-6.1-sol xhigh，固定产品diff只读，尚未返回。不把父检查当独立审查；exact-head CI 待普通 push 后执行。
 
 下一可验收产物是含实际 declared consumer 的完整 PR。触发条件：父静态门、精确出口分类、R1/既有P0/P1裁决及当前 head GitHub CI Gate。owner 2026-10-21 已取消 last-push/17分钟等待；不为 advisory 新建 timer、等待或重跑，至多 R1+R2 预算不变。
 
