@@ -11,11 +11,7 @@ import { event, knowledge, learning_session, practice_stream_item, question } fr
 import { ApiError } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { Review } from '@/server/session';
-import {
-  type CandidateInput,
-  type CollectedSignal,
-  collectCandidateSignals,
-} from './candidate-signals';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
 // 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
@@ -40,13 +36,13 @@ import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budge
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
+import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
   type StreamScope,
   type StreamView,
   buildStreamView,
   filterProspectiveStreamQuestions,
 } from './stream-view';
-import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
 // 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
@@ -1006,13 +1002,6 @@ function rowIsRecallLocked(signals: unknown): boolean {
   return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
 }
 
-/** 把 DB question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成可旋转分类的标签或
- * undefined（同 softmax 侧）。：边界从「enum 成员」改为
- * 「rotationClassForKind 可分类」——同一张 KNOWN 标签表，行为不变。 */
-function resolveRotatableKind(kind: string | null | undefined): string | undefined {
-  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
-}
-
 /**
  * 作答后有界增量重排（hybrid 运行时）。**永不 throw 出 compose 逻辑级别**——纯统计 sampler，
  * 无 LLM。若无受影响待做项（θ̂ 移动不触及任何待做非到期诊断项）→ no-op（不动流、不写观测）。
@@ -1118,45 +1107,20 @@ export async function reRankAfterAnswer(
     );
     if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // Enrich candidates in one batch. question.source feeds family_key resolution and is
-    // distinct from the slot `source` (stream origin) used above.
-    const poolQids = eligibleRaws.map((r) => r.questionId);
-    const candQRows = await tx
-      .select({
-        id: question.id,
-        kind: question.kind,
-        knowledge_ids: question.knowledge_ids,
-        difficulty: question.difficulty,
-        // question.source, not the stream-slot origin, for family_key resolution.
-        source: question.source,
-      })
-      .from(question)
-      .where(inArray(question.id, poolQids));
-    const candQById = new Map(candQRows.map((q) => [q.id, q]));
+    const candidateInputs = await readStreamSelectionCandidates(
+      tx,
+      eligibleRaws.map((r) => ({ questionId: r.questionId, role: r.source })),
+    );
 
     // Rerank only when the eligible pool touches an affected KC.
-    const poolTouchesAffected = eligibleRaws.some((r) => {
-      const kids = candQById.get(r.questionId)?.knowledge_ids ?? [];
-      return kids.some((k) => affectedKnowledgeIds.has(k));
-    });
+    const poolTouchesAffected = candidateInputs.some((candidate) =>
+      (candidate.knowledgeIds ?? []).some((k) => affectedKnowledgeIds.has(k)),
+    );
     if (!poolTouchesAffected) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Fresh θ̂: collectCandidateSignals reads current mastery_state.
     const sourceByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.source]));
     const labelByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.knowledgeLabel]));
-    const candidateInputs: CandidateInput[] = eligibleRaws.map((r) => {
-      const q = candQById.get(r.questionId);
-      return {
-        refKind: 'question' as const,
-        refId: r.questionId,
-        role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-        kind: resolveRotatableKind(q?.kind),
-        knowledgeIds: q?.knowledge_ids,
-        difficulty: q?.difficulty,
-        // question.source, not the slot source, for family_key resolution.
-        source: q?.source,
-      };
-    });
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
