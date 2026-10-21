@@ -1000,6 +1000,26 @@
       "issue": "YUK-1568",
       "owns": "组生命周期 owner 模块：统一发布 seam、lifecycle 维度与组子行晋升的完整操作（本边 = 组根来源核验成功后同事务晋升当前 revision 声明的真实 part 行）",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/session-history.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "errorResponse"],
+      "issue": "YUK-1522",
+      "owns": "Canonical API errors for the ingestion session history read endpoint",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/session-history.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
+      "issue": "YUK-1522",
+      "owns": "Authoritative current question serving projection kept separate from captured ingestion history; the API does not duplicate the serving gate",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [

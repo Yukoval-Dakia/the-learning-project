@@ -40,6 +40,7 @@ import {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
   QuestionDraftDocument,
@@ -68,9 +69,7 @@ import {
 import {
   type EditQuestionResult,
   TxAbort,
-  encodeDraftRef,
   findDraftSaveReceipt,
-  parseDraftRef,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';

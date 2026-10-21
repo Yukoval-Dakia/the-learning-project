@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
+import { DRAFT_REF_VERSION, encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import {
   DECLARED_BLANK_COMPARE_VERSION,
   EvaluationContractError,
@@ -76,25 +77,10 @@ import {
 // candidate / settlement）。确定性方法完整执行；模型方法未注入执行器 ⇒
 // 未决如实返回（绝不冒充分数）。每次 probe 写一条 run ref 事件。
 
-const DRAFT_REF_VERSION = 'qdraft1';
 const DRAFT_SAVE_ACTION = 'experimental:question_draft_save';
 const DRAFT_PROBE_ACTION = 'experimental:question_draft_probe';
 const DRAFT_EDIT_ACTION = 'experimental:edit_question_block_structured';
 const DRAFT_SESSION_PREFIX = 'draft:';
-
-export function encodeDraftRef(blockId: string, version: number): string {
-  return `${DRAFT_REF_VERSION}:${blockId}:${version}`;
-}
-
-export function parseDraftRef(raw: string): { blockId: string; version: number } | null {
-  const parts = raw.split(':');
-  if (parts.length !== 3) return null;
-  const [version, blockId, v] = parts;
-  if (version !== DRAFT_REF_VERSION) return null;
-  const parsed = Number.parseInt(v, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) return null;
-  return { blockId, version: parsed };
-}
 
 /**
  * expected_revision 输入：`qrev1:<id>:<digest12>` bank ref 或裸 revision id。
