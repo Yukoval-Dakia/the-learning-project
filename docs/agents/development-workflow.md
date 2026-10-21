@@ -4,6 +4,19 @@ This is the detailed command and validation reference linked from `AGENTS.md`.
 `README.md` remains the source of truth for runtime shape, local setup, NAS
 deployment, and the directory map.
 
+## Task state and handoff
+
+Linear owns shared task scope, ownership, progress, blockers, and follow-ups.
+`PLAN.md` and `.remember/now.md` are optional, ignored notes for the current
+worktree; keep them local. Commit durable requirements, approved designs,
+decisions, and delivery conclusions in the appropriate versioned documents.
+
+When an older branch first integrates their removal from Git, keep a copy of
+both local files outside the worktree before merging. If Git reports a
+modify/delete conflict, preserve the local content but accept removal from the
+index with `git rm --cached -- PLAN.md .remember/now.md`; restore the copies as
+ignored local files after the merge. Do not reintroduce another lane's task state.
+
 ## Local processes
 
 ```bash
