@@ -1,20 +1,19 @@
-// YUK-1523（P5）— 作答卷导出的领域编排：创建（= 逐题发放）、状态读面、
+// （P5）— 作答卷导出的领域编排：创建（= 逐题发放）、状态读面、
 // 区域图 write-once 存档、P6 按页读面。
-//
-// 关键语义（对齐 docs/design/2026-10-11-worksheet-print-layout.md §4 与
-// YUK-1052 发题合同）：
-//   - 导出 = 发放：每道可判题经既有 issueAssessment 落一条不可变 issuance
-//     （G4 门在 issueAssessment 内裁决；拒掉的题不发不导，typed 原因随
-//     响应返回并冻结在导出行）。container_occurrence_ref =
-//     'worksheet:<export_id>' 把发放事件与导出对上（既有索引列，无新事件面）。
-//   - 幂等：idempotency_key 唯一。同 key 同 request_digest ⇒ 重放（不重发、
-//     不改冻结 issuance/区域图）；同 key 异 digest ⇒ 冲突（409，不覆盖）。
-//     全部题被门拒绝 ⇒ 不建导出行（返回拒绝清单）。
-//   - 读面不带私有答案：practice_dto 是 §7.1 公开投影；units 只出 id +
-//     slot_refs（判据/分值/执行计划不离开服务端）。重放/读面按【冻结发放】
-//     重建，不重跑 serving gate —— 学习者手里已有纸卷，回收按冻结坐标对位。
-//   - 区域图 write-once：按页 INSERT-only；同 digest 重 POST 幂等，异 digest
-//     409。存档时对冻结发放跑 region-map-validate 的纯校验后才落库。
+// 关键语义（对齐 与
+// 发题合同）：
+// - 导出 = 发放：每道可判题经既有 issueAssessment 落一条不可变 issuance
+// （G4 门在 issueAssessment 内裁决；拒掉的题不发不导，typed 原因随
+// 响应返回并冻结在导出行）。container_occurrence_ref =
+// 'worksheet:<export_id>' 把发放事件与导出对上（既有索引列，无新事件面）。
+// - 幂等：idempotency_key 唯一。同 key 同 request_digest ⇒ 重放（不重发、
+// 不改冻结 issuance/区域图）；同 key 异 digest ⇒ 冲突（409，不覆盖）。
+// 全部题被门拒绝 ⇒ 不建导出行（返回拒绝清单）。
+// - 读面不带私有答案：practice_dto 是 公开投影；units 只出 id +
+// slot_refs（判据/分值/执行计划不离开服务端）。重放/读面按【冻结发放】
+// 重建，不重跑 serving gate —— 学习者手里已有纸卷，回收按冻结坐标对位。
+// - 区域图 write-once：按页 INSERT-only；同 digest 重 POST 幂等，异 digest
+// 409。存档时对冻结发放跑 region-map-validate 的纯校验后才落库。
 
 import { randomBytes } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
@@ -223,7 +222,7 @@ async function loadFrozenScopes(
   for (const issuanceId of ids) {
     const issuance = issuanceRows.find((row) => row.issuance_id === issuanceId);
     // R1 P2-7：请求的 issuance 行/pinned revision 缺失 = 跨库破坏 —— fail-loud
-    //（同 buildIssuedItem），绝不静默跳过让区域图校验对着不完整冻结集裁决。
+    // （同 buildIssuedItem），绝不静默跳过让区域图校验对着不完整冻结集裁决。
     if (issuance == null) {
       throw new Error(
         `worksheet export: issuance '${issuanceId}' missing while loading frozen scopes`,

@@ -21,7 +21,7 @@ export interface CanonicalQuestionContentInput {
   choicesMd?: string[] | null;
   rubricJson?: unknown;
   /**
-   * YUK-1011 — shape discriminator for composite (篇) parents. A composite
+   * shape discriminator for composite (篇) parents. A composite
    * parent's derived prompt_md renders stem + every sub as one blob, so it can
    * be byte-identical to a flat question that happened to carry the same merged
    * text. Without a discriminator the merge branch would treat that flat row as
@@ -85,7 +85,7 @@ export function canonicalQuestionContent(input: CanonicalQuestionContentInput): 
     answer: input.referenceMd == null ? null : normalizeMarkdown(input.referenceMd),
     choices: input.choicesMd?.map(normalizeMarkdown) ?? null,
     rubric: input.rubricJson == null ? null : stableJson(input.rubricJson),
-    // YUK-1011 — appended LAST so flat callers (composite absent/false) emit the
+    // appended LAST so flat callers (composite absent/false) emit the
     // byte-identical canonical string they always did; only composite:true adds
     // the key (JSON.stringify drops undefined/absent keys).
     ...(input.composite === true ? { composite: true } : {}),
@@ -311,13 +311,13 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   params: {
     canonicalContentHash: string;
     knowledgeIds: string[];
-    // YUK-697: jyeoo_fetch reuses this cross-KC dedup path via insertSourcedDraft.
+    // jyeoo_fetch reuses this cross-KC dedup path via insertSourcedDraft.
     actorRef: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
     taskRunId?: string;
     now: Date;
   },
 ): Promise<ExactQuestionDuplicateKnowledgeMerge | null> {
-  // YUK-497 review F2 (revised after the barrier-test deadlock postmortem) — lock order
+  // review F2 (revised after the barrier-test deadlock postmortem) — lock order
   // must be G→question-row (matching the live submit tx), but taking G on the LOOKUP-MISS
   // path serializes the producers' entire persist txs and deadlocks the designed
   // canonical-hash race choreography (a tx holding G at the post-miss seam while its racing
@@ -433,7 +433,7 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   const enrolledKnowledgeIds: string[] = [];
   if (row.draftStatus !== 'draft') {
     for (const knowledgeId of addedKnowledgeIds) {
-      // YUK-1037 — same anchor-not-content exclusion as the verify-time enroll
+      // same anchor-not-content exclusion as the verify-time enroll
       // loops: a merged-in synthetic subject root ('seed:<subj>:root') still
       // updates the binding (addedKnowledgeIds / knowledge_ids stay faithful to
       // the duplicate's attribution) but must never mint a knowledge-level FSRS

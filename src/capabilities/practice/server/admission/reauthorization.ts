@@ -1,4 +1,4 @@
-// YUK-1567 — admission-specific surface of the generic paid-effect void +
+// admission-specific surface of the generic paid-effect void +
 // successor reauthorization. Shared by the reopen planning CLI (evaluate,
 // freeze) and the backlog driver (verify, release ONE group inside its
 // per-question gate, recover after a crash). Nothing here family-codes to a
@@ -242,7 +242,7 @@ export async function evaluateAdmissionVoidGroup(
     }
     // Resolved history never blocks a reauthorization: 'voided' rows are
     // retired obligations and 'cancelled' rows are sealed never-sent intents
-    // (YUK-1567) — neither owes a send nor an application.
+    // neither owes a send nor an application.
     if (effect.state === 'voided' || effect.state === 'cancelled') continue;
     if (effect.state === 'applied' && effect.entity_revision !== spec.baseDigest) continue;
     if (effect.state === 'applied') {

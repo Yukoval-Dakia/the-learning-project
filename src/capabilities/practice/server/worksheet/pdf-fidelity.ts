@@ -1,7 +1,6 @@
-// YUK-1572 — worksheet PDF 保真层：对象级 canonicalize（抹掉 Chromium 每次
+// worksheet PDF 保真层：对象级 canonicalize（抹掉 Chromium 每次
 // 渲染打上的墙钟元数据）+ 渲染产物硬校验（页树页数对账 / A4 MediaBox /
 // 画出来的四角锚点 ±0.5mm）。
-//
 // 由 jobs/worksheet_render.ts 迁出：worker 只保留运行/产物生命周期，本模块
 // 独占 PDF 字节解析/规范化/验真责任。字节层在 ./pdf-structure，内容流解释
 // 在 ./pdf-content；导出签名与错误时序逐字保持。
@@ -22,16 +21,14 @@ import {
 export { WorksheetRenderPermanentError } from './pdf-structure';
 
 // ---------- 对象级 PDF canonicalize（R1 P1-3） ----------
-//
 // Chromium（Skia/PDF）每次渲染都嵌入墙钟 CreationDate/ModDate（Info 对象），
 // 部分版本还在 trailer 放随机 /ID —— 同一份 DOM 出两份不同字节，write-once
 // 存档会把重跑误判成冲突。
-//
 // 这里做**对象感知**的同长度归一（绝不全文正则扫二进制流）：
-//   a) 末尾 startxref → xref 表 → trailer 字典（平衡 <<>> 扫描），只改 trailer
-//      里的 /ID [<hex><hex>]（十六进制位同长度置 0）；有 /Prev 增量链直接抛错；
-//   b) trailer /Info N 0 R 指到的对象（按其 xref 偏移定位、endobj 截界）里，
-//      只抹 /CreationDate (...) 与 /ModDate (...) 的括串内容（同长度定值）。
+// a) 末尾 startxref → xref 表 → trailer 字典（平衡 <<>> 扫描），只改 trailer
+// 里的 /ID [<hex><hex>]（十六进制位同长度置 0）；有 /Prev 增量链直接抛错；
+// b) trailer /Info N 0 R 指到的对象（按其 xref 偏移定位、endobj 截界）里，
+// 只抹 /CreationDate (...) 与 /ModDate (...) 的括串内容（同长度定值）。
 // 之后断言：输出长度 === 输入长度；xref 每个 n 条目偏移仍指向 `N G obj`。
 // 任何一步不满足都抛错 —— 坏文件诚实失败，不猜、不放宽。
 
@@ -102,32 +99,30 @@ export function canonicalizeWorksheetPdf(pdf: Buffer): Buffer {
 }
 
 // ---------- 渲染产物强制校验（Grok QA P1-1：write-once 存档，错了就是永久脏数据） ----------
-//
-// 起因：page.pdf() 时隐藏测量区 .ws-stage-host 还在 DOM —— 里面的 297mm 横向
+// 起因：page.pdf 时隐藏测量区 .ws-stage-host 还在 DOM —— 里面的 297mm 横向
 // 样张把 ≥3 页的卷面整体 shrink-to-fit 到 ~0.73，四角定位点全偏，但区域图
 // 仍按 1:1 mm 存档（write-once 无法补救）。job 侧修复：先取区域图 → 移除
-// .ws-stage-host → 再 page.pdf()；然后对产物字节做下述硬校验，任何一项不过
+// .ws-stage-host → 再 page.pdf；然后对产物字节做下述硬校验，任何一项不过
 // 即判渲染失败：不写 blob、不存档。
-//
 // 校验项：
-//   1. PDF 页数 === 区域图页数：页树按规范走 trailer /Root → catalog /Pages →
-//      /Kids 显式栈深度优先序取叶子 /Page 序列（任意深度嵌套 —— Skia 多页
-//      渲染会产中间层 /Pages 节点）；每个 /Pages 节点声明的 /Count 与其子树
-//      实际叶子数逐项对账，叶子总数再与区域图页数对账。属性按对象顶层字典
-//      真实 key 解析；/MediaBox、/Rotate 只有本节点未声明才沿祖先链继承，
-//      声明而非法（间接/malformed）即抛；/Rotate 全无声明按 0，有效值非 0
-//      即抛。重复/环/共享引用、坏 gen 引用一律抛错。
-//   2. 每页有效 MediaBox = A4 且原点 [0 0]：portrait 595.28×841.89pt、
-//      landscape 841.89×595.28pt（方向以区域图为准），±1pt。
-//   3. **实测四个画出来的定位点**：有界解释器走页面内容流 —— q/Q 图形状态
-//      栈 + cm 复合全仿射（scale、平移都在内，不猜前缀）——收集 fill/stroke
-//      上色的路径，按 producer contract（worksheet-svg.tsx Anchor：#1f1e1d
-//      的 5mm 实心方块 / BR 1.2mm 描边 3.8mm 空心方块）找出四角锚点，量出
-//      它们在该页 PDF 里的真实中心与尺寸，与区域图登记的 mm 位置逐项对账
-//      （±0.5mm）。shrink/平移/DPI 变化都等价地体现在画出来坐标上 —— 这是
-//      对 PDF↔map 一致性的直接证明，不依赖任何流结构假设。找不齐、形态对
-//      不上、解不出 → 一律诚实失败，不放行。
-//   实测值全部进 job 结果 verification 字段留证。
+// 1. PDF 页数 === 区域图页数：页树按规范走 trailer /Root → catalog /Pages →
+// Kids 显式栈深度优先序取叶子 /Page 序列（任意深度嵌套 —— Skia 多页
+// 渲染会产中间层 /Pages 节点）；每个 /Pages 节点声明的 /Count 与其子树
+// 实际叶子数逐项对账，叶子总数再与区域图页数对账。属性按对象顶层字典
+// 真实 key 解析；/MediaBox、/Rotate 只有本节点未声明才沿祖先链继承，
+// 声明而非法（间接/malformed）即抛；/Rotate 全无声明按 0，有效值非 0
+// 即抛。重复/环/共享引用、坏 gen 引用一律抛错。
+// 2. 每页有效 MediaBox = A4 且原点 [0 0]：portrait 595.28×841.89pt、
+// landscape 841.89×595.28pt（方向以区域图为准），±1pt。
+// 3. **实测四个画出来的定位点**：有界解释器走页面内容流 —— q/Q 图形状态
+// 栈 + cm 复合全仿射（scale、平移都在内，不猜前缀）——收集 fill/stroke
+// 上色的路径，按 producer contract（worksheet-svg.tsx Anchor：#1f1e1d
+// 的 5mm 实心方块 / BR 1.2mm 描边 3.8mm 空心方块）找出四角锚点，量出
+// 它们在该页 PDF 里的真实中心与尺寸，与区域图登记的 mm 位置逐项对账
+// （±0.5mm）。shrink/平移/DPI 变化都等价地体现在画出来坐标上 —— 这是
+// 对 PDF↔map 一致性的直接证明，不依赖任何流结构假设。找不齐、形态对
+// 不上、解不出 → 一律诚实失败，不放行。
+// 实测值全部进 job 结果 verification 字段留证。
 
 const A4_PORTRAIT_PT = { w: 595.28, h: 841.89 } as const;
 const MEDIA_BOX_TOLERANCE_PT = 1;

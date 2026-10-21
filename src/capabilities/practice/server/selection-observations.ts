@@ -1,10 +1,6 @@
-// YUK-361 Phase 1（观测先行）— selection_observation writer。
-//
-// 每个被选中的候选落一行选题遥测。π_i（inclusion_probability）是 D17 推翻后
-// active-PPI 重标定必需的慢热资产，本表是承重 telemetry（进 FK_ORDER 备份）。
-//
-// **本 lane 零选题行为变更**：writer 就位但不接进 composeDailyStream；Phase 3
-// 随机化选题落地后才在真实选题路径调用本 helper（roadmap Task 8）。
+// Selection telemetry writer: one row per sampled candidate.
+// inclusion_probability is the π_i asset required for future active-PPI recalibration and is
+// part of the backup FK order. Writing is best-effort and must never affect selection.
 
 import { and, asc, eq } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -60,7 +56,7 @@ export async function recordSelectionObservation(
 }
 
 /**
- * 按日 + ref 取观测（Phase 3 active-PPI 重标定回放 / 调试用）。
+ * 按日 + ref 取观测。
  * 按 created_at 升序——回放是时序语义（同一候选一天可多次观测），无 ORDER BY 时
  * Postgres 按堆序返回（VACUUM / 并行扫描后不确定），会破坏顺序敏感的重标定回放。
  */

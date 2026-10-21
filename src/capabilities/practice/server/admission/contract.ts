@@ -1,10 +1,8 @@
-// YUK-1445 (Stage 1 / G1+G2) — question admission definition.
-//
+// (Stage 1 / G1+G2) — question admission definition.
 // The admission lane consumes a frozen draft definition (the four contract
 // layers) plus per-unit scoring intent declared by intake. It is deliberately
 // NOT a schema-level type (src/core/schema/assessment is frozen for this
 // lane): this is the module-local envelope `runQuestionAdmission` accepts.
-//
 // A definition is already-resolved on the response_spec axis: slots are in
 // their FINAL form (select/blank/open_response for new content, legacy kinds
 // kept verbatim for units that cannot be upgraded). `original_response_spec`
@@ -37,7 +35,7 @@ export interface AdmissionUnitSpec {
   points: number | null;
   unit_kind: AdmissionUnitKind;
   /** Converted slot this unit will grade against when resolved; null when the
-   *  unit keeps its legacy slot (unresolved / unsupported / free). */
+   * unit keeps its legacy slot (unresolved / unsupported / free). */
   resolved_slot: ResponseSlotT | null;
   /** 已 typed 录入的判据（待独立核验的种子）；absent = dual solve mints it. */
   seeded_criterion: ScoringUnitCriterionT | null;

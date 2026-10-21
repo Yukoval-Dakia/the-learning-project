@@ -1,14 +1,13 @@
-// YUK-1445 (Stage 1 / G2) — per-scoring-unit method calibration.
-//
+// (Stage 1 / G2) — per-scoring-unit method calibration.
 // For every resolved unit we freeze a probe set (digest-pinned) and execute it
 // through the SAME evaluateSubmissionCore real submissions use — no second
-// grader, no heuristic re-implementation. Probe classes (design §4 step 4):
-//   - reference      : the agreed key itself must score full marks
-//   - equivalent     : claimed-equivalent forms must score identically
-//   - typical_wrong  : common wrong answers must NOT score full marks
-//   - over_select    : (select) key ∪ one wrong item must not score full marks
-//   - blank_state    : explicit blank obeys basis.blank_scores_zero policy
-//   - unknown_state  : unreadable must land pending, never a fake zero
+// grader, no heuristic re-implementation. Probe classes (design step 4):
+// - reference : the agreed key itself must score full marks
+// - equivalent : claimed-equivalent forms must score identically
+// - typical_wrong : common wrong answers must NOT score full marks
+// - over_select : (select) key ∪ one wrong item must not score full marks
+// - blank_state : explicit blank obeys basis.blank_scores_zero policy
+// - unknown_state : unreadable must land pending, never a fake zero
 // Any failing/pending-unexpected probe blocks admission; changing method or
 // rule produces a new method_fingerprint and forces recalibration.
 
@@ -67,7 +66,7 @@ export interface ProbeOutcome {
 }
 
 /** 方法与规则的指纹 —— 任一变化即产生新 fingerprint，旧校准自动失效。
- * YUK-1568（第 2 片）：已声明槽位的指纹携带 answer_shape、其版本与比较器
+ * （第 2 片）：已声明槽位的指纹携带 answer_shape、其版本与比较器
  * 版本（声明/绑定/单位语义变化 ⇒ 新指纹 ⇒ 重新标定）；无声明旧单元不携带
  * 任何新字段，指纹字节不变，旧校准不受影响。 */
 export function methodFingerprint(
@@ -141,7 +140,7 @@ export async function freezeProbes(
   const slotId = slot.slot_id;
   const unitId = unit.scoring_unit_id;
   const rule = unit.rule;
-  // YUK-1568 第 2 片：已声明槽的探针纪律 —— 数学语法区分大小写（casefold
+  // 第 2 片：已声明槽的探针纪律 —— 数学语法区分大小写（casefold
   // 探针不适用）；typical_wrong 先经同一比较核心分诊（读不出的作答不能断言
   // 计 0，跳过并如实记录）；不再合成 `${reference}x` 式扰动（对声明语法是
   // unparseable → pending，会制造假校准失败）。

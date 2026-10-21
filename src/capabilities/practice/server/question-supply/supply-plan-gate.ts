@@ -1,5 +1,4 @@
-// YUK-987 (985/E2) — SupplyPlan 确定性机器门（纯函数，零 DB import）。
-//
+// (985/E2) — SupplyPlan 确定性机器门（纯函数，零 DB import）。
 // 照 quiz_gen_plan.ts 形状：LLM 产出的 SupplyPlan JSON 先过 lenient parse
 // （JSON 抽取 + 严格 zod），再过语义机检（结构去重 / 预算声明 vs 当日剩余 /
 // 活 knowledge_id）。拒绝原因以字符串数组返回，由 caller 回喂 LLM 做 ≤2 轮
@@ -53,10 +52,10 @@ function itemKey(item: SupplyPlanItemV1T): string {
 /**
  * 结构机检（不依赖 DB 的部分）：
  * - 同 (knowledge_id, kind, difficulty_band) 格子重复 → 拒（迫使 planner 合并，
- *   避免同一格子被两份需求重复计数）；
+ * 避免同一格子被两份需求重复计数）；
  * - 声明的 jyeoo 预算 > 当日剩余 → 拒（需求侧自约束不能超物理预算）；
  * - route_preference 仅含 'jyeoo_fetch' 的项的 count 总和 > 声明预算 → 拒
- *   （声明预算必须覆盖它想走的付费路线；含非 jyeoo 路线的项可由他路承担）。
+ * （声明预算必须覆盖它想走的付费路线；含非 jyeoo 路线的项可由他路承担）。
  */
 export function checkSupplyPlanStructure(
   plan: SupplyPlanV1T,

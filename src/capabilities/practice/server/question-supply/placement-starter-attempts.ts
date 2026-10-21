@@ -44,7 +44,7 @@ export interface PlacementVerificationAuthority {
 export class PlacementStarterAdmissionError extends Error {}
 // Budget exhaustion is a TERMINAL admission failure: no redelivery can make progress (known_cost
 // never decreases), so the handler terminalizes the claim as 'exhausted' and completes the job
-// rather than retrying into the same throw (YUK-452 round-3, codex P2-A). Subclass so existing
+// rather than retrying into the same throw (round-3, codex P2-A). Subclass so existing
 // `instanceof PlacementStarterAdmissionError` checks + `/budget/` message assertions still hold.
 export class PlacementStarterBudgetExhaustedError extends PlacementStarterAdmissionError {}
 export class PlacementStarterUnknownCostError extends PlacementStarterAdmissionError {}
@@ -398,7 +398,7 @@ export function heartbeatSleep(ms: number, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return reject(signal.reason ?? new Error('placement heartbeat stopped'));
     // Remove the abort listener on the normal resolve path — `{ once: true }` only fires-then-removes
     // on abort, so a normal timeout would leak a listener on the long-lived job.signal every cycle
-    // (YUK-452 followup, same shape as defaultPlacementSleep).
+    // (followup, same shape as defaultPlacementSleep).
     const onAbort = () => {
       clearTimeout(timer);
       reject(signal.reason ?? new Error('placement heartbeat stopped'));
@@ -683,7 +683,7 @@ export async function recordPlacementAttemptOutput(
       .from(placement_starter_cost_component)
       .where(eq(placement_starter_cost_component.id, reservationId))
       .for('update');
-    // Settle-before-raise (YUK-452 review, codex P2): persist the ACTUAL provider run id + cost
+    // Settle-before-raise (review, codex P2): persist the ACTUAL provider run id + cost
     // and correct known_cost FIRST, then surface over-cap to the caller as a return flag. The prior
     // shape threw before the settle write, so an over-budget generation call lost its real
     // provider_task_run_id + actual cost and left the claim pinned to the 500k reservation
@@ -738,7 +738,7 @@ export async function recordPlacementAttemptOutput(
 }
 
 /**
- * Release an unsettled paid-call reservation (YUK-452 review): delete the `reservation:*`
+ * Release an unsettled paid-call reservation (review): delete the `reservation:*`
  * placeholder cost component and refund its reserved amount from the claim's known_cost. Idempotent
  * and RETENTION-safe — a no-op when the reservation is missing or has already been settled (its
  * provider_task_run_id no longer starts with `reservation:`), so an already-committed actual cost is
@@ -1035,7 +1035,7 @@ export async function countEligiblePlacementQuestions(
   // success event WRONGLY excluded active DUPLICATES that were verified via a different path (or a
   // prior attempt): quiz_gen attaches such a live question to the attempt but the outbox terminal_skips
   // re-verifying an already-active question, so no quiz_verify event is ever written for it
-  // (YUK-452 round-3, codex P2-B).
+  // (round-3, codex P2-B).
   const verified = await db
     .select({ questionId: placement_starter_attempt_question.question_id })
     .from(placement_starter_attempt_question)
@@ -1050,7 +1050,7 @@ export async function countEligiblePlacementQuestions(
         ...(attemptId ? [eq(placement_starter_attempt_question.attempt_id, attemptId)] : []),
         eq(placement_starter_attempt_question.verification_status, 'authorized'),
         notDraftPredicate(question.draft_status),
-        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不算已验证供给。
+        // 契约准入门：suspended/withdrawn 组不算已验证供给。
         questionSuspendedPredicate(question),
         isNull(sql`${question.metadata}->>'archived_at'`),
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
@@ -1070,7 +1070,7 @@ export async function placementAttemptVerificationSettled(
 ): Promise<boolean> {
   // A question's verification is SETTLED when it is already pool-visible (active — verified by
   // definition; an active DUPLICATE the outbox terminal_skips never gets a fresh quiz_verify event,
-  // YUK-452 round-3, codex P2-B) OR it carries a terminal quiz_verify verdict (any non-error
+  // round-3, codex P2-B) OR it carries a terminal quiz_verify verdict (any non-error
   // outcome — pass/needs_review/fail all settle a draft). Only a still-draft question with no
   // terminal verdict keeps the delivery polling.
   const rows = await db
@@ -1100,7 +1100,7 @@ export async function markAttemptVerifying(
 ): Promise<void> {
   // Attempt + claim status must flip together: a crash between the two UPDATEs would leave the
   // attempt 'verifying' while the claim stays 'running' (or vice versa), a split state the fence /
-  // reconcile guards do not model. One transaction (YUK-452 review).
+  // reconcile guards do not model. One transaction (review).
   await db.transaction(async (tx) => {
     const rows = await tx
       .update(placement_starter_attempt)
@@ -1176,13 +1176,13 @@ export async function finishPlacementAttempt(
       .update(placement_starter_attempt_question)
       .set({ verification_status: status === 'succeeded' ? 'satisfied' : 'superseded' })
       .where(eq(placement_starter_attempt_question.attempt_id, attempt.attemptId));
-    // Exhaustion (YUK-452 review): the pg-boss quiz_gen job has retryLimit=2 → exactly 3
+    // Exhaustion (review): the pg-boss quiz_gen job has retryLimit=2 → exactly 3
     // deliveries. When the FINAL (max_paid_attempts-th) delivery fails to satisfy, there is no
     // further redelivery, so writing retry_scheduled here would zombie the claim non-terminal
     // forever. Terminalize as 'exhausted' (owner-locked explicit terminal failure state) so
     // placement stops waiting on a batch that will never arrive. Non-final failures stay
     // retry_scheduled — acquirePlacementAttempt accepts that status and the pg-boss retry
-    // re-drives the next delivery. YUK-761 note: that pg-boss retry remains the ONLY re-driver of
+    // re-drives the next delivery. note: that pg-boss retry remains the ONLY re-driver of
     // retry_scheduled; the recovery sweeper deliberately never re-dispatches this status (a second
     // quiz_gen job would double-pay), it only REAPS a claim whose redelivery never arrived — so
     // the eager terminalization above is still required, not superseded by the sweeper.

@@ -1,16 +1,14 @@
-// YUK-1016 / 454-B — 错因 catalog 扩张的复发信号 → LLM 提议生产者。
-//
+//B — 错因 catalog 扩张的复发信号 → LLM 提议生产者。
 // 触发点：runAttributionAndWriteJudgeEvent 写出 primary='other' 的 judge 之后
 // 内联调用（全吞错——目录扩张是机会型旁路，绝不影响归因 outcome）。
-//
 // 机制（ticket：attribution 落 other 时 tally，按 subject + 语义聚类粗略即可）：
-//   1. pending 去重——同一 subject 同时最多一张 open catalog 提议，避免骚扰
-//      owner（accept/dismiss 后下一轮 other 才重新评估）。
-//   2. tally——读侧聚合 getFailureAttempts 的 effective cause（user_cause 赢
-//      judge），不建新表：event 流本身就是台账。
-//   3. ≥ floor → CauseCategoryProposeTask 判定连贯模式 → propose event。
-//      LLM 只产语义（slug/label/description/rationale）；`ov_` 前缀与 id 防撞
-//      在代码里收口。
+// 1. pending 去重——同一 subject 同时最多一张 open catalog 提议，避免骚扰
+// owner（accept/dismiss 后下一轮 other 才重新评估）。
+// 2. tally——读侧聚合 getFailureAttempts 的 effective cause（user_cause 赢
+// judge），不建新表：event 流本身就是台账。
+// 3. ≥ floor → CauseCategoryProposeTask 判定连贯模式 → propose event。
+// LLM 只产语义（slug/label/description/rationale）；`ov_` 前缀与 id 防撞
+// 在代码里收口。
 
 import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -144,7 +142,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
         .where(inArray(question.id, [...new Set(needQuestionKc)]));
       for (const row of rows) questionKcById.set(row.id, row.knowledge_ids);
     }
-    // YUK-1019 — 首个「存在」的 KC 决定归属（dangling [0] 不再把外科目失败劫持
+    // 首个「存在」的 KC 决定归属（dangling [0] 不再把外科目失败劫持
     // 进 general 桶）；全部候选都不可解析 → 不进任何科目桶，单独记账，proposal
     // 落地时 reason_md 标注 bucket=unresolved。比归因链略严是有意的：归因给
     // 判不出科目的失败兜底 general 是运行语义，给词表扩张计数要更保守。
@@ -210,7 +208,7 @@ export async function maybeProposeCauseCategoryFromOthers(params: {
           (unresolvedCount > 0
             ? `\n\n另有 ${unresolvedCount} 条 other 失败因 KC 不可解析未计入本桶（bucket=unresolved）。`
             : ''),
-        // YUK-1019 — evidence_refs 标 event_role：effective event 对 user 源是
+        // evidence_refs 标 event_role：effective event 对 user 源是
         // user_cause event、对 agent 源是 judge event，reviewer 不回查即分辨。
         evidence_refs: samples.map((sample) => ({
           kind: 'event' as const,

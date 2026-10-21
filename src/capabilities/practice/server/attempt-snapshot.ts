@@ -1,24 +1,20 @@
-// YUK-561 S2 (revert-bracket §4.1 / O2 dual-sibling) — shared attempt-snapshot writer.
-//
+//shared attempt-snapshot writer.
 // Both the solo /api/review/submit and the paper per-slot submit brackets EACH axis
 // (θ̂ / FSRS) it just moved with an INDEPENDENT sibling checkpoint + snapshot so a
 // judge-overturn can revert the θ̂ transition ALONE (register F8 fix). This helper is
 // the single owner of that write shape so the two attempt writers can't drift.
-//
 // Per segment (θ̂ / FSRS), written iff that axis moved (its snapshot array non-empty):
-//   C_seg = `${E}:checkpoint:${seg}` — grading_checkpoint anchor (caused_by = E)
-//   S_seg = `${E}:snapshot:${seg}`   — state_snapshot carrying ONLY this segment
-//                                       (caused_by = C_seg; the OTHER array is empty)
+// C_seg = `${E}:checkpoint:${seg}` — grading_checkpoint anchor (caused_by = E)
+// S_seg = `${E}:snapshot:${seg}` — state_snapshot carrying ONLY this segment
+// (caused_by = C_seg; the OTHER array is empty)
 // revert(C_seg) closes over {S_seg} only (E is C_seg's parent, the reverse-CTE never
-// climbs up), so the two segments revert ORTHOGONALLY (ADR-0035 R⟂p(L)) — the O2
+// climbs up), so the two segments revert ORTHOGONALLY (R⟂p(L)) — the O2
 // "which checkpoint you revert IS the segment selector" design.
-//
-// SAME-CONDITION WRITE INVARIANT (spec §4.1, Lens A F6): per segment, C_seg and S_seg
+// SAME-CONDITION WRITE INVARIANT (, Lens A F6): per segment, C_seg and S_seg
 // are BOTH-or-NEITHER (gated on the same non-empty array) — there is no FK on
 // caused_by (schema.ts:814), so a dangling snapshot with no checkpoint would be
 // permanently unrevertable with no DB backstop. This helper is the invariant.
-//
-// Idempotency (§6.7): deterministic ids + writeEvent's PK-conflict-do-nothing make a
+// Idempotency : deterministic ids + writeEvent's PK-conflict-do-nothing make a
 // retried/redelivered attempt tx a no-op (never a duplicate ledger row). ingest_at:now
 // opts every row out of the memory outbox (internal rollback ledger, not a learner fact).
 

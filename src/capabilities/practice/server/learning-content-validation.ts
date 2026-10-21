@@ -110,7 +110,7 @@ function errorReason(result: PromiseRejectedResult): string {
 }
 
 /**
- * YUK-993 — does a forwarded remote-evidence packet contain at least one call
+ * does a forwarded remote-evidence packet contain at least one call
  * that actually RETURNED an output? The packet also lists failed calls
  * (`failure` entries carry no `output`), and a failure corroborates nothing:
  * a packet of only failures must keep the basis unsupported.
@@ -209,7 +209,7 @@ export async function validateLearningContent(
       const output =
         questionContent.status === 'fulfilled' ? questionContent.value.output : undefined;
       const basis = output?.grounding.basis;
-      // YUK-993 — 'executed_remote_evidence' is supported only when the verify
+      // 'executed_remote_evidence' is supported only when the verify
       // task input actually carried a non-empty packet of this turn's executed
       // remote-MCP calls AND at least one call returned an output: the exact
       // evidence the judge corroborated against, not a model self-declaration.
