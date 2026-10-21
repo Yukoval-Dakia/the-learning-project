@@ -1,0 +1,1 @@
+ALTER TABLE "system_config" ADD COLUMN "expires_at" timestamp with time zone;

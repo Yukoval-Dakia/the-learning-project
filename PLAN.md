@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-21：K1 父独占接线已落，当前 main 组合1763d642；tsrs通过，静态审计/独立审查与exact CI待收口。17分钟等待已按owner取消。
+> Linear 是权威 tracker。2026-10-21：K1 父独占接线已落，父b9d050acd后整合main def2（含1925）；新组合静态门/独立审查与exact CI待收口。17分钟等待已按owner取消。
 
 ## NOW
 
-- **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` 唯一父 writer，子线 eecf79ada 已释放；正常整合 main3d5 得1763d642，父接既有submit API与实际 declared sourcing consumer，parts/draft-contract不改。首发根/真实子行/发布/outbox/canonical回执同事务；去重merge终态提交，投影后发布冲突整笔回滚；commit后drain。接线后tsrs两配置0；五个精确公共出口分类待协调、lint/build/最终audits/R1/new-head CI待交付。下一产物是完整consumer PR；真实DB/serving/provider仍NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
+- **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` 唯一父 writer，子线 eecf79ada 已释放；正常整合 main3d5 得1763d642，父接既有submit API与实际 declared sourcing consumer，parts/draft-contract不改。首发根/真实子行/发布/outbox/canonical回执同事务；去重merge终态提交，投影后发布冲突整笔回滚；commit后drain。接线后tsrs两配置0；五个精确公共出口已获协调stable_contract分类、lint/build/最终audits/R1/new-head CI待交付。下一产物是完整consumer PR；真实DB/serving/provider仍NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
 
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 

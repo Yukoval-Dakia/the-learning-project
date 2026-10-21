@@ -687,12 +687,7 @@
       "file": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "SourceAssetRow",
-        "lockImageStorageKey",
-        "persistImageAsset",
-        "sha256Hex"
-      ],
+      "symbols": ["SourceAssetRow", "lockImageStorageKey", "persistImageAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -702,9 +697,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/assessment-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "resolveVerdictsForAttempts"
-      ],
+      "symbols": ["resolveVerdictsForAttempts"],
       "issue": "YUK-1570",
       "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
       "date": "2026-10-20"
@@ -714,9 +707,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/cause-policy.ts",
       "kind": "value",
-      "symbols": [
-        "effectiveCauseForFailureAttempt"
-      ],
+      "symbols": ["effectiveCauseForFailureAttempt"],
       "issue": "YUK-1570",
       "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
       "date": "2026-10-20"
@@ -726,9 +717,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/failure-attempts.ts",
       "kind": "value",
-      "symbols": [
-        "getFailureAttempts"
-      ],
+      "symbols": ["getFailureAttempts"],
       "issue": "YUK-1570",
       "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
       "date": "2026-10-20"
@@ -738,9 +727,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/misc-cause-labels.ts",
       "kind": "value",
-      "symbols": [
-        "resolveMiscCauseLabels"
-      ],
+      "symbols": ["resolveMiscCauseLabels"],
       "issue": "YUK-1570",
       "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
       "date": "2026-10-20"
@@ -750,9 +737,7 @@
       "file": "src/capabilities/ingestion/api/asset-delete.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "deleteImageAsset"
-      ],
+      "symbols": ["deleteImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -762,9 +747,7 @@
       "file": "src/capabilities/ingestion/api/assets.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -774,9 +757,7 @@
       "file": "src/capabilities/ingestion/api/pdf.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -786,11 +767,7 @@
       "file": "src/capabilities/ingestion/server/crop.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "isUniqueViolation",
-        "lockImageStorageKey",
-        "sha256Hex"
-      ],
+      "symbols": ["isUniqueViolation", "lockImageStorageKey", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -800,10 +777,7 @@
       "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset",
-        "persistSourceAsset"
-      ],
+      "symbols": ["persistImageAsset", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -813,9 +787,7 @@
       "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -825,10 +797,7 @@
       "file": "src/capabilities/ingestion/server/source-package.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistSourceAsset",
-        "sha256Hex"
-      ],
+      "symbols": ["persistSourceAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -838,10 +807,7 @@
       "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "isUniqueViolation",
-        "persistSourceAsset"
-      ],
+      "symbols": ["isUniqueViolation", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -851,9 +817,7 @@
       "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "lockImageStorageKey"
-      ],
+      "symbols": ["lockImageStorageKey"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -863,10 +827,7 @@
       "file": "src/capabilities/agency/jobs/coach_daily.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -876,10 +837,7 @@
       "file": "src/capabilities/agency/jobs/dreaming_nightly.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -889,9 +847,7 @@
       "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "listActiveGoals"
-      ],
+      "symbols": ["listActiveGoals"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -901,9 +857,7 @@
       "file": "src/capabilities/copilot/server/learner-state.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -913,10 +867,7 @@
       "file": "src/capabilities/practice/server/due-list.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -926,9 +877,7 @@
       "file": "src/capabilities/agency/server/intervention/settlement-subscription.ts",
       "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "loadLatestTrustedInterventionDiagnosticVerdict"
-      ],
+      "symbols": ["loadLatestTrustedInterventionDiagnosticVerdict"],
       "issue": "YUK-1571",
       "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
       "date": "2026-10-20"
@@ -938,9 +887,7 @@
       "file": "src/capabilities/agency/server/intervention/store.ts",
       "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1571",
       "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
       "date": "2026-10-20"
@@ -963,9 +910,7 @@
       "file": "src/capabilities/ingestion/server/tools/compose-presentation.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "OpaqueJsonInput"
-      ],
+      "symbols": ["OpaqueJsonInput"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -975,11 +920,7 @@
       "file": "src/capabilities/ingestion/server/tools/proposal-tools.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "DomainTool",
-        "OpaqueJsonInput",
-        "ToolContext"
-      ],
+      "symbols": ["DomainTool", "OpaqueJsonInput", "ToolContext"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -989,10 +930,7 @@
       "file": "src/capabilities/knowledge/server/review.ts",
       "module": "src/kernel/tools/allowlists.ts",
       "kind": "value",
-      "symbols": [
-        "DOMAIN_TOOL_MCP_SERVER_NAME",
-        "resolveDomainToolNames"
-      ],
+      "symbols": ["DOMAIN_TOOL_MCP_SERVER_NAME", "resolveDomainToolNames"],
       "issue": "YUK-1553",
       "owns": "DomainTool surface 与 MCP wire 工具名的唯一授权清单/命名来源",
       "date": "2026-10-21"
@@ -1002,10 +940,7 @@
       "file": "src/capabilities/knowledge/server/tools/proposal-tools.ts",
       "module": "src/kernel/proposals/signals.ts",
       "kind": "value",
-      "symbols": [
-        "findActiveProposalCooldown",
-        "withProposalGateLock"
-      ],
+      "symbols": ["findActiveProposalCooldown", "withProposalGateLock"],
       "issue": "YUK-1553",
       "owns": "proposal (kind, cooldown_key) 去重/cooldown 的 advisory-lock 事务与有效冷却读取",
       "date": "2026-10-21"
@@ -1015,9 +950,7 @@
       "file": "src/capabilities/knowledge/tasks/knowledge-tasks.ts",
       "module": "src/kernel/tools/allowlists.ts",
       "kind": "value",
-      "symbols": [
-        "resolveMcpAllowedTools"
-      ],
+      "symbols": ["resolveMcpAllowedTools"],
       "issue": "YUK-1553",
       "owns": "DomainTool surface 与 MCP wire 工具名的唯一授权清单/命名来源",
       "date": "2026-10-21"
@@ -1027,11 +960,7 @@
       "file": "src/capabilities/practice/server/tools/proposal-tools.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "DomainTool",
-        "OpaqueJsonInput",
-        "ToolContext"
-      ],
+      "symbols": ["DomainTool", "OpaqueJsonInput", "ToolContext"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -1041,11 +970,29 @@
       "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
       "module": "src/server/mastery/joint-calibration.ts",
       "kind": "value",
-      "symbols": [
-        "runJointCalibrationBatch"
-      ],
+      "symbols": ["runJointCalibrationBatch"],
       "issue": "YUK-439",
       "owns": "Joint calibration batch: recompute each question b posterior from the difficulty_calibration_evidence ledger under the agent prior, write item_calibration posterior columns, and run the A5 KB drift audit/renormalization. The practice job owns only nightly scheduling/yield; this edge replaces the prior same-responsibility trigger import of the retired AIPW firm-up (recalibration.ts), not a second business dependency.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/harness-scoreboard.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["errorResponse"],
+      "issue": "YUK-1557",
+      "owns": "HTTP error envelope for the harness scoreboard read route",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/harness-scoreboard.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1557",
+      "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
     }
   ],
@@ -1105,6 +1052,51 @@
       "responsibilityReason": "Settlement writes the sealed calibration evidence row from the verdict already used for grading (theta abstain does not exclude evidence), captures the PRE-attempt theta snapshot, and deletes evidence on revert with a same-transaction posterior-to-prior repair when the last row is removed. Grading and FSRS bodies are unchanged."
     },
     {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "date": "2026-10-21",
+      "baseBlob": "f89e7490fdffbd02aba58a50e08d70a651fad623",
+      "from": 1939,
+      "to": 1940,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the per-question difficulty sentence on the quiz_gen store event; no new responsibility, one event payload field."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "4e773f14f1c7828c717a4cc59f4d1da67c687570",
+      "from": 1247,
+      "to": 1267,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the SourcingTask run identity and the one-line difficulty reason on the submit_question store event / created_by; the publication and verify paths are unchanged."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-21",
+      "baseBlob": "99be5acde14abcc87e6f715e21e56ade31c7f304",
+      "from": 4966,
+      "to": 4974,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Add nullable system_config.expires_at for temporary overrides; additive column, no new table or writer family."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-21",
+      "baseBlob": "8ad42e79918f59b7bc9ede7bf60b220753581ba8",
+      "from": 2045,
+      "to": 2055,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stamp the active ai_task_runs.id onto domain and remote-MCP tool logs so one run owns its tool evidence."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-21",
+      "baseBlob": "213b6c6b7607e57af0a236e98c9ff8a33d28850a",
+      "from": 1453,
+      "to": 1479,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
+    },
+    {
       "path": "src/server/questions/edit-question.ts",
       "date": "2026-10-21",
       "baseBlob": "7a55e6c9c79bc5d0e3a63bfc5f12c3c66e5a402d",
@@ -1126,8 +1118,8 @@
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
       "date": "2026-10-21",
       "baseBlob": "9d4ecfb55b73fec558921dd642abe9ef1865c3d5",
-      "from": 1247,
-      "to": 1292,
+      "from": 1267,
+      "to": 1312,
       "issue": "YUK-1568",
       "responsibilityReason": "现役已声明候选由分离 save/submit/候选回执事务改为单原子提交入口；新增终态投影使同事务 canonical 回执与返回值同源。已评估拆分：本片不把来源注入和候选终态映射拆成第二套入口/额外 capability→server 边，完整声明持久化职责已迁 shared-submit，保留现有工具唯一 consumer 与 legacy 路径。"
     }
@@ -1404,13 +1396,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [
-        [
-          "agency",
-          "knowledge",
-          "practice"
-        ]
-      ]
+      "nontrivialSccs": [["agency", "knowledge", "practice"]]
     }
   }
 }

@@ -1600,6 +1600,11 @@ export const ai_task_runs = pgTable(
       .$type<{
         inputTokens: number;
         outputTokens: number;
+        /** YUK-1557 — provider prompt-cache counters (0 = lane reported none). */
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        /** YUK-1557 — completed assistant turns. */
+        numTurns?: number;
         thinkingBlocks?: number;
         thinkingCharacters?: number;
         /** YUK-1531 — estimated when a timeout had no provider usage payload. */
@@ -4394,6 +4399,9 @@ export const system_config = pgTable('system_config', {
   revision: integer('revision').notNull().default(0),
   // 自由备注（「谁为什么设」）。
   source_note: text('source_note'),
+  // YUK-1557 — TEMP 覆盖必须能被时间收口：非空时该行只在此刻之前生效，
+  // 过期后读面 fall through 到 env/code default（不删行，保留审计值）。
+  expires_at: timestamp('expires_at', { withTimezone: true }),
   // 'panel:admin' | 'migrate' | 'cli' 等 actor 标签（枚举在写面 zod 侧，
   // DDL 保持 loose text —— 同 subject_control_journal.actor 惯例）。
   updated_by: text('updated_by').notNull(),

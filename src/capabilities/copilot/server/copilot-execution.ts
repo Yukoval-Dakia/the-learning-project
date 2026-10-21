@@ -344,7 +344,7 @@ export function createCopilotExecutionOwner(
     const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
     const piToolMounts = [
       piDomainMount(domainMountOptions),
-      ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES)] : []),
+      ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES, db)] : []),
     ];
     const baseAllowedTools = [
       ...(answerOnly

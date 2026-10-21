@@ -167,6 +167,39 @@ async function insertCostLedger(
   });
 }
 
+/**
+ * YUK-1557 — record a remote tool call that has no provider-reported USD
+ * price. The cost is explicitly `unknown` (never a fabricated zero) and the
+ * synthetic task_run_id keeps the attempt-ledger uniqueness separate from the
+ * model attempt row on the same run.
+ */
+export async function writeUnpricedToolCost(
+  db: DbLike,
+  entry: {
+    taskRunId: string;
+    provider: string;
+    toolName: string;
+    outcome: 'success' | 'failed_permanent' | 'failed_retryable';
+    occurredAt?: Date;
+  },
+): Promise<void> {
+  await insertCostLedger(db, {
+    entry_kind: 'attempt',
+    task_run_id: `tool:${entry.taskRunId}:${entry.provider}:${entry.toolName}:${createId()}`,
+    task_kind: 'remote_mcp_tool',
+    provider: entry.provider,
+    model: entry.toolName,
+    cost: null,
+    cost_basis: 'unknown',
+    cost_ref: `unpriced:${entry.provider}/${entry.toolName}`,
+    currency: 'USD',
+    tokens_in: null,
+    tokens_out: null,
+    outcome: entry.outcome,
+    occurred_at: entry.occurredAt ?? new Date(),
+  });
+}
+
 export interface AiTaskRunStartEntry {
   id: string;
   task_kind: TaskKind;
@@ -193,7 +226,13 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     prompt_context_digest: entry.promptContextDigest ?? null,
     status: 'running',
     finish_reason: null,
-    usage_json: { inputTokens: 0, outputTokens: 0 },
+    usage_json: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      numTurns: 0,
+    },
     cost_usd: null,
     cost_basis: null,
     cost_ref: null,
@@ -219,6 +258,15 @@ export interface NoteGeneratePhaseTimings {
 export interface AiTaskUsage {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
+   * (0 when the lane reported no cache) so the scoreboard can compute cache
+   * share without treating absence as unknown.
+   */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** YUK-1557 — completed assistant turns (provider `num_turns`, or observed frames). */
+  numTurns?: number;
   /**
    * `estimated` when a budget abort had to infer tokens from the prompt and
    * any streamed text. Absent when the provider reported the counts.
@@ -263,7 +311,13 @@ export async function writeAiTaskRunFinished(
     .set({
       status: entry.status,
       finish_reason: entry.finish_reason ?? null,
-      usage_json: entry.usage ?? { inputTokens: 0, outputTokens: 0 },
+      usage_json: entry.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        numTurns: 0,
+      },
       cost_usd: entry.cost_usd ?? null,
       cost_basis: entry.cost_basis ?? null,
       cost_ref: entry.cost_ref ?? null,

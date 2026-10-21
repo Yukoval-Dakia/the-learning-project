@@ -34,6 +34,7 @@ import { AgentRef } from '@/core/schema/business';
 import {
   DifficultyEvidence,
   buildProducerDifficultyEvidence,
+  explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import { QuestionDraftDocument, type QuestionDraftDocumentT } from '@/core/schema/question-draft';
@@ -112,6 +113,21 @@ const SOURCED_CREATED_BY_BY_ROUTE = {
   jyeoo_fetch: AgentRef.parse({ by: 'system', task_kind: 'JyeooFetch' }),
   sourcing_web: AgentRef.parse({ by: 'system', task_kind: 'SourcingTask' }),
 } as const;
+
+/** YUK-1557 — a web-sourced row keeps the AI run that actually produced it. */
+function sourcedCreatedBy(
+  route: keyof typeof SOURCED_CREATED_BY_BY_ROUTE,
+  logTaskRunId: string | undefined,
+) {
+  if (route === 'sourcing_web' && logTaskRunId) {
+    return AgentRef.parse({
+      by: 'ai',
+      task_kind: 'SourcingTask',
+      task_run_id: logTaskRunId,
+    });
+  }
+  return SOURCED_CREATED_BY_BY_ROUTE[route];
+}
 
 // 旧 handler 同款 pool 上界（source_verify checkDedup 的 LIMIT 先例）。
 const NEAR_DUP_POOL_LIMIT = 100;
@@ -258,7 +274,7 @@ const COMMIT_ROUTE_CONFIG = {
 
 type CandidateSubmitContext = Pick<
   ToolContext,
-  'db' | 'sessionId' | 'taskRunId' | 'causedByEventId'
+  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'
 > & {
   callerActor?: ToolContext['callerActor'];
 };
@@ -534,7 +550,7 @@ async function runCandidateSubmit(
         q: candidate.question,
         knowledgeIds,
         sourceRoute: input.source_route,
-        createdBy: SOURCED_CREATED_BY_BY_ROUTE[input.source_route],
+        createdBy: sourcedCreatedBy(input.source_route, ctx.logTaskRunId),
         whitelistMatch: matchesWhitelist(candidate.question.source_url, whitelist),
         fetchedAt: now.toISOString(),
         canonicalContentHash: canonicalHash,
@@ -676,11 +692,14 @@ async function runCandidateSubmit(
         attribution_state: input.attribution_state,
         verify_enqueued: verifyEnqueued,
         difficulty_evidence: persisted.difficultyEvidence,
+        difficulty_reason: explainDifficultyEvidence(
+          DifficultyEvidence.parse(persisted.difficultyEvidence),
+        ),
         ...(input.demand_id ? { demand_id: input.demand_id } : {}),
         ...(input.supply_trace ? { supply_trace: input.supply_trace } : {}),
       },
       caused_by_event_id: ctx.causedByEventId ?? null,
-      task_run_id: ctx.taskRunId,
+      task_run_id: ctx.logTaskRunId ?? ctx.taskRunId,
       cost_micro_usd: null,
       created_at: now,
     });
@@ -951,7 +970,7 @@ async function runDeclaredCandidateSubmit(
     ...(input.availability != null ? { availability: input.availability } : {}),
     sourced: {
       canonical_content_hash: canonicalHash,
-      created_by: SOURCED_CREATED_BY_BY_ROUTE[input.source_route],
+      created_by: sourcedCreatedBy(input.source_route, ctx.logTaskRunId),
       difficulty: q.difficulty,
       metadata: {
         web_sourced: webSourced,
@@ -1106,12 +1125,13 @@ async function runDeclaredCandidateSubmit(
         attribution_state: input.attribution_state,
         verify_enqueued: submit.verify_enqueued === true,
         difficulty_evidence: difficultyEvidence,
+        difficulty_reason: explainDifficultyEvidence(difficultyEvidence),
         draft_block_id: parseDraftRef(save.draft_ref)?.blockId ?? save.draft_ref,
         ...(input.demand_id ? { demand_id: input.demand_id } : {}),
         ...(input.supply_trace ? { supply_trace: input.supply_trace } : {}),
       },
       caused_by_event_id: ctx.causedByEventId ?? null,
-      task_run_id: ctx.taskRunId,
+      task_run_id: ctx.logTaskRunId ?? ctx.taskRunId,
       cost_micro_usd: null,
       created_at: now,
     });

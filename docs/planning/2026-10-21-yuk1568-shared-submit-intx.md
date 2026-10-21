@@ -6,7 +6,7 @@
 
 - 工作树：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-12b32ff3`；分支 `feat/yuk-1568-shared-submit-intx-20261021`。
 - 原基线 `214ecb0ef1c2d746316af5831ea79bbaa18345ef`；子线 `259c26d015740a5452f2a3e4426ffa0a3567fe58`，定向修复 `eecf79ada503e64e2fbf0406bc23a1415a6059f5` 已释放 writer。
-- 父正常整合 main `3d5fa20a4c3e4e4e2c1ab42e46f6f2c4b81235b5` 得 `1763d64202da63e0192f9783a0f7521be60c66dc`，随后由父唯一 writer 接线。最终候选以 PR head 为准。
+- 父正常整合 main `3d5fa20a4c3e4e4e2c1ab42e46f6f2c4b81235b5` 得 `1763d64202da63e0192f9783a0f7521be60c66dc`，随后由父唯一 writer 接线，保存为 b9d050acd；#1925 已合后继续普通整合 main def2aeb51c238c3fdd04abb2a9a9b9e169bc34b6，冲突只在工具接线与审计登记，保留两侧完整语义。最终候选以 PR head 为准。
 - 原子任务 `node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021`，协调登记 YUK-1568 评论 `4528709`。
 - 父接 `src/server/questions/submit-question.ts` 与 `src/capabilities/practice/server/tools/submit-question.ts`；另两 held `parts.ts`/`draft-contract.ts` 不需改动。不触 provider、questions/write.ts、embedding 或旧父树。
 
@@ -32,9 +32,9 @@
 
 ## #1925 整合保护
 
-未合 #1925 固定 `23e103b82ed7b80dac50379d11f3df2481e4fc24` 的工具 diff 独立封存于仓库外 `review/stage1-yuk1568-s3-intx-20261021/integration-protection.json` 及相邻源码/patch。其源码 SHA `270e1a43bbc17364bd4b12ca8664ab881bab7e5d5a5346d3732a6787c414cf45` 与当时 main 工具 SHA 不同，原因是未合 PR 的实质差量，不是清单录制时点错误。
+此前未合 #1925 固定 `23e103b82ed7b80dac50379d11f3df2481e4fc24` 的工具 diff 独立封存于仓库外 `review/stage1-yuk1568-s3-intx-20261021/integration-protection.json` 及相邻源码/patch。其源码 SHA `270e1a43bbc17364bd4b12ca8664ab881bab7e5d5a5346d3732a6787c414cf45` 与当时 main 工具 SHA 不同，原因是未合 PR 的实质差量，不是清单录制时点错误。
 
-本片不整体合入未合的 #1925。后合的一方按实际 main 逐 hunk 保留：
+2026-10-21 fresh GitHub 读回 #1925 已合（head 未变），父按实际 main 正常整合，工具的以下保护逐 hunk 接入新事务，未把旧两事务实现复活：
 
 - sourcing_web 且 logTaskRunId 存在时，created_by 归 SourcingTask 的真实 run；其余 fallback 保持。
 - candidate 和 declared 成功事件的 difficulty_reason 与 `task_run_id=logTaskRunId??taskRunId` 均保留。
@@ -44,7 +44,7 @@
 
 完整事务职责有现役工具 consumer；不另建 registry，不增加跨 capability 值依赖或 capability→server 边。submit 原 1175 行的判定、投影和事务分别归完整模块，新文件均小于1500行。
 
-工具从1247到1292行的增长是原子回执终态映射，已评估拆分：声明持久化已移到完整内核，来源注入与候选输出留原工具，避免新入口和额外 server 边。edit/shared/tool 的 sourceSizeRecords 仅登记实际大小和职责理由。
+当前 main 组合工具从1267到1312行的增长是原子回执终态映射，已评估拆分：声明持久化已移到完整内核，来源注入与候选输出留原工具，避免新入口和额外 server 边。edit/shared/tool 的 sourceSizeRecords 仅登记实际大小和职责理由。
 
 现行架构门发现原 facade 的新转出；无外部 consumer 的 runAdmissionChecks 与类型已删，剩 canonicalJson、deriveKind、claimSubmitRequestId、writeSubmitReceiptEvent、persistDeclaredQuestionGroup 五个精确站点已由协调精确裁为 stable_contract；批准工件 coordinator-resume-20261021/k1-five-stable-contract-classification.json，SHA d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df。旧 claim/receipt 的 caller 仍掌握锁序，这项残余负担不称已解决；不按文件泛放，不修改审计逻辑。
 
