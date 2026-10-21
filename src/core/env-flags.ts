@@ -1,15 +1,12 @@
-/** Shared grammar for runtime `*_ENABLED` environment flags. */
+/** Shared grammar for runtime `*_ENABLED` flags. */
 export interface ParseFlagOptions {
-  /** Value used for an absent, blank, or unrecognized literal. */
+  /** Value used for absent, blank, or unrecognized literals. */
   defaultValue?: boolean;
 }
 
 /**
- * Parse a runtime feature flag with one repo-wide literal grammar.
- *
- * `true` / `1` enable and `false` / `0` disable, case-insensitively and with
- * surrounding whitespace ignored. Unknown values preserve the caller's declared
- * default, so opt-in and opt-out flags share syntax without changing polarity.
+ * Parse a flag: true/1 and false/0, case-insensitive, surrounding whitespace ignored.
+ * Unknown values keep the caller's default, so opt-in and opt-out share syntax.
  */
 export function parseFlag(
   value: string | undefined,

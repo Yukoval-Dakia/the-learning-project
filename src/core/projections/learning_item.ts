@@ -35,15 +35,13 @@ export function applyKnowledgeMergeToIds(
   return [...new Set(replaced)];
 }
 
-// Pure learning_item reducer. Genesis is the sole seed: unlike mistake_variant, there is
-// no fold-blind field, so no dedicated create event is needed. Each item folds independently
-// and the tree is read via parent_learning_item_id, not the child array.
+// Pure learning_item reducer. Genesis is the sole seed (no fold-blind field, so no
+// dedicated create event). Each item folds independently; the tree is read via
+// parent_learning_item_id, not the child array.
 //
-// Version semantics mirror the imperative writers per site: genesis verbatim, complete and
-// relearn +1, archive/retract no bump. Each transition applies only when the row matches the
-// imperative WHERE (terminal-status guard), otherwise it is a no-op.
-//
-// No IO, ids, or clocks; gather is Q1 plus accepted merges.
+// Version semantics mirror the imperative writers: genesis verbatim, complete/relearn
+// +1, archive/retract no bump. Each transition applies only when the row matches the
+// imperative WHERE guard; otherwise it is a no-op. Gather is Q1 plus accepted merges.
 
 // Rebuild the parse input from the flat row so each branch validates its payload.
 function toParseInput(fe: FoldEvent): unknown {
@@ -93,9 +91,9 @@ export function foldLearningItem(
   let row: LearningItemRowSnapshotT | null = null;
 
   for (const fe of ordered) {
-    // ---------- BASE: experimental:genesis (the sole seed; design §3②/§3⑥) ----------
+    // ---------- BASE: genesis (sole seed) ----------
     if (fe.action === 'experimental:genesis' && fe.subject_kind === 'learning_item') {
-      // First base wins; backfill should seed only once, but a duplicate must not clobber.
+      // First base wins; a duplicate backfill seed must not clobber.
       if (row !== null) continue;
       const g = GenesisExperimental.safeParse(toParseInput(fe));
       if (!g.success) {
@@ -152,8 +150,7 @@ export function foldLearningItem(
       continue;
     }
 
-    // ---------- complete — status→done, version+1 ----------
-    // Mirrors acceptCompletionProposal, including its archived/null status guard.
+    // ---------- complete — status→done, version+1; same guards as the writer ----------
     if (
       fe.action === 'experimental:learning_item_complete' &&
       fe.subject_kind === 'learning_item' &&
@@ -179,7 +176,7 @@ export function foldLearningItem(
     }
 
     // ---------- relearn — status→in_progress, completed_at=null, version+1 ----------
-    // Mirrors acceptRelearnProposal. completed_at stays null: the original time is not restorable.
+    // completed_at stays null: the original time is not restorable.
     if (
       fe.action === 'experimental:learning_item_relearn' &&
       fe.subject_kind === 'learning_item' &&
@@ -227,9 +224,8 @@ export function foldLearningItem(
     }
 
     // ---------- knowledge_ids merge rewrite ----------
-    // A merge proposal's subject is the surviving knowledge node, so it reaches this reducer
-    // via the gather. Apply only when accepted; only knowledge_ids changes (no version or
-    // updated_at bump), and unrelated merges are a no-op.
+    // A merge proposal's subject is the surviving KC, so it reaches this reducer via the
+    // gather. Only accepted merges rewrite attribution; no version/updated_at bump.
     if (fe.action === 'experimental:knowledge_merge' && fe.subject_kind === 'knowledge') {
       if (!acceptedProposeIds.has(fe.id)) continue; // pending / dismissed / rolled-back → no rewrite
       const m = KnowledgeMergePayloadForFold.safeParse(fe.payload);
@@ -237,7 +233,7 @@ export function foldLearningItem(
         warnMalformed('experimental:knowledge_merge', fe.id, m.error);
         continue;
       }
-      // Capture as const: narrowing does not survive into the closure, and the annotation
+      // Capture as const: narrowing does not survive the closure, and the annotation
       // breaks the loop-carried type cycle (TS7022).
       const prevIds: string[] = row.knowledge_ids;
       const nextIds = applyKnowledgeMergeToIds(prevIds, new Set(m.data.from_ids), m.data.into_id);

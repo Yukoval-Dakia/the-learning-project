@@ -1,10 +1,8 @@
 // YUK-1622 — the model's daily_focus must not restate plan arithmetic.
 //
-// The TodayPlan numbers are computed from the due queue + budget, but the model
-// still writes prose. A sentence such as "今天复习 30 题，约 60 分钟" would
-// contradict the computed 7 / 14 on /today, so this guard removes only clauses
-// that make a question-count, duration, or percentage claim. Bare numbers
-// (dates, names, "第 3 题") are deliberately left alone.
+// Computed TodayPlan numbers come from the due queue and budget, but model prose can
+// contradict them ("复习 30 题，约 60 分钟"). Remove only clauses claiming a question
+// count, duration, or percentage; bare numbers and ordinals stay.
 
 const NUMBER = String.raw`(?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十百千万两]+)`;
 
@@ -28,9 +26,8 @@ function hasPlanClaim(clause: string): boolean {
 }
 
 /**
- * Drop clauses that claim a plan quantity. Safe text is returned unchanged;
- * if every clause was a claim, use a neutral fallback rather than inventing a
- * replacement number.
+ * Drop plan-quantity clauses; safe text is unchanged. If everything is a claim, use a
+ * neutral fallback rather than inventing a number.
  */
 export function guardDailyFocusClaims(text: string): string {
   const clauses = (text.match(CLAUSE) ?? []).map((clause) => clause.trim()).filter(Boolean);

@@ -34,7 +34,6 @@ function parseIpv4Value(address: string): number | null {
   if (parts.length !== 4) return null;
   let value = 0;
   for (const part of parts) {
-    // `0` alone, or 1-3 digits with no leading zero.
     if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
     const octet = Number(part);
     if (octet > 255) return null;
