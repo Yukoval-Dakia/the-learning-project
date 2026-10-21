@@ -32,23 +32,22 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
-import {
-  type SourceAssetRow,
-  lockImageStorageKey,
-  persistImageAsset,
-  sha256Hex,
-} from '@/capabilities/ingestion/public';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  type SourceAssetRow,
+  lockImageStorageKey,
+  persistImageAsset,
+  sha256Hex,
+} from '@/kernel/records/asset-store';
 import { type R2Client, getR2 } from '@/server/r2';
 
 // r2 访问单主：practice 内只有本模块直接触达 '@/server/r2'（边界 audit 的
 // distinct-file 计数保持基线）。reaper / tools 一律经本模块的转发出口。
-export { lockImageStorageKey } from '@/capabilities/ingestion/public';
 export type { R2Client as JyeooR2Client } from '@/server/r2';
 export { getR2 as resolveJyeooR2 } from '@/server/r2';
 

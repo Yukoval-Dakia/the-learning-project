@@ -31,7 +31,7 @@ export async function readProviderCostAggregates(
   from: Date,
 ): Promise<ProviderCostAggregateRow[]> {
   return db.execute<ProviderCostAggregateRow>(sql`
-    ${projectedCosts(from)}, aggregates AS (
+    ${providerCostProjectedCte(from)}, aggregates AS (
       SELECT 'total'::text AS dimension, NULL::text AS day, NULL::text AS task_kind,
         NULL::text AS currency, NULL::text AS entry_kind, NULL::text AS cost_basis,
         NULL::text AS cost_ref,
@@ -102,8 +102,18 @@ export async function readProviderCostAggregates(
   `);
 }
 
-/** Shared authority/dedup seam. Link authority is intentionally not window-filtered. */
-function projectedCosts(from: Date, to?: Date) {
+/**
+ * Shared authority/dedup seam. Link authority is intentionally not window-filtered.
+ *
+ * YUK-1522 — moved verbatim from observability/server into kernel/read-models so
+ * the ingestion-agent weekly budget gate can compose the same canonical cost
+ * truth (dedup, basis, currency-split) without a capability→capability import.
+ * `ref`/`operation_id` are identity columns for scoped attribution filters:
+ * ref = cost_ledger.task_run_id | provider_attempt.attempt_id; operation_id is
+ * the provider attempt's durable operation id as text (NULL for ledger rows).
+ * Existing aggregate consumers do not select them and are unaffected.
+ */
+export function providerCostProjectedCte(from: Date, to?: Date) {
   const fromIso = from.toISOString();
   return sql`
     WITH authoritative_attempts AS NOT MATERIALIZED (
@@ -116,6 +126,7 @@ function projectedCosts(from: Date, to?: Date) {
       SELECT c.task_kind, c.cost, c.currency, c.entry_kind, c.cost_basis, c.cost_ref,
         c.tokens_in, c.tokens_out, c.occurred_at,
         c.provider, c.model, NULL::text AS lane_id, 'cost_ledger'::text AS source,
+        c.task_run_id AS ref, NULL::text AS operation_id,
         NULL::int AS wire_count, 'unclassified'::text AS usage_basis,
         'tokens'::text AS usage_unit, NULL::text AS usage_source,
         c.tokens_in::double precision AS usage_input, c.tokens_out::double precision AS usage_output,
@@ -135,7 +146,9 @@ function projectedCosts(from: Date, to?: Date) {
         'attempt', p.cost_basis, p.cost_source,
         COALESCE((p.usage_json->>'input')::double precision, 0)::int,
         COALESCE((p.usage_json->>'output')::double precision, 0)::int,
-        p.finished_at, p.provider, p.model, p.lane_id, 'provider_attempt', p.wire_count,
+        p.finished_at, p.provider, p.model, p.lane_id, 'provider_attempt',
+        p.attempt_id::text AS ref, p.operation_id::text AS operation_id,
+        p.wire_count,
         p.usage_json->>'basis', p.usage_json->>'unit', p.usage_json->>'source',
         (p.usage_json->>'input')::double precision,
         (p.usage_json->>'output')::double precision,
@@ -158,7 +171,7 @@ export async function readProviderCostWindow(
   if (!(Number.isFinite(from.getTime()) && Number.isFinite(to.getTime()) && from < to))
     throw new RangeError('Provider cost window must be finite and increasing');
   const details = await db.execute<ProviderCostDetail>(sql`
-    ${projectedCosts(from, to)}
+    ${providerCostProjectedCte(from, to)}
     SELECT provider, model, lane_id, task_kind, source, entry_kind, cost_basis, cost_ref, currency,
       SUM(cost)::double precision AS amount, COUNT(*)::int AS records,
       SUM(wire_count)::double precision AS wire_calls,

@@ -9,8 +9,8 @@
 
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
-import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import type { SubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 

@@ -5,6 +5,12 @@
 
 // YUK-885 — public read-model ports repointed from central deep imports.
 export { isDirectTreePair } from '@/core/topology-gate';
+export type {
+  CuratedAtomic,
+  HubMeshAtomicInput,
+  HubMeshEdge,
+} from '@/kernel/hub-mesh';
+export { resolveHubMeshAtomics } from '@/kernel/hub-mesh';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {
   FailureAttempt,
@@ -70,12 +76,6 @@ export {
   isMasteredForFrontier,
   learnableFrontierResolved,
 } from './server/frontier-read';
-export type {
-  CuratedAtomic,
-  HubMeshAtomicInput,
-  HubMeshEdge,
-} from './server/hub-mesh';
-export { resolveHubMeshAtomics } from './server/hub-mesh';
 export type {
   CreateLearningIntentKnowledgeNodeFn,
   CreateLearningIntentKnowledgeNodeInput,

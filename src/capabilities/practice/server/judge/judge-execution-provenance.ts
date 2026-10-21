@@ -1,11 +1,9 @@
 import type { AiTaskKind } from '@/capabilities/task-registry';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
-import { sha256Canonical, stableCanonicalValue } from '@/server/ai/task-input-hash';
+import { sha256Canonical, stableCanonicalValue } from '@/core/task-input-hash';
 import type { SubjectProfile } from '@/subjects/profile';
 export const JUDGE_PROMPT_ENVELOPE_VERSION = 1 as const;
 export const JUDGE_PROMPT_TEMPLATE_REVISION = 'judge-prompt-v1' as const;
-
-export { sha256Canonical, stableCanonicalValue, taskInputHash } from '@/server/ai/task-input-hash';
 
 export function judgePromptFingerprint(input: {
   taskKind: AiTaskKind;

@@ -20,11 +20,6 @@ export type {
 export type { MistakeListQuery } from './server/mistakes-read';
 export { readMistakes } from './server/mistakes-read';
 export type { SourceAssetRow } from './server/persist-image-asset';
-export {
-  lockImageStorageKey,
-  persistImageAsset,
-  sha256Hex,
-} from './server/persist-image-asset';
 // YUK-1408 — the docx TEXT-line session owner (src/server/session/
 // docx-ingestion.ts) writes the same usage receipt the OCR job writes; export
 // the writer + its field vocabulary through the public port so no server

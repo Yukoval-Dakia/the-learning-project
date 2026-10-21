@@ -11,13 +11,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
 import { sql } from 'drizzle-orm';
-import {
-  type HubMeshAtomicInput,
-  type HubMeshEdge,
-  listKnowledgeEdges,
-  loadTreeSnapshot,
-  resolveHubMeshAtomics,
-} from '@/capabilities/knowledge/public';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 // Auto-zone builder + suppression reader live in a neutral module (YUK-384 Task 8
 // ESM-cycle lift) so both the reconciler and the nightly job — which now imports
@@ -32,6 +25,12 @@ import { getConfig } from '@/core/config/store';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
+import {
+  type HubMeshAtomicInput,
+  type HubMeshEdge,
+  resolveHubMeshAtomics,
+} from '@/kernel/hub-mesh';
+import { listKnowledgeMeshEdges, loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 
 export interface HubSyncClaim {
   artifactId: string;
@@ -282,7 +281,7 @@ async function loadAtomicInputs(db: Db | Tx): Promise<HubMeshAtomicInput[]> {
 }
 
 async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
-  const rows = await listKnowledgeEdges(db);
+  const rows = await listKnowledgeMeshEdges(db);
   return rows.map((r) => ({
     from_knowledge_id: r.from_knowledge_id,
     to_knowledge_id: r.to_knowledge_id,

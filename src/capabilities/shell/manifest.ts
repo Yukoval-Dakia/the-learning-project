@@ -5,10 +5,6 @@ import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AutoAppliedProposalDigestSchema,
-  LegacyProposalDecisionBodySchema,
-  LegacyProposalDecisionResponseSchema,
-  LegacyProposalRetractBodySchema,
-  LegacyProposalRetractResponseSchema,
   OvernightDigestResponseSchema,
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
@@ -88,32 +84,6 @@ export const shellCapability = defineCapability({
         },
         successStatus: [200, 201],
         load: () => import('./api/proposal-decisions').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/proposals/[id]/decide',
-        operationId: 'decideProposalLegacy',
-        request: { params: ApiIdParamsSchema, body: LegacyProposalDecisionBodySchema },
-        responses: { 200: LegacyProposalDecisionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: {
-          successor: '/api/proposals/[id]/decisions',
-          since: '@1783987200',
-        },
-        load: () => import('./api/proposal-decide').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/proposals/[id]/retract',
-        operationId: 'retractProposalLegacy',
-        request: { params: ApiIdParamsSchema, body: LegacyProposalRetractBodySchema },
-        responses: { 200: LegacyProposalRetractResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: {
-          successor: '/api/proposals/[id]/decisions',
-          since: '@1783987200',
-        },
-        load: () => import('./api/proposal-retract').then((m) => m.POST),
       },
       {
         method: 'GET',

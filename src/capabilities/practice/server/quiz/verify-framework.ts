@@ -3,6 +3,7 @@ import {
   type JudgeAnswerParams,
   runSemanticJudge,
 } from '@/capabilities/practice/server/judge/question-contract';
+import { type RepairLevel, parseJsonObjectLoose } from '@/core/json-extract';
 import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
@@ -40,7 +41,6 @@ import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/sch
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -64,6 +64,7 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '../question-supply/placement-starter-attempts';
+import { answerCandidates, normalizeAnswer, referenceAnswerCandidates } from './choice-surface';
 
 // ---------- check identifiers ----------
 //
@@ -481,133 +482,13 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
   return isObjectiveAnswerKind(q.kind);
 }
 
-// F2: the question's declared answer for solve-check comparison. solution-generate.ts
-// writes the STRUCTURED final answer to rubric_json.reference_solution.final_answer
-// (+ answer_equivalents) while reference_md holds the full worked solution prose.
-// Comparing an exact solver answer against an entire worked solution would falsely
-// fail, so prefer the structured final answer and only fall back to reference_md when
-// no structured answer is present.
+// ---------- deterministic choice-surface pre-checks (YUK-1624 #24) ----------
 //
-// A1 (YUK-554 独立 review) — the reference_md fallback is the COMMON case for quiz_gen rows:
-// quiz_gen writes reference_md + rubric_json{keywords,required_points} but NO
-// reference_solution, and both backfill paths gate on reference_md IS NULL (quiz_gen rows
-// are always non-null → never backfilled). An exact-kind quiz_gen reference_md is typically
-// 「答案+解析」 prose, so the whole-text candidate alone made normalize-compare a
-// near-guaranteed false FAIL. Mitigation: ALSO derive (a) the first LINE and (b) the first
-// SENTENCE of that line (split on full-width enders 。！？ only — ASCII '.' excluded so
-// decimals like "3.14" never truncate) as candidates; the quiz_gen prompt contract puts the
-// bare answer first (choice/true_false: correct option text). Reverse (false-pass) risk: a
-// solver final_answer would have to normalize-equal a NON-answer prose line — implausible
-// for exact-shaped rows (the exact path is already gated to the objective kind family
-//  / persisted choices / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
-// vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
-// = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
-// unchanged. No kind gate — spec 附录 B (review A1 裁决).
-function referenceAnswerCandidates(q: SolveCheckQuestion): string[] {
-  const rubric = q.rubric_json;
-  if (rubric !== null && typeof rubric === 'object' && !Array.isArray(rubric)) {
-    const refSolution = (rubric as Record<string, unknown>).reference_solution;
-    if (refSolution !== null && typeof refSolution === 'object' && !Array.isArray(refSolution)) {
-      const rs = refSolution as Record<string, unknown>;
-      const out: string[] = [];
-      if (typeof rs.final_answer === 'string' && rs.final_answer.trim().length > 0) {
-        out.push(rs.final_answer.trim());
-      }
-      if (Array.isArray(rs.answer_equivalents)) {
-        for (const eq of rs.answer_equivalents) {
-          if (typeof eq === 'string' && eq.trim().length > 0) out.push(eq.trim());
-        }
-      }
-      if (out.length > 0) return out;
-    }
-  }
-  const fallback = (q.reference_md ?? '').trim();
-  if (fallback.length === 0) return [];
-  const out = [fallback];
-  // A1 — first line of the worked answer (quiz_gen contract: bare answer first).
-  const firstLine = (fallback.split(/\r?\n/, 1)[0] ?? '').trim();
-  if (firstLine.length > 0 && firstLine !== fallback) out.push(firstLine);
-  // A1 — first sentence of that line (full-width enders only; '.' excluded for decimals).
-  const firstSentence = (firstLine.split(/[。！？]/u, 1)[0] ?? '').trim();
-  if (firstSentence.length > 0 && !out.includes(firstSentence)) out.push(firstSentence);
-  return out;
-}
-
-export function normalizeAnswer(text: string): string {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\s　]+/gu, '') // strip ASCII + full-width whitespace only
-    .trim();
-}
-
-function choiceLabelIndex(value: string): number | null {
-  const label = value.normalize('NFKC').trim().toUpperCase();
-  if (!/^[A-F]$/u.test(label)) return null;
-  return label.charCodeAt(0) - 'A'.charCodeAt(0);
-}
-
-function stripLeadingChoiceLabel(value: string): string | null {
-  const normalized = value.normalize('NFKC').trim();
-  // low-pri (YUK-554 review A2, skip 裁决): `.` here is not dotAll — a multi-line labelled
-  // answer won't strip. Post-A1 the fallback candidates are first-line/first-sentence
-  // (single-line) so this is moot in practice; not worth a behavior-bearing regex change.
-  // Try the balanced-bracket shape first. Otherwise `A (content)` is consumed
-  // by the generic separator branch at the space and retains `(content)`.
-  // A labelled answer is persisted with an uppercase option marker. Keep this
-  // case-sensitive: treating lowercase function names such as `f(x)` as an
-  // option wrapper would add the false candidate `x` and could normalize-pass
-  // an actually wrong fill-blank answer.
-  const match = /^([A-F])(?:\s*[(（[【]\s*(.+?)\s*[)）\]】]\s*$|[\s.、:：)\]）-]+(.+))$/u.exec(
-    normalized,
-  );
-  const stripped = (match?.[2] ?? match?.[3])?.trim();
-  return stripped && stripped.length > 0 ? stripped : null;
-}
-
-// A1 (YUK-554 独立 review) — trailing sentence-punctuation variant for exact compare, applied
-// symmetrically to BOTH reference and solver candidates via answerCandidates. normalizeAnswer
-// deliberately strips whitespace only (mathematical symbols are load-bearing), so 『长安。』 vs
-// 『长安』 was a stable false fail. Conservative trailing set: full-width 。．！？ + ASCII .!?
-// — trailing-only, so interior punctuation ("3.14", "x=-1") is untouched.
-function stripTrailingPunct(value: string): string | null {
-  const stripped = value.replace(/[。．.!！?？]+$/u, '').trim();
-  return stripped.length > 0 && stripped !== value ? stripped : null;
-}
-
-function addChoiceExpansion(out: string[], choice: string | undefined): void {
-  if (!choice) return;
-  // `choices_md` entries are option bodies, not answer wrappers. Re-running
-  // wrapper stripping here would turn a real option such as F(x) into the false
-  // candidate x. Explicit labels are stripped only from answer strings above.
-  out.push(choice);
-}
-
-function answerCandidates(
-  text: string,
-  choices: readonly string[],
-  allowChoiceWrapper: boolean,
-): string[] {
-  const out = [text];
-  // Parenthesized A-F wrappers are only meaningful for an actual choice item.
-  // Outside that context, F(x) / A(t) are load-bearing mathematical notation.
-  const stripped = allowChoiceWrapper ? stripLeadingChoiceLabel(text) : null;
-  if (stripped) out.push(stripped);
-
-  const labelIndex = choiceLabelIndex(text);
-  if (labelIndex !== null) {
-    addChoiceExpansion(out, choices[labelIndex]);
-  }
-
-  // A1 — trailing-punct variant of every candidate gathered so far (both sides of the
-  // compare flow through here, so 『长安』↔『长安。』 matches in either direction).
-  for (const candidate of [...out]) {
-    const trimmed = stripTrailingPunct(candidate);
-    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
-  }
-
-  return out;
-}
+// MOVED to ./choice-surface.ts (YUK-1572): the pure answer-candidate kernel
+// (referenceAnswerCandidates / normalizeAnswer / choiceLabel* / answerCandidates)
+// plus the whole choice-surface rule block. runSolveCheck's exact path imports
+// the kernel back above; consumers (quiz_verify.ts) import the rules module
+// directly. Semantics unchanged — the module received the code verbatim.
 
 // OCR (PR #716) — `label` identifies the CALLER (check name + task kind) so a parse-failure
 // error message names the check/task that actually blew up. This is a SHARED helper (solve_check

@@ -1,41 +1,8 @@
-// YUK-924 — ModelProfile capability registry for the AI runner.
-//
-// Three-layer resolution (OpenCode-style config-over-catalog):
-//
-//   conservative defaults  ←  catalog snapshot  ←  provider binding
-//   (all 'unknown', no      (models.dev trim,     (PROVIDERS[].models /
-//    limits, standard        committed, parsed     modelDefaults in
-//    execution)              fail-closed)          providers.ts)
-//
-// A binding field ALWAYS wins over the catalog; a catalog field wins over the
-// conservative defaults; anything neither layer knows stays 'unknown'/omitted.
-// `source` reports the HIGHEST layer that contributed at least one field
-// ('binding' | 'catalog' | 'defaults') so run metadata can explain where the
-// effective profile came from.
-//
-// The catalog layer is the runtime document in model-catalog.ts: the last
-// models.dev fetch in model_catalog_cache, or the committed snapshot when that
-// row is missing or unreadable. `pnpm gen:model-catalog` still rewrites the
-// snapshot for offline boot and fixtures. The parse is deliberately NARROW
-// (only the fields we consume) and fail-closed (a malformed entry parses to an
-// empty catalog layer, never to invented capabilities). A model missing from
-// the newest document keeps its previous entry there. A selected model whose
-// capabilities change does too. This resolver does not swap the stored task model.
-//
-// YUK-921 (execution-adapter) is PARKED and out of scope: this module only
-// classifies models; it does not change how requests are executed.
-
 import type { Provider } from '@/ai/registry';
-import type { EffortLevel } from '@/ai/task-spec';
-import { catalogModelEntry, parseCatalogModelEntry } from './model-catalog';
-import { nativePiModel } from './pi-provider-catalog';
+import { type ParsedCatalogModel, catalogModelEntry, catalogModelFacts } from './model-catalog';
+import { modelCatalogOverride } from './model-catalog-overrides';
 import { PROVIDER_MODEL_BINDINGS } from './providers';
 
-// ---------------------------------------------------------------------------
-// Public shape
-// ---------------------------------------------------------------------------
-
-/** Knowledge tri-state: confirmed true / confirmed false / not known. */
 export type ModelCapabilityTriState = true | false | 'unknown';
 
 export interface ModelProfileCapabilities {
@@ -43,107 +10,31 @@ export interface ModelProfileCapabilities {
   vision: ModelCapabilityTriState;
   reasoning: ModelCapabilityTriState;
   structuredOutput: ModelCapabilityTriState;
-  /**
-   * YUK-1547 — does this lane's endpoint accept a forced named-function
-   * `tool_choice` on the resolved wire shape (incl. thinking/reasoning params)?
-   * The catalog snapshots carry no such bit, so this is binding-declared only:
-   * 'unknown' keeps the legacy forced-submit posture (no evidence either way);
-   * `false` is an evidence-backed rejection — the runner degrades to
-   * `tool_choice:'auto'` + one closing reminder instead of sending the forced
-   * choice that the provider 400s. `true` is explicit confirmation.
-   */
   forcedToolChoice: ModelCapabilityTriState;
 }
 
 export interface ModelProfileLimits {
-  /** Total context window (input+output) in tokens; omitted when unknown. */
   contextWindowTokens?: number;
-  /**
-   * Hard output-token ceiling; omitted when unknown.
-   *
-   * P2 wiring note (documented no-op): the Agent SDK `Options` surface exposes
-   * NO plain output-token cap — only the deprecated `maxThinkingTokens`
-   * (reasoning-only) and the alpha `taskBudget` (a DIFFERENT semantic: total
-   * task-budget awareness sent under a beta header). Flowing
-   * limits.maxOutputTokens into either would change request bytes for every
-   * known model, so the runner does not set an output cap today and this field
-   * is consumed only as data (metadata / future adapters such as a YUK-921
-   * execution-adapter follow-up).
-   */
+  maxInputTokens?: number;
   maxOutputTokens?: number;
 }
 
 export interface ModelProfileReasoning {
-  /** How the endpoint takes a reasoning directive (from catalog reasoning_options). */
-  mode: 'effort' | 'budget_tokens' | 'toggle';
-  /** Effort ladder the model accepts (effort mode only; else empty). */
-  supportedEfforts: readonly EffortLevel[];
-  /**
-   * OUR operational default (provider binding only — the catalog has no
-   * default-effort field). Metadata-only: it feeds the same YUK-923 chain for
-   * observability and MUST NOT introduce a new effort wiring path; the runner
-   * still passes `effort` exclusively from the task spec's reasoningEffort.
-   */
-  defaultEffort?: EffortLevel;
+  mode: 'effort' | 'budget_tokens' | 'toggle' | 'unknown';
+  supportedEfforts: readonly string[];
+  defaultEffort?: string;
 }
 
 export interface ModelProfileExecution {
-  /**
-   * Durable-lane timeout class. 'durable-heavy' models (zhipu glm-5.3-flash,
-   * YUK-839 burn-in) get the relaxed durable evidence budgets; every other
-   * model keeps the mimo-sized constants (site 1 convergence).
-   */
   timeoutClass: 'standard' | 'durable-heavy';
-  /**
-   * Cost tier of the lane (informational; no runtime consumer yet beyond the
-   * documented classification of the four active models).
-   */
   budgetClass: 'cheap' | 'standard' | 'heavy';
-  /**
-   * Site 3 convergence: this lane reports trustworthy SDK USD totals and the
-   * per-run maxBudgetUsd ceiling is a real guardrail (anthropic pay-as-you-go
-   * only; NOT anthropic-sub — flat subscription quota — and not the compat
-   * endpoints, which report placeholder zeros).
-   */
   meteredUsd: boolean;
-  /**
-   * Site 5 convergence: the model has a local USD token pricebook entry
-   * (pricing.ts). Membership lives here; pricing.ts uses the corresponding
-   * committed catalog rates as a dated public-price estimate, not an invoice.
-   */
   localPricebook: boolean;
 }
 
-/**
- * Provider-declared model binding (the "config" in config-over-catalog). Lives
- * here so the type sits next to its merge semantics; providers.ts imports it
- * (type-only) to type the PROVIDER_MODEL_BINDINGS table. Every field is
- * optional — a binding either overrides specific fields of a catalog entry or
- * fully defines a profile for a catalog-miss model.
- */
+/** Application policy is not a claim about upstream model capabilities. */
 export interface ProviderModelBinding {
-  capabilities?: {
-    toolCalling?: boolean;
-    vision?: boolean;
-    reasoning?: boolean;
-    structuredOutput?: boolean;
-    forcedToolChoice?: boolean;
-  };
-  limits?: {
-    contextWindowTokens?: number;
-    maxOutputTokens?: number;
-  };
-  reasoning?: {
-    mode?: ModelProfileReasoning['mode'];
-    supportedEfforts?: readonly EffortLevel[];
-    defaultEffort?: EffortLevel;
-  };
-  execution?: {
-    timeoutClass?: ModelProfileExecution['timeoutClass'];
-    budgetClass?: ModelProfileExecution['budgetClass'];
-    meteredUsd?: boolean;
-    localPricebook?: boolean;
-  };
+  execution?: Partial<ModelProfileExecution>;
 }
 
 export interface ModelProfile {
@@ -151,233 +42,118 @@ export interface ModelProfile {
   model: string;
   capabilities: ModelProfileCapabilities;
   limits: ModelProfileLimits;
+  inputModalities: readonly string[] | 'unknown';
+  baseUrl?: string;
+  api?: ParsedCatalogModel['api'];
   reasoning: ModelProfileReasoning;
   execution: ModelProfileExecution;
-  /** Highest layer that contributed at least one field. */
   source: 'binding' | 'catalog' | 'defaults';
 }
 
-// ---------------------------------------------------------------------------
-// Catalog snapshot — narrow parse (Layer 1)
-// ---------------------------------------------------------------------------
-
-/**
- * Internal provider → catalog provider id. anthropic-sub serves the same claude
- * model ids against Anthropic's first-party endpoint, so it maps to the same
- * catalog entries and the binding layer re-classifies the lane-specific fields
- * (meteredUsd). Reserved-but-not-implemented providers (openrouter / gateway)
- * intentionally have NO mapping: they resolve to conservative defaults.
- * 'openai' is implemented (YUK-1027) but also unmapped: the committed snapshot
- * has no openai bucket — the pi builtin catalog owns the wire facts, so the
- * openai provider binding carries the complete app-level profile for
- * gpt-6-astra (every field declared explicitly, source:'binding').
- * 'opencode-go' reads the models.dev opencode-go bucket. toolCalling is that
- * bucket's tool_call. The binding still owns structuredOutput and meteredUsd.
- */
 export const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
   'zhipuai-coding-plan': 'zhipuai-coding-plan',
   'opencode-go': 'opencode-go',
+  openai: 'openai',
+  openrouter: 'openrouter',
 };
 
-function catalogEntryFor(provider: Provider, model: string): unknown {
-  const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider];
-  if (catalogProvider === undefined) return undefined;
-  return catalogModelEntry(catalogProvider, model);
-}
-
-// ---------------------------------------------------------------------------
-// Resolution (Layer 2)
-// ---------------------------------------------------------------------------
-
-const CONSERVATIVE_EXECUTION: ModelProfileExecution = Object.freeze({
+const CONSERVATIVE_EXECUTION: ModelProfileExecution = {
   timeoutClass: 'standard',
   budgetClass: 'standard',
   meteredUsd: false,
   localPricebook: false,
-});
+};
 
-function bindingForProvider(provider: Provider): {
-  modelDefaults?: ProviderModelBinding;
-  models?: Readonly<Record<string, ProviderModelBinding>>;
-} {
-  return PROVIDER_MODEL_BINDINGS[provider] ?? {};
-}
-
-function applyBindingLayer(profile: ModelProfile, binding: ProviderModelBinding | undefined): void {
-  if (!binding) return;
-  if (binding.capabilities) {
-    const caps = binding.capabilities;
-    if (caps.toolCalling !== undefined) profile.capabilities.toolCalling = caps.toolCalling;
-    if (caps.vision !== undefined) profile.capabilities.vision = caps.vision;
-    if (caps.reasoning !== undefined) profile.capabilities.reasoning = caps.reasoning;
-    if (caps.structuredOutput !== undefined) {
-      profile.capabilities.structuredOutput = caps.structuredOutput;
-    }
-    if (caps.forcedToolChoice !== undefined) {
-      profile.capabilities.forcedToolChoice = caps.forcedToolChoice;
-    }
+export function resolveModelProfile(
+  provider: Provider,
+  model: string,
+  env: Record<string, string | undefined> = process.env,
+): ModelProfile {
+  const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider];
+  let facts: ParsedCatalogModel = catalogProvider ? catalogModelFacts(catalogProvider, model) : {};
+  const override = modelCatalogOverride(provider, model, env);
+  // Token Plan has no catalog bucket. Reuse model facts, never Xiaomi's endpoint or tool admission.
+  if (provider === 'xiaomi-token-plan' && override) {
+    const { baseUrl: _base, toolCalling: _tools, ...shared } = catalogModelFacts('xiaomi', model);
+    facts = shared;
   }
-  if (binding.limits) {
-    if (binding.limits.contextWindowTokens !== undefined) {
-      profile.limits.contextWindowTokens = binding.limits.contextWindowTokens;
-    }
-    if (binding.limits.maxOutputTokens !== undefined) {
-      profile.limits.maxOutputTokens = binding.limits.maxOutputTokens;
-    }
+  let source: ModelProfile['source'] = Object.values(facts).some((value) => value !== undefined)
+    ? 'catalog'
+    : 'defaults';
+  if (override) {
+    const known = Object.fromEntries(
+      Object.entries(facts).filter(([, value]) => value !== undefined),
+    );
+    facts =
+      override.when === 'missing'
+        ? { ...override.facts, ...known }
+        : { ...facts, ...override.facts };
+    source = 'binding';
   }
-  if (binding.reasoning) {
-    if (binding.reasoning.mode !== undefined) profile.reasoning.mode = binding.reasoning.mode;
-    if (binding.reasoning.supportedEfforts !== undefined) {
-      profile.reasoning.supportedEfforts = binding.reasoning.supportedEfforts;
-    }
-    if (binding.reasoning.defaultEffort !== undefined) {
-      profile.reasoning.defaultEffort = binding.reasoning.defaultEffort;
-    }
-  }
-  if (binding.execution) {
-    const exec = binding.execution;
-    if (exec.timeoutClass !== undefined) profile.execution.timeoutClass = exec.timeoutClass;
-    if (exec.budgetClass !== undefined) profile.execution.budgetClass = exec.budgetClass;
-    if (exec.meteredUsd !== undefined) profile.execution.meteredUsd = exec.meteredUsd;
-    if (exec.localPricebook !== undefined) profile.execution.localPricebook = exec.localPricebook;
-  }
-  profile.source = 'binding';
-}
-
-/**
- * Resolve the ModelProfile for an exact (provider, model) lane.
- *
- * Pure and synchronous; safe to call per attempt. Unknown models on unmapped
- * providers resolve to the conservative tri-state defaults.
- */
-export function resolveModelProfile(provider: Provider, model: string): ModelProfile {
-  const profile: ModelProfile = {
+  const binding = PROVIDER_MODEL_BINDINGS[provider];
+  return {
     provider,
     model,
     capabilities: {
-      toolCalling: 'unknown',
-      vision: 'unknown',
-      reasoning: 'unknown',
-      structuredOutput: 'unknown',
-      forcedToolChoice: 'unknown',
+      toolCalling: facts.toolCalling ?? 'unknown',
+      vision: facts.vision ?? 'unknown',
+      reasoning: facts.reasoning ?? 'unknown',
+      structuredOutput: facts.structuredOutput ?? 'unknown',
+      forcedToolChoice: facts.forcedToolChoice ?? 'unknown',
     },
-    limits: {},
-    reasoning: { mode: 'toggle', supportedEfforts: [] },
-    execution: { ...CONSERVATIVE_EXECUTION },
-    source: 'defaults',
+    limits: {
+      contextWindowTokens: facts.contextWindowTokens,
+      maxInputTokens: facts.maxInputTokens,
+      maxOutputTokens: facts.maxOutputTokens,
+    },
+    inputModalities: facts.inputModalities ?? 'unknown',
+    baseUrl: facts.baseUrl,
+    api: facts.api,
+    reasoning: {
+      mode: facts.reasoningMode ?? 'unknown',
+      supportedEfforts: facts.supportedEfforts ?? [],
+    },
+    execution: {
+      ...CONSERVATIVE_EXECUTION,
+      ...binding?.modelDefaults?.execution,
+      ...binding?.models?.[model]?.execution,
+    },
+    source,
   };
-
-  const catalog = parseCatalogModelEntry(catalogEntryFor(provider, model));
-  if (catalog.toolCalling !== undefined) profile.capabilities.toolCalling = catalog.toolCalling;
-  if (catalog.vision !== undefined) profile.capabilities.vision = catalog.vision;
-  if (catalog.reasoning !== undefined) profile.capabilities.reasoning = catalog.reasoning;
-  if (catalog.structuredOutput !== undefined) {
-    profile.capabilities.structuredOutput = catalog.structuredOutput;
-  }
-  if (catalog.contextWindowTokens !== undefined) {
-    profile.limits.contextWindowTokens = catalog.contextWindowTokens;
-  }
-  if (catalog.maxOutputTokens !== undefined) {
-    profile.limits.maxOutputTokens = catalog.maxOutputTokens;
-  }
-  if (catalog.reasoningMode !== undefined) profile.reasoning.mode = catalog.reasoningMode;
-  if (catalog.supportedEfforts !== undefined) {
-    profile.reasoning.supportedEfforts = catalog.supportedEfforts;
-  }
-  if (
-    catalog.toolCalling !== undefined ||
-    catalog.vision !== undefined ||
-    catalog.reasoning !== undefined ||
-    catalog.structuredOutput !== undefined ||
-    catalog.contextWindowTokens !== undefined ||
-    catalog.maxOutputTokens !== undefined ||
-    catalog.reasoningMode !== undefined ||
-    catalog.supportedEfforts !== undefined
-  ) {
-    profile.source = 'catalog';
-  }
-
-  const binding = bindingForProvider(provider);
-  applyBindingLayer(profile, binding.modelDefaults);
-  applyBindingLayer(profile, binding.models?.[model]);
-  // Native execution facts are authoritative over historical compatibility-lane declarations.
-  const native = nativePiModel(provider, model);
-  if (native) {
-    profile.capabilities.vision = native.input.includes('image');
-    profile.capabilities.reasoning = native.reasoning;
-    profile.limits.contextWindowTokens = native.contextWindow;
-    profile.limits.maxOutputTokens = native.maxTokens;
-  }
-  return profile;
 }
 
-/**
- * Model-only lookup for the legacy per-model consumers (durable evidence
- * budgets, local pricebook membership) whose lanes hand them a bare model id.
- * Scans the wired providers in declaration order and returns the FIRST lane on
- * which the model is actually known — a per-model binding entry OR a catalog
- * hit under that provider's mapped catalog provider. Provider-wide
- * modelDefaults do NOT count as knowing a model (they apply to every model id,
- * including unknown ones). All-miss → conservative defaults. Our model ids do
- * not collide across providers, so the scan is deterministic in practice.
- */
 export function resolveModelProfileByModel(model: string): ModelProfile {
-  for (const provider of Object.keys(CATALOG_PROVIDER_BY_INTERNAL) as Provider[]) {
-    const binding = bindingForProvider(provider);
-    if (binding.models?.[model] !== undefined) return resolveModelProfile(provider, model);
-    if (catalogEntryFor(provider, model) !== undefined) return resolveModelProfile(provider, model);
+  for (const [provider, catalogProvider] of Object.entries(CATALOG_PROVIDER_BY_INTERNAL)) {
+    if (catalogModelEntry(catalogProvider, model) !== undefined) {
+      return resolveModelProfile(provider as Provider, model);
+    }
   }
-  // All-miss: the conservative defaults profile (kept on a mapped provider so
-  // provider/model stay populated for metadata).
   return resolveModelProfile('anthropic', model);
 }
 
-// ---------------------------------------------------------------------------
-// Capability gate (Layer 4 / P2)
-// ---------------------------------------------------------------------------
-
-/** Minimal task-definition view the gate needs (structural subset of TaskDefinition). */
 export interface CapabilityGatedTaskDef {
   readonly kind: string;
   readonly needsToolCall: boolean;
   readonly isMultimodal: boolean;
 }
 
-function capabilityGap(
-  def: CapabilityGatedTaskDef,
-  profile: ModelProfile,
-): { capability: 'toolCalling' | 'vision'; value: ModelCapabilityTriState } | undefined {
-  if (def.needsToolCall && profile.capabilities.toolCalling !== true) {
-    return { capability: 'toolCalling', value: profile.capabilities.toolCalling };
-  }
-  if (def.isMultimodal && profile.capabilities.vision !== true) {
-    return { capability: 'vision', value: profile.capabilities.vision };
-  }
-  return undefined;
-}
-
-/**
- * YUK-924 P2 fail-closed capability gate, run at task resolution time (the
- * AiRunLifecycle constructor — before any paid call, admission row, or attempt
- * row exists). A task that NEEDS a capability (needsToolCall / isMultimodal)
- * may only run on a lane whose profile CONFIRMS it (`true`). 'unknown' and
- * false both reject: the remedy is an explicit provider-binding entry in
- * providers.ts (config-over-catalog) declaring the capability for that model,
- * which this same function then accepts.
- */
 export function assertModelProfileCapabilityFit(
   def: CapabilityGatedTaskDef,
   provider: Provider,
   model: string,
 ): void {
   const profile = resolveModelProfile(provider, model);
-  const gap = capabilityGap(def, profile);
-  if (!gap) return;
-  const state = gap.value === false ? 'does not support' : 'has no confirmed';
+  const capability =
+    def.needsToolCall && profile.capabilities.toolCalling !== true
+      ? 'toolCalling'
+      : def.isMultimodal && profile.capabilities.vision !== true
+        ? 'vision'
+        : undefined;
+  if (!capability) return;
   throw new Error(
-    `Task ${def.kind} requires ${gap.capability === 'toolCalling' ? 'tool calling' : 'vision input'}, but model '${model}' on provider '${provider}' ${state} it (profile source: ${profile.source}). Fix the lane (AI_PROVIDER_OVERRIDE / AI_PROVIDER_MODEL / task registry default), or declare the capability explicitly in the provider's models binding in src/server/ai/providers.ts.`,
+    `Task ${def.kind} requires ${capability}, but '${provider}/${model}' reports ${profile.capabilities[capability]} (source: ${profile.source}). Review the catalog finding or add an evidence-backed model-catalog-overrides.ts entry; task model selection is unchanged.`,
   );
 }

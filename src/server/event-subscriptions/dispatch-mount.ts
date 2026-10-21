@@ -1,13 +1,11 @@
-// YUK-751 review TcWGF — the live mount for the durable subscription bus. Before this the whole
-// runtime (registry + dispatch cycle) had NO production caller: 建成不通电. `startBossWorker` calls
-// `mountSubscriptionDispatch` after registering capability jobs, so both the standalone worker
-// (scripts/worker.ts) and the in-process RW_WORKER (server/index.ts) drive the cycle.
+// Live mount for the durable subscription bus. `startBossWorker` mounts it after
+// registering capability jobs, so both the standalone worker and the in-process
+// RW_WORKER drive the cycle.
 //
-// Shape: load the subscription registry from the manifests once at boot, then a recurring pg-boss
-// job runs one dispatch cycle per tick. Checkpoint leases (claimSubscriptionLease) serialize per
-// subscriber across workers, so the exact cadence is NOT load-bearing and a double-fire is safe —
-// pg-boss's cron floor is 1 minute. Each tick drains a bounded slice rather than
-// imposing an additional one-minute delay for EVERY pending delivery.
+// The registry loads once at boot, then a recurring pg-boss job runs one dispatch
+// cycle per tick. Checkpoint leases serialize each subscriber across workers, so
+// the cadence is not load-bearing and a double-fire is safe. A tick drains a
+// bounded slice instead of adding a minute of delay per delivery.
 
 import type { PgBoss } from 'pg-boss';
 
@@ -35,15 +33,14 @@ export const EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE = {
   note: '仅在存在订阅时挂载；此处为默认调度声明，不代表 worker 已挂载或确认。',
 } as const;
 const DEFAULT_DISPATCH_MAX_ATTEMPTS = 5;
-// YUK-1565: one minute is the idle wake-up floor, not the per-delivery rate.
-// A slice starts no new claims after 30s; an already claimed handler keeps its
-// existing timeout/lease semantics, so this is NOT a 30s hard cycle deadline.
+// One minute is the idle wake-up floor, not the per-delivery rate. A slice starts
+// no new claims after 30s; an active handler keeps its own timeout and lease, so
+// 30s is not a hard cycle deadline.
 const MAX_DELIVERIES_PER_SUBSCRIPTION = 100;
 const MAX_DISPATCH_MS = 30_000;
 
-// H2 (Tdx9E) — explicit retry policy for the dispatch queue instead of pg-boss defaults (which would
-// retry a failed cycle immediately ×3 during a DB outage). Reuses the codebase job-retry convention
-// (JOB_RETRY_LIMIT / JOB_RETRY_DELAY_SECONDS + backoff), same as the LLM/agent job queues.
+// Explicit retry policy: pg-boss defaults would retry a failed cycle immediately
+// three times during a DB outage. Reuse the job-retry convention and backoff.
 const DISPATCH_QUEUE_OPTS = {
   ...FAST_QUEUE_OPTS,
   retryLimit: JOB_RETRY_LIMIT,
@@ -58,8 +55,8 @@ export type MountSubscriptionDispatchOptions = {
 };
 
 /**
- * Mounts the recurring subscription-dispatch driver. Returns false (mounts nothing) when no
- * capability declares a subscription — there is nothing to power, so we don't create an idle queue.
+ * Mount the recurring dispatcher. Returns false and creates no queue when no
+ * capability declares a subscription.
  */
 export async function mountSubscriptionDispatch(
   boss: PgBoss,
@@ -78,11 +75,10 @@ export async function mountSubscriptionDispatch(
   await boss.work(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    // YUK-1055 — epoch fence（'drain'：delivery 自带 idempotency，分发器与合同无关，
-    // 但维护窗下仍停拍）。pending 翻译在 bootstrapSubscription（runtime.ts）。
+    // Drain mode: delivery is idempotent, but maintenance still stops the tick.
+    // Pending-item translation lives in bootstrapSubscription.
     fenceAwareJobHandler(db, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, async () => {
-      // Tc4HL — log the cycle result (counts + duration) so the dispatcher is observable; a
-      // dead-lettered delivery is a real handler failure that needs attention → warn.
+      // Log counts and duration; a dead-lettered delivery is a real failure, so warn.
       const startedAt = Date.now();
       try {
         const cycle = await runSubscriptionDispatchCycle(db, registry, {
@@ -95,8 +91,7 @@ export async function mountSubscriptionDispatch(
         const log = cycle.deadLettered > 0 ? console.warn : console.info;
         log('[event-subscriptions] dispatch cycle', { ...cycle, durationMs });
       } catch (err) {
-        // G5 (TdYuQ) — log with context, then RETHROW so pg-boss marks the job failed (retry +
-        // visibility) instead of the error vanishing.
+        // Rethrow so pg-boss records and retries the failure instead of losing it.
         console.error('[event-subscriptions] dispatch cycle failed', {
           durationMs: Date.now() - startedAt,
           error: err,
@@ -105,8 +100,7 @@ export async function mountSubscriptionDispatch(
       }
     }),
   );
-  // Tc4HM — align tz with the codebase's boss.schedule convention (Asia/Shanghai). Cadence is not
-  // load-bearing (leases serialize), but keep the schedule row's tz consistent with the rest.
+  // Match the codebase schedule timezone; leases make cadence non-load-bearing.
   await boss.schedule(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
     cron,

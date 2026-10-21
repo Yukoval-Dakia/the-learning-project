@@ -25,7 +25,7 @@
 // verify-framework.ts for the full asymmetry rationale before "unifying" the two.
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
   type RunSourceGroundingVerifyParams,
@@ -46,7 +46,6 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
-import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -56,7 +55,6 @@ import {
   recordPaidEffectApplication,
   recordPaidEffectResult,
 } from '@/db/paid-effect-store';
-import { notDraftPredicate } from '@/db/predicates';
 import {
   event,
   knowledge,
@@ -86,18 +84,15 @@ import {
   publishQuestionGroupFromRow,
 } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
-import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
+import { DEDUP_OVERLAP_THRESHOLD } from '../server/question-supply/sourced-dedup';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
-  type SolveCheckResult,
-  type VerifyCheck,
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
@@ -109,6 +104,13 @@ import {
   draftCanonicalIdentity,
   revisionToDraftDocument,
 } from '../server/tools/submit-question';
+import { checkDedup } from './source_verify_dedup';
+import {
+  type CheckOutcome,
+  checkSourceConsistency,
+  checkStructureCompleteness,
+} from './source_verify_prechecks';
+import { projectSourceVerifyResult, solveCheckToOutcome } from './source_verify_result';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -135,14 +137,6 @@ type DepsOverride = {
 // 保既有 import 路径。near-duplicate 判定仍用同一 maxNgramOverlap（word-shingle
 // Jaccard, CJK-aware）。
 export { DEDUP_OVERLAP_THRESHOLD };
-
-export interface CheckOutcome {
-  check: VerifyCheck;
-  // pass = the check is satisfied; fail = a hard problem; unsupported = no signal
-  // (normally non-blocking; an unresolved exact mismatch is held in tier 2).
-  verdict: 'pass' | 'fail' | 'unsupported';
-  reason: string;
-}
 
 export type SourceVerifyPerQuestionStatus =
   | 'verified'
@@ -329,189 +323,13 @@ export async function publishVerifyLifecycleUpdate(
 }
 
 // ---------- deterministic checks ----------
+//
+// YUK-1572 — the two PURE pre-checks of this set (structure_completeness +
+// source_consistency, with the CheckOutcome record) moved to
+// ./source_verify_prechecks.ts. What remains here is the checks that cannot
+// be pure: dedup queries the pool and solve_check spends the LLM call.
 
 type QuestionRow = typeof question.$inferSelect;
-
-// structure_completeness — the row carries the fields its kind requires. Only
-// `choice` requires ≥2 options; every kind needs a non-empty prompt + reference
-// answer. true_false is INTENTIONALLY exempt: the repo's existing 判断题 form is
-// kind='true_false' + reference_md carrying 真/假 with NO choices_md (practice/paper
-// fixtures share this shape, and judge routing dispatches true_false straight to
-// exact). Forcing ≥2 choices onto sourced true_false rows would strand every
-// option-less 判断题 in draft forever (F1).
-function checkStructureCompleteness(row: QuestionRow): CheckOutcome {
-  const problems: string[] = [];
-  if (!row.prompt_md || row.prompt_md.trim().length === 0) problems.push('empty prompt_md');
-  if (!row.reference_md || row.reference_md.trim().length === 0) {
-    problems.push('empty reference_md');
-  }
-  // YUK-386 — kind is a free-form label; fold through the vocab (single_choice /
-  // multiple_choice → choice) so legacy profile-vocab rows keep the same check,
-  // then read the STRUCTURE: a choice-shaped row must carry ≥2 options.
-  const choices = row.choices_md ?? [];
-  if (
-    (normalizeToCanonicalKind(row.kind) === 'choice' || choices.length === 1) &&
-    choices.length < 2
-  ) {
-    problems.push('choice question has <2 choices');
-  }
-  return problems.length === 0
-    ? { check: 'structure_completeness', verdict: 'pass', reason: 'all required fields present' }
-    : { check: 'structure_completeness', verdict: 'fail', reason: problems.join('; ') };
-}
-
-// Minimum deterministic overlap between a sourced question's prompt+reference and the
-// extract the agent reported lifting from the declared source page. BELOW this, the
-// stored content does not support the declared provenance (mis-extraction or a
-// fabricated/guessed URL) and source_consistency fails. This is the INVERSE direction
-// of quiz_verify's copy_safety (which fails on HIGH overlap to catch plagiarism):
-// here a sourced question SHOULD closely echo its real source. Reuses the same
-// deterministic word-shingle overlap (maxNgramOverlap, CJK-aware). CONSERVATIVE start
-// — the gate only fires when an extract is present AND clearly fails to ground the
-// question, so genuine restructuring (paraphrase) is not punished. Tunable.
-export const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
-
-// source_consistency — the row's declared source matches its persisted provenance:
-// deriveSourceTier lands tier 2, the web_sourced block parses, source_ref is present
-// and equals the provenance URL, AND (when the agent persisted an extract) the
-// prompt+reference deterministically overlap that extract. A web_sourced row that
-// does NOT derive tier 2, omits source_ref, or whose stored content does not ground
-// the declared source page is rejected. The overlap is DETERMINISTIC over the
-// PERSISTED extract — verify never refetches the network (mirrors the quiz_gen
-// source_pack snippet → quiz_verify maxNgramOverlap precedent; spec §4).
-function checkSourceConsistency(row: QuestionRow): CheckOutcome {
-  const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-  // F2: extract is the deterministic grounding anchor. A web_sourced row without a
-  // non-empty extract cannot derive tier 2 (WebSourcedProvenance now requires it), so
-  // the generic tier check below already rejects it — but check it FIRST so the audit
-  // reason names extract precisely rather than the opaque "missing or malformed".
-  const rawWebSourced = (metadata.web_sourced ?? {}) as Record<string, unknown>;
-  const rawExtract = rawWebSourced.extract;
-  if (typeof rawExtract !== 'string' || rawExtract.trim().length === 0) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason:
-        'web_sourced row has no extract; the declared source cannot be deterministically grounded (fabricated/unanchored URL risk)',
-    };
-  }
-  const { tier } = deriveSourceTier({ source: row.source, metadata });
-  if (tier !== 2) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason: `web_sourced row does not derive tier 2 (got tier ${tier}); provenance is missing or malformed`,
-    };
-  }
-  const parsed = WebSourcedProvenance.safeParse(metadata.web_sourced);
-  if (!parsed.success) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason: `metadata.web_sourced failed provenance parse: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    };
-  }
-  // A web_sourced question with no source_ref has incomplete provenance — the column
-  // is supposed to carry the fetched URL (合约三). Missing → fail (CR), not pass.
-  if (!row.source_ref) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason: 'source_ref is missing for web_sourced question',
-    };
-  }
-  if (row.source_ref !== parsed.data.url) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason: `source_ref (${row.source_ref}) disagrees with provenance url (${parsed.data.url})`,
-    };
-  }
-  // Deterministic content grounding (F2). extract is guaranteed non-empty here (the
-  // top-of-function guard + the required WebSourcedProvenance.extract contract). The
-  // question's prompt+reference must overlap it — a mis-extracted or fabricated source
-  // carries an extract that does not echo the question → fail.
-  const extract = parsed.data.extract;
-  const questionText = `${row.prompt_md}\n${row.reference_md}`;
-  const overlap = maxNgramOverlap(questionText, [extract]);
-  if (overlap < SOURCE_GROUNDING_MIN_OVERLAP) {
-    return {
-      check: 'source_consistency',
-      verdict: 'fail',
-      reason: `question content does not ground its declared source (overlap ${overlap.toFixed(2)} < ${SOURCE_GROUNDING_MIN_OVERLAP}); extract may be mis-attributed or fabricated`,
-    };
-  }
-  return {
-    check: 'source_consistency',
-    verdict: 'pass',
-    reason: `tier 2 sourced provenance consistent + content grounded (url ${parsed.data.url}, overlap ${overlap.toFixed(2)})`,
-  };
-}
-
-// dedup — not a near-duplicate of an existing ACTIVE pool question sharing one of
-// this question's knowledge points. Deterministic n-gram overlap (reused from
-// quiz_verify). No candidates / no knowledge ids → no signal → pass.
-async function checkDedup(db: Db, row: QuestionRow): Promise<CheckOutcome> {
-  const knowledgeIds = row.knowledge_ids ?? [];
-  if (knowledgeIds.length === 0) {
-    return { check: 'dedup', verdict: 'pass', reason: 'no knowledge_ids — dedup not applicable' };
-  }
-  // Pull existing ACTIVE pool questions that share ANY knowledge point. Mirrors
-  // due-list's `knowledge_ids @> [id]::jsonb` containment precedent (due-list.ts:215),
-  // OR'd per id for ANY-overlap. Exclude the row itself + drafts. LIMIT keeps the
-  // comparison bounded.
-  const overlapClauses = knowledgeIds.map(
-    (kid) => sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
-  );
-  const candidates = await db
-    .select({ id: question.id, prompt_md: question.prompt_md })
-    .from(question)
-    .where(
-      and(
-        ne(question.id, row.id),
-        // Pool-visibility (红线-4, NULL≡active; legacy active rows carry NULL — a bare
-        // ne() would drop them). Shared notDraftPredicate (@/db/predicates).
-        notDraftPredicate(question.draft_status),
-        or(...overlapClauses),
-      ),
-    )
-    .limit(50);
-  if (candidates.length === 0) {
-    return { check: 'dedup', verdict: 'pass', reason: 'no existing pool question to compare' };
-  }
-  let maxOverlap = 0;
-  let nearestId = '';
-  for (const c of candidates) {
-    const overlap = maxNgramOverlap(row.prompt_md, [c.prompt_md]);
-    if (overlap > maxOverlap) {
-      maxOverlap = overlap;
-      nearestId = c.id;
-    }
-  }
-  if (maxOverlap >= DEDUP_OVERLAP_THRESHOLD) {
-    return {
-      check: 'dedup',
-      verdict: 'fail',
-      reason: `near-duplicate of pool question ${nearestId} (overlap ${maxOverlap.toFixed(2)} >= ${DEDUP_OVERLAP_THRESHOLD})`,
-    };
-  }
-  return {
-    check: 'dedup',
-    verdict: 'pass',
-    reason: `max overlap ${maxOverlap.toFixed(2)} below dedup threshold`,
-  };
-}
-
-function solveCheckToOutcome(result: SolveCheckResult): CheckOutcome {
-  // verify-framework's solve-check is conservative: 'unsupported' carries no signal.
-  // Map its verdict onto the verify outcome — only a confident 'fail' blocks promotion.
-  return {
-    check: 'solve_check',
-    verdict:
-      result.verdict === 'fail' ? 'fail' : result.verdict === 'pass' ? 'pass' : 'unsupported',
-    reason: result.reason,
-  };
-}
 
 // ---------- YUK-230 source-grounding gate (single_source_grounding rows) ----------
 //
@@ -1133,29 +951,13 @@ export async function runSourceVerify(
     // YUK-230 (thread 3) — grounding fail is now a failing check in `checks[]`, so the generic
     // `failingCheck` branch names it (`source_grounding — <reason_md>`); no separate grounding
     // summary branch is needed, and toUnifiedVerifyResult's roll-up sees the failing check.
-    const failingCheck = checks.find((c) => c.verdict === 'fail');
-    const sourceSummaryMd = promote
-      ? 'tier-2 source verify passed'
-      : failingCheck
-        ? `tier-2 source verify failed: ${failingCheck.check} — ${failingCheck.reason}`
-        : unresolvedAnchoredExactMismatch
-          ? 'tier-2 source verify needs review: exact answer mismatch remained unresolved'
-          : imageInputUnavailable
-            ? 'tier-2 source verify needs review: prompt image content was unavailable'
-            : !knowledgeAlive
-              ? 'referenced knowledge point archived after sourcing; not promoted'
-              : vectorNearHold
-                ? `tier-2 source verify needs review: vector similarity ${vectorNearHold.similarity.toFixed(3)} with ${vectorNearHold.neighbor_question_id}`
-                : 'tier-2 source verify did not promote';
-    const unified = toUnifiedVerifyResult({
-      source: 'source',
+    const { failingCheck, unified } = projectSourceVerifyResult({
+      checks,
       promote,
-      summary_md: sourceSummaryMd,
-      // tier-2 checks are deterministic (or conservative solve-check); the handler has no
-      // calibrated scalar confidence, so report a flat 1 on a verdict and let the axes /
-      // overall carry the signal (mirrors the pre-existing absence of a confidence field).
-      confidence: 1,
-      checks: checks.map((c) => ({ check: c.check, verdict: c.verdict, reason: c.reason })),
+      unresolvedAnchoredExactMismatch,
+      imageInputUnavailable,
+      knowledgeAlive,
+      vectorNearHold,
     });
 
     let wasDemoted = false;

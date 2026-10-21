@@ -1,11 +1,8 @@
-// YUK-601 PR7 (v3.2 §7，v2 PR7 原样保留) — 装配粒度漂移审计：全部 subject 行
-// （含 general 与 retired）逐一「读六绑定 → assemble → validateProfile」。
-// 与编译期 audit:profile（scripts/audit-profile.ts 无参模式，走内存 registry）
-// 互补：本审计读 DB 活绑定，抓「共享 trait 被编辑后某绑定科目装配变坏」
-// 「deprecated judge 仍被活装配引用」这类只在 DB 面存在的漂移。
-// report-only 语义由调用方裁（CLI 默认 report-only；--strict / 夜间 cron 失败可见）。
-// 复用 validateSubject（subject-control-write.ts）——审计与写门预检同一条装配
-// 路径，防双真相源。
+// 装配粒度漂移审计：逐个 DB subject 行（含 general 与 retired）读六绑定 →
+// assemble → validateProfile。与编译期 audit:profile 互补：这里读 DB 活绑定，
+// 抓共享 trait 被编辑后某科目装配变坏、deprecated judge 仍被引用等只在 DB 面
+// 出现的漂移。report-only 由调用方裁；复用 validateSubject，使审计与写门预检
+// 走同一条装配路径。
 
 import { asc } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -43,9 +40,8 @@ export async function auditProfilesFromDb(db: Db): Promise<DbProfileAuditResult>
   const entries: DbProfileAuditEntry[] = [];
   for (const row of rows) {
     const result = await validateSubject(db, row.id);
-    // YUK-739 — same builtin fail-closed semantics check as the compile-time
-    // audit mode (an owner-edited pre-YUK-739 cause_taxonomy trait row surfaces
-    // here as invalid instead of silently inheriting cross-subject defaults).
+    // Builtin fail-closed semantics: a legacy owner-edited cause_taxonomy row is
+    // invalid here instead of silently inheriting cross-subject defaults.
     const semanticErrors =
       result?.profile !== undefined ? auditEvaluationSemantics(result.profile) : [];
     entries.push({

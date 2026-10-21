@@ -8,8 +8,9 @@ due-list/variant-rotation）、会话编排（review-session/solve-session，原
 
 - server/ — 上述模块本体（测试同居，命名即分区）
 - api/ — 厚 route body（外壳 app/api/{review,practice,questions}/** 挂载）
-- 迁移期豁免记录：review-session/solve-session 仍 import 遗留共享件
-  `@/server/orchestrator/json-sanitize`（如有），P4 清账；capability 暂可 import @/db/*。
+- 迁移期豁免记录：capability 暂可 import @/db/*。原 solve-session 的
+  `@/server/orchestrator/json-sanitize` 豁免已清账——共享件 YUK-1570 迁入
+  `@/core/json-sanitize`，solve-session 现从 core 引用。
 - 包外主要消费方：proposals/actions（fsrs）、events/queries + cause-policy（effective-truth）、
   boss handlers quiz_verify/source_verify（fsrs）、copilot solve-skill（solve-session）、
   UI practice 页 + PaperCard（practice-read/paper-detail）。

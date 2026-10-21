@@ -1,22 +1,10 @@
-// YUK-601 (v3.2 §3.1-§3.3 + §3.4 reset-to-seed) — trait 域写面业务层。
-// 六个写函数对应六个端点（route 壳在 observability capability）：
-//   editSubjectTrait   → PUT  /api/admin/subjects/:id/traits/:kind（主写面，自动 COW）
-//   editSharedTrait    → PUT  /api/admin/traits/:traitId（显式共享写）
-//   rollbackTrait      → POST /api/admin/traits/:traitId/rollback
-//   forkSubjectTrait   → POST /api/admin/subjects/:id/traits/:kind/fork
-//   rebindSubjectTrait → PUT  /api/admin/subjects/:id/traits/:kind/binding
-//   resetTraitToSeed   → POST /api/admin/traits/:traitId/reset-to-seed
+// trait 域写面业务层：edit/fork/rebind/rollback/reset-to-seed。
 //
-// 并发协议（v3.2 owner R2-P1）：一切写事务开头 `pg_advisory_xact_lock`——整面
-// 串行化；CAS 语义降级为陈旧 UI 提交守卫（锁内读行比对 expectedRevision，不等
-// → 'stale' 携 currentRevision，UPDATE 本身无需 revision 谓词）。
-// 所有权判定（v3.2 owner R2-P2，按 trait ownership 不按 subject origin）：
-//   自有 ≡ trait.id == trt_seed_<本科>_<kind> 或 owner_subject_id == 本科 → 原地写
-//   非自有（他科种子/他科 fork/general 种子）→ 同事务 fork-and-edit（无中间态）
-// general 锁定（v3.1 owner P1-1）：fork/换绑对 subject_id='general' 一律 forbidden；
-// general 只有自有种子可编（原地写 + fan-out）。
-// 每个写函数 commit 后由调用方（route 壳）触发 hydrateSubjectRegistryFromDb——
-// 本层保持纯事务语义便于测试直驱。
+// 一切写事务开头取控制面 advisory lock；CAS 只守卫陈旧 UI 提交（锁内比对
+// expectedRevision，'stale' 携 currentRevision）。
+// 所有权按 trait 判定：自有（本科种子或 owner_subject_id=本科）原地写，非自有
+// 同事务 fork-and-edit。general 的 fork/换绑一律 forbidden，只有自有种子可编。
+// 本层保持纯事务语义；commit 后由 route 壳触发 hydrateSubjectRegistryFromDb。
 
 import { isDeepStrictEqual } from 'node:util';
 import { createId } from '@paralleldrive/cuid2';
@@ -61,8 +49,6 @@ export type TraitWriteResult =
   | { kind: 'forbidden'; message: string }
   | { kind: 'invalid'; message: string; issues?: FanoutIssue[] };
 
-// ---------- 共享内部件 ----------
-
 function parsePayload(
   kind: SubjectTraitKind,
   payload: unknown,
@@ -89,9 +75,9 @@ async function loadTraitRow(tx: Tx, traitId: string) {
 }
 
 /**
- * fan-out 装配校验：对 binders（科目 id 集）逐科装配（`kind` 的 payload 用
- * `overridePayload` 覆盖）+ validateProfile。返回失败清单（空 = 全绿）。
- * version 串用 'preflight'（validateProfile 只要求非空；真组合串是 hydrate 的事）。
+ * Fan-out check: assemble each binder with `overridePayload` for `kind` and
+ * validate. Returns the failures (empty = all valid); 'preflight' is not the
+ * real composition string.
  */
 async function validateBinders(
   tx: Tx,
@@ -124,8 +110,6 @@ async function validateBinders(
     }
     const payloads: Partial<Record<SubjectTraitKind, unknown>> = {};
     for (const b of bound) {
-      // 该 kind 一律用候选 payload（编辑=新值 / rollback=目标行 / 换绑=目标 trait /
-      // reset-to-seed=代码种子），其余 kind 用当前绑定的活 payload。
       payloads[b.kind] = b.kind === kind ? overridePayload : b.payload;
     }
     try {
@@ -155,7 +139,7 @@ async function bindersOf(tx: Tx, traitId: string): Promise<string[]> {
   return rows.map((r) => r.subjectId);
 }
 
-/** 自有判定（v3.2）：本科种子 或 本科 fork/创建的 custom trait。 */
+/** 自有 = 本科种子，或 owner_subject_id 为本科的 custom trait。 */
 function ownsTrait(
   subjectId: string,
   trait: { id: string; owner_subject_id: string | null },
@@ -212,11 +196,8 @@ export async function editSubjectTrait(
       return { kind: 'stale', currentRevision: trait.revision, axis: 'trait' };
     }
 
-    // deep-equal no-op 预检（v3.2 owner R2-P2）：规范化后深等 → 200，零 fork 零
-    // journal 零 bump——「保存未修改的表单」不得制造内容相同的空分叉。
-    // 序注（review-765 P3-1）：本实现 CAS 在 no-op 之前——陈旧 revision + 相同
-    // payload 返回 409-stale 而非 200-noop（no-op 只对「正编辑当前版本」成立，
-    // 陈旧页签先 refetch 再判等更诚实）。§3.1 字面未排 CAS 位置，此为实现裁量。
+    // Deep-equal no-op: saving an unchanged form must not create an empty fork.
+    // CAS runs first, so a stale revision with identical payload is stale, not noop.
     if (isDeepStrictEqual(parsed.value, trait.payload)) {
       return { kind: 'noop', traitId: trait.id, revision: trait.revision };
     }
@@ -248,9 +229,8 @@ export async function editSubjectTrait(
       return { kind: 'ok', traitId: trait.id, revision: nextRevision, forked: false };
     }
 
-    // 非自有（他科种子/他科 fork/general 种子）→ 同事务 fork-and-edit。
-    // general 永不 fork（P1-1）——general 六绑定结构性锁定在自有种子，own 恒真，
-    // 走不到这里；防御断言留痕。
+    // Non-owned trait → fork-and-edit in the same transaction. general cannot
+    // reach here (its bindings are locked to its own seeds); keep the guard.
     if (args.subjectId === 'general') {
       return { kind: 'forbidden', message: 'general bindings are structurally locked (P1-1)' };
     }
@@ -399,13 +379,10 @@ export async function rollbackTrait(
     if (isDeepStrictEqual(target.payload, trait.payload)) {
       return { kind: 'noop', traitId: trait.id, revision: trait.revision };
     }
-    // §3.1 全套校验（review-765 P2）：先 per-kind strict parse（写入即
-    // strict-parseable 不变式——hydrate 的 resolveTraitPayload 用同一 strict
-    // schema 读，两头对称，防「fan-out 放行、hydrate 拒收」的静默降级；跨代际
-    // upgrade-on-read 是 YUK-599 面的未实现项，目标行拒 parse 即 422 不静默），
-    // 再 fan-out 装配（已退场 capability 由 validateProfile 抓 → 422）。
-    // 恢复范围 = payload + payload_schema_version（取目标行）；seed lineage 不动
-    // （rollback 是内容裁决非血统操作）。
+    // Parse the target with the same strict schema hydrate reads with, so a
+    // target fan-out accepted cannot later be rejected on read. Then re-run
+    // fan-out assembly (a retired capability fails validateProfile). Restore
+    // payload + payload_schema_version; seed lineage stays untouched.
     const reparsed = parsePayload(trait.trait_kind, target.payload);
     if (!reparsed.ok) {
       return {
@@ -480,9 +457,8 @@ export async function forkSubjectTrait(
     const trait = await loadTraitRow(tx, boundTraitId);
     if (!trait) return { kind: 'not_found', message: `bound trait "${boundTraitId}" is missing` };
     if (ownsTrait(args.subjectId, trait, args.kind) && trait.owner_subject_id === args.subjectId) {
-      // 已是本科 fork——再剥离无意义（本科种子仍可显式剥离出可编辑副本吗？合同
-      // 语义：fork = 「先剥离、稍后再改」的显式意图面，对任何当前绑定 trait 复制；
-      // 唯独 general 锁定。本科自有 custom fork 再 fork 只会造孤儿，拒绝。
+      // A subject-owned fork is already editable; forking it again would only
+      // create an orphan.
       return { kind: 'invalid', message: 'binding already points at a subject-owned fork' };
     }
     const newTraitId = `trt_${createId()}`;
@@ -586,7 +562,6 @@ export async function rebindSubjectTrait(
     if (fromTraitId === args.targetTraitId) {
       return { kind: 'noop', traitId: fromTraitId, revision: target.revision };
     }
-    // 装配校验本科（新绑定生效后的六件套）。
     const issues = await validateBinders(tx, [args.subjectId], args.kind, target.payload);
     if (issues.length > 0) {
       return { kind: 'invalid', message: 'rebound profile fails assembled validation', issues };

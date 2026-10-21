@@ -30,10 +30,9 @@ function compareDeclarations(
   return a.version - b.version;
 }
 
-// Hash ONLY the subscription's own declaration (YUK-751 review Tb7Aj). A global hash over all
-// declarations was fenced per (subscriber_id, subscriber_version), so adding/removing/editing ANY
-// subscription bricked every other subscriber's checkpoint claim on a hash mismatch. Scoping the
-// hash to the single declaration confines a change to the subscriber that actually changed.
+// Hash only this subscription's declaration. The checkpoint fence compares this
+// value, so scoping it here confines a change to the subscriber that changed;
+// a global hash invalidated every other subscriber's claim.
 function computeDeclarationHash(declaration: SubscriptionDeclarationSnapshot): string {
   const canonical = {
     contractVersion: EVENT_SUBSCRIPTION_REGISTRY_CONTRACT_VERSION,
@@ -47,10 +46,7 @@ function computeDeclarationHash(declaration: SubscriptionDeclarationSnapshot): s
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
-/**
- * Validates the complete capability composition, then crosses the executable
- * boundary by loading and instantiating every declared subscription handler.
- */
+/** Validate the composition, then load and instantiate every declared handler. */
 export async function loadEventSubscriptionRegistry(
   capabilities: CapabilityManifest[],
   dependency: EventSubscriptionFactoryDependency,
@@ -71,10 +67,8 @@ export async function loadEventSubscriptionRegistry(
     .sort(compareDeclarations);
 
   const loaded: LoadedEventSubscription[] = [];
-  // Load all factories in parallel — the loaders are independent (dynamic imports with no shared
-  // state), so awaiting them serially only adds startup latency (YUK-751 review). Each load is
-  // wrapped so a dynamic-import / loader throw names the offending subscription instead of surfacing
-  // a bare import error.
+  // Factories are independent imports, so load in parallel. Failures name the
+  // subscription instead of surfacing a bare import error.
   const factories = await Promise.all(
     declarations.map(async (declaration) => {
       const identity = `${declaration.id}@v${declaration.version}`;
@@ -92,7 +86,7 @@ export async function loadEventSubscriptionRegistry(
       return { declaration, identity, factory };
     }),
   );
-  // Instantiate handlers + build the loaded list in the (sorted) declaration order.
+  // Instantiate in sorted declaration order.
   for (const { declaration, identity, factory } of factories) {
     let handler: ReturnType<typeof factory>;
     try {

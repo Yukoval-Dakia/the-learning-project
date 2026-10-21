@@ -9,25 +9,30 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 //   1. idempotency guard — skip if a verify event already chains off the
 //      question (action='experimental:quiz_verify', subject_kind='question',
 //      subject_id) so pg-boss re-delivery is safe (mirrors variant_verify).
+//   1b. YUK-1624 (#24) — DETERMINISTIC choice-surface pre-check (duplicate
+//      options / reference-not-in-options / insufficient options) BEFORE any
+//      paid call; a defect terminates as needs_review with zero model calls.
 //   2. runs the single-shot CLOSED-BOOK QuizVerifyTask (§1: trusts the agent's
 //      self-reported source_refs; no own Tavily loop this wave) — three checks:
 //      fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit.
 //   3. computes a DETERMINISTIC normalized n-gram overlap(prompt_md, source_ref
-//      snippets) and folds it into the persisted copy_safety verdict.
+//      snippets — excluding a tier-3 question's own grounded material ref) and
+//      folds it into the persisted copy_safety verdict.
 //   4. in a single transaction writes metadata.quiz_gen.verification (two-axis)
 //      + writeEvent(action='experimental:quiz_verify', subject_kind='question').
 //
-// Gate = Option B (owner-confirmed §3):
-//   pass (LLM overall='pass' AND copy_safety != 'too_close')
+// Gate = Option B (owner-confirmed §3; YUK-1624 #22 relaxation):
+//   pass (LLM overall='pass' AND copy_safety resolved-and-not-too_close)
 //     → promote draft_status 'draft'→'active' + Q6 FSRS enroll (materialize an
 //       initial material_fsrs_state via the existing single-owner enroll path so
 //       the question enters the review pool).
 //     YUK-1507 — promote 不再直接 admitted：发布为 withheld(unverified_rules) 待
 //       准入，由 assessment_publish outbox 订阅触发 C1 双解 + 标定后才 admitted
 //       （serving 读面要求 scoring_admission_state='admitted'，withheld 期间不入池）。
-//   needs_review / fail / too_close
+//   needs_review / fail / deterministic too_close / model-only too_close (→'unknown')
 //     → leave draft_status='draft' (never reaches the pool) with
-//       verification.status='needs_review'|'failed'.
+//       verification.status='needs_review'|'failed'; only the DETERMINISTIC
+//       n-gram hit persists 'too_close' (hard block retained).
 //
 // failure-bottom: catch → set verification.status='failed' (best-effort) → write
 // a failure event → re-throw so pg-boss retries.
@@ -71,6 +76,7 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { appendAdmissionVerificationRecord } from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type TaskTextResult,
@@ -86,7 +92,7 @@ import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
-import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -100,6 +106,12 @@ import {
 } from '../server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
+import {
+  type ChoiceSurfacePrecheckRecord,
+  type ChoiceSurfaceRuleCheck,
+  choiceSurfacePrecheckRecord,
+  evaluateChoiceSurface,
+} from '../server/quiz/choice-surface';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
@@ -415,6 +427,191 @@ async function readBoundIndependentAdmission(
 }
 
 /**
+ * YUK-1624 — shared concurrent-success predicate for verify terminal writes: a
+ * success event bound to the CURRENT admission generation proves a duplicate
+ * delivery is stale. See the main select for the full rationale (YUK-1095).
+ */
+function promotedElsewhereEventExists(questionId: string) {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM ${event}
+    WHERE ${event.action} = 'experimental:quiz_verify'
+      AND ${event.subject_kind} = 'question'
+      AND ${event.subject_id} = ${questionId}
+      AND ${event.outcome} = 'success'
+      AND (${event.payload}->>'admission_generation')::text = (
+        SELECT ${question_group_lifecycle.scoring_admission_generation}::text
+        FROM ${question_group_lifecycle}
+        WHERE ${question_group_lifecycle.group_id} = ${questionId}
+      )
+  )`;
+}
+
+/** YUK-1624 (#22) — the grounded material's own origin URL, when recorded. */
+function readMaterialUrl(
+  materialDoc: { provenance: Record<string, unknown> } | null,
+): string | null {
+  const url = materialDoc?.provenance.url;
+  return typeof url === 'string' && url.length > 0 ? url : null;
+}
+
+/**
+ * YUK-1624 (#24) — terminal write for a draft whose deterministic choice-surface
+ * pre-check rejected. Zero paid calls were spent, so there is no model verdict to
+ * record: the event honestly reports a rules-only needs_review and the draft is
+ * held for human review exactly like a model needs_review (verify_hold +
+ * unverified_rules; a rules defect is not promoted to a proven failure because
+ * the check could still mis-shape an unusual-but-valid item). The per-rule
+ * precheck record (name + verdict + reason) lands in the admission
+ * verification evidence — PM condition: every precheck outcome, reject or pass,
+ * is auditable on the admission record. Deliberately outside the main
+ * failure-bottom: this path has no minutes-long model window, so a rare throw
+ * (version race) simply falls back to pg-boss retry with no terminal event
+ * written for the idempotency guard to trip over.
+ */
+async function finalizeDeterministicPrecheckFailure(input: {
+  db: Db;
+  row: typeof question.$inferSelect;
+  metadataRaw: Record<string, unknown>;
+  meta: QuizGenMetadataT;
+  precheckChecks: ChoiceSurfaceRuleCheck[];
+  precheckRecord: ChoiceSurfacePrecheckRecord;
+  sourceTier: number;
+  admissionGenerationAtStart: number | undefined;
+  supplyTrace?: SupplyTraceV1T;
+  difficultyEvidence?: unknown;
+}): Promise<RunQuizVerifyResult> {
+  const { db, row, meta, metadataRaw, precheckChecks, precheckRecord } = input;
+  const questionId = row.id;
+  const now = new Date();
+  const verifyEventId = createId();
+  const rejectedRules = precheckChecks
+    .filter((check) => check.verdict === 'reject')
+    .map((check) => check.rule)
+    .join('、');
+  const summary = `quiz_verify 确定性预检未通过（${rejectedRules}）；未运行付费核验，留人工复核。`;
+  const verifiedBy = { by: 'system' as const, task_kind: 'quiz_verify' };
+  const verification: QuizGenVerificationT = {
+    status: 'needs_review',
+    summary,
+    verified_by: verifiedBy,
+  };
+  const newMetadata = {
+    ...metadataRaw,
+    quiz_gen: { ...meta, verification } satisfies QuizGenMetadataT,
+  };
+  const unified = toUnifiedVerifyResult({
+    source: 'quiz',
+    overall: 'needs_review',
+    promote: false,
+    summary_md: summary,
+    confidence: 1,
+    checks: [],
+  });
+
+  await db.transaction(async (tx) => {
+    await acquireLearningStateWriteLock(tx);
+    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    const [current] = await tx
+      .select({
+        version: question.version,
+        promotedElsewhere: promotedElsewhereEventExists(questionId),
+      })
+      .from(question)
+      .where(eq(question.id, questionId))
+      .limit(1)
+      .for('update');
+    if (!current || current.version !== row.version) {
+      throw new Error(
+        `quiz_verify pre-check question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+      );
+    }
+    await tx
+      .update(question)
+      .set({ metadata: newMetadata as never, updated_at: now })
+      .where(eq(question.id, questionId));
+    if (!current.promotedElsewhere) {
+      // Same stale-admission semantics as the model needs_review branch: an
+      // independent C1 admission decided after this delivery started must not
+      // be folded back into verify_hold.
+      const staleAgainstAdmission = await readBoundIndependentAdmission(
+        tx,
+        row.parent_question_id ?? questionId,
+        input.admissionGenerationAtStart ?? null,
+      );
+      if (staleAgainstAdmission == null) {
+        await publishQuestionGroupFromRow(tx, {
+          rootId: row.parent_question_id ?? questionId,
+          admission: {
+            state: SCORING_ADMISSION_STATE.WITHHELD,
+            reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+          },
+          suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+          verification: {
+            policy_id: 'quiz_verify@1',
+            outcome: 'suspended',
+            evidence: {
+              overall: 'needs_review',
+              deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
+            },
+          },
+          actorRef: 'quiz_verify:suspend',
+          now,
+        });
+      }
+    }
+    await writeEvent(tx, {
+      id: verifyEventId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_verify',
+      action: 'experimental:quiz_verify',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'partial',
+      payload: {
+        question_id: questionId,
+        ...unified,
+        deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
+        copy_safety: {
+          llm_verdict: null,
+          persisted_verdict: meta.copy_safety.verdict,
+        },
+        source_tier: input.sourceTier,
+        promoted: false,
+        verification_status: 'needs_review',
+        verified_by: verifiedBy,
+        ...(input.difficultyEvidence ? { difficulty_evidence: input.difficultyEvidence } : {}),
+        ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+  });
+
+  try {
+    await recordQuestionPoolGap(db, {
+      questionId,
+      knowledgeIds: row.knowledge_ids,
+      verificationStatus: 'needs_review',
+      confidence: 1,
+      taskRunId: null,
+      verificationEventId: verifyEventId,
+      observedAt: now,
+    });
+  } catch (noteErr) {
+    console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
+  }
+
+  return {
+    status: 'needs_review',
+    overall: 'needs_review',
+    copy_safety_verdict: meta.copy_safety.verdict,
+  };
+}
+
+/**
  * Verify a single quiz_gen draft question. Idempotent per (question_id) via the
  * chained verify event guard. Promotes draft→active + FSRS-enrolls on pass.
  */
@@ -525,18 +722,56 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   // alone. The already-green tier-4 flow is unchanged — material is simply absent there.
   const tier = deriveSourceTier({ source: row.source, metadata: metadataRaw }).tier;
   const tierChecks = checksForTier(tier);
-  let materialDoc: { id: string; title: string | null; body_md: string | null } | null = null;
+  let materialDoc: {
+    id: string;
+    title: string | null;
+    body_md: string | null;
+    provenance: Record<string, unknown>;
+  } | null = null;
   if (tier === 3 && meta.material_source_document_id) {
     const docRows = await db
       .select({
         id: source_document.id,
         title: source_document.title,
         body_md: source_document.body_md,
+        provenance: source_document.provenance,
       })
       .from(source_document)
       .where(eq(source_document.id, meta.material_source_document_id))
       .limit(1);
     materialDoc = docRows[0] ?? null;
+  }
+
+  // YUK-1624 (#24) — deterministic choice-surface pre-check runs BEFORE any paid
+  // call. Duplicated options (post-normalization, case-preserving), a reference
+  // answer that resolves to no option, and an insufficient option count are
+  // rule-decidable; the model stays reserved for what rules cannot judge. The
+  // per-rule record is persisted on the admission record for BOTH outcomes
+  // (PM condition): rejects terminate here with zero model calls, passes ride
+  // along every downstream terminal write's verification evidence.
+  const precheckChecks = evaluateChoiceSurface({
+    kind: row.kind,
+    reference_md: row.reference_md,
+    choices_md: row.choices_md,
+    rubric_json: row.rubric_json,
+    // Composite (篇) parents keep flat choices null by design (quiz_gen.ts);
+    // their options live in structured sub-questions.
+    ...(row.structured != null ? { hasStructuredStem: true } : {}),
+  });
+  const precheckRecord = choiceSurfacePrecheckRecord(precheckChecks);
+  if (precheckRecord.outcome === 'reject') {
+    return finalizeDeterministicPrecheckFailure({
+      db,
+      row,
+      metadataRaw,
+      meta,
+      precheckChecks,
+      precheckRecord,
+      sourceTier: tier,
+      admissionGenerationAtStart,
+      ...(supplyTrace ? { supplyTrace } : {}),
+      ...(difficultyEvidence ? { difficultyEvidence } : {}),
+    });
   }
 
   const input = {
@@ -619,26 +854,38 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const parsed = validationRun.output;
 
     // §4 / §5 — deterministic n-gram overlap over the self-reported snippets,
-    // folded into the persisted copy_safety. The DETERMINISTIC computation is
-    // authoritative for max_overlap; the verdict is the stricter of (LLM verdict,
-    // deterministic-threshold verdict) — either one calling 'too_close' blocks
-    // promotion.
+    // folded into the persisted copy_safety. YUK-1624 (#22): the DETERMINISTIC
+    // gate alone owns the persisted 'too_close' verdict (hard block retained).
+    // A tier-3 question quotes its grounded material by design
+    // (embedMaterialInPrompt), so the ref pointing at the material's own URL is
+    // excluded from the comparison — overlap with the material is not
+    // plagiarism (YUK-1254 false-positive root cause). Web refs still compare
+    // against the full prompt. A model-only too_close (n-gram missed) no longer
+    // brands the draft: the persisted verdict stays 'unknown' (unresolved →
+    // needs_review, the PM-approved review routing) and the raw model verdict
+    // survives in the event payload for the reviewer.
+    const materialUrl = readMaterialUrl(materialDoc);
     const snippets = meta.source_refs
+      .filter((ref) => materialUrl === null || ref.url !== materialUrl)
       .map((r) => r.snippet)
       .filter((s): s is string => typeof s === 'string' && s.length > 0);
     const maxOverlap = maxNgramOverlap(row.prompt_md, snippets);
     const deterministicTooClose = maxOverlap >= COPY_SAFETY_TOO_CLOSE_THRESHOLD;
-    const copySafetyVerdict: QuizGenMetadataT['copy_safety']['verdict'] =
-      parsed.copy_safety.verdict === 'too_close' || deterministicTooClose
-        ? 'too_close'
+    const modelTooClose = parsed.copy_safety.verdict === 'too_close';
+    const copySafetyVerdict: QuizGenMetadataT['copy_safety']['verdict'] = deterministicTooClose
+      ? 'too_close'
+      : modelTooClose
+        ? 'unknown'
         : parsed.copy_safety.verdict;
 
     // Option B gate: promote ONLY when EVERY structured axis agrees the draft is
     // good. overall='pass' is necessary but NOT sufficient — an inconsistent LLM
     // output (overall='pass' while grounding/knowledge_hit verdict is 'fail' or
     // 'unclear') must not enter the review pool with an unsupported fact or an
-    // off-topic question. Such inconsistency stays draft (needs_review). copy_safety
-    // 'too_close' (LLM verdict OR deterministic overlap) also blocks promotion.
+    // off-topic question. Such inconsistency stays draft (needs_review). A
+    // copy_safety 'too_close' persisted verdict is deterministic-gate-only and
+    // blocks promotion; a model-only too_close persists as 'unknown', so
+    // copySafetyResolved below routes it to needs_review without re-branding it.
     const isTooClose = copySafetyVerdict === 'too_close';
     // A passing overall verdict cannot promote while copy safety remains unresolved.
     // Keep the raw/persisted `unknown` judgment for review instead of treating it as
@@ -951,18 +1198,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           // 时盖上写入后的 generation，只有 generation == 当前值的 success 才算
           // 并发副本。历史上任意 success（无 generation 限定）会让一次真正失败的
           // 重验被旧记录跳过 —— 旧验证不得冒充较新 admission 决定的并发副本。
-          promotedElsewhere: sql<boolean>`EXISTS (
-            SELECT 1 FROM ${event}
-            WHERE ${event.action} = 'experimental:quiz_verify'
-              AND ${event.subject_kind} = 'question'
-              AND ${event.subject_id} = ${questionId}
-              AND ${event.outcome} = 'success'
-              AND (${event.payload}->>'admission_generation')::text = (
-                SELECT ${question_group_lifecycle.scoring_admission_generation}::text
-                FROM ${question_group_lifecycle}
-                WHERE ${question_group_lifecycle.group_id} = ${questionId}
-              )
-          )`,
+          promotedElsewhere: promotedElsewhereEventExists(questionId),
         })
         .from(question)
         .where(eq(question.id, questionId))
@@ -1125,6 +1361,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
                   admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:promote',
@@ -1140,6 +1377,26 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             if ('admission_generation' in cleared) {
               promotedAdmissionGeneration = cleared.admission_generation;
             }
+          } else {
+            // YUK-1624（PM 条件）——无 verify_hold 可清的 kept 分支也要给这次
+            // verify 结果落一条 append-only 记录：不改任何 lifecycle 维度、
+            // 不推进 generation（readBoundIndependentAdmission 已锁 lifecycle 行）。
+            await appendAdmissionVerificationRecord(tx, {
+              groupId: groupRootId,
+              expectedRevisionId: keptAdmission.revisionId,
+              expectedGeneration: keptAdmission.lifecycle.scoring_admission_generation,
+              verification: {
+                policy_id: 'quiz_verify@1',
+                outcome: 'passed',
+                evidence: {
+                  overall: parsed.overall,
+                  copy_safety: copySafetyVerdict,
+                  admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
+                },
+              },
+              now,
+            });
           }
         } else {
           const promotePublish = await publishQuestionGroupFromRow(tx, {
@@ -1155,6 +1412,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               evidence: {
                 overall: parsed.overall,
                 copy_safety: copySafetyVerdict,
+                deterministic_precheck: precheckRecord,
               },
             },
             availability: QUESTION_AVAILABILITY.GENERAL_POOL,
@@ -1230,6 +1488,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 evidence: {
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:suspend',
@@ -1268,6 +1527,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             max_overlap: maxOverlap,
             deterministic_too_close: deterministicTooClose,
           },
+          // YUK-1624 — precheck per-rule record on every terminal event, pass or
+          // reject (mirrors the admission verification evidence above).
+          deterministic_precheck: precheckRecord,
           // YUK-224 — source tier + the tier-3 material_grounding outcome (audit trail).
           source_tier: tier,
           ...(tierChecks.includes('material_grounding')

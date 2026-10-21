@@ -108,22 +108,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     ],
   },
   {
-    owner: 'practice',
-    consumer: 'ingestion',
-    files: [
-      'src/capabilities/ingestion/api/mistakes.ts',
-      'src/capabilities/ingestion/server/enroll.ts',
-    ],
-    symbols: ['loadAttemptQuestionSnapshot'],
-    dto: 'AttemptQuestionSnapshot',
-    justification: 'mistake enrollment reads the attempt question snapshot owned by practice.',
-    reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/ingestion/api/mistakes.ts',
-      'src/capabilities/ingestion/server/enroll.ts',
-    ],
-  },
-  {
     owner: 'agency',
     consumer: 'knowledge',
     files: ['src/capabilities/knowledge/server/proposals.ts'],
@@ -148,59 +132,29 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     reviewIssue: 'YUK-953',
     commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
   },
-  {
-    owner: 'knowledge',
-    consumer: 'notes',
-    files: ['src/capabilities/notes/server/hub-sync-reconciliation.ts'],
-    symbols: [
-      'HubMeshAtomicInput',
-      'HubMeshEdge',
-      'listKnowledgeEdges',
-      'loadTreeSnapshot',
-      'resolveHubMeshAtomics',
-    ],
-    dto: 'TreeSnapshot / HubMeshEdge projections',
-    justification:
-      'hub auto-sync reconciles note hubs against the knowledge tree; subject-profile resolution moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/notes/server/hub-sync-reconciliation.ts'],
-  },
+
   {
     owner: 'agency',
     consumer: 'practice',
     files: [
       'src/capabilities/practice/jobs/quiz_verify.ts',
-      'src/capabilities/practice/server/due-list.ts',
       'src/capabilities/practice/server/intervention-author.ts',
     ],
     symbols: [
-      'ActiveGoal',
       'InterventionAuthoringContextT',
       'guardInterventionPreparationStage',
-      'listActiveGoalsWithResolvedScope',
       'recordQuestionPoolGap',
     ],
-    dto: 'ActiveGoal / intervention authoring context reads',
+    dto: 'intervention authoring context reads',
     justification:
-      'review due-list + intervention authoring read agency-owned goals; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy.',
+      'intervention authoring reads the agency-owned preparation context; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy. The active-goal effective-scope read moved to @/kernel/read-models/active-goal-scope (YUK-1571).',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
   },
-  {
-    owner: 'ingestion',
-    consumer: 'practice',
-    files: [
-      // YUK-986 (Supply-Agent/1) — jyeoo-fetch queue job 退休后，candidates 模块接手
-      // staged 资产持久化（同一 ingestion owner seam，r2/lock 经本模块单点转发）。
-      'src/capabilities/practice/server/question-supply/jyeoo-candidates.ts',
-    ],
-    symbols: ['SourceAssetRow', 'lockImageStorageKey', 'persistImageAsset', 'sha256Hex'],
-    dto: 'SourceAssetRow + asset persistence commands',
-    justification:
-      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner. The question-context material excerpt reads moved to @/kernel/read-models/extraction-summary (YUK-1571).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/practice/server/question-supply/jyeoo-candidates.ts'],
-  },
+  // YUK-1571 — the practice -> ingestion edge is retired: the content-addressed
+  // source_asset write protocol moved to src/kernel/records/asset-store.ts;
+  // jyeoo-candidates.ts now consumes the kernel module directly and ingestion
+  // exits the SCC (asset-store compat shims keep the old import paths alive).
   {
     owner: 'knowledge',
     consumer: 'practice',

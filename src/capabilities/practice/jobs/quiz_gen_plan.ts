@@ -12,8 +12,8 @@
 // A rejected plan regenerates (bounded, with the rejection reasons fed back) or
 // fails closed — it must never proceed to generation.
 
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { QUIZ_PLAN_OBJECTIVE_KINDS, QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { answerClassCompatible } from '@/subjects/question-kind';
 
 // Bounded regeneration budget for the plan phase (initial attempt + 1 retry).

@@ -1,4 +1,4 @@
-// Offline metadata for synchronous config readers. The execution registry remains pi's builtins.
+// Synchronous protocol/compat metadata only. Model facts belong to models.dev.
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +13,6 @@ const providers = Object.fromEntries(
         model.id,
         {
           api: model.api,
-          baseUrl: model.baseUrl,
-          input: model.input,
-          reasoning: model.reasoning,
-          contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens,
-          thinkingLevelMap: model.thinkingLevelMap,
           thinkingFormat: (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat,
         },
       ]),
