@@ -890,6 +890,26 @@
       "issue": "YUK-1557",
       "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/session-history.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "errorResponse"],
+      "issue": "YUK-1522",
+      "owns": "Canonical API errors for the ingestion session history read endpoint",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/session-history.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
+      "issue": "YUK-1522",
+      "owns": "Authoritative current question serving projection kept separate from captured ingestion history; the API does not duplicate the serving gate",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
