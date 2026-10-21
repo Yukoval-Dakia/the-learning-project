@@ -3,10 +3,8 @@ import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capabili
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 /**
- * SDK-native output contract for SemanticJudgeTask.
- *
- * Kept in core so the AI task registry and the server-side semantic judge parse
- * the exact same schema without introducing a registry -> server/ai cycle.
+ * Shared output contract, kept in core so the task registry and server judge
+ * parse one schema without a registry → server/ai cycle.
  */
 export const SemanticJudgeOutput = z.object({
   score: z.number().min(0).max(1),

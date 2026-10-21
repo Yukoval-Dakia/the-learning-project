@@ -1,24 +1,6 @@
-// YUK-520 (A1 夜窗 digest) — overnight-digest 只读读模型。把**昨夜窗口**内五个夜间事实源的产出
-// 聚成一个 digest payload，供 /today 的最小交班缕消费（「昨夜 AI 替你做了什么」）。范本同
-// effectiveness-trend.ts（纯 drizzle 读 + 纯 summary helpers 抽到单独文件落 unit 测）。
-//
-// 窗口口径：「昨夜」= Asia/Shanghai 日界的**前一日历日**（owner 可调，默认前一日历日）。窗口算在
-// overnightWindow（纯 JS，BJT 固定 UTC+8）。降级注释（YUK-520 OUT-OF-SCOPE）：系统无
-// `last_visited_at`「自上次到访」锚，故用固定昨夜窗，不做「自上次访问以来」窗。
-//
-// 红线（YUK-520）：① 纯读绝不写库（evidence-first）；② has_overnight_activity 显式产出——「安静
-// 夜」是一等态，必须与「加载中/失败」可区分（见 hasOvernightActivity）；③ 三轴正交——绝不写回
-// mastery_state / item_calibration / FSRS；④ prep-desk confidence/predicted_p 等内部校准数永不过
-// wire（只取 count，不取概率）；⑤ additive——不改既有读模型。只读现有列，零 schema 变更（故不触
-// audit:schema / audit:draft-status）。
-//
-// 五个夜间事实源（has_overnight_activity 枚举全部）：
-//   1. ai_task_runs —— 按 finished_at 时间窗（不假设 FK 完整性，loose coupling），按 task_kind 聚合
-//      count + status_breakdown。finished_at 可空，gte/lt 比较天然排除 NULL。
-//   2. note refine changes —— listNoteRefineChanges（窗内 count）。
-//   3. agent notes —— 窗内新 experimental:agent_note 事件 count。
-//   4. proposals —— 窗内新 proposals（不含 conjecture）count。
-//   5. prep-desk conjectures —— 窗内新 conjectures count。
+// Read-only last-night digest over the five nightly sources. It never writes, never
+// emits calibration numbers, and keeps a quiet night as an explicit state. The window is
+// the previous Asia/Shanghai calendar day (fixed UTC+8, no last-visited anchor).
 
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { listNoteRefineChanges } from '@/capabilities/notes/public';
@@ -36,7 +18,7 @@ import {
   overnightWindow,
 } from './overnight-digest-summary';
 
-// 向后兼容：重导出纯模块的公共类型 / 纯函数，既有 import 路径单一。
+// Backward-compatible re-exports keep existing import paths working.
 export type {
   DegradedKind,
   OvernightDigest,
@@ -47,11 +29,8 @@ export { overnightWindow } from './overnight-digest-summary';
 
 type DbLike = Db | Tx;
 
-// agent note 事实源谓词（与 agency/server/notes.ts 的 readAllAgentNotes 同口径：
-// action='experimental:agent_note' + subject_kind='query'）。这里**故意不复用**
-// readAllAgentNotes——它带 expires_at>now 过滤 + limit 20，做的是「当前未过期、给 UI 注入」的
-// 读；digest 要的是「昨夜窗内 created 了几条」的历史窗计数（含此后已过期的），两者口径不同，故走
-// 直接窗内 count。
+// Deliberately not readAllAgentNotes: that read filters unexpired rows and limits to 20,
+// while the digest needs a historical window count including rows that have since expired.
 async function countAgentNotesInWindow(db: DbLike, from: Date, to: Date): Promise<number> {
   const [row] = await db
     .select({ c: count() })
@@ -67,9 +46,8 @@ async function countAgentNotesInWindow(db: DbLike, from: Date, to: Date): Promis
   return row?.c ?? 0;
 }
 
-// ai_task_runs 窗内分组：按 finished_at ∈ [from, to) 过滤（finished_at 可空，gte/lt 天然排除
-// 未完成的 NULL 行 → 只聚「昨夜跑完的」），按 (task_kind, status) 分组取 count。扁平行交给纯函数
-// groupRunsByKind 卷成 per-kind。
+// finished_at may be null; gte/lt excludes unfinished rows, so only last night's
+// completed runs are counted.
 async function loadRunRows(db: DbLike, from: Date, to: Date): Promise<RunStatusCountRow[]> {
   const rows = await db
     .select({
@@ -83,27 +61,18 @@ async function loadRunRows(db: DbLike, from: Date, to: Date): Promise<RunStatusC
   return rows.map((r) => ({ task_kind: r.task_kind, status: r.status, count: r.count }));
 }
 
-// note refine apply 窗内 count——复用 listNoteRefineChanges（既有读路径，单一真相）。它只接
-// since（无上界），故传 since=from 后在 JS 里裁到 < to。单用户工具 + 1 天窗，行数有界。
+// listNoteRefineChanges only takes a lower bound; trim to < to in JS. The window is one
+// day, so the row count is bounded.
 async function countNoteChangesInWindow(db: DbLike, from: Date, to: Date): Promise<number> {
   const rows = await listNoteRefineChanges(db, { since: from });
   return rows.filter((r) => r.created_at < to).length;
 }
 
-// YUK-580：ai_task_runs 窗内失败原始行（task_kind + error_message + finished_at），
-// 供纯函数 computeDegradedKinds 消费。按 finished_at desc 预排序（纯函数侧仍二次排序兜底，
-// 保证与查询层排序假设解耦）。与 loadRunRows 各自独立查询——后者只聚合 count，这里要保留
-// 原始 error_message 字符串，两者列不同不宜合并成一次查询。
+// Raw failure rows; separate from loadRunRows because the sample needs error_message.
 //
-// YUK-576 §5.3 — 死过滤修复：原 `eq(status,'error')` 收不到任何生产行——ai_task_runs.status
-// 的封闭写入词表是 {running, success, failure}（log.ts AiTaskRunFinishEntry），零 writer 写
-// 'error'，watchdog 对真实失败全盲。改按 status='failure' 收，并排除两类**非逻辑失败**行
-// （alerting 面排除、admin Failures 翻查面保留——那边按 finish_reason 聚类，仍可见）：
-//   - 'error_retried'：runner 进程内瞬时重试的非末次尝试（runner.ts §3.3）——一次逻辑请求
-//     两跳全挂只计末级 1 条，DEGRADED_KIND_ERROR_THRESHOLD=2 的「2 个独立逻辑失败才标红」
-//     语义不被单次用户动作打满；
-//   - 'reconciled_stuck'：stuck-run sweeper 的收敛行（ai_task_run_reconcile.ts）——状态
-//     收敛不是任务失败。
+// status='failure' is the only terminal failure writer; exclude non-failures:
+// error_retried (a retried attempt is not the final outcome) and reconciled_stuck
+// (sweeper convergence is not a task failure).
 async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunErrorRow[]> {
   const rows = await db
     .select({

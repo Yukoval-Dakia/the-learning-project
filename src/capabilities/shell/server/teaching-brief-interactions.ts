@@ -1,39 +1,12 @@
-// YUK-710 (P0F/6) — the append-only teaching-brief interaction ledger.
+// Append-only interaction ledger for the survival report: a brief was opened, or its
+// prepared action was started. No derived status is written back.
 //
-// Two minimal, opt-out-of-mem0 UI-interaction events power the two-week survival report
-// (scripts/report-teaching-brief.ts) WITHOUT a new table, a new gate, or a third-party
-// analytics platform:
+// Row ids are deterministic in the idempotency key (brief × Asia/Shanghai learner-local
+// day; action starts also key on action kind and probe question). The PK conflict is the
+// serialization — no advisory lock is needed, and a lost race can only mislabel
+// `idempotent`, never double-write.
 //
-//   - `experimental:brief_seen`            — the learner opened a delivered brief.
-//   - `experimental:primary_action_started` — the learner started a brief's prepared action.
-//
-// Everything else the report needs already exists and is NOT re-instrumented here: the
-// proposal decision (accept/edit/dismiss) is the canonical `rate` event, the probe outcome
-// is `experimental:probe_result`, and the outcome dismissal is `experimental:brief_acknowledged`
-// (teaching-brief-ack.ts). This module only adds the two funnel-entry signals those events
-// cannot express.
-//
-// Idempotency (contract-style, mirrors the ack writer's "one effective row" guarantee but
-// without an advisory lock): each event's row id is DETERMINISTIC in its idempotency key —
-// `brief_id × learner-local day` for a seen; action starts use `brief_id × action_kind ×
-// learner-local day`, plus probe_question_id for answer_probe (one brief can carry two probes).
-// writeEvent's `onConflictDoNothing({ target: event.id })` then makes a
-// re-render / React Query refetch / reload / dev strict-mode double-invoke a hard no-op at the
-// PK, so the ledger can never inflate. The PK conflict IS the serialization, so unlike the ack
-// (whose idempotency key ≠ its event id and which needs a deliverability re-check under lock)
-// no advisory lock is required. The pre-INSERT existence read only reports `idempotent`
-// accurately; the PK is the real guard, so a lost race just mis-labels the flag, never
-// double-writes.
-//
-// "learner-local day" = Asia/Shanghai calendar day (learnerLocalDay), the project-wide learner
-// day boundary (fixed UTC+8, matching the house crons / overnight-digest / learner-state).
-//
-// mem0 opt-out (acceptance item 8, mirrors the ack event): every row is written with
-// `ingest_at = now`, so the memory-ingestion outbox poller skips it, and — because ingest_at is
-// non-null and affected_scopes is left unset — writeEvent stamps an empty scope set, so no brief
-// scan can mistake an internal interaction row for learner evidence. These rows never reach the
-// mem0 learner-fact collection. This is a pure observational ledger: it writes NO derived status
-// back onto the proposal / question / result, and touches NO FSRS / mastery / θ̂ state.
+// `ingest_at` opts every row out of the mem0 learner-fact collection.
 
 import { and, eq } from 'drizzle-orm';
 import { learnerLocalDay } from '@/core/learner-day';
@@ -56,11 +29,8 @@ export interface RecordInteractionResult {
   idempotent: boolean;
 }
 
-// The two ledger payload shapes are the SINGLE contract between this writer and the offline
-// report reader (scripts/report-teaching-brief.ts imports them as types), so the read side is
-// connected to the write side at compile time and cannot silently drift from the fields written
-// here. All fields are always written; the reader still validates at the boundary (a foreign /
-// corrupt row is treated as missing data, never trusted blindly).
+// Shared with the offline report reader at compile time; the reader still validates at its
+// boundary because a foreign or corrupt row is missing data, not truth.
 export interface BriefSeenPayload {
   brief_state: BriefState;
   local_day: string;
@@ -81,9 +51,7 @@ function encodeEventIdSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
-// Encode every dynamic segment independently before joining. Public contracts accept
-// non-cuid legacy IDs, including `|`; raw concatenation could otherwise alias two
-// different brief × probe tuples and silently drop one through onConflictDoNothing.
+// Encode each segment: legacy ids may contain `|`, and aliasing would silently drop a row.
 function briefSeenEventId(briefId: string, localDay: string): string {
   return `bseen|${encodeEventIdSegment(briefId)}|${encodeEventIdSegment(localDay)}`;
 }
@@ -102,12 +70,7 @@ function primaryActionEventId(
   return `bact|${encodeEventIdSegment(briefId)}|${actionKind}|${encodeEventIdSegment(localDay)}`;
 }
 
-/**
- * Append the interaction row under its deterministic idempotency-key id. The pre-read only
- * decides the returned `idempotent` flag; the PK `onConflictDoNothing` inside writeEvent is
- * the actual single-row guarantee. `ingest_at = now` + the resulting empty affected_scopes
- * keep the row out of mem0 (see file header).
- */
+/** The pre-read only sets `idempotent`; the PK conflict is the real single-row guard. */
 async function appendInteraction(
   db: Db,
   input: {
@@ -133,8 +96,7 @@ async function appendInteraction(
     actor_kind: 'user',
     actor_ref: 'self',
     action: input.action,
-    // The brief (its stable id = the conjecture proposal event id) is the subject; the report
-    // joins interactions to briefs on subject_id. caused_by keeps the evidence chain to the brief.
+    // The stable brief id is the subject the report joins on.
     subject_kind: 'event',
     subject_id: input.briefId,
     payload: input.payload,
@@ -146,10 +108,7 @@ async function appendInteraction(
   return { interaction_event_id: input.id, local_day: input.localDay, idempotent: false };
 }
 
-/**
- * Record that the learner opened a delivered brief. Idempotent per brief_id × learner-local
- * day. Carries only the brief state + timestamps as metadata — never claim / basis / answer text.
- */
+/** Idempotent per brief × local day; carries no claim, basis, or answer text. */
 export async function recordBriefSeen(
   db: Db,
   input: { briefId: string; briefState: BriefState },
@@ -172,11 +131,8 @@ export async function recordBriefSeen(
 }
 
 /**
- * Record that the learner started a brief's prepared action. Idempotent per
- * brief_id × action_kind × learner-local day (so a double-click never inflates the funnel);
- * answer_probe additionally keys on probe_question_id so the independent recurrence is counted.
- * `resultEventId` is present only for scoped_practice (the confirmed outcome's probe_result), so
- * the report can join a confirmed outcome to its practice start. NO answer text is ever recorded.
+ * Idempotent per brief × action kind × local day; answer_probe also keys on question id so
+ * recurrence is counted separately. No answer text is recorded.
  */
 export async function recordPrimaryActionStarted(
   db: Db,
@@ -188,12 +144,8 @@ export async function recordPrimaryActionStarted(
   },
   now: Date = new Date(),
 ): Promise<RecordInteractionResult> {
-  // Server-layer self-defense (double layer with the route's Zod refine): result_event_id is
-  // REQUIRED for scoped_practice (the report joins on it) and FORBIDDEN for the others, so a direct
-  // (non-route) caller cannot write a malformed row. A programmer-error invariant → throw.
-  // Truthiness, NOT `=== undefined`: an empty string is falsy and would be DROPPED by the payload
-  // construction below (`input.resultEventId ? … : {}`), so `''` on scoped_practice must also throw —
-  // otherwise it slips past the guard and writes a scoped_practice row with no join key.
+  // Mirror the route Zod refine for direct callers. Use truthiness so an empty
+  // scoped_practice id throws instead of being dropped by the payload construction.
   if (input.actionKind === 'scoped_practice' && !input.resultEventId) {
     throw new Error('recordPrimaryActionStarted: scoped_practice requires resultEventId');
   }

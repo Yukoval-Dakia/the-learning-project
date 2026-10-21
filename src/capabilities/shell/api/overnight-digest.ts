@@ -1,5 +1,5 @@
-// YUK-520 (A1 夜窗 digest)：GET /api/workbench/overnight-digest 薄壳——聚合逻辑在
-// ../server/overnight-digest（昨夜窗 digest 只读读模型）。
+// GET /api/workbench/overnight-digest route shell; the read model lives in
+// ../server/overnight-digest.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

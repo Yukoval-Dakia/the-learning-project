@@ -1,35 +1,15 @@
-// YUK-708 (P0F/4) — the append-only, idempotent teaching-brief outcome
-// acknowledgement writer.
+// Append-only, idempotent acknowledgement of a delivered brief outcome.
 //
-// Contract (LAW): docs/design/2026-07-19-teaching-brief-contract.md §4.2.
-//   - "outcome 目前没有持久 acknowledgement SoT. P0F/4 将新增 append-only、幂等
-//      acknowledgement event."
-//   - "ack 只追加事件，绝不更新 proposal、question 或 result event." — this module
-//     writes exactly ONE `experimental:brief_acknowledged` event and mutates nothing.
-//   - "已 ack 的 result 立即失去 eligibility" — the read model (teaching-brief.ts)
-//     excludes any probe_result that has an ack event; this writer only appends it.
+// The sole write is one `experimental:brief_acknowledged` event; no derived status is
+// written back to proposal/question/result, and no learner-state row is touched.
 //
-// ND-5 (contract §10): zero FSRS / mastery_state / θ̂ / calibration writes. The sole
-// write is the append-only ack event; no learner-state row is ever touched.
+// Idempotency (keyed on the probe_result event id) always precedes the deliverability
+// verdict: a lost-response retry or a concurrent duplicate resolves to idempotent:true
+// even if the proposal was retracted or the probe drifted. A per-target advisory lock
+// serializes the first-write race.
 //
-// Idempotency (acceptance items 4/5): one effective ack per outcome. The ack is keyed
-// on the probe_result event id — `(action=BRIEF_ACK_ACTION, subject_kind='event',
-// subject_id=<result id>)`. CHECK-SEQUENCE INVARIANT: idempotency ALWAYS precedes the
-// deliverability verdict — a lock-free existing-ack short-circuit runs first, and the
-// deliverability verdict itself runs INSIDE the per-target advisory lock AFTER a second
-// existing-ack re-check. So a retry after a lost response, AND a concurrent "知道了" whose
-// sibling committed first, both resolve to idempotent:true instead of a misleading 409 —
-// even after the proposal was retracted or the probe drifted. The advisory lock
-// (hashtextextended on the result id, mirroring answerProbe) serializes the first-write
-// race so two clicks can never both insert.
-//
-// Deliverability (acceptance items 6/8, review rounds 1–5): a FIRST ack must target the
-// outcome the reader would currently deliver. Rather than re-derive each dimension, it
-// reuses the reader's own primary selection (loadOutcomeBrief) and requires the target to
-// BE that primary — so the writer's ackable set is identical to the reader's delivered set:
-// canonical body, TTL window, chain (probe + accepted proposal), correction folding, AND
-// selection (an older outcome hidden behind a newer primary is not ackable and resurfaces
-// once the newer one is acked — contract §4.2/§5).
+// A first ack must target exactly the reader's current primary outcome, so the writer's
+// ackable set matches the reader's delivered set without re-deriving each dimension.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { loadOutcomeBrief } from '@/capabilities/shell/server/teaching-brief';
@@ -51,12 +31,7 @@ export interface AcknowledgeBriefResult {
   idempotent: boolean;
 }
 
-/**
- * Read an existing ack for a result as an idempotent result, or null. brief_id comes from
- * the ack's OWN payload (not from re-validating the outcome chain), so a completed ack
- * still resolves after the proposal was retracted or the probe drifted. Accepts a Db or Tx
- * so the caller can pre-check without the lock and re-check inside it.
- */
+/** Read an existing ack; brief_id comes from the ack's own payload so it survives drift. */
 async function findExistingAck(
   db: Db | Tx,
   probeResultEventId: string,
@@ -74,9 +49,7 @@ async function findExistingAck(
     .limit(1);
   if (!existing) return null;
   const briefId = (existing.payload as Record<string, unknown> | null)?.brief_id;
-  // brief_id is our own append-only payload; a missing/empty one is a real data-integrity
-  // signal (the wire contract requires min(1)), so surface it loudly rather than papering it
-  // over with '' (which would violate the response schema). Round-5 OCR minor.
+  // Missing brief_id is data corruption; fail loudly rather than violate the schema.
   if (typeof briefId !== 'string' || briefId.length === 0) {
     throw new ApiError(
       'ack_payload_corrupt',
@@ -93,38 +66,22 @@ async function findExistingAck(
 }
 
 /**
- * Acknowledge a delivered teaching-brief outcome. Appends exactly one
- * `experimental:brief_acknowledged` event keyed on the probe_result event, or
- * short-circuits to the existing ack when one is already recorded.
- *
- * Idempotency wins over the deliverability check: an already-recorded ack returns
- * idempotent:true BEFORE any validation, so a retry after a lost response succeeds even if
- * the proposal was since retracted or the probe drifted (round-3, codex P2). A FIRST ack is
- * fail-closed: 404 when the result event is absent; 409 (`not_current_primary`) when the
- * target is not the outcome the reader would currently deliver — corrupt/orphan/expired
- * results, and an older outcome temporarily hidden behind a newer primary, all fail here and
- * (for the older one) resurface once the newer is acked (contract §4.2/§5). We only READ
- * provenance, never write derived status back onto proposal/question/result (contract §4.2).
+ * Append one ack keyed on the probe_result event, or return the existing ack.
+ * Missing result → 404; a result that is not the current primary → 409. An older
+ * outcome hidden behind a newer primary becomes ackable again once the newer is acked.
  */
 export async function acknowledgeTeachingBriefOutcome(
   db: Db,
   probeResultEventId: string,
   now: Date = new Date(),
 ): Promise<AcknowledgeBriefResult> {
-  // Idempotent short-circuit FIRST, before any deliverability check: an already-recorded ack
-  // is immutable + append-only, so returning it is always correct regardless of whether the
-  // outcome is still deliverable now. Re-gating a successful retry would surface a completed
-  // ack as a failure (round-3, codex P2). Safe without the lock; the lock below closes the
-  // first-write race.
+  // Short-circuit first: an existing ack is immutable, so re-gating a retry would turn a
+  // completed ack into a failure. The lock below closes the first-write race.
   const prior = await findExistingAck(db, probeResultEventId);
   if (prior) return prior;
 
-  // First ack — a precise 404 when the id is not a probe_result outcome at all (the action
-  // filter makes a non-result id 404 rather than a misleading 409). Then defer the WHOLE
-  // deliverability judgment to the reader: require the target to be exactly the outcome
-  // loadOutcomeBrief would currently deliver. This makes the writer's ackable set identical
-  // to the reader's delivered set — every dimension (canonical, TTL window, chain, correction
-  // folding) plus SELECTION — with zero re-derivation (round-5, codex P2).
+  // A non-result id is a 404, not a misleading 409. Deliverability itself is delegated
+  // to the reader so both sides share one definition.
   const [result] = await db
     .select({ id: event.id })
     .from(event)
@@ -138,26 +95,15 @@ export async function acknowledgeTeachingBriefOutcome(
     );
   }
 
-  // Everything below runs under the per-target advisory lock in ONE transaction. Check
-  // sequence invariant: idempotency ALWAYS precedes the deliverability verdict. The primary
-  // selection is read INSIDE the tx (loadOutcomeBrief on `tx`, serial reads — one connection
-  // can't run its Promise.all) so the verdict and the append share a single snapshot+lock:
-  // the primary cannot change between the check and the write (a judge inserting a newer
-  // result, a proposal retract, or TTL rolling), closing the TOCTOU window structurally
-  // (round-8, mirrors answerProbe's all-reads-in-tx precedent). A racer that committed its ack
-  // first is caught by the in-lock findExistingAck and returns idempotent, not a 409 (round-6).
+  // Verdict and append share one transaction and the per-target lock, so the primary cannot
+  // change between check and write. A racer that committed first is caught in-lock and
+  // returns idempotent, not 409.
   //
-  // KNOWN LIMITATION (round-9, deliberate WONT_FIX): the advisory lock is per-TARGET, not a
-  // global selection lock, so a primary-changing writer on a DIFFERENT chain (a judge inserting
-  // a newer probe_result, a proposal retract) that commits in the sub-millisecond window between
-  // this tx's last SELECT and its INSERT is not serialized against this ack. That is acceptable:
-  // (a) the in-tx verdict already guarantees the target WAS the delivered primary in this
-  // snapshot; (b) acking the outcome the user was actually shown a moment ago is their real
-  // intent, and the ack is append-only (it retires nothing but its own target — no corruption);
-  // (c) a global selection lock would couple research-pipeline write throughput to the UI's
-  // dismissal ledger, a much worse trade. The exact-version upgrade path, if ever needed, is the
-  // round-5 delivery-token: stamp a token when a brief is delivered and require it on ack, so the
-  // server verifies the precise delivered version instead of re-deriving "current primary".
+  // Deliberate limitation: the lock is per target, not global selection. A writer changing
+  // the primary on another chain can still commit between our last SELECT and INSERT. That
+  // is acceptable — the target was the delivered primary in this snapshot, the ack is
+  // append-only, and a global lock would couple pipeline throughput to UI dismissal. The
+  // exact-version upgrade path is a delivery token required on ack.
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeResultEventId}, 0))`);
 

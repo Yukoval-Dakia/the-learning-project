@@ -1,4 +1,5 @@
-// YUK-706 (P0F/2) — thin route shell for the read-only TeachingBrief projection.
+// GET /api/prep-desk/brief route shell; the projection lives in
+// ../server/teaching-brief.
 
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { db } from '@/db/client';
