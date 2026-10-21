@@ -8,6 +8,8 @@ import {
   createStartProposalDecision,
   readStartAutoApplied,
   readStartConjectures,
+  readStartKnowledgeFrontier,
+  readStartKnowledgeReviewDue,
   readStartKnowledgeTree,
   readStartOvernightDigest,
   readStartProposalInbox,
@@ -34,6 +36,12 @@ export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
   .handler(({ context, data }) =>
     runAuthenticatedStartWorkbench(context, getRequest(), () => readStartKnowledgeTree(data)),
   );
+export const getStartKnowledgeFrontier = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeFrontier),
+);
+export const getStartKnowledgeReviewDue = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeReviewDue),
+);
 export const getStartConjectures = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartConjectures),
 );

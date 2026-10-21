@@ -10,6 +10,8 @@ import {
   decideStartProposal,
   getStartAutoApplied,
   getStartConjectures,
+  getStartKnowledgeFrontier,
+  getStartKnowledgeReviewDue,
   getStartKnowledgeTree,
   getStartOvernightDigest,
   getStartProposalInbox,
@@ -72,3 +74,6 @@ export const startWorkbenchClient: WorkbenchClient = {
     return result;
   },
 };
+
+export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);
+export const startKnowledgeReviewDueClient = () => getStartKnowledgeReviewDue(transport);
