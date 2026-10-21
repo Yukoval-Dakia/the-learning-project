@@ -295,7 +295,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   get usage(): LifecycleUsage {
     const base = this.terminal?.usage ??
-      this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+      this.observedUsage?.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        numTurns: 0,
+      };
     const phased = !this.notePhases ? base : { ...base, phases: { ...this.notePhases } };
     // YUK-1630 — transport evidence is metadata namespaced beside the token
     // truth: it never feeds tokenCounts/costTruth, and a usage 0 / cost null
@@ -344,6 +350,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       usage: {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        numTurns: 1,
         usage_basis: 'estimated',
       },
       tokenCounts: {

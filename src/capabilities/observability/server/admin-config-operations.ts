@@ -16,7 +16,12 @@ export async function patchAdminConfig(input: unknown): Promise<AdminConfigWrite
   const writer = getAdminConfigWriter();
   if (!writer)
     throw new ApiError('config_writer_unavailable', 'Configuration writer is unavailable', 503);
-  return writer(body.data.changes, body.data.note);
+  return writer(
+    body.data.changes.map((change) =>
+      change.action === 'set' ? { ...change, expiresAt: change.expires_at ?? null } : change,
+    ),
+    body.data.note,
+  );
 }
 
 export async function resetAdminConfig(input: unknown): Promise<AdminConfigWriteResult> {

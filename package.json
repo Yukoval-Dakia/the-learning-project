@@ -100,6 +100,7 @@
     "grounding:gate": "tsx scripts/grounding-gate.ts",
     "replay:urnings": "tsx scripts/replay-urnings-lite.ts",
     "report:teaching-brief": "tsx scripts/report-teaching-brief.ts",
+    "harness:scoreboard": "tsx scripts/harness-scoreboard.ts",
     "compose:up": "tsx scripts/cloudflared-preflight.ts && docker compose up -d",
     "compose:down": "docker compose down",
     "compose:build": "node scripts/local-heavy.mjs 'docker compose build'",

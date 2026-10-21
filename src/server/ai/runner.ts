@@ -289,9 +289,9 @@ export interface RunTaskCtx {
    */
   parentTaskRunId?: string;
   /**
-   * Disable runner-owned tool logging. `runTask` records only the SDK-native Task
-   * spawn; MCP DomainTools keep their bridge-owned authoritative input/output row.
-   * Streaming runners retain their existing input-only logging contract.
+   * Disable runner-owned tool logging. The runner records only the SDK-native
+   * Task spawn; DomainTools, custom mounts and remote MCP write their own
+   * authoritative input/output row (YUK-1557: one row per executed call).
    */
   autoLogToolCalls?: boolean;
   /**
@@ -646,8 +646,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let firstTokenAt: number | undefined;
   const outputStats = emptyStreamTextStats();
   const settleAbortUsage = async () => {
-    if (args.kind !== 'NoteGenerateTask') return;
     if (!args.lifecycle.aborted || args.lifecycle.sawTerminalResult) return;
+    // YUK-1557 — a budget abort cut the provider stream before its usage chunk.
+    // Persist the bounded estimate (basis='estimated') for every task kind, so a
+    // failed run that already submitted a prompt is not booked as $0/null.
     await args.lifecycle.recordAbortedUsage({
       promptText: args.usagePrompt ?? '',
       output: outputStats,
@@ -1143,7 +1145,8 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                   kind,
                   ctx,
                   lifecycle,
-                  shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+                  shouldRecordToolCall: (block) =>
+                    isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
                   onTextDelta: (text) => {
                     controller.enqueue(encoder.encode(text));
                     resultText += text;
@@ -1355,7 +1358,8 @@ async function streamTaskCollectingImpl(
           ctx,
           lifecycle,
           notifySessionId: true,
-          shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+          shouldRecordToolCall: (block) =>
+            isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
           onTextDelta: (text) => {
             onDelta(text);
             resultText += text;

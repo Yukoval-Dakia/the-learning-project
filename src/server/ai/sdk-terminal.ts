@@ -48,10 +48,14 @@ function usageWithThinking(
   thinking: ThinkingObservation,
   compaction: LifecycleUsage['compaction'],
   tokenUsageObserved: boolean,
+  numTurns: number,
 ): ObservedRunUsage {
   const usage: LifecycleUsage = {
     inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
     outputTokens: aggregate.outputTokens,
+    cacheReadTokens: aggregate.cacheReadTokens,
+    cacheWriteTokens: aggregate.cacheCreationTokens,
+    numTurns,
     ...(compaction ? { compaction } : {}),
     ...(thinking.blocks > 0
       ? { thinkingBlocks: thinking.blocks, thinkingCharacters: thinking.characters }
@@ -79,6 +83,7 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
   const thinking: ThinkingObservation = { blocks: 0, characters: 0 };
   const observedUsage = emptyUsage();
   let hasObservedUsage = false;
+  let assistantTurns = 0;
   let compaction: LifecycleUsage['compaction'];
 
   return {
@@ -92,9 +97,16 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
           ...(metadata.post_tokens !== undefined ? { postTokens: metadata.post_tokens } : {}),
         },
       };
-      return usageWithThinking(observedUsage, thinking, compaction, hasObservedUsage);
+      return usageWithThinking(
+        observedUsage,
+        thinking,
+        compaction,
+        hasObservedUsage,
+        assistantTurns,
+      );
     },
     observeAssistant(message) {
+      assistantTurns += 1;
       for (const block of message.message.content ?? []) {
         if (block.type !== 'thinking') continue;
         thinking.blocks += 1;
@@ -106,7 +118,7 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
       )
         return undefined;
       hasObservedUsage = true;
-      return usageWithThinking(observedUsage, thinking, compaction, true);
+      return usageWithThinking(observedUsage, thinking, compaction, true, assistantTurns);
     },
     fromResult(message) {
       const terminalUsage = emptyUsage();
@@ -114,7 +126,15 @@ export function createSdkTerminalEvidenceCollector(): Readonly<{
         message.usage_observed !== false && accumulateUsage(message.usage, terminalUsage);
       const aggregate = hasTerminalUsage ? terminalUsage : observedUsage;
       return {
-        ...usageWithThinking(aggregate, thinking, compaction, hasTerminalUsage || hasObservedUsage),
+        ...usageWithThinking(
+          aggregate,
+          thinking,
+          compaction,
+          hasTerminalUsage || hasObservedUsage,
+          typeof message.num_turns === 'number' && message.num_turns > 0
+            ? message.num_turns
+            : Math.max(1, assistantTurns),
+        ),
         costUsd:
           message.usage_observed === false && message.total_cost_usd === 0
             ? undefined

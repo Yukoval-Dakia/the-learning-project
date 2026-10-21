@@ -25,6 +25,8 @@ export interface ConfigSnapshotEntry {
   value: ConfigValue;
   revision: number;
   updatedAt: string | null;
+  /** YUK-1557 — ISO instant after which this row no longer participates in resolution. */
+  expiresAt?: string | null;
 }
 
 export interface ConfigSnapshot {
@@ -90,17 +92,38 @@ function envValueFor(
   return { raw, parsed, expressed: parsed !== undefined };
 }
 
+/**
+ * YUK-1557 — a row past its `expires_at` is no longer a DB layer fact.
+ * Expiry is evaluated at read time so it needs no writer/cron to flip the
+ * snapshot; the row itself stays for audit and for the read model's
+ * expired-override display.
+ */
+export function isConfigEntryExpired(
+  entry: Pick<ConfigSnapshotEntry, 'expiresAt'>,
+  now: number = Date.now(),
+): boolean {
+  if (entry.expiresAt === null || entry.expiresAt === undefined) return false;
+  const at = Date.parse(entry.expiresAt);
+  return Number.isFinite(at) && at <= now;
+}
+
 function dbValueFor(key: string): { entry?: ConfigSnapshotEntry; test: boolean } {
   // overlay 在这里再查一次不是重复：getTaskOverride 直读本函数（不经
   // resolveConfigValue 的顶检），task.<kind>.* 的 setTestConfig 靠这层生效。
   if (testOverlay.has(key)) {
     return {
-      entry: { value: testOverlay.get(key) as ConfigValue, revision: -1, updatedAt: null },
+      entry: {
+        value: testOverlay.get(key) as ConfigValue,
+        revision: -1,
+        updatedAt: null,
+        expiresAt: null,
+      },
       test: true,
     };
   }
   const entry = snapshot.entries.get(key);
-  return entry ? { entry, test: false } : { test: false };
+  if (!entry || isConfigEntryExpired(entry)) return { test: false };
+  return { entry, test: false };
 }
 
 /**

@@ -710,6 +710,26 @@
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/harness-scoreboard.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["errorResponse"],
+      "issue": "YUK-1557",
+      "owns": "HTTP error envelope for the harness scoreboard read route",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/harness-scoreboard.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1557",
+      "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -721,6 +741,51 @@
       "to": 1790,
       "issue": "YUK-1572",
       "responsibilityReason": "Move the two choice-surface precheck values and two types to their owning pure module. Splitting the existing import adds two lines; all other imports and job execution, paid-call, placement authority, publication, fence, and recovery bodies are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "date": "2026-10-21",
+      "baseBlob": "f89e7490fdffbd02aba58a50e08d70a651fad623",
+      "from": 1939,
+      "to": 1940,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the per-question difficulty sentence on the quiz_gen store event; no new responsibility, one event payload field."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "4e773f14f1c7828c717a4cc59f4d1da67c687570",
+      "from": 1247,
+      "to": 1267,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the SourcingTask run identity and the one-line difficulty reason on the submit_question store event / created_by; the publication and verify paths are unchanged."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-21",
+      "baseBlob": "6f8ce80f7494c680ee0fcf1c323eb637d6be6549",
+      "from": 4883,
+      "to": 4891,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Add nullable system_config.expires_at for temporary overrides; additive column, no new table or writer family."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-21",
+      "baseBlob": "8ad42e79918f59b7bc9ede7bf60b220753581ba8",
+      "from": 2045,
+      "to": 2055,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stamp the active ai_task_runs.id onto domain and remote-MCP tool logs so one run owns its tool evidence."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-21",
+      "baseBlob": "1577ea4d79eb72c18832c4c898c0102c8a37870c",
+      "from": 1457,
+      "to": 1461,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
     }
   ],
   "compatShims": [

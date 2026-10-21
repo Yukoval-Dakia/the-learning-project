@@ -36,6 +36,10 @@ export const AdminConfigKeyRowSchema = z.object({
   consumer: z.string().nullable(),
   revision: z.number().int().nullable(),
   updated_at: z.string().nullable(),
+  /** YUK-1557 — DB row's hard stop; null = permanent (or no DB row). */
+  expires_at: z.string().nullable().optional(),
+  /** True when the row exists but its expires_at has passed. */
+  expired: z.boolean().optional(),
   note: z.string().optional(),
 });
 

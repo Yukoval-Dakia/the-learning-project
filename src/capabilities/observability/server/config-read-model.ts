@@ -31,6 +31,7 @@ import {
   getConfigSnapshot,
   getLaneOverride,
   getTaskOverride,
+  isConfigEntryExpired,
   resolveConfigValue,
 } from '@/core/config/store';
 
@@ -268,6 +269,7 @@ export function buildAdminConfigReadModel(
     .map((key) => {
       const def = CONFIG_REGISTRY[key];
       const resolved = resolveConfigValue(key, env);
+      const snapEntry = snap.entries.get(key);
       const consumer = KEY_CONSUMERS[key] ?? null;
       const envMode = def.envMode ?? 'fallback';
       const effectiveFact = facts?.effective_values[key];
@@ -294,6 +296,10 @@ export function buildAdminConfigReadModel(
           resolved.updatedAt !== null
             ? resolved.updatedAt
             : null,
+        // YUK-1557 — an expired row is no longer effective; keep it visible so a
+        // status page can show the override and its stop time without implying it still applies.
+        expires_at: snapEntry?.expiresAt ?? null,
+        expired: snapEntry !== undefined && isConfigEntryExpired(snapEntry),
         ...(def.note !== undefined ? { note: def.note } : {}),
       };
     });

@@ -26,10 +26,12 @@
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
+import type { Db } from '@/db/client';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
+import { writeToolCallLog, writeUnpricedToolCost } from '@/server/ai/log';
 import { type BuildMcpServerOptions, executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 
@@ -58,6 +60,12 @@ export type PiToolMount =
       config: RemoteMcpHttpConfig;
       /** Upstream tool names to expose (mirrors the caller's allowedTools scope). */
       toolNames: readonly string[];
+      /**
+       * YUK-1557 — required to persist one tool_call_log row (and unknown-cost
+       * ledger row) per remote call. Omitted mounts keep the wire behavior but
+       * leave no audit row.
+       */
+      db?: Db;
     }
   | {
       type: 'custom';
@@ -123,8 +131,9 @@ export function piRemoteMcpMount(
   serverName: string,
   config: RemoteMcpHttpConfig,
   toolNames: readonly string[],
+  db?: Db,
 ): PiToolMount {
-  return { type: 'remote-mcp', serverName, config, toolNames };
+  return { type: 'remote-mcp', serverName, config, toolNames, ...(db ? { db } : {}) };
 }
 
 /**
@@ -209,6 +218,7 @@ export interface PiRemoteMcpMountHandle {
 export async function connectPiRemoteMcp(
   mount: Extract<PiToolMount, { type: 'remote-mcp' }>,
   timeoutMs: number,
+  run?: { taskRunId: string; taskKind: string },
 ): Promise<PiRemoteMcpMountHandle> {
   // Dynamic imports keep the migrate bundle free of the MCP client (the same
   // boundary as the pi packages — build:migrate marks these external and the
@@ -255,10 +265,55 @@ export async function connectPiRemoteMcp(
           description: remote.description ?? '',
           parameters,
           execute: async (_toolCallId, params) => {
-            const res = (await client.callTool({
-              name: remote.name,
-              arguments: params as Record<string, unknown>,
-            })) as {
+            const startedAt = Date.now();
+            const wireName = piToolWireName(mount.serverName, remote.name);
+            const record = async (
+              output: Record<string, unknown>,
+              errorReason?: string,
+            ): Promise<void> => {
+              if (!mount.db || !run) return;
+              try {
+                await writeToolCallLog(mount.db, {
+                  task_run_id: run.taskRunId,
+                  task_kind: run.taskKind,
+                  tool_name: wireName,
+                  effect: 'read',
+                  input_json: (params ?? {}) as Record<string, unknown>,
+                  output_json: output,
+                  ...(errorReason ? { error_reason: errorReason } : {}),
+                  iteration: 0,
+                  latency_ms: Date.now() - startedAt,
+                  // Per the tool_call_log contract this column is not a cost
+                  // ledger; the unknown-price attempt row below carries it.
+                  cost: 0,
+                });
+                await writeUnpricedToolCost(mount.db, {
+                  taskRunId: run.taskRunId,
+                  provider: mount.serverName,
+                  toolName: remote.name,
+                  outcome: errorReason ? 'failed_permanent' : 'success',
+                });
+              } catch (logErr) {
+                // Bookkeeping must not turn a completed remote read into a failure.
+                console.error('[pi-tools] remote MCP tool log failed', {
+                  tool: wireName,
+                  task_run_id: run.taskRunId,
+                  err: logErr,
+                });
+              }
+            };
+            const res = (await client
+              .callTool({
+                name: remote.name,
+                arguments: params as Record<string, unknown>,
+              })
+              .catch(async (err: unknown) => {
+                await record(
+                  { error: err instanceof Error ? err.message : String(err) },
+                  'remote_mcp_call_failed',
+                );
+                throw err;
+              })) as {
               content?: Array<{ type: string; text?: string }>;
               isError?: boolean;
             };
@@ -271,13 +326,17 @@ export async function connectPiRemoteMcp(
               // SDK parity: an isError MCP result becomes an error tool
               // result. Pi marks errors via a thrown execute — carry the
               // serialized content so the model still sees the payload.
+              await record(
+                { content: content.length > 0 ? content : (res.content ?? res) },
+                'remote_mcp_is_error',
+              );
               throw new Error(JSON.stringify(content.length > 0 ? content : (res.content ?? res)));
             }
+            const resultContent =
+              content.length > 0 ? content : [{ type: 'text' as const, text: JSON.stringify(res) }];
+            await record({ content: resultContent });
             return {
-              content:
-                content.length > 0
-                  ? content
-                  : [{ type: 'text' as const, text: JSON.stringify(res) }],
+              content: resultContent,
               details: null,
             } satisfies AgentToolResult<null>;
           },

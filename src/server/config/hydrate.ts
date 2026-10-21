@@ -71,6 +71,7 @@ interface RawConfigRow {
   value: unknown;
   revision: number;
   updated_at: string | null;
+  expires_at: string | null;
 }
 
 /**
@@ -162,6 +163,7 @@ async function doHydrate(db: Db): Promise<ConfigHydrationReport> {
         revision: row.revision,
         // jsonb_agg(to_jsonb(...)) 把 timestamptz 序列化成 ISO string——直存。
         updatedAt: row.updated_at ?? null,
+        expiresAt: row.expires_at ?? null,
       });
       report.hydrated.push(row.key);
     }

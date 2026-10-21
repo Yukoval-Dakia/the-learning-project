@@ -353,6 +353,9 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             usage: {
               inputTokens: usage?.input_tokens ?? 0,
               outputTokens: usage?.output_tokens ?? 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              numTurns: 1,
             },
             tokenCounts: {
               inputTokens: usage?.input_tokens ?? 0,

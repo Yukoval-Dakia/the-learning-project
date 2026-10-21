@@ -216,6 +216,8 @@ export interface ToolInputInterceptResult {
 
 export interface BuildMcpServerOptions {
   ctx: ToolContext;
+  /** YUK-1557 — active ai_task_runs.id for tool log/mirror attribution. */
+  logTaskRunId?: string;
   /** Logical mount name; tools surface as `mcp__<name>__<tool>`. */
   serverName: string;
   /** Subset of registered DomainTool names to expose. */
@@ -271,6 +273,12 @@ export interface BuildMcpServerOptions {
  */
 export interface DomainToolCallOptions {
   ctx: ToolContext;
+  /**
+   * YUK-1557 — ai_task_runs.id for tool_call_log / tool_use mirror attribution.
+   * Defaults to ctx.taskRunId; the runner injects its active run id so tools
+   * with a separate spend-owner id still land one row on the real run.
+   */
+  logTaskRunId?: string;
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
   /** The agentLoop's native toolCall.id, forwarded for call correlation. */
@@ -332,7 +340,11 @@ export async function executeDomainToolCall(
   const call: ToolCallContext = {
     dt,
     opts,
-    ctx: { ...opts.ctx, derivationPolicy: policy },
+    ctx: {
+      ...opts.ctx,
+      ...(opts.logTaskRunId ? { logTaskRunId: opts.logTaskRunId } : {}),
+      derivationPolicy: policy,
+    },
     taskKind: opts.taskKind ?? opts.ctx.callerActor.ref,
     startedAt: Date.now(),
     gateInput: { name: dt.name, effect: dt.effect },
@@ -760,7 +772,7 @@ async function persistToolCallLog(
   let toolCallLogId: string | undefined;
   try {
     toolCallLogId = await writeToolCallLog(ctx.db, {
-      task_run_id: ctx.taskRunId,
+      task_run_id: ctx.logTaskRunId ?? ctx.taskRunId,
       task_kind: taskKind,
       tool_name: dt.name,
       effect: dt.effect,
@@ -832,7 +844,7 @@ async function mirrorToolUse(
         outcome: errorReason ? 'failure' : 'success',
         payload: mirrorPayload,
         caused_by_event_id: ctx.causedByEventId ?? null,
-        task_run_id: ctx.taskRunId,
+        task_run_id: ctx.logTaskRunId ?? ctx.taskRunId,
         cost_micro_usd: 0,
       });
       if (toolCallLogId) {
