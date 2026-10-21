@@ -5,19 +5,23 @@
 // the version under SELECT ... FOR UPDATE, and writes both the SSE job event and the
 // canonical edit event. Callers surface soft skip results; unexpected faults throw.
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
+import { encodeDraftRef } from '@/core/question-draft-ref';
+import type { PresentationT } from '@/core/schema/assessment';
 import type { QuestionKind } from '@/core/schema/business';
+import type { QuestionBlockStructuredT } from '@/core/schema/question-draft';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { question_block } from '@/db/schema';
+import { event, question_block } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import { writeJobEvent } from '@/server/events/writer';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -125,7 +129,7 @@ async function loadBlockForUpdate(tx: Tx, blockId: string): Promise<BlockRow | u
 interface PersistStructuredParams {
   blockId: string;
   /** The AFTER tree; single-block edits always rewrite it. */
-  structured: StructuredQuestionT;
+  structured: QuestionBlockStructuredT;
   op: SingleBlockEditOp;
   /** Orthogonal SSE transport payload. */
   jobPayload: Record<string, unknown>;
@@ -425,14 +429,35 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
   });
 }
 
-export interface SetPresentationParams extends BaseEditParams {
-  blockId: string;
-  /** The AFTER tree with the presentation already merged in. */
-  structured: StructuredQuestionT;
+export interface SetPresentationValidation {
+  status: 'valid' | 'invalid' | 'rejected_input' | 'unresolvable_contract' | 'unsupported_contract';
+  issues: { code: string; detail: string }[];
 }
+
+interface SetPresentationOptions extends BaseEditParams {
+  blockId: string;
+  expectedVersion?: number;
+  requestId?: string;
+  /** Defaults to save for existing callers. Validation runs under the same row lock. */
+  save?: boolean;
+  validate?: (tx: Tx, block: BlockRow) => Promise<SetPresentationValidation>;
+}
+
+export type SetPresentationParams = SetPresentationOptions &
+  (
+    | { presentation: PresentationT; structured?: never }
+    // Legacy callers: consume only presentation, never their supplied AFTER tree.
+    | { structured: StructuredQuestionT; presentation?: never }
+  );
 
 export type SetPresentationStatus =
   | 'written'
+  | 'validated'
+  | 'conflict'
+  | 'invalid'
+  | 'rejected_input'
+  | 'unresolvable_contract'
+  | 'unsupported_contract'
   | 'skipped:not_draft'
   | 'skipped:block_not_found'
   | 'skipped:null_structured';
@@ -441,25 +466,91 @@ export interface SetPresentationResult {
   status: SetPresentationStatus;
   /** Set on `written`; the post-save block version. */
   version?: number;
+  draft_ref?: string;
+  request_id?: string;
+  replayed?: boolean;
+  reason?: string;
+  current_draft_ref?: string;
+  current_draft_version?: number;
+  issues?: { code: string; detail: string }[];
 }
 
 /**
  * Persists a validated presentation through the standard single-block edit channel.
- * Callers validate shape and binding first; this only writes the merged AFTER tree.
+ * Owns request lock → replay → row lock → CAS → validation → canonical save/receipt.
+ * The validator reads the locked version; only presentation is merged into that row.
  */
 export async function setPresentation(
   db: Db | Tx,
   params: SetPresentationParams,
 ): Promise<SetPresentationResult> {
   return db.transaction(async (tx) => {
+    const save = params.save !== false;
+    const presentation = params.presentation ?? params.structured?.presentation;
+    // Same request lock and receipt action as edit_question. The tool/actor-bound
+    // fingerprint keeps a reused edit/compose key from replaying another operation.
+    const fingerprint = `sha256:${sha256CanonicalJson({
+      tool: 'compose_presentation',
+      block_id: params.blockId,
+      expected_version: params.expectedVersion ?? null,
+      presentation,
+      actor_ref: params.actorRef,
+      actor_kind: params.actorKind ?? 'agent',
+    })}`;
+    if (save && params.requestId != null) {
+      // Always before the row lock, matching edit/submit's lock order.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${params.requestId}))`);
+      const [existing] = await tx
+        .select({ payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:question_draft_save'),
+            sql`${event.payload} ->> 'request_id' = ${params.requestId}`,
+          ),
+        )
+        .orderBy(desc(event.created_at))
+        .limit(1);
+      if (existing != null) {
+        const payload = existing.payload as {
+          fingerprint: string;
+          receipt: SetPresentationResult;
+        };
+        if (payload.fingerprint !== fingerprint) {
+          return { status: 'conflict', reason: 'request_id_reused', request_id: params.requestId };
+        }
+        return { ...payload.receipt, replayed: true };
+      }
+    }
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:null_structured' };
+    if (params.expectedVersion != null && params.expectedVersion !== block.version) {
+      return {
+        status: 'conflict',
+        reason: 'draft_version_cas',
+        current_draft_ref: encodeDraftRef(block.id, block.version),
+        current_draft_version: block.version,
+      };
+    }
+    if (params.validate != null) {
+      const validation = await params.validate(tx, block);
+      if (validation.status !== 'valid') {
+        return { status: validation.status, issues: validation.issues };
+      }
+    }
+    if (!save) {
+      return {
+        status: 'validated',
+        version: block.version,
+        draft_ref: encodeDraftRef(block.id, block.version),
+      };
+    }
 
     const version = await persistStructured(tx, {
       blockId: params.blockId,
-      structured: params.structured,
+      structured: { ...block.structured, presentation },
       op: 'set_presentation',
       jobPayload: { op: 'set_presentation' },
       actorRef: params.actorRef,
@@ -467,7 +558,28 @@ export async function setPresentation(
       currentStatus: block.status,
       currentVersion: block.version,
     });
-    return { status: 'written', version };
+    const receipt: SetPresentationResult = {
+      status: 'written',
+      version,
+      draft_ref: encodeDraftRef(block.id, version),
+      ...(params.requestId != null ? { request_id: params.requestId } : {}),
+    };
+    if (params.requestId != null) {
+      // Existing draft-save receipt, atomic with the canonical edit and projection.
+      // Replays return this original version/ref even if later edits have advanced it.
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: params.actorKind ?? 'agent',
+        actor_ref: params.actorRef,
+        action: 'experimental:question_draft_save',
+        subject_kind: 'question_block',
+        subject_id: block.id,
+        outcome: 'success',
+        payload: { request_id: params.requestId, fingerprint, receipt },
+        ingest_at: new Date(),
+      });
+    }
+    return receipt;
   });
 }
 
