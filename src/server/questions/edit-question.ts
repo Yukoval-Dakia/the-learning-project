@@ -338,8 +338,8 @@ function publishIssues(
   return issues;
 }
 
-/** request_id 幂等回执：已写过的相同请求直接返回回执。 */
-async function findReceipt(
+/** Save receipt lookup shared by save and the locked legacy-resume branch. */
+export async function findDraftSaveReceipt(
   db: Db | Tx,
   requestId: string,
 ): Promise<{ fingerprint: string; receipt: unknown } | null> {
@@ -357,19 +357,6 @@ async function findReceipt(
   const payload = rows[0]?.payload as { fingerprint?: string; receipt?: unknown } | undefined;
   if (payload?.fingerprint == null) return null;
   return { fingerprint: payload.fingerprint, receipt: payload.receipt };
-}
-
-/**
- * YUK-1568 S3 R1-F1 — save 幂等回执（DRAFT_SAVE_ACTION 域）的只读查询。
- * 共享 declared 链在绑定新声明文档前用它甄别「升级前已用原始（未绑定）
- * 文档完成 save、submit/顶层回执缺失」的历史半成品：存在 ⇒ 必须经同一
- * saveDraftEditInTx 原指纹重放恢复，绝不对新文档换 request 重算。
- */
-export async function findDraftSaveReceipt(
-  db: Db | Tx,
-  requestId: string,
-): Promise<{ fingerprint: string; receipt: unknown } | null> {
-  return findReceipt(db, requestId);
 }
 
 // ---------- save ----------
@@ -611,7 +598,7 @@ export async function saveDraftEditInTx(
     // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
     // 锁内查重放（原 check-then-act 竞态在锁外）。
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
-    const existing = await findReceipt(tx, requestId);
+    const existing = await findDraftSaveReceipt(tx, requestId);
     if (existing != null) {
       if (existing.fingerprint === fingerprint) {
         return {

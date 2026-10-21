@@ -1041,6 +1041,9 @@ export async function persistDeclaredQuestionGroupInTx(
   // 回执；不重发布、不另付费核验。只对【确无历史 save】的首发才走下方
   // 新绑定链 —— 不误把所有同 request 冲突当 legacy（指纹不符的探测落回
   // 绑定链，由 bound save 产出同一诚实 request_id_reused 终态）。
+  // Decide legacy resume versus new binding under the save request's own lock.
+  // The caller lock alone does not serialize an older independent save writer.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${params.saveRequestId}))`);
   const preExistingSave = await findDraftSaveReceipt(tx, params.saveRequestId);
   if (preExistingSave != null) {
     const resumed = await saveDraftEditInTx(tx, {

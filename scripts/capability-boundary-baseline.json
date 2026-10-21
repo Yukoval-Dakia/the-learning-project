@@ -1026,7 +1026,7 @@
       "date": "2026-10-21",
       "baseBlob": "38b42726947ac1f6dc24a8c34d883b8e43a01e71",
       "from": 1295,
-      "to": 1298,
+      "to": 1320,
       "issue": "YUK-1553",
       "responsibilityReason": "EditQuestionInput 的 opaque document 字段改用共享 OpaqueJsonInput/JSON 类型，以满足 effectful tool 注册期 schema 契约；未改业务逻辑。"
     },
@@ -1116,7 +1116,7 @@
       "date": "2026-10-21",
       "baseBlob": null,
       "from": null,
-      "to": 1160,
+      "to": 1163,
       "issue": "YUK-1568",
       "responsibilityReason": "共享 save/submit 事务内核的单一完整职责：request 认领/回执重放、CAS、契约屏障、来源 URL claim 与 exact/near 去重、根行+typed 父子投影（子行 INSERT 字面量在本文件 submitDraftQuestionInTx —— writer 审计 per-site 同闭包）、唯一 publish seam、草稿终态、verify outbox、原子链入口（caller canonical 回执同事务 + R1-F1 升级前半成品原指纹恢复）。事务体为连续原子叙事，判定层与绑定/守闸已拆至 submit-decision.ts/typed-group.ts。"
     },

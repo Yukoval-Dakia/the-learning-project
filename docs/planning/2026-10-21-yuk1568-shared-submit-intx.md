@@ -34,7 +34,7 @@
 
 ## R1 发现与修复（review-r1-3116e69ec，2 P1 / 0 P0）
 
-- **F1 升级前半成品恢复**：旧版链可能已用同一 `:save` request_id 对原始未绑定文档写过 save 回执（submit/顶层回执崩溃缺失）。组合入口在绑定前先查 `findDraftSaveReceipt`；存在即以原文档经同一 `saveDraftEditInTx` 内核原指纹重放恢复 → 原 submit 语义续完（无 producer ⇒ 旧指纹字段集、平铺投影、`expected_draft_version=save.draft_version`、`expected_revision=null`）或重放既有 `:submit` 回执；caller canonical 回执同事务补齐，不重发布/不另付费核验。探测指纹不符（非同源历史）落回绑定链产出同一诚实 `request_id_reused`——不误把所有同 request 冲突当 legacy；确无历史 save 的首发才走新绑定链。恢复终态 `id_map=null` 如实标记无新绑定（caller 映射不读该字段）。
+- **F1 升级前半成品恢复**：旧版链可能已用同一 `:save` request_id 对原始未绑定文档写过 save 回执（submit/顶层回执崩溃缺失）。组合入口先取 save request 的 advisory lock，再在绑定前查 `findDraftSaveReceipt`（独立旧 save writer 也取同锁，不靠 caller lock 猜不存在）；存在即以原文档经同一 `saveDraftEditInTx` 内核原指纹重放恢复 → 原 submit 语义续完（无 producer ⇒ 旧指纹字段集、平铺投影、`expected_draft_version=save.draft_version`、`expected_revision=null`）或重放既有 `:submit` 回执；caller canonical 回执同事务补齐，不重发布/不另付费核验。探测指纹不符（非同源历史）落回绑定链产出同一诚实 `request_id_reused`——不误把所有同 request 冲突当 legacy；确无历史 save 的首发才走新绑定链。恢复终态 `id_map=null` 如实标记无新绑定（caller 映射不读该字段）。
 - **F2 声明子行晋升路径**：typed 声明多 part 组的 `question_part` 子行此前无成功晋升通道（verify_and_promote 对 part 行 `skipped:question_part`、source_verify 只翻根、C1 只翻组 admission 维度）。补 `promoteVerifiedGroupPartRows`（kernel 组生命周期 owner）+ source_verify promote 分支接入，同事务、root→child 锁序、继承证据留痕；不首发 active、不授予子行独立 verify、不伪造 quiz_gen 元数据、不靠 owner override。quiz_verify/owner-override 既有级联约定（verify-and-promote.ts）作为参照口径。
 
 writer-registry 按真实闭包收口：`submit-question.ts`（facade 零写点）stale 登记删除；`shared-submit.ts` 登记 publisher-converged（root insert / root update / typed 子行 insert 三写点均在 `submitDraftQuestionInTx`，per-site seam 同闭包）；`typed-group.ts` 零写点不登记。`source_verify`/`assessment-publication` 新写均为 lifecycle 列（draft_status/metadata），非判分输入列，按 §2 矩阵不需登记。
@@ -76,3 +76,5 @@ CI 事实（如实记录，不重跑）：09e04 head run39611151600 已终态 �
 - YUK-1431/ADR-0070 共用判断只读适配在 K1 第三片后；按真实现役版本封存 θ̂/PFA/FSRS，不把已合算法当 owner 批准切换。YUK-1470 切换仍另批。
 - ea21 发布：迁移线执行、协调裁资源；下一事件为 appendix/build 资源明确裁定。主线不取运营锁。1629 04/05 负正例已接受，不重复；只剩部署状态。
 - 清树/巡检：迁移线按各自授权和活跃绑定处理；本实施树活跃保留，旧 stage1-lead 不写。这些运营事项不阻塞 K1 源码交付，不计作 K1/K5 成果。
+
+父接收后定向修正：直接导出原 save 回执查询实现，删除 findDraftSaveReceipt→findReceipt 转发包装；在历史判定前先取 save 请求锁，避免探测后旧 save 才提交导致相同候选误判。没有手动 SHA/seal，未改业务指纹。
