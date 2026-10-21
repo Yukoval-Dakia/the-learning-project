@@ -1,4 +1,4 @@
-// YUK-1468 — the admit/withhold decision shared by submit and the admission job.
+// the admit/withhold decision shared by submit and the admission job.
 // Submit has no verdict yet, so a new question stays withheld. The job passes the
 // dual-solve verdict; a full pass on live knowledge is the only admitted result.
 

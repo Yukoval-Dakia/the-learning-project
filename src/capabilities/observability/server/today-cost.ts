@@ -87,9 +87,7 @@ export async function loadTodayCost(db: Db | Tx, now: Date = new Date()): Promis
       label: 'BJT today (from local midnight)',
     },
     today: {
-      // YUK-330: per-currency amount key is `cost` (unified with /api/_/admin/cost
-      // and the cost_ledger.cost source column). cost-today previously emitted
-      // `spend`, diverging from admin-cost's `cost` for the same concept.
+      // Per-currency amount key is `cost`, matching admin cost and the ledger column.
       by_currency: byCurrency,
       tokens_in: total?.tokens_in ?? 0,
       tokens_out: total?.tokens_out ?? 0,

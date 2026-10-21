@@ -336,17 +336,17 @@ export async function updateThetaForAttempt(
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
   }
 
-  // 1. Read the b anchor (item-half locked: READ-ONLY — 不变量①, G4). track='hard'
-  //    only — soft track never reaches p(L)/scheduling (ADR-0035). YUK-361 Phase 6
-  //    (Task 11 step 5): 读 effectiveB = b_calib ?? b_anchor ?? b（去偏 b 优先）。
-  //    在线 θ̂ 路径**只 READS** effectiveB，**绝不 WRITES** b_calib（b_calib 只由批量
-  //    recalibrateQuestion 写）——不变量① intact。NO-OP today：b_calib 攒够标签前 NULL，
-  //    b_anchor 由 migration 0038 从既有 b 回填，故 effectiveB 当前等于原 b。
+  // 1. Read the b anchor (READ-ONLY — b 的写者是标定批/锚写者，在线路径只读). track='hard'
+  //    only — soft track never reaches p(L)/scheduling (ADR-0035). YUK-439 (ADR-0043
+  //    Amendment A2): 读 effectiveB = b_post ?? b_anchor ?? b（后验优先）。在线 θ̂ 路径
+  //    **只 READS** effectiveB，**绝不**写 b——b 单写者由标定批保（G4 改写后红线）。
+  //    无证据时 b_post = b_anchor（锚写者初始化/migration 回填），读侧零跳变。
   const calRows = await tx
     .select({
       b: item_calibration.b,
       b_anchor: item_calibration.b_anchor,
       b_calib: item_calibration.b_calib,
+      b_post: item_calibration.b_post,
     })
     .from(item_calibration)
     .where(

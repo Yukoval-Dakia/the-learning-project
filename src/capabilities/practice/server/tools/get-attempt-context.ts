@@ -3,8 +3,7 @@ import {
   type SchedulingState,
   isCandidateState,
 } from '@/core/schema/scheduling-state';
-// YUK-81 / Foundation D M1 Lane C; YUK-832 evidence-reader hardening.
-//
+//evidence-reader hardening.
 // Exact-id event evidence reader, preserving the historical tool/input name.
 // Reader v2 separates event availability from optional answer enrichment.
 // Same-question history is non-causal; the causal neighborhood covers only the
@@ -103,18 +102,18 @@ const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   event_id: z.string(),
   primary_category: z.string(),
-  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // misc_ id 的显示回填（active misconception title）；非 misc /
   // unresolvable → null。
   primary_label: z.string().nullable(),
   secondary_categories: z.array(z.string()),
-  // YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
+  // secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
   secondary_labels: z.record(z.string(), z.string()),
   analysis_md: z.string().nullable(),
   user_notes: z.string().nullable(),
   confidence: z.number().nullable(),
 });
 
-// YUK-1054 — 双轨裁决（§9）。attempt 的原始执行收据判轨 + 当前 effective 判轨
+// 双轨裁决。attempt 的原始执行收据判轨 + 当前 effective 判轨
 // 在 evidence surface 上显式拆开，供 caller 区分「首判因」与「当前判因」。
 const VerdictTrackSchema = z.object({
   judge_event_id: z.string().nullable(),
@@ -137,9 +136,9 @@ const TimelineEntrySchema = z.discriminatedUnion('kind', [
       .object({
         primary: z.string(),
         confidence: z.number().nullable(),
-        // YUK-1018 — misc_ id 显示回填（与 read-model 字段同名直通）。
+        // misc_ id 显示回填（与 read-model 字段同名直通）。
         primary_label: z.string().nullable(),
-        // YUK-1020 — 副归因 id + misc_ 显示回填（与 read-model 字段同名直通）。
+        // 副归因 id + misc_ 显示回填（与 read-model 字段同名直通）。
         secondary: z.array(z.string()),
         secondary_labels: z.record(z.string(), z.string()),
       })
@@ -285,7 +284,7 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
     theta_snapshots: z.array(
       z.object({
         knowledge_id: z.string(),
-        // YUK-1093 — mastery_state partition: 'ability_global' entries carry a
+        // mastery_state partition: 'ability_global' entries carry a
         // domain id in knowledge_id (snapshot subject_kind passthrough).
         subject_kind: z.enum(['knowledge', 'ability_global']),
         before_present: z.boolean(),
@@ -363,7 +362,7 @@ const OutputSchema = z.object({
     'not_resolved',
   ]),
   cause: CauseSchema.nullable(),
-  // YUK-1054 — 原始/effective 判轨指针（attempt 证据拆分）。
+  // 原始/effective 判轨指针（attempt 证据拆分）。
   verdicts: AttemptVerdictsSchema.nullable().optional(),
   timeline: z.array(TimelineEntrySchema),
   timeline_scope: z.literal('same_question_context_noncausal'),
@@ -1135,7 +1134,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const failure =
     activity.outcome === 'failure' ? await getFailureAttemptById(ctx.db, activity.event_id) : null;
   const cause = failure ? effectiveCauseForFailureAttempt(failure) : null;
-  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询）；
+  //misc_ primary + secondary id 的 title 回填（同一批查询）；
   // 与 records 读并行。
   const [miscLabels, records] = await Promise.all([
     cause
@@ -1184,7 +1183,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
           confidence: cause.confidence,
         }
       : null,
-    // YUK-1054 — 原始/effective 判轨。effective=当前判因（user_cause 优先于
+    // 原始/effective 判轨。effective=当前判因（user_cause 优先于
     // judge），original=首判（earliest judge，未链解析）。无 failure 判 → null。
     verdicts: failure
       ? {

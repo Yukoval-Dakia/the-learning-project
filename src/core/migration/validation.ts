@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 
 // ====================================================================
-// YUK-1048 — 历史冻结输入/判词的契约校验（review 终轮 P1-1）
+// 历史冻结输入/判词的契约校验
 // ====================================================================
 //
 // 「complete」必须建立在【被识别且自洽】的冻结输入与判词上，不接受
@@ -113,7 +113,7 @@ export function validateDurableSnapshot(
 export type VerdictStatus = 'valid' | 'invalid' | 'absent';
 
 /**
- * 判词校验（真实值域，P1-1）：coarse_outcome × score 必须成对落在
+ * 判词校验（真实值域）：coarse_outcome × score 必须成对落在
  * JudgeResultV2 的判别分支上：
  *   correct: score ∈ [0.85,1]；partial: score ∈ (0,0.85)；
  *   incorrect: score === 0；unsupported: score null/缺省。

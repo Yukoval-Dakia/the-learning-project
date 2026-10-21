@@ -1,5 +1,4 @@
-// YUK-230 (PR #1063 review, thread 7) — shared judge output-parse helpers.
-//
+// (PR #1063 review, thread 7) — shared judge output-parse helpers.
 // extractJsonObject was copy-pasted into steps-judge, multimodal-direct-judge,
 // question-contract (semantic) and source-grounding-verify (4 copies); the structured
 // runTask default was copy-pasted into the 3 vision judges. Both are consolidated here.

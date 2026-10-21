@@ -12,8 +12,8 @@ export {
 export type { QuizGenJobData } from './jobs/quiz_gen';
 
 export { runQuestionAdmissionChecks } from './server/admission/checks';
-// YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
-// barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
+// Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
+// bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
 export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
 
@@ -22,7 +22,7 @@ export {
   type CalibrationSampleDispatch,
   calibrationSampleDispatchSchema,
 } from './server/calibration-sample-store';
-// YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 
@@ -55,9 +55,8 @@ export type { FrontierResolution } from './server/learnable-frontier';
 export { isMasteredForFrontier } from './server/learnable-frontier';
 export { validateLearningContent } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
-// YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by
-// placement-scope but consumed from server/*; re-exported through the public
-// seam so server→capability stays public (not deep).
+// The seed-root anchor regex is owned by placement-scope but consumed from server/*;
+// re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 
 export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
@@ -80,7 +79,7 @@ export {
 export type { PracticeTaskRunFn } from './server/task-runtime';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
-// YUK-1622 — Coach's nightly daily-plan inputs share the practice due queue and
+// Coach's nightly daily-plan inputs share the practice due queue and
 // measured question pace.
 export const resolveDailyReviewPlanInputs: typeof import('./server/daily-review-plan').resolveDailyReviewPlanInputs =
   async (...args) =>
@@ -94,7 +93,7 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
 };
 
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
-// YUK-1064 — explicit operations used by scripts and integration consumers.
+// explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export {
   commitFormalAttempt,
@@ -123,7 +122,7 @@ export {
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
-// YUK-1063 — explicit judging contract consumed by the stable kernel facade.
+// explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
   type ContractAttemptInput,
@@ -175,7 +174,7 @@ export type {
   QuestionEditAcceptResult,
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
-// YUK-885 — public ports repointed from central deep imports.
+// public ports repointed from central deep imports.
 export { applyQuestionEdit } from './server/proposal-appliers';
 export type { DispatchResult } from './server/question-supply/dispatcher';
 export {
@@ -187,9 +186,9 @@ export {
 export type { SupplyTraceV1T } from './server/question-supply/evidence-demand';
 export { withSupplyTraceDifficultyEvidence } from './server/question-supply/evidence-demand';
 
-// YUK-986 (Supply-Agent/1) — jyeoo agent-tool 链公开面：候选抓取核心（tool 与 CLI 共用）、
-// hint 名匹配（CLI/executor 的确定性归属辅助）。DomainTool 本体由 manifest
-// copilotTools lazy-load 深路径授予，CLI 直接调 execute。
+// Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
+// hint matching. DomainTool registration loads deep paths from the manifest; the CLI calls
+// execute directly.
 export { runJyeooFetchCandidates } from './server/question-supply/jyeoo-candidates';
 export {
   findSubjectRootKnowledgeId,
@@ -230,11 +229,11 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
-// YUK-988 (Supply-Agent/3) — executeSupplyPlan/buildSupplyExecutorDeps 不进本 barrel：
-// 该链（plan-executor → web-candidates → SourcingTask → pi agent runtime）
-// 会把 SDK 拉进 build:migrate 的 cjs bundle，SDK 顶层 createRequire(import.meta.url)
-// 在 cjs 下启动即崩（server/worker 构建标 external 所以只 migrate 中招）。
-// scripts/supply-execute.ts 走深路径直引（E1 jyeoo-backfill 先例）。
+// Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
+// (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
+// migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
+// server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
+// imports the deep path directly.
 
 export type {
   DifficultyBand,
@@ -257,11 +256,11 @@ export {
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
 
-// YUK-892 — due-review queue reader for non-LLM read paths (today summary).
+// due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { submitQuestionTool } from './server/tools/submit-question';
-// YUK-1468 — `store_sourced_question` 工具面已并入 submit_question（旧名不再
-// 注册/授权）；函数级 compat 仍在 ./server/tools/store-sourced-question。
+// store_sourced_question is folded into submit_question (the old tool is no longer
+// registered or granted); the function-level compat export remains.
 
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);

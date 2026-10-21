@@ -1,22 +1,9 @@
-// P1 (YUK-489) — KC-keyed cosine retriever over `knowledge.embedding`. The unified
-// match-or-propose TaggingTask (YUK-489) calls this to fetch candidate KCs by embedding
-// similarity, then decides MATCH (nearest within MATCH_THRESHOLD) vs PROPOSE (new child KC).
+// KC-keyed cosine retriever over `knowledge.embedding`, used by match-or-propose
+// tagging.
 //
-// Net-new read consumer: `knowledge.embedding` is populated nightly (embed_backfill,
-// DashScope text-embedding-v4, 1024-dim) and re-embedded on reparent/edit, but had ZERO
-// `<=>` reader before this — the dead `knowledge_ids:[]` cold-start gate (YUK-478 false
-// premise) meant the tagger only ever matched against the in-prompt grid, never the vectors.
-//
-// Mirrors the Practice `poolFetch` ORDER-BY-`<=>` pattern, retargeted
-// from `question` to `knowledge`. `<=>` is pgvector COSINE DISTANCE (0 = identical direction,
-// 1 = orthogonal, 2 = opposite): SMALLER = NEARER. Rows with a NULL embedding (never embedded
-// / edit-NULLed, awaiting the nightly backfill) and archived rows are excluded.
-//
-// SCOPE (deliberately minimal): this is a PURE global top-K retriever. It does NOT
-// subject-scope — effective-domain is app-layer-derived (a parent walk), not a SQL column
-// (same reason poolFetch omits it). The caller (P2 TaggingTask) applies the MATCH_THRESHOLD
-// cutoff and any effective-domain filter on the returned candidates, mirroring how the quiz
-// matcher thresholds poolFetch output in TS rather than in SQL.
+// `<=>` is pgvector cosine distance (0 nearest, 2 farthest). Archived and unembedded
+// rows are excluded. This is a pure global top-K read: effective domain is derived in
+// the app, so the caller applies both the threshold and the subject filter.
 
 import { and, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -26,9 +13,7 @@ import { toSqlVector } from '@/db/vector';
 export interface KnowledgeSimilarityCandidate {
   knowledge_id: string;
   name: string;
-  /** knowledge.domain — only the subject-root carries it; children inherit it via the
-   *  parent chain (effective-domain), so this is NULL for non-root KCs. Projected so the
-   *  caller can effective-domain-filter without a second query. */
+  /** Only subject roots carry it; projected so the caller can resolve effective domain. */
   domain: string | null;
   parent_id: string | null;
   /** pgvector cosine distance to the query vector: 0 (nearest) .. 2 (farthest). */
@@ -41,13 +26,8 @@ export interface MatchKnowledgeOptions {
 }
 
 /**
- * Fetch the top-K active, embedded KCs nearest to `queryEmbedding` by pgvector cosine
- * distance (nearest first). Pure read; no writes. Returns `[]` for an empty query vector
- * (the caller routes that to the PROPOSE path — there is nothing to match against).
- *
- * `queryEmbedding` MUST be EMBED_DIMS (1024)-length — the same single internal embedder that
- * populated `knowledge.embedding`. A wrong length is a programmer error and fails loud at
- * query time (pgvector dim mismatch); P1 does not soft-guard it (caller contract, like poolFetch).
+ * Nearest embedded KCs, nearest first. An empty query vector returns [] so the caller
+ * proposes instead. A wrong vector length fails loudly at query time by contract.
  */
 export async function matchKnowledgeBySimilarity(
   db: Db,
@@ -56,17 +36,11 @@ export async function matchKnowledgeBySimilarity(
 ): Promise<KnowledgeSimilarityCandidate[]> {
   if (queryEmbedding.length === 0) return [];
 
-  // Clamp topK to a valid LIMIT (>= 1). A caller that mis-sets topK <= 0 would otherwise
-  // either SILENTLY return [] (→ the caller routes EVERYTHING to propose — the opposite of
-  // intent, and exactly the silent-degradation class this redesign kills) or error at the DB
-  // (negative LIMIT). Clamp-to-1 always yields at least the nearest candidate to decide
-  // match-vs-propose against.
+  // Clamp to at least one, so a bad topK cannot silently route everything to propose.
   const limit = Math.max(1, Math.trunc(opts.topK));
 
-  // Single source of truth: the same distance expression feeds both the SELECT projection
-  // and the ORDER BY (the column the caller thresholds on IS the column we sort by), exactly
-  // as poolFetch reuses its distanceExpr. A bare expression in ORDER BY sorts ASC → nearest
-  // first (smaller cosine distance = nearer).
+  // One expression for both projection and ordering, so the thresholded value is the
+  // sorted value.
   const distanceExpr = sql<number>`${knowledge.embedding} <=> ${toSqlVector(queryEmbedding)}::vector`;
 
   return (
@@ -79,15 +53,9 @@ export async function matchKnowledgeBySimilarity(
         cosine_distance: distanceExpr,
       })
       .from(knowledge)
-      // Active + embedded only. NOTE: `approval_status` is intentionally NOT filtered.
-      // YUK-1405 armed 'pending' (auto_tag agent-minted KCs are honestly marked
-      // unapproved) but deliberately did NOT gate reads on it: a pending KC stays
-      // matchable so a second similar question re-uses it instead of minting a
-      // duplicate pending node (kc_dedup_nightly owns merge proposals). If the
-      // review flow later wants 'pending' to mean unusable, this MUST add
-      // `approval_status = 'approved'` (latent dep, YUK-489) — that is a
-      // semantics change, not this filter's current contract. Mirrors
-      // poolFetch's documented answer_class deferral.
+      // approval_status is intentionally not filtered: a pending KC stays matchable so a
+      // similar question reuses it instead of minting a duplicate. Gating on approved
+      // would be a semantics change for the review flow to decide.
       .where(and(isNull(knowledge.archived_at), sql`${knowledge.embedding} IS NOT NULL`))
       .orderBy(distanceExpr)
       .limit(limit)

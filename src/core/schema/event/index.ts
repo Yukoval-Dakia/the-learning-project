@@ -61,50 +61,49 @@ export * from './subagent-events';
 //
 // Parse precedence（z.union 按顺序 try，第一个成功胜出）：
 //   1. KnownEvent — 15 个稳定分支（含 ToolUseQuery，自 ADR-0011 §1.1 promote 自
-//      `experimental:tool_use`；含 SuppressArtifactLink，YUK-95 P5 Lane-D
-//      ADR-0020 §9 dismiss）
+//      `experimental:tool_use`；含 SuppressArtifactLink，ADR-0020 §9 dismiss）
 //   2. UserCauseExperimental — experimental:user_cause 的特化（payload shape 已 locked）
 //   3. RecordCaptureExperimental — experimental:record_capture
 //   4. MemoryBriefRefreshExperimental — experimental:memory_brief_refresh
 //   5. StateSnapshotExperimental — experimental:state_snapshot 的特化（ADR-0044 §3）
 //   5b. GradingCheckpointExperimental — experimental:grading_checkpoint 的特化
-//       （YUK-561 S2：snapshot 的可逆锚，θ̂/FSRS 双 sibling，payload.segment 判别）
+//       （snapshot 的可逆锚，θ̂/FSRS 双 sibling，payload.segment 判别）
 //   5c. ReprojectDeferredExperimental — experimental:reproject_deferred 的特化
-//       （YUK-561 S4：judge-overturn 残留可见 marker，第二实例重投影引擎 worklist）
-//   6. GenesisExperimental — experimental:genesis 的特化（YUK-471 W1, Codex #4 parse barrier）
+//       （judge-overturn 残留可见 marker，第二实例重投影引擎 worklist）
+//   6. GenesisExperimental — experimental:genesis 的特化（pre-fold 回填 seed）
 //   7. GoalStatusUpdateExperimental / GoalScopeUpdateExperimental — goal 动作事件特化
-//      （YUK-471 W2，使 status/scope 变更 fold-visible，./goal-events.ts）
+//      （使 status/scope 变更 fold-visible，./goal-events.ts）
 //   7b. SubjectRootNameUpdateExperimental — subject control-plane 根节点名称转移事件特化
-//       （YUK-728：使 rename/reset 的 knowledge root mirror fold-visible）
+//       （使 rename/reset 的 knowledge root mirror fold-visible）
 //   8. MistakeVariantCreateExperimental — mistake_variant 运行时 creation BASE 事件特化
-//      （YUK-471 W2 critic A4：携带 fold-blind cause_category；genesis 仅 backfill，
+//       （携带 fold-blind cause_category；genesis 仅 backfill，
 //       runtime create 用专属事件，./mistake-variant-events.ts）
 //   9. LearningItemComplete/Relearn/ArchiveExperimental — learning_item 状态转移动作事件特化
-//      （YUK-471 W2：使 complete/relearn/archive fold-visible via Q1，./learning-item-events.ts）
+//       （使 complete/relearn/archive fold-visible，./learning-item-events.ts）
 //  10. BodyBlocksEdit/ArtifactCreate/ArtifactLifecycle/NoteRefineUndoExperimental — artifact 动作事件特化
-//      （YUK-471 W3-A1：body 编辑 / 运行时新建 / 生命周期变更 fold-visible；W3-C1γ：note-refine undo
+//      （body 编辑 / 运行时新建 / 生命周期变更 fold-visible；note-refine undo
 //       自携 restored body fold-visible，./artifact-events.ts。NoteRefineUndo 复用既有 action 名，
 //       fold 字段 optional 保 getEvents 旧 loose 事件读取不 throw）
 //  11. EditQuestionBlockStructured/QuestionBlockCreate/QuestionBlockLifecycleExperimental —
-//      question_block 动作事件特化（YUK-471 W3-A2：structured 编辑（merge 多行 after）/ 运行时新建
-//      fold-visible；W3-D：lifecycle 使 5 个无事件 fold-truth mutator（reassignFigure / auto-enroll /
+//      question_block 动作事件特化（structured 编辑（merge 多行 after）/ 运行时新建
+//      fold-visible；lifecycle 使 5 个无事件 fold-truth mutator（reassignFigure / auto-enroll /
 //      import-enroll / import-ignore / revert）fold-visible，./question-block-events.ts）
-//  11b. NudgeExperimental — copilot 主动开口触发留痕特化（YUK-577：承重非 report-only，
+//  11b. NudgeExperimental — copilot 主动开口触发留痕特化（承重非 report-only，
 //      GET /nudges 读它 + 频控 + surfacing gate 依赖 payload 承重键，./nudge-events.ts）
 //  11c. JudgePendingAttemptExperimental — durable judge 面「作答已录、判词未落」的不可变
-//      证据特化（YUK-777 A2：sweeper 从 payload.submit 逐字重投、late-arrival guard 读
+//      证据特化（sweeper 从 payload.submit 逐字重投、late-arrival guard 读
 //      payload.knowledge_ids + submit.submitted_at 当水位，./judge-pending-events.ts）
 //  12. ExperimentalEvent — 通用 experimental:* 命名空间逃逸阀
 //
 // 顺序要点：特化 experimental schemas 必须排在通用 ExperimentalEvent 之前，否则后者的
 // payload (任意 record) 会先 match 走，结构信息丢失。
 //
-// YUK-772 的单 owner fail-closed 闸门刻意落在 KnownEvent seam。experimental
+// 单 owner fail-closed 闸门刻意落在 KnownEvent seam。experimental
 // branches 仍有已持久化的 workflow/source provenance refs（例如 `owner`、
 // `user:self`、`block_import`、`artifact_block_tree_editor`、
 // `learning_item_detail`、`hub_dismiss_link`、`proposal:accept`）；在没有逐 branch
 // migration 前不得把它们伪装成 stable `self`。未来收紧 experimental actor refs
-// 必须作为独立迁移交付，而不是扩大 YUK-772 的读取拒绝面。
+// 必须作为独立迁移交付，而不是扩大该闸门的读取拒绝面。
 
 export const Event = z.union([
   KnownEvent,

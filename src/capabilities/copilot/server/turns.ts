@@ -1,22 +1,13 @@
-// AF S3a / YUK-203 U3 — Copilot turn reader (replay-last-N).
+// Copilot turn reader (replay-last-N).
 //
-// Reads the recent Copilot conversation turns from the event stream and returns
-// them oldest→newest so the drawer can prefill its message list on open.
+// A "turn" is one row: a user ask or chip trigger → 'user'; an agent reply → 'ai'.
+// One newest-first scan of at most `limit * 2` rows across asks, chip triggers and
+// replies; interleave by (created_at, id), then keep the last `limit` so ask+reply
+// pairs stay adjacent.
 //
-// A "turn" is one row: a user ask (`experimental:copilot_user_ask`) or a chip
-// trigger (`experimental:copilot_chip_trigger`) → role 'user'; an agent reply
-// (`experimental:copilot_reply`) → role 'ai'. We read the newest `limit` rows of
-// EACH side and interleave by (created_at, id), then keep the last `limit` of the
-// merged stream. This guarantees ask+reply pairs stay adjacent regardless of how
-// many tool-loop seconds separated them.
-//
-// No new schema: all three actions live in the generic ExperimentalEvent escape
-// hatch and carry their text in payload. Replay is scoped to the CURRENT
-// reusable Copilot session (codex #3356884484): we resolve that session with the
-// same predicate find-or-create uses (Conversation.findReusableCopilotConversation),
-// then filter events by the events.session_id column — which every Copilot turn
-// event now writes (ask/chip + reply), the column being the event's conversation
-// session (teaching + copilot share it; payload.session_id is a portable copy).
+// Replay is scoped to the CURRENT reusable Copilot session, resolved with the same
+// predicate find-or-create uses, and filtered on events.session_id (the event's
+// conversation session; payload.session_id is a portable copy).
 
 import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -42,14 +33,10 @@ import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
-// AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
-// the copilot_reply event payload so replay can surface the structured question
-// card without re-running the LLM. The canonical type lives in chat-contracts,
-// which is dependency-light and shared with the emission side.
+// Persisted in the copilot_reply payload so replay restores skill state without
+// re-running the LLM. The canonical type lives in chat-contracts.
 export type CopilotTurnSkillTurn = CopilotSkillTurn;
 
-// PR round-2 — skill_context persisted in copilot_reply payload so replay can
-// restore the skill card even after page refresh (without re-running the LLM).
 export interface CopilotTurnSkillContext {
   skill: string;
   ref: { kind: string; id: string };
@@ -65,10 +52,8 @@ export interface CopilotTurn {
   event_id: string;
   /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
   run_id?: string;
-  // PR round-2 (CR 3360614432): session_id + reply_event_id let the Dock
-  // chip-renderer anchor a corrective chip on the correct event/session after
-  // page refresh. session_id = the Copilot conversation envelope id; both are
-  // present only on AI turns (replay fills them from the event row).
+  // session_id + reply_event_id let the Dock anchor a corrective chip after a
+  // refresh; both are present only on AI turns.
   session_id?: string;
   reply_event_id?: string;
   /** Typed user_ask root that owns this reversible turn. */
@@ -77,15 +62,15 @@ export interface CopilotTurn {
   skill_turn?: CopilotTurnSkillTurn;
   /** Originating skill selector; paired with skill_turn for deterministic replay state. */
   skill_context?: CopilotTurnSkillContext;
-  /** YUK-307 — present for AI turns whose reply nominated a hero deliverable (§2.3). */
+  /** Present for AI turns whose reply nominated a hero deliverable. */
   primary_view?: CopilotPrimaryView;
-  /** YUK-457 — per-call tool-use mirrors chained to this turn's ask/chip parent. */
+  /** Per-call tool-use mirrors chained to this turn's ask/chip parent. */
   tool_calls?: CopilotTurnToolCall[];
   tool_operations?: CopilotTurnToolOperation[];
   subagent_runs?: CopilotTurnSubagentRun[];
 }
 
-/** YUK-457 — replay projection of a persisted tool_use mirror event. */
+/** Replay projection of a persisted tool_use mirror event. */
 export interface CopilotTurnToolCall {
   toolName: string;
   input: Record<string, unknown>;
@@ -105,9 +90,9 @@ export interface CopilotTurnSubagentRun {
   status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
 }
 
-// The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
-// user-role turn but is NOT a revert root, so a reply caused by one must not surface a
-// checkpoint_event_id (which would render a revert button that 404s).
+// The ONLY revert root the endpoint accepts. A copilot_chip_trigger is a user-role
+// turn but NOT a revert root, so its reply must not surface a checkpoint_event_id
+// (that would render a revert button that 404s).
 const USER_ASK_ACTION = 'experimental:copilot_user_ask';
 const USER_ACTIONS = [USER_ASK_ACTION, 'experimental:copilot_chip_trigger'] as const;
 const REPLY_ACTION = 'experimental:copilot_reply';
@@ -115,10 +100,9 @@ const REPLY_ACTION = 'experimental:copilot_reply';
 const DEFAULT_TURN_LIMIT = 20;
 const MAX_TURN_LIMIT = 100;
 
-// YUK-457 — native SDK Task spawns never mirror through the bridge, but a
-// corrupt or foreign row must not surface subagent prompts at the replay seam
-// either (mirrors the SSE filter in api/tool-use-sse.ts).
-// Must stay aligned with SPAWN_TOOL_NAME in src/server/ai/spawn-contract.ts.
+// Native SDK Task spawns never mirror through the bridge, but a corrupt or foreign
+// row must not surface subagent prompts at the replay seam either (mirrors the SSE
+// filter in api/tool-use-sse.ts). Must stay aligned with SPAWN_TOOL_NAME.
 const NATIVE_SPAWN_TOOL_NAME = 'Task';
 
 type DbLike = Db | Tx;
@@ -367,10 +351,9 @@ type CopilotTurnRow = Pick<
 >;
 
 /**
- * Project newest-first Copilot event rows into the replay surface shared by the
- * live-session reader and the durable anchor reader. Keeping correction,
- * materialization, tombstone, and checkpoint rules here prevents the two
- * history modes from drifting as replay semantics evolve.
+ * Project newest-first event rows into the replay surface shared by the live-session
+ * and durable anchor readers, so both keep identical correction, materialization,
+ * tombstone, and checkpoint rules.
  */
 async function projectCopilotTurnRows(
   dbArg: DbLike,
@@ -378,16 +361,13 @@ async function projectCopilotTurnRows(
   rows: CopilotTurnRow[],
   limit: number,
 ): Promise<CopilotTurn[]> {
-  // YUK-497 wave-3 (OCR minor) — also probe the retraction status of each reply's parent, even when
-  // that parent fell OUTSIDE this limit*2 window. Otherwise a reply whose parent was retracted
-  // out-of-window renders normally after a refresh (stale content from a reverted turn). NOTE: a
-  // reply's caused_by parent is a user_ask OR a chip_trigger, so this set is NOT ask-only (YUK-497
-  // wave-4 rename).
+  // Also probe each reply's parent retraction status, even when the parent fell outside this
+  // window; otherwise a reply under an out-of-window retracted parent renders stale content.
+  // The parent is a user_ask OR a chip_trigger, so this set is not ask-only.
   const replyParentIds = rows
     .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
     .map((row) => row.caused_by_event_id as string);
-  // All typed user-ask ids in the window — the ONLY valid revert roots. A reply's caused_by may be a
-  // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
+  // All typed user-ask ids in the window — the only valid revert roots.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
   const toolCallParentIds = [...new Set([...askIds, ...replyParentIds])];
   const taskRunIds = [
@@ -398,8 +378,6 @@ async function projectCopilotTurnRows(
         .filter((taskRunId): taskRunId is string => taskRunId !== null),
     ),
   ];
-  // TchmW — these reads are independent (correction statuses over the window vs the materializing
-  // tool_use scan over the ask ids vs replay tool-call mirrors); run them concurrently.
   const [
     statuses,
     asksWithMaterializingTool,
@@ -409,8 +387,6 @@ async function projectCopilotTurnRows(
     replyRoots,
   ] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
-    // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
-    // / update_artifact / write_quiz) wrote a domain row cascade-revert can't compensate.
     selectAsksWithMaterializingToolCall(dbArg, [...askIds]),
     selectToolCallsForReplay(dbArg, toolCallParentIds),
     selectToolOperationsForReplay(dbArg, sessionId, taskRunIds),
@@ -429,20 +405,18 @@ async function projectCopilotTurnRows(
       : Promise.resolve([]),
   ]);
   const replyRunIds = new Set(replyRoots.map((root) => root.id));
-  // YUK-1398：受限根策略投影到回复 turn——answer_only 根回 answer_only（原行为），
-  // crisis 根回 crisis；不再统一塌缩成 answer_only。
+  // 受限根策略投影到回复 turn：answer_only 根回 answer_only，crisis 根回 crisis。
   const restrictedRootPolicies = new Map(
     replyRoots
       .filter((root) => readDerivationPolicy(root.payload) !== 'allow')
       .map((root) => [root.id, readDerivationPolicy(root.payload)] as const),
   );
-  // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
-  // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
+  // Out-of-window parents are included: a reply under one is skipped, not shown stale.
   const retractedParentIds = new Set(
     [...askIds, ...replyParentIds].filter((id) => statuses.get(id)?.state === 'retracted'),
   );
-  // YUK-497 wave-3 — a teaching_check turn materializes a draft question via the reply's
-  // structured_question. Key it by ASK id so BOTH the ask row and the reply row suppress consistently.
+  // A teaching_check turn materializes a draft question via structured_question; key it by
+  // ask id so the ask and reply rows suppress consistently.
   const structuredQuestionAskIds = new Set(
     rows
       .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
@@ -452,9 +426,8 @@ async function projectCopilotTurnRows(
       )
       .map((row) => row.caused_by_event_id as string),
   );
-  // An ambiguous recovery, or an in-loop cancellation that observed a
-  // materializing tool start, is stronger evidence than an absent mirror.
-  // After refresh neither side may resurrect an unsafe revert anchor.
+  // Ambiguous recovery or a cancellation that observed a materializing tool start
+  // outranks an absent mirror: after refresh no side may resurrect an unsafe anchor.
   const checkpointUnsafeAskIds = new Set(
     rows
       .filter((row) => row.action === REPLY_ACTION && row.caused_by_event_id)
@@ -473,10 +446,8 @@ async function projectCopilotTurnRows(
       })
       .map((row) => row.caused_by_event_id as string),
   );
-  // Anchor exposed ⇔ every effect of the turn is event-chain-compensable (materializing-tools.ts).
-  // Suppress when the turn materialized a teaching_check draft (wave-3) OR called a materializing
-  // DOMAIN tool (wave-4) — both write rows cascade-revert can't undo. Applied to BOTH the ask row
-  // (wave-5, TcHwW — W4 only guarded the reply) and the reply row so the button can't leak via either.
+  // Anchor ⇔ every effect is event-chain-compensable (materializing-tools.ts). Suppress for a
+  // teaching_check draft or a materializing domain tool, on both the ask and reply rows.
   const anchorSuppressed = (askId: string): boolean =>
     asksWithMaterializingTool.has(askId) ||
     structuredQuestionAskIds.has(askId) ||
@@ -517,14 +488,11 @@ async function projectCopilotTurnRows(
         ...(row.caused_by_event_id && replyRunIds.has(row.caused_by_event_id)
           ? { run_id: row.caused_by_event_id }
           : {}),
-        // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
-        // resolve the conversation and reply_event_id to anchor the chip.
+        // Dock chip renderer needs the conversation and reply event ids.
         session_id: sessionId,
         reply_event_id: row.id,
-        // Only a reply rooted at a typed user_ask exposes a revert affordance; a chip-triggered
-        // reply's caused_by points at a chip_trigger (not a revert root). Suppress a materializing
-        // turn's anchor (anchorSuppressed) so re-exposing the button after a refresh can't 409 or
-        // orphan a row. Live suppression mirrors this exactly.
+        // Only a reply rooted at a typed user_ask exposes a revert affordance; suppress a
+        // materializing turn's anchor so a refresh can't 409 or orphan a row.
         ...(checkpointEventId &&
         askIds.has(checkpointEventId) &&
         !anchorSuppressed(checkpointEventId)
@@ -555,8 +523,7 @@ async function projectCopilotTurnRows(
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
-        // W5-1a (TcHwW) — the ask row anchors the SAME checkpoint the reply does, so it must honour
-        // the identical materializing suppression or the revert button leaks back in through it.
+        // The ask row anchors the same checkpoint and must honour the same suppression.
         ...(row.action === USER_ASK_ACTION && !anchorSuppressed(row.id)
           ? { checkpoint_event_id: row.id }
           : {}),
@@ -569,13 +536,9 @@ async function projectCopilotTurnRows(
 }
 
 /**
- * Returns the most recent Copilot turns, oldest→newest, capped at `limit`
- * (default 20, max 100). Pulls the newest `limit` of both the user-side and
- * reply-side actions, merges by (created_at desc, id desc), keeps the newest
- * `limit`, then reverses to chronological order for the drawer.
- *
- * Rows whose payload has no usable text (corrupt / partial) are dropped — replay
- * is best-effort prefill, never the source of truth.
+ * Returns the most recent turns oldest→newest, capped at `limit` (default 20, max 100).
+ * Rows without usable text are dropped: replay is best-effort prefill, never the
+ * source of truth.
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
@@ -583,21 +546,15 @@ export async function getRecentCopilotTurns(
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
-  // codex #3356884484 — scope replay to the CURRENT reusable Copilot session.
-  // Resolve it with the SAME predicate find-or-create uses (shared helper) so a
-  // stale prior conversation (ended/abandoned, or last active >24h ago) is never
-  // replayed into what the server will treat as a fresh session. No reusable
-  // session → this is a brand-new conversation; return nothing to prefill.
+  // Scope replay to the CURRENT reusable session, resolved with the same predicate
+  // find-or-create uses, so a stale conversation is never replayed into a fresh one.
   const session = opts.sessionId
     ? await getCopilotConversation(dbArg, opts.sessionId)
     : await findReusableCopilotConversation(dbArg, { now: opts.now });
   if (session === null) return [];
 
-  // One query over all three actions for THIS session, newest first, bounded by
-  // limit*2 (a turn pair is one user + one reply row, so ≤ limit*2 rows cover
-  // `limit` turns). Filter on the events.session_id column — every Copilot turn
-  // event (ask/chip + reply) now writes it (the column = the event's conversation
-  // session, shared by teaching + copilot; payload.session_id is the portable copy).
+  // Bounded by limit*2: one user + one reply row per turn. Filter on events.session_id
+  // (the conversation session, shared with teaching; payload.session_id is the copy).
   const rows = await dbArg
     .select({
       id: event.id,
@@ -684,11 +641,9 @@ export type CopilotHistoryAnchorErrorReason =
   | 'session_mismatch';
 
 /**
- * A durable run must never silently switch to whatever conversation happens to
- * be reusable when the worker finally picks it up. Existing anchors with the
- * wrong action/session are integrity failures and fail closed. `missing_anchor`
- * remains distinguishable so the assembler can apply YUK-596's explicit legacy
- * fallback with a structured alert.
+ * A durable run must never silently switch to whatever conversation is reusable when
+ * the worker picks it up. Wrong action/session fails closed; `missing_anchor` stays
+ * distinguishable so the assembler can apply its explicit legacy fallback.
  */
 export class CopilotHistoryAnchorError extends Error {
   constructor(
@@ -703,12 +658,10 @@ export class CopilotHistoryAnchorError extends Error {
 /**
  * Read the causal conversation history for one durable Copilot run.
  *
- * Root asks/chips are eligible only when their insertion coordinate precedes
- * the run's user-ask anchor. A reply follows its causal root instead of its own
- * timestamp/dispatch coordinate, so a late reply to an earlier root is kept,
- * while replies to the anchor or later roots are excluded. Parentless legacy
- * replies fall back to their own coordinate. Eligibility is applied before the
- * LIMIT so future traffic cannot evict the run's real history.
+ * Roots are eligible only before the anchor coordinate. A reply follows its causal
+ * root, so a late reply to an earlier root is kept while replies to the anchor or
+ * later roots are excluded; parentless legacy replies use their own coordinate.
+ * Eligibility applies before the LIMIT so future traffic cannot evict real history.
  */
 export async function getCopilotTurnsBeforeAnchor(
   dbArg: DbLike,
@@ -734,18 +687,14 @@ export async function getCopilotTurnsBeforeAnchor(
     throw new CopilotHistoryAnchorError('session_mismatch', opts.anchorEventId);
   }
 
-  // Keep bigint dispatch_seq entirely inside Postgres. The schema intentionally
-  // types this diagnostic sequence as number because normal subscription flows
-  // never materialize it in JavaScript; reading an anchor value here would lose
-  // precision once the sequence exceeds Number.MAX_SAFE_INTEGER.
+  // Keep bigint dispatch_seq inside Postgres: reading an anchor value in JavaScript would
+  // lose precision once the sequence exceeds Number.MAX_SAFE_INTEGER.
   const historyAnchor = alias(event, 'copilot_history_anchor');
   const historyParent = alias(event, 'copilot_history_parent');
-  // A queued run's reply may be inserted long after several later roots. Sort
-  // attributed replies by their ROOT coordinate, not their own insertion time,
-  // and put the reply immediately before its root in newest-first order. The
-  // shared projector reverses this to root→reply chronological pairs. Applying
-  // this ordering before LIMIT prevents a batchSize:1 backlog from producing a
-  // history of orphan replies or a block of users followed by a block of AIs.
+  // A queued reply may be inserted after several later roots. Sort attributed replies by
+  // their ROOT coordinate and place each immediately before its root in newest-first
+  // order; the projector reverses this to root→reply pairs. Ordering before LIMIT
+  // prevents a backlog from producing orphan replies or blocks of users then AIs.
   const causalDispatchSeq = sql<number>`case
     when ${event.action} = ${REPLY_ACTION}
       then coalesce(${historyParent.dispatch_seq}, ${event.dispatch_seq})
@@ -782,8 +731,8 @@ export async function getCopilotTurnsBeforeAnchor(
                 isNull(event.caused_by_event_id),
                 lt(event.dispatch_seq, historyAnchor.dispatch_seq),
               ),
-              // Attributed replies inherit eligibility from their root, even
-              // when the reply itself was inserted after the anchor.
+              // Attributed replies inherit eligibility from their root, even when the
+              // reply itself was inserted after the anchor.
               and(
                 eq(historyParent.session_id, opts.sessionId),
                 inArray(historyParent.action, [...USER_ACTIONS]),

@@ -20,15 +20,12 @@ export const RescueBody = z.object({
 });
 
 /**
- * POST /api/ingestion-sessions/[id]/operations 的资源创建契约。
- *
- * `kind` 是 operation 的类型，不是要直接执行的 URL 动词；所有可能耗时的工作
- * 都先创建可轮询资源，再由既有 OCR 队列或 ingestion_operation worker 执行。
+ * Resource-creation contract for ingestion operations. `kind` names the work, not a
+ * URL verb; work runs in the OCR queue or the ingestion_operation worker.
  */
 export const IngestionOperationRequest = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('extract') }).strict(),
-  // YUK-1522 (R8) — whole-package agent run (replaces the OCR pipeline for the
-  // new lane; one durable agent job per session).
+  // Whole-package agent run: one durable job per session.
   z.object({ kind: z.literal('agent') }).strict(),
   z.object({ kind: z.literal('import'), input: ImportBody }).strict(),
   z

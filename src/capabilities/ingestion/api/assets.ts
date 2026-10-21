@@ -4,8 +4,7 @@ import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { getR2 } from '@/server/r2';
 
-// Single-source the per-image cap (src/core/limits.ts) so the DOCX embedded-media
-// path enforces the identical limit (codex-4 / YUK-250 limits pattern).
+// Single-sourced so the DOCX embedded-media path enforces the same cap.
 const MAX_UPLOAD_BYTES = MAX_IMAGE_UPLOAD_BYTES;
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 

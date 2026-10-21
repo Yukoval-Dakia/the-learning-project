@@ -24,7 +24,7 @@ import { PublishedQuestionRevision, validateIssuanceBinding } from './revision';
 //      对应解析/评分依据；policy 在发布时定，反馈投影在服务端做。
 //
 //   3. QuestionBankEditDto（题库编辑）：完整契约视图（含答案键与计划），
-//      授权由 route 层负责（后续 lane）。
+//      授权由 route 层负责。
 //
 // 先例：PaperQuestionFace 不含 reference（paper-contracts.ts）；本文件把该
 // 纪律推广为统一 issuance DTO。
@@ -48,7 +48,7 @@ export const PublicQuestionFace = z.object({
   prompt_md: z.string(),
   material_ids: z.array(z.string().min(1)),
   /**
-   * YUK-1568（第 1 片，可选）：本 part 独立 blank 槽的默认逻辑序（公开展示
+   * YUK-1568（可选）：本 part 独立 blank 槽的默认逻辑序（公开展示
    * 顺序信息，不含任何答案）。作答身份仍按 slot_id；缺省 = 未声明，旧题不变。
    */
   blank_order: z.array(z.string().min(1)).optional(),
@@ -90,7 +90,7 @@ export type PracticeIssuanceDtoT = z.infer<typeof PracticeIssuanceDto>;
  * 纯投影：published revision + issuance → 公开作答 DTO。只从公开字段构造；
  * scoring_basis / execution_plan / 私有 metadata 无从进入。
  *
- * P1-2/P1-6：fail-closed —— 绑定必须先过 validateIssuanceBinding（revision
+ * fail-closed —— 绑定必须先过 validateIssuanceBinding（revision
  * 一致、材料同 digest、选择槽顺序为声明选项的排列），否则抛错，绝不
  * 静默回退到 revision 原状。投影反映【冻结的呈现】：选项按 binding 的
  * option_order 重排（默认 = 声明顺序，不 shuffle）；slots 只包含发出
@@ -124,7 +124,7 @@ export function projectPracticeIssuance(
     return served.map((optionId) => byId.get(optionId)).filter((o): o is T => o != null);
   };
   const projectedSlots = revision.response_spec.slots
-    // P1-6：只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
+    // 只投影发出 part 范围内的槽位；选项按冻结顺序呈现。
     .filter((slot) => boundParts.has(slot.part_id))
     .map((slot) => {
       if (slot.kind === 'single_choice' || slot.kind === 'multi_choice') {
@@ -148,7 +148,7 @@ export function projectPracticeIssuance(
   // 仍按 slot_id 关联，不按序数。
   const issuedParts = revision.structure.parts.filter((part) => boundParts.has(part.part_id));
   const orderedSlots = slotsInDefaultOrder(projectedSlots, issuedParts);
-  // P1-B 防御：发出集合内不得出现悬空表格（单元格不在发出集内）——
+  // 发出集合内不得出现悬空表格（单元格不在发出集内）——
   // 宁可抛错也不产出不可作答/不可校验的 DTO。
   const emittedSlotIds = new Set(projectedSlots.map((slot) => slot.slot_id));
   for (const slot of projectedSlots) {
@@ -238,7 +238,7 @@ export function projectPracticeIssuance(
 // ---------- 2. 评分后 feedback DTO（按可见性 policy 揭示） ----------
 
 /**
- * YUK-1096 P1-1：feedback 投影的显式身份违背码 —— stale/mis-keyed 的
+ * YUK-1096：feedback 投影的显式身份违背码 —— stale/mis-keyed 的
  * evaluation/submission/revision 组合在投影边界 fail-closed，绝不把别人的
  * 判分结果拼进这份作答的反馈。
  */
@@ -269,7 +269,7 @@ export type FeedbackVisibilityPolicyT = z.infer<typeof FeedbackVisibilityPolicy>
 
 /**
  * 答案键的公开呈现（揭示时才存在；形态镜像 criterion 的键材料）。
- * P1-3：答案键只揭示【键身份/键值】—— rule_id 与档位 id+rank；
+ * 答案键只揭示【键身份/键值】—— rule_id 与档位 id+rank；
  * 规则原文与档位描述符是私有 rubric，只在 reveal_rubric_explanations
  * 下出现（answer-key 开、rubric 关时不得泄漏 statement/descriptor）。
  */
@@ -323,8 +323,8 @@ export const RevealedAnswerKey = z.discriminatedUnion('criterion_kind', [
     expected: z.number().optional(),
     expected_unit: z.string().min(1).optional(),
   }),
-  // YUK-1496 C2：rubric 单元只揭示 criterion 身份与满分；statement_md 是
-  // 私有评分细则，走 reveal_rubric_explanations 门（P1-3 同律）。
+  // YUK-1496：rubric 单元只揭示 criterion 身份与满分；statement_md 是
+  // 私有评分细则，走 reveal_rubric_explanations 门。
   z.object({
     scoring_unit_id: z.string().min(1),
     criterion_kind: z.literal('rubric'),
@@ -429,14 +429,14 @@ function revealAnswerKey(
         expected_unit: criterion.expected_unit,
       };
     case 'rule_reference':
-      // P1-3：答案键只给 rule_id（身份）；statement_md 是 rubric，另门揭示。
+      // 答案键只给 rule_id（身份）；statement_md 是 rubric，另门揭示。
       return {
         scoring_unit_id: unit.scoring_unit_id,
         criterion_kind: 'rule_reference',
         rule_id: criterion.rule_id,
       };
     case 'holistic_level':
-      // P1-3：只给档位身份与次序；descriptor_md 是 rubric，另门揭示。
+      // 只给档位身份与次序；descriptor_md 是 rubric，另门揭示。
       return {
         scoring_unit_id: unit.scoring_unit_id,
         criterion_kind: 'holistic_level',
@@ -514,7 +514,7 @@ function revealRubricExplanation(
 
 /**
  * 纯投影：评分记录 + 可见性 policy → 反馈 DTO。
- * P2-3 语义说明：未揭示的维度以【显式无内容】呈现 —— aggregate:null、
+ * 未揭示的维度以【显式无内容】呈现 —— aggregate:null、
  * 数组为空 —— 字段本身始终存在（strict schema 固定形状）；“未揭示”与
  * “揭示后确实为空”的区分由 status + 对应 flag 消费方判定，不靠缺键。
  * pending 评估只回身份与状态，任何 flag 都不产生内容。
@@ -525,7 +525,7 @@ export function projectFeedback(
   revision: PublishedQuestionRevisionT,
   policy: FeedbackVisibilityPolicyT,
 ): AssessmentFeedbackDtoT {
-  // YUK-1096 P1-1：身份交叉校验先行 —— stale/mis-keyed 的 lookup 结果
+  // YUK-1096：身份交叉校验先行 —— stale/mis-keyed 的 lookup 结果
   // （别的 submission 的 evaluation、别的 group 的 attempt、别的 revision
   // 的题面）绝不投影成这份作答的反馈。fail-closed：抛错，不静默回退。
   const rawSnapshot = evaluation.provenance?.input_snapshot;

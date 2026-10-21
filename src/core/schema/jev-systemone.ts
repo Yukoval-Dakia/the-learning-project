@@ -1,15 +1,15 @@
-// YUK-1049 — OpenRouter native decisions endpoint (POST /api/v1/systemone)
+// OpenRouter native decisions endpoint (POST /api/v1/systemone)
 // wire contract: the {state, questions} typed input and the full typed
-// response, as verified by the D12 smoke (2026-09-24 — wire/auth/cost only,
+// response, as verified by smoke testing (wire/auth/cost only,
 // NO accuracy claim).
 //
-// Subject-agnostic transport contract → lives in core (same lane as
-// provider-attempt.ts). Ownership of the TASK spec stays in
+// Subject-agnostic transport contract → lives in core (same
+// directory as provider-attempt.ts). Ownership of the TASK spec stays in
 // src/capabilities/practice/tasks/jev-typed.ts; the typed runner and the
 // assessment executor import THESE schemas so no server→capability edge
 // exists (capability-boundaries baseline).
 //
-// Contract facts (decisions file D12 + TypeSafe docs):
+// Contract facts (decisions file + TypeSafe docs):
 //   - request model pin 'typesafe/jev-1.13' → canonical response model
 //     'typesafe/jev-1.13-20260917'; provider TypeSafe only;
 //   - usage / usage.cost / probabilities / confidence are OPTIONAL —

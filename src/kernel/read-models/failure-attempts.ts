@@ -1,10 +1,6 @@
-// YUK-876 / FULL F3.7b — knowledge-owned failure-attempt evidence read models.
-//
-// The FailureAttempt projection family (failed attempts as knowledge-graph
-// evidence, with chained judge / user_cause attribution) moved here from
-// src/server/events/queries.ts, byte-identical. Shared correction-status
-// active-row machinery (takeActiveRows / filterActiveRows / newerEventRow)
-// stays central and is imported below.
+// Failure-attempt evidence read models: failed attempts as knowledge-graph evidence
+// with chained judge / user_cause attribution. Shared active-row machinery comes from
+// @/kernel/events.
 
 import { type SQL, and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
@@ -33,10 +29,9 @@ type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 
 // ============================================================================
-// FailureAttempt — user-facing "mistake" view projected from the event stream.
-// The public name predates FSRS review events and is kept for compatibility. One
-// row is returned per attempt/review event with outcome='failure'; an optional
-// judge event is joined via caused_by_event_id reverse lookup.
+// User-facing "mistake" view projected from the event stream. The public name
+// predates FSRS reviews; one row per failed attempt/review, with an optional
+// chained judge.
 // ============================================================================
 
 export type FailureAttemptJudge = {
@@ -47,9 +42,8 @@ export type FailureAttemptJudge = {
   correction_state: EffectiveTruth;
 };
 
-// User-supplied cause via experimental:user_cause event (Phase 1c.2). Lives
-// alongside `judge` because both can coexist on the same attempt — projection
-// callers pick user_cause first (the user has the last word on attribution).
+// User attribution lives alongside judge; projection callers prefer user_cause
+// because the user has the last word on attribution.
 export type FailureAttemptUserCause = {
   user_cause_event_id: string;
   primary_category: CauseCategoryT;
@@ -69,10 +63,8 @@ export type FailureAttempt = {
   correction_state: EffectiveTruth;
   judge?: FailureAttemptJudge;
   /**
-   * YUK-1054 — 双轨裁决（§9）。`judge` 是 effective 判（链解析后仍 live 的
-   * 最新判）；本字段是原始执行收据侧 earliest judge 事件（首个写给该 attempt
-   * 的 judge 行，未做链解析）。无 judge 时 null。与 `judge` 共存，不改旧
-   * `judge` 语义。
+   * Earliest raw judge receipt for this attempt, unchained. judge is the
+   * chain-resolved effective one; the two coexist.
    */
   original_judge?: FailureAttemptJudge | null;
   assessment?: Pick<
@@ -96,32 +88,16 @@ export interface GetFailureAttemptsOpts {
    * distribution; nightly knowledge/research consumers opt in deliberately.
    */
   includeReviewFailures?: boolean;
-  // YUK-76 codex round-3 P1 — per-question SQL partition cap.
-  //
-  // When set, SQL filters via `ROW_NUMBER() OVER (PARTITION BY subject_id …)`
-  // so each question contributes at most `perQuestionLimit * 3` rows to the
-  // active-correction pre-filter (×3 mirrors the ×3 buffer the global-`limit`
-  // path uses for active-row overhead). The final per-question cap is then
-  // applied in JS after the active-correction filter so each question returns
-  // ≤ `perQuestionLimit` active failures.
-  //
-  // Mutually exclusive with `limit`: callers using per-question coverage
-  // semantics (e.g. `/api/review/due` building the never-reviewed slice) want
-  // each question represented, not a flat newest-first window. The function
-  // ignores `limit` and replenishes bounded partition windows after filtering.
+  // Per-question cap. SQL partitions with ROW_NUMBER and over-samples 3x for
+  // retracted rows; the final cap is applied after active filtering. Mutually
+  // exclusive with limit.
   perQuestionLimit?: number;
-  // YUK-583 — keyset cursor for the knowledge_edge_propose_nightly watermark
-  // 续扫. When BOTH are set, only attempts strictly AFTER (afterCreatedAt,
-  // afterEventId) in (created_at, id) order are returned; the id tie-break means
-  // a second attempt sharing the cursor's exact created_at is not lost. Pairs
-  // with `order: 'asc'` so the caller pages forward and advances the watermark to
-  // the last (max) row. Every legacy caller omits these → unchanged behaviour.
+  // Keyset cursor for the nightly watermark scan: strict (created_at, id) order,
+  // paired with order: 'asc'. Legacy callers omit both.
   afterCreatedAt?: Date;
   afterEventId?: string;
-  // YUK-583 — scan direction for the non-perQuestion path. Default 'desc'
-  // preserves the newest-first window every existing caller relies on; the
-  // watermark scan passes 'asc' so a backlog > limit pages oldest-first and the
-  // cursor advances only to the last event actually processed (never to `now`).
+  // Scan direction. Default 'desc' keeps the newest-first window; the watermark
+  // scan uses 'asc' so a backlog pages oldest-first.
   order?: 'asc' | 'desc';
 }
 
@@ -165,11 +141,8 @@ async function resolveEffectiveActiveRows(
 }
 
 /**
- * YUK-562 — the attempt payload's process-data self-report ("how the learner
- * thought"), or null when the attempt carries no process text. Kept OFF the
- * {@link FailureAttempt} bare type on purpose (that shape is a stable contract
- * downstream consumers depend on); readers that want the trace opt in via the
- * wrapper shape below.
+ * Attempt payload's process self-report, or null. Kept off FailureAttempt so the
+ * stable public shape does not grow; callers opt in through the wrapper.
  */
 function reasoningTraceFromRow(row: EventRow): string | null {
   const trace = (row.payload as { reasoning_trace?: unknown } | null)?.reasoning_trace;
@@ -227,9 +200,8 @@ function failureEvidenceFromRow(row: EventRow): {
     }
   }
   return {
-    // FSRS reviews call the same learner evidence `user_response_md`; normalize
-    // it onto the legacy mistake projection so every downstream consumer sees
-    // the answer rather than a false null.
+    // FSRS reviews call the answer user_response_md; normalize it onto the legacy
+    // projection so downstream consumers see the answer.
     answer_md:
       row.action === 'review' ? (payload.user_response_md ?? null) : (payload.answer_md ?? null),
     answer_image_refs: payload.answer_image_refs ?? [],
@@ -239,13 +211,8 @@ function failureEvidenceFromRow(row: EventRow): {
 }
 
 /**
- * Returns failed attempts and, when includeReviewFailures is enabled, failed
- * FSRS reviews (with chained judges populated when present), ordered by
- * created_at desc. Default limit 100 matches legacy RECENT_MISTAKES_LIMIT.
- *
- * Two queries + JS join (vs single subquery): clearer code, well-bounded by limit.
- * Judge lookup uses `event_caused_by_idx`. Filter must keep outcome='failure' —
- * the event stream stores successes too.
+ * Failed attempts (and optionally failed FSRS reviews), newest first, with chained
+ * judges populated. Default limit 100.
  */
 export async function getFailureAttempts(
   db: DbLike,
@@ -255,16 +222,8 @@ export async function getFailureAttempts(
 }
 
 /**
- * YUK-786 — the LIST sibling of {@link getFailureAttemptWithReasoningTraceById}:
- * the same rows {@link getFailureAttempts} returns, each paired with the attempt
- * payload's `reasoning_trace` (YUK-562 process data). Same wrapper shape as the
- * by-id reader, for the same reason: the exported {@link FailureAttempt} type is
- * a stable contract and must NOT grow a field, so the trace rides alongside it.
- *
- * No extra round-trip — the trace is derived from the SAME attempt rows the base
- * reader already selects. The nightly 教研例会 job uses this so conjecture
- * induction can see the learner's own account of how they thought, which is the
- * single most load-bearing piece of first-hand evidence for a mind-model claim.
+ * List sibling of the by-id trace reader. Same rows plus reasoning_trace, with no
+ * extra query; the bare FailureAttempt shape stays stable.
  */
 export async function getFailureAttemptsWithReasoningTrace(
   db: DbLike,
@@ -273,7 +232,7 @@ export async function getFailureAttemptsWithReasoningTrace(
   return loadFailureAttempts(db, opts);
 }
 
-/** {@link FailureAttempt} + the opt-in YUK-562 process-data self-report. */
+/** {@link FailureAttempt} plus the opt-in process-data self-report. */
 export type FailureAttemptWithReasoningTrace = {
   failure: FailureAttempt;
   reasoning_trace: string | null;
@@ -345,11 +304,8 @@ async function loadFailureAttempts(
   if (opts.since) {
     conditions.push(gte(event.created_at, opts.since));
   }
-  // YUK-583 — keyset cursor predicate: strict "(created_at, id) > (afterCreatedAt,
-  // afterEventId)" so the row at the exact cursor is excluded but a DIFFERENT row
-  // sharing the cursor's created_at (larger id) is still returned (no same-instant
-  // event loss). Lives in `conditions` so both the main query and the
-  // bounded scan share it. Only applied when BOTH cursor parts are set.
+  // Strict (created_at, id) cursor: the row at the cursor is excluded, but a
+  // same-instant row with a larger id is kept.
   if (opts.afterCreatedAt !== undefined && opts.afterEventId !== undefined) {
     const cursorPredicate = or(
       gt(event.created_at, opts.afterCreatedAt),
@@ -357,21 +313,13 @@ async function loadFailureAttempts(
     );
     if (cursorPredicate) conditions.push(cursorPredicate);
   }
-  // YUK-76 codex P2 — secondary `desc(event.id)` makes the order
-  // deterministic when two failure attempts share the same `created_at`.
-  // Without it, callers like `/api/review/due`'s per-question cap pick a
-  // non-deterministic representative across requests.
+  // Secondary id order makes same-instant attempts deterministic across requests.
   let activeAttemptRows: EventRow[];
 
   if (perQuestionLimit !== undefined) {
-    // YUK-76 codex round-3 P1 — partition-by-question SQL slice so each
-    // question gets its own bounded window, not a global newest-first feed.
-    // `getFailureAttempts({ limit })` would let a hot question saturate the
-    // global limit and silently drop quieter questions from the result. The
-    // `* 3` buffer matches the global-`limit` path's pre-filter overhead for
-    // active corrections (some head rows get retracted; over-sample so the
-    // final per-question cap still holds). If a partition head is fully
-    // retracted, keep fetching deeper windows for that question.
+    // Partition per question so a hot question cannot saturate a global limit and
+    // drop quieter ones. Over-sample 3x for retracted heads, then keep fetching
+    // deeper windows until every requested question has its cap.
     const partitionBatchLimit = Math.min(perQuestionLimit * 3, 300);
     const activeRowsByQuestion = new Map<string, EventRow[]>();
     const targetQuestionIds =
@@ -438,13 +386,9 @@ async function loadFailureAttempts(
   if (activeAttemptRows.length === 0) return [];
 
   const attemptIds = activeAttemptRows.map((r) => r.id);
-  // One round-trip fetches BOTH judge events (action='judge') and user_cause
-  // events (action='experimental:user_cause'). Both chain via caused_by_event_id
-  // and have subject_kind='event'.
-  // YUK-1054 — subject_id ∪ caused_by 双锚。只查 caused_by 会漏掉申诉重判
-  // （它的 caused_by=appeal.id, subject_id=attempt）；双锚与
-  // resolveVerdictsForAttempts 的候选谓词同轨。reject: 不能省 caused_by —
-  // 归因 judge 的 caused_by=attempt 是历史锚。
+  // One round-trip fetches judge and user_cause events, which chain via subject_id
+  // or caused_by_event_id. Both anchors are needed: appeals set caused_by to the
+  // appeal, while historical attribution sets caused_by to the attempt.
   const chainedRows = await db
     .select()
     .from(event)
@@ -459,15 +403,13 @@ async function loadFailureAttempts(
   const attemptTruths = await getEffectiveTruths(db, attemptIds);
   const attemptIdSet = new Set(attemptIds);
 
-  // Group by (action, caused_by_event_id); keep newest within each group.
+  // Keep newest per (action, attempt) group.
   const judgeByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
   const userCauseByAttempt = new Map<string, { row: EventRow; truth: EffectiveTruth }>();
-  // YUK-1054 — 原始判（earliest raw judge 行，未做链解析）按 attempt 各留一份，
-  // 供双轨读取；独立于 effective 判（后者取链解析后仍 live 的最新行）。
+  // Earliest raw judge per attempt, kept separately from the effective judge.
   const originalJudgeRowByAttempt = new Map<string, EventRow>();
-  // 分组键：subject_id 命中 attemptIds 优先（改判 rejudge 的
-  // subject=attempt / caused_by=appeal 也必须分回该 attempt），否则
-  // caused_by_event_id 命中项（归因 judge 的历史锚）。
+  // subject_id wins: appeal re-judgments set it to the attempt. Otherwise
+  // caused_by is the historical attribution anchor.
   const anchorKeyFor = (row: EventRow): string | null => {
     if (row.subject_id !== null && attemptIdSet.has(row.subject_id)) return row.subject_id;
     if (row.caused_by_event_id !== null && attemptIdSet.has(row.caused_by_event_id)) {
@@ -480,7 +422,7 @@ async function loadFailureAttempts(
     if (key === null) continue;
     if (originalRow.action === 'judge') {
       const prev = originalJudgeRowByAttempt.get(key);
-      // keep earliest: replace when the stored row is newer than the current one
+      // Keep the earliest row.
       if (!prev || newerEventRow(prev, originalRow)) {
         originalJudgeRowByAttempt.set(key, originalRow);
       }
@@ -493,8 +435,8 @@ async function loadFailureAttempts(
       bucket.set(key, effective);
     }
   }
-  // YUK-1054 — resolve each原始 judge 行自身的 chain truth，供其
-  // correction_state 反映“该收据行是否已被改判/撤回”。
+  // Resolve each raw judge's own chain truth so correction_state reflects later
+  // reversals.
   const originalJudgeTruths = await getEffectiveTruths(
     db,
     [...originalJudgeRowByAttempt.values()].map((r) => r.id),
@@ -559,8 +501,7 @@ async function loadFailureAttempts(
         correction_state: uc.truth,
       };
     }
-    // YUK-786 — derived from the SAME row (no second query); the bare projection
-    // above stays byte-identical for every legacy caller.
+    // Derived from the same row; the bare projection stays byte-identical.
     return { failure: result, reasoning_trace: reasoningTraceFromRow(a) };
   });
 }
@@ -663,13 +604,8 @@ export async function getFailureAttemptById(
 }
 
 /**
- * YUK-562 — same SINGLE-QUERY load as {@link getFailureAttemptById}, additionally
- * surfacing the attempt payload's `reasoning_trace` (process-data self-report) so
- * the copilot `attribute_mistake` caller can feed it into attribution WITHOUT a
- * second round-trip. The exported {@link FailureAttempt} shape is deliberately
- * unchanged (downstream consumers depend on it); the trace rides alongside it in
- * the wrapper object. `reasoning_trace` is `null` when the attempt carries no
- * process text.
+ * By-id sibling of the trace reader: one query, with the trace alongside the
+ * unchanged FailureAttempt shape.
  */
 export async function getFailureAttemptWithReasoningTraceById(
   db: DbLike,
@@ -679,11 +615,8 @@ export async function getFailureAttemptWithReasoningTraceById(
 }
 
 /**
- * Shared single-query loader behind {@link getFailureAttemptById} and
- * {@link getFailureAttemptWithReasoningTraceById}. Runs ONE select of the full
- * attempt row and derives both the FailureAttempt projection and the raw
- * payload's reasoning_trace from it — so the reasoning_trace is available without
- * a second round-trip.
+ * Shared single-query loader: derives both the projection and reasoning_trace from
+ * one attempt row, so no second round-trip is needed.
  */
 async function loadFailureAttemptById(
   db: DbLike,
@@ -714,10 +647,8 @@ async function loadFailureAttemptById(
     if (nativeAttemptOutcome(native.get(attempt.id)) !== 'failure') return null;
   }
   const evidence = failureEvidenceFromRow(attempt);
-  // YUK-1054 — 一次拉全 judge 行（subject_id ∪ caused_by 双锚、最老排序），
-  // 同批做链解析分出 original（earliest 原始收据）+ effective（最新 live 判）。
-  // 单一拉取覆盖两轨：避免 earliest-only + getJudgeForAttempt(caused_by) 两次往返，
-  // 也修掉申诉重判（subject=attempt / caused_by=appeal）在 caused_by-only 读的丢失。
+  // Pull all judge rows once (subject_id or caused_by anchor, oldest first) and
+  // derive both the earliest receipt and the newest live effective judge.
   const judgeRows = await db
     .select()
     .from(event)
@@ -739,11 +670,9 @@ async function loadFailureAttemptById(
       : Promise.resolve(new Map<string, EffectiveTruth>()),
     getUserCauseForAttempt(db, attempt.id),
   ]);
-  // original = 全判里最早一行（已按 created_at 升序，首行即最早收据）。
+  // earliestJudge is the first row in created_at order.
   const earliestJudge = judgeRows[0];
-  // effective = 链解析仍 live 的最新一行（resolveEffectiveActiveRows 端点，
-  // newest-wins）。the judge row 自身锚(subject_id)与该 attempt 一致 —— rejudge
-  // 也分回本 attempt。
+  // effective judge is the newest row still live after chain resolution.
   let judge: FailureAttemptJudge | null = null;
   let judgeRow: EventRow | null = null;
   for (const originalRow of judgeRows) {
@@ -800,34 +729,20 @@ async function loadFailureAttemptById(
         originalJudgeTruths.get(earliestJudge.id) ?? activeEffectiveTruth(earliestJudge.id),
     };
   }
-  // YUK-562 — derive reasoning_trace from the SAME row (no extra query). Null when
-  // the attempt has no process text; the copilot caller trims/omits empty values.
+  // Derived from the same row; null when there is no process text. The copilot
+  // caller trims or omits empty values.
   return { failure, reasoning_trace: reasoningTraceFromRow(attempt) };
 }
 
-// YUK-76 codex round-3 P1 — per-question partition for failure-attempt scan.
-//
-// `getFailureAttempts({ perQuestionLimit })` needs each question to contribute
-// at most `partitionLimit` rows (before active-correction filter), regardless
-// of how dense any single question's history is. We run `ROW_NUMBER()
-// PARTITION BY subject_id` and keep the partitioned slice; the caller applies
-// the post-filter cap in JS so behaviour mirrors the legacy global-`limit`
-// path (which over-samples by ×3 to absorb retraction overhead).
-//
-// We can't express `inArray` over a JS array cleanly inside a raw `sql` string
-// from drizzle, so we cap subject_id via the same `inArray` builder by doing a
-// CTE outer-select pattern. Easier: build the outer `SELECT *` in drizzle and
-// use a raw lateral subquery for the rownumber filter.
+// Per-question partition for the perQuestionLimit path. ROW_NUMBER keeps each
+// question's own window; the caller applies the final cap after active filtering.
 async function getPartitionedFailureRows(
   db: DbLike,
   conditions: (SQL | undefined)[],
   partitionOffset: number,
   partitionLimit: number,
 ): Promise<EventRow[]> {
-  // We re-use the existing drizzle condition tuple by wrapping the partitioned
-  // CTE in a subquery and joining back to `event` on id. This keeps the
-  // condition predicates (action / outcome / questionIds / since) in one place
-  // and avoids re-implementing them in raw SQL.
+  // The partitioned CTE reuses the same drizzle conditions and joins back on id.
   const ranked = db
     .select({
       id: event.id,

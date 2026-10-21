@@ -1,6 +1,5 @@
-// YUK-1572 — worksheet PDF 字节结构层：classic xref/trailer 解析、对象定位、
+// worksheet PDF 字节结构层：classic xref/trailer 解析、对象定位、
 // 顶层字典 token 扫描、引用对账、页树遍历（/Kids DFS + MediaBox/Rotate 继承）。
-//
 // 由 jobs/worksheet_render.ts 迁出（结构半区）：本模块只认字节与 PDF 规范
 // 形状，不知道渲染/区域图契约；确定性坏文件一律 WorksheetRenderPermanentError。
 // 该错误类型归此层所有 —— fidelity 与 worker 共用，避免 server ↔ jobs 环。
@@ -114,10 +113,9 @@ export function objectRegion(
 }
 
 // ---- 页树遍历（/Kids 深度优先序，MediaBox/Rotate 按规范继承） ----
-//
 // Skia 的页树不是恒定的单根：实测 9 页卷子产 root /Pages Kids [中间 /Pages
 // 节点, 末页 /Page]，中间节点再挂 8 个叶子。页序与页数的真相是 trailer
-// /Root → catalog /Pages → /Kids 深度优先序，不是"全文件唯一的 /Pages
+// Root → catalog /Pages → /Kids 深度优先序，不是"全文件唯一的 /Pages
 // 对象"。每个 /Pages 节点的 /Count 与其子树实际解析出的叶子数逐项对账；
 // 重复/环/共享引用、悬空/旧代引用、声明而非法的可继承属性、非 90 倍数或
 // 非 0 有效 /Rotate（/Rotate 未声明沿祖先链继承、全无声明按 0；锚点几何
@@ -126,7 +124,7 @@ export function objectRegion(
 // 环都过不了。
 
 // -- 字典 token 扫描：属性按真实顶层 key 取值，字符串/嵌套结构/流里偶然
-//    撞中的同名字样不冒充属性；三个 *SpanEnd 互递归 --
+// 撞中的同名字样不冒充属性；三个 *SpanEnd 互递归 --
 
 /** 跳过空白与 %注释，返回第一个实质字符位。 */
 function skipWsAndComments(text: string, i: number): number {
@@ -287,7 +285,7 @@ export function requiredIndirectRef(
   return objNum;
 }
 
-/** 顶层 /MediaBox —— 页树可继承属性（规范 §7.7.3.3）。只有本节点字典确实
+/** 顶层 /MediaBox —— 页树可继承属性（规范）。只有本节点字典确实
  * 没有声明才返回 null 走继承；声明了就必须是直接 [n n n n] —— 间接引用、
  * malformed、数组长度不对一律 PermanentError，不允许静默落回继承值。
  * 退化盒同样是坏文件。 */

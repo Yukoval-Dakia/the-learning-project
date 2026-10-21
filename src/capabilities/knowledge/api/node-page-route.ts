@@ -1,13 +1,5 @@
-// YUK-96 P6/C — single knowledge node read endpoint (ADR-0020 §10).
-//
-// GET /api/knowledge/[id]
-//   → 200 KnowledgeNodePage (metadata + mastery + mesh neighbors + primary
-//          atomic body_blocks + backlinks + activity timeline)
-//   → 404 unknown / archived knowledge id
-//
-// Replaces the old /knowledge/[id] client page's O(N) `/api/knowledge` full
-// snapshot scan + `/api/mistakes?limit=200` scan with one server-side aggregate
-// (loadKnowledgeNodePage). Read-only; no write path.
+// Single node read: one server-side aggregate replaces the old client-side full
+// scans. Read-only; unknown or archived ids are 404.
 
 import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadKnowledgeNodePage } from '@/capabilities/knowledge/server/node-page';

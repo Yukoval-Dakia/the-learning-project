@@ -1,12 +1,12 @@
 /**
- * ColdStartPlacementBridgeTask I/O contract — YUK-478 (cold-start upload→placement bridge).
+ * ColdStartPlacementBridgeTask I/O contract — cold-start upload→placement bridge.
  *
  * A single-shot, text-only structured-output AI task that runs ONCE per uploaded
  * question whose VLM extraction produced NO knowledge-graph match (the thin-seed
- * tree from YUK-477 has only subject-root nodes, so TaggingTask's anti-hallucination
+ * tree has only subject-root nodes, so TaggingTask's anti-hallucination
  * filter drops every suggestion → knowledge_ids:[] → the question is invisible to
- * placement). This task COMBINES two cold-start bridges into ONE LLM pass (efficiency,
- * per the YUK-478 brief):
+ * placement). This task COMBINES two cold-start bridges into ONE LLM pass
+ * (efficiency):
  *   ① subject classification — pick which KNOWN_SUBJECT_ID the question belongs to,
  *      so a child KC can be created under `seed:<subjectId>:root` and the question
  *      attributed to it (placement filters on `knowledge_ids @> [kc]`).
@@ -37,7 +37,7 @@ export const ColdStartBridgeInput = z.object({
    */
   knowledge_hint: z.string().nullable().default(null),
   /**
-   * YUK-600（阻断②）— 分类词表升对象数组：opaque id 互相零语义差（判别近随机），
+   * 分类词表升对象数组：opaque id 互相零语义差（判别近随机），
    * display_name 才是分类依据；id 是 opaque stable key，LLM 必须原样回传禁自造；
    * aliases present 才序列化（builtin 的 legacy 别名帮助识别旧语料表述）。
    */

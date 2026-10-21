@@ -6,7 +6,7 @@ import {
 import { copilotRunTerminalSql } from '@/capabilities/copilot/server/copilot-run-terminal-sql';
 import type { Db } from '@/db/client';
 
-/** Hard backlog ceiling for paid durable Copilot runs (YUK-693). */
+/** Hard backlog ceiling for paid durable Copilot runs. */
 export const MAX_OUTSTANDING_DURABLE_RUNS = 5;
 
 /** Count runs with a QUEUED event and no successful/failed terminal event. */
@@ -15,8 +15,7 @@ export async function countOutstandingDurableRuns(db: Db): Promise<number> {
     sql.raw('terminal.event_type'),
     sql.raw('terminal.payload'),
   );
-  // Keep this as one raw aggregate query: the route's unit harness supplies the
-  // existing `db.execute` seam, while real DB tests exercise the SQL contract.
+  // Keep this as one raw aggregate query so `db.execute` stays the only read path.
   const rows = (await db.execute(sql<{ count: number }>`
     SELECT count(DISTINCT queued.business_id)::int AS count
     FROM job_events queued

@@ -1,8 +1,5 @@
-// YUK-1571 — shared active-goal effective-scope read model, moved verbatim from
-// src/capabilities/agency/server/goals/queries.ts. Agency keeps goal writes
-// (mutateGoal / updateGoalStatus / updateGoalScope) and the scope vocabulary
-// (commands.ts); this module only projects stored goal rows. scope_mode types
-// against the stored column — the schema enum IS the vocabulary.
+// Active-goal effective-scope read model. Agency keeps goal writes and the scope
+// vocabulary; this module only projects stored rows.
 
 import { asc, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -21,10 +18,8 @@ export interface ActiveGoal {
 }
 
 /**
- * Active goals ordered by sequence_hint then created_at. Fed into the Coach
- * input so it can distribute the goal strand across them (round-robin + weakest
- * first per ADR-0025 §3 v0). This is a read-only ADD to the Coach signal set —
- * it does not touch the FSRS-due / review backbone (ND-5).
+ * Active goals in sequence_hint order, fed into the Coach input. Read-only; it does
+ * not touch the FSRS-due / review backbone.
  */
 export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
   const rows = await db
@@ -50,14 +45,9 @@ export async function listActiveGoals(db: DbLike): Promise<ActiveGoal[]> {
 }
 
 /**
- * YUK-603 (v2 contract §5.3 read path) — active goals with their EFFECTIVE scope:
- * explicit → the frozen scope_knowledge_ids verbatim; subject_live → the subject's KC set
- * re-derived at read time (effective-domain axis, synthetic root excluded at the source).
- *
- * This is the goal-strand readers' default (coach_daily / dreaming_nightly / due-list rerank /
- * learner-state): they previously read the frozen column with NO live tier at all, so a subject
- * goal's pinned scope silently blinded them. One resolve per DISTINCT subject (Map-deduped) —
- * no caching subsystem (single-user, hundreds of nodes; see §9⑨ cost prerequisite).
+ * Active goals with effective scope: explicit keeps the frozen ids verbatim;
+ * subject_live re-derives the subject's KC set at read time. One resolve per
+ * distinct subject.
  */
 export async function listActiveGoalsWithResolvedScope(db: DbLike): Promise<ActiveGoal[]> {
   const goals = await listActiveGoals(db);

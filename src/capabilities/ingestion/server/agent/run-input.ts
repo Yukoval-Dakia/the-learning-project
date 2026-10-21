@@ -3,7 +3,7 @@ import { redactIngestionText } from '../privacy-guard';
 import { recordAgentRedaction } from '../tools/redaction-sink';
 import type { AgentRunLedger } from './ledger';
 
-/** Does this op attempt to write the authority provenance field? (R2-3) */
+/** Whether this op tries to write the system-owned provenance field. */
 function opTouchesSource(op: unknown): boolean {
   if (op == null || typeof op !== 'object') return false;
   const o = op as {
@@ -19,12 +19,10 @@ function opTouchesSource(op: unknown): boolean {
 }
 
 /**
- * Deterministic per-run tool-call identity (P1-5.5): a redelivery of the same
- * logical call replays the owner's idempotent write instead of duplicating it.
- * Provenance is system-owned here: document seeds are force-stamped
- * `{kind:'photo_ingest', ref:'ingestion_agent:<session>'}` and any attempt to
- * set `source` through ops (or seed from a published question) is rejected —
- * a page-copied key is always traceable back to this lane.
+ * Deterministic per-run tool-call identity: a redelivery replays the owner's
+ * idempotent write instead of duplicating it. Provenance is system-owned: seeds are
+ * stamped with photo_ingest, and ops that write `source` or edit a published
+ * question are rejected so every page-copied key stays traceable to this lane.
  */
 export function agentInterceptInput(sessionId: string) {
   const stamp = { kind: 'photo_ingest', ref: `ingestion_agent:${sessionId}` };
@@ -38,11 +36,8 @@ export function agentInterceptInput(sessionId: string) {
       };
     }
     if (tool.name === 'edit_question') {
-      // R2-3: provenance is system-owned on this lane. Reject (softStop — the
-      // model sees a clear tool error, the tool never runs):
-      //   - ops that set/clear/replace the document 'source' field;
-      //   - edits seeded from a published question (the seed would carry the
-      //     published source over unstamped — this lane owns drafts only).
+      // Provenance is system-owned: reject source writes and edits seeded from a
+      // published question. softStop shows the model a tool error without running it.
       if (input.question_id != null) {
         return {
           args,
@@ -60,9 +55,8 @@ export function agentInterceptInput(sessionId: string) {
       }
       const next = { ...input };
       if (ops.length > 0) {
-        // R3-3 belt-and-braces: append a re-stamp op AFTER the model's ops so
-        // the last thing applied before persist is our stamp — no op kind
-        // (incl. whole-document replacement) can leave a foreign source.
+        // Re-stamp after the model's ops, so even a whole-document replacement
+        // cannot leave a foreign source.
         next.ops = [...ops, { op: 'set', target: { kind: 'question' }, fields: { source: stamp } }];
       }
       next.request_id = `r8:${sessionId}:edit:${sha256CanonicalJson({
@@ -140,8 +134,7 @@ export function buildAgentSegmentInput(args: SegmentInputArgs): string {
     answer_kind: ask.created.answer_kind,
     expires_at: ask.created.expires_at,
     ...(ask.created.context_md != null ? { context_md: ask.created.context_md } : {}),
-    // R2-2: learner answer text is model input — redact it on the resume path
-    // exactly like the ask_learner poll path does.
+    // Answer text is model input; redact it here as the poll path does.
     resolved: ask.resolved ? redactAskAnswerForInput(args.toolCtx, ask.resolved.answer) : null,
   }));
   return JSON.stringify({

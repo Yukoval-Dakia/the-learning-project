@@ -8,17 +8,12 @@ import { cachedAgentRedaction } from './redaction-sink';
 import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
-// YUK-1404 (B2/R2) — read_source: the one text-reading tool for every source
-// package kind. The agent gets the manifest (kind, page refs, text coverage)
-// and windowed access to body_md — anchored markdown, so a page read is a
-// slice between <!-- tlp:page index=N --> comments, never a fabricated
-// transcription. There is deliberately no per-format reader.
+// read_source: the one text reader for every package kind. It returns a manifest
+// plus windows of anchored markdown, so a page read comes from tlp:page comments
+// rather than a fabricated transcription. There is no per-format reader.
 //
-// YUK-1522 (R8 R1) — every text window handed to the model is re-redacted
-// through redactIngestionText before it leaves this tool (idempotent on
-// already-redacted body_md; the docx/legacy lanes can hold raw text), and the
-// fired fields/counts fold into the run-scoped redaction sink so the usage
-// receipt's extracted_text:'redacted' claim is true, not nominal.
+// Every window is re-redacted before leaving the tool (stored markdown may be raw),
+// and the fired fields feed the run redaction sink so the receipt claim is true.
 
 const MAX_CHARS_HARD_CAP = 24_000;
 const DEFAULT_MAX_CHARS = 12_000;

@@ -1,36 +1,10 @@
-// YUK-227 S3 Slice C (题源扩展 Strategy D / ADR-0002) — image_candidate accept
-// fulfillment.
+// image_candidate accept fulfillment (ADR-0002).
 //
-// This is the SINGLE place that turns an image-type source into a tier-2 SourcedQuestion
-// by spending a VLM extraction. It runs ONLY from acceptAiProposal's dispatch on explicit
-// user accept (src/server/proposals/actions.ts). There is NO automatic / backend path
-// that reaches here — the SourcingTask handler only WRITES the proposal (守 ADR-0002:
-// VLM 抽图是用户授权的付费动作). Per accept = exactly ONE VLM call on exactly ONE image
-// (the天然 per-accept upper bound), and every accept writes one cost_ledger row.
-//
-// Flow (mirrors src/server/ingestion/rescue.ts, the ADR-0002 manual-rescue precedent):
-//   0. (FIX-5) concurrency guard tx: advisory-lock the proposal id, re-check the rate
-//      event + a live `accept_started` marker; either return idempotent, 409, or claim
-//      the accept by inserting an `accept_started` marker. This closes the double-spend
-//      TOCTOU where two concurrent POSTs both pass the idempotency check (which used to
-//      run BEFORE any write/lock) and each burned one VLM call.
-//   1. download the image bytes from the proposal's source_url (FIX-2/FIX-7: protocol +
-//      private-host + size + timeout + Content-Type guards — AI-written URL is untrusted)
-//   2. persist them to R2 + a source_asset row (the materialized asset)
-//   3. run VisionExtractTask (invocation: manual_rescue_only) on the image, through the
-//      production runTask WITH a real ctx (FIX-4: so it writes its own ai_task_runs +
-//      cost_ledger audit row — the run is auditable, not a black box)
-//   4. build a web_sourced draft question from the VLM block + persist it (FIX-3: with the
-//      sourcing-resolved knowledge_ids so it attributes to the originating 知识点)
-//   5. writeCostLedger(task_kind='sourcing_image_extract') — a CORRELATION row that串联s
-//      the underlying VisionExtractTask run (FIX-4: real provider/model/usage, not全零)
-//   6. enqueue source_verify (the existing tier-2 gate promotes draft→active on pass)
-//   7. write the accept rate event chained to the proposal
-//
-// On download/VLM failure (FIX-5): write an `accept_failed` marker so the stale-`accept_started`
-// reclaim path lets the user retry instead of the proposal being永久 wedged "in progress".
-//
-// See docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
+// The only path that turns an image_candidate proposal into a tier-2 question. It runs
+// only on explicit user accept and spends exactly one VLM call on one image; the sourcing
+// job only writes proposals, so the paid extraction stays user-authorized. An advisory
+// lock plus a claim marker makes retries idempotent and blocks concurrent double-spend.
+// A failed download/VLM writes an `accept_failed` marker so the user can retry.
 
 import { lookup } from 'node:dns/promises';
 import type { LookupFunction } from 'node:net';
@@ -50,9 +24,8 @@ import {
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
 import { isTagKnowledgeInvariantError, tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
-// YUK-229 — SSRF host-literal guard shared with the client (@/core/net/private-host). The
-// server keeps a throwing wrapper (assertPublicHttpUrl) + DNS-answer/redirect re-validation on
-// top; the literal-host + CIDR logic is single-sourced here so the two ends cannot drift.
+// Shared with the client so the literal-host/CIDR rules cannot drift; this module adds
+// the throwing wrapper plus DNS-answer and redirect re-validation.
 import {
   ipFamily,
   isBlockedHostLiteral,
@@ -90,81 +63,63 @@ export interface ImageCandidateAcceptResult {
   idempotent?: boolean;
 }
 
-// Seam set so DB tests can stub the network fetch + the VLM call (the only two
-// non-DB side effects) and assert the cost-ledger / source_verify wiring runs WITHOUT
-// real R2 / real model spend.
+// Test seams for non-DB side effects, so accept wiring can be asserted without real R2
+// or model spend.
 export interface ImageCandidateAcceptDeps {
   /**
-   * Trusted-only test/composition seam. A replacement owns the complete SSRF
-   * invariant (DNS validation, address pinning, redirect checks and byte cap);
-   * production leaves this unset and uses defaultFetchImageBytes below.
+   * Trusted test/composition seam. A replacement owns the full SSRF invariant (DNS
+   * validation, address pinning, redirect checks, byte cap); production leaves it unset.
    */
   fetchImageBytesFn?: (url: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
-  /** DNS resolver seam for deterministic SSRF tests. Defaults to node:dns lookup. */
+  /** DNS resolver seam. Defaults to node:dns lookup. */
   lookupFn?: LookupFn;
-  /** R2 client for persisting the downloaded asset. Defaults to getR2(). */
+  /** R2 client. Defaults to getR2(). */
   r2?: R2Client;
-  /** VisionExtractTask runner seam (defaults to the production runner). */
+  /** VisionExtractTask runner. Defaults to the production runner. */
   runTaskFn?: (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
-  /** Chained source_verify enqueue (DB tests inject a vi.fn()). */
+  /** Chained source_verify enqueue. */
   enqueueSourceVerify?: (questionIds: string[]) => Promise<void>;
-  /** Cost-ledger writer seam (defaults to writeCostLedger). */
+  /** Cost-ledger writer. Defaults to writeCostLedger. */
   writeCostLedgerFn?: typeof writeCostLedger;
   /**
-   * Cold-start SUBJECT-CLASSIFY LLM seam. DB tests inject a stub so the subject classification
-   * (runColdStartBridge, used only to resolve the subject root for tagKnowledge when the candidate
-   * carries no knowledge_ids) runs WITHOUT a real model. Defaults to the production runner.
-   * (P3, YUK-489: reference-answer generation is no longer used on this path — decoupled to P4a.)
+   * Subject-classify seam, used only when the candidate has no knowledge_ids. Defaults to
+   * the production runner.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
   /**
-   * P3 (YUK-489) — the unified tagging step run when the candidate's knowledge_ids are empty.
-   * Defaults to the production `tagKnowledge` (embedding match-or-propose). DB tests inject a stub
-   * so the embedding model is not called; the stub returns the attributed ids directly.
+   * Tagging step run when the candidate has no knowledge_ids. Defaults to `tagKnowledge`.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
 }
 
 const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
-// The VLM task kind that owns image extraction — invocation: 'manual_rescue_only' in the
-// registry (the same付费授权 semantics as rescue.ts), so accept reaching it is ADR-0002
-// compliant by construction.
+// Registered as manual_rescue_only, so reaching it on accept is ADR-0002 compliant.
 const IMAGE_EXTRACT_TASK_KIND = 'VisionExtractTask';
-// cost_ledger task_kind for this付费 point (plan §4). Distinct from the SourcingTask text
-// path so per-accept image spend is auditable in isolation.
+// Separate from the text path so per-accept image spend is auditable in isolation.
 const COST_LEDGER_TASK_KIND = 'sourcing_image_extract';
 
-// FIX-5 — concurrency guard marker actions (experimental:* escape-valve events, so no
-// schema/migration: parseEvent accepts any experimental:<name> with a record payload).
-// `accept_started` claims the accept; `accept_failed` clears the claim on a crash so the
-// user can retry instead of the proposal being wedged "in progress" forever.
+// experimental:* events need no schema change. `accept_started` claims an accept;
+// `accept_failed` clears the claim after a crash so the user can retry.
 const ACCEPT_STARTED_ACTION = 'experimental:image_candidate_accept_started';
 const ACCEPT_FAILED_ACTION = 'experimental:image_candidate_accept_failed';
-// A claim older than this (with no terminal rate / no clearing failure) is treated as
-// stale — the original accept process crashed mid-flight before writing the rate event.
-// A fresh attempt may reclaim it. The window must exceed the worst-case download+VLM
-// latency so a slow-but-alive accept is not stolen out from under itself.
+// Must exceed worst-case download + VLM latency so a slow-but-alive accept is not
+// reclaimed underneath itself.
 const ACCEPT_STALE_MS = 10 * 60 * 1000; // 10 minutes
 
-// FIX-7/YUK-688 — AI-written URLs are untrusted even behind the internal-token gate.
-// Validate syntax, literal hosts, DNS answers, every redirect, timeout, size and MIME
-// before bytes can reach R2 or the VLM.
+// AI-written URLs are untrusted even behind the internal-token gate: validate syntax,
+// literal hosts, DNS answers, redirects, timeout, size, and MIME before bytes reach R2
+// or the VLM.
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 type LookupFn = typeof lookup;
 
-// YUK-1404 — typed, learner-safe source-fetch failure contract for image_candidate accept.
+// Learner-safe source-fetch failure contract.
 //
-// The proposal's source_url is AI-written (TEST evidence: real jyeoo /shiti/{id} PAGE
-// links), so the old messages interpolated the raw host / resolved IP / full URL straight
-// into the client response. The vocabulary below is serialized through ApiError `details`
-// ({ reason, next_step }) for UI mapping while `message` stays generic and actionable;
-// the exact raw detail goes to server logs ONLY. Codes and HTTP statuses are preserved
-// verbatim from the pre-YUK-1404 guard (400 validation_error for non-public destinations,
-// 422 extraction_failed for resolution/download failures, 422 unsupported_media_type for
-// non-image payloads) — the SSRF validation/pinning/redirect/size/timing behavior is
-// UNCHANGED; only the error surface was retyped.
+// source_url is AI-written, so the raw host / resolved IP / URL must stay in server logs;
+// only `details` ({ reason, next_step }) is serialized for UI mapping. Codes and statuses
+// are part of the API contract: 400 for non-public destinations, 422 for resolution,
+// download, or non-image failures.
 export type ImageCandidateSourceFailureReason =
   | 'source_host_nonpublic'
   | 'source_dns_lookup_failed'
@@ -189,8 +144,7 @@ const SOURCE_FAILURE_MESSAGES = {
     '这张图暂时取不到（来源网站连不上）。请换用图片链接，或直接上传图片；现有题目不受影响。',
   source_fetch_failed:
     '这张图暂时取不到（来源网站连不上）。请稍后重试，或直接上传图片；现有题目不受影响。',
-  // Real-world shape (YUK-1404 TEST evidence): scanner proposals point at /shiti/{id}
-  // PAGES, not image files — this is the failure those accepts produce.
+  // Scanner proposals often point at HTML pages rather than image files.
   source_not_an_image:
     '这个链接没有返回可读取的图片，可能指向了网页。请换用图片链接，或直接上传图片；现有题目不受影响。',
 } as const satisfies Record<ImageCandidateSourceFailureReason, string>;
@@ -207,9 +161,8 @@ const SOURCE_FAILURE_NEXT_STEP = {
 >;
 
 /**
- * Throw the typed, learner-safe source-fetch failure. `rawDetail` carries the real
- * host / resolved IP / URL and is written to the server log ONLY — never into the
- * ApiError message or details, which are serialized to the client.
+ * `rawDetail` may contain the host / resolved IP / URL and is logged only, never put into
+ * the client-facing ApiError.
  */
 function throwSourceFetchFailure(
   reason: ImageCandidateSourceFailureReason,
@@ -223,10 +176,8 @@ function throwSourceFetchFailure(
   });
 }
 
-// FIX-7 — reject URL forms and literal destinations that can never be valid public image
-// sources. Hostnames receive a second A/AAAA answer check below. The literal-host + CIDR logic
-// is shared with the client via @/core/net/private-host (isBlockedHostLiteral); this wrapper
-// only adds the throwing ApiError semantics the accept path relies on.
+// Reject URL forms and literal destinations that can never be public image sources;
+// hostnames get a second A/AAAA answer check in resolvePublicAddresses.
 export function assertPublicHttpUrl(url: string): URL {
   let parsed: URL;
   try {
@@ -234,8 +185,8 @@ export function assertPublicHttpUrl(url: string): URL {
   } catch {
     throw new ApiError(
       'validation_error',
-      // YUK-1404 — no raw URL interpolation: the AI-written source_url can embed
-      // internal topology. The raw input is visible to the operator in the proposal row.
+      // No raw URL interpolation: the AI-written source_url can embed internal topology.
+      // The operator can still see the raw input on the proposal row.
       '这个图片链接无法识别。请换用图片链接，或直接上传图片。',
       400,
     );
@@ -290,8 +241,7 @@ export async function resolvePublicAddresses(
       }),
     ]);
   } catch (err) {
-    // node:dns errors embed the hostname in their message (getaddrinfo ENOTFOUND
-    // <host>) — keep err out of the learner-safe message; log it raw server-side.
+    // node:dns errors embed the hostname; keep err out of the learner-safe message.
     throwSourceFetchFailure(
       'source_dns_lookup_failed',
       `lookup ${bareHost}: ${err instanceof Error ? err.message : String(err)}`,
@@ -306,8 +256,7 @@ export async function resolvePublicAddresses(
     (answer) => (answer.family !== 4 && answer.family !== 6) || isBlockedIpAddress(answer.address),
   );
   if (invalid) {
-    // The YUK-1404 incident shape: a fake-IP resolver answering from 198.18.0.0/15
-    // lands here (blocked range, by design — do not allowlist it).
+    // Fake-IP resolvers answering from 198.18.0.0/15 land here; do not allowlist them.
     throwSourceFetchFailure(
       'source_host_nonpublic',
       `${bareHost} answer ${invalid.address} (family ${invalid.family}) is non-public`,
@@ -334,11 +283,8 @@ function createPinnedLookup(answers: ResolvedAddress[]): LookupFunction {
   };
 }
 
-// FIX-R2-1 — fetch follows 30x by default, which would let an AI-written URL that
-// PASSED assertPublicHttpUrl redirect to localhost / 169.254.169.254 / an internal host
-// and bypass the SSRF guard. Drive redirects manually (redirect:'manual') and re-run
-// assertPublicHttpUrl on each hop's Location before following it. Cap at MAX_REDIRECTS so
-// a redirect loop / chain can't spin.
+// Redirects are followed manually and re-validated per hop; automatic follow would let a
+// URL that passed assertPublicHttpUrl redirect to an internal host. The cap stops loops.
 const MAX_REDIRECTS = 3;
 
 async function readBoundedResponseBody(res: PinnedFetchResponse): Promise<Uint8Array> {
@@ -354,7 +300,7 @@ async function readBoundedResponseBody(res: PinnedFetchResponse): Promise<Uint8A
       await reader.cancel();
       throw new ApiError(
         'payload_too_large',
-        // YUK-1404 — sizes are safe to show; the source URL is not.
+        // Sizes are safe to show; the source URL is not.
         '这张图超过了 10 MB，暂时无法获取。请压缩后上传，或换一张图片。',
         413,
       );
@@ -381,16 +327,14 @@ export async function defaultFetchImageBytes(
     const dispatcher = new Agent({
       connect: {
         lookup: createPinnedLookup(approvedAddresses),
-        // Ask Undici's connector for all vetted A/AAAA answers so it can race/fall
-        // back across legitimate multi-address origins without performing DNS again.
+        // Race/fall back across vetted A/AAAA answers without another DNS lookup.
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: 250,
       },
     });
     try {
-      // The URL retains its original hostname (Host + TLS SNI), while the Agent's
-      // connector can use only the exact public answers validated above. This closes
-      // the DNS-rebinding gap between validation and socket connect.
+      // Keep the original hostname for Host/TLS SNI while the connector is pinned to
+      // the validated answers, closing the DNS-rebinding gap before socket connect.
       const res = await fetchWithPinnedDispatcher(currentUrl, {
         redirect: 'manual',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -446,19 +390,15 @@ export async function defaultFetchImageBytes(
       }
       return { bytes: await readBoundedResponseBody(res), mimeType };
     } catch (err) {
-      // Transport-level failures (undici TypeError 'fetch failed', AbortSignal.timeout
-      // TimeoutError, ECONNREFUSED/EHOSTUNREACH causes…) never carried an ApiError and
-      // used to bubble as generic 500 internal_error. Map them onto the same typed,
-      // learner-safe source_fetch_failed contract (YUK-1404's network-fetch class).
-      // ApiErrors from the guards above pass through untouched.
+      // Transport failures carry no ApiError and would otherwise surface as a 500; map
+      // them onto the typed source_fetch_failed contract. Guard errors pass through.
       if (err instanceof ApiError) throw err;
       throwSourceFetchFailure(
         'source_fetch_failed',
         `transport error at ${currentUrl}: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      // Cleanup must never replace the fetch/validation error that explains the
-      // failed accept. There are no reusable sockets beyond this one guarded hop.
+      // Cleanup must not replace the error that explains the failed accept.
       await dispatcher.close().catch((err) => {
         console.warn('[image_candidate_accept] failed to close pinned dispatcher', err);
       });
@@ -468,15 +408,10 @@ export async function defaultFetchImageBytes(
 }
 
 /**
- * FIX-5 — concurrency claim. Inside one tx, advisory-lock the proposal id (auto-released
- * at tx boundary, no UNIQUE index → no migration; mirrors make-paper.ts:177), then under
- * the lock decide whether this caller may proceed. Returns:
- *   - { decision: 'idempotent', rate } — an accept rate already exists (a prior accept
- *     fully committed); the caller re-derives the result, no re-spend.
- *   - { decision: 'claimed' } — no rate + no live claim (or a stale claim reclaimed); a
- *     fresh `accept_started` marker was inserted, this caller owns the accept.
- *   - throws 409 — a non-accept terminal decision exists, OR a fresh `accept_started`
- *     claim by a concurrent in-flight accept (no rate yet, within the stale window).
+ * Claims an accept under a transaction-scoped advisory lock on the proposal id.
+ * Returns the committed rate for an idempotent retry, claims the accept for a fresh or
+ * stale caller, and throws 409 when the proposal has another terminal decision or a
+ * live concurrent claim.
  */
 async function claimAccept(
   db: Db,
@@ -489,8 +424,7 @@ async function claimAccept(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`image_candidate_accept:${proposalId}`}, 0))`,
     );
 
-    // Re-check the rate event UNDER the lock — a concurrent accept that finished while we
-    // waited for the lock is now visible. accept → idempotent; any other decision → 409.
+    // Re-check under the lock so an accept that finished while waiting is visible.
     const rateRows = await tx
       .select()
       .from(event)
@@ -506,8 +440,8 @@ async function claimAccept(
       return { decision: 'idempotent', rate };
     }
 
-    // No rate yet. Look at the latest claim marker + the latest clearing failure. A claim
-    // is LIVE iff it is newer than any clearing failure AND within the stale window.
+    // No rate yet: a claim is live when it is newer than any clearing failure and still
+    // inside the stale window.
     const latestStarted = (
       await tx
         .select({ created_at: event.created_at })
@@ -533,8 +467,7 @@ async function claimAccept(
       const startedAt = latestStarted.created_at.getTime();
       const clearedAfter = latestFailed ? latestFailed.created_at.getTime() >= startedAt : false;
       const stale = now.getTime() - startedAt > ACCEPT_STALE_MS;
-      // Live claim = not cleared by a later failure AND not stale → a concurrent accept is
-      // in flight. Reject so we don't double-spend the VLM.
+      // A live claim means another accept is in flight; reject to avoid double-spend.
       if (!clearedAfter && !stale) {
         throw new ApiError(
           'conflict',
@@ -542,12 +475,10 @@ async function claimAccept(
           409,
         );
       }
-      // Otherwise the prior claim was cleared (failed) or went stale (crashed mid-flight) —
-      // fall through and reclaim.
+      // Cleared or stale claim: fall through and reclaim.
     }
 
-    // Claim it: insert a fresh accept_started marker (within the lock, so two concurrent
-    // claimers can't both insert one). caused_by_event_id chains it to the proposal.
+    // Insert under the lock so two claimers cannot both insert a marker.
     await writeEvent(tx, {
       id: createId(),
       actor_kind: 'user',
@@ -564,7 +495,7 @@ async function claimAccept(
   });
 }
 
-/** FIX-5 — clear the claim on a download/VLM failure so the user can retry. Best-effort. */
+/** Clears the claim after a failure so the user can retry. Best-effort. */
 async function markAcceptFailed(db: Db, proposalId: string, reason: string): Promise<void> {
   try {
     await writeEvent(db, {
@@ -585,11 +516,8 @@ async function markAcceptFailed(db: Db, proposalId: string, reason: string): Pro
 }
 
 /**
- * Re-derive the idempotent result from a committed accept rate event. FIX-9a: a rate
- * event with a missing materialized id is a corrupted state (the accept tx writes both
- * the question/asset rows AND the rate event together), so surface it as an error rather
- * than papering over it with `?? ''` — an empty id would let the caller believe the accept
- * succeeded while pointing at nothing.
+ * Re-derives the result from a committed accept rate. Missing ids mean corrupted state:
+ * the rows and the rate commit together, so an empty id must not look like success.
  */
 function idempotentResultFromRate(
   rate: typeof event.$inferSelect,
@@ -625,14 +553,9 @@ function idempotentResultFromRate(
 }
 
 /**
- * Accept an `image_candidate` proposal: materialize the source image as a tier-2
- * SourcedQuestion via a single, user-authorized VLM extraction.
- *
- * Atomicity follows the acceptBlockMergeProposal precedent: the heavy work (download +
- * VLM + question INSERT) commits in its own tx, then the accept rate event. The FIX-5
- * concurrency claim (claimAccept) makes a retry idempotent AND blocks a concurrent second
- * accept from double-spending the VLM — the old `existingAcceptRate`-before-any-write
- * check let two POSTs both pass and each burn one call.
+ * Accepts an `image_candidate` proposal by materializing one user-authorized VLM
+ * extraction as a tier-2 question. The question insert and accept rate commit in one
+ * transaction; the claim keeps retries idempotent and blocks concurrent double-spend.
  */
 export async function acceptImageCandidateProposal(
   db: Db,
@@ -650,8 +573,7 @@ export async function acceptImageCandidateProposal(
   const change: ImageCandidateProposalChangeT = proposal.payload.proposed_change;
 
   const claimNow = new Date();
-  // FIX-5 — claim the accept under an advisory lock. Idempotent → re-derive + return.
-  // 409 conflict → a concurrent accept is in flight (or a non-accept decision exists).
+  // Idempotent retries re-derive; a live claim or other decision throws 409.
   const claim = await claimAccept(db, proposalId, proposal, claimNow);
   if (claim.decision === 'idempotent') {
     return idempotentResultFromRate(claim.rate, proposalId);
@@ -664,7 +586,7 @@ export async function acceptImageCandidateProposal(
     const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
 
-    // ── 1+2. download + persist the asset ───────────────────────────────────────
+    // Download and persist the source asset.
     const { bytes, mimeType } = await fetchImageBytes(change.source_url);
     if (bytes.byteLength === 0) {
       throwSourceFetchFailure('source_fetch_failed', `0 bytes from ${change.source_url}`);
@@ -679,23 +601,11 @@ export async function acceptImageCandidateProposal(
     const sourceAssetId = sourceAsset.id;
     const now = new Date();
 
-    // ── 3. ONE VLM extraction on ONE image (the per-accept付费 point) ────────────
-    // FIX-4 — thread a REAL ctx (with db) to runTask so it writes its own ai_task_runs +
-    // cost_ledger audit row. The old seam forwarded an empty {} ctx, so the production
-    // runTask (which dereferences ctx.db to write ai_task_runs) ran the VLM with NO audit
-    // trail. The runTaskFn seam still lets DB tests stub the model, but production now
-    // gets a real ctx. We capture the returned VisionExtractTask task_run_id to correlate
-    // the cost_ledger correlation row written in step 5.
+    // One VLM extraction on one image: the paid point of an accept. Pass a real ctx so
+    // runTask writes its own ai_task_runs + cost_ledger audit rows.
     let visionTaskRunId: string | null = null;
-    // FIX-R2-6 — capture the VLM's RAW output text (the full block-serialized JSON from
-    // the same VLM call) so metadata.web_sourced.extract can store something WIDER than the
-    // final promptMd. The old code set extract = promptMd, which made source_verify's
-    // source_consistency n-gram overlap pass trivially (extract === prompt), grounding the
-    // question against itself. The raw VLM text still comes from the same single call (we do
-    // NOT spend a second VLM), but it carries the reference / wrong-answer / confidence
-    // context too, so the overlap is no longer an identity. (True independent grounding —
-    // re-verifying the prompt against the IMAGE via a multimodal verify pass — is now wired in
-    // YUK-230: source_verify runs it on single_source_grounding rows; see the marker below.)
+    // Keep the raw VLM text, not promptMd, so source_verify's n-gram overlap is not the
+    // question grounded against itself. It comes from the same single call.
     let visionRawText = '';
     const vision = await runVisionExtract({
       assetId: sourceAssetId,
@@ -703,15 +613,12 @@ export async function acceptImageCandidateProposal(
       imageBytes: bytes.buffer as ArrayBuffer,
       pageIndex: 0,
       runTaskFn: async (_kind, input, ctx) => {
-        // Preserve the vision-supplied call context; the production runner already has db bound.
-        // Test seams may ignore the context entirely.
+        // The production runner has db bound; test seams may ignore the context.
         const realCtx = ctx && typeof ctx === 'object' ? { ...ctx } : {};
         const out = await runTaskFn(IMAGE_EXTRACT_TASK_KIND, input, realCtx);
-        // The production runTaskFn result carries task_run_id; the test seam returns just
-        // { text }. Capture it when present so step 5's ledger row串联s the real run.
+        // Production results carry task_run_id; capture it so the ledger row links the run.
         const maybeRunId = (out as { task_run_id?: unknown }).task_run_id;
         if (typeof maybeRunId === 'string') visionTaskRunId = maybeRunId;
-        // FIX-R2-6 — keep the raw VLM output text for the extract field (see above).
         if (typeof out.text === 'string') visionRawText = out.text;
         return out;
       },
@@ -721,16 +628,10 @@ export async function acceptImageCandidateProposal(
       throw new ApiError('extraction_failed', 'VLM returned 0 blocks for image_candidate', 422);
     }
 
-    // FIX-R2-2 — the correlation ledger row is ZERO-VALUED on cost/tokens by design.
-    // The production runTask already wrote a REAL cost_ledger row for the
-    // VisionExtractTask run (with the actual model spend). If THIS correlation row also
-    // carried that same cost/tokens, /api/cost/today + the admin SUM(cost_ledger.cost)
-    // aggregate would count the one VLM extraction TWICE (both rows share visionTaskRunId).
-    // So this row keeps cost=0 / tokens_in=0 / tokens_out=0 CONSTANT and串联s the real run
-    // via task_run_id=visionTaskRunId; the real numbers are recoverable by JOINing the
-    // VisionExtractTask row on the same task_run_id (OCR-O5 traceability). provider/model
-    // are still looked up from ai_task_runs so the correlation row is self-describing
-    // ('unknown' when the run row is absent — never a hardcoded xiaomi/mimo guess).
+    // The correlation row is zero-cost by design: runTask already wrote the real spend.
+    // Duplicating it here would double-count the extraction in every cost aggregate. The
+    // real numbers stay recoverable by joining the VisionExtractTask row on task_run_id.
+    // provider/model still come from ai_task_runs, or 'unknown' when absent.
     let ledgerProvider = 'unknown';
     let ledgerModel = 'unknown';
     if (visionTaskRunId) {
@@ -745,9 +646,8 @@ export async function acceptImageCandidateProposal(
         ledgerModel = runRow.model;
       }
     } else {
-      // Production always has a real VisionExtractTask run id (defaultRunTaskFn forwards it).
-      // A null id here is an anomaly (the run completed without an id) — log it; the row
-      // still串联s nothing but its zeros keep it from corrupting the cost aggregate.
+      // Production should always have a run id; log the anomaly. The zero row cannot
+      // corrupt cost aggregates.
       console.warn(
         '[image_candidate_accept] no VisionExtractTask task_run_id for accept of',
         proposalId,
@@ -755,49 +655,28 @@ export async function acceptImageCandidateProposal(
       );
     }
 
-    // ── 4. build a web_sourced draft question from the VLM block ─────────────────
-    // The VLM-extracted prompt IS the deterministic-grounding extract: the question text
-    // was lifted from this exact image page, so prompt↔extract overlap is total (mirrors
-    // the SourcingTask text path where the agent's self-reported extract grounds the URL).
+    // Build the web_sourced draft from the VLM block.
     const promptMd = block.extracted_prompt_md;
-    // P3 (YUK-489) — reference_md is the OCR-extracted answer directly. Bridge-GENERATED
-    // reference (when OCR got none) is decoupled to P4a; we never synthesize one here.
+    // The OCR-extracted answer only; reference generation is out of scope here.
     const referenceMd = block.reference_md ?? '';
-    // The accept run id correlates the cost_ledger correlation row + the question's
-    // created_by. `text` is unused downstream (aiAgentRef only reads task_run_id) but
-    // TaskTextResult requires it.
+    // aiAgentRef only reads task_run_id, but TaskTextResult requires text.
     const result = { text: '', task_run_id: `image_candidate_accept_${proposalId}` };
-    // FIX-3 — attribute the materialized question to the sourcing-resolved knowledge nodes
-    // (carried on the proposal at propose time) — identical column semantics to the text
-    // path's question.knowledge_ids. Empty when the run resolved no node (legacy proposal
-    // or free-form manual ref) → empty attribution, same as before FIX-3.
+    // Human-confirmed ids must win; only an empty set falls back to tagging below.
     let knowledgeIds = change.knowledge_ids ?? [];
 
-    // ── P3 (YUK-489) unified tagging — ids-authoritative-when-present ─────────────
-    // ids-authoritative: the accepted candidate's change.knowledge_ids are HUMAN-confirmed at
-    // accept time — KEEP them when present (manual intent wins; tagKnowledge is NOT run). Only
-    // when EMPTY (a thin-seed upload that resolved no node) run the unified `tagKnowledge`:
-    //
-    // tagKnowledge needs a `subjectRootId` (the PROPOSE parent + the D1 subject filter), but an
-    // image_candidate proposal carries NO subject signal (the schema has none — see DEVIATION
-    // note in the P3 report). The old cold-start bridge RESOLVED the subject via its LLM
-    // (bridge.subject_id). We keep exactly ONE LLM pass: call runColdStartBridge to classify the
-    // subject (+ name a child concept), derive seed:<subject>:root, then run tagKnowledge under
-    // that root with a nameKcFn that REUSES the bridge's kc_name (no second model call). This
-    // gives the embedding match-or-propose its correct subject root while subsuming bridge ① —
-    // tagKnowledge MATCHes an existing in-subject KC if one is near enough, else auto-approves a
-    // PROPOSE child (in its own tx + audit event). The bridge ③ reference generation is dropped
-    // (P4a). The whole thing runs OUTSIDE the terminal tx (no model call inside a DB tx).
+    // When ids are empty, classify the subject once and reuse the bridge's KC name for
+    // tagKnowledge, so match-or-propose gets the right subject root without a second model
+    // call. The proposal carries no subject signal. This runs outside the terminal tx:
+    // no model call inside a DB transaction.
     if (knowledgeIds.length === 0) {
       try {
         const bridge = await runColdStartBridge({
           db,
           questionMd: promptMd,
-          // A non-empty placeholder so the bridge takes its ECHO path (we discard its
-          // reference_md anyway — P4a owns reference generation).
+          // A non-empty placeholder forces the bridge's ECHO path; its reference is unused.
           existingReferenceMd: '(reference answer not needed for tagging)',
           knowledgeHint: block.knowledge_hint,
-          knownSubjects: getKnownSubjects(), // YUK-600：活 registry 词表（custom 入表）
+          knownSubjects: getKnownSubjects(),
           runTaskFn: deps.runColdStartBridgeFn,
         });
         const subjectRootId = `seed:${bridge.subject_id}:root`;
@@ -811,16 +690,12 @@ export async function acceptImageCandidateProposal(
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
             },
-            // Reuse the bridge's already-classified name — NO second model call.
+            // Reuse the classified name; no second model call.
             nameKcFn: async () => ({ kc_name: bridge.kc_name }),
           },
           {
-            // YUK-1408 — tagKnowledge embeds this text (a model call); the
-            // deterministic identifier redaction runs at the call boundary.
-            // The hint is redacted as well so what the audit event stores
-            // matches the model-facing contract. This path is a web-image
-            // proposal accept — it owns no ingestion session, so the events
-            // keep the non-ingestion shape (session_id null).
+            // Redact identifiers at the model boundary. This path owns no ingestion
+            // session, so its audit events keep session_id null.
             questionText: redactIngestionText(promptMd).text,
             knowledgeHint: block.knowledge_hint
               ? redactIngestionText(block.knowledge_hint).text
@@ -829,17 +704,13 @@ export async function acceptImageCandidateProposal(
             sourceRef: { kind: 'image_candidate_proposal', id: proposalId },
           },
         );
-        // tagKnowledge already created any PROPOSE KC (live + approved) in its own tx + audit
-        // event, so the terminal tx just attributes the question to the returned ids.
+        // tagKnowledge already committed any PROPOSE KC in its own tx; attribute only.
         knowledgeIds = tag.knowledge_ids;
       } catch (bridgeErr) {
         if (isTagKnowledgeInvariantError(bridgeErr)) throw bridgeErr;
-        // Best-effort: a provider outage / unparseable output / a missing seed root must NOT lose
-        // the user's upload. Persist the draft un-attributed (knowledge_ids:[], stays a 'draft'
-        // — see structural-verify gate below), exactly as the pre-YUK-478 behaviour. This catch
-        // covers BOTH the subject-classify bridge AND tagKnowledge (either can throw — the bridge
-        // on a provider/parse fault, tagKnowledge on a plain Error from applyProposeNew's
-        // assertParentExists when the subject's seed root was never planted).
+        // Best-effort: a provider outage, unparseable output, or missing seed root must
+        // not lose the upload. Persist an un-attributed draft, which the structural gate
+        // below keeps out of the active pool.
         console.error(
           '[image_candidate_accept] subject-classify/tagKnowledge failed; persisting un-attributed draft for',
           proposalId,
@@ -847,43 +718,25 @@ export async function acceptImageCandidateProposal(
         );
       }
     }
-    // FIX-R2-6 — the extract is the RAW VLM output (block-serialized text from the same
-    // call), NOT the final promptMd. Storing promptMd made source_verify's source
-    // consistency n-gram overlap an identity (extract === prompt → always passes), so the
-    // question was "grounded" against itself. The raw text is still single-source (it is
-    // the same VLM call's output, not an independent re-read of the image), but it carries
-    // the reference / confidence / wrong-answer context so the overlap is no longer an
-    // identity. We mark single_source_grounding: true so the limitation is explicit AND so
-    // source_verify runs the independent source-grounding re-check on these rows.
-    // YUK-230 — that re-check is now WIRED: source_verify reads single_source_grounding +
-    // image_candidate_source_asset_id (stamped below) and runs runSourceGroundingVerify
-    // (dedicated grounding task, NOT the answer judge) on the source image + 题面 (「题面真在
-    // 图里吗」); a grounding fail demotes the draft out of the pool. The paid re-check is the
-    // automatic extension of THIS user accept (owner 2026-07-23 决策清单②: accept = 授权自动复核一次).
+    // The raw output both keeps the overlap non-identity and carries the reference /
+    // confidence context. single_source_grounding makes the limitation explicit so
+    // source_verify runs the independent multimodal re-check and can demote the draft.
     const extractRaw = visionRawText.trim().length > 0 ? visionRawText : promptMd;
     const webSourced: WebSourcedProvenanceT = {
       url: change.source_url,
       title: change.source_title,
       fetched_at: now.toISOString(),
-      // image_candidate sources have no profile whitelist context at accept time → demoted
-      // like every cold-start sourced row (OF-2). The verify gate is NOT relaxed.
+      // No profile context at accept time; the verify gate is not relaxed.
       whitelist_match: false,
       extract: extractRaw,
     };
-    // FIX-R2-5 — honour a题型约束 carried on the proposal. When the sourcing job that
-    // produced this candidate was kind-constrained, requested_kind was stamped on the
-    // proposed_change (the text path enforces the same pin). Normalize it through the
-    // single-authority question-kind vocabulary (src/subjects/question-kind.ts) so a
-    // profile/skill key (single_choice / calculation ...) maps to its canonical persisted
-    // kind; fall back to short_answer when absent or unrecognised (legacy proposal or
-    // free-form run) — the prior unconditional behaviour.
+    // Honour a kind constraint carried on the proposal, normalized through the canonical
+    // question-kind vocabulary. Unknown or absent kinds fall back to short_answer.
     const requestedKind = change.requested_kind
       ? normalizeToCanonicalKind(change.requested_kind)
       : null;
     const resolvedKind = requestedKind ?? 'short_answer';
-    // A VLM-extracted question defaults to a semantic judge (no structured choices
-    // recoverable from a single image block); defaultJudgeKindForQuestion keeps this
-    // aligned with the SourcingTask judge-route contract.
+    // A single image block has no structured choices, so default to a semantic judge.
     const draftQuestion = {
       kind: resolvedKind,
       prompt_md: promptMd,
@@ -900,16 +753,10 @@ export async function acceptImageCandidateProposal(
     const questionId = createId();
     const rateEventId = newId();
     await db.transaction(async (tx) => {
-      // FIX-R2-3 — the claim (accept_started) does NOT freeze the inbox: while the VLM ran
-      // (the long, racy window), the user could have dismissed / retracted this proposal,
-      // landing a non-accept terminal rate event. Without this re-check the terminal tx
-      // would blindly write the accept rate + question, OVERWRITING that veto. Re-acquire
-      // the advisory lock and re-read the rate event under it; if a non-accept terminal
-      // decision now exists, abort with 409 and write NOTHING (no question, no accept rate).
-      // The VLM spend is already irreversible, but it is audited by the VisionExtractTask's
-      // own ledger row (the accept_failed marker below is NOT written — this is a user
-      // decision, not a crash — so the proposal correctly stays in its dismissed/retracted
-      // terminal state).
+      // The claim does not freeze the inbox: the user may have dismissed or retracted
+      // during the VLM call. Re-read under the lock and abort with 409, writing nothing,
+      // so a later terminal decision is never overwritten. This is a user decision, not a
+      // crash, so the caller does not write an accept_failed marker.
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`image_candidate_accept:${proposalId}`}, 0))`,
       );
@@ -928,21 +775,14 @@ export async function acceptImageCandidateProposal(
         );
       }
 
-      // ── P3 (YUK-489) — KC attribution comes from tagKnowledge (pre-tx). ──────────
-      // The now-redundant in-tx applyProposeNew is GONE: when change.knowledge_ids was empty,
-      // tagKnowledge already MATCHed an existing KC or auto-approved a PROPOSE child (in its own
-      // tx + audit event) OUTSIDE this tx, and `knowledgeIds` now holds those ids. ATOMICITY
-      // (accepted): a PROPOSE KC is committed before this tx, so a rollback orphans it — benign
-      // (a valid leaf under the subject root, reconciled by the P5 dedup-on-maintenance lane),
-      // matching this path's pre-existing posture (the VLM spend is likewise already irreversible).
+      // KC attribution was resolved pre-tx. A PROPOSE KC committed before this tx can be
+      // orphaned by a rollback; that is benign because it stays a valid leaf under the
+      // subject root and dedup-on-maintenance reconciles it. The VLM spend is likewise
+      // already irreversible.
 
-      // ── Structural verify → auto-promote draft→active ─────────────────────────────
-      // Mirrors verify-and-promote.ts: a question is structurally sound when it has a
-      // non-empty prompt, a valid (normalized) kind, and ≥1 knowledge id. We additionally
-      // honour the archived-KC guard (a referenced KC must be live) — a freshly-created
-      // PROPOSE KC is approved+live, but change.knowledge_ids could reference an archived
-      // node. FSRS enroll is DEFERRED to first answer (placement is read-only), so we only
-      // flip draft_status; we do NOT enroll here. No inbox accept wall — auto-flow.
+      // Structural verify → promote to active. A question is sound with a non-empty
+      // prompt, a valid kind, and at least one live KC; archived ids keep it draft.
+      // FSRS enrollment waits for the first answer, so only draft_status is set here.
       let liveKnowledgeCount = 0;
       if (knowledgeIds.length > 0) {
         const liveKnowledge = await tx
@@ -966,17 +806,13 @@ export async function acceptImageCandidateProposal(
           prompt_md: promptMd,
           reference_md: referenceMd || null,
           judge_kind_override: judgeKind,
-          // FIX-3 / YUK-478 — attribute to the originating 知识点 (sourcing-resolved) OR the
-          // cold-start child KC created just above.
+          // Sourcing-resolved ids or the child KC created just above.
           knowledge_ids: knowledgeIds,
           difficulty: draftQuestion.difficulty,
-          // source_ref = the page URL + source_ref_kind='url' so deriveSourceTier lands tier 2
-          // (合约三), identical to the SourcingTask text path.
+          // URL source_ref makes deriveSourceTier land at tier 2, as on the text path.
           source_ref: change.source_url,
-          // YUK-478 — auto-promote on structural verify (prompt + kind + ≥1 live KC). The
-          // source_verify job still runs (enqueued below) and remains the deeper grounding
-          // gate; this just removes the cold-start inbox wall so the upload is immediately
-          // placement-selectable. A bridge failure (no KC) leaves it a 'draft' as before.
+          // source_verify still runs as the deeper grounding gate; this only removes the
+          // inbox wall so the upload is immediately placement-selectable.
           draft_status: draftStatus,
           created_by: aiAgentRef(IMAGE_EXTRACT_TASK_KIND, result),
           metadata: {
@@ -985,12 +821,8 @@ export async function acceptImageCandidateProposal(
             // Evidence trail: which asset + proposal this question came from.
             image_candidate_source_asset_id: sourceAssetId,
             image_candidate_proposal_id: proposalId,
-            // FIX-R2-6 — the prompt + the extract both originate from the SAME single VLM
-            // call (no independent re-read of the image), so source_verify's n-gram overlap is
-            // a weaker signal than for a web-text source (where extract is an independent page
-            // scrape). YUK-230 — source_verify CONSUMES this flag (+ image_candidate_source_
-            // asset_id above) to run the independent multimodal grounding re-check against the
-            // source image; a grounding fail demotes the draft out of the pool.
+            // Prompt and extract share one VLM call, so the n-gram overlap is weak.
+            // source_verify reads this flag and performs the independent image re-check.
             single_source_grounding: true,
           },
           created_at: now,
@@ -998,29 +830,17 @@ export async function acceptImageCandidateProposal(
         }),
       );
 
-      // YUK-1043（复审裁决：可行写口即刻收敛）—— image_candidate 接受 INSERT
-      // 同事务铸首版 revision。withheld admission 正是为这类「结构可判分但
-      // 深度 grounding 未过」的题准备的：source_verify（含 YUK-230 独立多模态
-      // grounding 复查）通过后由 promote 翻 admitted；pre-promote 的 active 只
-      // 是池可见性投影，不是判分准入。
+      // Mint the first revision in the same transaction. Withheld admission covers
+      // questions that are structurally gradable but not yet grounded; source_verify
+      // promotes them, and pre-promote active is pool visibility, not scoring admission.
       await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
         actorRef: 'image-candidate-accept:question',
         now,
       });
 
-      // ── 5. cost ledger — one CORRELATION row per accept. ───────────────────────
-      // FIX-R2-2 — this row's cost/tokens are intentionally ZERO. The underlying
-      // VisionExtractTask run ALREADY wrote its own cost_ledger row carrying the real
-      // model spend (via the production runner). This distinct `sourcing_image_extract`-
-      // kinded row exists only to make per-accept image extraction queryable in isolation
-      // (plan §4) and to串联 the real run via task_run_id=visionTaskRunId. If it ALSO
-      // carried the cost/tokens, every cost aggregate (SUM(cost_ledger.cost) in
-      // /api/cost/today + admin) would count the one extraction TWICE (both rows share
-      // visionTaskRunId). The REAL花费 is recoverable by JOINing the VisionExtractTask row
-      // on the same task_run_id — so zeros here lose no traceability (OCR-O5). provider/
-      // model are still the real run's (or 'unknown' when no run id) so the row is
-      // self-describing.
+      // One zero-cost correlation row per accept, queryable in isolation. The real spend
+      // lives on the VisionExtractTask row, joined via task_run_id.
       await writeCostLedgerFn(tx, {
         task_run_id: visionTaskRunId ?? result.task_run_id,
         task_kind: COST_LEDGER_TASK_KIND,
@@ -1031,7 +851,7 @@ export async function acceptImageCandidateProposal(
         tokens_out: 0,
       });
 
-      // ── 7. accept rate event chained to the proposal. ──────────────────────────
+      // Accept rate event chained to the proposal.
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',
@@ -1052,7 +872,7 @@ export async function acceptImageCandidateProposal(
 
     await recordProposalDecisionSignal(db, proposal, 'accept');
 
-    // ── 6. chain the verification job (best-effort; the draft is already committed). ──
+    // Chain verification; best-effort because the draft is already committed.
     const enqueueSourceVerify = deps.enqueueSourceVerify ?? defaultEnqueueSourceVerify;
     try {
       await enqueueSourceVerify([questionId]);
@@ -1071,16 +891,12 @@ export async function acceptImageCandidateProposal(
       question_id: questionId,
     };
   } catch (err) {
-    // FIX-R2-3 — a 409 conflict from the terminal-tx veto re-check is NOT a crash: the
-    // user dismissed/retracted the proposal during accept, so it already has a non-accept
-    // terminal rate. Do NOT write an `accept_failed` marker (that is the crash-recovery
-    // path that re-opens the claim for retry); the proposal must stay in its terminal
-    // dismissed/retracted state. Just re-throw.
+    // A 409 means the user decided during accept, not a crash: do not clear the claim or
+    // the proposal loses its terminal state.
     if (err instanceof ApiError && err.status === 409) {
       throw err;
     }
-    // FIX-5 — the accept failed (download/VLM/insert). Clear the `accept_started` claim so
-    // the next attempt can reclaim immediately instead of waiting out the stale window.
+    // Real failure: release the claim so the next attempt can retry immediately.
     await markAcceptFailed(db, proposalId, err instanceof Error ? err.message : String(err));
     throw err;
   }

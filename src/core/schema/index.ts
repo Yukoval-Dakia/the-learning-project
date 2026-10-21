@@ -20,13 +20,13 @@ export const Knowledge = g.KnowledgeSelectGenerated.extend({
 export type Knowledge = z.infer<typeof Knowledge>;
 
 export type { Misconception } from './misconception';
-// ---------- Misconception (YUK-454 inc-1, ADR-0036 身份层) ----------
+// ---------- Misconception (ADR-0036 身份层) ----------
 // HAND-WRITTEN Zod (NOT drizzle-zod): the misconception identity-table skeleton
-// is DORMANT in L1 (no writer, no route/job/copilotTool wiring). Soft-track red
+// is DORMANT (no writer, no route/job/copilotTool wiring). Soft-track red
 // line (ADR-0035) + subject=view are enforced by `.strict()` in the module.
 export { MisconceptionInsert, MisconceptionSchema } from './misconception';
 export type { MisconceptionEdge } from './misconception-edge';
-// YUK-531 (A5 S4 / ADR-0036 RT1): heterogeneous misconception edge. DORMANT until
+// ADR-0036 RT1 — heterogeneous misconception edge. DORMANT until
 // the promotion writer / accept route lands; endpoint×relation validity lives in
 // the parallel topology gate (misconception-topology-gate.ts), not the Zod here.
 export {
@@ -63,9 +63,9 @@ export const SourceDocumentInsert = g.SourceDocumentInsertGenerated;
 export const SourceDocument = g.SourceDocumentSelectGenerated;
 export type SourceDocument = z.infer<typeof SourceDocument>;
 
-// Phase 1c.1 Step 9.J: legacy `ingestion_session` table DROPped. Sessions now
+// Legacy `ingestion_session` table DROPped. Sessions now
 // live in `learning_session(type='ingestion')`; Zod schemas for the new shape
-// live in src/core/schema/learning_session.ts (Lane B).
+// live in src/core/schema/learning_session.ts.
 
 export const QuestionBlockInsert = g.QuestionBlockInsertGenerated.extend({
   page_spans: z.array(PageSpan).min(1).max(8),
@@ -97,14 +97,14 @@ export const Question = g.QuestionSelectGenerated.extend({
 });
 export type Question = z.infer<typeof Question>;
 
-// Phase 1c.1 Step 9.J: legacy `mistake` + `review_event` tables DROPped.
+// Legacy `mistake` + `review_event` tables DROPped.
 // Failure attempts are events (action='attempt', outcome='failure'); reviews
 // are events (action='review'). FSRS state projection lives in
 // `material_fsrs_state`. Zod schemas for the event shapes live in
-// src/core/schema/event/known.ts (Lane B).
+// src/core/schema/event/known.ts.
 
 // ---------- LearningItem ----------
-// YUK-19 — `proposal_retracted` is set when a learning_intent proposal's L3
+// `proposal_retracted` is set when a learning_intent proposal's L3
 // correction tombstones the hub + atomic LearningItems it materialized. See
 // `retractAiProposal()` in src/server/proposals/actions.ts.
 export const LearningItemInsert = g.LearningItemInsertGenerated.extend({
@@ -150,14 +150,13 @@ export type MemoryBriefNote = z.infer<typeof MemoryBriefNote>;
 // ---------- Artifact ----------
 export const Artifact = g.ArtifactSelectGenerated.extend({
   type: b.ArtifactType,
-  // U5 (YUK-203) — widened so every paper row (Coach review_plan / quiz_gen /
+  // widened so every paper row (Coach review_plan / quiz_gen /
   // embedded_check) parses without throwing. The three new values are the live
   // DB intent_source strings; `tool_kind` mirrors them. Pure additive enum.
-  // YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth paper provenance:
-  // a tool_quiz built from a session's imported questions (ingest→practice
-  // bridge §2.3). Pure additive enum, no migration (intent_source/tool_kind are
-  // text columns).
-  // ADR-0033 D6 (YUK-306) — `author_artifact` is the interactive-artifact
+  // `ingestion_paper` is the paper provenance for a tool_quiz built from a
+  // session's imported questions (ingest→practice bridge §2.3). Pure additive
+  // enum, no migration (intent_source/tool_kind are text columns).
+  // ADR-0033 D6 — `author_artifact` is the interactive-artifact
   // provenance (copilot-authored via the author_artifact DomainTool; tool_kind
   // mirrors it). Pure additive enum, no migration. NOT a paper provenance —
   // practice gates (practice-read.ts / /api/practice) must keep rejecting it.
@@ -176,7 +175,7 @@ export const Artifact = g.ArtifactSelectGenerated.extend({
   knowledge_ids: z.array(z.string()),
   attrs: z.record(z.string(), z.unknown()),
   tool_state: b.ToolState.nullable(),
-  // ADR-0033 D6 (YUK-306) — 'author_artifact' mirrors the intent_source above
+  // ADR-0033 D6 — 'author_artifact' mirrors the intent_source above
   // for type='interactive' rows. Pure additive enum (text column, no DDL).
   tool_kind: z
     .enum([
@@ -201,7 +200,7 @@ export const Answer = g.AnswerSelectGenerated.extend({
 });
 export type Answer = z.infer<typeof Answer>;
 
-// Judgment + UserAppeal removed in Phase 1c.1 Step 1.4 (Lane A) per ADR-0006 v2 /
+// Judgment + UserAppeal tables removed per ADR-0006 v2 /
 // data-assumptions §O2. Judge is now an event (action='judge', subject_kind='event').
 
 // ---------- LearningItem 完成证据 ----------
@@ -213,9 +212,9 @@ export const CompletionEvidence = g.CompletionEvidenceSelectGenerated.extend({
 });
 export type CompletionEvidence = z.infer<typeof CompletionEvidence>;
 
-// Phase 1c.1 Step 9.J: legacy `dreaming_proposal` table DROPped. Proposals
-// live as event(action='propose', subject_kind='knowledge') (Lane B
-// ProposeKnowledge) plus experimental:knowledge_<mutation> namespace events.
+// Legacy `dreaming_proposal` table DROPped. Proposals
+// live as event(action='propose', subject_kind='knowledge') plus
+// experimental:knowledge_<mutation> namespace events.
 
 // ---------- 观测 ----------
 export const ToolCallLogInsert = g.ToolCallLogInsertGenerated;

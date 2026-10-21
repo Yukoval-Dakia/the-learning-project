@@ -1,4 +1,4 @@
-// YUK-1570 — review-session lifecycle port for the HTTP adapters in
+// review-session lifecycle port for the HTTP adapters in
 // capabilities/practice/api/. The operations below own every decision the
 // route files used to re-know one by one: which Review member implements a
 // transition, the paper-frozen reopen wrapper, the close → session_summary
@@ -47,7 +47,7 @@ export async function resumeReviewSession(sessionId: string): Promise<void> {
   await Review.resumeReviewSession(db, sessionId);
 }
 
-/** abandoned → started, wrapped in the paper-frozen reopen transaction (YUK-63). */
+/** abandoned → started, wrapped in the paper-frozen reopen transaction. */
 export async function reopenReviewSession(sessionId: string): Promise<void> {
   await withFrozenPaperReopen(db, sessionId, (tx) =>
     Review.reopenAbandonedReviewSession(tx, sessionId),
@@ -62,12 +62,11 @@ export async function closeReviewSession(
 ): Promise<void> {
   if (status === 'completed') {
     await Review.completeReviewSession(db, sessionId);
-    // Enqueue async SessionSummaryTask (Phase 1d). Best-effort: if pg-boss
+    // Enqueue async SessionSummaryTask. Best-effort: if pg-boss
     // is down the session still closes successfully and summary stays null
     // (the /learning-sessions/[id] UI shows a stub in that case).
-    //
-    // Skipped in tests via the shared shouldEnqueueBackgroundJobs() (YUK-239)
-    // — the singleton boss instance + per-route invocation bloats the
+    // Skipped in tests via the shared shouldEnqueueBackgroundJobs
+    // the singleton boss instance + per-route invocation bloats the
     // testcontainer's connection pool past max_connections, tipping over
     // src/server/boss/client.test.ts. The summary handler is covered by its
     // own unit test (src/server/session/summary.test.ts).
@@ -170,7 +169,7 @@ export async function createPaperReviewSession(paperId: string): Promise<PaperRe
       .orderBy(desc(learning_session.created_at))
       .limit(1);
     if (existingSessionRows[0]) {
-      // YUK-1573 — an occurrence opened before the whole-paper guard is not handed back
+      // an occurrence opened before the whole-paper guard is not handed back
       // to the paper page when its issued slots include ones the page cannot render.
       const binding = await readPaperAssessmentBinding(tx, existingSessionRows[0].id);
       if (binding) {
@@ -183,7 +182,7 @@ export async function createPaperReviewSession(paperId: string): Promise<PaperRe
       return { sessionId: existingSessionRows[0].id, created: false };
     }
 
-    // YUK-1573 — read-only refusal before the session row and any issuance are written.
+    // read-only refusal before the session row and any issuance are written.
     await assertPaperOpenable(tx, paperId);
     const { sessionId } = await Review.startReviewSession(tx, { artifactId: paperId });
     await issuePaperAssessment(tx, sessionId, paperId);

@@ -1,8 +1,5 @@
-// YUK-601 (v3.2 §3.1/§3.2/§3.4) — trait 直址写面三壳：
-//   PUT           /api/admin/traits/:id                → editSharedTrait（显式共享写，影响全部绑定者）
-//   ROLLBACK      /api/admin/traits/:id/rollback       → rollbackTrait（rollback-forward）
-//   RESET_TO_SEED /api/admin/traits/:id/reset-to-seed  → resetTraitToSeed（恢复出厂，全局显式）
-// Shared operations own post-commit hydration; JSON and Response stay in this adapter.
+// Trait write endpoints: shared edit (affects every binding), rollback-forward, and
+// reset to seed. Shared operations own hydration; this adapter owns JSON and responses.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

@@ -1,19 +1,8 @@
-// Phase 1c.2.C — GET /api/assets/[id]/content streams the raw asset bytes
-// back from R2 so the browser can render the source image inside the vision
-// review UI without exposing R2 directly.
+// Streams asset bytes from R2 behind the normal x-internal-token gate; the UI
+// fetches a blob, so no presigned URL or client-side secret is needed.
 //
-// The route is still behind the x-internal-token gate (middleware.ts matches
-// all /api/*); the UI fetches via apiFetch → Blob → URL.createObjectURL so
-// the auth header rides naturally. We don't generate a presigned R2 URL —
-// keeps the single-user secret on the server.
-//
-// YUK-1497 (K5 custom block): the same route serves frozen JS code assets
-// for the sandboxed custom block; the page only fetch()es the bytes, verifies
-// SHA-256 against the presentation digest and injects them into a sandboxed
-// iframe of its own — the content type is irrelevant to it. Code assets are
-// therefore served INERT: text/plain + nosniff + CSP `sandbox; default-src
-// 'none'`. Serving same-origin text/javascript would let any <script src> on
-// our origin execute agent-generated code with full origin privileges.
+// Frozen JS assets are served inert as text/plain with nosniff and a sandbox CSP,
+// because same-origin text/javascript would run agent code with origin privileges.
 
 import { eq } from 'drizzle-orm';
 

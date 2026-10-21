@@ -69,7 +69,7 @@ export function precisionBand(thetaPrecision: number | null): PrecisionBandT {
 }
 
 export function disabledPedagogyMethods(env: NodeJS.ProcessEnv): PedagogyMethodIdT[] {
-  // YUK-1007：DB > env > code-default([])；DB 层存已验证数组（z.array(PedagogyMethodId)），
+  // DB > env > code-default([])：DB 层存已验证数组（z.array(PedagogyMethodId)），
   // env 层还是 CSV 原文（registry csvEnv 已展开成 string[]）。
   const resolved = getConfig(INTERVENTION_DISABLED_METHOD_IDS, env);
   if (!Array.isArray(resolved)) return [];
@@ -85,7 +85,7 @@ export function disabledPedagogyMethods(env: NodeJS.ProcessEnv): PedagogyMethodI
 }
 
 export function interventionDeliveryMode(env: NodeJS.ProcessEnv): InterventionDeliveryModeT {
-  // YUK-1007：DB > env > code-default(false→'shadow')。
+  // DB > env > code-default(false→'shadow')。
   return getConfigFlag(AUTO_INTERVENTION_EXPANSION_ENABLED, env) ? 'eligible' : 'shadow';
 }
 

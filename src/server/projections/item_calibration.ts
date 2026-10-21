@@ -90,6 +90,10 @@ async function upsertProjectedItemCalibration(
     calibration_n: projected.calibration_n,
     calibration_weight: projected.calibration_weight,
     last_calibrated_at: projected.last_calibrated_at,
+    // YUK-439 — 后验列（historical anchors lack the keys → undefined keeps column）。
+    b_post: projected.b_post ?? undefined,
+    posterior_variance: projected.posterior_variance ?? undefined,
+    calibration_source: projected.calibration_source ?? undefined,
     irt_a: projected.irt_a,
     irt_c: projected.irt_c,
     cdm_json: projected.cdm_json,

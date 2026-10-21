@@ -48,7 +48,7 @@ export const BANK_SEARCH_RRF_K = 60;
 
 // YUK-1448 — 难度硬过滤。两条基准互斥，绝不混量：
 //   - 'authored'   → question.difficulty（作者难度，1–5 整数，NOT NULL）。
-//   - 'calibrated' → item_calibration(track='hard') 的 effectiveB（COALESCE(b_calib,
+//   - 'calibrated' → item_calibration(track='hard') 的 effectiveB（COALESCE(b_post,
 //     b_anchor, b)，logit 尺度）。**校准未知（无 row / effectiveB NULL）的题一律排除**，
 //     绝不退回作者难度冒充校准值（「校准未知不混为作者难度」）。
 export const BankDifficultyFilterSchema = z
@@ -731,7 +731,7 @@ function buildFilters(resolved: ResolvedScope): SQL[] {
       // 校准难度：item_calibration(track='hard') 的 effectiveB（logit 尺度）。
       // 无 row / effectiveB NULL（校准未知）的题被 EXISTS 天然排除——绝不退回作者难度。
       filters.push(
-        sql`EXISTS (SELECT 1 FROM ${item_calibration} ic WHERE ic.question_id = ${question.id} AND ic.track = 'hard' AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) BETWEEN ${lo} AND ${hi})`,
+        sql`EXISTS (SELECT 1 FROM ${item_calibration} ic WHERE ic.question_id = ${question.id} AND ic.track = 'hard' AND COALESCE(ic.b_post, ic.b_anchor, ic.b) BETWEEN ${lo} AND ${hi})`,
       );
     }
   }

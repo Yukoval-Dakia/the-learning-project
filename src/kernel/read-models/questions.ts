@@ -1,23 +1,12 @@
-// YUK-280 P4 (YUK-203) — GET /api/questions list reader.
+// GET /api/questions list reader: multi-axis SQL filtering, derived source-tier
+// filter/sort, and variant-family aggregation.
 //
-// docs/superpowers/plans/2026-06-07-yuk280-question-bank-api.md §2 (A1a/A1b/A1c)
+// source_tier is provenance-derived, never a column, so tier filtering and ranking
+// happen in memory after the SQL axes narrow the candidate set. Truncating in SQL
+// first would drop newer high-tier rows.
 //
-// Multi-axis question-bank list reader. Three composed capabilities:
-//   A1a 基础列表 — SQL axes (knowledge_ids / source / kind / difficulty /
-//                 visual_complexity / draft) + offset pagination.
-//   A1b grounding — source_tier is a DERIVED (provenance-driven) value, NOT a
-//                 column. Per the D-P4-1 red line we NEVER express tier in SQL
-//                 WHERE/ORDER BY; we narrow the candidate set with the SQL axes,
-//                 then deriveSourceTier + compareBySourceTierThenWhitelist purely
-//                 in memory. (Same teaching as sourcing-sequence.ts:98-103 —
-//                 truncating in SQL before the in-memory tier sort would drop a
-//                 newer high-tier row in favour of older low-tier ones.)
-//   A1c variant families — group by root family / expand one root's full family.
-//
-// 量级假设 (plan §0): a single user's question bank is hundreds-to-thousands of
-// rows (SPEC-given), bounded by the SQL axes above. The CANDIDATE_CAP below is an
-// OOM guard, NOT a business limit — it only bites when the tier/family in-memory
-// path must fetch the full WHERE-hit set (it cannot SQL-paginate, see A1b).
+// A single user's bank is hundreds to low thousands of rows; CANDIDATE_CAP is an
+// OOM guard, not a business limit.
 
 import {
   type SQL,
@@ -60,24 +49,17 @@ import {
   readQuestionServing,
 } from './question-serving';
 
-// Truncation threshold for list-item `prompt_md` (detail page serves the full
-// text). Keeps the list payload bounded on long prompts. A trailing ellipsis
-// marks truncation so a consumer never mistakes a cut prompt for the whole text.
+// List preview cap; the detail page serves the full text. The ellipsis marks
+// truncation so a consumer never mistakes a preview for the whole prompt.
 const PROMPT_PREVIEW_CHARS = 200;
 
-// OOM guard for the in-memory derive path (A1b/A1c). When a tier filter / tier
-// sort / family aggregation is requested the SQL stage CANNOT limit/offset (it
-// would drop high-tier rows before the in-memory rank — sourcing-sequence:98-103
-// 同款教训), so we fetch the full WHERE-hit set and cap it here. A single user's
-// bank is hundreds-to-thousands of rows, so this never bites in practice; when it
-// does, `truncated: true` is surfaced and a warn is logged. NOT a business limit.
+// OOM guard for the in-memory derive path. The SQL stage cannot limit/offset there
+// without dropping high-tier rows, so fetch the full hit set and cap it here.
+// Truncation sets `truncated` and logs a warn. Not a business limit.
 const CANDIDATE_CAP = 2000;
 
-// OF-2 (plan §12) — read metadata.web_sourced.whitelist_match for the within-
-// tier-2 demotion comparator. Returns null for non-web_sourced rows. Mirrors
-// sourcing-sequence:70-76 readWhitelistMatch verbatim (the ORDER logic itself is
-// the shared compareBySourceTierThenWhitelist comparator — only this tiny jsonb
-// read is local).
+// Read metadata.web_sourced.whitelist_match for the within-tier demotion comparator.
+// Only this jsonb read is local; the ordering itself is shared.
 function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const webSourced = (metadata as Record<string, unknown>).web_sourced;
@@ -96,47 +78,35 @@ export type QuestionListSortDir = 'asc' | 'desc';
 export type QuestionListDraftStatus = 'all' | 'active' | 'draft';
 
 export interface ListQuestionsParams {
-  // 任一匹配 → OR of `knowledge_ids @> [id]` (复用 sourcing-sequence:114 容器写法).
+  // Any match -> OR of knowledge_ids containment.
   knowledgeIds?: string[];
-  // YUK-288 subject 派生轴: a question's subject is DERIVED via
-  // knowledge_ids → knowledge.(effective)domain → resolveSubjectProfile.id, never
-  // a question column. The route resolves `subject` to its knowledge-id set
-  // (resolveSubjectKnowledgeIds) and passes it here as `subjectKnowledgeIds`; the
-  // list ANDs an OR-of-containment over that set with the other axes. An empty
-  // set means the subject labels no questions → empty result (not unfiltered).
+  // Derived subject axis: the route resolves subject -> knowledge ids. An empty set
+  // means the subject labels no questions, so the result is empty, not unfiltered.
   subjectKnowledgeIds?: string[];
   source?: string;
-  // YUK-288 题型 filter: the UI sends a known kind label (choice / reading /
-  // computation …, from KIND_OPTIONS). Persisted `question.kind` is a free-form
-  // label (YUK-386) — historical seed/fixture rows store profile vocabulary
-  // (single_choice / reading_comprehension / calculation), so an exact
-  // eq(kind, 'choice') matched ZERO seeded single_choice rows (the empty-list bug).
-  // We expand the requested label to ALL persisted forms that normalise to it
-  // (canonicalKindToPersistedForms) and SQL `IN (...)` over the set — still a pure
-  // SQL axis (no in-memory degradation), symmetric with meta.ts's display-side fold.
+  // Expand the requested canonical kind to every persisted form, because historical
+  // rows store profile vocabulary. Still a pure SQL axis.
   kind?: string;
   difficulty?: number; // 1-5
   difficulties?: number[]; // repeated difficulty params; OR semantics.
   visualComplexity?: string; // nullable column: only filters when a value is passed.
   search?: string; // prompt/id/knowledge-name substring.
-  // A1b grounding axis (in-memory derive only — never SQL).
+  // Grounding axis, derived in memory only.
   sourceTier?: SourceTier[];
-  sortBy?: QuestionListSortBy; // default 'created_at' (desc); 'source_tier' → comparator.
+  sortBy?: QuestionListSortBy; // default 'created_at' (desc); 'source_tier' uses the comparator.
   sortDir?: QuestionListSortDir; // default desc; ignored by source_tier ranking.
-  // A1c variant families.
+  // Variant families.
   groupByFamily?: boolean;
   expandRoot?: string;
-  // draft exclusion (default false → draft 排除惯例).
+  // default false -> drafts excluded.
   includeDrafts?: boolean;
   draftStatus?: QuestionListDraftStatus;
   // status=not_servable: filter held questions before SQL pagination.
   notServable?: boolean;
-  // YUK-1514 — return pagination-independent hold counts alongside the page.
+  // Return pagination-independent hold counts alongside the page.
   includeServingCounts?: boolean;
-  // YUK-409 题库面 enrichment opt-in. true → 回填 subject / knowledge_labels /
-  // is_composite / children（loom screen-questions 所需的派生量）。只在默认 SQL-
-  // 分页 flat 路径生效（题库 UI 唯一走的路径）；tier/family/OOM 路径与 copilot
-  // search_bank 工具不传它 → 零额外查询、零行为变更。
+  // Page enrichment opt-in (subject, labels, composite children). Only the default
+  // SQL-paginated path uses it, so tier/family/tool paths add no queries.
   enrich?: boolean;
   limit: number; // clamp 1..200
   offset: number; // >= 0
@@ -154,34 +124,23 @@ export interface QuestionListItem {
   knowledge_ids: string[];
   root_question_id: string | null;
   variant_depth: number;
-  // YUK-288 gap A — composite linkage. Top-level list rows always have
-  // parent_question_id === null (parts are excluded); the field is surfaced so a
-  // future composite-aware view (and the detail parts loader) read the same shape.
+  // Composite linkage. Top-level rows always have parent_question_id null (parts are
+  // excluded); the field keeps the shared shape for composite-aware readers.
   parent_question_id: string | null;
   part_index: number | null;
   draft_status: string | null;
-  created_at_sec: number; // unix seconds — matches全仓 API 时间形 (learning-items/timeline).
-  // ── YUK-409 题库面 enrichment (opt-in via `enrich`; null when not requested) ──
-  // 这些字段是 loom screen-questions 的真面所需、基础投影没有的派生量。**全部 additive**
-  // （existing list/route 契约与测试只断言 .id / 子属性，从不整对象 toEqual），且仅在
-  // `enrich:true`（题库 UI 路径）时计算——tier/family/OOM 路径与 copilot search_bank
-  // 工具走 enrich:false，零额外查询、零行为变更。null≡未请求 enrichment。
-  //
-  // subject: 派生学科 profile id（batchResolveSubjectIds，knowledge_ids[0] →
-  //   effectiveDomain → resolveSubjectProfile.id；绝非 question 列——subject 模型终版）。
+  created_at_sec: number; // Unix seconds, matching the API time shape.
+  // Page enrichment (opt-in via `enrich`; null when not requested). All additive,
+  // computed only on the bank-UI path.
   subject: string | null;
-  // notation: 从 server 侧 resolvable registry 取；retired custom 仍保留原渲染语义。
+  // notation comes from the server's resolvable registry, so retired subjects keep
+  // their original rendering.
   notation: string | null;
-  // knowledge_labels: knowledge_ids → {id,name}（kchips 显示中文名而非裸 id；
-  //   archived/missing 节点从 labels 落选，仅在原 knowledge_ids 保留可追溯）。
   knowledge_labels: { id: string; name: string }[] | null;
-  // is_composite: 此行是否为大题（有 question_part 子题）——驱动展开折叠 glyph。
   is_composite: boolean;
-  // children: 大题的有序小题（part_index 序）。非大题为 []。小题本身也 enrich（subject/
-  //   labels/glyph 所需），但小题不再递归取 children（小题无小题）。
   children: QuestionListItem[];
-  // YUK-1514 — serving hold projection (group-level: a composite child shares
-  // its parent's). Attached by listQuestions' post-pass on every path.
+  // Serving hold projection (group-level: a composite child shares its parent's).
+  // Attached by listQuestions' post-pass on every path.
   serving: QuestionServing;
 }
 
@@ -208,7 +167,7 @@ export interface ListQuestionsResult {
     has_more: boolean;
     next_cursor: string | null;
   };
-  // YUK-1514 — present only when notServable or includeServingCounts was set.
+  // Present only when notServable or includeServingCounts was set.
   serving_counts?: ServingCounts;
   computed_at_sec: number;
 }
@@ -258,11 +217,8 @@ interface DerivedCandidate {
   whitelistMatch: boolean | null;
 }
 
-// OR of `knowledge_ids @> [id]` over a set of ids — the established containment
-// pattern (note-page:262 / sourcing-sequence:114). A `?|` operator is
-// intentionally avoided (drizzle has no first-class helper and it bypasses
-// jsonb_path_ops). Shared by the explicit knowledge axis and the derived subject
-// axis so the two read identically.
+// OR of knowledge_ids containment. Avoid `?|`: there is no first-class drizzle
+// helper and it bypasses jsonb_path_ops.
 function knowledgeContainmentOr(ids: string[]): SQL {
   const containers = ids.map(
     (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
@@ -276,11 +232,8 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   if (params.knowledgeIds && params.knowledgeIds.length > 0) {
     filters.push(knowledgeContainmentOr(params.knowledgeIds));
   }
-  // YUK-288 subject 派生轴 — ANDed with the explicit knowledge axis (a question
-  // must match both). An empty subjectKnowledgeIds (subject labels no questions)
-  // forces an empty result via `false`, NOT an unfiltered list. We only branch on
-  // `!== undefined` so "subject filter requested but resolves to nothing" stays
-  // distinguishable from "no subject filter".
+  // Subject axis ANDs with the knowledge axis. An empty set forces an empty result,
+  // which stays distinguishable from "no subject filter".
   if (params.subjectKnowledgeIds !== undefined) {
     filters.push(
       params.subjectKnowledgeIds.length > 0
@@ -288,29 +241,19 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
         : sql`false`,
     );
   }
-  // Composite top-level default (YUK-288 gap A): `question_part` rows are the
-  // inner小题 of a composite parent (parts.ts write path) — they are reachable via
-  // the parent's detail `parts[]`, NOT as standalone list rows. The list excludes
-  // them so a composite大题 shows once. (Variant members are NOT excluded — they
-  // are first-class questions; family aggregation handles their grouping.)
+  // Exclude question_part rows: they are reachable through the parent's parts[],
+  // not as standalone list rows. Variant members stay; family grouping handles them.
   filters.push(sql`(${question.parent_question_id} IS NULL)`);
   // Fixed-window diagnostics are learner-facing only through /api/review/due.
   // Never expose future probes or reference answers through the question bank.
   filters.push(ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE));
-  // YUK-308 — proposal-dismissed draft tombstones (metadata.dismissed_at,
-  // written by the question_draft dismiss applier) are dead rows, not live
-  // drafts: exclude them on EVERY path, including include_drafts=true (the
-  // copilot search_bank default — otherwise a rejected draft keeps
-  // re-surfacing as "reusable" to the orchestrator) and draftStatus='draft'
-  // /'all' queries. Same marker family as metadata.archived_at (soft-delete);
-  // kept off draft_status because the fail-open pool predicate treats any
-  // non-'draft' literal as pool-visible (write.ts header decision).
+  // Dismissed draft tombstones are dead rows on every path, including
+  // include_drafts. Kept off draft_status because the pool predicate treats any
+  // non-'draft' value as pool-visible.
   filters.push(sql`(${question.metadata} -> 'dismissed_at') IS NULL`);
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) {
-    // Match every persisted form normalising to the requested canonical (see the
-    // `kind` field comment) — canonical-only rows AND subject-vocab rows. A
-    // single-element set degenerates to an exact match.
+    // Match every persisted form; a single-element set is an exact match.
     filters.push(inArray(question.kind, canonicalKindToPersistedForms(params.kind)));
   }
   const difficulties = params.difficulties?.length
@@ -346,8 +289,7 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   } else if (params.draftStatus === 'active') {
     filters.push(notDraftPredicate(question.draft_status));
   } else if (params.draftStatus === undefined && !params.includeDrafts) {
-    // draft 排除惯例 (sourcing-sequence:116 / due-list): nullable column must
-    // carry the IS NULL branch, not a bare `<> 'draft'`.
+    // Nullable column needs the IS NULL branch, not a bare <> 'draft'.
     filters.push(notDraftPredicate(question.draft_status));
   }
   return filters;
@@ -370,8 +312,7 @@ function toListItem(c: DerivedCandidate): QuestionListItem {
     part_index: row.part_index,
     draft_status: row.draft_status,
     created_at_sec: Math.floor(row.created_at.getTime() / 1000),
-    // YUK-409 — enrichment 默认未填（null / 非大题）。仅 enrichItems 在 enrich:true
-    // 路径回填 subject / knowledge_labels / is_composite / children。
+    // Enrichment stays unset here; enrichItems fills subject/labels/composite/children.
     subject: null,
     notation: null,
     knowledge_labels: null,
@@ -388,9 +329,8 @@ function deriveCandidate(row: CandidateRow): DerivedCandidate {
   return { row, tier, tierName: name, whitelistMatch: readWhitelistMatch(metadata) };
 }
 
-// Fetch the full WHERE-hit candidate set (capped) for the in-memory derive path.
-// ORDER BY created_at ASC is the stable BASE order the comparator relies on
-// (compareBySourceTierThenWhitelist is a stable secondary sort within equal keys).
+// Fetch the full hit set (capped) for the in-memory path. created_at ASC is the
+// stable base order the tier comparator relies on.
 async function fetchCandidates(
   db: Db | Tx,
   filters: SQL[],
@@ -437,21 +377,7 @@ const emptyResult = (params: ListQuestionsParams): ListQuestionsResult => ({
   computed_at_sec: Math.floor(Date.now() / 1000),
 });
 
-/**
- * List questions with multi-axis SQL filtering, in-memory grounding-tier
- * filter/sort, and variant-family aggregation/expansion.
- *
- * Path selection (mutually exclusive, resolved upstream by the route's zod
- * refine; here we honour the precedence expandRoot > groupByFamily > list):
- *   - expandRoot: return one root's full family, depth-ordered.
- *   - groupByFamily: aggregate candidates into families, paginate families.
- *   - otherwise: a flat list (with optional tier filter/sort).
- */
-/**
- * YUK-1514 — attach the serving projection to every emitted item (top-level,
- * composite children, family representatives). One batched read per call —
- * never per item (N+1).
- */
+/** Attach the serving projection to every emitted item in one batched read, never per item. */
 async function attachServingToItems(db: Db | Tx, items: QuestionListItem[]): Promise<void> {
   const flat: QuestionListItem[] = [];
   const collect = (item: QuestionListItem) => {
@@ -459,8 +385,7 @@ async function attachServingToItems(db: Db | Tx, items: QuestionListItem[]): Pro
     for (const child of item.children) flat.push(child);
   };
   for (const item of items) collect(item);
-  // Per-ITEM attachment (P1-3): a composite child reports its own per-part
-  // verdict, not the group's shared one.
+  // Per-item attachment: a composite child reports its own per-part verdict.
   const serving = await readQuestionServing(
     db,
     flat.map((item) => item.id),
@@ -470,6 +395,7 @@ async function attachServingToItems(db: Db | Tx, items: QuestionListItem[]): Pro
   }
 }
 
+/** Multi-axis list. Precedence: expandRoot > groupByFamily > flat list. */
 export async function listQuestions(
   db: Db,
   params: ListQuestionsParams,
@@ -501,8 +427,8 @@ async function readQuestions(
   const tierSorted = params.sortBy === 'source_tier';
   let servingCounts: ServingCounts | undefined;
   if (needServingPass) {
-    // Tier remains provenance-derived in TS. Only this opt-in combination
-    // needs its complete metadata set; it must not truncate the count's scope.
+    // Tier stays derived in TS. Only this opt-in combination needs the complete
+    // metadata set, so it must not truncate the count's scope.
     if (tierFiltered) {
       const rows = await db
         .select({ id: question.id, source: question.source, metadata: question.metadata })
@@ -536,8 +462,7 @@ async function readQuestions(
     : flatList(derived, params, truncated, computedAtSec);
   if (servingCounts != null) result = { ...result, serving_counts: servingCounts };
 
-  // enrich is page-bounded (≤200); apply it on the in-memory flat page too so
-  // status=not_servable keeps the same bank-UI surface.
+  // enrich is page-bounded (<=200), so apply it on the in-memory flat page too.
   if (params.enrich && result.families == null && result.items.length > 0) {
     result = {
       ...result,
@@ -639,11 +564,9 @@ function questionCursorFilter(cursor: QuestionCursor): SQL {
   return createdTie;
 }
 
-// ── A1a: plain default list — SQL-paginated created_at DESC (no in-memory cap) ──
-// The tier is still a DERIVED projection (deriveSourceTier per returned row), but
-// because no tier filter/sort is requested we never need the full WHERE-hit set:
-// SQL does ORDER BY created_at DESC + LIMIT/OFFSET and a separate COUNT for total.
-// `truncated` is always false here — there is no OOM guard on this path.
+// Plain default list: SQL-paginated created_at DESC. Tier is still derived per
+// returned row, but no full hit set is needed because no tier filter/sort is
+// requested. `truncated` is always false on this path.
 async function flatListSqlPaginated(
   db: Db | Tx,
   filters: SQL[],
@@ -685,10 +608,9 @@ async function flatListSqlPaginated(
     .where(filters.length > 0 ? and(...filters) : undefined);
 
   let items = rows.map((row) => toListItem(deriveCandidate(row)));
-  // YUK-409 — 题库面 enrichment：subject / knowledge_labels / 大题小题展开。仅本
-  // SQL-分页路径（题库 UI 唯一路径）按 page 量（≤200 行）补，绝不入 tier/family 路径。
+  // Bank-UI enrichment, page-bounded (<=200 rows); never used on tier/family paths.
   if (params.enrich) items = await enrichItems(db, items, params.includeDrafts ?? false);
-  // YUK-1514 — serving projection for page items + any enriched children.
+  // Serving projection for page items and any enriched children.
   await attachServingToItems(db, items);
 
   return {
@@ -701,12 +623,9 @@ async function flatListSqlPaginated(
   };
 }
 
-// ── YUK-409: 题库面 enrichment（subject / knowledge_labels / 大题小题展开）─────────
-// 输入是 page 量（≤200）顶层行。三步批量补全，避免 N+1：
-//   1. children — 一次 IN 查 page 内所有 parent 的 question_part 子行（part_index 序）。
-//   2. subject — batchResolveSubjectIds 对 page+children 全体一次解析（去重 walk）。
-//   3. knowledge_labels — 一次 IN 查 page+children 全体 knowledge_ids 的非归档 name。
-// children 自身也被 enrich（subject/labels），但不再递归取它们的 children（小题无小题）。
+// Page-bounded enrichment (<=200 rows), three batched steps to avoid N+1:
+// children, subjects, knowledge labels. Children get subjects/labels but are not
+// recursed into.
 async function enrichItems(
   db: Db | Tx,
   items: QuestionListItem[],
@@ -714,7 +633,7 @@ async function enrichItems(
 ): Promise<QuestionListItem[]> {
   if (items.length === 0) return items;
 
-  // 1. 取所有 parent 的 question_part 子行（loom 大题展开所需）。一次 IN 查全 page。
+  // 1. All question_part children for this page in one IN query.
   const parentIds = items.map((it) => it.id);
   const draftFilter = includeDrafts ? undefined : notDraftPredicate(question.draft_status);
   const childRows = (await db
@@ -739,19 +658,18 @@ async function enrichItems(
     else childrenByParent.set(row.parent_question_id as string, [child]);
   }
 
-  // enrichment 解析对象：page 顶层 items + 全部 children 实例（小题也要 subject/labels）。
-  // 用 childrenByParent 内的实例（就地写回，最终随顶层 it.children 返回）。
+  // Enrich page items and child instances together; children are written in place.
   const enrichTargets: QuestionListItem[] = [...items, ...[...childrenByParent.values()].flat()];
 
-  // 2. subject learner 投影：已注册 domain → canonical profile id；未配置但真实存在的
-  //    domain → raw key；无信号 → null。调度侧仍使用 batchResolveSubjectIds 的 general
-  //    fallback，本读面不能把未知学科伪装成“通用”。
+  // 2. Learner display subject: registered domain -> canonical id; a real unknown
+  //    domain -> raw key; no signal -> null. Scheduling keeps its general fallback;
+  //    this read surface must not disguise an unknown subject as general.
   const subjectById = await batchResolveSubjectDisplayIds(
     db,
     enrichTargets.map((it) => ({ id: it.id, knowledge_ids: it.knowledge_ids })),
   );
 
-  // 3. knowledge label 解析（非归档 name；archived/missing 落选——同 detail:191-200）。
+  // 3. Non-archived knowledge names; archived or missing ids drop out.
   const allKnowledgeIds = [...new Set(enrichTargets.flatMap((it) => it.knowledge_ids))];
   const labelRows =
     allKnowledgeIds.length === 0
@@ -764,14 +682,14 @@ async function enrichItems(
   const labelsFor = (ids: string[]) =>
     ids.filter((id) => nameById.has(id)).map((id) => ({ id, name: nameById.get(id) as string }));
 
-  // 就地写回 subject / knowledge_labels（顶层 + children 实例）。
+  // Write subject and labels in place for page items and children.
   for (const it of enrichTargets) {
     it.subject = subjectById.get(it.id) ?? null;
     it.notation = resolveSubjectRenderNotation(it.subject);
     it.knowledge_labels = labelsFor(it.knowledge_ids);
   }
 
-  // 顶层挂 children + is_composite（child 实例已在 enrichTargets 内就地补好）。
+  // Attach children and the composite flag on top-level items.
   for (const it of items) {
     const kids = childrenByParent.get(it.id) ?? [];
     it.children = kids;
@@ -780,7 +698,7 @@ async function enrichItems(
   return items;
 }
 
-// ── A1a/A1b: flat list (with optional tier filter + tier/created_at sort) ──────
+// Flat list with optional tier filter and tier/created_at sort.
 function flatList(
   derived: DerivedCandidate[],
   params: ListQuestionsParams,
@@ -793,10 +711,9 @@ function flatList(
     filtered = filtered.filter((c) => wanted.has(c.tier));
   }
 
-  // Base order from SQL is created_at ASC (stable secondary-sort base).
+  // Base order from SQL is created_at ASC, the stable comparator base.
   if (params.sortBy === 'source_tier') {
-    // High tier first (1→4) + OF-2 demotion; the created_at-asc base order
-    // survives within equal (tier, demotion) keys (comparator returns 0).
+    // High tier first plus the demotion rule; equal keys keep the created_at-asc base.
     filtered = [...filtered].sort((a, b) =>
       compareBySourceTierThenWhitelist(
         { tier: a.tier, whitelistMatch: a.whitelistMatch },
@@ -804,10 +721,8 @@ function flatList(
       ),
     );
   } else {
-    // Default list semantics are newest-first; the SQL base order is created_at
-    // ASC (needed as the comparator base), so reverse it here for the non-tier
-    // path. Stable reverse: equal created_at keeps insertion order reversed,
-    // which is acceptable for a created_at-keyed list.
+    // Default list is newest-first; the ascending SQL base exists only for the
+    // comparator, so reverse it here.
     filtered = [...filtered].reverse();
   }
 
@@ -823,9 +738,9 @@ function flatList(
   };
 }
 
-// ── A1c (1): family aggregation ───────────────────────────────────────────────
+// Family aggregation.
 function familyKey(c: DerivedCandidate): string {
-  // root's own root_question_id is null → it IS the family root, key by its id.
+  // A root's own root_question_id is null, so key it by its id.
   return c.row.root_question_id ?? c.row.id;
 }
 
@@ -835,8 +750,7 @@ function aggregateFamilies(
   truncated: boolean,
   computedAtSec: number,
 ): ListQuestionsResult {
-  // Optional tier filter applies BEFORE grouping (a tier-filtered family view
-  // groups only the surviving members). Mirrors the flat-list filter order.
+  // Tier filtering applies before grouping, mirroring the flat-list order.
   let members = derived;
   if (params.sourceTier && params.sourceTier.length > 0) {
     const wanted = new Set<SourceTier>(params.sourceTier);
@@ -853,8 +767,8 @@ function aggregateFamilies(
 
   const families: QuestionFamily[] = [];
   for (const [key, bucket] of groups) {
-    // representative = the shallowest member (root has variant_depth 0); ties
-    // break on created_at asc (bucket already in created_at-asc base order).
+    // representative = shallowest member (root has depth 0); ties keep the
+    // created_at-asc bucket order.
     const representative = bucket.reduce((best, c) =>
       c.row.variant_depth < best.row.variant_depth ? c : best,
     );
@@ -869,8 +783,7 @@ function aggregateFamilies(
     });
   }
 
-  // Newest-first family ordering by the representative's created_at (mirrors the
-  // flat list's newest-first default).
+  // Newest-first by representative, mirroring the flat list default.
   families.sort((a, b) => b.representative.created_at_sec - a.representative.created_at_sec);
 
   const total = families.length;
@@ -885,7 +798,7 @@ function aggregateFamilies(
   };
 }
 
-// ── A1c (2): expand one root's full family ────────────────────────────────────
+// Expand one root's full family.
 async function expandRootFamily(
   db: Db | Tx,
   params: ListQuestionsParams,
@@ -920,7 +833,7 @@ async function expandRootFamily(
     }
   }
 
-  // depth asc, created_at asc — the family-tree reading order.
+  // Depth asc, then created_at asc: the family-tree reading order.
   derived.sort((a, b) => {
     if (a.row.variant_depth !== b.row.variant_depth) {
       return a.row.variant_depth - b.row.variant_depth;
@@ -944,13 +857,9 @@ async function expandRootFamily(
 }
 
 /**
- * Load every member of a variant family (the root plus all its variants),
- * keyed by `rootKey`. Shared by the list `expand_root` path and the detail
- * reader's family panel. `excludeDrafts` mirrors the list's draft 排除惯例 — the
- * detail reader passes false (it shows drafts), the list passes true by default.
- *
- * Family membership = `root_question_id = rootKey OR id = rootKey` (the root has
- * a null root_question_id and is matched by its own id).
+ * Every member of a variant family (the root plus its variants). Membership is
+ * root_question_id = rootKey or id = rootKey. excludeDrafts mirrors the list
+ * convention; the detail reader passes false because it shows drafts.
  */
 export async function loadFamilyMembers(
   db: Db | Tx,

@@ -1,20 +1,17 @@
-// YUK-1570 — SupplyPlan 有界规划尝试操作（自 jobs/supply_planner.ts 下沉的完整运行操作）。
-//
+// SupplyPlan 有界规划尝试操作（自 jobs/supply_planner.ts 下沉的完整运行操作）。
 // 本模块拥有"一次有界规划尝试"的全部内部决策，caller 只喂快照并收结果：
-//
-//   - 挂载装配：planner 的只读知识图谱面（SUPPLY_PLANNER_READ_TOOLS）经
-//     piDomainMount 编译 + allowedTools 折叠；`supply_planner_tool_${createId()}`
-//     工具归因 taskRunId 创建一次、跨全部重试复用（绝不逐 attempt 新铸）；
-//   - 运行调用：`runAgentTask('SupplyPlanTask')` 字面量 kind（task census 可见）；
-//     `runAgentTaskFn` 注入 seam 保留（db 测试 fake 原路径有效）；
-//   - 有界尝试政策：≤ SUPPLY_PLAN_MAX_ATTEMPTS 轮，每轮拒绝原因 flat 回喂
-//     previous_rejection 驱动有界重生成，仍不过则 fail closed（plan=null）；
-//   - 解析/机检顺序与拒绝归集：parseSupplyPlanOutput → checkSupplyPlanStructure
-//     → checkSupplyPlanKnowledgeIds，reasons 逐轮 push 进 rejections（原顺序、
-//     原结构，caller 原样写进 run 事件 payload）；
-//   - 留痕口径：task_run_id 仅在存在时收集、cost_usd 按 `?? 0` 累加、
-//     attempts 记实际执行轮数。
-//
+// - 挂载装配：planner 的只读知识图谱面（SUPPLY_PLANNER_READ_TOOLS）经
+// piDomainMount 编译 + allowedTools 折叠；`supply_planner_tool_${createId}`
+// 工具归因 taskRunId 创建一次、跨全部重试复用（绝不逐 attempt 新铸）；
+// - 运行调用：`runAgentTask('SupplyPlanTask')` 字面量 kind；
+// `runAgentTaskFn` 注入 seam 保留（db 测试 fake 原路径有效）；
+// - 有界尝试政策：≤ SUPPLY_PLAN_MAX_ATTEMPTS 轮，每轮拒绝原因 flat 回喂
+// previous_rejection 驱动有界重生成，仍不过则 fail closed（plan=null）；
+// - 解析/机检顺序与拒绝归集：parseSupplyPlanOutput → checkSupplyPlanStructure
+// → checkSupplyPlanKnowledgeIds，reasons 逐轮 push 进 rejections（原顺序、
+// 原结构，caller 原样写进 run 事件 payload）；
+// - 留痕口径：task_run_id 仅在存在时收集、cost_usd 按 `?? 0` 累加、
+// attempts 记实际执行轮数。
 // caller（jobs/supply_planner.ts）保留：原始信号快照装配（知识树/题数/掌握度/
 // pending claims/jyeoo 余量）、plannerInput 构造、PLANNER_HOST_SUBJECT 的
 // subjectProfile 解析，以及全部 run/demand/execute/shadow 事件与 DB 写入。

@@ -36,25 +36,17 @@ export async function createKnowledgeNodeFromEvents(
       `knowledge ${initial.id} has history without a live row; repair before creation`,
     );
   }
-  // YUK-1004 — `general` is the fallback subject identity and is NEVER a valid
-  // node domain (subjects/profile.ts contract). Fail closed on it at the sole
-  // creation seam; registered aliases canonicalise at write, unrecognised
-  // domains (e.g. a custom subject minted pre-hydration) pass through verbatim.
+  // `general` is the fallback identity, never a node domain. Aliases canonicalize;
+  // unknown domains pass through.
   const canonicalDomain = resolveKnownSubjectId(initial.domain);
   if (canonicalDomain === 'general') {
     throw new Error(
       `knowledge ${initial.id} rejected: 'general' is the fallback subject identity, not a node domain`,
     );
   }
-  // YUK-1405 (Stage 1 B6 S5) — genesis-writes-`'approved'` is now a CALLER
-  // contract, not a universal rule: every caller of this seam must be creating
-  // the node inside an owner-authorised plan (seeds, subject roots, accepted
-  // proposal/import paths, the learner-initiated placement starter anchor).
-  // Agent-invented KCs must NOT come through here — `tagKnowledge` declares
-  // `approval_status:'pending'` on its own `experimental:auto_tag_kc_created`
-  // event and the knowledge fold honors only that claim. If a future genesis
-  // caller is ad-hoc rather than owner-authorised, the authorization must be
-  // carried as an explicit argument instead of silently self-approving.
+  // Callers own authorization: this seam creates approved nodes. Agent-invented
+  // KCs go through tagKnowledge, which declares pending. A future ad-hoc caller
+  // must carry explicit authorization rather than self-approving.
   const row: KnowledgeRowSnapshotT = {
     ...initial,
     domain: canonicalDomain ?? initial.domain,

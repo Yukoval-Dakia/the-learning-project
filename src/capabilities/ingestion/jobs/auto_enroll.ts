@@ -1,10 +1,8 @@
-// Strategy D Slice B (YUK-190) — observe-only auto-enroll production consumer.
+// Observe-only auto-enroll consumer.
 //
-// Enqueued by tencent_ocr_extract after a successful extraction (session
-// 'extracted'|'partial'). Runs runAutoEnrollForSession, which with the enroll
-// flag OFF + observe explicitly ON runs TaggingTask + WorkflowJudge for a bounded set of draft
-// blocks and writes one durable `experimental:auto_enroll_observed` audit event per block —
-// zero domain rows, every block stays 'draft'. Both paid modes default OFF.
+// Enqueued after a successful extraction. With enroll off and observe explicitly
+// on, it tags and judges a bounded set of draft blocks and writes one durable
+// observed event per block, mutating nothing. Both paid modes default off.
 //
 // Failure boundary (§5): per-block tagging/judge/observe-write faults are
 // swallowed INSIDE the runner (missing XIAOMI_API_KEY → TaggingTaskError →

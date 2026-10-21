@@ -21,7 +21,7 @@
 | edge propose event | ✅ | `event(action='propose', subject_kind='knowledge_edge')` |
 | edge accept / rate path | ✅ | `RateKnowledgeEdge` → `GenerateKnowledgeEdge` → insert edge |
 | `KnowledgeEdgeProposeTask` | ✅ registered | 单轮结构化输出，nightly / maintenance 用 |
-| `KnowledgeReviewTask` | ✅ registered, tool-call | in-process MCP `write_proposal`；可写 tree / mesh proposal |
+| `KnowledgeReviewTask` | ✅ registered, tool-call | `knowledge_review` surface 经共享 DomainTool bridge 挂 `propose_knowledge_mutation` / `propose_knowledge_edge`（YUK-1553） |
 | Subject Graph Guide runtime | ⚠️ 部分 | guide 实体（可 seed / versioned / enrich 的 `SubjectGraphGuide` §2）仍未落地——无 `subject_graph_guide` 表、无 `seedSubjectGraphGuide()`。graph reader tools 当前用 DB 派生的确定性 fallback（`DEFAULT_RELATIONS` + 固定 reading hint，§62「没有 guide 时」路径），不读 guide 实体 |
 | Graph reader tools | ✅ | 4 个语义化 graph reader 全部上线：`get_subject_graph_overview` / `query_knowledge` / `expand_knowledge_subgraph` / `find_knowledge_paths`，定义在 `src/capabilities/knowledge/server/tools/knowledge-readers.ts`（`DomainTool` + `execute`，YUK-876 起由 knowledge 包拥有），经 `src/capabilities/knowledge/manifest.ts` 的 `copilotTools` 贡献制登记进组合根，进 allowlist/budget，被 copilot / quiz_gen / sourcing 消费。见 [架构基础](../architecture.md) 的「agent 读图路径」 |
 
@@ -276,9 +276,8 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 
 > **Enforcement status (Layer 1, P5.4 / YUK-143 — shipped 2026-05-31).** §4.1 / §4.2 / §4.3
 > are now enforced deterministically by a single shared validator,
-> `src/server/knowledge/rubric-validator.ts` (`validateProposalQuality`), called by **both**
-> agent edge-proposal write paths before the propose-event write: the DomainTool
-> `proposeKnowledgeEdgeExecute` and the legacy MCP `writeProposalAfterGate`. Agents are strict
+> `src/capabilities/knowledge/server/rubric-validator.ts` (`validateProposalQuality`), called by the
+> agent edge-proposal write path (`proposeKnowledgeEdgeCreate`) before the propose-event write. Agents are strict
 > (structural + reasoning-depth + evidence floor + relation predicates); user-edited proposals run
 > structural-only (§4.1 G1–G6). A rejected agent proposal is **folded, not dropped**: the propose
 > event is still written carrying a `rubric_verdict: { ok:false, gate, reason }` marker, derives a
@@ -449,4 +448,4 @@ Recommended order:
 6. Tighten `propose_knowledge_edge` to require `evidence_event_ids` for agent proposals.
 7. Add `ToolUseCard` summaries based on each tool's `summarize()`.
 
-Keep `KnowledgeReviewTask`'s current single `write_proposal` MCP tool until read tools exist. The next iteration should split read and proposal tools instead of sending a full tree snapshot into the prompt.
+`KnowledgeReviewTask` now mounts the shared `knowledge_review` surface (read tools + `propose_knowledge_mutation` / `propose_knowledge_edge`) through the DomainTool bridge; the private `write_proposal` tool is gone (YUK-1553).

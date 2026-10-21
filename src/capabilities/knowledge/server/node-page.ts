@@ -1,19 +1,9 @@
-// YUK-96 P6/C — /knowledge/[id] node-page read aggregator (ADR-0020 §10).
+// `/knowledge/[id]` read aggregator. One server call gathers metadata, mastery,
+// mesh neighbors, the primary atomic body, backlinks, timeline, notes and the
+// subject profile, instead of the old client-side full-table scans.
 //
-// 节点页 = 视图职能（query 聚合不存盘）；hub = 作品职能（artifact 实体）。本 module
-// 把单节点页所需的所有读路径聚合到一个 server-side query 里，替掉旧 client page 的
-// O(N) `/api/knowledge` 全表扫 + `/api/mistakes?limit=200` 扫。
-//
-// 分层视图契约（ADR-0020 §10 line 130-134）：
-//   1. 节点 metadata + mastery + mesh 邻居 chip
-//   2. 主 atomic body_blocks inline 渲染（WHERE knowledge_ids @> [k_id] AND type='note_atomic'）
-//   3. 反链 panel（复用 listBacklinks，cross_link only）
-//   4. 最近活动 timeline（event payload.referenced_knowledge_ids @> [k_id] 倒序）
-//   5. 无主 atomic 时 hasPrimaryAtomic=false → client 渲染占位卡
-//
-// 复用锚点（不重建）：loadMastery via knowledge_mastery view、listKnowledgeEdges、
-// listBacklinks + getArtifactCorrectionStates（backlinks route 的同款 read-time 过滤）、
-// resolveSubjectProfileForKnowledgeIds + toSlimSubjectProfile。
+// Backlink filtering matches the backlink route so a retracted or archived source
+// never renders as a live link.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
@@ -49,11 +39,8 @@ export type MasteryDecayBucket = 'untrained' | 'fresh' | 'mild' | 'stale' | 'unk
 
 export interface NodePagePrimaryAtomic {
   id: string;
-  // owning learning_item.id for this atomic (primary_artifact_id == atomic.id),
-  // null when the atomic has no non-archived owning learning_item. The node page
-  // title links to /learning-items/<owning_learning_item_id> (that route queries
-  // by learning_item.id, NOT artifact.id; linking by the artifact id 404s — same
-  // class as the backlink rows); when null the title renders as a non-link. (Codex #193)
+  // The learning-item route expects learning_item.id, not artifact.id, so the title
+  // links through this and stays a non-link when there is no owner.
   owning_learning_item_id: string | null;
   title: string;
   version: number;
@@ -67,15 +54,13 @@ export interface NodePageMeshNeighbor {
   knowledge_id: string;
   name: string;
   relation_type: string;
-  // direction relative to the focal node: 'out' (focal → neighbor) / 'in' (neighbor → focal)
+  /** Relative to the focal node. */
   direction: 'out' | 'in';
   weight: number;
 }
 
-// S10 (YUK-335 audit §3.9): direct children of the focal node, for the hierarchy
-// block on /knowledge/[id]. mastery comes from the knowledge_mastery view (null =
-// never practiced). Archived children are excluded (same dead-link discipline as
-// the parent-name lookup — the endpoint 404s on archived nodes).
+// Direct children for the hierarchy block. Mastery null means never practiced;
+// archived children are excluded because their endpoint would 404.
 export interface NodePageChild {
   id: string;
   name: string;
@@ -84,10 +69,7 @@ export interface NodePageChild {
 
 export interface NodePageBacklink {
   from_artifact_id: string;
-  // owning learning_item.id for the source artifact (primary_artifact_id == from_artifact_id),
-  // null when the source artifact has no non-archived owning learning_item. The node page links
-  // to /learning-items/<from_learning_item_id> (that route queries by learning_item.id, NOT
-  // artifact.id); when null the source renders as a non-link to avoid a 404. (Codex #193)
+  // Same id distinction as the primary atomic: null renders as a non-link.
   from_learning_item_id: string | null;
   from_title: string;
   from_type: string;
@@ -111,19 +93,15 @@ export interface KnowledgeNodePage {
   parent_name: string | null;
   effective_domain: string | null;
   mastery: number | null;
-  // A5 S1 (YUK-354) — ADR-0035 p(L) confidence-interval band + low-confidence flag,
-  // surfaced for the focal-node BandChip (discrete band + interval + source). Cold start
-  // (no mastery_state row) → null/null/false; the client renders the unknown band.
+  // Mastery interval and low-confidence flag; cold start is null/null/false.
   mastery_lo: number | null;
   mastery_hi: number | null;
   low_confidence: boolean;
   evidence_count: number;
-  // A5 S3 (YUK-354) — NodeComposite 三维折叠 RAW 读模型（p(L) 上方已铺；这里补 R + β）。
-  // 同 S1 raw-over-wire 先例：node-page 出 RAW，前端 buildNodeThreeDim 客户端 band 化。
-  // 三轴正交：纯 READ，绝不写回。
-  //   retrievability = FSRS R(t)∈[0,1]（null = 无 fsrs_state 行，无留存数据，非 R=0）；
-  //   beta           = 代表性 β（IRT logit；有锚时独立于 mastery_state，可在作答前读取）；
-  //   difficulty_anchored = hard-track 难度锚是否真实存在（区分真 β=0 与无锚 sentinel）。
+  // Raw three-axis values; the client bands them. Pure read.
+  // retrievability is FSRS R(t), null when no state row exists (unknown, not 0).
+  // beta is the representative IRT anchor, available before any attempt.
+  // difficulty_anchored separates a real beta=0 anchor from the unanchored sentinel.
   retrievability: number | null;
   retention: RetentionReading | null;
   beta: number | null;
@@ -131,17 +109,12 @@ export interface KnowledgeNodePage {
   last_evidence_at: string | null;
   mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
-  // S10: direct (non-archived) children for the hierarchy block, name-ordered.
   children: NodePageChild[];
   mesh_neighbors: NodePageMeshNeighbor[];
   primary_atomic: NodePagePrimaryAtomic | null;
-  // ADR-0027: all notes labeled with this node (atomic/hub/long), atomic-first.
-  // `primary_atomic` stays as the inline-rendered 节点简介 (newest atomic); `notes`
-  // is the full labeled set for the "带当前 knowledge_id 标签的笔记列表" (0/1/many).
+  /** All notes labeled with this node, atomic first; primary_atomic is the newest. */
   notes: NoteSummary[];
-  // ADR-0033 D5: interactive artifacts labeled with this node. A separate field,
-  // NOT mixed into `notes` — `notes` is the ADR-0027 note contract (the page
-  // groups it by note type); interactive is opaque to note machinery.
+  /** Interactive artifacts stay separate; note machinery must not see them. */
   interactive_artifacts: NoteSummary[];
   backlinks: NodePageBacklink[];
   backlinks_by_type: BacklinksByArtifactType<NodePageBacklink>;
@@ -149,16 +122,8 @@ export interface KnowledgeNodePage {
 }
 
 /**
- * A5 S3 (YUK-354) — batched R(t) read for the 'knowledge' axis. One DB round-trip
- * (getFsrsStatesByIds) over `material_fsrs_state WHERE subject_kind='knowledge' AND
- * subject_id IN (ids)`, each row through retrievabilityForKc(state, now) → R ∈ [0,1].
- * KCs with no row are ABSENT from the map (the caller renders "no retention data yet",
- * NOT R=0 — a missing card is unknown, not fully-forgotten). Map presence ⇔ a real
- * fsrs_state row (hard source); absence ⇔ unknown — no separate `hasState` flag needed,
- * it was always true (OCR).
- *
- * `now` is injectable for deterministic tests (retrievability is time-relative).
- * READ-ONLY — three-axis orthogonality: never writes any axis.
+ * Batched FSRS retrievability for knowledge ids. A missing map entry means no state
+ * row, i.e. unknown retention, not zero. `now` is injectable for deterministic tests.
  */
 export async function loadRetrievabilityMap(
   db: Db,
@@ -169,21 +134,16 @@ export async function loadRetrievabilityMap(
 }
 
 /**
- * Aggregate every read the /knowledge/[id] node page needs into one server call.
- * Returns null when the knowledge node doesn't exist (or is archived) so the
- * route can 404 instead of rendering an empty shell.
+ * Every read the node page needs, in one call. Null for a missing or archived node
+ * so the route can 404 instead of rendering an empty shell.
  */
 export async function loadKnowledgeNodePage(
   db: Db,
   knowledgeId: string,
 ): Promise<KnowledgeNodePage | null> {
   if (!isLearnerVisibleKnowledgeId(knowledgeId)) return null;
-  // 1. node metadata (single row; no O(N) tree scan). B1 double-truth fix —
-  // mastery / evidence_count / last_evidence_at are overlaid below from the SoT
-  // mastery_state.theta_hat projection (getMasteryProjection → σ(θ̂)), NOT the
-  // deprecated knowledge_mastery view's weighted-success-rate + `<3 → 0.5`
-  // placeholder. `last_evidence_at` maps to mastery_state.last_outcome_at (the
-  // real last-attempt time).
+  // Mastery is overlaid from the mastery_state projection, not the deprecated
+  // knowledge_mastery view, so last_evidence_at is the real last attempt.
   const nodeRows = await db
     .select({
       id: knowledge.id,
@@ -198,14 +158,11 @@ export async function loadKnowledgeNodePage(
   const node = nodeRows[0];
   if (!node) return null;
 
-  // parent name + effective_domain — walk up domain inheritance if this node's
-  // domain is null (matches loadTreeSnapshot's effective-domain semantics).
+  // Resolve the parent name and inherit a domain only from non-archived ancestors,
+  // or the page would link to a 404.
   let parentName: string | null = null;
   let effectiveDomain = node.domain;
   if (node.parent_id) {
-    // Skip archived parents: the /knowledge/[id] endpoint 404s on archived nodes
-    // (it filters isNull(archived_at) above), so surfacing an archived parent name
-    // would render a dead link. archived parent → parentName=null → non-link. (Codex #193)
     const parentRows = await db
       .select({ name: knowledge.name, domain: knowledge.domain, parent_id: knowledge.parent_id })
       .from(knowledge)
@@ -217,11 +174,7 @@ export async function loadKnowledgeNodePage(
     effectiveDomain = await resolveEffectiveDomain(db, node.parent_id);
   }
 
-  // 1b. direct children — non-archived nodes whose parent_id is this node.
-  // Archived children are filtered out for the same dead-link reason as the parent
-  // lookup (the endpoint 404s on archived nodes). Name-ordered for stable display.
-  // B1 double-truth fix — child mastery is overlaid from the SoT mastery_state
-  // projection below (same as the focal node), NOT the deprecated view.
+  // Non-archived children, name-ordered; mastery comes from the same projection.
   const childRows = await db
     .select({
       id: knowledge.id,
@@ -231,10 +184,8 @@ export async function loadKnowledgeNodePage(
     .where(and(eq(knowledge.parent_id, knowledgeId), isNull(knowledge.archived_at)))
     .orderBy(knowledge.name);
 
-  // The SoT mastery projection and focal difficulty anchor are independent reads:
-  // mastery can be absent before the first attempt, while hard-track item difficulty
-  // already exists. Map presence is the authoritative has-anchor bit that β=0 alone
-  // cannot represent. Run both reads in parallel.
+  // Independent reads: mastery may not exist before an attempt, while a difficulty
+  // anchor can. Map presence is the has-anchor bit beta=0 alone cannot express.
   const [masteryProjection, focalBetaMap] = await Promise.all([
     getMasteryProjection(db, [node.id, ...childRows.map((c) => c.id)]),
     getRepresentativeKcBeta(db, [node.id]),
@@ -250,10 +201,7 @@ export async function loadKnowledgeNodePage(
       mastery: masteryProjection.get(row.id)?.mastery ?? null,
     }));
 
-  // 2. mesh neighbors + focal-node R(t). The R read (NodeComposite 三维 R axis; only the
-  // focal node carries the three-dim fold, children stay mastery-only) is independent of
-  // the edge queries → parallelize in one Promise.all (OCR). Absent row → R null (unknown,
-  // not R=0).
+  // Mesh neighbors and focal retrievability are independent reads.
   const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
     loadRetrievabilityMap(db, [node.id]),
     listKnowledgeEdges(db, { from: knowledgeId }),
@@ -267,9 +215,7 @@ export async function loadKnowledgeNodePage(
     ]),
   );
   const neighborNames = await loadNames(db, neighborIds);
-  // Drop edges whose neighbor isn't in the (non-archived) name map: an archived
-  // neighbor would render a chip linking to a node the endpoint 404s on. No
-  // id-fallback name — skip the chip entirely instead. (Codex #193)
+  // Drop edges to archived/unknown neighbors rather than render a dead chip.
   const meshNeighbors: NodePageMeshNeighbor[] = [
     ...outEdges
       .filter((e) => neighborNames.has(e.to_knowledge_id))
@@ -293,27 +239,11 @@ export async function loadKnowledgeNodePage(
       })),
   ];
 
-  // Five independent reads for this node — the primary atomic body, the activity
-  // timeline, all labeled notes (ADR-0027), interactive artifacts (ADR-0033 D5),
-  // and the subject profile — have no data dependency on one another, so kick them
-  // all off concurrently and use Promise.all as the barrier. The backlink panel
-  // below still depends on the resolved primary atomic, so it runs afterwards.
+  // Five independent reads run concurrently; backlinks wait for the primary atomic.
+  // Named promises prevent a silent swap between the two NoteSummary results. The
+  // inline builders are executed once and their promises reused.
   //
-  // Bound by NAME rather than positional destructuring: `notes` and
-  // `interactiveArtifacts` are both NoteSummary[], so a positional swap would be
-  // invisible to the type checker — separate named promises make a reorder
-  // impossible. The two inline queries use `.execute()` so each drizzle builder
-  // runs exactly once (a drizzle builder re-executes on every await), and the
-  // Promise.all barrier + the follow-up awaits then share those in-flight promises.
-  //
-  // Connection budget: the 5 concurrent reads sit inside the postgres-js pool
-  // (max=10 per process — src/db/client.ts). This is a single-user tool, so
-  // simultaneous node-page loads are rare, and postgres-js queues (never errors)
-  // when the pool is momentarily saturated — no chunking needed at this scale.
-  //
-  // primary atomic — the newest non-archived note_atomic whose knowledge_ids
-  // contains this node. atomic.knowledge_ids length is 1 (ADR-0020 §3), so a node
-  // has at most one "节点简介" atomic; we still pick newest if multiple.
+  // The primary atomic is the newest non-archived note_atomic containing this node.
   const atomicPromise = db
     .select({
       id: artifact.id,
@@ -334,8 +264,7 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(artifact.created_at))
     .limit(1)
     .execute();
-  // timeline — events whose payload.referenced_knowledge_ids contains this
-  // node, newest first (ADR-0020 GIN index `event_referenced_knowledge_gin`).
+  // Events referencing this node, newest first.
   const timelinePromise = db
     .select({
       event_id: event.id,
@@ -352,15 +281,10 @@ export async function loadKnowledgeNodePage(
     .orderBy(desc(event.created_at))
     .limit(TIMELINE_LIMIT)
     .execute();
-  // all notes labeled with this node (ADR-0027) — atomic/hub/long, atomic-first.
-  // Superset of `primary_atomic`; powers the multi-note list on /knowledge/[id].
   const notesPromise = notesForKnowledge(db, knowledgeId);
-  // interactive artifacts labeled with this node (ADR-0033 D5) — kept out of
-  // `notes` (note contract) on purpose.
   const interactivePromise = interactiveForKnowledge(db, knowledgeId);
-  // subject profile for the focal node (slimmed at the return site).
   const profilePromise = resolveSubjectProfileForKnowledgeIds(db, [knowledgeId]);
-  // Concurrency barrier + single rejection point; all five are already in flight.
+  // Single rejection point; all five reads are already in flight.
   await Promise.all([
     atomicPromise,
     timelinePromise,
@@ -378,13 +302,7 @@ export async function loadKnowledgeNodePage(
   const backlinks: NodePageBacklink[] = [];
   const atomic = atomicRows[0];
   if (atomic) {
-    // YUK-358 决定3：graded embedded-check question projection removed with the
-    // orphan chain. The check section itself survives as the Phase-3
-    // self-explanation anchor (body_blocks carries it; rendered downstream).
-    // Resolve the primary atomic to its owning learning_item so the title links
-    // to /learning-items/<learning_item_id> instead of the artifact id (those are
-    // distinct ids; linking by artifact id 404s — Codex #193 / YUK-161). Mirrors
-    // the backlink-source resolution below; null when no non-archived owner.
+    // Link through the owning learning item; artifact ids 404 on that route.
     const owningLearningItemForAtomic = await resolveOwningLearningItemIds(db, [atomic.id]);
     primaryAtomic = {
       id: atomic.id,
@@ -396,9 +314,8 @@ export async function loadKnowledgeNodePage(
       verification_status: atomic.verification_status,
     };
 
-    // 4. backlinks — inbound cross_links pointing AT the primary atomic. Reuse
-    // the same read-time filters as the artifact backlink panel route (XC-5):
-    // cross_link refs only, drop archived / non-ready / retracted sources.
+    // Inbound cross-links only; drop archived, non-ready, retracted or superseded
+    // sources, matching the backlink panel route.
     const inbound = (await listBacklinks(db, { toArtifactId: atomic.id })).filter(
       (ref) => ref.ref_kind === CROSS_LINK_REF_KIND,
     );
@@ -414,13 +331,7 @@ export async function loadKnowledgeNodePage(
         .where(inArray(artifact.id, sourceIds));
       const sourceById = new Map(sourceRows.map((row) => [row.id, row]));
       const correctionStates = await getArtifactCorrectionStates(db, sourceIds);
-      // Resolve each source artifact to its owning learning_item so the panel can
-      // link to /learning-items/<learning_item_id> instead of the artifact id
-      // (those are distinct ids; linking by artifact id 404s — Codex #193). The
-      // link is learning_item.primary_artifact_id == source.artifact_id. Per ADR-0027
-      // an artifact may be referenced by >1 item; resolveOwning returns the earliest as
-      // a representative. Drop archived learning_items → unresolved sources render as
-      // non-links downstream.
+      // One representative owner per artifact; unresolved sources render as non-links.
       const owningLearningItemByArtifactId = await resolveOwningLearningItemIds(db, sourceIds);
       for (const ref of inbound) {
         const source = sourceById.get(ref.from_artifact_id);
@@ -451,8 +362,7 @@ export async function loadKnowledgeNodePage(
     }
   }
 
-  // timeline / notes / interactiveArtifacts / profile were fetched above in the
-  // Promise.all; map the raw event rows into the wire shape here (newest first).
+  // Map rows to the wire shape; they are already newest first.
   const timeline: NodePageTimelineEntry[] = timelineRows.map((r) => ({
     event_id: r.event_id,
     action: r.action,
@@ -462,10 +372,7 @@ export async function loadKnowledgeNodePage(
     created_at: r.created_at.toISOString(),
   }));
 
-  // B1 double-truth fix — focal-node mastery / evidence_count / last_evidence_at
-  // from the SoT mastery_state projection (σ(θ̂)). Absent row → cold start:
-  // mastery null / evidence 0 / no last_evidence_at (matches the old view NULL/0).
-  // last_evidence_at is the real last-attempt time (mastery_state.last_outcome_at).
+  // Absent projection means cold start: no mastery, zero evidence, no last attempt.
   const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
   const nodeLastEvidenceAt = nodeMastery?.last_outcome_at ?? null;
 
@@ -477,16 +384,13 @@ export async function loadKnowledgeNodePage(
     parent_name: parentName,
     effective_domain: effectiveDomain,
     mastery: nodeMastery?.mastery ?? null,
-    // A5 S1 (YUK-354) — band fields from the same getMasteryProjection read above.
-    // Absent (cold start) → null/false; the client maps mastery=null to the unknown band.
+    // Cold start is null/false; the client maps null mastery to the unknown band.
     mastery_lo: nodeMastery?.mastery_lo ?? null,
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
     evidence_count: nodeEvidenceCount,
-    // A5 S3 + YUK-528 — three-dim RAW: R(t) + representative β. β is read
-    // independently of learner mastery so a never-attempted KC can expose a real
-    // absolute difficulty anchor. The explicit presence bit distinguishes a true
-    // medium β=0 anchor from the projection's unanchored β=0 sentinel.
+    // Raw R(t) and beta. The presence bit distinguishes a real beta=0 anchor from
+    // the unanchored sentinel.
     retrievability:
       typeof focalRetrievability === 'number'
         ? focalRetrievability
@@ -523,9 +427,7 @@ export function masteryDecayBucket(
   return 'fresh';
 }
 
-// Resolve non-archived knowledge names. Archived neighbors are intentionally
-// omitted from the map so mesh-chip construction can drop them (linking to an
-// archived node 404s — the /knowledge/[id] endpoint filters archived). (Codex #193)
+// Archived and invisible ids are omitted so their chips can be dropped.
 async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   const rows = await db
@@ -537,14 +439,8 @@ async function loadNames(db: Db, ids: string[]): Promise<Map<string, string>> {
   );
 }
 
-// Walk up the parent chain until a node carries an explicit domain. Mirrors
-// loadTreeSnapshot's effective-domain inheritance: it only keeps non-archived
-// rows in byId and stops at an archived ancestor, so the walk filters
-// isNull(archived_at) too — an archived (or missing) ancestor stops the walk
-// and returns null, matching the parent-name lookup above. Without this filter
-// the node detail page could inherit a domain from an archived ancestor that
-// the tree never would (divergent effective_domain — Codex #193 / YUK-161).
-// Depth-capped at 32 to guard against cyclic parent_id data.
+// Walk up until a node carries an explicit domain, stopping at archived or missing
+// ancestors like the tree reader does. The depth cap guards cyclic parent data.
 async function resolveEffectiveDomain(db: Db, startParentId: string): Promise<string | null> {
   let currentId: string | null = startParentId;
   let depth = 0;

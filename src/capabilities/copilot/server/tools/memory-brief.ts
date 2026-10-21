@@ -1,8 +1,5 @@
-// YUK-102 / Foundation D M2 — moved to Copilot by YUK-892 (F4.0).
-//
-// Read tool for the Dreaming-maintained memory brief (global or subject
-// scope). Copilot owns the memory-brief reader; the brief row itself is
-// written by the Dreaming nightly job.
+// Read tool for the Dreaming-maintained memory brief (global or subject scope).
+// The brief row itself is written by the Dreaming nightly job.
 
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -22,7 +19,7 @@ export const MEMORY_BRIEF_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const MemoryBriefFreshnessSchema = z.object({
   state: z.enum(['fresh', 'stale', 'missing']),
-  /** Age of refreshed_at at read time; null when the row/timestamp is absent. */
+  /** Age of refreshed_at; null when the row/timestamp is absent. */
   age_ms: z.number().int().nonnegative().nullable(),
   stale_after_ms: z.number().int().positive(),
 });
@@ -36,17 +33,16 @@ const MemoryBriefOutputSchema = z.object({
       recent_week_md: z.string(),
       recent_months_md: z.string(),
       long_term_md: z.string(),
-      // P5.3 (YUK-183) — additive-optional evidence-decay freshness score for
-      // long_term_md. null = unjudgeable. Advisory render-annotation signal only;
-      // not evidence-gated (a scalar score is not provenance). Spec §7.2.
+      // Optional freshness score for long_term_md; null = unjudgeable. Advisory
+      // render annotation only, not evidence-gated (a score is not provenance).
       long_term_freshness_score: z.number().nullable().optional(),
       refreshed_at: z.string().nullable(),
       source_event_id: z.string().nullable(),
       version: z.number().int(),
     })
     .nullable(),
-  // YUK-378 — explicit reader-side signal. Dreaming/Coach must not silently
-  // treat a previous-night or never-built brief as current context.
+  // Reader-side signal: a previous-night or never-built brief must not read as
+  // current context.
   freshness: MemoryBriefFreshnessSchema,
   evidence: z
     .object({
@@ -60,9 +56,7 @@ const MemoryBriefOutputSchema = z.object({
 type MemoryBriefInput = z.infer<typeof MemoryBriefInputSchema>;
 type MemoryBriefOutput = z.infer<typeof MemoryBriefOutputSchema>;
 
-// Exported alongside the tool so the Copilot Drawer summary
-// (Wave 5 / T-D3/B) can read the memory_brief_note row directly without
-// mirroring the SQL or going through the MCP bridge. No event side effects.
+// Exported for direct callers (e.g. the Copilot Drawer summary); no event side effects.
 export async function executeMemoryBrief(
   ctx: ToolContext,
   raw: MemoryBriefInput,
@@ -96,7 +90,7 @@ export async function executeMemoryBrief(
       recent_week_md: note.recent_week_md,
       recent_months_md: note.recent_months_md,
       long_term_md: note.long_term_md,
-      long_term_freshness_score: note.long_term_freshness_score ?? null, // P5.3 (§7.2)
+      long_term_freshness_score: note.long_term_freshness_score ?? null,
       refreshed_at: iso(note.refreshed_at),
       source_event_id: note.source_event_id ?? null,
       version: note.version,

@@ -1,13 +1,9 @@
-// YUK-579 — 覆盖细目表**纯函数核**（零 DB import，故可进 unit 分区，镜像 effectiveness-trend-
-// summary.ts「本模块零 DB import」先例）。读模型 coverage-lattice.ts 从这里 import 同一套纯函数
-// + 常量注入——单一真相，无漂移。
+// Pure coverage-lattice core with no DB imports, so it can run in the unit lane. The
+// read model imports these same functions and injects the three constants.
 //
-// 只 type-only import target-discovery（运行期擦除，绝不拉进 @/db/client 的 throw-on-missing-
-// DATABASE_URL 链）；三个常量（depth threshold / near window / cooldown days）**注入**而非 import
-// value，使本模块可在无 DB 的 unit 分区直接测。
-//
-// 诚实约束（design §2）：scanCoverageGaps 四规则全 KC 池级，**绝不产逐格覆盖矩阵**。池级布尔从
-// 哪些 gapKind 触发**反读**（§2.1 免漂移等价），零池 KC 三轴 null（扫描器短路，target-discovery.ts:401）。
+// The scanner's four rules are pool-level; this never produces a per-cell matrix. Pool
+// booleans are read back from which gap kinds fired, and an empty pool leaves the three
+// axes null because the scanner short-circuits.
 
 import type {
   DifficultyBand,
@@ -23,16 +19,14 @@ export const COVERAGE_SCOPE_NOTE =
   'covers the four single-KC pool rules of scanCoverageGaps (R1-R4); ' +
   'NOT the full union of supply gaps — confusable_contrast (misconception mesh) is out of scope.';
 
-/** 注入常量（避免 core 运行期 import DB-tainted 模块拿 value）。 */
+/** Injected so the core never imports DB-tainted value modules. */
 export interface LatticeConstants {
   coverageDepthThreshold: number;
   nearWindow: number;
   cooldownDays: number;
 }
 
-// ── 输出契约（design §2.5）───────────────────────────────────────────────────
-
-/** 一个缺口的最近供给活动注记（MF1：从 fingerprint 聚合派生，纯只读）。 */
+/** Recent supply activity per gap, derived from fingerprints. */
 export interface GapActivity {
   lastActivityAt: string | null;
   lastStatus: string | null;
@@ -41,7 +35,6 @@ export interface GapActivity {
   cooldownUntil: string | null;
 }
 
-/** 一条 emitted 缺口 target 的细目行（+ 活动注记）。 */
 export interface LatticeGap {
   gapKind: SupplyGapKind;
   kind: string;
@@ -52,7 +45,7 @@ export interface LatticeGap {
   reason: string;
   fingerprint: string;
   routePreference: SupplyRoute[];
-  /** MF3：frontier_zero 的 kind/band/tier 是硬编脚手架常量 → UI 置灰标「not scanned」。 */
+  /** frontier_zero uses fixed scaffolding constants; the UI greys it as not scanned. */
   scaffold: boolean;
   lastActivity: GapActivity | null;
 }
@@ -93,9 +86,7 @@ export interface CoverageLatticeRead {
   };
 }
 
-// ── 纯函数 1：活动事件聚合（MF1，单测靶）─────────────────────────────────────
-
-/** 一条 experimental:question_supply 事件的最小投影（fingerprint 聚合用）。 */
+/** Minimal supply-event projection for fingerprint aggregation. */
 export interface SupplyActivityEvent {
   fingerprint: string;
   status: string;
@@ -103,9 +94,8 @@ export interface SupplyActivityEvent {
 }
 
 /**
- * MF1：按 fingerprint 聚合供给活动。lastActivity/lastStatus = 每 fingerprint 最新一条（任意
- * status）；inCooldown/cooldownUntil **只**从最近 status='dispatched' 事件算（cooldown 凭证 =
- * dispatched 行，dispatcher.ts:331-333）。纯函数：now / cooldownDays 注入以可测。
+ * Aggregate by fingerprint: last activity and status from the newest event; cooldown
+ * only from the newest dispatched event, because that is the cooldown credential.
  */
 export function aggregateSupplyActivity(
   events: SupplyActivityEvent[],
@@ -123,9 +113,7 @@ export function aggregateSupplyActivity(
   const out = new Map<string, GapActivity>();
   const cooldownMs = cooldownDays * DAY_MS;
   for (const [fingerprint, list] of byFingerprint) {
-    // 最新一条（任意 status）。
     const latest = list.reduce((a, b) => (b.createdAt >= a.createdAt ? b : a));
-    // 最近 status='dispatched'（cooldown 凭证）。
     const dispatched = list.filter((e) => e.status === 'dispatched');
     const lastDispatched =
       dispatched.length > 0
@@ -144,20 +132,16 @@ export function aggregateSupplyActivity(
   return out;
 }
 
-// ── 纯函数 2：覆盖点阵变换（design §2，单测靶）───────────────────────────────
-
 export interface BuildLatticeOptions {
   now?: Date;
   scanMs?: number;
-  /** subjectId → displayName（registry 派生；测试可注入）。 */
   displayNameById?: Record<string, string | null>;
 }
 
 /**
- * 纯变换：(ScanInput, targets, activityByFingerprint, constants) → CoverageLatticeRead。无 IO。
- *
- * 池级布尔从 gapKind 反读（design §2.1，零漂移）；零池 KC 三轴 null。usableCount 单源于扫描器
- * 同一 questionsByKid 分桶（should#2）。
+ * Pure transform from scan input, targets, activity and constants to the read model.
+ * Pool booleans are derived from gap kinds; usable counts use the scanner's own
+ * question-to-KC bucketing.
  */
 export function buildCoverageLattice(
   scanInput: ScanInput,
@@ -169,7 +153,7 @@ export function buildCoverageLattice(
   const now = opts.now ?? new Date();
   const displayNameById = opts.displayNameById ?? {};
 
-  // 现有题按 KC 分桶（镜像 scanCoverageGaps target-discovery.ts:328-335：一题挂多 KC → 每桶收）。
+  // A question with several KCs counts in each bucket, matching the scanner.
   const usableCountByKid = new Map<string, number>();
   for (const q of scanInput.questions) {
     for (const kid of q.knowledgeIds) {
@@ -177,7 +161,7 @@ export function buildCoverageLattice(
     }
   }
 
-  // targets 按 KC 分组（scanCoverageGaps 的 target.knowledgeIds 恒单元素 [f.knowledgeId]）。
+  // Scanner targets always carry exactly one KC.
   const targetsByKid = new Map<string, QuestionSupplyTarget[]>();
   for (const t of targets) {
     const kid = t.knowledgeIds[0];
@@ -191,7 +175,7 @@ export function buildCoverageLattice(
   let totalGaps = 0;
   let kcsWithGaps = 0;
 
-  // 按 subjectId → KC 分组（frontier 是权威 active-goal KC 集，满覆盖 KC 亦成行）。
+  // The frontier is the authoritative active-goal set; fully covered KCs still get a row.
   const rowsBySubject = new Map<string, KcCoverageRow[]>();
   for (const f of scanInput.frontier) {
     const usableCount = usableCountByKid.get(f.knowledgeId) ?? 0;
@@ -208,7 +192,6 @@ export function buildCoverageLattice(
       reason: t.reason,
       fingerprint: t.fingerprint,
       routePreference: t.routePreference,
-      // MF3：frontier_zero 坐标是硬编脚手架常量，非扫描依据 → 置灰标记。
       scaffold: t.gapKind === 'frontier_zero',
       lastActivity: activityByFingerprint.get(t.fingerprint) ?? null,
     }));
@@ -219,7 +202,7 @@ export function buildCoverageLattice(
       for (const g of gaps) gapsByKind[g.gapKind] = (gapsByKind[g.gapKind] ?? 0) + 1;
     }
 
-    // 池级布尔从 gapKind 反读（§2.1）；零池 KC 扫描器短路 R2/R3/R4 → null 未评估。
+    // An empty pool short-circuits the scanner, so those axes are unassessed (null).
     const emptyPool = usableCount === 0;
     const row: KcCoverageRow = {
       knowledgeId: f.knowledgeId,

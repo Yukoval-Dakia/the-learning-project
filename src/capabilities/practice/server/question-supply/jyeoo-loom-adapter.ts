@@ -1,8 +1,5 @@
-// YUK-697 — jyeoo-rs → loom NDJSON adapter (pure, unit-tested).
-//
-// ~/jyeoo-rs/docs/DESIGN.md §1.1 (NDJSON envelope) / §5 (exit codes);
-// docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md §5 (VIP, image).
-//
+// jyeoo-rs → loom NDJSON adapter (pure, unit-tested).
+// ~/jyeoo-rs/ (NDJSON envelope) / (exit codes);
 // The producer emits one JSON envelope per stdout line: { question, jyeoo }. `question`
 // is byte-aligned with loom's SourcedQuestion Zod contract; `jyeoo` is a free-form
 // extension block the handler reads for VIP status / knowledge hints / audit. This
@@ -14,9 +11,8 @@ import { z } from 'zod';
 import { SourcedQuestion, type SourcedQuestionT } from '@/core/schema/sourcing';
 
 // ── exit classification ──────────────────────────────────────────────────────
-//
-// DESIGN §5 exit codes: 0 ok / 2 args (clap) / 3 auth (cookie invalid / guest) /
-// 4 network / 5 parse. YUK-697 producer-patch proposal adds 6 = VIP required/expired
+// DESIGN exit codes: 0 ok / 2 args (clap) / 3 auth (cookie invalid / guest) /
+// 4 network / 5 parse. producer-patch proposal adds 6 = VIP required/expired
 // (so a non-VIP run fails BEFORE emitting hole-punched reference_md rather than exiting
 // 0 with degraded content). Until the patch lands, the handler ALSO gates on the
 // per-line vip flag (belt-and-suspenders — see jyeoo.vip below).
@@ -43,14 +39,14 @@ export interface JyeooExitClassification {
   /** null ⇒ clean success (exit 0, no timeout, no signal). */
   failure: JyeooFailureClass | null;
   /** Retryable failures (network/timeout) should re-throw so pg-boss retries; terminal
-   *  ones write a failure event and return without a retry storm. */
+   * ones write a failure event and return without a retry storm. */
   retryable: boolean;
 }
 
 /**
  * Classify a finished jyeoo-rs run. A non-zero exit (or a timeout / killing signal)
  * means the WHOLE batch is discarded before any INSERT — the producer contract is
- * "fail the whole batch, never emit half the data" (DESIGN §5 反爬: batch 中途失效立即
+ * "fail the whole batch, never emit half the data" (DESIGN 反爬: batch 中途失效立即
  * 整体退出码 3), so a partial/mid-crash run must not ingest partial questions.
  */
 export function classifyJyeooExit(input: {
@@ -82,7 +78,6 @@ export function classifyJyeooExit(input: {
 }
 
 // ── per-line envelope parse ──────────────────────────────────────────────────
-//
 // The `jyeoo` extension block is deliberately loose (passthrough) — the handler only
 // reads vip + id/subject for audit; everything else is opaque. vip is OPTIONAL: the
 // pre-patch producer omits it (the handler then relies on the exit-6 gate); the patched
@@ -136,12 +131,10 @@ export function parseJyeooLine(line: string): JyeooParsedLine {
 }
 
 // ── image dependency ─────────────────────────────────────────────────────────
-//
 // A markdown image `![alt](src)` in the stem or a choice means the question's meaning
-// depends on a figure. YUK-727 now localizes and persists those figures; this predicate
+// depends on a figure. now localizes and persists those figures; this predicate
 // remains the pure structural classifier for consumers. reference_md is scanned too: the
 // worked solution is learner-visible and must not retain a temporary/external image URL.
-//
 // Deliberately OVER-INCLUSIVE: detect the
 // markdown image MARKER STRUCTURE `![...](` rather than parse a full `(...)` URL. A URL
 // containing a literal `)` (e.g. `![x](https://h/Foo_(bar).png)`) would defeat a
@@ -247,7 +240,6 @@ export function rewriteMarkdownImageSources(
 }
 
 // ── source host guard ─────────────────────────────────────────────────────────
-//
 // A row whose source_url host is NOT the expected jyeoo host is a producer anomaly (a
 // jyeoo scrape only ever yields www.jyeoo.com URLs). Since source_verify grounds a
 // web_sourced row against its PERSISTED extract (never a refetch), a foreign URL would

@@ -1,12 +1,9 @@
-// YUK-601 — 写面结果联合 → HTTP 映射（三壳共用）。
-// 状态码合同（v3.2 §3 + UI design doc v1.1 §2.3）：
-//   ok/noop → 200 · stale → 409 携 currentRevision（CAS 陈旧守卫，UI 以
-//   currentRevision 在场分流 refetch）· conflict（撞名）→ 409 **不携**
-//   currentRevision（UI 直出「名称已被占用」，不 refetch 重放）·
-//   not_found → 404 · forbidden（general 锁定）→ 422 · invalid → 422（携
-//   fan-out issues 时逐科回显）。
-// currentRevision 走手写 Response.json（ApiError 承载不了附加字段——errors.ts
-// 三字段形状；question-detail DELETE 409 同为先例）。
+// Shared write-result to HTTP mapping.
+//
+// ok/noop are 200; stale is 409 carrying currentRevision so the UI knows to refetch;
+// a name conflict is 409 without it, because retrying cannot help; not_found is 404;
+// forbidden and invalid are 422, with fan-out issues when present. Stale builds its
+// response by hand because ApiError cannot carry the extra revision field.
 
 import type { ControlWriteResult } from '@/server/subjects/subject-control-write';
 import type { TraitWriteResult } from '@/server/subjects/trait-write';

@@ -179,7 +179,7 @@ async function loadAttempts(): Promise<LoadResult> {
   // 4. item_calibration (track='hard') b anchor per question.
   const calByQuestion = new Map<
     string,
-    { b: number | null; b_anchor: number | null; b_calib: number | null }
+    { b: number | null; b_anchor: number | null; b_calib: number | null; b_post: number | null }
   >();
   if (questionIds.length > 0) {
     const calRows = await db
@@ -188,13 +188,19 @@ async function loadAttempts(): Promise<LoadResult> {
         b: item_calibration.b,
         b_anchor: item_calibration.b_anchor,
         b_calib: item_calibration.b_calib,
+        b_post: item_calibration.b_post,
       })
       .from(item_calibration)
       .where(
         and(inArray(item_calibration.question_id, questionIds), eq(item_calibration.track, 'hard')),
       );
     for (const r of calRows) {
-      calByQuestion.set(r.question_id, { b: r.b, b_anchor: r.b_anchor, b_calib: r.b_calib });
+      calByQuestion.set(r.question_id, {
+        b: r.b,
+        b_anchor: r.b_anchor,
+        b_calib: r.b_calib,
+        b_post: r.b_post,
+      });
     }
   }
 

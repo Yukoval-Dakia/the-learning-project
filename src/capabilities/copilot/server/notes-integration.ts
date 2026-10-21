@@ -26,8 +26,8 @@ export async function resolveLiveArtifactPrimaryView(
 ): Promise<{ kind: string; id: string } | null> {
   const artifactType = await getLiveArtifactType(db, ref.id);
   if (artifactType === null || !artifactKindMatchesType(ref.kind, artifactType)) return null;
-  // Publish the existing product navigation contract, not a storage type that
-  // the client can only render as a link-less label.
+  // Publish the product navigation kind, not a storage type the client can only
+  // render as a link-less label.
   const kind = artifactType.startsWith('note_')
     ? 'note'
     : artifactType === 'tool_quiz'

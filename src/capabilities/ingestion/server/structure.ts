@@ -1,25 +1,13 @@
 /**
- * VLM StructureTask — T-OC slice 2 (YUK-145, OC-1/OC-2).
+ * VLM StructureTask.
  *
- * See the design spec `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`
- * (OC-1/OC-2) + `docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md`.
+ * OCR is only a character-level text hint; the VLM sees all page images plus that
+ * hint and owns the normalized tree, including cross-page stems. It parses strict
+ * JSON through a Zod schema and accepts an injectable runner for tests.
  *
- * OC-1/OC-2: Tencent is demoted to a character-level **text OCR hint**; the VLM
- * (multimodal mimo-v2.5) owns the normalized structure. It sees all N page
- * images (in page order) + the Tencent text hint, and assembles a normalized
- * stem/sub/standalone tree — including 跨页大题 split across pages into ONE stem.
- *
- * Mirrors the Practice-owned `runStepsJudge` pattern: an
- * auto-invoked multimodal task that passes `{ text, images }` through `runTask`,
- * parses strict JSON via a Zod schema, and accepts an injectable `runTaskFn` for
- * testability.
- *
- * YUK-227 S3 Slice A: Figure↔question matching is now performed by the VLM via
- * `figure_ids` on StructureNode. `preFigures` (sequence index + page_index) are
- * fed into the prompt so the VLM can self-report which figures belong to which
- * question. The result is surfaced as `figureAssignments` on StructureResult and
- * consumed by `assignFiguresFromVlm` in figure_attach.ts. OCR fallback uses only
- * unambiguous same-page containment; uncertain crops stay unbound.
+ * The VLM also reports figure↔question ownership via figure_ids, surfaced as
+ * figureAssignments. The OCR fallback binds only unambiguous containment; uncertain
+ * crops stay unbound.
  */
 
 import { createId } from '@paralleldrive/cuid2';
@@ -44,13 +32,7 @@ export { StructureOutput, type StructureOutputT, StructureTaskError };
 
 // ---------- Result shape (consumed by tencent_ocr_extract handler) ----------
 
-/**
- * YUK-227 S3 Slice A — one VLM figure assignment: a pre-figure at `figure_index`
- * belongs to the question with `attached_to_question_id`.
- * `confidence` comes from the VLM's self-report context: 'high' when the VLM
- * explicitly assigned this figure via figure_ids; 'low' denotes an uncertain claim
- * (not currently emitted here — the VLM always emits 'high' when it assigns).
- */
+/** One VLM figure assignment: pre-figure `figure_index` belongs to a question. */
 export type FigureAssignment = {
   figure_index: number;
   attached_to_question_id: string;
@@ -63,18 +45,13 @@ export type StructureResult = {
   /** Overall confidence in the extracted structure; persisted on each emitted block. */
   extraction_confidence?: number;
   warnings: string[];
-  /**
-   * YUK-227 S3 Slice A — VLM figure assignments extracted from figure_ids on
-   * StructureNode. Absent (undefined) when no preFigures were supplied or the
-   * VLM did not assign any figures. Consumed by assignFiguresFromVlm().
-   */
+  /** Absent when no preFigures were supplied or none were assigned. */
   figureAssignments?: FigureAssignment[];
 };
 
 /**
- * Thrown when the VLM structure step cannot produce a usable tree (provider
- * down, unparseable output, or zero questions). The handler catches this and
- * falls back to the Tencent structure (regression safety — lane plan §5).
+ * Thrown when the VLM cannot produce a usable tree; the handler catches it and falls
+ * back to OCR structure.
  */
 // ---------- Tencent text hint rendering ----------
 
@@ -84,10 +61,8 @@ export type TencentPageHint = {
 };
 
 /**
- * Render the demoted Tencent structure as a flat text hint for the VLM. Each
- * page is prefixed with `=== page K ===`; per top-level question we reuse
- * `structuredToPromptMarkdown` (the canonical structured→markdown derivation).
- * This is advisory text only — the VLM owns the structure of record.
+ * Renders OCR structure as an advisory text hint. The VLM owns the structure of
+ * record; per top-level question this reuses the canonical markdown derivation.
  */
 export function renderTencentHint(pages: TencentPageHint[]): string {
   const parts: string[] = [];
@@ -106,26 +81,15 @@ export function renderTencentHint(pages: TencentPageHint[]): string {
 
 // ---------- Mapping VLM nodes → StructuredQuestionT ----------
 
-// ---------- YUK-1404: explicit math delimiter canonicalization ----------
-//
-// Settled producer decision (YUK-1404): extracted stems STORE explicit
-// `$inline$` / `$$display$$` math. The StructureTask prompt now instructs the
-// VLM to emit dollar delimiters, but the Tencent text hint (and model habit)
-// can carry the equally-explicit LaTeX forms \(...\) / \[...\]. Those — and
-// ONLY those already-explicitly-delimited spans — are canonicalized to the
-// dollar form here, at the canonical mapping. No undelimited text is ever
-// wrapped (no guessing around bare backslashes or prose).
-//
-// Mirrors the proven renderer gate (src/ui/lib/math-markdown.tsx
-// LATEX_DELIMITED): code spans/fences are matched first and returned
-// untouched; a delimiter preceded by another backslash is a LaTeX line break,
-// not an opener; a formula never crosses a blank line or a backtick. The
-// spacing guards keep neighbouring `$...$` / `$$...$$` runs apart after
-// conversion (`$a$$b$` would parse as one broken formula downstream).
+// Stems store explicit dollar-delimited math. Only spans already delimited as
+// \(...\) / \[...\] are canonicalized; undelimited prose is never wrapped. The
+// guards mirror the renderer: code spans/fences stay untouched, a double backslash
+// is a line break, formulas never cross blank lines/backticks, and spacing keeps
+// adjacent formulas from merging.
 const EXPLICIT_MATH_DELIMITED =
   /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
 
-/** Canonicalize already-explicit \(...\) / \[...\] math to $...$ / $$...$$. */
+/** Canonicalizes already-delimited LaTeX math to dollar delimiters. */
 function canonicalizeExplicitMathDelimiters(text: string): string {
   if (!text.includes('\\(') && !text.includes('\\[')) return text;
   return text.replace(
@@ -148,10 +112,8 @@ function canonicalizeExplicitMathDelimiters(text: string): string {
 }
 
 /**
- * YUK-227 S3 Slice A — walk the VLM node tree, assign cuid ids, and collect
- * figure_ids → question_id assignments into `assignmentsOut`. The collector is
- * mutated in place so callers don't need to thread a return value through the
- * recursive walk.
+ * Walks the VLM tree, assigns ids, and collects figure assignments into
+ * `assignmentsOut` so the recursive walk needs no return value.
  */
 function nodeToStructured(
   node: StructureNodeT,
@@ -179,18 +141,14 @@ function nodeToStructured(
   if (node.answers && node.answers.length > 0) out.answers = node.answers;
   if (node.analysis) out.analysis = node.analysis;
   if (subs && subs.length > 0) out.sub_questions = subs;
-  // YUK-227 S3 Slice A (P1 fix): copy VLM page_index to the output so
-  // q.page_index in the handler is non-null on the VLM path and
-  // isAllPlaceholderPageIndex can distinguish VLM (real values) from
-  // Tencent fallback (all page 0 via ??0 placeholder).
+  // Copy page_index so the handler can distinguish VLM pages from the Tencent
+  // fallback's placeholder 0.
   if (node.page_index != null) out.page_index = node.page_index;
 
-  // Preserve explicit clean-pixel evidence for prospective public figures.
-  // Omitted/null remains unknown; true remains private student-work evidence.
+  // Omitted stays unknown; true means private student-work evidence.
   if (node.student_answer_present != null) out.student_answer_present = node.student_answer_present;
 
-  // Keep every figure_ids claim with its generated structured id. The attachment
-  // consumer withholds conflicting claims instead of inventing another owner.
+  // Keep each claim with its generated id; conflicting claims are withheld later.
   if (assignmentsOut && node.figure_ids && node.figure_ids.length > 0) {
     for (const figIdx of node.figure_ids) {
       assignmentsOut.push({
@@ -220,12 +178,8 @@ export type RunStructureTaskParams = {
   /** Number of pages (so the VLM knows the page count). */
   pageCount: number;
   /**
-   * YUK-227 S3 Slice A — minimal per-figure info fed to the VLM so it can
-   * self-report figure↔question assignments via figure_ids on StructureNode.
-   * Index, page_index, position and bbox identify the crop (image bytes are already
-   * present in the page images array). The bbox distinguishes crops within the
-   * same 3×3 position label.
-   * Absent = no figures to assign.
+   * Minimal figure metadata for VLM self-assignment. The bbox distinguishes crops
+   * sharing a 3×3 position label; image bytes are already in the page images.
    */
   preFigures?: Array<{
     index: number;
@@ -242,10 +196,8 @@ export type RunStructureTaskParams = {
 };
 
 /**
- * Runs the VLM StructureTask. Returns a normalized question tree (ids assigned)
- * shaped for `Ingestion.applyExtractionResult`. Throws `StructureTaskError` on
- * provider failure / unparseable output / zero questions so the handler can fall
- * back to the Tencent structure.
+ * Returns an id-assigned tree for applyExtractionResult. Throws StructureTaskError
+ * so the handler can fall back to OCR structure.
  */
 export async function runStructureTask(params: RunStructureTaskParams): Promise<StructureResult> {
   if (params.pageImages.length === 0) {
@@ -253,14 +205,10 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   }
 
   const textPayload = JSON.stringify({
-    // YUK-1408 — the OCR text hint is deterministically redacted before it
-    // reaches the VLM (personal identifiers are never needed for structuring).
-    // The page images stay raw: they are the extraction input itself.
+    // Redact the text hint; page images stay raw because they are the input itself.
     tencent_hint_md: redactIngestionText(params.tencentHintMd).text,
     page_count: params.pageCount,
-    // YUK-227 S3 Slice A: pass minimal figure metadata so the VLM can self-report
-    // figure↔question assignments via figure_ids on StructureNode. Coordinates
-    // identify the exact crop; the image bytes are already in pageImages.
+    // Coordinates identify the exact crop for figure_ids self-assignment.
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
 
@@ -294,8 +242,7 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     throw new StructureTaskError('StructureTask returned 0 questions');
   }
 
-  // YUK-227 S3 Slice A: collect figure assignments while mapping nodes.
-  // Only populate the collector when preFigures were supplied (no-op otherwise).
+  // Collect assignments while mapping; no-op without preFigures.
   const assignmentsOut: FigureAssignment[] | undefined =
     params.preFigures && params.preFigures.length > 0 ? [] : undefined;
   const questions = parsed.questions.map((node) => nodeToStructured(node, assignmentsOut));

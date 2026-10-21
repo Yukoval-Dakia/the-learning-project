@@ -76,10 +76,10 @@ export const COACH_CONTEXT_BUDGET: ContextBudget = {
   maxProposals: 5,
 };
 
-// §3.1 — keying budgets by DomainToolSurface is the natural fit. A fourth
-// surface (maintenance) and the knowledge_review / chip surfaces fall back to a
-// generous default until they need an explicit budget. The chip surface shares
-// the Copilot budget because it runs the same user-facing CopilotTask path.
+// §3.1 — keying budgets by DomainToolSurface is the natural fit. The
+// knowledge_review / chip / ingestion surfaces fall back to a generous default
+// until they need an explicit budget. The chip surface shares the Copilot
+// budget because it runs the same user-facing CopilotTask path.
 const GENERIC_CONTEXT_BUDGET: ContextBudget = {
   toolCalls: { warning: 12, hard: 36 },
   nodesPlusEdges: { warning: 250, hard: 1000 },
@@ -93,7 +93,6 @@ export const BUDGETS_BY_SURFACE: Record<DomainToolSurface, ContextBudget> = {
   dreaming: DREAMING_CONTEXT_BUDGET,
   coach: COACH_CONTEXT_BUDGET,
   knowledge_review: GENERIC_CONTEXT_BUDGET,
-  maintenance: GENERIC_CONTEXT_BUDGET,
   // YUK-195 — question structure-correction surface falls back to the generic
   // budget until it needs an explicit one (no read-heavy fan-out; the 6 write
   // tools are local DB mutations).

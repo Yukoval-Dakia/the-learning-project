@@ -1,21 +1,21 @@
 // ====================================================================
-// YUK-1056 — cutover 队列/订阅处置常量（grounding §14 manifest 口径）
+// cutover 队列/订阅处置常量（grounding §14 manifest 口径）
 // ====================================================================
 //
 // 本模块是【策略常量】，无 IO：切换前 final backup manifest 把「每条 pgboss
 // 队列在 cutover 如何处置 + 27 条 DLQ tombstone 的处置决定 + 订阅 outstanding
 // delivery 翻译语义」作为结构化数据封存。事实来源：
-//   - YUK-1042 census：docs/audit/2026-09-25-yuk1042-pgboss-dlq-census.md
+//   - census：docs/audit/2026-09-25-yuk1042-pgboss-dlq-census.md
 //     （27 DLQ 行全部逐类盘点；worker 启动自清；group A 8 条 add_started 待 owner）。
-//   - YUK-1055 启动 fences：src/server/contract-epoch/{rules,jobs,boss-fence}.ts
+//   - 启动 fences：src/server/contract-epoch/{rules,jobs,boss-fence}.ts
 //     （drain/translate/fenced 运行期裁决 + epoch guard）。
-//   - YUK-1055 订阅翻译：src/server/event-subscriptions/runtime.ts
+//   - 订阅翻译：src/server/event-subscriptions/runtime.ts
 //     bootstrapSubscription —— 版本 bump 时 outstanding delivery 按 stable
 //     source_event_id 翻译，不盲标 bootstrap_skipped、不盲 replay。
 //
 // 诚实化：census 计数是【观测值快照】（导出时对账，漂移即不符）；disposition
 // 是【已落位策略】；'owner_decision_required' 的行【不做】生产恢复动作 ——
-// 本 lane 只登记策略与依据，执行归 owner。
+// 此处只登记策略与依据，执行归 owner。
 
 export const DLQ_DISPOSITION_POLICY_VERSION = '2026-09-25-yuk1042' as const;
 
@@ -29,7 +29,7 @@ export type QueueDisposalKind =
   /** 队列无积压或有界 drain；cron/active 工作自然恢复，无需处置。 */
   | 'natural_drain';
 
-/** YUK-1042 census §4 处置表（逐 DLQ 组）。`census_rows` 为 2026-09-25 快照观测值。 */
+/** census §4 处置表（逐 DLQ 组）。`census_rows` 为 2026-09-25 快照观测值。 */
 export interface DlqDisposition {
   /** pgboss.job.name（DLQ 队列名，`*_dlq` 后缀）。 */
   queue: string;
@@ -126,7 +126,7 @@ export function dlqCensusTotal(): number {
 
 // ───────────────────── 非 DLQ 队列的 cutover 处置语义 ─────────────────────
 //
-// 运行期裁决归 YUK-1055 JOB_EPOCH_DISPOSITION（drain/translate/fenced），
+// 运行期裁决归 JOB_EPOCH_DISPOSITION（drain/translate/fenced），
 // 本表只把【策略语义】固化进 manifest —— 不复制分类表本体（单源在
 // src/server/contract-epoch/jobs.ts）。
 
@@ -141,7 +141,7 @@ export const CUTOVER_QUEUE_SEMANTICS = {
 // ───────────────────── 订阅 outstanding 处置 ─────────────────────
 
 export const SUBSCRIPTION_OUTSTANDING_POLICY = {
-  /** YUK-1055 runtime.ts bootstrapSubscription：版本 bump 时按 stable source_event_id 翻译 outstanding delivery —— 不盲标 bootstrap_skipped，不盲 replay 历史。 */
+  /** runtime.ts bootstrapSubscription：版本 bump 时按 stable source_event_id 翻译 outstanding delivery —— 不盲标 bootstrap_skipped，不盲 replay 历史。 */
   translation: 'translate_outstanding_stable_id',
   /** checkpoint status 词表（event_subscription_checkpoint.status 观测值）。 */
   checkpoint_statuses: ['active', 'bootstrap_skipped', 'stalled'] as const,

@@ -1,5 +1,5 @@
-// YUK-1007 — ingestion 拥有键的 consumer-effective 事实（真实 reader 调用，
-// 不复述 clamp 规则）。经 ingestion/public.ts 透出给组合根 facts seam。
+// Consumer-effective facts for ingestion-owned config keys, read through the real
+// readers rather than restating clamp rules. Exposed via ingestion/public.ts.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { autoEnrollThreshold } from './workflow-judge-config';
 

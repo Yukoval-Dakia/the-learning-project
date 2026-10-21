@@ -2,7 +2,7 @@ import { sha256Hex } from './canonical';
 import type { MigrationCapture, RawEventRow } from './types';
 
 // ====================================================================
-// YUK-1048 — 捕获脱敏（grounding §14；review 终轮 P1-4：默认拒绝）
+// 捕获脱敏（grounding §14；默认拒绝）
 // ====================================================================
 //
 // 完整 event 分区捕获带进了全部事件家族（copilot 对话、record capture、
@@ -141,7 +141,7 @@ function redactText(value: string): RedactedText {
 /**
  * 深度默认拒绝脱敏：递归遍历对象；safe subtree 键整棵保留；字符串值仅当
  * 键 ∈ SAFE_STRING_KEYS 时保留，否则替换为占位。数组逐元素递归并把父属性键
- * 下传 —— 标量元素按父键策略判定（YUK-1098：warnings/failure_reasons 这类
+ * 下传 —— 标量元素按父键策略判定（warnings/failure_reasons 这类
  * 自由文本 string[] 必须被脱敏，safe 键的 id/枚举 string[] 仍整体保留）；
  * 对象元素按自身键判定。返回新结构，输入不可变。
  */

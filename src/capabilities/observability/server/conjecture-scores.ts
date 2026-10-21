@@ -1,36 +1,13 @@
-// conjecture-wire #13 (YUK-538 ⑬ / spec §6 S4 + §10 A4 fix) — admin reader for the
-// conjecture calibration loop. READ-ONLY.
+// Read-only admin reader for conjecture calibration.
 //
-// A4 (「reader before producer」红线真守): this reader is DELIBERATELY built ahead of its
-// producer. Read (a) is live; read (b) is NOT — see the ADR-0050 correction below.
+// (a) prediction_score events are live: one single-point proper score per probe, never
+// an "accuracy" or a window mean.
+// (b) confused-with-X typed states are pending energization: no writer can produce one
+// yet, because the only caller hardcodes a null second KC and the gate requires a named
+// one. Keep the query and describe the panel as pending, not auto-minted or impossible.
 //
-// TWO READS (A4):
-//   (a) prediction_score events — calibration/accountability facts (brier / log_loss /
-//       skill_score_point single-point, NOT a window mean; never «accuracy»). LIVE: the
-//       reconcile loop appends one per scored probe and YUK-795's nightly ranker consumes
-//       correction-aware score streaks.
-//   (b) kc_typed_state WHERE typed_state='confused-with-X' — the structural soft-track cell.
-//       **RAIL PENDING ENERGIZATION (YUK-794) — read (b) returns the empty set until it lands.**
-//
-// ADR-0050 §(a) correction (YUK-790). An earlier version of this header claimed the reconcile
-// loop "AUTO-MINTS" confused-with-X rows on every confirmed probe. That is reverse-drift: it
-// describes a future state as if it were current. Today `reconcileConjecturePredictions()`
-// (reconcile.ts — the ONLY production caller of the single-writer `upsertKcTypedState`)
-// hardcodes `confused_with_kc_id: null`, the §修正-4 gate (`nextTypedState()` in typed-state.ts)
-// requires a NAMED confused-with KC before it will emit `confused-with-X`, and the induction
-// schema (`ConjectureProposalChange`) carries no such field at all — so no writer can produce
-// the row and this half of the panel is empty.
-//
-// Owner ruled 2026-07-25: ENERGIZE it (execution = YUK-794 — extend the proposal schema, have
-// induction name the second KC, validate it, only then relax the null). Do NOT relax the gate
-// instead: requiring a named KC is the point. Until YUK-794 lands, keep the query and keep the
-// copy at "pending", never "auto-minted" (a future tense written as present) and never
-// "structurally impossible" (now the wrong direction).
-//
-// Honesty: score values render as their canonical names (brier_model / brier_baseline /
-// log_loss_model / skill_score_point). skill_score_point is a SINGLE-POINT proper score
-// (scoring.ts), NOT the Rust-deferred window mean (ADR-0046) — the response declares this
-// in `score_basis: 'single_point'` so no consumer mistakes it for a window-calibrated score.
+// The response declares score_basis single_point so consumers cannot mistake it for a
+// window-calibrated score.
 
 import { and, desc, eq } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
@@ -38,7 +15,7 @@ import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjectur
 import type { Db, Tx } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 
-/** One calibration/accountability score row (mapped from prediction_score). */
+/** One mapped prediction_score row. */
 export interface ConjecturePredictionScoreRow {
   event_id: string;
   conjecture_event_id: string;
@@ -56,10 +33,7 @@ export interface ConjecturePredictionScoreRow {
   created_at: string;
 }
 
-/**
- * One soft-track typed-state row. Not yet produced — no writer emits `confused-with-X` until
- * YUK-794 energizes the rail (ADR-0050 §(a)); this shape is the contract that producer must meet.
- */
+/** Contract for the not-yet-produced confused-with-X row. */
 export interface ConjectureTypedStateRow {
   id: string;
   knowledge_id: string;
@@ -72,7 +46,7 @@ export interface ConjectureTypedStateRow {
 }
 
 export interface ConjectureScoresRead {
-  /** Honest score basis declaration — single_point proper score (scoring.ts), NOT a window mean. */
+  /** Single-point proper score, not a window mean. */
   score_basis: 'single_point';
   prediction_scores: ConjecturePredictionScoreRow[];
   typed_states: ConjectureTypedStateRow[];
@@ -83,22 +57,16 @@ export interface ConjectureScoresRead {
 }
 
 export interface ConjectureScanDiagnostics {
-  /** Raw matching rows actually passed through the fail-closed mapper. */
   scanned_count: number;
-  /**
-   * Scanned rows rejected by the mapper, including malformed score payloads and
-   * scores whose source probe evidence was later invalidated. Unscanned older
-   * rows are not counted.
-   */
+  /** Malformed rows plus scores whose source probe was corrected or inactive. */
   dropped_count: number;
-  /** True when older matching rows exist but the result/scan bound stopped inspection. */
+  /** Older matching rows exist beyond the scan bound. */
   scan_truncated: boolean;
 }
 
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const ADMIN_RESULT_LIMIT = 200;
-// Invalid rows fail closed after selection. Bounded over-fetch keeps a small corrupt tail from
-// crowding valid diagnostics out of the response without returning to an unbounded table scan.
+// Bounded over-fetch so a small corrupt tail does not crowd out valid rows.
 const ADMIN_SCAN_LIMIT = ADMIN_RESULT_LIMIT * 2;
 
 type OptionalNumber = { ok: true; value: number | null } | { ok: false };
@@ -125,8 +93,7 @@ function extractProbeResultEventId(row: typeof event.$inferSelect): string | und
 function rowToScore(r: typeof event.$inferSelect): ConjecturePredictionScoreRow | null {
   const p = r.payload as Record<string, unknown> | null;
   if (!p) return null;
-  // Fail-closed per field: a prediction_score with a missing/invalid load-bearing value
-  // is dropped (never partially rendered) — mirrors hard-confirm.ts predictionScoreToRecord.
+  // Fail closed per field; never render a partially valid score.
   const predicted_p = p.predicted_p;
   const baseline_p = p.baseline_p;
   const outcome = p.outcome;
@@ -198,8 +165,7 @@ function collectBoundedRows<Raw, Mapped>(
   rowsWithSentinel: readonly Raw[],
   map: (row: Raw) => Mapped | null,
 ): { rows: Mapped[]; diagnostics: ConjectureScanDiagnostics } {
-  // The query fetches one sentinel beyond the hard scan window solely to distinguish exactly-N rows
-  // from a genuinely truncated backlog. The sentinel is never mapped and is not counted as scanned.
+  // One sentinel past the window distinguishes exactly N from a truncated backlog.
   const scanWindow = rowsWithSentinel.slice(0, ADMIN_SCAN_LIMIT);
   const rows: Mapped[] = [];
   let scanned_count = 0;
@@ -223,10 +189,8 @@ function collectBoundedRows<Raw, Mapped>(
 }
 
 /**
- * READ-ONLY admin reader. Two queries (A4): prediction_score events (LOG anchors, LIVE) +
- * kc_typed_state confused-with-X rows (soft-track cell — rail pending energization, so this
- * query returns zero rows until YUK-794 lands; ADR-0050 §(a)). Never writes. Never flips flags.
- * Never touches FSRS/θ̂ (ND-5).
+ * Two read-only queries: live prediction scores and the still-empty confused-with-X
+ * rows. Never writes, flips flags, or touches scheduling or mastery.
  */
 export async function loadConjectureScores(db: Db | Tx): Promise<ConjectureScoresRead> {
   const scoreRows = await db

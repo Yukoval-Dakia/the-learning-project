@@ -28,7 +28,7 @@ export async function withFrozenPaperReopen<T>(
             .where(eq(artifact.id, before.artifact_id))
         : [];
     const isPaper = paper?.type === 'tool_quiz' && isPaperIntentSource(paper.intent_source);
-    // YUK-1573 — read-only refusal before the transition writes the session row.
+    // read-only refusal before the transition writes the session row.
     if (reopens && isPaper && before?.artifact_id) {
       await assertPaperOpenable(tx, before.artifact_id);
     }

@@ -28,8 +28,7 @@ function jsonRequest(path: string, body: unknown): Request {
 
 async function executeLegacyOperation(
   sessionId: string,
-  // 'agent' is dispatched in the POST handler itself (YUK-1522 R8) — it never
-  // reaches this legacy adapter.
+  // 'agent' is dispatched in the POST handler and never reaches this adapter.
   request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' | 'agent' }>,
 ): Promise<Response> {
   switch (request.kind) {
@@ -98,9 +97,8 @@ export function buildIngestionOperationHandler(
       }
 
       if (parsed.data.kind === 'agent') {
-        // YUK-1522 (R8) — 'agent' is dispatched inline in the POST handler and
-        // has no legacy adapter; a job row for it can only be a stale/foreign
-        // payload, so record honest failure instead of a silent drop.
+        // 'agent' has no legacy adapter; such a job can only be stale or foreign,
+        // so record an honest failure instead of dropping it.
         await writeIngestionOperationEvent(db, {
           operationId,
           eventType: 'operation.failed',

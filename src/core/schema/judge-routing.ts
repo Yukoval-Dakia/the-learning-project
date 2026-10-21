@@ -1,7 +1,7 @@
 // Shared judge-route inference for AI-generated questions.
 //
-// Extracted from src/server/boss/handlers/embedded_check_generate.ts (Q1 of the
-// search-grounded QuizGen wave, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
+// Extracted from src/server/boss/handlers/embedded_check_generate.ts
+// (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
 // §2 / §5). Both EmbeddedCheckGenerate and QuizGen (and any future generator)
 // need the same default judge_kind for a freshly generated question, so the
 // routing rule lives here in core/ (cross-subject, no IO) rather than being
@@ -11,7 +11,7 @@
 // generated-question shape that carries those fields can be routed without
 // importing the per-handler Zod schema.
 //
-// YUK-391 (kind Step 4) — the default route is a pure read of the answer-class
+// The default route is a pure read of the answer-class
 // axis (core/schema/answer-class.ts, the single source of truth). This is the
 // PROFILE-FREE generation twin of route-resolve.ts
 // (resolveQuestionJudgeRoute); the two must stay behavior-synced — pinned by
@@ -20,13 +20,13 @@ import type { z } from 'zod';
 import { deriveAnswerClass } from './answer-class';
 import type { JudgeKind, QuestionKind, Rubric } from './business';
 
-// YUK-386 — question.kind is a free-form display label; QuestionKindT is
+// question.kind is a free-form display label; QuestionKindT is
 // `string` (kept as an alias for source-compatible imports). No reader below
 // treats the label as a closed-set authority.
 export type QuestionKindT = z.infer<typeof QuestionKind>;
 export type JudgeKindT = z.infer<typeof JudgeKind>;
 
-// nonEmptyStrings moved to answer-class.ts (YUK-391) so judge-routing can import
+// nonEmptyStrings moved to answer-class.ts so judge-routing can import
 // deriveAnswerClass without an import cycle; re-exported here to keep this
 // module's public surface stable for its existing consumers.
 export { nonEmptyStrings } from './answer-class';
@@ -38,7 +38,7 @@ export interface JudgeRoutableQuestion {
   rubric_json?: z.infer<typeof Rubric> | null;
 }
 
-// YUK-1003 — web-sourced reference_md stores several producer conventions:
+// web-sourced reference_md stores several producer conventions:
 //   "（C）选项原文\n\n解析：…"          (jyeoo parenthesized head)
 //   "C.0.432\n\n解析：…" / "B．0.4\n\n【详解】…"
 //   "**C. 0.950**\n\n解析：…"          (markdown emphasis wrapper)
@@ -54,7 +54,7 @@ const EXPLANATION_TAIL_RE =
   /\n+\s*(?:【\s*(?:解析|详解|解答|分析|点评|点拨|答案解析)\s*】|\**\s*(?:解析|详解|解答|证明|分析|点评|点拨)\s*[：:])/;
 const LEADING_ANSWER_MARKER_RE = /^(?:答案|答|解)\s*[：:．.]\s*/;
 
-// YUK-1224 (SCF-141) — trailing-junk stripping, shared by both head-extraction
+// Trailing-junk stripping, shared by both head-extraction
 // branches. This replaced a single end-anchored regex
 //   /(?:[\s。．.，,；;：:、*]|\s*[（(]\s*(?:选项|正确答案)\s*[A-Z]{0,4}\s*[)）]?)+$/
 // whose outer `+` overlapped on whitespace (the bare `\s` alternative vs. the
@@ -165,11 +165,11 @@ const SOLUTION_BLOB_RE = /解析|详解|解答|证明|【解|【答/;
 const MAX_EXACT_HEAD_LEN = 300;
 
 // ====================================================================
-// YUK-1407 — 过程作答的【终态答案】提取（确定性、保守、绝不"最后数字获胜"）
+// 过程作答的【终态答案】提取（确定性、保守、绝不"最后数字获胜"）
 // ====================================================================
 //
 // 主解答槽的学习者文本可以是完整推导（"…q=-2，S5=11"）。整段做答案头比较
-// 必然 miss —— 这是 R02 误 0 的机制。本提取器只认【明示终态结论】：
+// 必然 miss —— 这是过程作答被误判 0 分的机制。本提取器只认【明示终态结论】：
 //   1. 结论标记行/从句：答 / 答案 / 最终答案 / 综上 / 所以 / 因此 / 故 / 即 / ∴；
 //   2. 完整末句 `identifier = value`，或肯定结果词引出的完整句末赋值从句。
 // 多个相互矛盾的明示结论 ⇒ 'ambiguous'（交人工/语义复核，绝不猜）；
@@ -403,7 +403,7 @@ export function defaultJudgeKindForQuestion(q: JudgeRoutableQuestion): JudgeKind
       return 'exact';
     case 'keyword':
       return 'keyword';
-    // M2.1 (2026-05-22): derivation must NEVER fall through to exact — step-by-step
+    // derivation must NEVER fall through to exact — step-by-step
     // answers cannot be graded by string equality. Generated derivation runs through
     // semantic (required_points-driven); the 'steps' route is reserved for
     // first-class math questions with reference_solution shape (see
@@ -412,7 +412,7 @@ export function defaultJudgeKindForQuestion(q: JudgeRoutableQuestion): JudgeKind
     case 'steps':
       return 'semantic';
     case 'semantic':
-      // Prose + keyword-less computation + every free-form label (YUK-386) →
+      // Prose + keyword-less computation + every free-form label →
       // semantic. The retired closed-enum fallback sent non-enum kinds to
       // 'exact'; under free-form labels that cell is removed — 'semantic' is
       // the conservative model-backed default for any label the classifier

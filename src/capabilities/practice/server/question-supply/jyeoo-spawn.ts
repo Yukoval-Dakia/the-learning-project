@@ -1,7 +1,6 @@
-// YUK-697 — bounded jyeoo-rs subprocess I/O.
-//
+// bounded jyeoo-rs subprocess I/O.
 // The producer is spawned as a subprocess whose stdout is NDJSON (one envelope/line)
-// and whose logs go to stderr (DESIGN §2: "stdout 只出数据，一切日志走 stderr"). This
+// and whose logs go to stderr (DESIGN: "stdout 只出数据，一切日志走 stderr"). This
 // module owns the SAFETY envelope around that spawn: a wall-clock timeout that KILLS a
 // wedged producer, and byte caps on stdout/stderr so a runaway producer can never
 // exhaust worker memory. It returns raw lines + the exit disposition; parsing +
@@ -68,7 +67,7 @@ class BoundedByteSink {
 
 // Truncate a Buffer to at most `maxBytes`, rolling the cut point back so it never lands
 // inside a multibyte UTF-8 sequence (a continuation byte is 0b10xxxxxx = 0x80..0xBF). This
-// is the real fix the bot's suggested `subarray(0, n).toString()` does NOT provide — that
+// is the real fix the bot's suggested `subarray(0, n).toString` does NOT provide — that
 // re-decode still yields U+FFFD when the cut splits a char.
 export function sliceToCharBoundary(buf: Buffer, maxBytes: number): Buffer {
   let end = Math.min(maxBytes, buf.length);

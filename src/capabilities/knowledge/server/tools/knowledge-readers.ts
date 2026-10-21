@@ -1,32 +1,21 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
-// YUK-102 / Foundation D M2
-//
-// Knowledge graph read tools. These keep graph traversal on the server side so
-// Copilot / Dreaming callers receive bounded, named context instead of raw SQL
-// row dumps.
+
+// Knowledge graph read tools. Traversal stays server-side so callers get bounded,
+// named context instead of raw rows.
 
 import { and, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-// P5.4 §5-Q5 / YUK-175 — single source of truth for the recent-failure /
-// evidence window. Reusing the rubric validator's constant keeps the readers'
-// "recent failure" window aligned with the rubric's §4.2 evidence window (no
-// import cycle: rubric-validator does not import this module).
+// Share the rubric's evidence window so readers and validation cannot drift.
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge, knowledge_mastery } from '@/db/schema';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
-// P5.1 / YUK-143 — excerpt cap + courtesy defaults sourced from the single
-// budgets.ts source of truth. KNOWLEDGE_EXCERPT_MAX is 180 (byte-unchanged from
-// the prior file-local TEXT_SNIPPET_MAX); the courtesy defaults below are the
-// tools' CURRENT defaults, just named centrally.
 import { KNOWLEDGE_EXCERPT_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_SNIPPET_MAX = KNOWLEDGE_EXCERPT_MAX;
 const MAX_NODES = 60;
 const QUERY_FAILURE_LIMIT = 10;
-// Exported so tests can assert the window is sourced from the single rubric
-// constant (no hardcoded 30) — see propose_edge.test.ts window-merge case.
 export const RECENT_FAILURE_WINDOW_MS = RUBRIC_EVIDENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 type KnowledgeRow = {
@@ -34,11 +23,7 @@ type KnowledgeRow = {
   name: string;
   domain: string | null;
   parent_id: string | null;
-  // YUK-270 — per-node optimistic-concurrency version. Surfaced on the Copilot
-  // graph readers so the agent can pass expected_version / expected_versions to
-  // propose_knowledge_mutation (reparent/merge/split/archive); accept hard-fails
-  // the stale-version guard (knowledge/proposals.ts) on any mismatch, so omitting
-  // or guessing it makes the structural-mutation surface unusable.
+  // Optimistic-concurrency version, needed for every structural mutation proposal.
   version: number;
 };
 
@@ -142,12 +127,8 @@ async function loadMasteryMap(
   ids: string[],
 ): Promise<Map<string, { mastery: number | null; last_active_at: string | null }>> {
   if (ids.length === 0) return new Map();
-  // B1 double-truth fix — `mastery` now comes from the SoT mastery_state.theta_hat
-  // projection (getMasteryProjection → σ(θ̂)), NOT the deprecated knowledge_mastery
-  // view's weighted-success-rate + `evidence_count < 3 → 0.5` placeholder.
-  // `last_active_at` is an orthogonal "last touched by ANY event" timeline value
-  // (not just attempts) — it is NOT the double-truth bug, so it still reads the
-  // view's last_active_at (COALESCE(any-event, knowledge.created_at)).
+  // Mastery comes from the source-of-truth projection; last_active_at is a separate
+  // any-event timeline and still reads the view.
   const [projection, activityRows] = await Promise.all([
     getMasteryProjection(db, ids),
     db
@@ -384,8 +365,6 @@ const QueryKnowledgeOutputSchema = z.object({
       path: z.array(z.string()),
       children_count: z.number().int(),
       edge_count: z.number().int(),
-      // YUK-270 — per-node optimistic-concurrency version. Pass this back as
-      // expected_version / expected_versions on propose_knowledge_mutation.
       version: z.number().int(),
       stats: z
         .object({
@@ -436,12 +415,8 @@ async function executeQueryKnowledge(
       },
     ]);
   }
-  // P5.1 / YUK-143 — courtesy default (10) centralized in budgets.ts;
-  // byte-unchanged from the prior inline literal.
   const limit = input.limit ?? TOOL_COURTESY_DEFAULTS.query_knowledge;
-  // [] is a common model spelling for "no relation filter". Canonicalize it
-  // to the same typed output as omission instead of claiming that an empty
-  // requested set somehow returned every relation.
+  // [] is the model's spelling for "no filter"; treat it like omission.
   const relationTypes = input.relationTypes?.length ? input.relationTypes : undefined;
   const rows = await loadKnowledgeRows(ctx.db, input.subjectId);
   const byId = nodeMap(rows);
@@ -618,8 +593,6 @@ const ExpandOutputSchema = z.object({
       name: z.string(),
       path: z.array(z.string()),
       role: z.enum(['ancestor', 'child', 'neighbor', 'center']),
-      // YUK-270 — per-node version for propose_knowledge_mutation. merge/split
-      // need every involved node's expected_versions, so expose it on each node.
       version: z.number().int(),
     }),
   ),
@@ -649,8 +622,6 @@ type ExpandOutput = z.infer<typeof ExpandOutputSchema>;
 
 async function executeExpand(ctx: ToolContext, raw: ExpandInput): Promise<ExpandOutput> {
   const input = ExpandInputSchema.parse(raw);
-  // P5.1 / YUK-143 — courtesy default (30) centralized in budgets.ts;
-  // byte-unchanged from the prior inline literal.
   const maxNodes = input.maxNodes ?? TOOL_COURTESY_DEFAULTS.expand_knowledge_subgraph;
   const allRows = await loadKnowledgeRows(ctx.db);
   const byId = nodeMap(allRows);

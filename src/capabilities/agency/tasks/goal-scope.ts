@@ -1,11 +1,8 @@
-// YUK-879 — GoalScopeTask contract, owned by the agency capability
-// (YUK-143 / ADR-0024 lineage). Output schema + strict parser + profile prompt
-// live here; ../server/goals/scope keeps the knowledge-grid snapshot, id-subset
-// filter, and goal_scope proposal write. Prompt text is byte-identical to the
-// former central quarry entry.
+// GoalScopeTask contract: output schema + strict parser + profile prompt.
+// ../server/goals/scope owns the knowledge-grid snapshot, id-subset filter and
+// goal_scope proposal write.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';

@@ -3,7 +3,7 @@ import {
   markCopilotSessionContextDelivered,
 } from './live-session-context';
 
-/** An optimization only: evicted/foreign conversations rebuild from durable history. */
+/** An optimization only: evicted or foreign conversations rebuild from durable history. */
 const ownedSessions = new Map<string, string>();
 const MAX_OWNED_CONVERSATIONS = 256;
 

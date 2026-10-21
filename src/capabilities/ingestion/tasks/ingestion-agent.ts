@@ -2,14 +2,11 @@ import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import type { SubjectProfile } from '@/subjects/profile';
 
-// YUK-1522 (R8) — IngestionAgentTask: one durable agent run per ingestion
-// session over the WHOLE source package (pages, figures, docx text). The model
-// drives the shared source-package tools for reading/media and the unified
-// draft lane (edit_question → compose_presentation → submit_question) for
-// writes, plus the two R8 tools for contract progress and durable asks.
-// Prompt text lives in the spec; per-run context (document id, package
-// manifest, resume ledger) arrives as the user-message JSON input built by
-// server/agent/run.ts.
+// IngestionAgentTask: one durable run per session over the whole source package.
+// The model uses shared source/media tools to read, the draft lane
+// (edit_question → compose_presentation → submit_question) to write, and the
+// contract tools for progress and durable asks. Prompt text is in the spec; run
+// context arrives as JSON input built by server/agent/run.ts.
 
 const AgentRunReport = z.object({
   outcome: z.enum(['done', 'awaiting_ask', 'blocked']).optional(),

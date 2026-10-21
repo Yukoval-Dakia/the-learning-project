@@ -48,7 +48,7 @@ export const PaperAssessmentBinding = z.object({
     }),
   ),
   /**
-   * YUK-1445 — slots the serving gate refused at open time (typed reason only;
+   * slots the serving gate refused at open time (typed reason only;
    * no issuance exists for them, so no issuance_id is recorded). Optional so
    * bindings written before this field existed still parse.
    */
@@ -138,7 +138,7 @@ async function resolvePaperSlotRevision(
 }
 
 /**
- * YUK-1573 — the whole-paper page draws answers only for WHOLE_PAPER_SLOT_KINDS. A paper
+ * the whole-paper page draws answers only for WHOLE_PAPER_SLOT_KINDS. A paper
  * with an issued answer slot outside that list is refused as a whole (open and hand-in):
  * the page would show no control and hand in an empty answer.
  */
@@ -153,7 +153,7 @@ function paperModeUnsupported(paperId: string, slot: ResponseSlotT) {
 /**
  * Read-only opening preflight, run before the session row or any issuance is written:
  * refuses when a slot the issuance gate would admit carries an answer slot the paper page
- * cannot render. Slots the gate withholds stay withheld (YUK-1445), so they do not refuse.
+ * cannot render. Slots the gate withholds stay withheld, so they do not refuse.
  */
 export async function assertPaperOpenable(tx: Tx, paperId: string): Promise<void> {
   const [paper] = await tx.select().from(artifact).where(eq(artifact.id, paperId));
@@ -270,7 +270,7 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
       now: session.started_at,
     });
     if (issued.status !== 'issued' && issued.status !== 'replayed') {
-      // YUK-1445 — a gate-refused slot is withheld individually so a mixed paper
+      // a gate-refused slot is withheld individually so a mixed paper
       // stays openable; every other failure (structural, lifecycle, claim) still
       // aborts the whole opening transaction.
       if (issued.status === 'not_admitted' && issued.serving_reason !== undefined) {
@@ -284,7 +284,7 @@ export async function issuePaperAssessment(tx: Tx, sessionId: string, paperId: s
       }
       throw new ApiError(issued.status, `paper slot issuance failed: ${issued.status}`, 409);
     }
-    // YUK-1573 backstop for a gate decision that changed after the preflight: throwing here
+    // backstop for a gate decision that changed after the preflight: throwing here
     // rolls back the whole opening transaction (session row and every issuance with it).
     const unrenderable = firstWholePaperUnrenderableSlot(
       revision.response_spec.slots,

@@ -1,11 +1,6 @@
 /**
- * Observability cross-capability ports.
- *
- * - YUK-1007: the admin config read face's runtime-facts injection seam. The
- *   composition root (server layer) aggregates server-side truth sources
- *   (provider registry, infra cron declarations, runtime constants) and each
- *   capability's consumer-effective facts, then injects the factory here.
- *   The config read face receives runtime facts through that factory.
+ * Observability cross-capability ports. The composition root gathers server-side
+ * truth sources and injects the config facts factory; the read face consumes it here.
  */
 
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';

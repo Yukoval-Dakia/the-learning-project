@@ -5,10 +5,9 @@ import { getR2 } from '@/server/r2';
 import { RescueBody } from './operation-schema';
 
 /**
- * POST /api/ingestion/[id]/rescue —— 手动 Vision Tier 2/3 救援。
- *
- * 同步返回 —— Vision 调用本身就快（haiku ~5s, sonnet ~15s），不走 pg-boss。
- * 用户在 review 页选哪个 block 救援 + tier；结果直接替换 block 内容。
+ * Manual Vision tier 2/3 rescue. It runs synchronously because the call is fast
+ * (seconds), not through pg-boss. The user picks the block and tier; the result
+ * replaces the block content.
  */
 async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {
   try {

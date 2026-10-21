@@ -1,16 +1,8 @@
-// YUK-214 (Strategy D · S1) — ingest→practice bridge.
+// Ingest → practice bridge.
 //
-// import (existing) writes N×question + N×event + N×learning_record but NEVER a
-// tool_quiz artifact, so an imported paper's questions exist yet /practice can't
-// see them as "a takeable paper" (the structural break, plan §1.1). This module
-// is the ONE new write path: read a session's imported questions → build a
-// tool_quiz artifact (each question = one section assignment) → INSERT it. The
-// consumer side (readPaperSections / resolveSlotAssignment / getPracticeList /
-// submitPaperSlot) is UNCHANGED — it already supports tool_state.sections[].
-//
-// Form (b) — OWNER-FORK §13: a paper is built only on an explicit make-paper
-// request (POST /api/ingestion/[id]/make-paper), never auto-built at import
-// commit, so the owner decides which imported papers become takeable.
+// Import writes questions but no tool_quiz artifact, so /practice cannot see the
+// paper. This module builds that artifact on an explicit make-paper request; it is
+// never auto-built at import, so the owner chooses which papers become takeable.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
@@ -35,15 +27,9 @@ export interface BuildIngestionPaperParams {
 export const INGESTION_PAPER_INTENT_SOURCE = 'ingestion_paper' as const;
 
 /**
- * Build the tool_quiz `tool_state` for an imported paper (§3.2). Pure: question
- * rows in input order → one section, one assignment per question, FSRS keyed on
- * each question's primary knowledge (knowledge_ids[0]). feedback_policy is
- * 'immediate' so an imported paper's judgements are immediately visible.
- *
- * Throws on an empty question set (no empty papers) or a question with no
- * knowledge_ids (primary_knowledge_id would be undefined — the invariant
- * import/route enforces via knowledge_ids.min(1), re-asserted here so the builder
- * is safe standalone). Passes the ToolState Zod barrier before returning (RL4).
+ * Builds tool_state for an imported paper: one section, one assignment per question,
+ * FSRS keyed on knowledge_ids[0], immediate feedback. Throws on an empty paper or a
+ * question without knowledge ids, and validates through the ToolState schema.
  */
 export function buildIngestionPaperToolState(
   questions: IngestionPaperQuestion[],
@@ -63,8 +49,7 @@ export function buildIngestionPaperToolState(
     for (const k of q.knowledge_ids) knowledgeFocus.add(k);
     return {
       question_id: q.id,
-      // part_ref omitted: ingested questions are atomic (no StructuredQuestion
-      // sub-node slot), so the whole question is one slot.
+      // Ingested questions are atomic, so the whole question is one slot.
       primary_knowledge_id: q.knowledge_ids[0],
       secondary_knowledge_ids: q.knowledge_ids.slice(1),
       selection_reason: 'ingested_paper',
@@ -72,8 +57,7 @@ export function buildIngestionPaperToolState(
     };
   });
 
-  // Zod barrier (RL4): tool_state is jsonb, opaque to audit:schema; the parse is
-  // the load-bearing guard (same discipline as write_review_plan).
+  // tool_state is opaque jsonb to audit:schema, so this parse is the guard.
   return ToolState.parse({
     question_ids: questions.map((q) => q.id),
     sections: [
@@ -95,11 +79,7 @@ export function buildIngestionPaperToolState(
 
 export interface CreateIngestionPaperParams {
   sessionId: string;
-  /**
-   * Explicit override of the questions to package (import returns these). When
-   * absent the writer reverse-queries question.metadata->>'ingestion_session_id'
-   * (§3.3) — more robust (independent of client state, replayable).
-   */
+  /** Explicit subset to package; absent means all of the session's questions. */
   questionIds?: string[];
 }
 
@@ -110,37 +90,18 @@ export interface CreateIngestionPaperResult {
 }
 
 /**
- * Create (or return the existing) imported-paper artifact for a session.
- *
- * Idempotent on sessionId: an advisory lock keyed on the session + a lookup for
- * an existing `intent_source='ingestion_paper' AND source_ref=session` artifact
- * means a double-click returns the same paper instead of duplicating it (mirrors
- * write_review_plan's per-run lock). The key is sessionId-only because the plan
- * keeps a fixed "one session, one paper" range (Cross-统合 F-7), so there is no
- * same-session multi-paper fork.
- *
- * F1 (PR #309 round-2, YUK-214) — that fixed range is the reason an explicit
- * `questionIds` subset must NOT silently reuse a paper built from a different
- * set. Pre-fix, a first call with `['q1']` then a second call with `['q2']`
- * returned the SAME (stale, q1-only) artifact, dropping the caller's new subset
- * on the floor. The chosen reconciliation (Cross-统合 F-7: one session = one
- * paper, do not re-package) is to reject with 409 when the existing paper's
- * question set differs from an EXPLICITLY-passed `questionIds` — the owner must
- * delete/rebuild rather than have one session silently fork into two ranges.
- * The default full-set path (no `questionIds`) stays purely idempotent: it never
- * specifies a set, so it can never conflict with the existing paper.
+ * Creates or returns the session's imported-paper artifact. The session lock plus
+ * the intent_source/source_ref lookup make a double-click idempotent. One session
+ * maps to one paper, so an explicit subset that differs from the stored set is a
+ * 409 rather than a silent stale reuse; the full-set path never conflicts.
  */
 export async function createIngestionPaper(
   db: Db,
   params: CreateIngestionPaperParams,
 ): Promise<CreateIngestionPaperResult> {
   const now = new Date();
-  // F3 (PR #309 round-3, YUK-214) — separate `undefined` from an explicit empty
-  // array. `undefined` (questionIds omitted) means "default full-set" → fall
-  // through to the reverse-query. An EXPLICIT empty array is an explicit empty
-  // selection (≠ select all) and must be rejected here, not silently treated as
-  // full-set. The route schema also rejects `[]` (defense in depth); this guard
-  // makes the service the authoritative boundary for any other caller.
+  // Omitted means the full set; an explicit empty array is a selection error, not
+  // select-all. This service is the boundary, with the route schema as a mirror.
   if (params.questionIds !== undefined && params.questionIds.length === 0) {
     throw new ApiError(
       'validation_error',
@@ -148,14 +109,8 @@ export async function createIngestionPaper(
       400,
     );
   }
-  // F2 (PR #309 round-4, YUK-214) — reject duplicate question_ids. Two assignments
-  // sharing a question_id collapse onto the same slot key (question_id::part_ref),
-  // which scrambles client per-slot state AND makes total_slots de-dupe (so the
-  // counts disagree with the assignment list). We REJECT rather than silently
-  // de-dupe — same semantic style as the explicit-empty-array guard above (F3
-  // round-3): an explicitly-malformed selection is a client error, and the service
-  // is the authoritative boundary (the route schema mirrors this as defense in
-  // depth). A caller that wants the de-duped set should pass it explicitly.
+  // Duplicate ids collapse onto one slot key, scrambling client state and making
+  // total_slots disagree with the assignment list. Reject; callers must dedupe.
   if (params.questionIds !== undefined) {
     const seen = new Set<string>();
     const duplicates = new Set<string>();
@@ -172,53 +127,18 @@ export async function createIngestionPaper(
     }
   }
   return db.transaction(async (tx: Tx) => {
-    // Serialise concurrent make-paper calls for the same session; auto-released
-    // at txn boundary (no UNIQUE index → no migration, same as write_review_plan).
+    // Serialize concurrent make-paper calls; the xact lock releases at commit.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ingestion_paper:${params.sessionId}`}, 0))`,
     );
 
-    // F4 (PR #309 round-3, YUK-214 / CodeRabbit) — resolve the question list with
-    // the SAME normalization the create branch uses (session-filter + preserve
-    // the caller's requested order, dropping ids that are not in this session)
-    // BEFORE the existing-paper check. The reuse-branch idempotency comparison
-    // must compare the existing paper's stored set against this NORMALIZED list,
-    // not the raw `params.questionIds`. Pre-fix it compared against the raw ids:
-    // a replay of the exact same request that happened to include a session-EXTERNAL
-    // id (filtered out at store time) compared `[q1]` (stored) vs `[q1, qExternal]`
-    // (raw) → false mismatch → self-409. Normalizing both sides makes the same
-    // request idempotent.
+    // Normalize the requested set (session filter, requested order) before the
+    // existing-paper check so a replay that names an external id stays idempotent.
     //
-    // Paper question order must be deterministic AND reconstruct the user's
-    // original paper sequence. `inArray` / a bare WHERE returns rows in an
-    // UNSPECIFIED order (Postgres is free to return them in any sequence), which
-    // silently scrambled the paper's slot order vs the user's original paper.
-    //   - explicit override: re-sort the fetched rows into params.questionIds
-    //     order (the caller's requested sequence is the source of truth).
-    //   - fall-through reverse-query: ORDER BY the SOURCE paper's block order.
-    //
-    // F3 (PR #309 round-2, YUK-214) — original-paper order key. Round-1 ordered
-    // by (question.created_at, question.id), but import writes the whole question
-    // batch with one shared `now` (import/route.ts:250 `const now = new Date()`),
-    // so question.created_at is constant within a session and `id` (cuid2) is
-    // UNORDERED — the result was deterministic-but-arbitrary, not the paper order.
-    //
-    // The order key lives on `question_block`: every imported question persists
-    // `metadata.question_block_id` (import/route.ts:407,421), and the block list's
-    // canonical display order is `ORDER BY question_block.ordinal` (the /blocks
-    // read path, src/capabilities/ingestion/api/blocks.ts — the read the user's
-    // on-screen paper order comes from). We join question → question_block on that
-    // id and order by (question_block.ordinal, question_block.id, question.id) —
-    // the same key /blocks uses — so the paper's slot sequence equals the on-screen
-    // block order.
-    //
-    // YUK-221 (was the F2 SEMANTIC BOUNDARY from PR #309 round-3) — `ordinal` is the
-    // true 0-based positional key, written from the extraction/import array index.
-    // It replaces the old `created_at` sort, which degenerated to the cuid2 id
-    // tiebreaker WITHIN a batch (applyExtractionResult stamps ONE `now` for the whole
-    // batch, so created_at could not carry intra-batch order). Historical rows were
-    // backfilled (drizzle/0068) to their prior on-screen order, so this is
-    // order-preserving for legacy papers and truly-ordered for new extractions.
+    // Paper order follows the source block order. inArray returns rows unordered,
+    // and question.created_at is identical across an import batch, so the stable key
+    // is question_block.ordinal (the same order /blocks displays), with block id and
+    // question id as tiebreakers.
     let questions: Array<{ id: string; knowledge_ids: string[] }>;
     if (params.questionIds && params.questionIds.length > 0) {
       const rows = await tx
@@ -230,17 +150,13 @@ export async function createIngestionPaper(
             sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`,
           ),
         );
-      // Re-order into the caller's requested sequence; drop ids the WHERE filtered
-      // out (not in this session) by skipping unresolved entries.
+      // Re-order to the requested sequence; skip ids the session filter removed.
       const byId = new Map(rows.map((r) => [r.id, r]));
       questions = params.questionIds
         .map((id) => byId.get(id))
         .filter((r): r is { id: string; knowledge_ids: string[] } => r !== undefined);
     } else {
-      // LEFT JOIN so a question whose metadata.question_block_id has no matching
-      // block row (manual/legacy import path) still appears; such rows sort last
-      // (NULL block ordinal sorts last under ASC) with question.id as the final
-      // stable tiebreaker.
+      // LEFT JOIN keeps manual/legacy questions; null ordinals sort last.
       questions = await tx
         .select({ id: question.id, knowledge_ids: question.knowledge_ids })
         .from(question)
@@ -251,8 +167,7 @@ export async function createIngestionPaper(
         .where(sql`${question.metadata}->>'ingestion_session_id' = ${params.sessionId}`)
         .orderBy(asc(question_block.ordinal), asc(question_block.id), asc(question.id));
     }
-    // The normalized id sequence — session-filtered + order-preserved — used by
-    // BOTH the reuse-branch comparison (F4) and the create-branch build below.
+    // Normalized sequence used by both the reuse comparison and the build.
     const normalizedQuestionIds = questions.map((q) => q.id);
 
     const [existing] = await tx
@@ -266,16 +181,8 @@ export async function createIngestionPaper(
       )
       .limit(1);
     if (existing) {
-      // F1 (PR #309 round-2) — an explicitly-passed questionIds set must match the
-      // existing paper's set; otherwise reuse would silently drop the caller's new
-      // subset. Compare as ORDERED sequences: the paper's slot order is meaningful
-      // (F2/F3), so a reorder of the same ids is still a different paper request.
-      // A bare idempotent call (no questionIds) carries no set to conflict with.
-      //
-      // F4 (PR #309 round-3) — compare the NORMALIZED requested ids (session-filtered,
-      // order-preserved — the exact sequence that WAS stored when the paper was
-      // built), not the raw `params.questionIds`, so a replay including a
-      // session-external id stays idempotent instead of self-409ing.
+      // Compare ordered normalized sequences: order is meaningful, so a reorder
+      // is a different request. A full-set call has no set to conflict with.
       if (params.questionIds && params.questionIds.length > 0) {
         const existingIds = (existing.tool_state as ToolStateT | null)?.question_ids ?? [];
         const requested = normalizedQuestionIds;
@@ -303,7 +210,7 @@ export async function createIngestionPaper(
       );
     }
 
-    // source_document.title (nullable) → paper title fallback.
+    // Fall back to a generic title when the source has none.
     const [doc] = await tx
       .select({ id: source_document.id, title: source_document.title })
       .from(source_document)
@@ -322,10 +229,8 @@ export async function createIngestionPaper(
     const knowledgeIds = [...new Set(questions.flatMap((q) => q.knowledge_ids))];
     const artifactId = `ingestion_paper_${createId()}`;
 
-    // YUK-471 W3-C1β — INSERT … RETURNING the full row, then emit the same-tx artifact_create event
-    // from the MATERIALIZED row (all 22 columns, defaults applied) so the fold reproduces it and the
-    // ArtifactRowSnapshot.strict() barrier never false-rejects (rollback-safe). Imported paper →
-    // actor user/self; no causing event (a make-paper request is not driven by a propose/rate event).
+    // Emit the create event from the materialized row (DB defaults applied) so the
+    // fold reproduces it and the strict snapshot never false-rejects.
     const [insertedArtifact] = await tx
       .insert(artifact)
       .values({
@@ -335,9 +240,8 @@ export async function createIngestionPaper(
         parent_artifact_id: null,
         knowledge_ids: knowledgeIds,
         intent_source: INGESTION_PAPER_INTENT_SOURCE,
-        // 'imported' (user's real paper), NOT 'ai_generated'.
         source: 'imported',
-        // Back-reference to the ingestion session (idempotency key + traceability).
+        // Idempotency key and traceability back to the session.
         source_ref: params.sessionId,
         body_blocks: null,
         attrs: {

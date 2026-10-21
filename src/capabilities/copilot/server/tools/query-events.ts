@@ -1,19 +1,14 @@
-// YUK-81 / Foundation D M1 Lane C
-//
-// `query_events` — generic event-stream reader. Goes directly against the
-// `event` table (bypassing the parseEvent envelope) because the
-// discriminated KnownEvent union narrows field types in a way that's
-// painful to consume generically — but the raw row columns are all the
-// LLM needs (id / actor / action / subject / outcome / caused_by /
-// created_at).
+// `query_events` — generic event-stream reader over the `event` table. It bypasses
+// the parseEvent envelope because the discriminated KnownEvent union narrows fields
+// in a way that is painful to consume generically, while the raw columns (id /
+// actor / action / subject / outcome / caused_by / created_at) are all the LLM needs.
 
 import { and, desc, eq, gte, lt, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-// P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
-// byte-unchanged from the prior inline literal.
+// Courtesy default (20) lives in budgets.ts.
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -28,9 +23,9 @@ const CursorSchema = z.object({
   filterKey: z.string().min(1),
 });
 
-// An exact string filter must never have two meanings. In particular, an
-// explicit empty/whitespace value must not survive into filter_applied while
-// the SQL builder treats it as "filter omitted" via a truthiness check.
+// An exact string filter must never have two meanings: an explicit
+// empty/whitespace value must not survive into filter_applied while the SQL
+// builder treats the same value as "filter omitted" via a truthiness check.
 const ExactStringSchema = z.string().trim().min(1);
 
 // Keep the public tool input as a ZodObject because the MCP bridge consumes `.shape`.
@@ -73,8 +68,8 @@ const EventRowSchema = z.object({
 const OutputSchema = z.object({
   required_followup: z.enum(['none', 'continue_with_next_cursor']),
   events: z.array(EventRowSchema),
-  // Compatibility: this remains the number of rows in this page, never the
-  // number of all matching rows. Use coverage.has_more before claiming full coverage.
+  // Compatibility: total is this page's row count, never the number of all
+  // matching rows. Check coverage.has_more before claiming full coverage.
   total: z.number().int().nonnegative(),
   filter_applied: z.record(z.string(), z.unknown()),
   subject_scope: z.object({

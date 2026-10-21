@@ -1,22 +1,9 @@
-// YUK-1572 — deterministic choice/answer-surface rules, extracted verbatim from
-// verify-framework.ts (same capability package). PURE module: zero I/O, zero DB /
-// provider / blob edges — the only import is the subjects kind fold. Do not add
-// paid-call or persistence code here; verification orchestration stays in
-// verify-framework.ts.
-//
-// One knowledge cluster, two layers:
-//   1. answer-candidate kernel (shared): how a reference or solver answer string
-//      expands into normalized comparison candidates — label wrappers
-//      (（B）/【B】/B. / bare B), option-body expansion, trailing-punctuation
-//      variants, rubric reference_solution and first-line/first-sentence
-//      fallbacks. Consumers: evaluateChoiceSurface below AND runSolveCheck's
-//      exact path in verify-framework.ts (imported back — a real edge, not a
-//      pass-through).
-//   2. choice-surface precheck (YUK-1624 #24): deterministic reject/pass rules
-//      evaluated before ANY paid verify call — insufficient_choices /
-//      duplicate_options / reference_not_in_choices, folded into the admission
-//      record by choiceSurfacePrecheckRecord. Public consumer: quiz_verify.ts
-//      (admission lane), importing this module directly.
+// Deterministic choice/answer-surface rules. Pure: no I/O or DB/provider/blob edges; do not
+// add paid calls or persistence here.
+// answerCandidates normalizes label wrappers, option bodies, punctuation variants, rubric
+// reference solutions, and first-line fallbacks. evaluateChoiceSurface and runSolveCheck
+// share that kernel. choiceSurfacePrecheck rejects insufficient, duplicate, or
+// reference-not-in-choices surfaces before any paid verify call.
 
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
@@ -33,14 +20,13 @@ interface ReferenceAnswerSource {
   choices_md: string[] | null;
 }
 
-// F2: the question's declared answer for solve-check comparison. solution-generate.ts
+// the question's declared answer for solve-check comparison. solution-generate.ts
 // writes the STRUCTURED final answer to rubric_json.reference_solution.final_answer
 // (+ answer_equivalents) while reference_md holds the full worked solution prose.
 // Comparing an exact solver answer against an entire worked solution would falsely
 // fail, so prefer the structured final answer and only fall back to reference_md when
 // no structured answer is present.
-//
-// A1 (YUK-554 独立 review) — the reference_md fallback is the COMMON case for quiz_gen rows:
+// A1 (独立 review) — the reference_md fallback is the COMMON case for quiz_gen rows:
 // quiz_gen writes reference_md + rubric_json{keywords,required_points} but NO
 // reference_solution, and both backfill paths gate on reference_md IS NULL (quiz_gen rows
 // are always non-null → never backfilled). An exact-kind quiz_gen reference_md is typically
@@ -51,7 +37,7 @@ interface ReferenceAnswerSource {
 // bare answer first (choice/true_false: correct option text). Reverse (false-pass) risk: a
 // solver final_answer would have to normalize-equal a NON-answer prose line — implausible
 // for exact-shaped rows (the exact path is already gated to the objective kind family
-//  / persisted choices / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
+// persisted choices / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
 // vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
 // = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
 // unchanged. No kind gate — spec 附录 B (review A1 裁决).
@@ -96,7 +82,7 @@ export function normalizeAnswer(text: string): string {
 function choiceLabelIndex(value: string): number | null {
   // Wrapper forms「（C）」/「【C】」are legal label shapes (sourcing contract),
   // so strip label wrappers before the bare-letter test. NFKC already folds
-  // fullwidth （）；【】 survives it, hence both sets here.
+  // fullwidth ；【】 survives it, hence both sets here.
   const label = value
     .normalize('NFKC')
     .replace(/^[\s([【]+|[\s)\]】]+$/gu, '')
@@ -151,11 +137,11 @@ function stripLeadingChoiceLabel(value: string): string | null {
   return choiceLabelPrefix(value)?.remainder ?? null;
 }
 
-// A1 (YUK-554 独立 review) — trailing sentence-punctuation variant for exact compare, applied
+// A1 (独立 review) — trailing sentence-punctuation variant for exact compare, applied
 // symmetrically to BOTH reference and solver candidates via answerCandidates. normalizeAnswer
 // deliberately strips whitespace only (mathematical symbols are load-bearing), so 『长安。』 vs
 // 『长安』 was a stable false fail. Conservative trailing set: full-width 。．！？ + ASCII .!?
-// — trailing-only, so interior punctuation ("3.14", "x=-1") is untouched.
+// trailing-only, so interior punctuation ("3.14", "x=-1") is untouched.
 function stripTrailingPunct(value: string): string | null {
   const stripped = value.replace(/[。．.!！?？]+$/u, '').trim();
   return stripped.length > 0 && stripped !== value ? stripped : null;
@@ -195,7 +181,7 @@ export function answerCandidates(
   return out;
 }
 
-// ---------- deterministic choice-surface pre-checks (YUK-1624 #24) ----------
+// ---------- deterministic choice-surface pre-checks (#24) ----------
 
 export type ChoiceSurfaceRule =
   | 'insufficient_choices'
@@ -210,7 +196,7 @@ export interface ChoiceSurfaceRuleCheck {
 
 /**
  * The precheck record persisted on the admission record for EVERY outcome —
- * reject or pass (PM condition, YUK-1624): each rule's name, verdict, and a
+ * reject or pass (PM condition,): each rule's name, verdict, and a
  * concrete reason, so a reviewer can audit what the deterministic gate decided
  * without re-deriving it. `not_applicable` marks a row the rules genuinely do
  * not cover (an option-less non-choice kind) — recorded explicitly instead of

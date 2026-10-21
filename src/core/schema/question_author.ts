@@ -1,19 +1,19 @@
-// ADR-0031 / YUK-304 (quiz C→A, lane B) — QuestionAuthorTask LLM output schema +
+// ADR-0031 — QuestionAuthorTask LLM output schema +
 // the server-side normalization barrier for the LLM-emitted StructuredQuestion
 // tree.
 //
 // The author_question knowledge|material seed runs ONE single-shot structured
 // call (QuestionAuthorTask — 决定6: NOT the QuizGenTask agent loop; no Tavily, no
 // 8-iteration budget) that emits exactly ONE question as this shape. 材料/阅读
-// kinds emit an Axis-A tree (stem 节点带 passage + sub_questions[]，吸收 YUK-302
-// 的 composite-generation piece)；其余题型 emit a single standalone node — 与 OCR
-// 题组 / /practice / 判分同构 (ADR-0031 决定4).
+// kinds emit an Axis-A tree (stem 节点带 passage + sub_questions[])；其余题型
+// emit a single standalone node — 与 OCR 题组 / /practice / 判分同构 (ADR-0031
+// 决定4).
 //
 // prompt_md / reference_md are DERIVED, not LLM fields: structuredToPromptMarkdown /
 // structuredToReferenceMarkdown — the same derivation the OCR import path uses, so
 // the persisted row renders identically everywhere.
 //
-// Normalization discipline (lane-B critic #6): the repo never trusts LLM-minted
+// Normalization discipline: the repo never trusts LLM-minted
 // ids ("hallucinated ids filtered code-side"). `normalizeAuthorStructured`
 // regenerates every node id server-side, rejects malformed root shapes (root
 // role 'sub', stem without sub_questions, non-'sub' children), and rejects

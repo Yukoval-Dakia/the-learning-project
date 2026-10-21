@@ -1,86 +1,18 @@
-// YUK-761 / YUK-776 — placement starter claim recovery sweeper.
-//
-// YUK-452 Phase B shipped the recovery INFRASTRUCTURE — `placement_starter_claim.next_reconcile_at`
-// (migration 0074) plus the partial `placement_starter_claim_recovery_idx` on
-// (next_reconcile_at, created_at) WHERE status IN (5 nonterminal states) — and then explicitly
-// left it without a consumer (placement-start.ts: "there is NO background sweeper for
-// pending_dispatch claims (the placement_starter_claim_recovery_idx supports one but none is
-// wired yet)"). This module is that consumer. It is invoked from the tail of the existing
-// `question_supply_nightly` job — no new cron surface.
-//
-// ── What is actually stranded (grounded state-machine reading) ────────────────────────────
-// `pending_dispatch` — RE-DRIVE. A claim is committed by Transaction A of /api/placement/start
-//   (materializePlacementStartersForGoal) and dispatched in a SEPARATE transaction afterwards.
-//   If that dispatch throws (boss down, enqueue failure), the claim is committed but no quiz_gen
-//   job exists, and the ONLY recovery is a subsequent /placement/start for the same goal. If the
-//   learner never comes back, the goal's placement pool never fills — the crash window this
-//   sweeper closes. Re-driving is safe because a pending_dispatch claim has spent NOTHING and
-//   holds no pg-boss job: `dispatchPlacementStarterClaimTx` re-checks `status='pending_dispatch'`
-//   under FOR UPDATE and CASes the pending→queued transition, so a concurrent /placement/start
-//   and this sweeper cannot both dispatch.
-//
-// `retry_scheduled` — REAP ONLY, NEVER RE-DRIVE. This status is written by
-//   `finishPlacementAttempt` on a NON-final delivery failure, and the pg-boss retry of the SAME
-//   quiz_gen job (JOB_RETRY_LIMIT=2, 30s→60s backoff) is what re-drives it. Enqueuing a second
-//   quiz_gen job here would run two paid generation batches against one claim — a direct
-//   violation of the paid single-flight invariant that `placement_starter_claim_nonterminal_uq`
-//   exists to protect. (`dispatchPlacementStarterClaimTx` would refuse it anyway: it returns
-//   early for any status other than 'pending_dispatch'.) The REAL hazard on this status is the
-//   opposite one: if the owning quiz_gen job dies without ever calling `finishPlacementAttempt`
-//   again (worker killed, job expired past the 2h AGENT ceiling, DLQ'd), the claim zombies
-//   non-terminal FOREVER — and because 'retry_scheduled' IS inside the
-//   `placement_starter_claim_nonterminal_uq` predicate, that zombie permanently blocks every
-//   later goal revision for the same (goal_id, subject_id): placement soft-stuck with no exit.
-//   So the sweeper terminalizes such a claim as 'exhausted' (the same terminal state
-//   `finishPlacementAttempt` writes when the final delivery fails) — but ONLY after
-//   `isPlacementStarterJobLive` confirms the owning quiz_gen job can no longer redeliver.
-//   Elapsed time alone is NOT proof of death: a paused / saturated quiz_gen queue (or a downed
-//   worker fleet) can hold a legitimate retry unfetched well past the grace window, and
-//   terminalizing then would make the eventual delivery fail admission in
-//   `acquirePlacementAttempt` and throw away paid generation work that was still coming.
-//
-// `queued` / `running` / `verifying` — FAIL-CLOSED REAP. A valid in-flight attempt owns its claim
-//   while `lease_expires_at > now`; elapsed claim `updated_at` is not delivery authority (attempt
-//   heartbeats renew the lease independently). Once no active lease remains, the owning job is the final
-//   redelivery authority. Only when that job is also confirmed non-live may recovery atomically
-//   fence an expired attempt (`interrupted`), supersede its authorized questions, and terminalize
-//   the claim as `exhausted`. A renewed/rotated fence or a live/unreadable job always wins and is
-//   deferred. queued legitimately has no attempt, so its proof is "no active attempt + dead job".
-//
-// ── Three INDEPENDENT legs, three independent budgets (anti-starvation) ───────────────────
-// The two reap legs and the re-drive leg run their own capped queries. They must NOT share one scan:
-// the re-drive leg is gated on PLACEMENT_PROBE_ENABLED and can accumulate a backlog of claims it
-// declines to touch, and a single shared `ORDER BY next_reconcile_at LIMIT n` would let ≥n such
-// rows monopolise every run forever — so a `retry_scheduled` zombie sorted behind them would
-// NEVER be reaped, resurrecting the blocked-revision bug this sweeper exists to fix, via its own
-// scan order. Separate queries make both reap classes structurally immune to whatever the paid
-// leg does or skips.
-//
-// ── Idempotency / anti-double-drive ───────────────────────────────────────────────────────
-// EVERY visited claim is ACQUIRED by a conditional UPDATE (`WHERE id = ? AND status = ? AND
-// next_reconcile_at <= now` RETURNING) that pushes `next_reconcile_at` forward — including the
-// paths that then decline to act (missing goal, still-live retry job) AND the paths that fail.
-// A claim that is visited but never advanced would re-occupy the per-run budget on every
-// subsequent run, which is the same starvation failure by another route. So the invariant is
-// "visited ⇒ advanced", and it admits NO exceptions: ALL legs acquire before doing anything that
-// can fail or that reaches outside this process — the re-drive leg before its goal read, authority
-// pre-check and scope resolution (all DB reads that can throw), and both reap legs before their
-// pg-boss liveness probe (which also means never querying pg-boss on behalf of a claim another
-// sweeper already owns). `guardClaim` then advances the cursor best-effort on anything that escapes.
-// A second sweeper pass in the same window matches zero rows and does nothing.
-//
-// ── Failure containment (three nested rings) ──────────────────────────────────────────────
-//   inner  — the individually risky calls (`dispatch`, the pg-boss liveness probe) are guarded
-//            where they are made, so a normal failure keeps its specific counter and semantics.
-//   claim  — `guardClaim` wraps a whole claim's handling: goal read, scope resolution, acquire,
-//            reap transaction. One poisoned claim must never abort the rest of its leg.
-//   leg    — `runLeg` wraps each scan + loop. Splitting the legs is pointless if one leg's scan
-//            failure still takes the other down with it.
-// The outermost ring lives at the CALL SITE, not here (see runQuestionSupplyNightly).
-//
-// The cursor bump deliberately does NOT touch `updated_at` or `version`: those mean "last STATE
-// transition", and the retry_scheduled zombie reap reads `updated_at` as its staleness signal —
-// bumping it on a scheduler visit would push the reap deadline out forever.
+// Recovery sweeper for stranded placement starter claims, run from the tail of
+// question_supply_nightly.
+// pending_dispatch: re-drive. The claim committed but its separate dispatch never
+// enqueued a quiz_gen job; dispatchPlacementStarterClaimTx re-checks status under FOR UPDATE
+// and CASes pending to queued, so /placement/start and this sweeper cannot both dispatch.
+// retry_scheduled: reap only, never re-drive. pg-boss retries the same quiz_gen job; a
+// second enqueue would run two paid batches for one claim. If the owning job is confirmed
+// dead, terminalize as exhausted, because a zombie retry_scheduled row blocks later goal
+// revisions through placement_starter_claim_nonterminal_uq.
+// queued/running/verifying: fail-closed reap. A live lease owns the claim. Once no lease
+// remains and the owning job is confirmed non-live, fence the attempt (interrupted),
+// supersede its authorized questions, and terminalize as exhausted.
+// The reap legs and the re-drive leg use independent capped queries so a backlog in one
+// cannot starve the others. Every visited claim is acquired by a conditional UPDATE that
+// pushes next_reconcile_at forward, including declined and failed paths.
 
 import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -428,7 +360,7 @@ export async function sweepStalePlacementStarterClaims(
   deps: PlacementStarterRecoveryDeps = {},
 ): Promise<PlacementStarterRecoveryResult> {
   const now = deps.now ?? new Date();
-  // Clamp: drizzle silently DROPS a non-positive `.limit()` rather than erroring, so a 0 /
+  // Clamp: drizzle silently DROPS a non-positive `.limit` rather than erroring, so a 0 /
   // negative override would turn the per-run cap into an unbounded scan — the exact opposite of
   // the cost guard it is there to be. Never trust the caller with the paid leg's ceiling.
   const maxPerRun = Math.max(1, Math.trunc(deps.maxPerRun ?? DEFAULT_MAX_PER_RUN));
@@ -459,7 +391,7 @@ export async function sweepStalePlacementStarterClaims(
   // in-flight claim for the same goal+subject because pending is outside nonterminal_uq. Reaping a
   // provably dead old delivery first lets the current claim dispatch in this same sweep. When the
   // old job is still live, the later paid leg safely loses the unique race and leaves current
-  // pending for a future window rather than cancelling it (YUK-776).
+  // pending for a future window rather than cancelling it.
   await runLeg(result, 'queued_running_verifying', async () => {
     const dueInflight = await selectDueInflightClaims(db, now, maxPerRun);
     result.scannedInflight = dueInflight.length;
@@ -638,7 +570,6 @@ async function sweepPendingDispatch(
   // guard below sails straight through. Without this check the sweeper would automatically spend
   // real money generating a placement batch for a goal the owner has retired — and again, only the
   // sweeper can: /placement/start runs on an explicit learner action against that goal.
-  //
   // DEFER, never cancel. 'dormant' is reversible, and cancelling would be permanent: claim ids are
   // deterministic in (revision, subject) and materialize is `onConflictDoNothing`, so a cancelled
   // claim can never be re-created — reactivating the goal would leave placement stuck on
@@ -658,9 +589,8 @@ async function sweepPendingDispatch(
   // is actively destructive: with two revisions stranded pending_dispatch (a pg-boss outage
   // spanning a goal edit), oldest-cursor-first could pay to dispatch the STALE one and let it hold
   // the `placement_starter_claim_nonterminal_uq` slot for (goal, subject). The CURRENT claim now
-  // stays pending on that conflict (YUK-776), but the paid stale batch may not serve the edited
+  // stays pending on that conflict, but the paid stale batch may not serve the edited
   // goal at all and unnecessarily delays the authoritative work.
-  //
   // So: never dispatch a claim whose revision is no longer authoritative. Terminalize it as
   // 'cancelled' with an explicit 'superseded' reason — unlike a single-flight collision, the
   // authority check proves this claim can never become dispatchable. The check happens TWICE: this first one is an
@@ -714,7 +644,6 @@ async function sweepPendingDispatch(
       // and for the revision case that is the destructive outcome in full, not a near-miss. Redo
       // both HERE, inside the dispatch tx, holding the goal row locked so a concurrent scope or
       // status update must serialize against us.
-      //
       // ── Why NOWAIT (review PRRT…HNf) ────────────────────────────────────────────────────
       // This path locks claim → goal, while materializePlacementStartersForGoal locks goal →
       // claim (goal FOR UPDATE, then INSERT ... ON CONFLICT DO NOTHING on the claim, which waits
@@ -723,7 +652,6 @@ async function sweepPendingDispatch(
       // earlier revision of this comment merely documented that — including that Postgres might
       // abort the LEARNER's transaction, i.e. a 5xx for a real person, which is not a cost a
       // background hygiene job gets to impose.
-      //
       // NOWAIT removes the cycle instead of describing it: a deadlock requires both sides to
       // WAIT, and this side now never waits. If the goal row is already locked — which in practice
       // means a /placement/start is mid-materialize for this very goal — we fail instantly with
@@ -732,7 +660,6 @@ async function sweepPendingDispatch(
       // sweeper has nothing to add. The learner never waits on us beyond our own short dispatch
       // tx, and never deadlocks with us. The serialization guarantee is unchanged in the common
       // case, where the lock is free and we take it.
-      //
       // The attempt is wrapped in a SAVEPOINT because a failed statement poisons the enclosing
       // transaction; rolling back to the savepoint leaves the dispatch tx usable so we can return
       // a clean "declined" rather than aborting it.
@@ -770,7 +697,7 @@ async function sweepPendingDispatch(
     if (!admitInvoked) {
       // Early return inside dispatchPlacementStarterClaimTx: the claim was no longer
       // 'pending_dispatch' when it took the row lock. Someone else — a concurrent
-      // /placement/start, or another sweeper — owns this dispatch. Counted separately so
+      // placement/start, or another sweeper — owns this dispatch. Counted separately so
       // `redispatched` stays an honest count of what THIS sweeper actually drove.
       result.dispatchedElsewhere += 1;
       console.log(

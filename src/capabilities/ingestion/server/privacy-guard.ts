@@ -1,26 +1,10 @@
-// YUK-1408 (Stage 1 B6 S1) — ingestion privacy guard.
+// Ingestion privacy guard: deterministic, no model in the loop.
 //
-// Two deterministic mechanisms, no model in the loop:
-//
-//   1. `redactIngestionText` — personal-identifier redaction applied to
-//      extracted text BEFORE it is sent to a model. Field categories mirror
-//      the display-side detector list landed in #1701 (credential syntax,
-//      emails, labeled contact fields) plus document-context identity fields
-//      (labeled identity rows, teacher-contact labels, ranking labels). Only
-//      label-anchored or format-strong spans are rewritten — free-running
-//      Chinese names inside question prose are deliberately NOT touched so
-//      legitimate content (word problems like 「小明有3个苹果」) is never
-//      damaged.
-//   2. Usage receipt — `writeIngestionUsageReceipt` records on the
-//      source_document WHAT was redacted under WHICH policy version
-//      (categories and channels only, never the redacted values). The policy
-//      resolvers live in `src/kernel/read-models/usage-policy.ts` (shared read
-//      layer — kernel events consume them too) so the existing derivation filter
-//      (src/kernel/events/derivation-policy.ts) drops them from memory/brief
-//      channels when consent is withdrawn. No second mechanism.
-//
-// Page images sent to OCR/VLM engines cannot be text-redacted; the receipt
-// records that channel honestly as `raw`.
+// Redaction rewrites only label-anchored or format-strong spans, so names inside
+// question prose are never damaged. Usage receipts record categories and channels,
+// never values, under the shared policy resolvers so a consent withdrawal also
+// excludes them from memory and brief channels. Page images cannot be redacted;
+// receipts record that channel honestly as raw.
 
 import { newId } from '@/core/ids';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
@@ -34,8 +18,8 @@ export const INGESTION_PRIVACY_POLICY_VERSION = 'ingestion-privacy-v1';
 const REDACTED = '[已隐去]';
 
 /**
- * The personal-identifier categories this guard can redact. The list is the
- * receipt vocabulary: a receipt records WHICH categories fired, never values.
+ * Redactable categories, also the receipt vocabulary. Receipts record fired
+ * categories, never values.
  */
 export type IngestionRedactionField =
   | 'phone' // 手机号 / labeled 电话·手机 numbers
@@ -51,12 +35,9 @@ type RedactionRule = {
   pattern: RegExp;
 };
 
-// Label-anchored rules keep the label and redact only the value span. The
-// value run stops at whitespace, common CJK punctuation, or line end so a
-// following sentence is preserved; parens stay INSIDE the value so class
-// names like 「初三(2)班」 redact whole. The tempered boundary also stops the
-// value run right before an ADJACENT label (「学校：实验中学（民办）校长：李四」
-// must not swallow the 校长 label into the 学校 value).
+// Label-anchored rules keep the label and redact only the value. The value stops
+// at whitespace, CJK punctuation, or an adjacent label; parentheses stay inside so
+// a class name redacts whole.
 const LABEL_BOUNDARY = `(?:姓名|学生姓名|考生姓名|名字|就读学校|所在学校|学校|班级|班别|考区|考点|校长|家长姓名|监护人|班主任|任课老师|任课教师|指导老师|辅导员|邮箱|微信号?|QQ号?|qq号?|住址|家庭住址|通讯地址|联系地址|紧急联系人|电话|手机|联系电话|联系方式|家长电话|热线|身份证号?|证件号|学号|考号|准考证号|学籍号|班级排名|年级排名|全校排名|综合排名|排名|名次|年级名次|班级名次|api[-_]?key|access[-_]?token|refresh[-_]?token|secret|password|密码|密钥)`;
 const LABELED_VALUE = String.raw`(?:(?!${LABEL_BOUNDARY}\s*[:：])[^\s,，。;；:：、<>《》「」]){1,64}`;
 
@@ -78,10 +59,8 @@ const RULES: RedactionRule[] = [
     ),
   },
   { field: 'email', pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g },
-  // Mainland mobile numbers — only separator-marked forms without a label
-  // (138-0013-8000 / 138 0013 8000 / +86-138-0013-8000). A BARE 11-digit run
-  // starting 13-19 stays: it is indistinguishable from an arithmetic operand
-  // (「计算 13800138000 除以 7」). Labeled digits hit the labeled rule below.
+  // Only separator-marked mobile numbers; a bare 11-digit run can be an arithmetic
+  // operand. Labeled digits are handled by the labeled rule.
   {
     field: 'phone',
     pattern: /(?<![\d-])(?:\+?86[-\s])?1[3-9]\d[-\s]\d{4}[-\s]\d{4}(?!\d)/g,
@@ -114,8 +93,7 @@ const RULES: RedactionRule[] = [
       'g',
     ),
   },
-  // Ranking is only redacted behind an explicit ranking label — bare 「第5名」
-  // inside problem prose is legitimate content and must survive.
+  // Bare 「第5名」 is legitimate problem content; only labeled rankings redact.
   {
     field: 'ranking',
     pattern:
@@ -128,18 +106,15 @@ export interface IngestionRedactionResult {
   /** Sorted unique categories that fired. Empty when nothing was redacted. */
   fields: IngestionRedactionField[];
   /**
-   * P2 (R1 fix) — mutated-span count per category that fired. NUMBERS ONLY —
-   * the receipt records these so silent degradation shows up as an
-   * unexplained zero vs the expected count. Every ingestion lane redacts its
-   * extracted text (the docx text lane too, since #1759). Redacted values are
-   * never recorded.
+   * Mutated-span counts make silent degradation visible as an unexplained zero.
+   * Numbers only; values are never recorded.
    */
   counts: Partial<Record<IngestionRedactionField, number>>;
 }
 
 /**
- * Deterministically redact personal identifiers from extracted text. Idempotent:
- * re-running on redacted output is a no-op (the marker matches no rule).
+ * Redacts personal identifiers from extracted text. Idempotent: the marker matches
+ * no rule, so re-running changes nothing.
  */
 export function redactIngestionText(text: string): IngestionRedactionResult {
   const fired = new Map<IngestionRedactionField, number>();
@@ -164,41 +139,35 @@ export interface IngestionUsageReceipt {
   sessionId: string;
   /** The derivation policy the document's content was sent under. */
   derivationPolicy: DerivationPolicyT;
-  /** OCR engine that ran ('glm' | 'tencent' | 'docx_text') — receipt self-describing. */
+  /** Engine that ran, so the receipt is self-describing. */
   engine: string;
   /** Categories that actually fired on the extraction text this run. */
   redactedFields: IngestionRedactionField[];
-  /** Mutated-span count per category — numbers only, never values. */
+  /** Mutated-span count per category; never values. */
   redactionCounts?: Partial<Record<IngestionRedactionField, number>>;
   /** Recovery cannot reconstruct an in-memory sink after rollback/crash. */
   redactionAccounting?: 'unavailable';
   /**
-   * YUK-1408 (S1 read side) — honest per-path channel accounting. The OCR job
-   * sends raw page images (unredactable) plus redacted text; the docx TEXT
-   * line sends no images to a model at all (evidence renders are review-UI
-   * only) and its text reaches models only via the redactIngestionText
-   * call-site backstops. 'none' = the channel never left the server for a
-   * model on this path. Defaults to the OCR/VLM shape.
+   * Per-path channel accounting. OCR sends raw images plus redacted text; the DOCX
+   * text line sends no images and redacts at call sites. 'none' means the channel
+   * never left the server. Defaults to the OCR/VLM shape.
    */
   channels?: {
     page_images: 'raw' | 'none';
     extracted_text: 'redacted' | 'none';
   };
   /**
-   * YUK-1522 (R8) — agent runs receipt PER SEGMENT: a suspended segment's
-   * paid work + redactions are usage too, so every segment terminal emits its
-   * own receipt carrying its own sink. Absent for the single-shot OCR lanes.
+   * Per-segment receipt: a suspended segment's paid work and redactions are usage
+   * too. Absent for single-shot OCR lanes.
    */
   segment?: number;
   now?: Date;
 }
 
 /**
- * Write the per-extraction usage receipt on the source document. The payload
- * records the policy + which categories were redacted + which channels carried
- * raw vs redacted content — never the redacted values themselves. When the
- * document is consented `answer_only`, the receipt itself inherits that policy
- * so it stays out of derivation channels like every other derived record.
+ * Records policy, redacted categories, and channels on the source document, never
+ * values. An answer_only document's receipt inherits that policy and stays out of
+ * derivation channels.
  */
 export async function writeIngestionUsageReceipt(
   db: Db | Tx,
@@ -219,8 +188,7 @@ export async function writeIngestionUsageReceipt(
       derivation_policy: input.derivationPolicy,
       engine: input.engine,
       channels: input.channels ?? {
-        // OCR/VLM engines must see the raw page image to extract at all; only
-        // extracted text is redacted before model calls.
+        // Engines need the raw page image; only extracted text is redacted.
         page_images: 'raw',
         extracted_text: 'redacted',
       },

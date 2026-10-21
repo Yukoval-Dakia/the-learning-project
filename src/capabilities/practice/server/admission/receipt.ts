@@ -132,7 +132,7 @@ export async function claimAdmissionBatch(
         ? PREVIOUS_QUESTION_ADMISSION_PAID_UNIT
         : LEGACY_QUESTION_ADMISSION_PAID_UNIT;
   // An applied verdict from ANY contract version is terminal for this base.
-  // YUK-1567: the marked @2 -> @3 reopen exception is retired — unresolved
+  // the marked @2 -> @3 reopen exception is retired — unresolved
   // rows move through the generic void + successor authorization instead, and
   // no applied row is ever passed over.
   const [applied] = await tx
@@ -173,7 +173,7 @@ export async function claimAdmissionBatch(
   // Prefer the original delivery/revision even if mutable rows changed after
   // payment. A voided predecessor shares unit + base with its successor —
   // 'voided' rows are resolved history and are NEVER the row to reconcile.
-  // 'cancelled' rows are likewise sealed never-sent history (YUK-1567).
+  // 'cancelled' rows are likewise sealed never-sent history.
   const [pinned] = await tx
     .select()
     .from(paid_effect)
@@ -281,7 +281,7 @@ export async function claimAdmissionBatch(
     .for('update')
     .limit(1);
   if (legacyReceipt) return { kind: 'held' as const, input, identity };
-  // Sealed-history gate (YUK-1567): a cancelled never-sent intent is the
+  // Sealed-history gate: a cancelled never-sent intent is the
   // original admission decision for this base/revision. When no live row
   // reconciles, a redelivery whose prepared input drifted (admission
   // generation, subject profile, policy, solver config) computes a NEW input

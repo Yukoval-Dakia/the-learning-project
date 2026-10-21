@@ -1,12 +1,10 @@
-// Discriminated attempt-payload sub-schema (YUK-367 / A1).
-//
-// owner ratify 2026-06-16.
+// Discriminated attempt-payload sub-schema.
 //
 // WHAT THIS IS: a per-archetype discriminated union for the STRUCTURED answer an
-// attempt carries, so a deterministic verifier (A5 / YUK-350) and item calibration
-// (B1 / YUK-348) can consume structured evidence instead of bare text. Objective
-// archetypes (single-/multi-select option, boolean, blank strings, numeric value)
-// are first-class; open / prose answers stay free-text.
+// attempt carries, so a deterministic verifier and item calibration can consume
+// structured evidence instead of bare text. Objective archetypes (single-/multi-
+// select option, boolean, blank strings, numeric value) are first-class; open /
+// prose answers stay free-text.
 //
 // WHAT THIS IS NOT (owner decisions, see issue body + grounded comment):
 //   - NO new table (UTR), NO top-level `question.expected_evidence` column.
@@ -14,9 +12,9 @@
 //     n=1 litmus: every field below is THIS learner's own answer state (option
 //     text / boolean / blank strings / number+unit) — zero cross-subject
 //     parameters (a / slip / guess / φ). Admissible. The red line lives downstream:
-//     B1 (YUK-348) must NOT group-fit slip/guess off these payloads.
+//     item calibration must NOT group-fit slip/guess off these payloads.
 //   - It does NOT decide right/wrong. The deterministic verifier reading this to
-//     flip an outcome is A5 / YUK-350 scope (that is where any flag/dark-ship lives);
+//     flip an outcome is verifier scope (that is where any flag/dark-ship lives);
 //     judging today still reads the flat `answer_md`, so landing this schema is a
 //     non-behavioral additive change (θ̂ / selection / p(L) byte-identical).
 //
@@ -26,10 +24,6 @@
 // routes keyword OR semantic depending on its rubric (see
 // `defaultJudgeKindForQuestion` in ./judge-routing). So a QuestionKind maps to an
 // archetype via ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND below, NOT 1:1.
-//
-// Follows the existing `z.discriminatedUnion('kind', …)` idiom (note-patch.ts,
-// event/blocks.ts MaterialRef) and the JudgeResultV2 discriminated-union precedent
-// (capability.ts).
 import { z } from 'zod';
 
 // ── Objective archetypes (first-class structured carriers) ──────────────────
@@ -50,8 +44,8 @@ export const ChoiceAttemptPayload = z.object({
 });
 export type ChoiceAttemptPayloadT = z.infer<typeof ChoiceAttemptPayload>;
 
-// `true_false` — boolean judgment. Explicit boolean (X-algorithm VALIDATES note,
-// 2026-06-26: objective payloads prefer an explicit value over null).
+// `true_false` — boolean judgment. Explicit boolean (objective payloads prefer
+// an explicit value over null).
 export const TrueFalseAttemptPayload = z.object({
   kind: z.literal('true_false'),
   value: z.boolean(),
@@ -112,19 +106,19 @@ export type AttemptPayloadKindT = z.infer<typeof AttemptPayloadKind>;
 // ── question kind label → payload archetype mapping ─────────────────────────
 //
 // The gating policy: which archetype an attempt on a given kind label must use.
-// YUK-386: `question.kind` is a free-form display label (z.string().min(1)), so
+// `question.kind` is a free-form display label (z.string().min(1)), so
 // this map is keyed by the KNOWN canonical labels only — `Record<string, …>`,
 // no exhaustiveness forcing function. Any label outside the map (custom labels,
 // profile-vocab leftovers like 'single_choice') falls back to `free_text`, the
 // permissive archetype. Callers that need vocab folding should normalize via
 // `normalizeToCanonicalKind` (subjects/question-kind.ts) before calling.
 //
-// Per the grounded plan, only the CLEAN objective labels are structured first
-// (choice / true_false / fill_blank — all route exact|keyword, both in
-// OBJECTIVE_JUDGE_ROUTES). Everything else falls back to free_text:
+// Only the CLEAN objective labels are structured (choice / true_false /
+// fill_blank — all route exact|keyword, both in OBJECTIVE_JUDGE_ROUTES).
+// Everything else falls back to free_text:
 //   - computation: routes keyword|semantic by rubric (not a clean objective
 //     archetype) → free_text for now. OWNER OPEN QUESTION #2: should computation
-//     answers carry the `numeric` archetype ({value, unit})? Deferred to A5.
+//     answers carry the `numeric` archetype ({value, unit})? Deferred.
 //   - derivation / short_answer / essay / reading / translation: prose / semantic.
 export const ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND: Record<string, AttemptPayloadKindT> = {
   choice: 'choice',

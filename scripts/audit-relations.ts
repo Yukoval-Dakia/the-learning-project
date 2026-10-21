@@ -144,8 +144,8 @@ export type ConsumerEntry = {
 //     contrasts_with 加反向邻接（双向语义）⇒ 这两 type 的 specialized 路径消费。
 //   - src/core/topology-gate.ts:52 ORDERED_RELATION =
 //     'prerequisite'，环/传递冗余检测**仅**对 prerequisite ⇒ prerequisite specialized。
-//   - src/capabilities/knowledge/server/hub-mesh.ts:63 RELATION_PRIORITY +
-//     :72 EXCLUDED_RELATIONS。笔记 hub 自动同步按 prerequisite/derived_from/
+//   - src/capabilities/notes/server/hub-curation.ts:26 RELATION_PRIORITY +
+//     :35 EXCLUDED_RELATIONS。笔记 hub 自动同步按 prerequisite/derived_from/
 //     contrasts_with 组装上下文，**显式排除** related_to / applied_in（rule iv）
 //     ⇒ 这三 type specialized（复习/笔记上下文）。
 //   - src/capabilities/knowledge/server/rubric-validator.ts:280 relationGate() 5 路
@@ -179,7 +179,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'prerequisite'",
     surface: 'review',
     evidence:
@@ -201,7 +201,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'contrasts_with',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'contrasts_with'",
     surface: 'review',
     evidence:
@@ -220,7 +220,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'derived_from',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'derived_from'",
     surface: 'review',
     evidence:
@@ -285,7 +285,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   ),
 
   // NOTE: applied_in 故意**无** specialized 条目——这是预期的死边候选。grounding：
-  //   hub-mesh.ts:72 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
+  //   src/capabilities/notes/server/hub-curation.ts:35 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
   //   prerequisite；knowledge-readers paths 反向邻接仅 related_to/contrasts_with。
   //   applied_in 只被 generic-read 一把捞 + creation-validation 校验，零特化学习消费。
 ];

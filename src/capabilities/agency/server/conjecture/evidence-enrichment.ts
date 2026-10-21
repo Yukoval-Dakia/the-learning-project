@@ -1,29 +1,12 @@
-// YUK-786 — conjecture induction GROUNDING: turn the deterministic (but opaque)
-// EvidenceCell into an evidence packet a domain-specific claim can actually be
-// induced FROM.
-//
-// The problem this closes: `gatherConjectureEvidence` folds FailureAttempt[]
-// into cells and keeps only `attempt_event_id` in `evidence_event_ids`. Every
-// piece of natural language the upstream reader already carried —
-// `question_id`, `answer_md`, `judge.cause` — was dropped, and the KC arrived at
-// the LLM as a bare UUID with no subject tag. The induction prompt still asks
-// for a domain-specific claim + a whole discriminating probe + its grading gold.
-// Before YUK-799 the draft had no abstain branch, so the model could only invent
-// the subject and misconception. Grounding v2 now carries both the evidence packet
-// and a first-class refusal path; this reader remains the source of proposal refs.
-//
-// This module is the READ half (it needs `db`); the shape it fills lives in the
-// PURE `evidence` sibling so that module keeps its no-IO unit-testability. The
-// nightly 例会 job calls this in its PRE-LLM read stage for salience-ordered cell
-// batches. Each read round is bounded by the still-empty sample slots; invalid
-// mutable/missing contexts are filtered before the quote cap and later attempts
-// refill those slots instead of being hidden behind a bad prefix.
+// Conjecture induction grounding: the db-reading half that turns deterministic
+// EvidenceCells into packets carrying KC name, subject identity and first-hand
+// attempt samples. The packet shape lives in the PURE `evidence` sibling so that
+// module keeps its no-IO unit-testability.
 //
 // Untrusted-text discipline: question prompts, learner answers, reasoning traces
-// and written attributions are all authored outside the system prompt, so every
-// one of them is truncated + `<untrusted_learner_text>`-delimited through the
-// SAME helpers the evidence MCP read tools use (scout spec §2 — one
-// implementation, not two).
+// and written attributions are all authored outside the system prompt, so each one
+// is truncated and `<untrusted_learner_text>`-delimited through the SAME helpers the
+// evidence MCP read tools use.
 
 import { and, eq, gte, inArray } from 'drizzle-orm';
 import {
@@ -95,14 +78,12 @@ const QUESTION_CONTEXT_FIELDS = {
 };
 
 /**
- * Representative attempts carried per cell. The cell's `recurrence_count` is the
- * full tally (>= 2) and stays authoritative; this caps only how many attempts
- * are QUOTED to the model. 3 is enough to show a repeated pattern rather than a
- * one-off, while keeping the packet inside the induction budget: at most
- * RESEARCH_MEETING_MAX_CONJECTURES(3) × 3 samples × 3 text fields × 2000 chars.
+ * Representative attempts quoted per cell. `recurrence_count` is the full tally and
+ * stays authoritative; this caps only how many attempts reach the model.
+ * Budget: 3 conjectures × 3 samples × 3 text fields × 2000 chars.
  */
 export const CONJECTURE_EVIDENCE_SAMPLES_PER_CELL = 3;
-/** Prompt-packet bounds; the real bytes are loaded later at the job composition seam. */
+/** Prompt-packet bounds; bytes are loaded later at the job composition seam. */
 export const CONJECTURE_EVIDENCE_CHOICES_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_IMAGE_REFS_PER_FIELD = 20;
 export const CONJECTURE_EVIDENCE_FIGURES_PER_FIELD = 20;
@@ -111,13 +92,13 @@ export const CONJECTURE_EVIDENCE_ASSET_REF_CHAR_CAP = 512;
 const CONJECTURE_EVIDENCE_VALIDATION_BATCH_PER_CELL = 20;
 
 export interface EnrichEvidenceCellsInput {
-  /** a salience-ordered cell batch (post recurrence floor + dedup). */
+  /** Salience-ordered cell batch. */
   cells: EvidenceCell[];
-  /** the failure attempts the cells were folded from (the job already has them). */
+  /** The failure attempts the cells were folded from. */
   failures: ConjectureFailureAttempt[];
-  /** attempt_event_id → YUK-562 process-data self-report, when present. */
+  /** attempt_event_id → learner process-data self-report, when present. */
   reasoningTraceByAttemptId?: ReadonlyMap<string, string | null>;
-  /** override the per-cell quote cap (tests). */
+  /** Override the per-cell quote cap (tests). */
   samplesPerCell?: number;
 }
 
@@ -187,8 +168,7 @@ async function loadEvidenceSampleBatch(
 /**
  * Attach the grounding packet (KC name + subject identity + first-hand attempt
  * samples) to each cell. Rows that cannot be resolved degrade to `null` fields
- * rather than throwing: absent evidence is itself signal the model must see, and
- * a missing question row must not take down the whole nightly run.
+ * rather than throwing; a missing question row must not take down the nightly run.
  */
 export async function enrichEvidenceCells(
   db: DbLike,
@@ -219,12 +199,10 @@ export async function enrichEvidenceCells(
           .from(knowledge)
           .where(inArray(knowledge.id, knowledgeIds))
       : Promise.resolve([]),
-    // The subject axis is the node's EFFECTIVE domain, not its raw column: a
-    // child KC normally carries domain=null and inherits the subject from an
-    // ancestor. Reading `knowledge.domain` directly would report "subject
-    // unknown" for exactly the common case and silently drop the whole run back
-    // to the neutral profile — i.e. it would undo this ticket's subject
-    // grounding on most cells. One query for all ids (YUK-716 batch twin).
+    // The subject axis is the node's EFFECTIVE domain, not its raw column: a child
+    // KC normally carries domain=null and inherits the subject from an ancestor, so
+    // reading `knowledge.domain` directly would report "subject unknown" for the
+    // common case. One query for all ids.
     batchResolveEffectiveDomains(db, knowledgeIds),
   ]);
 
@@ -281,9 +259,8 @@ export async function enrichEvidenceCells(
   return cells.map((cell) => {
     const kc = knowledgeById.get(cell.knowledge_id);
     // `resolveKnownSubjectId` (NOT `resolveSubjectProfile`) decides identity: an
-    // untagged / unknown domain must read as "subject unknown", never silently
-    // inherit the default profile — a fabricated subject label is exactly the
-    // failure this ticket exists to stop.
+    // untagged / unknown domain must read as "subject unknown", never inherit the
+    // default profile — a fabricated subject label is the failure to avoid.
     const subjectId = resolveKnownSubjectId(effectiveDomains.get(cell.knowledge_id) ?? null);
     const reproducibleEventIds = reproducibleIdsByCellKey.get(cell.key) ?? [];
     const hasOwnerCause = reproducibleEventIds.some((attemptId) => {
@@ -296,9 +273,9 @@ export async function enrichEvidenceCells(
       ...cell,
       recurrence_count: reproducibleEventIds.length,
       evidence_event_ids: reproducibleEventIds,
-      // The raw cell may have been owner-backed only through an attempt that was
-      // filtered above. Keep the judge-only confidence cap tied to the same
-      // reproducible evidence set that survives into recurrence/provenance.
+      // The raw cell may have been owner-backed only through an attempt filtered
+      // above. Keep the judge-only confidence cap tied to the reproducible evidence
+      // set that survives into recurrence/provenance.
       has_owner_cause: hasOwnerCause,
       knowledge_name: wrapTruncatedLearnerText(kc?.name ?? null, UNTRUSTED_TEXT_CHAR_CAP),
       subject_id: subjectId,
@@ -413,21 +390,16 @@ function toEvidenceSample(
     parent = liveParent;
   }
   const cause = effectiveCauseForConjectureFailure(failure);
-  // Owner notes and upstream judge analysis occupy the same slot — the effective
-  // cause policy decides which one has the last word on attribution. Both are
-  // generated outside this prompt, so both receive the same explicit data boundary.
+  // Both owner notes and upstream judge analysis are generated outside this prompt,
+  // so both receive the same explicit data boundary.
   const causeText = causeAnalysisText(cause);
   return {
     attempt_event_id: failure.attempt_event_id,
     question_id: failure.question_id,
     question_prompt_md: wrapTruncatedLearnerText(q.prompt_md, UNTRUSTED_TEXT_CHAR_CAP),
-    // The GOLD answer for the question that was failed. Without it the packet
-    // shows what was asked and what the owner wrote but not what "right" was,
-    // so neither the model nor a blind reviewer can say HOW the answer deviated
-    // — and the induction is asked for a claim about that deviation. Especially
-    // load-bearing when the owner supplied only a cause category (no notes), in
-    // which case `cause_attribution_md` is null and this is the only correctness
-    // signal in the sample.
+    // The GOLD answer for the question that was failed. Without it the deviation
+    // the claim is about is not reconstructable — especially when the owner supplied
+    // only a cause category, leaving this the sole correctness signal in the sample.
     question_reference_md: wrapTruncatedLearnerText(q.reference_md, UNTRUSTED_TEXT_CHAR_CAP),
     question_choices_md: wrapTextList(q.choices_md),
     question_image_refs: safeImageRefs(q.image_refs),

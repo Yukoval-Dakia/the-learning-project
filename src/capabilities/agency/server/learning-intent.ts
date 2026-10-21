@@ -1,18 +1,16 @@
-// Phase 2B — Learning Intent Orchestrator.
+// Learning Intent orchestrator.
 //
-// User declares "我想学 X" → orchestrator reads the knowledge graph for X,
-// asks LLM to propose a 1-hub + N-atomic split, persists the proposal as a
-// `propose` event, awaits user accept, then materializes the LearningItem
-// hierarchy + paired artifact stubs + enqueues N async NoteGenerateTask jobs.
+// User declares "我想学 X" → read the knowledge graph for X → LLM proposes a 1-hub +
+// N-atomic split → persist the proposal as a `propose` event → on user accept, materialize
+// the LearningItem hierarchy + paired artifact stubs + enqueue N async NoteGenerateTask jobs.
 //
-// Case coverage:
+// Cases:
 //   - 3a: topic node missing -> propose root + starter children, materialize on accept.
-//   - 3b: topic exists but child nodes missing -> propose starter children, materialize on accept.
-//   - 3c: topic + children already exist -> propose 1 hub + N atomic outline over existing nodes.
-// Notes default source_tier='llm_only'; no NoteVerifyTask; no Search-grounded.
-// Embedded check is a placeholder (empty question_ids).
-// Hub status auto-aggregation, living-note triggers, ai_propose completion
-// remain out of scope.
+//   - 3b: topic exists but child nodes missing -> propose starter children.
+//   - 3c: topic + children exist -> propose 1 hub + N atomic outline over existing nodes.
+// Notes default source_tier='llm_only'; no NoteVerifyTask; no Search-grounded. Embedded
+// check is a placeholder (empty question_ids); hub status aggregation and living-note
+// triggers remain out of scope.
 
 import { and, eq, isNull } from 'drizzle-orm';
 import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
@@ -29,9 +27,8 @@ import {
   resolveSubjectProfile,
   sanitizeProposedNodeDomain,
 } from '@/subjects/profile';
-// YUK-879 — the outline output contract (schema + strict parser + domain error)
-// is owned by the agency TaskSpec module; this orchestrator re-exports it so
-// existing consumers (api route, public surface) keep their import paths.
+// The outline output contract is owned by the agency TaskSpec module; this orchestrator
+// re-exports it so existing consumers keep their import paths.
 import { LearningIntentError, parseLearningIntentOutline } from '../tasks/learning-intent';
 import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
 
@@ -109,8 +106,6 @@ export interface PlanLearningIntentParams {
   runTaskFn: RunTaskFn;
 }
 
-// ---------- Errors ----------
-
 // ---------- Knowledge graph lookup ----------
 
 interface KnowledgeNodeRow {
@@ -136,11 +131,10 @@ function normalizeProposedNode(
   return {
     temp_id: node.temp_id,
     name: node.name,
-    // YUK-1004 — a proposed domain is sanitised to storage shape:
-    // selectable → canonical id, 'general' (the fallback identity, never a
-    // node domain) → null/inherit, unresolvable → verbatim (same tolerance
-    // as the write seam). A sanitised-out value degrades to the parent
-    // fallback instead of persisting into knowledge.domain.
+    // A proposed domain is sanitised to storage shape: selectable → canonical id,
+    // 'general' (the fallback identity, never a node domain) → null/inherit,
+    // unresolvable → verbatim. A sanitised-out value degrades to the parent fallback
+    // instead of persisting into knowledge.domain.
     domain: sanitizeProposedNodeDomain(node.domain) ?? fallbackDomain,
   };
 }
@@ -173,9 +167,8 @@ function validateLongKnowledgeIds(allowedIds: Set<string>, longs: LongProposal[]
 async function findTopicNode(db: Db, topic: string): Promise<KnowledgeNodeRow | null> {
   const normalized = topic.trim().toLowerCase();
   if (!normalized) return null;
-  // Case-insensitive exact match on knowledge.name first; if multiple match the
-  // first by created_at wins (user must disambiguate at /knowledge if they
-  // really have collisions).
+  // Case-insensitive exact match on knowledge.name first; if multiple match, the
+  // first by created_at wins (user must disambiguate at /knowledge).
   const rows = await db
     .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
     .from(knowledge)
@@ -200,14 +193,11 @@ async function loadChildren(db: Db, parentId: string): Promise<KnowledgeNodeRow[
 // ---------- planLearningIntent ----------
 
 /**
- * Locate the topic in the knowledge graph, determine whether the graph needs
- * bootstrapping, ask LLM for a 1-hub + N-atomic outline, then persist as a
- * `propose` event. Returns the proposal ready for user accept.
+ * Locate the topic in the knowledge graph, decide whether the graph needs bootstrapping,
+ * ask the LLM for a 1-hub + N-atomic outline, then persist it as a `propose` event.
  *
- * Throws LearningIntentError on:
- *   - llm_parse_failed: LLM output didn't match OutlineSchema
- *   - invalid_atomic_knowledge_id: LLM hallucinated a knowledge_id not in
- *     child_nodes / proposed child nodes
+ * Throws LearningIntentError for llm_parse_failed (output violates the outline schema) and
+ * invalid_atomic_knowledge_id (hallucinated ids outside child_nodes / proposed children).
  */
 export async function planLearningIntent(
   params: PlanLearningIntentParams,
@@ -229,8 +219,8 @@ export async function planLearningIntent(
     knowledge_node: node ? { id: node.id, name: node.name, domain: node.domain } : null,
     child_nodes: children.map((c) => ({ id: c.id, name: c.name })),
     existing_descendants_count: children.length,
-    // YUK-1004 — the prompt contract points domain values at this list;
-    // 'general' is deliberately absent (fallback identity, never a node domain).
+    // The prompt contract points domain values at this list; 'general' is deliberately
+    // absent (fallback identity, never a node domain).
     valid_domains: getDefaultSubjectRegistry().getSelectableSubjectIds(),
     output_contract:
       planCase === '3c_existing_graph'
@@ -250,7 +240,6 @@ export async function planLearningIntent(
     if (!node) {
       throw new LearningIntentError('topic_not_found', `knowledge topic vanished: ${topic}`);
     }
-    // Validate LLM didn't hallucinate child knowledge_ids
     const childIds = new Set(children.map((c) => c.id));
     validateAtomicKnowledgeIds(
       childIds,
@@ -273,10 +262,9 @@ export async function planLearningIntent(
         ? (() => {
             const raw =
               knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root');
-            // YUK-1004 — a NEW topic root must carry a real selectable subject:
-            // 'general' and any unresolvable string fail closed rather than
-            // materialising an invisible/orphan-domain root. (Children get the
-            // looser sanitise-then-inherit treatment via normalizeProposedNode.)
+            // A NEW topic root must carry a real selectable subject: 'general' and any
+            // unresolvable string fail closed rather than materialising an invisible or
+            // orphan-domain root. Children get sanitise-then-inherit via normalizeProposedNode.
             return {
               temp_id: raw.temp_id,
               name: raw.name,
@@ -289,10 +277,9 @@ export async function planLearningIntent(
         '3a knowledge.root.domain must resolve to a selectable subject id (see input.valid_domains)',
       );
     }
-    // root?.domain is already canonicalised by normalizeProposedNode; an
-    // existing node's stored domain goes through the same sanitiser so a
-    // corrupt 'general' can't leak into proposed children while legacy
-    // unresolvable domains keep their verbatim storage.
+    // root?.domain is already canonicalised; an existing node's stored domain goes through
+    // the same sanitiser so a corrupt 'general' can't leak into proposed children while
+    // legacy unresolvable domains keep their verbatim storage.
     const rootDomain = root?.domain ?? sanitizeProposedNodeDomain(node?.domain) ?? null;
     const proposedChildren = (knowledgeSpec.children ?? []).map((child) =>
       normalizeProposedNode(child, rootDomain),
@@ -434,9 +421,8 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
   }
 }
 
-// Hub, atomic and long items share one genesis→index→projection path.
-// The genesis carries the full initial structural state; ingest_at opts this
-// creation seed out of the memory outbox.
+// Hub, atomic and long items share one genesis→index→projection path. The genesis carries
+// the full initial structural state; ingest_at opts this creation seed out of the memory outbox.
 async function materializeLearningItem(
   tx: Tx,
   row: LearningItemRowSnapshotT,
@@ -464,13 +450,10 @@ async function materializeLearningItem(
 }
 
 /**
- * Materializes a proposal: creates 1 hub LearningItem + N atomic LearningItems
- * (parent_learning_item_id linked) + paired hub artifact + N atomic artifact
- * stubs (body_blocks=null, generation_status='pending'), then writes a rate
- * event chained to the proposal. Caller is responsible for enqueueing
- * note_generate jobs after this returns.
- *
- * All DB writes happen in a single transaction.
+ * Materializes a proposal: 1 hub LearningItem + N atomic LearningItems (parent-linked) +
+ * paired hub artifact + N atomic artifact stubs (body_blocks=null, generation_status='pending'),
+ * then writes a rate event chained to the proposal. Caller enqueues note_generate jobs after
+ * this returns. All DB writes happen in a single transaction.
  */
 export async function acceptLearningIntent(
   params: AcceptLearningIntentParams,
@@ -491,9 +474,9 @@ export async function acceptLearningIntent(
     longs = [],
   } = proposal.payload;
   const now = new Date();
-  // YUK-471 W3-C1β — mint the RATE event id up-front so the 3 same-tx artifact_create events can
-  // chain caused_by to it (the accept is what materializes these artifacts). caused_by has no FK
-  // (events/queries.ts), so emitting the create events BEFORE the rate row exists in the tx is safe.
+  // Mint the RATE event id up-front so the same-tx artifact_create events can chain caused_by
+  // to it (the accept is what materializes these artifacts). caused_by has no FK, so emitting
+  // the create events BEFORE the rate row exists in the tx is safe.
   const rateEventId = newId();
 
   return db.transaction(async (tx) => {
@@ -517,11 +500,10 @@ export async function acceptLearningIntent(
       tempIdToRealId.set(root.temp_id, rootKnowledgeId);
       createdKnowledgeIds.push(rootKnowledgeId);
 
-      // YUK-1008 — a domain-bearing topic root parents under its subject's seed
-      // anchor (seed:<domain>:root) so the tree backbone keeps every content node
-      // transitively inside its subject tree (same convention as placement-starter
-      // goal-kc). A domain without a seeded anchor (custom/unseeded identity) stays
-      // a standalone root — honest, not silently re-anchored.
+      // A domain-bearing topic root parents under its subject's seed anchor (seed:<domain>:root)
+      // so every content node stays transitively inside its subject tree (same convention as
+      // placement-starter goal-kc). A domain without a seeded anchor (custom/unseeded identity)
+      // stays a standalone root — honest, not silently re-anchored.
       const seedRootId = `seed:${rootDomain}:root`;
       const seedRoot = (
         await tx
@@ -556,10 +538,9 @@ export async function acceptLearningIntent(
           `${planCase} proposal missing proposed children`,
         );
       }
-      // YUK-1004 — sanitise every persisted domain so a stale pre-fix
-      // proposal carrying 'general' cannot leak into knowledge.domain at
-      // accept time either, while legitimately unresolvable domains keep the
-      // same verbatim passthrough the write seam applies.
+      // Sanitise every persisted domain so a stale proposal carrying 'general' cannot leak
+      // into knowledge.domain at accept time either; legitimately unresolvable domains keep
+      // the same verbatim passthrough the write seam applies.
       const fallbackDomain =
         sanitizeProposedNodeDomain(proposedKnowledge?.root?.domain) ??
         sanitizeProposedNodeDomain(proposal.payload.knowledge_node?.domain) ??
@@ -706,9 +687,9 @@ export async function acceptLearningIntent(
       );
     }
 
-    // Notes owns artifact rows, create events, and durable generation intents.
-    // Agency supplies the already-minted IDs so LearningItem↔artifact pairing and
-    // atomic/long ordering remain identical inside this single acceptance transaction.
+    // Notes owns artifact rows, create events, and durable generation intents. Agency
+    // supplies the already-minted IDs so LearningItem↔artifact pairing and atomic/long
+    // ordering stay identical inside this acceptance transaction.
     await createNote(tx, {
       kind: 'hub',
       id: hubArtifactId,
@@ -772,8 +753,8 @@ export async function acceptLearningIntent(
       caused_by_event_id: proposalId,
       task_run_id: proposalTaskRunId ?? null,
       cost_micro_usd: proposalCostMicroUsd ?? null,
-      // single-clock: the RATE parent shares `now` with its artifact_create children so the
-      // caused_by chain never inverts under created_at ordering (CodeRabbit).
+      // The RATE parent shares `now` with its artifact_create children so the caused_by
+      // chain never inverts under created_at ordering.
       created_at: now,
     });
 

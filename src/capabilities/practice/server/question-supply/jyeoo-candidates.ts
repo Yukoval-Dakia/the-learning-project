@@ -1,31 +1,28 @@
-// YUK-986 (Supply-Agent/1) — jyeoo-rs grade-route 候选抓取管线（供给 agent 化的 fetch 核）。
-//
-// 前身：YUK-697 jobs/jyeoo-fetch.ts（search 路线、锚定单 KC、fetch+insert 一体 handler）。
+// (Supply-Agent/1) — jyeoo-rs grade-route 候选抓取管线（供给 agent 化的 fetch 核）。
+// 前身： jobs/jyeoo-fetch.ts（search 路线、锚定单 KC、fetch+insert 一体 handler）。
 // 本模块是 `jyeoo_fetch_candidates` DomainTool 与 scripts/jyeoo-backfill.ts 共享的
 // DETERMINISTIC fetch 核，与旧 handler 的关键差异：
-//
-//   - producer 命令从 `search <keyword> --dg` 换成 `grade --grade G --subjects S`（producer
-//     经济学：发现免费、内容付费 40 题/日、无法按 KC 定向——见 docs/DESIGN §10 与
-//     YUK-985 epic）。锚定 KC / keyword / dg / subject-profile jyeooSupply 全部消失；
-//     知识归属延后到 commit（hint 匹配或 agent 提议），本模块只透传 knowledge_hints。
-//   - 只产候选，不写 question：候选图片即下载即持久化（R2 + source_asset，provenance
-//     origin='jyeoo_staged'）并把 markdown URL 改写为内部 /api/assets/<id>/content——
-//     候选必须自包含，agent 之后凭 extraction_hash + candidate 内容调
-//     store_sourced_question 提交。未提交候选的 staged 资产由 jyeoo_staged_asset_reap 回收。
-//   - dedup 分层：fetch 侧做 in-batch near-dup + 全局 canonical-hash 存在性判定
-//     （advisory，terminal-rejected 旧 draft 也保守判重——重复内容本就会被 verify 再拒）；
-//     KC-scoped pool near-dup + cross-KC merge 全部在 commit（store-sourced-question.ts），
-//     因为只有那时才有 knowledge_ids。
-//
+// - producer 命令从 `search <keyword> --dg` 换成 `grade --grade G --subjects S`（producer
+// 经济学：发现免费、内容付费 40 题/日、无法按 KC 定向——见 与
+// epic）。锚定 KC / keyword / dg / subject-profile jyeooSupply 全部消失；
+// 知识归属延后到 commit（hint 匹配或 agent 提议），本模块只透传 knowledge_hints。
+// - 只产候选，不写 question：候选图片即下载即持久化（R2 + source_asset，provenance
+// origin='jyeoo_staged'）并把 markdown URL 改写为内部 /api/assets/<id>/content——
+// 候选必须自包含，agent 之后凭 extraction_hash + candidate 内容调
+// store_sourced_question 提交。未提交候选的 staged 资产由 jyeoo_staged_asset_reap 回收。
+// - dedup 分层：fetch 侧做 in-batch near-dup + 全局 canonical-hash 存在性判定
+// （advisory，terminal-rejected 旧 draft 也保守判重——重复内容本就会被 verify 再拒）；
+// KC-scoped pool near-dup + cross-KC merge 全部在 commit（store-sourced-question.ts），
+// 因为只有那时才有 knowledge_ids。
 // 确定性保证（继承旧 handler 语义）：
-//   - 任何非零 exit / 超时 / stdout 截断 ⇒ 整批丢弃，绝不入库半截数据（producer 契约）。
-//   - vip:false 行 ⇒ 整批失败（belt：新 producer 不发 vip 字段，此闸对老二进制兜底）。
-//   - dedup 身份只看内容（canonical hash + n-gram），不看 detail id / URL。
-//   - 图片题：本地字节校验（magic + sharp decode）→ R2/source_asset → 内部 URL；
-//     任何外部/临时 URL 都不进候选输出，更不进 DB。
-//   - Canary 单写在本核（YUK-988 E3 P1-3）：每次运行（含失败）写恰好一条
-//     action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）——agent 工具与
-//     executor/脚本路径都经本核，无法绕过观测；工具层不再写。
+// - 任何非零 exit / 超时 / stdout 截断 ⇒ 整批丢弃，绝不入库半截数据（producer 契约）。
+// - vip:false 行 ⇒ 整批失败（belt：新 producer 不发 vip 字段，此闸对老二进制兜底）。
+// - dedup 身份只看内容（canonical hash + n-gram），不看 detail id / URL。
+// - 图片题：本地字节校验（magic + sharp decode）→ R2/source_asset → 内部 URL；
+// 任何外部/临时 URL 都不进候选输出，更不进 DB。
+// - Canary 单写在本核（E3 P1-3）：每次运行（含失败）写恰好一条
+// action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）——agent 工具与
+// executor/脚本路径都经本核，无法绕过观测；工具层不再写。
 
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -89,7 +86,7 @@ export type JyeooGrade = (typeof JYEOO_GRADES)[number];
 /**
  * band → 1-5 difficulty 集合的 post-filter（grade 路线无 --dg，过滤从 producer 侧移到
  * loom 侧；映射沿用旧 jyeooDgTokenForBand 的语义：easy≈1-2 / medium≈3 / hard≈4 /
- * difficult≈5）。标定到 logit-b 仍是 design §2.2 声明的后续工作。
+ * difficult≈5）。标定到 logit-b 仍是 design 声明的后续工作。
  */
 export function difficultyInBand(difficulty: number, band: DifficultyBand): boolean {
   switch (band) {
@@ -197,8 +194,8 @@ export interface RunJyeooFetchCandidatesParams {
   input: JyeooFetchCandidatesInput;
   spawnJyeooFn?: SpawnJyeooFn;
   /**
-   * spawn 墙钟上界的 per-call 覆盖（YUK-998 caller 语义）。缺省走
-   * jyeooSpawnTimeoutMs()（JYEOO_SPAWN_TIMEOUT_MS，in-band 默认 120s——agent 工具与
+   * spawn 墙钟上界的 per-call 覆盖（caller 语义）。缺省走
+   * jyeooSpawnTimeoutMs（JYEOO_SPAWN_TIMEOUT_MS，in-band 默认 120s——agent 工具与
    * supply_execute executor 路由均不传本参数）。批量 caller（scripts/jyeoo-backfill.ts）
    * 必须显式传 jyeooBackfillSpawnTimeoutMs(sessionMax) 的解析值：grade 路线内容拉取
    * ~45s+/题串行，120s 默认会在中途 SIGKILL 丢整批，producer 侧已烧的付费拉题一并损失。
@@ -211,7 +208,7 @@ export interface RunJyeooFetchCandidatesParams {
   ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
   /**
    * r2 惰性解析器：仅当存活候选带图时调用一次。测试注入 memR2；生产 caller 可省略，
-   * 缺省走本模块的 getR2()（practice 内 r2 访问单主，见模块头注释）。
+   * 缺省走本模块的 getR2（practice 内 r2 访问单主，见模块头注释）。
    */
   resolveR2?: () => R2Client;
   now?: Date;
@@ -472,7 +469,7 @@ const emptyCounts = (requested: number): JyeooFetchCandidatesCounts => ({
  * sessionMax 裁到日预算余额内；余额为 0 直接 budget_exhausted 短路（不 spawn）。
  * 失败分类与旧 handler 一致（auth/network/timeout/parse/args/spawn/vip/unknown）。
  *
- * Canary 单写（YUK-988 E3 P1-3）：本核 owns fetch canary——每次运行（含 failed /
+ * Canary 单写（E3 P1-3）：本核 owns fetch canary——每次运行（含 failed /
  * budget_exhausted）写恰好一条 action='experimental:jyeoo_fetch' 事件（预算账本
  * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。旧位在
  * jyeoo_fetch_candidates 工具层——executor 直调核时绕过观测；移入核后 agent 工具与

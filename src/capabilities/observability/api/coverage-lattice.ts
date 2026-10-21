@@ -1,7 +1,5 @@
-// YUK-579 — GET /api/admin/coverage-lattice (只读). 供题治理覆盖细目表：scanCoverageGaps 四规则
-// 的 KC 池级覆盖 + emitted 缺口 targets（desired kind×band×tier 坐标）+ MF1 供给活动注记。
-// READ-ONLY：零写、零 LLM。沿 conjecture-scores.ts 读模型 → 薄 route 形态；/api/* token 校验由
-// 组合根中间件统一施加。
+// Read-only coverage lattice: the scanner's four pool rules, emitted gap targets and
+// recent supply activity. Auth is enforced upstream.
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { loadCoverageLattice } from '../public';

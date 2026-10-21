@@ -1,28 +1,26 @@
-// YUK-1523（P5）— 区域图对冻结发放的纯校验（无 IO）。
-//
+// （P5）— 区域图对冻结发放的纯校验（无 IO）。
 // 输入：界面线渲染器 POST 回的整份区域图（与 PDF 同一渲染 pass 量出），
 // 加上导出时逐题冻结的发放坐标（issueAssessment 落库的 parts/slots/units/
 // option_order，及 revision 冻结 presentation 的输入积木绑定）。
-//
-// 校验目标（docs/design/2026-10-11-worksheet-print-layout.md §2–§3）：
-//   - 页面身份：qr payload 逐页等于 tlp://ws/v1/<token>/<页>/<总页>；
-//   - 区域着落：每个区域引用的 issuance/slot/unit 都在冻结范围内，配对一致
-//     （unit 的 slot_refs 恰含该 slot——G4 门保证已发单元单槽）；
-//   - 全覆盖：每个（发放, 计分单元）要么有 ≥1 个 writing/choice 区域（同一
-//     发放内跨页续写 segment_index 从 1 递增、每页至多一个），要么该
-//     scoring_unit_id 列在 web_only_units，二者互斥（回收端区分「不在纸上」
-//     与「留空」）。同一道题导出两次时 unit id 相同，段号按发放分开，不能
-//     把另一次发放收成同一次的下一段；
-//   - 选项一致：choice 区域的选项圈恰为该槽冻结 option_order 的排列（按
-//     order 排序后逐位相等）——回收按 option_id 判圈，印错集合即判错题；
-//   - 展示绑定一致：presentation 的 option_list 绑定槽只能出 choice 圈、
-//     blank_input/free_area 只能出 writing 区、点选积木（matching_columns/
-//     break_tap/ordering）与 custom 块绑定槽只能进 web_only_units。无绑定
-//     信息时按槽种类推导（single/multi_choice→choice；纯选项 select（冻结
-//     option_order）→choice；text/numeric/formula/open_response/blank/free
-//     →writing；其余→web_only）；
-//   - 版式硬约束：A4 尺寸与方向一致、四角标记 TL/TR/BL 实心 BR 空心、
-//     矩形正面积且落在页面毫米内（容差吸收渲染舍入）。
+// 校验目标：
+// - 页面身份：qr payload 逐页等于 tlp://ws/v1/<token>/<页>/<总页>；
+// - 区域着落：每个区域引用的 issuance/slot/unit 都在冻结范围内，配对一致
+// （unit 的 slot_refs 恰含该 slot——G4 门保证已发单元单槽）；
+// - 全覆盖：每个（发放, 计分单元）要么有 ≥1 个 writing/choice 区域（同一
+// 发放内跨页续写 segment_index 从 1 递增、每页至多一个），要么该
+// scoring_unit_id 列在 web_only_units，二者互斥（回收端区分「不在纸上」
+// 与「留空」）。同一道题导出两次时 unit id 相同，段号按发放分开，不能
+// 把另一次发放收成同一次的下一段；
+// - 选项一致：choice 区域的选项圈恰为该槽冻结 option_order 的排列（按
+// order 排序后逐位相等）——回收按 option_id 判圈，印错集合即判错题；
+// - 展示绑定一致：presentation 的 option_list 绑定槽只能出 choice 圈、
+// blank_input/free_area 只能出 writing 区、点选积木（matching_columns/
+// break_tap/ordering）与 custom 块绑定槽只能进 web_only_units。无绑定
+// 信息时按槽种类推导（single/multi_choice→choice；纯选项 select（冻结
+// option_order）→choice；text/numeric/formula/open_response/blank/free
+// →writing；其余→web_only）；
+// - 版式硬约束：A4 尺寸与方向一致、四角标记 TL/TR/BL 实心 BR 空心、
+// 矩形正面积且落在页面毫米内（容差吸收渲染舍入）。
 
 import type {
   WorksheetRegionMapArchiveBodyT,
@@ -54,7 +52,7 @@ export interface RegionMapIssue {
   detail: string;
 }
 
-// ---------- 版式常量（B 版契约 §1–§2） ----------
+// ---------- 版式常量（B 版契约–） ----------
 
 const A4_SHORT_MM = 210;
 const A4_LONG_MM = 297;
@@ -96,15 +94,15 @@ export function presentationBinders(root: PresentationBlockT): Map<string, strin
 
 /**
  * 旧 revision（无 presentation / 无绑定积木）按槽种类推导打印面。
- * K1 统一槽（YUK-1496/1497）补充：
- *   - blank：单空本质是书写面 → writing；
- *   - free：response_class 词表中的自由作答（↔ open_response 槽）→ writing；
- *   - select：纯选项形（item 无 coordinates/gap）发放时冻结 option_order
- *     （missing_option_order 强校验；关系/字缝 select 不冻结且多余顺序
- *     会被 unknown_option_order_slot 拒掉）—— 有冻结顺序即可印选项圈
- *     → choice，否则 v1 无纸上输入面 → web_only。
- *     与展示层绑定语义一致：option_list↔choice，
- *     matching_columns/break_tap/ordering↔web_only。
+ * K1 统一槽（/1497）补充：
+ * - blank：单空本质是书写面 → writing；
+ * - free：response_class 词表中的自由作答（↔ open_response 槽）→ writing；
+ * - select：纯选项形（item 无 coordinates/gap）发放时冻结 option_order
+ * （missing_option_order 强校验；关系/字缝 select 不冻结且多余顺序
+ * 会被 unknown_option_order_slot 拒掉）—— 有冻结顺序即可印选项圈
+ * → choice，否则 v1 无纸上输入面 → web_only。
+ * 与展示层绑定语义一致：option_list↔choice，
+ * matching_columns/break_tap/ordering↔web_only。
  */
 function legacySurface(scope: FrozenIssuanceScope, slotId: string): SlotPrintSurface {
   switch (scope.slots.get(slotId)?.kind) {
@@ -220,7 +218,7 @@ export function validateRegionMapArchive(
   >();
   for (const page of pages) {
     const { w, h } = page.size_mm;
-    // A4 与方向（B 版契约 §1：竖版 210×297，横版 297×210）。
+    // A4 与方向（B 版契约：竖版 210×297，横版 297×210）。
     const expectPortrait = page.orientation === 'portrait';
     const shortSide = expectPortrait ? w : h;
     const longSide = expectPortrait ? h : w;

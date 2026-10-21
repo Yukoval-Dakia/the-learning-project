@@ -1,6 +1,5 @@
-// YUK-1560 — 空闲回来可练的库存缺口。按目标继承后的有效 domain 统计，
-// 不读知识点行上的裸 domain（子节点通常是空的）。
-// 可用题走 questionServingSet 的正式出题准入。
+// Idle-return practice stock gap, counted by effective domain (raw node domain is
+// often empty on children). Servable questions use the normal serving admission.
 
 import { eq, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';

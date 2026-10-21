@@ -1,11 +1,7 @@
-// Phase 2 Dreaming — knowledge_edge propose pipeline.
-//
-// 和 propose.ts (节点提议) 对应：propose.ts 让 AI 提议**新节点**，本模块让 AI
-// 提议**新边**。两者都走"提议事件 → 用户 rate → accept 落库"的两步流程，区别只
-// 是落库目标 (knowledge vs knowledge_edge) 和 mutation 语义。
-//
-// 不复用 KnowledgeReviewTask 的 streaming + tool-calling 路径 —— ReviewTask 是
-// 交互式 12 iter 设计，nightly cron 用单次结构化输出更便宜可控。
+// Knowledge-edge proposal pipeline. AI proposes edges as propose events; a user
+// accept applies the mutation. This deliberately uses one structured model call
+// rather than the interactive review task's streaming tool loop, because it runs
+// unattended at night.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
@@ -51,10 +47,8 @@ export { EdgeProposalSchema, parseEdgeProposeOutput };
 
 export type RunTaskFn = TaskTextRunFn;
 
-// ADR-0034 §3 / YUK-344 增量 2 — the reconcile decision function. Defaults to the
-// live GLM `judgeEdgeReconcile`; tests inject a deterministic stub so the wiring
-// (pending supersede proposal vs KEEP_BOTH proposal) can be exercised without a GLM call.
-// Signature mirrors judgeEdgeReconcile's (candidate, neighbors) → decision.
+// Defaults to the live judge; tests inject a deterministic stub to exercise both
+// the supersede and KEEP_BOTH wiring without a model call.
 export type JudgeEdgeReconcileFn = (
   candidate: EdgeCandidate,
   neighbors: EdgeNeighbor[],
@@ -66,66 +60,34 @@ export interface RunEdgeProposeAndWriteParams {
   runTaskFn: RunTaskFn;
   env?: Env;
   subjectProfile?: SubjectProfile;
-  // Override for tests. Production omits it → the live GLM judge is used with
-  // `env` threaded through (so the ZHIPU key resolves via mem0 config).
+  /** Test override; production uses the live judge with `env`. */
   judgeReconcileFn?: JudgeEdgeReconcileFn;
   providerAttempt?: EdgeProviderAttemptOptions;
   pgbossJobId?: string;
 }
 
 export interface RunEdgeProposeAndWriteResult {
-  // YUK-583 — success/failure discriminant. `true` on EVERY genuine return
-  // (including the empty-tree no-op and a batch that yielded zero proposals);
-  // `false` ONLY when the catch-all below SWALLOWED an error. The nightly
-  // watermark advances iff `ok === true`, so a吞错夜 (swallowed LLM/DB failure)
-  // never advances the cursor — that is exactly the loss YUK-583 fixes. EMPTY_RESULT
-  // overloads "nothing to do" and "error swallowed" into the same zero-stats shape,
-  // so the counts alone cannot carry this bit; this flag is the disambiguator.
+  /** False only when the catch-all swallowed an error; the nightly watermark checks it. */
   ok: boolean;
-  /**
-   * YUK-779 — true once KnowledgeEdgeProposeTask was actually CALLED, false when this
-   * function returned before ever reaching it (today: the empty-knowledge-tree no-op
-   * at the top, which returns EMPTY_RESULT verbatim with `ok: true`).
-   *
-   * Why the nightly needs it separately from `ok`: `ok` answers "did anything get
-   * swallowed", NOT "did we try". The empty-tree no-op is `ok: true` with zero stats —
-   * indistinguishable from "the model ran and proposed nothing" — so a handler reading
-   * only `ok` would report a fallible unit as attempted on a night when nothing ran at
-   * all. See src/server/boss/job-yield.ts for why 「试过没有」 is the load-bearing
-   * distinction there.
-   */
+  /** True once the model task was actually called, not merely reached. */
   llm_attempted: boolean;
   proposed: number;
   skipped_self_loop: number;
   skipped_unknown_node: number;
   skipped_duplicate_edge: number;
   skipped_duplicate_pending: number;
-  // P5.4 §5-Q5 / YUK-175 — batch edge proposals that FAILED the L1 rubric floor
-  // (validateProposalQuality) and were FOLDED (a rubric-rejected propose event is
-  // still written, marked, but no live pending proposal is created).
+  /** Rubric failures: a marked propose event is kept for audit, not a live proposal. */
   folded_rubric_rejected: number;
-  // ADR-0034 §2 / YUK-344 / YUK-674 — TOPOLOGY gate hard-rejects tree
-  // redundancy, cycles and direction contradictions on the prerequisite graph. Folded like rubric rejects: a
-  // marked propose event is written for audit, no live pending proposal.
+  /** Topology hard rejects (redundancy, cycles, direction): folded like rubric failures. */
   folded_topology_rejected: number;
-  // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS. The edge is
-  // still proposed live (warning, not hard-reject per §2), but the propose event
-  // carries a topology_verdict marker so the inbox / downstream can downweight.
+  /** Edges still proposed live, with a warning marker for downstream downweighting. */
   warned_transitive_redundancy: number;
-  // YUK-689 — reconcile SUPERSEDE recommendations written as pending proposals.
-  // The historical field name is retained for result compatibility; it now counts
-  // recommendations awaiting user approval, never autonomous edge mutations.
+  /** Supersede recommendations awaiting user approval, never autonomous mutations. */
   reconcile_superseded: number;
 }
 
 const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
-  // Base is the SUCCESS shape (ok: true) — it seeds `stats` for the live loop and
-  // is returned verbatim on the genuine tree-empty no-op. The catch-all path
-  // overrides `ok: false` explicitly (YUK-583).
   ok: true,
-  // YUK-779: false by default — every early return that spreads EMPTY_RESULT (the
-  // empty-tree no-op, the catch-all) did NOT reach the model. Only the live path
-  // below flips it, immediately before the call.
   llm_attempted: false,
   proposed: 0,
   skipped_self_loop: 0,
@@ -139,22 +101,17 @@ const EMPTY_RESULT: RunEdgeProposeAndWriteResult = {
 };
 
 /**
- * Build input + call KnowledgeEdgeProposeTask + validate + write propose events.
- *
- * 任何步骤抛错都 swallow（log）—— nightly cron 不应因 LLM 故障停摆。返回
- * stats，便于 cron handler 写入日志。
+ * Build input, call the propose task, validate, and write propose events. Errors
+ * are swallowed and logged so a nightly cron is not stopped by one bad batch.
  */
 export async function runEdgeProposeAndWrite(
   params: RunEdgeProposeAndWriteParams,
 ): Promise<RunEdgeProposeAndWriteResult> {
-  // YUK-779 — 必须是 try 之外的局部量：catch 也要如实回答「刚才到底调没调模型」，
-  // 否则一个**发生在 LLM 之前**的吞掉的 DB 故障会被报成「今晚没事可做」（idle），
-  // 把一次真实的吞错完全隐形——那正是本票要消灭的东西。
+  // Declared outside try so the catch path can still report whether the model ran.
   let llmAttempted = false;
   try {
     const tree = await loadTreeSnapshot(params.db);
-    // 空知识树：本函数在**调用模型之前**就收工。这是「今晚确实没事可做」，
-    // llm_attempted 保持 false（EMPTY_RESULT 的默认值）。
+    // Empty tree is a genuine "nothing to do" night, before any model call.
     if (tree.length === 0) return { ...EMPTY_RESULT };
 
     const existingEdges = await params.db
@@ -171,18 +128,11 @@ export async function runEdgeProposeAndWrite(
       existingEdges.map((e) => edgeKey(e.from_knowledge_id, e.to_knowledge_id, e.relation_type)),
     );
 
-    // ADR-0034 §3 / YUK-344 增量 2 — node-name map for the reconcile prompt's
-    // human-readable neighbor descriptions (ids are NEVER exposed to the LLM, but
-    // names are; see edge-reconcile.ts describeEdge).
+    // The reconcile prompt sees names, never ids.
     const nodeNameById = new Map(tree.map((n) => [n.id, n.name]));
 
-    // ADR-0034 §2 / YUK-344 — the topology gate operates on the LIVE mesh only
-    // (archived_at IS NULL is the live-mesh reader's sole filter, ADR-0034 §4).
-    // An archived edge is not part of the learning-order graph, so it cannot
-    // form a cycle / contradiction / transitive path with a new live proposal.
-    // The dedup `existingEdgeKey` above intentionally still uses the FULL set
-    // (an archived row keeps its UNIQUE(from,to,type) slot), so these are kept
-    // separate.
+    // Topology checks use live edges only. Dedup deliberately uses the full set,
+    // because an archived row still occupies its unique (from, to, type) slot.
     const liveTopologyEdges: TopologyEdge[] = existingEdges
       .filter((e) => e.archived_at === null)
       .map((e) => ({
@@ -191,13 +141,9 @@ export async function runEdgeProposeAndWrite(
         relation_type: e.relation_type,
       }));
 
-    // ADR-0034 §3 / YUK-344 增量 2 — live edges carrying their REAL edge id, for
-    // the reconcile ring's neighbor lookup. Like `liveTopologyEdges`, this starts
-    // from the live (archived_at IS NULL) mesh and is mutated as the batch
-    // proceeds: a SUPERSEDE removes the archived old edge and adds the new one, a
-    // KEEP_BOTH adds the new edge — so a LATER candidate in the same batch
-    // reconciles against the batch-evolved live mesh (the DB is not yet
-    // persisted for the in-flight rows).
+    // Live edges with their real ids, for neighbor lookup. Kept in memory because
+    // in-flight batch rows are not persisted yet; a later candidate must reconcile
+    // against the batch-evolved mesh.
     type LiveEdge = {
       edge_id: string;
       from_knowledge_id: string;
@@ -214,8 +160,7 @@ export async function runEdgeProposeAndWrite(
       }));
 
     const pendingEdgeKey = await loadPendingEdgeProposalKeys(params.db);
-    // One old edge may back at most one pending SUPERSEDE recommendation in a
-    // batch. A later candidate must not produce a stale second proposal for it.
+    // At most one pending supersede recommendation per old edge per batch.
     const pendingSupersededEdgeIds = new Set<string>();
 
     const input = {
@@ -225,9 +170,7 @@ export async function runEdgeProposeAndWrite(
         parent_id: n.parent_id,
         effective_domain: n.effective_domain,
       })),
-      // Keep the LLM input shape stable (from/to/relation_type only) — the
-      // archived_at column added for the topology gate must not leak into the
-      // prompt input.
+      // Keep the prompt shape stable; archived_at is for the gate, not the model.
       existing_edges: existingEdges.map((e) => ({
         from_knowledge_id: e.from_knowledge_id,
         to_knowledge_id: e.to_knowledge_id,
@@ -245,7 +188,7 @@ export async function runEdgeProposeAndWrite(
       }),
     };
 
-    // YUK-779: 紧挨调用之前置位，故成功与吞错两条路都能如实回答「试过」。
+    // Set immediately before the call so both success and the catch path report it.
     llmAttempted = true;
     const result = await params.runTaskFn('KnowledgeEdgeProposeTask', input, {
       subjectProfile: params.subjectProfile,
@@ -256,8 +199,7 @@ export async function runEdgeProposeAndWrite(
     const treeParentLinks = tree.flatMap((node) =>
       node.parent_id ? [{ child_id: node.id, parent_id: node.parent_id }] : [],
     );
-    // 用 llmAttempted 而非硬编码 true（PR #1076 review）：其余每条出口都从这个局部量
-    // 派生，单一真相源；硬编码会在「赋值点被挪动 / 中间插入新路径」时静默漂移。
+    // Every exit derives from the local flag, so a moved assignment cannot drift.
     const stats = { ...EMPTY_RESULT, llm_attempted: llmAttempted };
 
     for (const p of parsed.proposals) {
@@ -279,30 +221,12 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      // P5.4-L2 / YUK-174 NOTE: this batch path's L1 rubric floor is now wired in
-      // (YUK-175): every proposal runs `validateProposalQuality` BELOW before the
-      // live write, mirroring the DomainTool / legacy-MCP call sites. Facet A
-      // (reason-digest) is still deferred — the `KnowledgeEdgeProposeTask` input
-      // built above carries only { tree_snapshot, existing_edges, recent_failures },
-      // NOT a `proposal_feedback` digest; threading it here needs the registry
-      // input schema + prompt extended first (out of scope here). Facet B (the
-      // adaptive gate-bump 4th arg) is INTENTIONALLY NOT passed: L2/Facet A is
-      // out-of-scope for this slice (§5-Q5), so the validator runs as pure L1.
-      // codex r? P2 (propose_edge.ts:163) — per-edge evidence scoping. Attaching
-      // EVERY batch recentFailure to EVERY edge's evidence_refs let edge B borrow
-      // edge A's same-pattern failures and clear the strong floor (live instead of
-      // fold). Scope each edge's evidence to the failures whose EFFECTIVE
-      // referenced ids touch THIS edge's own endpoints, where "effective" is the
-      // attempt ∪ judge union — identical to rubric-validator.ts
-      // `effectiveReferencedKnowledgeIds` (attempt.referenced_knowledge_ids ∪
-      // attempt.judge?.referenced_knowledge_ids). A failure references an endpoint
-      // when its effective id set contains p.from_knowledge_id or p.to_knowledge_id.
-      // When the scoped set is empty the validator takes the evidence_missing path
-      // → fold (correct, matches the existing no-endpoint-evidence behaviour).
-      //
-      // Built BEFORE the topology check so the topology-reject branch can reuse it
-      // (overriding only evidence_refs → []) instead of hand-rebuilding the same
-      // proposal payload object.
+      // Rubric evidence is scoped per edge: a failure counts only when its effective
+      // id set (attempt ∪ judge) touches one of this edge's endpoints. Attaching the
+      // whole batch would let one edge borrow another's evidence. An empty scoped set
+      // takes the validator's evidence-missing path and folds. L2 digest/adaptive gate
+      // stay deferred. Built before the topology check so the reject branch can reuse
+      // the payload with empty evidence_refs.
       const endpointTouchingFailures = params.recentFailures.filter((failure) => {
         const effectiveRefs = new Set([
           ...failure.referenced_knowledge_ids,
@@ -327,8 +251,7 @@ export async function runEdgeProposeAndWrite(
         cooldown_key: `knowledge_edge:${key}`,
       };
 
-      // Base fields shared by every writeAiProposal call below (reject / warn /
-      // normal). Each branch spreads this and adds its own payload + event_override.
+      // Common write fields; each branch adds its own payload and event override.
       const proposalWriteBase = {
         actor_ref: 'dreaming' as const,
         outcome: 'success' as const,
@@ -337,11 +260,7 @@ export async function runEdgeProposeAndWrite(
         created_at: new Date(),
       };
 
-      // Base event_override.payload fields shared by the topology reject AND warn
-      // branches below. Both branches emit the identical edge fields and differ
-      // ONLY in the `topology_verdict` marker they append, so we build the common
-      // base once here (before the topology check) and spread it with the
-      // per-branch verdict. Behaviour is byte-identical to inlining the fields.
+      // Shared by the topology reject and warn branches; only the verdict differs.
       const eventPayloadBase = {
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
@@ -350,12 +269,10 @@ export async function runEdgeProposeAndWrite(
         reasoning: p.reasoning,
       };
 
-      // ADR-0034 §2 / YUK-344 — write-time STRUCTURAL CONSISTENCY gate (topology
-      // layer). Pure graph checks (tree redundancy / cycle / direction contradiction /
-      // transitive redundancy) on the prerequisite graph, orthogonal to the semantic rubric
-      // gate below. `liveTopologyEdges` accumulates edges accepted EARLIER in this
-      // same batch so two proposals that TOGETHER form a cycle are caught (the
-      // batch is not yet persisted, so a fresh DB read would miss them).
+      // Structural gate, separate from the semantic rubric: tree redundancy, cycles,
+      // direction contradictions and transitive redundancy. The edge list includes
+      // earlier edges from this batch, so two proposals that only form a cycle
+      // together are still caught.
       const topology = checkEdgeTopology(
         {
           from_knowledge_id: p.from_knowledge_id,
@@ -367,13 +284,9 @@ export async function runEdgeProposeAndWrite(
       );
 
       if (topology.status === 'reject') {
-        // Tree redundancy / cycle / direction contradiction = HARD reject. Fold like a rubric
-        // reject (RB-6 / §3.4): write a MARKED propose event for audit, no live
-        // pending proposal, and exclude it from cross-batch dedup so a later
-        // batch can re-evaluate against an evolved graph. The marker is a
-        // `topology_verdict` sibling of ai_proposal on the event payload. Reuse
-        // `proposalPayload` but drop evidence_refs — a folded reject carries no
-        // evidence (its endpoints' failures are not "supporting" a live edge).
+        // Fold like a rubric reject: a marked event stays for audit, no live
+        // proposal is created, and a later batch may re-evaluate. A folded reject
+        // carries no evidence.
         await writeAiProposal(params.db, {
           ...proposalWriteBase,
           payload: { ...proposalPayload, evidence_refs: [] },
@@ -395,7 +308,6 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      // Write ProposeKnowledgeEdge event (Lane B).
       const verdict = await validateProposalQuality(
         parseAiProposalPayload(proposalPayload),
         params.db,
@@ -403,12 +315,9 @@ export async function runEdgeProposeAndWrite(
       );
 
       if (!verdict.ok) {
-        // RB-6 / §3.4 — write the propose event ANYWAY, MARKED rubric-rejected
-        // (carrying { rubric_verdict } as a sibling of ai_proposal in the event
-        // payload). Folded, not dropped: an audit trail + a Layer-2 signal, and
-        // excluded from live-pending dedup (RB-7) so a later batch can re-propose
-        // and re-fold rather than permanently lock the edge out. Mirrors
-        // foldRubricRejectedEdge in proposal-tools.ts.
+        // Folded, not dropped: keep a marked event for audit and exclude it from
+        // pending dedup so a later batch can re-propose. Mirrors the tool path's
+        // foldRubricRejectedEdge.
         await writeAiProposal(params.db, {
           ...proposalWriteBase,
           payload: proposalPayload,
@@ -425,24 +334,16 @@ export async function runEdgeProposeAndWrite(
             },
           },
         });
-        // Mark this key so the SAME batch does not re-emit it (the folded row is
-        // excluded from the CROSS-batch pending set in loadPendingEdgeProposalKeys,
-        // but within one batch we still suppress an immediate duplicate).
+        // Suppress an immediate duplicate within this batch.
         pendingEdgeKey.add(key);
         stats.folded_rubric_rejected += 1;
         continue;
       }
 
-      // ADR-0034 §3 / YUK-344 增量 2 — WRITE-TIME RECONCILIATION RING. Runs ONLY
-      // for a candidate that has already passed BOTH the topology gate (above —
-      // a topology-rejected edge `continue`d before ever reaching here, so the
-      // ring NEVER sees a topology-rejected edge) AND the semantic rubric floor
-      // (just above). Retrieve the live neighbor edges touching either endpoint
-      // and ask the ring whether the candidate semantically CORRECTS a live
-      // neighbor (SUPERSEDE) or coexists with all of them (KEEP_BOTH, the
-      // default-in-doubt). On ReconcileParseError / network / low confidence the
-      // ring (or this wiring) degrades to KEEP_BOTH — never a destructive
-      // supersede on an uncertain judgment.
+      // Reconciliation runs only after both gates pass. It asks whether the
+      // candidate semantically corrects a live neighbor (supersede) or coexists
+      // with it (keep both). Parse errors, network failures and low confidence all
+      // degrade to keep-both; an uncertain judge never causes a destructive write.
       const neighbors: EdgeNeighbor[] = liveNeighborEdges
         .filter((e) => !pendingSupersededEdgeIds.has(e.edge_id))
         .filter(
@@ -471,9 +372,8 @@ export async function runEdgeProposeAndWrite(
         reasoning: p.reasoning,
       };
 
-      // The ring only covers the 5 CORE homogeneous relation types (ADR-0010 /
-      // edge-reconcile.ts). An `experimental:*` candidate has no ring framing —
-      // treat it as KEEP_BOTH (skip the ring entirely), preserving today's behavior.
+      // The ring only understands the five core relation types; experimental ones
+      // skip it and keep both.
       const isCoreRelation = CORE_RELATION_TYPES.has(p.relation_type);
 
       let decision: EdgeReconcileDecision | null = null;
@@ -490,21 +390,13 @@ export async function runEdgeProposeAndWrite(
                   deadlineAt: new Date(Date.now() + 65_000),
                 },
               }));
-          // Defensive re-apply of the confidence threshold: the live
-          // judgeEdgeReconcile already applies it, so this is an idempotent no-op
-          // there; for an INJECTED fn it guarantees a low-confidence SUPERSEDE is
-          // still degraded to KEEP_BOTH (the "no destructive supersede on low
-          // confidence" invariant holds regardless of the decision source).
+          // Re-apply the threshold so an injected judge cannot bypass the
+          // no-destructive-supersede-on-low-confidence rule.
           decision = applyConfidenceThreshold(await judge(candidateForReconcile, neighbors));
         } catch (err) {
           if (isEdgeReconcileInvariantError(err)) throw err;
-          // ReconcileParseError / Retryable / Permanent — safe-degrade to
-          // KEEP_BOTH (no destructive supersede on an unparseable / failed judge).
-          // Log ONLY the safe message: a ReconcileParseError carries `raw` = the
-          // full raw LLM provider response, and serializing the whole error object
-          // would leak that sensitive AI payload into log output. Mirror the memory
-          // side's KEEP_BOTH degrade log (triggers.ts: `err.message` only); `raw`
-          // belongs in the audit-log row, never the console.
+          // Safe-degrade. Log only the message: a parse error carries the raw model
+          // response, which must stay out of console logs.
           console.warn(
             'runEdgeProposeAndWrite: reconcile judge failed, KEEP_BOTH degrade',
             err instanceof Error ? err.message : String(err),
@@ -514,24 +406,18 @@ export async function runEdgeProposeAndWrite(
       }
 
       if (decision?.action === 'SUPERSEDE' && decision.superseded_edge_id) {
-        // Resolve the superseded neighbor (its endpoints/type for the new-edge
-        // provenance + intra-batch live-mesh bookkeeping). Guard against a stale
-        // id that no longer matches a tracked live edge → degrade to KEEP_BOTH.
+        // A stale id that no longer matches a tracked live edge degrades to keep-both.
         const supersededId = decision.superseded_edge_id;
         const supersededEdge = liveNeighborEdges.find((e) => e.edge_id === supersededId);
-        // affected_refs must be ≥1 ActivityRef (CorrectEvent schema). The candidate
-        // reached the LIVE path, so the rubric floor passed via endpoint-touching
-        // judge-backed failures → endpointTouchingFailures is non-empty in practice.
-        // If it is somehow empty we cannot form a valid correction event → degrade.
+        // A correction event needs at least one ref; if none can be formed, keep both.
         const affectedRefs: ActivityRefT[] = endpointTouchingFailures.map((failure) => ({
           kind: 'question',
           id: failure.question_id,
         }));
 
         if (supersededEdge && affectedRefs.length > 0) {
-          // YUK-689 — the reconcile judge is advisory. Persist its SUPERSEDE as a
-          // pending proposal; the replacement edge and archive are applied only by
-          // decideKnowledgeEdgeProposal after an explicit user accept.
+          // The judge is advisory: persist a pending proposal; the replacement and
+          // archive happen only after an explicit user accept.
           await writeAiProposal(params.db, {
             ...proposalWriteBase,
             payload: {
@@ -553,15 +439,11 @@ export async function runEdgeProposeAndWrite(
           stats.reconcile_superseded += 1;
           continue;
         }
-        // supersededEdge missing / no affected_refs → fall through to KEEP_BOTH.
+        // Missing edge or refs falls through to keep-both.
       }
 
-      // ADR-0034 §2 — transitive-redundancy WARNING (topology.status === 'warn').
-      // Not a hard reject: the edge is still proposed live, but the propose event
-      // carries a `topology_verdict` marker so the inbox / downstream can
-      // downweight the redundant direct edge. When there is no warning we keep
-      // the original write shape (no marker), so the non-warning path is
-      // byte-identical to before this gate.
+      // A warning still proposes the edge live, but marks it so downstream can
+      // downweight the redundant direct edge. The clean path stays unmarked.
       if (topology.status === 'warn') {
         await writeAiProposal(params.db, {
           ...proposalWriteBase,
@@ -586,29 +468,10 @@ export async function runEdgeProposeAndWrite(
           payload: proposalPayload,
         });
       }
-      // 同一 batch 内防同向同型重复
       pendingEdgeKey.add(key);
-      // ADR-0034 §2 — record the now-live edge so a LATER proposal in this same
-      // batch is checked against it (intra-batch cycle / contradiction).
-      //
-      // FINDING A (YUK-344) — this push is reached ONLY on the live (non-folded)
-      // path: every fold branch above (topology reject, rubric reject) `continue`s
-      // BEFORE here, so a folded edge is intentionally NEVER added to
-      // `liveTopologyEdges`. This is correct, not a bug: a folded edge (rubric OR
-      // topology) is never persisted as a live edge, so it is not part of the live
-      // prerequisite graph. The accumulator must mirror the live graph — if a
-      // folded edge were added, a LATER same-batch edge that would only close a
-      // cycle THROUGH the folded edge would be falsely topology-rejected, even
-      // though that cycle does not exist in the live mesh. Excluding folded edges
-      // keeps the intra-batch check consistent with the eventual DB state.
-      //
-      // ADR-0034 §3 / YUK-344 增量 2 — a KEEP_BOTH edge is written as a PENDING
-      // PROPOSAL (writeAiProposal → a propose event), NOT a live knowledge_edge
-      // row, so it is intentionally NOT added to `liveNeighborEdges`: the
-      // reconcile ring's neighbors are LIVE edges (archivable rows with real
-      // ids), and a pending proposal has neither. A SUPERSEDE recommendation exits
-      // earlier as its own pending proposal and also leaves both live accumulators
-      // unchanged until the user accepts it.
+      // Only live-path edges enter the batch mesh. Folded edges are never persisted,
+      // so adding them would create false cycles for later candidates. Pending
+      // proposals are not live rows either, so they stay out of both accumulators.
       liveTopologyEdges.push({
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
@@ -620,22 +483,15 @@ export async function runEdgeProposeAndWrite(
     return stats;
   } catch (err) {
     if (isEdgeReconcileInvariantError(err)) throw err;
-    // Log ONLY the safe message: this catch-all in the edge-reconcile write path
-    // could in principle receive an error carrying a raw LLM payload (e.g. a
-    // ReconcileParseError), and serializing the whole error object would leak that
-    // sensitive AI response into log output. Message-only, matching the judge
-    // degrade site above.
+    // Message only: the error may carry a raw model response.
     console.error(
       'runEdgeProposeAndWrite: failed (no proposals written)',
       err instanceof Error ? err.message : String(err),
     );
     await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
-    // YUK-583 — ok: false marks a SWALLOWED error. The nightly must NOT advance
-    // the watermark on this path (advancing would drop the batch's events forever,
-    // reproducing the bug this issue fixes). Distinct from the tree-empty no-op
-    // (ok: true) which is safe to advance past.
-    // YUK-779: 带上 llmAttempted 的真实值——LLM 之前就吞掉的故障仍须计为一次失败的
-    // 尝试（见 handler 里 `llm_attempted || !ok` 的合成），绝不能滑成 idle。
+    // Never advance the nightly watermark on a swallowed error, or this batch's
+    // events are lost. Also report whether the model was called, so a pre-model
+    // failure is not mistaken for an idle night.
     return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
 }
@@ -644,10 +500,7 @@ function edgeKey(fromId: string, toId: string, relationType: string): string {
   return `${fromId}|${toId}|${relationType}`;
 }
 
-// ADR-0034 §3 / YUK-344 增量 2 — the 5 CORE homogeneous relation types the
-// reconcile ring covers (ADR-0010 / edge-reconcile.ts EdgeRelationType). An
-// `experimental:*` candidate has no ring framing → KEEP_BOTH (skip the ring),
-// preserving today's behavior for experimental edges.
+// The five core relation types the reconcile ring covers.
 const CORE_RELATION_TYPES = new Set<string>([
   'prerequisite',
   'related_to',
@@ -657,35 +510,16 @@ const CORE_RELATION_TYPES = new Set<string>([
 ]);
 
 /**
- * ADR-0034 §3 / YUK-344 增量 2 — apply a reconcile SUPERSEDE decision.
+ * Apply a user-approved supersede inside the caller's transaction, so a crash
+ * rolls back everything and there is nothing to replay:
+ *   1. record the plan in the reconciliation log;
+ *   2. archive the old edge;
+ *   3. create the new edge and its generate event;
+ *   4. write the correction event, targeting the old archive event;
+ *   5. mark the log row applied.
  *
- * Caller-owned single-transaction sequence (the proposal action supplies a Tx, so a
- * crash rolls back EVERYTHING — including the `edge_reconciliation_log` row — and there is
- * nothing to replay). The log row is an AUDIT / PROVENANCE record of the supersede,
- * not a write-ahead replay cursor: it captures the decision (action, confidence,
- * superseded_edge_id, llm_raw) for observability. The no-double-apply guard is the
- * `knowledge_edge` UNIQUE(from,to,relation_type) constraint (a re-proposed duplicate
- * candidate is `skipped_duplicate_edge` upstream before ever reaching this apply),
- * NOT deterministic ids — every id below is a fresh `createId()`.
- *   1. audit-log the SUPERSEDE plan (planned_at set; applied_at stamped in step 6);
- *   2. write the NEW edge: a `generate` knowledge_edge event (its id is the
- *      correction's `replacement_event_id`) + the real live `knowledge_edge` row
- *      (createKnowledgeEdge — single-owner INSERT);
- *   3. archive the OLD edge: `archiveKnowledgeEdge` (NULL→now soft-delete — the
- *      ADR-0034 §4 LOAD-BEARING removal from the live mesh);
- *   4. write the OLD edge's archive-provenance `generate` event (mirrors the
- *      proposals/actions.ts archive path) so the correction has a stable event to
- *      target — a CorrectEvent can only target subject_kind='event', NOT an edge
- *      row (ADR-0034 §4);
- *   5. write the `correct` event: correction_kind='supersede', subject targeting
- *      the OLD edge's archive-provenance event, replacement_event_id = the NEW
- *      edge's generate event (epistemic PROVENANCE only — the archive in step 3 is
- *      what actually removes the edge). Attributed to the dreaming AGENT
- *      (actor_kind='user', actor_ref='self') because only an explicit proposal
- *      acceptance reaches this function;
- *   6. mark the write-ahead log row applied.
- *
- * Applies a user-approved reconcile SUPERSEDE inside the caller's transaction.
+ * The log is audit/provenance, not a replay cursor. Double-apply is prevented by
+ * the unique edge key and the upstream duplicate check, not by deterministic ids.
  */
 export async function applyApprovedEdgeSupersede(
   db: Tx,
@@ -714,10 +548,10 @@ export async function applyApprovedEdgeSupersede(
   const newGenerateEventId = createId();
   const oldArchiveGenerateEventId = createId();
   const correctionEventId = createId();
-  // 1) audit-log the SUPERSEDE plan (applied_at stamped in step 6, same tx).
+  // 1) Record the plan; applied_at is stamped last in the same transaction.
   await insertEdgePlannedRows(db, [logRow]);
 
-  // Retire old topology before introducing its replacement in this transaction.
+  // 2) Retire the old edge before introducing its replacement.
   const archived = await archiveKnowledgeEdgeFromEvents(db, supersededEdgeId, {
     event_id: oldArchiveGenerateEventId,
     caused_by_event_id: proposeEventId,
@@ -727,11 +561,8 @@ export async function applyApprovedEdgeSupersede(
   if (!archived.archived)
     throw new Error(`superseded edge ${supersededEdgeId} is already archived`);
 
-  // Create replacement and provenance.
-  //    event subject-anchored to that id. The candidate's key is guaranteed
-  //    unique here (a key matching ANY existing edge — including the archived
-  //    superseded one, which keeps its UNIQUE(from,to,type) slot — was already
-  //    `skipped_duplicate_edge` upstream), so this INSERT cannot 23505-conflict.
+  // 3) Create the replacement. Its key is unique here because duplicates,
+  //    including the archived old edge's slot, were filtered upstream.
   const newEdgeId = await createKnowledgeEdge(db, {
     generate_event_id: newGenerateEventId,
     from_knowledge_id: p.from_knowledge_id,
@@ -739,15 +570,14 @@ export async function applyApprovedEdgeSupersede(
     relation_type: p.relation_type,
     weight: p.weight,
     reasoning: p.reasoning,
-    // YUK-471 — fold-consistent created_by + created_at aligned to the `generate` event below
-    // (same `now`, same actor) so this reconcile edge folds == its row.
+    // Align actor and time with the generate event so the edge folds to its row.
     actor_kind: 'user',
     actor_ref: 'self',
     propose_event_id: proposeEventId,
     created_at: now,
   });
 
-  // 5) Human-attributed correction provenance for the accepted replacement.
+  // 4) Human-attributed correction provenance for the accepted replacement.
   await writeEvent(db, {
     id: correctionEventId,
     actor_kind: 'user',
@@ -766,17 +596,15 @@ export async function applyApprovedEdgeSupersede(
     created_at: now,
   });
 
-  // 6) Stamp the audit-log row applied_at (same tx — atomic with the apply, so
-  //    a committed log row always reflects a fully-applied supersede).
+  // 5) Same transaction, so a committed log row always means a full apply.
   await markEdgeReconcileApplied(db, logRow.id);
 
   return { edgeId: newEdgeId, generateEventId: newGenerateEventId };
 }
 
 /**
- * Load (from, to, relation_type) keys of pending edge proposals — i.e. propose
- * events for knowledge_edge that have no rate event chained. Used for dedupe so
- * dreaming doesn't re-propose the same edge nightly.
+ * Keys of pending edge proposals: propose events with no chained rate event and no
+ * terminal fold. Used so dreaming does not re-propose the same edge nightly.
  */
 export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
   const proposeRows = await db
@@ -786,24 +614,10 @@ export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> 
       and(
         eq(event.action, 'propose'),
         eq(event.subject_kind, 'knowledge_edge'),
-        // P5.4 / YUK-143 (RB-7) — exclude rubric-rejected (folded) propose
-        // events. They are TERMINAL, not live-pending; counting one in the
-        // dedup set would make the next nightly batch hit
-        // `skipped_duplicate_pending` and permanently refuse to re-propose the
-        // very edge the rubric rejected. This is the 4th "pending propose with
-        // no chained rate" query and must filter the marker like
-        // findProposalRowsForGate (review.ts) does. The marker is a
-        // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
+        // Folded proposals are terminal, not pending. Counting them here would
+        // permanently block re-proposing the same edge. A topology reject carries
+        // no rubric marker, so both predicates are required.
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
-        // ADR-0034 §2 / YUK-344 — exclude TOPOLOGY-rejected (folded) propose
-        // events too. A topology reject fold writes a `topology_verdict` marker
-        // with status 'reject' (and NO rubric_verdict key), so the rubric filter
-        // above does NOT catch it. Without this twin filter a topology-rejected
-        // edge would be counted as live-pending here → the next batch hits
-        // `skipped_duplicate_pending` and permanently refuses to re-propose the
-        // very edge topology rejected (the cross-batch lockout RB-7 forbids).
-        // Mirrors the rubric_verdict predicate exactly; the marker is a
-        // `topology_verdict: { status:'reject' }` sibling of ai_proposal.
         sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),
     )

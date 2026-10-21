@@ -1,6 +1,6 @@
-// YUK-1355 Lane B — shared durable paid-effect protocol (FIXED typed interface).
+// Shared durable paid-effect protocol (FIXED typed interface).
 //
-// This module is the contract handed to lanes A/C and the parent: the effect
+// This module is the shared contract for every consumer: the effect
 // identity, delivery/admission, receipt, application and obligation vocabulary
 // every paid-effect family shares. It owns no DB access so consumers can depend
 // on the types without pulling a runtime. Breaking changes to anything exported
@@ -39,8 +39,8 @@ export const PAID_EFFECT_STATE_SCHEMA = z.enum([
 export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
 
 // 'voided' is a terminal RESOLVED state, not an unfinished obligation: a lead
-// explicitly retired an 'unknown' obligation under a recorded authorization
-// (YUK-1567). The row keeps its identity, input, unknown reason and delivery
+// explicitly retired an 'unknown' obligation under a recorded authorization.
+// The row keeps its identity, input, unknown reason and delivery
 // audit forever — void never deletes, never rewrites input/history, and bumps
 // the fence so the old delivery's late receipt/unknown-marking is rejected by
 // the same CAS that protects receipt recording.
@@ -49,7 +49,7 @@ export type PaidEffectState = z.infer<typeof PAID_EFFECT_STATE_SCHEMA>;
 // application, fence literally 0 — an advanced fence means a claim touched the
 // row). Unlike void it binds no successor and authorizes no new send — the
 // cancelled intent is only proven never-spent and sealed under an immutable
-// cancellation event + receipt (YUK-1567).
+// cancellation event + receipt.
 /**
  * States in which a successor authorization still gates the entity: while the
  * authorized successor row is missing or in one of these states, ONLY the
@@ -77,7 +77,7 @@ export const PAID_EFFECT_OBLIGATION_STATES = [
 ] as const satisfies readonly PaidEffectState[];
 
 /**
- * States that block a backend switch (P1-5: block on EVERY unfinished
+ * States that block a backend switch (block on EVERY unfinished
  * obligation — pending intents and unapplied receipts included). Until the
  * parent defines per-state takeover evidence, ownership moves only over a
  * fully drained family; unfinished work must never silently vanish under a
@@ -108,7 +108,7 @@ const parallelRepUnit = new RegExp(PAID_EFFECT_PARALLEL_REP_UNIT_PATTERN);
  * Open effects gate the entity. Only item_prior_backfill's recognized feature
  * reps of the same revision are parallel siblings — every other unresolved
  * send (including same-unit input changes and any different revision) blocks.
- * The one sanctioned way past an unresolved blocker is YUK-1567's generic
+ * The one sanctioned way past an unresolved blocker is the generic
  * void + successor authorization, which resolves the old row to 'voided' and
  * is enforced by the authorization gate in the store layer, never by exempting
  * a still-open blocker here.
@@ -129,7 +129,7 @@ export function paidEffectGateBlocks(
 }
 
 /**
- * Serialized per (family, entityId) — NEVER per revision (P1-1): claims for
+ * Serialized per (family, entityId) — NEVER per revision: claims for
  * different revisions of one entity must serialize on the same lock so the
  * cross-revision block cannot be raced past.
  */
@@ -138,7 +138,7 @@ export function paidEffectGateLockKey(identity: PaidEffectIdentity): string {
 }
 
 /**
- * THE family-level serialization lock (P1-R2-1): every control admission and
+ * THE family-level serialization lock: every control admission and
  * every switch takes it FIRST, in the SAME transaction, BEFORE reading or
  * materializing the control row. A FOR SHARE/UPDATE row lock cannot serialize
  * anything when the row does not exist yet — without this advisory, a
@@ -273,7 +273,7 @@ export interface PaidEffectSuccessorDelivery {
 
 /**
  * Lead authorization for voiding an 'unknown' obligation and binding ONE
- * successor effect to ONE delivery — the generic YUK-1567 reauthorization
+ * successor effect to ONE delivery — the generic reauthorization
  * record (never family- or task-specific). All fields are audit truth written
  * verbatim to paid_effect_authorization and the voided row's receipt.
  */
@@ -306,7 +306,7 @@ export interface PaidEffectVoidReceipt {
 }
 
 /**
- * Lead request to cancel a never-sent 'pending' intent — the generic YUK-1567
+ * Lead request to cancel a never-sent 'pending' intent — the generic
  * cancellation record (never family- or task-specific). All fields are audit
  * truth written verbatim to paid_effect_cancellation and the cancelled row's
  * receipt. A cancel mints NO authorization, binds NO successor, and triggers
@@ -556,7 +556,7 @@ export function summarizePaidEffectSwitchBlocking(
 
 /**
  * The reserve discrimination — the ONLY send admission verdict. Computed from
- * the locked own row plus the entity-gate scan; pinned so consumers (A/C)
+ * the locked own row plus the entity-gate scan; pinned so consumers
  * never build their own shared-state interpretation:
  * - 'winner': this delivery owns the physical send (pending → sending CAS won).
  * - 'held': do not send — the effect is in flight/unresolved itself, or the
