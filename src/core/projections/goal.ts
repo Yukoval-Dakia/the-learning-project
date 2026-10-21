@@ -11,12 +11,10 @@ import {
 } from '../schema/event/goal-events';
 import type { FoldEvent } from './fold-event';
 
-// Pure goal reducer: genesis or an accepted goal_scope proposal seeds the row, retract
-// tombstones it to dormant, and status/scope updates bump version. Version changes mirror
-// the imperative writers per site (genesis verbatim, insert 0, retract no bump, updates +1),
-// not a blanket +1. No IO, ids, or clocks, so the same events always fold to the same row.
-//
-// Gather: Q1 goal events plus the caused_by accept/retract chain.
+// Pure goal reducer. genesis or an accepted goal_scope proposal seeds the row; retract
+// tombstones it to dormant; status/scope updates bump version. Version changes mirror the
+// imperative writers per site, not a blanket +1. No IO/ids/clocks, so events always fold
+// to the same row. Gather is Q1 plus the caused_by accept/retract chain.
 
 // Focused parse of the proposal's structural fields; the full AiProposal payload is not needed.
 const GoalProposedChange = z.object({
@@ -59,13 +57,13 @@ function warnMalformed(action: string, eventId: string, error: unknown): void {
 
 /** Project one goal from its events; callers may pass a superset. Null when no base exists. */
 export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT | null {
-  // Sort once so both passes see event order, not arrival order; a duplicate accept then
-  // resolves deterministically.
+  // Sort once so both passes see event order, not arrival order; duplicate accepts
+  // then resolve deterministically.
   const ordered = [...events].sort(byCreatedThenId);
 
   // ---------- pass 1: accept resolution ----------
-  // Only an accepted propose materializes a goal. Capture the accept moment and the
-  // materialized id; retract is applied in pass 2 so it interleaves chronologically.
+  // Only an accepted propose materializes a goal. Capture the accept moment and id;
+  // retract is applied in pass 2 so it interleaves chronologically.
   const acceptedAtByProposeId = new Map<string, Date>();
   const materializedGoalByProposeId = new Map<string, string>();
 
@@ -87,7 +85,7 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
   let materializingProposeId: string | null = null;
 
   for (const fe of ordered) {
-    // genesis seed — the base state (version, timestamps and all carried verbatim).
+    // genesis seed — base state carried verbatim.
     if (fe.action === 'experimental:genesis' && fe.subject_kind === 'goal') {
       const g = GenesisExperimental.safeParse(toParseInput(fe));
       if (!g.success) {
@@ -111,8 +109,8 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
       continue;
     }
 
-    // proposal materialization — create only when accepted; timestamps use the accept
-    // moment and version stays 0, mirroring insertGoal.
+    // proposal materialization — accepted only; timestamps use the accept moment and
+    // version stays 0, mirroring insertGoal.
     if (
       fe.action === 'experimental:proposal' &&
       fe.subject_kind === 'goal' &&
@@ -155,8 +153,8 @@ export function foldGoal(goalId: string, events: FoldEvent[]): GoalRowSnapshotT 
       continue;
     }
 
-    // RETRACT — proposal-level retract tombstones an active goal to dormant without a version
-    // bump. Its subject is the proposal, so route it via materializingProposeId.
+    // RETRACT — proposal-level retract tombstones an active goal without a version bump.
+    // Its subject is the proposal, so route it through materializingProposeId.
     if (fe.action === 'correct' && fe.subject_kind === 'event') {
       if (row === null || materializingProposeId === null) continue;
       if (fe.caused_by_event_id !== materializingProposeId) continue;

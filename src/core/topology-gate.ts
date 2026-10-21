@@ -1,38 +1,15 @@
-// ADR-0034 §2 — write-time structural consistency gate (TOPOLOGY layer).
+// ADR-0034 §2 — write-time topology gate. Pure graph checks on a candidate
+// knowledge_edge; no DB or LLM. Checks run in this order:
+//   ① self-loop prerequisite → reject;
+//   ② direct parent-child pair already in the tree → reject;
+//   ③ inverse prerequisite already exists → reject (specific 2-node back-edge);
+//   ④ new prerequisite closes a cycle → reject;
+//   ⑤ direct edge duplicates an existing ≥2-hop path → warn.
 //
-// Spec: docs/adr/0034-knowledge-structure-consistency-gate-supersedes-bitemporal.md §2
-//
-// Five PURE graph checks on a candidate knowledge_edge write (no DB, no LLM),
-// numbered here in the order they run in checkEdgeTopology below:
-//   ① self-loop               — a `prerequisite` edge whose from == to is the
-//                               degenerate 1-node cycle → hard-reject.
-//   ② tree redundancy         — the pair is already a direct knowledge.parent_id
-//                               relationship in either direction → hard-reject.
-//   ③ direction contradiction — A prereq B already exists AND the candidate is
-//                               B prereq A → hard-reject (the 2-node back-edge
-//                               case, called out separately from the generic
-//                               cycle per the ADR).
-//   ④ cycle detection (general) — a `prerequisite` edge must not close a cycle in
-//                               the learning-order graph → hard-reject.
-//   ⑤ transitive redundancy   — A→…→C is already reachable along prerequisite
-//                               edges and a DIRECT A→C is proposed → warn
-//                               (rejected-or-downweighted; this layer warns and
-//                               lets the caller decide to fold/downweight).
-//
-// This is the TOPOLOGY gate ONLY. It is orthogonal to the SEMANTIC gate
-// (rubric-validator.ts, §4.x evidence/relation predicates); both run on the edge
-// propose-and-write path and stack. The write-time reconciliation ring (ADR-0034
-// §3, blockedBy YUK-342) is a separate follow-up and is NOT implemented here.
-//
-// SCOPING: the cycle/direction/transitive checks apply to the `prerequisite`
-// relation only — it is the load-bearing learning-ORDER relation the ADR names
-// ("prerequisite 边不得成环"). `related_to` / `contrasts_with` are symmetric /
-// non-ordering (cycles are meaningless). `derived_from` / `applied_in` are
-// directional but the ADR scopes the topology gate to `prerequisite`; extending
-// it to other directed relations is a deliberate non-goal of this lane (the
-// heterogeneous-edge / misconception-edge topology gate is RT1's, ADR-0034 §
-// 后果/风险). A non-prerequisite candidate always returns { status: 'ok' } from
-// this gate (its semantic checks live in rubric-validator.ts).
+// Only `prerequisite` is policed: it is the learning-order relation the ADR names.
+// related_to/contrasts_with are non-ordering; derived_from/applied_in are out of scope.
+// Semantic checks live in rubric-validator.ts and stack with this gate. The ADR §3
+// reconciliation ring is a separate follow-up and not implemented here.
 
 export interface TopologyEdge {
   from_knowledge_id: string;
@@ -57,8 +34,7 @@ export function isDirectTreePair(
   );
 }
 
-// The stable topology gate string set. Mirrors the RubricGate convention in
-// rubric-validator.ts (a stable discriminant carried in the verdict).
+// Stable verdict discriminants, mirroring rubric-validator's gate convention.
 export type TopologyGate =
   | 'cycle'
   | 'direction_contradiction'
@@ -70,15 +46,10 @@ export type TopologyVerdict =
   | { status: 'reject'; gate: TopologyGate; reason: string }
   | { status: 'warn'; gate: TopologyGate; reason: string };
 
-// The relation this gate governs. Only learning-ORDER edges form a meaningful
-// DAG; the ADR names `prerequisite` explicitly.
+// The only learning-order relation; the ADR scopes this gate to it.
 const ORDERED_RELATION = 'prerequisite';
 
-/**
- * Adjacency map (from → set of direct successors) built from the live
- * prerequisite edges. Non-prerequisite edges are ignored — they are not part of
- * the learning-order graph.
- */
+/** Adjacency (from → direct successors) over live prerequisite edges only. */
 function buildPrerequisiteAdjacency(existing: readonly TopologyEdge[]): Map<string, Set<string>> {
   const adj = new Map<string, Set<string>>();
   for (const e of existing) {
@@ -94,9 +65,8 @@ function buildPrerequisiteAdjacency(existing: readonly TopologyEdge[]): Map<stri
 }
 
 /**
- * Is `target` reachable from `start` following prerequisite edges in `adj`?
- * Iterative DFS with a visited set — terminates even if the existing graph
- * already contains a cycle (defensive: a prior bad write should not hang us).
+ * Reachability along prerequisite edges. Iterative DFS with a visited set, so an
+ * already-corrupt graph cannot hang the check.
  */
 function isReachable(adj: Map<string, Set<string>>, start: string, target: string): boolean {
   if (start === target) return true;
@@ -117,27 +87,21 @@ function isReachable(adj: Map<string, Set<string>>, start: string, target: strin
 }
 
 /**
- * Run the five pure topological checks for one candidate edge against the live
- * (already filtered to `archived_at IS NULL` by the caller) edge set.
+ * Run the five checks for one candidate against the live edge set. Reject wins over
+ * warn; non-prerequisite candidates return ok.
  *
- * Returns a single verdict with reject taking priority over warn (numbered in
- * the order the checks run below):
- *   ① self-loop                       → reject (degenerate cycle)
- *   ② direct tree parent pair          → reject
- *   ③ direction contradiction (B→A)   → reject (more specific than the generic
- *                                       cycle for the 2-node case)
- *   ④ new edge closes a cycle         → reject
- *   ⑤ direct edge duplicates a path   → warn
- *   - otherwise                       → ok
- *
- * Non-prerequisite candidates are out of this gate's scope → { status: 'ok' }.
+ *   ① self-loop → reject
+ *   ② tree parent pair → reject
+ *   ③ inverse prerequisite → reject
+ *   ④ closes a cycle → reject
+ *   ⑤ duplicates a path → warn
  */
 export function checkEdgeTopology(
   candidate: TopologyEdge,
   existing: readonly TopologyEdge[],
   treeParentLinks: readonly TreeParentLink[],
 ): TopologyVerdict {
-  // Out of scope: only the learning-order relation forms a DAG to police here.
+  // Out of scope: only the learning-order relation is policed here.
   if (candidate.relation_type !== ORDERED_RELATION) {
     return { status: 'ok' };
   }
@@ -145,7 +109,7 @@ export function checkEdgeTopology(
   const from = candidate.from_knowledge_id;
   const to = candidate.to_knowledge_id;
 
-  // ① self-loop — the degenerate 1-node cycle (from == to).
+  // ① self-loop — degenerate one-node cycle.
   if (from === to) {
     return {
       status: 'reject',
@@ -154,9 +118,8 @@ export function checkEdgeTopology(
     };
   }
 
-  // ② tree redundancy — tree is the structural backbone; mesh must not store a
-  // second edge over the same direct child↔parent pair. Direction is irrelevant
-  // because either orientation would double-represent the same pair downstream.
+  // ② Tree is the structural backbone; the mesh must not store a second copy of a
+  // direct parent-child pair. Direction is irrelevant.
   const repeatsTreeLink = isDirectTreePair(from, to, treeParentLinks);
   if (repeatsTreeLink) {
     return {
@@ -168,10 +131,8 @@ export function checkEdgeTopology(
 
   const adj = buildPrerequisiteAdjacency(existing);
 
-  // ③ direction contradiction — the exact inverse edge already exists. This is
-  // the 2-node back-edge special case; surface the more specific gate before the
-  // generic cycle check (a 2-node cycle would also be caught by the general cycle
-  // check ④ below).
+  // ③ Inverse edge already exists; report this more specific gate before the generic
+  // cycle check, which would also catch it.
   const inverseSuccessors = adj.get(to);
   if (inverseSuccessors?.has(from)) {
     return {
@@ -181,9 +142,7 @@ export function checkEdgeTopology(
     };
   }
 
-  // ④ cycle (general) — adding from → to creates a cycle iff `from` is already
-  // reachable FROM `to` along existing prerequisite edges (i.e. a path to → … →
-  // from already exists, and the new edge would close it).
+  // ④ The new edge closes a cycle iff `from` is already reachable from `to`.
   if (isReachable(adj, to, from)) {
     return {
       status: 'reject',
@@ -192,9 +151,7 @@ export function checkEdgeTopology(
     };
   }
 
-  // ⑤ transitive redundancy — a DIRECT from → to edge whose target is ALREADY
-  // reachable from the source via an intermediate node (length ≥ 2 path). Warn,
-  // do not reject (ADR §2: "rejected-or-downweighted (warning)").
+  // ⑤ A direct edge over an existing ≥2-hop path warns; the caller decides.
   const directSuccessors = adj.get(from);
   const alreadyDirect = directSuccessors?.has(to) ?? false;
   if (!alreadyDirect && isReachableViaIntermediate(adj, from, to)) {
@@ -209,11 +166,8 @@ export function checkEdgeTopology(
 }
 
 /**
- * Is `target` reachable from `start` along a path of LENGTH ≥ 2 (i.e. through at
- * least one intermediate node)? Distinguishes transitive redundancy from a plain
- * direct edge: a direct from→to is not "redundant", an A→B→C path making A→C
- * redundant is. Implemented by checking reachability from each direct successor
- * of `start` (every such path has length ≥ 2).
+ * Reachability over a path of length ≥ 2: check each direct successor, skipping the
+ * direct edge itself.
  */
 function isReachableViaIntermediate(
   adj: Map<string, Set<string>>,

@@ -5,13 +5,10 @@ import {
 } from '../schema/event/genesis';
 import type { FoldEvent } from './fold-event';
 
-// Anchor-only reducer: item_calibration has no runtime create/mutation events, so the only
-// input is the genesis snapshot the backfill seeds. Latest anchor wins — there are no
-// mutation reducers to protect from a duplicate seed, and a re-anchor is the current truth.
-//
-// Imperative writes after the anchor (recalibration firm-up) are invisible here, so
-// audit:projection reports drift until re-anchored; that is the honest event=truth signal.
-// No IO, ids, or clocks; the gather is Q1 only.
+// Anchor-only reducer: item_calibration has no runtime mutations, so the only input is
+// the genesis snapshot. Latest anchor wins.
+// Imperative post-anchor writes are invisible here, so audit:projection reports drift
+// until re-anchored; that is the honest event=truth signal.
 
 // Rebuild the parse input from the flat row so a malformed payload is rejected.
 function toParseInput(fe: FoldEvent): unknown {

@@ -1,62 +1,25 @@
-// Cross-cutting ingestion limits — single source of truth so the PDF page cap
-// and the /api/ingestion asset_ids array cap are provably equal (YUK-250).
-//
-// This module is pure (no IO, no heavy deps) so it can be imported by both the
-// renderer (src/server/ingestion/pdf-render.ts) and the ingestion route Zod
-// (src/capabilities/ingestion/api/sessions.ts) without dragging the PDFium WASM renderer into
-// the ingestion route's bundle graph.
+// Cross-cutting ingestion limits, shared so the route and renderer cannot drift.
+// Pure, so the SPA and route Zod can import it without pulling PDFium into their graphs.
 
-// A PDF expands to at most this many page images. Each page is sent base64 to
-// BOTH Tencent OCR and the VLM downstream (tencent_ocr_extract.ts) — cost +
-// latency scale linearly — so this is a hard, finite ceiling.
+// Each page is base64-sent to OCR and the VLM, so cost and latency scale linearly.
 export const MAX_PDF_PAGES = 15;
 
-// YUK-258 — DOCX ingestion caps. Every uploaded .docx (both text + visual line)
-// is rendered once through LibreOffice→PDF→PDFium for evidence page images, so it
-// shares the PDFium page ceiling. Kept provably equal to MAX_PDF_PAGES so the
-// evidence render path can reuse renderPdfToPngPages' cap unchanged.
+// DOCX renders through LibreOffice→PDF→PDFium and shares the same page ceiling.
 export const MAX_DOCX_PAGES = MAX_PDF_PAGES;
 
-// Source-DOCX upload byte cap. Smaller than the 30 MB PDF cap because a .docx is
-// XML + compressed media — even a media-heavy exam stays well under this. Route
-// validates before any conversion spawn.
+// DOCX is compressed XML plus media; even media-heavy exams stay well below this.
 export const MAX_DOCX_UPLOAD_BYTES = 20_000_000;
 
-// YUK-562 — upper bound (chars) for the process-data `reasoning_trace` field.
-// Single source of truth for the whole write path: the two event payload schemas
-// (core/schema/event/known.ts), the /api/attempts request contract
-// (capabilities/practice/api/contracts.ts), the solve-session write-side
-// truncation, and the practice UI's textarea maxLength + pre-send clamp all
-// reference it, so the bound can never drift.
-//
-// It lives HERE rather than in known.ts (its original home) for the same reason
-// MAX_PDF_PAGES does: this module is pure, so the browser-side practice UI can
-// take the bound — via the @/kernel/capability-contract-schemas facade — without
-// pulling the whole event Zod schema surface into the SPA bundle graph. Moved out
-// of known.ts per PR #1069 review (capability→core deep import + bundle weight).
+// Single source for the practice reasoning-trace bound across schemas, route contract,
+// write-side truncation and UI. Pure leaf so the browser can read it without the event
+// schema bundle (moved out of known.ts per PR #1069 review).
 export const REASONING_TRACE_MAX_LEN = 4000;
 
-// Per-image byte cap, single source of truth (YUK-250 limits pattern). Enforced
-// by the generic asset upload route (src/capabilities/ingestion/api/assets.ts) and the DOCX
-// embedded-media persist path (src/capabilities/ingestion/api/docx.ts) so an image
-// embedded inside an under-cap .docx can't create a source_asset that diverges
-// from the limit every other image path honours (codex-4).
+// Enforced by the generic asset route and the DOCX embedded-media path, so an image
+// inside an under-cap DOCX cannot diverge from the standalone upload limit.
 export const MAX_IMAGE_UPLOAD_BYTES = 8_000_000;
 
-// YUK-1340 P1 — Copilot conversation auto-reuse age ceiling. The most recent
-// `learning_session(type='conversation', entrypoint='copilot')` is auto-resumed
-// only when `updated_at >= now - COPILOT_REUSE_WINDOW_MS`. Single source of truth
-// for BOTH the server predicate (`findReusableCopilotConversation` in
-// src/server/session/conversation.ts — its `gte(updated_at, cutoff)` clause) and the
-// Copilot UI bootstrap auto-select (`isWithinCopilotReuseWindow` in
-// src/capabilities/copilot/session-reuse.ts), so the two surfaces cannot drift.
-//
-// Lives HERE (pure leaf) rather than in the copilot capability for the same reason
-// REASONING_TRACE_MAX_LEN does: the server predicate must not deep-import
-// `@/capabilities/copilot/session-reuse` (server→capability-deep is an architecture
-// regression both the boundary + deepening audits reject), and routing through
-// `@/capabilities/copilot/public` would introduce a module-eval cycle
-// (public → legacy-drain-readiness → subagent-mailbox → copilot-run-outcome →
-// turns → conversation). A pure-leaf bound lets server + capability + browser share
-// one number with no deep import, no cycle, and no server module in the SPA graph.
+// Copilot conversation auto-reuse age ceiling for both the server predicate and the UI
+// bootstrap. Lives here (pure leaf) to avoid a server→capability deep import or the
+// public-export module cycle.
 export const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;

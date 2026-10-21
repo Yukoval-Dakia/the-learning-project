@@ -1,18 +1,13 @@
-// YUK-1622 — single source for the daily review plan's numbers.
-//
-// Coach's TodayPlan and the practice stream both read this module, so YUK-1422's
-// "budget / 2" quota and YUK-1424's stream estimate are one formula rather than
-// two drifting ones. The model owns prose and suggestions; it never computes
-// these numbers.
+// YUK-1622 — single source for daily-review numbers. Coach and practice stream both
+// read this module so quota and estimate cannot drift. The model owns prose only.
 
 /**
- * Minutes assumed for one question until the learner has measured attempts.
- * This is YUK-622's 2-minute question estimate — the same value that makes a
- * 20-minute budget a 10-question day.
+ * Minutes assumed per question until attempts are measured. The same 2-minute value
+ * makes a 20-minute budget a 10-question day.
  */
 export const DEFAULT_QUESTION_MINUTES = 2;
 
-/** Guard rails for a measured pace: a sub-30s or 10min+ mean is treated as noise. */
+/** Measured-pace guard rails; outside this range the mean is noise. */
 export const MIN_QUESTION_MINUTES = 0.5;
 export const MAX_QUESTION_MINUTES = 10;
 
@@ -49,8 +44,8 @@ export function normalizeQuestionMinutes(value: number | null | undefined): numb
 }
 
 /**
- * Collapse the due rows into one bucket per subject. Counts are whole
- * non-negative numbers so the denominator is the same value the caller sees.
+ * Collapse due rows into one bucket per subject; counts are whole and non-negative so
+ * the denominator matches what the caller sees.
  */
 function normalizeDueBySubject(dueBySubject: readonly SubjectDueCount[]): Map<string, number> {
   const bySubject = new Map<string, number>();
@@ -63,9 +58,8 @@ function normalizeDueBySubject(dueBySubject: readonly SubjectDueCount[]): Map<st
 }
 
 /**
- * Allocate `count` seats across subjects proportional to their due counts.
- * Largest remainder keeps the result deterministic: ties break by due count,
- * then subject id, so the same input always yields the same mix.
+ * Largest-remainder allocation. Ties break by due count, then subject id, so the mix
+ * is deterministic.
  */
 function allocateSubjectMix(
   count: number,
