@@ -22,7 +22,7 @@ SQL 硬范围仍先于每通道候选上限。实际发题门仍由 `readBankSer
 
 召回和有权限同版读取在短只读 repeatable-read 事务冻结，事务结束后执行无工具解释/核验任务，再短事务重验状态并保存结果。每候选只取真实 revision 内容，不用 mutable reference_md 当核验原文。每项证据校验 locator、原文 quote 和 offset；同题共同成立另检查 joint，选中 parts 必须合法且满足用途。共享材料按本题绑定定位；未实际读到的媒体、权限缺失、文本截断或摘要不符保持 unknown。caption/alt/OCR 不能冒充看图。
 
-核验策略版本 `bank-semantic-v1-20261022`：最多 20 候选逐题核验，总墙钟 180 秒并受父调用更短 deadline/取消约束；每字段读取上限 200000、每候选送模型原文预算 90000 字符，超限明确缺证。达到明确 need 可停止；失败不重发同次 unknown。全部 required 与 joint 支持且用途可用才计 matched；preferred 与原 RRF 顺序只在同组内排序，保留前后 rank。未核题、反证、用途不可用分别返回。global enforced 仅确定性硬范围，条件通过只放 checks；不从空池、翻完本池或页大小证明全库 absence。
+核验策略版本 `bank-semantic-v2-20261022` 与完整公开槽位投影绑定（替代初版 `bank-semantic-v1-20261022`，wire contract_version 仍为 2）；旧策略快照沿现有 policy 比较返回 stale。最多 20 候选逐题核验，总墙钟 180 秒并受父调用更短 deadline/取消约束；每字段读取上限 200000、每候选原文与完整槽位 JSON 共用 90000 字符预算，超限明确缺证。达到明确 need 可停止；失败不重发同次 unknown。全部 required 与 joint 支持且用途可用才计 matched；preferred 与原 RRF 顺序只在同组内排序，保留前后 rank。未核题、反证、用途不可用分别返回。global enforced 仅确定性硬范围，条件通过只放 checks；不从空池、翻完本池或页大小证明全库 absence。
 
 任务回执使用真实 task-run、provider/model、输入/输出 digest、compiled prompt、usage、cost 与 transport 证据引用；执行真相与产品校验结果分别保留。费用无证时 null/unknown，不补 0。不修改 paid/fallback/retry 协议，不持事务等待模型。
 
@@ -56,7 +56,7 @@ SQL 硬范围仍先于每通道候选上限。实际发题门仍由 `readBankSer
 
 39 条/K7、owner 盲题、DB/TEST/Docker/provider/付费/browser/后台/部署/真实产品验收：全部 NOT_RUN。无断言/测试脚本；tests/cases/fixtures/测试配置均未修改。最终静态检查和 commit/PR head 在交付回执记录；迁移 metadata 的具体依赖如上，不以静态源码代替运行验收。
 
-## 本候选静态交付回执
+## 初版候选静态交付回执（0fe7271b）
 
 本机全部重活经指定 heavy.sh，lane 串行、全机两槽，Node 堆上限 3072。frozen install exit 0，无 lockfile 改动。
 
@@ -73,4 +73,56 @@ SQL 硬范围仍先于每通道候选上限。实际发题门仍由 `readBankSer
 
 初次 lint/边界/任务审计的失败已按真实源码与生产总量修正；不把先前失败说成通过。独立 R1/必要 R2、exact-head CI、Linear 与 merge 由父接管，writer 不 watch/poll/merge。没有新独立 follow-up 票：本片未交义务均仍在原 YUK-1448 范围，由父归档。
 
-本片共 19 个 task-owned 文件：tools 下的 search-bank、bank-search、read-bank、bank-search-scope、bank-search-channel、bank-requirements、bank-verification、bank-semantic-search、bank-search-snapshot；practice/tasks 下的新 bank-search-semantic 与 index；capabilities/task-catalog、copilot/tasks/agent；db/schema；drizzle/0133 SQL；export/constants；capability-boundary-baseline；ADR-0072；本文。没有改 manifest/allowlist、matcher/refill/threshold、issuance 或旧 gap writer。
+含本次 R1 修复，本片共 20 个 task-owned 文件：tools 下的 search-bank、bank-search、read-bank、bank-search-scope、bank-search-channel、bank-requirements、bank-verification、bank-slot-evidence、bank-semantic-search、bank-search-snapshot；practice/tasks 下的新 bank-search-semantic 与 index；capabilities/task-catalog、copilot/tasks/agent；db/schema；drizzle/0133 SQL；export/constants；capability-boundary-baseline；ADR-0072；本文。没有改 manifest/allowlist、matcher/refill/threshold、issuance 或旧 gap writer。
+
+
+## R1 唯一 P1 修复：公开槽位证据完整性
+
+起始 head `0fe7271b83db0ef4d03fe5ab3a2fc17d245cbc43`。唯一 writer 仍为本树，无另委派或自行审查。R1 指出 read_bank 已读到的 slot.detail 被 adapter 丢弃，原本只冻结 options.text；这会漏判，也可能在输入不全时仅引题干获得 complete/matched。属于本片输入完整性错误，不归入 L2 未交义务。
+
+已普通 merge 真实 origin/main `7142cd969f3a7225983185232efd31f2bf9ff43a`（包含 #1968/#1970），merge commit `fdac7a0720446d91fd8f62109a8f0ae6815144c2`。无冲突；main 的三条 public contract 登记与本片 baseline 增量均保留，没有覆盖旧 48 条记录或改审计器。0133 SQL/schema 不变，最终 metadata/journal 仍只待真实 0132 合入后由父整合；未取 #1926 未合内容。
+
+`bank-slot-evidence.ts` 只消费同角色 runReadBank 返回的公开 slots。复用现役 ResponseSlot 及其成员 schema 的 strict 视图校验原始字段，避免未知字段被 canonical parser strip 后假称完整；复用 validateResponseSpec 校验同版 part、重复身份、select 坐标/字缝和 table 子槽引用。没有第二套 response codec 或私有答案权限表，没有读取 mutable question/options。完整 canonical slots（含默认输入语义）及关系直接交给现役核验 Task；原文字段另有 literal passage，不把 describeSelectItem 或 JSON 序列化当原文引用。
+
+| 现役公开槽位 | 原文 passage | 一起传给 Task 的身份、关系与输入语义 |
+| --- | --- | --- |
+| 全部 12 类 | placement.label（存在时） | slot_id、part_id、kind、placement.row/col |
+| single_choice / multi_choice | options[].label / text | option_id 与原数组顺序；min/max_select |
+| select | items[].label_md、axes 各 entry.label_md、text | item_id、axis 名及 entry.id、coordinates、gap_after_codepoint→本槽 text、at_most_per_coordinate、pick |
+| matching | left_items[].label / text、right_options[].label / text | 左右角色、item_id / option_id、pairing、allow_left_unmatched、has_distractors；无正确配对 |
+| ordering | items[].label / text | item_id 与显示顺序；不当正确答案 |
+| sentence_breaks | text | 字缝在冻结 text 的 code point 上；引用仍用 UTF-16 offset |
+| table | column_headers[]、row_labels[] | cells[].row/col→slot_id 指向同 part 子槽，子槽本身也完整投影；不虚造 cell 文本 |
+| numeric | unit_hint | precision |
+| blank | unit_hint、answer_shape 的 unit / binding / axes / variables | format、max_chars、完整 canonical answer_shape version/value/notation；这是公开输入声明 |
+| open_response | accepted_evidence[].allowed_mime_patterns[] | max_chars、evidence_required、允许提交的 kind/max_bytes/security_scan；不把允许上传误认成题目含未读媒体 |
+| text / formula | 无额外自由文本；仍保留 placement.label | max_chars / math_preview / notation |
+
+passage 定位使用 `/parts/<part>/slots/<slot>/<field path>`，part/slot/axis 名采用 JSON Pointer 转义；数组下标只定位原文字段，稳定身份和归属始终从 slots 对象读取。每个 quote 仍由现有确定性验证逐字核对 UTF-16 start/end，版本与权限来自同一次冻结。候选与每份 anchor 都传 parts/slots、revision/digest 与对应 locator 前缀，不能混用身份。
+
+完整 slots 的序列化长度与原文 passages 共用原 90000 字符预算，重复发送的文本也计入；候选与 anchors 的 slots/文字合并受原 120000 输入预算，单锚仍受 50000 上限。结构放不下、原文截断、未知/畸形字段、无槽位、非法身份/关系、文本未读全、缺材料或任一公开文字字段中的 Markdown/HTML 媒体未读，都留下明确 blocker。已知所属 part 的局部缺证阻断该 part；无法绑定 part 或全图关系错误保守阻断整个任务。所选 part 有 blocker 时，现有 verifier 强制所有 checks 和 joint unknown，不能仅引题干绕过，matched 不增加。完整无媒体的普通槽位不会因此永久 unknown。
+
+策略常量单行经父定向释放为 `bank-semantic-v2-20261022`，使旧 adapter 生成的快照沿已有校验失效，不更改 wire contract_version、恢复逻辑、阈值或 serving/scoring/paid。
+
+新增验收 TEXT（均 NOT_RUN）：以同版 select 关系项、select 字缝、旧 matching/ordering/sentence_breaks/table 的必要条件请求，逐项观察 literal quote 与结构关系同时存在；对选项图片、畸形坐标/child 引用、槽位超预算，观察所选 part 的 checks/joint unknown 且 matched 不增；以无材料且槽位完整的纯文字题观察没有无故 blocker。所有 tests/cases/fixtures/断言均未改，不执行此 TEXT。实际模型质量仍待有授权的运行验证。
+
+### R1 修复后的静态回执
+
+所有重活经同一 heavy.sh 串行执行、全机两槽、Node≤3072；未重复 install。
+
+| 命令 | exit | 证据 / 日志 |
+| --- | --- | --- |
+| `pnpm typecheck` | 2 | 仍为 29 条，全部在未改的 bank-tools.db.test.ts；无新增产品类型错误。`/tmp/yuk1448-r1-typecheck-final.log` |
+| `pnpm exec tsrs --noEmit -p server/start/tsconfig.json` | 0 | 主 typecheck 第一项目失败后另跑现有 Start 检查。`/tmp/yuk1448-r1-start-types.log` |
+| `pnpm lint` | 0 | 181 warnings，与初版相同；新模块格式检查无诊断。`/tmp/yuk1448-r1-lint.log` |
+| `pnpm build` | 0 | web/Start/server/worker/migrate 均完成；没有运行产物。`/tmp/yuk1448-r1-build.log` |
+| `audit:task-census` | 0 | 60 注册 / 58 调用 / 2 兼容 / 75 call sites。`/tmp/yuk1448-r1-task-census.log` |
+| `audit:tool-params` | 0 | 所有枚举工具面零 violation。`/tmp/yuk1448-r1-tool-params.log` |
+| `audit:capability-boundaries` | 0 | totals 384/0/36，R1 没有新增共享边界登记或豁免。`/tmp/yuk1448-r1-boundaries.log` |
+| `audit:architecture-deepening` | 0 | main 新增三条登记完整保留；60 TaskSpecs，1092 pass-through sites / +0。`/tmp/yuk1448-r1-architecture.log` |
+| `audit:model-source` | 0 | `/tmp/yuk1448-r1-model-source.log` |
+| `audit:provider-lanes` | 0 | `/tmp/yuk1448-r1-provider-lanes.log` |
+| `audit:schema` | 0 | 仅源码写入 census，不等于完整迁移。`/tmp/yuk1448-r1-schema.log` |
+| `git diff --check` | 0 | 本次没有改 read-bank、core response schema、呈现组件、SQL/schema、backup/restore 或 tests/cases/fixtures/测试配置。 |
+
+各检查 exit 汇总 `/tmp/yuk1448-r1-check-exits.log`。DB/TEST/Docker/provider/browser/runtime/付费/后台/部署、39/K7/owner 盲题、槽位验收 TEXT：全部 NOT_RUN；没有 actual model output。修后 exact-head CI 不观测/不轮询，独立唯一 R2、迁移 metadata、Linear 与 merge 均交父。本片未交义务仍归原 YUK-1448，没有新增独立 follow-up 或新票。

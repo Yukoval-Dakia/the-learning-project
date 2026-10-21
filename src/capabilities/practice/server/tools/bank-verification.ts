@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
+import type { ResponseSlotT } from '@/core/schema/assessment/response';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
@@ -10,6 +11,7 @@ import { makeRunTaskFn } from '../task-runtime';
 import { resolveBankRefs } from './bank-ref';
 import type { BankRequirement, BankSemanticHit, BankTaskReceipt } from './bank-requirements';
 import type { BankSearchHit } from './bank-search';
+import { freezeBankResponseSlots } from './bank-slot-evidence';
 import { bankReadRoleForActor, runReadBank } from './read-bank';
 
 export type BankPassage = {
@@ -29,6 +31,7 @@ export type FrozenBankCandidate = {
   revision_id: string | null;
   integrity_digest: string | null;
   parts: Array<{ part_id: string; material_ids: string[] }>;
+  slots: ResponseSlotT[];
   passages: BankPassage[];
   blockers: Array<{ part_ids: string[]; reason: string }>;
 };
@@ -46,6 +49,7 @@ export async function freezeBankCandidate(
     revision_id: null,
     integrity_digest: null,
     parts: [],
+    slots: [],
     passages: [],
     blockers: [],
   };
@@ -96,6 +100,11 @@ export async function freezeBankCandidate(
   }));
   let remaining = 90000;
   const add = (passage: BankPassage) => {
+    if (/!\[|<(?:img|svg|audio|video|picture|source|iframe|object|embed)\b/i.test(passage.text))
+      frozen.blockers.push({
+        part_ids: passage.part_ids,
+        reason: `${passage.locator}:inline_media_not_read`,
+      });
     const text = passage.text.slice(0, Math.max(0, remaining));
     remaining -= text.length;
     if (text.length !== passage.text.length)
@@ -107,8 +116,6 @@ export async function freezeBankCandidate(
   };
   for (const part of item.content.parts) {
     add({ locator: `part:${part.part_id}:prompt`, text: part.prompt_md, part_ids: [part.part_id] });
-    if (/!\[[^\]]*\]\(|<img\b/i.test(part.prompt_md))
-      frozen.blockers.push({ part_ids: [part.part_id], reason: 'inline_media_not_read' });
     if (part.extent?.complete === false)
       frozen.blockers.push({ part_ids: [part.part_id], reason: 'part_text_incomplete' });
     for (const id of part.material_ids) {
@@ -120,15 +127,18 @@ export async function freezeBankCandidate(
         });
     }
   }
-  for (const slot of item.content.slots) {
-    for (const option of slot.options ?? []) {
-      add({
-        locator: `part:${slot.part_id}:slot:${slot.slot_id}:option:${option.option_id}`,
-        text: option.text,
-        part_ids: [slot.part_id],
-      });
-    }
-  }
+  frozen.slots = freezeBankResponseSlots(item.content.slots, resolved.revision.structure, {
+    add,
+    block: (part_ids, reason) => frozen.blockers.push({ part_ids, reason }),
+    reserve: (chars, part_ids, reason) => {
+      if (chars > remaining) {
+        frozen.blockers.push({ part_ids, reason });
+        return false;
+      }
+      remaining -= chars;
+      return true;
+    },
+  });
   for (const material of item.materials ?? []) {
     const part_ids = frozen.parts
       .filter((p) => p.material_ids.includes(material.material_id))

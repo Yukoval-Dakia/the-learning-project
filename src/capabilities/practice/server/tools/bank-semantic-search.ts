@@ -197,7 +197,9 @@ export async function runBankSemanticSearch(
             !read.revision_id ||
             !read.parts.length ||
             read.blockers.length ||
-            read.passages.reduce((sum, p) => sum + p.text.length, 0) > 50000
+            read.passages.reduce((sum, p) => sum + p.text.length, 0) +
+              JSON.stringify(read.slots).length >
+              50000
           )
             throw new BankSearchV2Error(
               'anchor_unavailable',
@@ -216,6 +218,7 @@ export async function runBankSemanticSearch(
               revision_id: hit.revision_id ?? null,
               integrity_digest: hit.integrity_digest ?? null,
               parts: [],
+              slots: [],
               passages: [],
               blockers: [],
             });
@@ -278,7 +281,21 @@ export async function runBankSemanticSearch(
           },
         });
     }
-    if (passages.reduce((sum, passage) => sum + passage.text.length, 0) > 120000) {
+    const anchorInput = (input.anchors ?? []).map((a, i) => ({
+      ...a,
+      locator_prefix: `anchor:${i}:`,
+      ref: anchors[i].hit.ref,
+      revision_id: anchors[i].revision_id,
+      integrity_digest: anchors[i].integrity_digest,
+      parts: anchors[i].parts,
+      slots: anchors[i].slots,
+    }));
+    if (
+      passages.reduce((sum, passage) => sum + passage.text.length, 0) +
+        JSON.stringify(candidate.slots).length +
+        JSON.stringify(anchorInput).length >
+      120000
+    ) {
       hits.push(
         unverifiedBankHit(
           candidate,
@@ -304,9 +321,10 @@ export async function runBankSemanticSearch(
         revision_id: candidate.revision_id,
         integrity_digest: candidate.integrity_digest,
         parts: candidate.parts,
+        slots: candidate.slots,
         passages,
         missing: candidate.blockers,
-        anchors: (input.anchors ?? []).map((a, i) => ({ ...a, locator_prefix: `anchor:${i}:` })),
+        anchors: anchorInput,
       },
       deadline,
     );
