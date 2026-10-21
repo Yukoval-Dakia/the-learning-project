@@ -5000,3 +5000,31 @@ export const model_catalog_cache = pgTable(
   },
   (t) => [check('model_catalog_cache_singleton', sql`${t.id} = 1`)],
 );
+
+// YUK-1563 part 4 — runtime-configured custom providers. Authored config, no
+// secret: api_key_env holds the env var NAME; the key value stays in the
+// operator's env. Model facts live in model_catalog_cache under a synthetic
+// `custom:<slug>` bucket, never here.
+export const custom_provider = pgTable(
+  'custom_provider',
+  {
+    id: text('id').primaryKey(),
+    display_name: text('display_name').notNull(),
+    base_url: text('base_url').notNull(),
+    api_key_env: text('api_key_env').notNull(),
+    protocol: text('protocol').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('custom_provider_id_prefix_ck', sql`${t.id} LIKE 'custom:%'`),
+    check(
+      'custom_provider_protocol_ck',
+      sql`${t.protocol} IN ('openai-completions', 'anthropic-messages')`,
+    ),
+    check(
+      'custom_provider_base_url_ck',
+      sql`${t.base_url} LIKE 'https://%' AND ${t.base_url} NOT LIKE '%@%' AND ${t.base_url} NOT LIKE '%?%' AND ${t.base_url} NOT LIKE '%#%'`,
+    ),
+  ],
+);

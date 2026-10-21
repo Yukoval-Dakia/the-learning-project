@@ -133,7 +133,13 @@
 // FK_ORDER 备份 (非 BACKUP_EXCLUDED)。+ item_calibration 的 b_post/posterior_variance/
 // calibration_source additive 列 (随整行 dump/restore，不 bump——表 = bump，列 = 不
 // bump 的既有先例)。NEW FK_ORDER table → bump 4.30 → 4.31。
-export const SCHEMA_VERSION = '4.31';
+// YUK-1563 part 4: custom_provider — runtime-configured custom provider
+// definitions (endpoint, protocol, credential env NAME; never the key value).
+// Authored config like system_config: a restore that drops it would silently
+// unconfigure every task pinned to a custom provider. No enforced FK. The
+// model_catalog_cache bucket/checks it feeds are refetchable and excluded.
+// NEW FK_ORDER table → bump 4.31 → 4.32 (migration 0130).
+export const SCHEMA_VERSION = '4.32';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -367,6 +373,13 @@ export const FK_ORDER = [
   'system_config',
   'system_config_journal',
   'system_config_epoch',
+  // YUK-1563 part 4 — custom_provider：运行时配置的自定义 provider 定义
+  // （endpoint / protocol / 凭据 env 变量名，绝无 key 值）。authored config，
+  // 与 system_config 家族一起备份——restore 丢了它会静默拆掉每个钉在自定义
+  // provider 上的任务配置。无 enforced FK。它喂的 model_catalog_cache
+  // bucket/checks 是可重取运维态（BACKUP_EXCLUDED）。NEW FK_ORDER table →
+  // bump 4.31 → 4.32（migration 0130）。
+  'custom_provider',
   // YUK-1523 (P5) — 作答卷导出三表：export（页面身份/幂等/拒绝清单）先于
   // item（冻结题目清单）与 region_map_page（按页冻结区域图）。FK：item/page →
   // export，且 item.issuance_id → assessment_issuance（父表在本簇之前，插入序

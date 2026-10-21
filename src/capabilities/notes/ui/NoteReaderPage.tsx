@@ -165,14 +165,23 @@ export default function NoteReaderPage({
   id,
   navigate,
   read = getNotePage,
+  save = saveBodyBlocks,
+  readAiChanges = getAiChanges,
+  undo = undoAiChange,
 }: {
   id: string;
   navigate: (to: string) => void;
   read?: typeof getNotePage;
+  save?: typeof saveBodyBlocks;
+  readAiChanges?: typeof getAiChanges;
+  undo?: typeof undoAiChange;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
-  const changesQ = useQuery({ queryKey: ['note-ai-changes', id], queryFn: () => getAiChanges(id) });
+  const changesQ = useQuery({
+    queryKey: ['note-ai-changes', id],
+    queryFn: () => readAiChanges(id),
+  });
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -248,7 +257,7 @@ export default function NoteReaderPage({
 
   const saveM = useMutation({
     mutationFn: () =>
-      saveBodyBlocks(id, {
+      save(id, {
         artifact_version: note?.version ?? 0,
         body_blocks: { type: 'doc', content: draft ?? [] },
       }),
@@ -268,7 +277,7 @@ export default function NoteReaderPage({
   });
 
   const undoM = useMutation({
-    mutationFn: (eventId: string) => undoAiChange(id, eventId),
+    mutationFn: (eventId: string) => undo(id, eventId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['note-page', id] });
       void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });

@@ -1,6 +1,6 @@
 import type { TaskDefinition } from './task-spec';
 
-export type { ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
+export type { KnownProvider, ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
 export type TaskDef = TaskDefinition;
 export type TaskCatalog = Readonly<Record<string, TaskDefinition>>;
 export type TaskKindOf<Catalog extends TaskCatalog> = Extract<keyof Catalog, string>;
