@@ -145,6 +145,13 @@ export interface ToolContext {
    */
   scope?: { readonly kind: string; readonly id?: string };
   taskRunId: string;
+  /**
+   * YUK-1557 — the caller's active ai_task_runs.id for observability rows
+   * (tool_call_log / tool_use mirror / store events). Tools whose spend or
+   * budget reservation uses a different internal id (ingestion agent segments)
+   * keep that id in `taskRunId`; one run still owns all its tool evidence here.
+   */
+  logTaskRunId?: string;
   callerActor: ToolCallerActor;
   /** When set, mirror events use this as `caused_by_event_id`. */
   causedByEventId?: string;

@@ -75,7 +75,7 @@ export const runWebSourcingOperation: RunWebSourcingAgentFn = async (params) => 
       toolNames: SOURCING_READ_TOOLS,
       taskKind: 'SourcingTask',
     }),
-    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES),
+    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES, db),
   ];
   const allowedTools = [
     ...SOURCING_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),

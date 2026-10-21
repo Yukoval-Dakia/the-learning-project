@@ -42,7 +42,7 @@ export function resolveAttemptCostTruth(input: {
    * and any USD figure was priced from the same card as a finished run.
    * The ref prefix keeps that row distinct from a settled catalog charge.
    */
-  priceOrigin?: 'provider' | 'timeout-estimate';
+  priceOrigin?: 'provider' | 'timeout-estimate' | 'failure-estimate';
 }): AttemptCostTruth {
   if (input.provider === 'anthropic-sub') {
     return {
@@ -67,7 +67,11 @@ export function resolveAttemptCostTruth(input: {
     const reported = input.reportedCostUsd;
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       const prefix =
-        input.priceOrigin === 'timeout-estimate' ? 'pi-catalog-timeout-estimate' : 'pi-catalog';
+        input.priceOrigin === 'timeout-estimate'
+          ? 'pi-catalog-timeout-estimate'
+          : input.priceOrigin === 'failure-estimate'
+            ? 'pi-catalog-failure-estimate'
+            : 'pi-catalog';
       return {
         basis: 'estimated',
         amountUsd: reported,
@@ -118,7 +122,11 @@ export function resolveAttemptCostTruth(input: {
     estimated >= 0
   ) {
     const prefix =
-      input.priceOrigin === 'timeout-estimate' ? 'pricebook-timeout-estimate' : 'pricebook';
+      input.priceOrigin === 'timeout-estimate'
+        ? 'pricebook-timeout-estimate'
+        : input.priceOrigin === 'failure-estimate'
+          ? 'pricebook-failure-estimate'
+          : 'pricebook';
     return {
       basis: 'estimated',
       amountUsd: estimated,

@@ -9,7 +9,15 @@ const ValueSchema = z.union([
   z.record(z.string(), z.unknown()),
 ]);
 const MutationSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('set'), key: KeySchema, value: ValueSchema }).strict(),
+  z
+    .object({
+      action: z.literal('set'),
+      key: KeySchema,
+      value: ValueSchema,
+      /** YUK-1557 — optional hard stop; expired rows fall through to env/default. */
+      expires_at: z.string().datetime({ offset: true }).nullable().optional(),
+    })
+    .strict(),
   z.object({ action: z.literal('clear'), key: KeySchema }).strict(),
 ]);
 
