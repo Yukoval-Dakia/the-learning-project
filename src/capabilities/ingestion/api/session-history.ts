@@ -402,6 +402,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     if (path === 'agent') {
       if (run == null) missing.push('run');
       if (history != null && !history.snapshot) missing.push('snapshot');
+      if (history?.corrupt_snapshot === true) missing.push('unparsed_history');
       // The durable record itself declares it once dropped rows — name the
       // known gap instead of implying completeness.
       if (history?.errors_truncated === true) missing.push('errors');

@@ -439,7 +439,7 @@ export interface AgentRunHistory {
   snapshot: boolean;
   /** Any current-run event rows are still within the job_events window. */
   live_events: boolean;
-  /** Snapshot row was present but failed to parse — treated as absent evidence. */
+  /** Current or retained history contains an uninterpretable snapshot. */
   corrupt_snapshot: boolean;
   /** execution_owner.run_ref of the current run; null when no owner exists. */
   run_ref: string | null;
@@ -519,7 +519,13 @@ async function readAgentRunHistoryInTx(tx: Tx, sessionId: string): Promise<Agent
   const parsedSnapshot =
     rawSnapshot == null ? null : AgentRunHistorySnapshot.safeParse(rawSnapshot);
   const snapshot = parsedSnapshot?.success === true ? parsedSnapshot.data : null;
-  const corruptSnapshot = rawSnapshot != null && parsedSnapshot?.success !== true;
+  // A valid new checkpoint does not repair the opaque history it retained.
+  // Keep that evidence gap visible across refreshes and run changes without
+  // interpreting or exposing the original blob.
+  const corruptSnapshot =
+    (rawSnapshot != null && parsedSnapshot?.success !== true) ||
+    snapshot?.unparsed_previous !== undefined ||
+    (snapshot?.prior_runs?.some((prior) => prior.unparsed_previous !== undefined) ?? false);
   const sameRun = snapshotMatchesRun(snapshot, runRef, floor);
   const current = sameRun ? snapshot : null;
 

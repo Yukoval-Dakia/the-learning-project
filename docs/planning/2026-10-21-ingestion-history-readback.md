@@ -152,4 +152,8 @@ schema.ts / 迁移 / `server/session/ingestion.ts` 状态机不动（无共享 h
 - 新 run 快照在每次 segment 关闭时刷新 → 30 天后仍有完整 items/asks/outcome。
 - item → question 链：item_state.question_id → 回退 metadata.draft_block_id →
   source_ref；`current` 由 question-serving 读模型裁决。
-- 缺证据一律 null/`missing[]`，调用方按 unknown 渲染。
+- 缺证据一律 null/`missing[]`，调用方按 unknown 渲染。R2 N1：history owner
+  将外层不可解析快照、当前 checkpoint 的 `unparsed_previous`、任一 prior
+  run 携带的 `unparsed_previous` 统一投影为 `corrupt_snapshot=true`；读接口
+  持续输出 `evidence.missing` 中的 `unparsed_history`。正常 refresh 或新 run
+  不表示旧坏历史已经恢复；wire 不暴露 opaque 原件，也不用 current 行补造。
