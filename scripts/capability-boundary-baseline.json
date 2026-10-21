@@ -959,7 +959,7 @@
       "rationale": "Practice owns goal validation, scope resolution, complete profile assembly, full-set counts and ordering. Host binding preserves the hydrated registry and optional native loader graph used by HTTP.",
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c035b586-df8a-48c5-9a21-dce8d2b58fc9",
-      "date": "2026-10-22"
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -1472,7 +1472,7 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the typed API error contract. Practice owns complete profile reading; HTTP retains errorResponse, so splitting ApiError adds a physical reference rather than being entirely net zero.",
-      "date": "2026-10-22"
+      "date": "2026-10-21"
     },
     {
       "debt": "capabilityToKernel",
@@ -1482,7 +1482,7 @@
       "symbols": ["getMasteryProjection"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the mastery projection facts. Practice owns scope, profile assembly, counts and ordering; the same dependency moves from the HTTP adapter.",
-      "date": "2026-10-22"
+      "date": "2026-10-21"
     },
     {
       "debt": "capabilityToServer",
@@ -1492,7 +1492,7 @@
       "symbols": ["readLearnerAxisStates"],
       "issue": "YUK-1358",
       "owns": "Calibration owns the existing read-only axis facts. Practice preserves their optional profile projection; the same dependency moves from the HTTP adapter without changing the axis owner.",
-      "date": "2026-10-22"
+      "date": "2026-10-21"
     },
     {
       "debt": "capabilityToServer",
@@ -1502,7 +1502,7 @@
       "symbols": ["loadDayOnePriors"],
       "issue": "YUK-1358",
       "owns": "Coldstart owns the existing flag, native loader and prior computation. Practice preserves optional prior fields in the complete profile read; the same dependency moves from the HTTP adapter.",
-      "date": "2026-10-22"
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
