@@ -64,6 +64,7 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
+import { promoteVerifiedGroupPartRows } from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -78,7 +79,6 @@ import {
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/server/questions/publisher';
-import { promoteVerifiedGroupPartRows } from '@/kernel/records/assessment-publication';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
