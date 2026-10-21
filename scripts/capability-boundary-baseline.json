@@ -853,7 +853,7 @@
       "date": "2026-10-21",
       "baseBlob": "2f69ce242e4a068d9a48c196801ec0a663baf95f",
       "from": 1153,
-      "to": 1221,
+      "to": 1230,
       "issue": "YUK-1553",
       "responsibilityReason": "共享 propose 工具需要五分支 mutation cooldown 的单一 key/kind helper 与 change-scoped 去重身份；新增行用于 C1-1/cooldown 契约，不新增第二 writer。"
     },

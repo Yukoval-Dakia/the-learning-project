@@ -13,6 +13,7 @@
 // history, prepares side effects, writes the complete decision, then projects nodes
 // in one transaction. There is no second structural writer.
 
+import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
 import {
@@ -249,13 +250,21 @@ export function knowledgeMutationCooldown(
       };
     case 'reparent':
     case 'merge':
-    case 'split':
+    case 'split': {
+      // Keep the key bounded (proposal payload contract: <=300 chars) while
+      // still distinguishing changes: the subject id stays readable, the
+      // identity digest carries the target/parent/from-set/layout.
+      const identityDigest = createHash('sha256')
+        .update(JSON.stringify(mutationChangeIdentity(payload)))
+        .digest('hex')
+        .slice(0, 32);
       return {
         kind: 'knowledge_mutation',
         cooldownKeys: [
-          `knowledge_mutation:${payload.mutation}:${encodeURIComponent(JSON.stringify(mutationChangeIdentity(payload)))}`,
+          `knowledge_mutation:${payload.mutation}:${mutationSubjectId(payload)}:${identityDigest}`,
         ],
       };
+    }
   }
 }
 
