@@ -14,7 +14,7 @@
 //     （可信投影面 + 父子行物化）在同一个最外事务里完成。业务终态
 //     （declaration/save/submit conflict）以结果返回、随事务提交 ——
 //     冲突回执与 exact/source KC merge 副作用按旧 submit tx 口径落库；
-//     只有真实内部错误（投影哨兵/DB 错误）抛出回滚，绝不交半个
+//     save 中止、投影后的发布冲突及内部错误穿透事务回滚，绝不交半个
 //     草稿/根/子行。commit 后才 drain verify intent（drainSubmitVerifyIntents）。
 //     `caller` 槽位把调用方的 canonical receipt 写进同一事务 ——
 //     claim+domain+receipt 一次 commit，commit 前崩溃无「域已提交而
@@ -87,7 +87,6 @@ import type { SubmitDraftInput, SubmitResult } from '@/server/questions/submit-q
 import {
   type BindIssue,
   type BoundIdMap,
-  TypedGroupProjectionError,
   bindDeclaredGroupIds,
   insertTypedGroupChildren,
 } from '@/server/questions/typed-group';
@@ -129,8 +128,13 @@ export interface SharedSubmitOptions {
   declaredIdMap?: BoundIdMap;
 }
 
-/** 父子行投影失败的哨兵类型 —— 内核不捕获，穿透到最外事务要求整体回滚。 */
-export { TypedGroupProjectionError };
+/** Publishing can reject after row projection; this result must escape the transaction. */
+export class SubmitTransactionAbort extends Error {
+  constructor(public readonly receipt: Extract<SubmitResult, { status: 'conflict' }>) {
+    super(receipt.detail);
+    this.name = 'SubmitTransactionAbort';
+  }
+}
 
 // ---------- 请求指纹 / 回执（与 save 同一幂等纪律） ----------
 
@@ -754,14 +758,14 @@ export async function submitDraftQuestionInTx(
     now,
   });
   if (publishResult.status === 'conflict') {
-    return {
+    throw new SubmitTransactionAbort({
       status: 'conflict',
       reason: 'publish_conflict',
       detail: `publish seam conflict (${publishResult.reason})`,
       question_id: groupId,
       current_revision_ref: publishResult.current_revision_id,
       request_id: requestId,
-    };
+    });
   }
   const revisionId =
     publishResult.status === 'published' || publishResult.status === 'noop'
@@ -885,6 +889,7 @@ export type DeclaredGroupDomainOutcome =
 
 export type DeclaredGroupPersistResult =
   | DeclaredGroupDomainOutcome
+  | { status: 'submit_rolled_back'; submit: Extract<SubmitResult, { status: 'conflict' }> }
   | { status: 'replayed'; receipt: SubmitResult }
   | { status: 'request_id_reused'; request_id: string; detail: string };
 
@@ -933,8 +938,8 @@ export interface DeclaredGroupPersistParams {
  * 声明组 save+submit 的一次性原子链（事务内核形态）。
  * caller claim → 绑定 → save → submit → caller receipt 全在同一事务内；
  * 业务终态以结果返回并随事务提交（冲突回执/merge 副作用不丢）；
- * 只有真实内部错误（TypedGroupProjectionError / DB 错误）抛出要求整体
- * 回滚 —— 调用方不得捕获它们当业务结果。
+ * save 中止、投影后的发布冲突、TypedGroupProjectionError / DB 错误必须
+ * 穿透最外事务；只在事务回滚后转换可返回的业务结果。
  */
 export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
@@ -992,27 +997,14 @@ export async function persistDeclaredQuestionGroupInTx(
     newGroupId: bound.bound.groupId,
   };
 
-  let save: EditQuestionResult;
-  try {
-    save = await saveDraftEditInTx(tx, {
-      input: {
-        action: 'save',
-        document: bound.bound.document,
-        request_id: params.saveRequestId,
-      },
-      ctx: params.ctx,
-    });
-  } catch (err) {
-    // TxAbort = save 侧自选的回滚终态。save 失败路径不携任何持久写入，
-    // 转成已提交 save_failed 与旧链（save tx 无写 + 调用方回执照常落库）
-    // 等价；若未来 save 出现「先写后 abort」路径，这里必须改为向上传播。
-    if (err instanceof TxAbort) {
-      const outcome: DeclaredGroupDomainOutcome = { status: 'save_failed', save: err.result };
-      await writeCallerReceipt(outcome);
-      return outcome;
-    }
-    throw err;
-  }
+  const save = await saveDraftEditInTx(tx, {
+    input: {
+      action: 'save',
+      document: bound.bound.document,
+      request_id: params.saveRequestId,
+    },
+    ctx: params.ctx,
+  });
   if (save.status !== 'saved' && save.status !== 'noop') {
     const outcome: DeclaredGroupDomainOutcome = { status: 'save_failed', save };
     await writeCallerReceipt(outcome);
@@ -1052,10 +1044,21 @@ export async function persistDeclaredQuestionGroup(
   db: Db,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
-  const out = await db.transaction(async (tx) => persistDeclaredQuestionGroupInTx(tx, params));
-  // 域冲突/失败终态不写 verify intent；只有 completed 可能携带待派发 intent。
+  let out: DeclaredGroupPersistResult;
+  try {
+    out = await db.transaction((tx) => persistDeclaredQuestionGroupInTx(tx, params));
+  } catch (error) {
+    // Convert only after the complete outer transaction has rolled back.
+    if (error instanceof TxAbort) return { status: 'save_failed', save: error.result };
+    if (error instanceof SubmitTransactionAbort) {
+      return { status: 'submit_rolled_back', submit: error.receipt };
+    }
+    throw error;
+  }
   if (out.status === 'completed') {
     await drainSubmitVerifyIntents(db, out.submit);
+  } else if (out.status === 'replayed') {
+    await drainSubmitVerifyIntents(db, out.receipt);
   }
   return out;
 }

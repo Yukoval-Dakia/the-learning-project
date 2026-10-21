@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：录入助手 PR1891 五项P1源码修复，已正常整合main并完成静态构建/8审计；草稿待父定向验证，默认禁开。
+> Linear 是权威 tracker。2026-10-21：K1 父独占接线已落，当前 main 组合1763d642；tsrs通过，静态审计/独立审查与exact CI待收口。17分钟等待已按owner取消。
 
 ## NOW
 
-- **题库供给 / 共享 save-submit 事务内核（YUK-1568 S3 子片）**：隔离树 `t3-12b32ff3` / `feat/yuk-1568-shared-submit-intx-20261021`（merge base `102e77e42`，merge `8d95b2fc1`），子任务 `delegate-task:stage1-yuk1568-shared-submit-intx-swe2-max-214-20261021`，协调登记 YUK-1568#4528709。交付：`saveDraftEditInTx` 内核 + `shared-submit.ts`（submit InTx 内核、最小 producer 投影、`persistDeclaredQuestionGroup` 原子链含 caller canonical 回执同事务槽位）+ `submit-decision.ts`/`typed-group.ts`；父定向修复已落（指纹零扩、单 part groupId=part_id、item/criterion 按 unit 作用域、冲突终态提交不回滚 merge、撤 task_run_id envelope）。4 个交集文件父串行接。typecheck/lint/build/schema/capability-boundaries/draft-status 经 heavy.sh 全 exit0；本机测试与真实 DB 重放 NOT_RUN。[实施记录](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
+- **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` 唯一父 writer，子线 eecf79ada 已释放；正常整合 main3d5 得1763d642，父接既有submit API与实际 declared sourcing consumer，parts/draft-contract不改。首发根/真实子行/发布/outbox/canonical回执同事务；去重merge终态提交，投影后发布冲突整笔回滚；commit后drain。接线后tsrs两配置0；五个精确公共出口分类待协调、lint/build/最终audits/R1/new-head CI待交付。下一产物是完整consumer PR；真实DB/serving/provider仍NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
 
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 
@@ -43,6 +43,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **K1 下一交付**：父静态门/精确出口分类→独立R1→exact-head Gate；不等17分钟、不重复旧审查。四生产端未全交付；K5可独立契约开发继续，复合题真实验收依赖相应typed产出。1431只读共用判断按原顺序后接，1470替换不偷切。ea21/清树/巡检由迁移与协调持有，下一事件为资源裁定；不构成源码暂停条件。
 
 - **PR1891**：普通push后交父定向验证及新head CI；不merge/watch/部署。历史OCR归属/费用实际数量未查，需运营核对，未证持续503，默认助手禁开。queued session恢复跟进仍归YUK-1638，不能豁免费用闭环。
 

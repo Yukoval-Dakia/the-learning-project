@@ -1,132 +1,65 @@
-# YUK-1568 S3 — 共享 save/submit 事务内核（子实施记录）
+# 共享声明提交与真实父子投影（YUK-1568）
 
-- 日期：2026-10-21
-- 分支：`feat/yuk-1568-shared-submit-intx-20261021`（隔离工作树 `t3-12b32ff3`，base = `origin/main` `214ecb0ef1c2d746316af5831ea79bbaa18345ef`）
-- 子任务：`node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021`
-- 协调登记：YUK-1568 评论 `4528709`（本线为该片唯一 writer；4 个交集文件由父串行接线）
+2026-10-21；服务「第一天能用」K1 统一判分契约。本片交付声明 sourcing 候选的完整 save/submit 事务与现役 consumer，不代表四类生产端全部完成。
 
-## 范围
+## 当前版本与写权
 
-本 commit 只交付「共享 save/submit 事务内核」的可编译产品代码，不写 held 文件：
+- 工作树：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-12b32ff3`；分支 `feat/yuk-1568-shared-submit-intx-20261021`。
+- 原基线 `214ecb0ef1c2d746316af5831ea79bbaa18345ef`；子线 `259c26d015740a5452f2a3e4426ffa0a3567fe58`，定向修复 `eecf79ada503e64e2fbf0406bc23a1415a6059f5` 已释放 writer。
+- 父正常整合 main `3d5fa20a4c3e4e4e2c1ab42e46f6f2c4b81235b5` 得 `1763d64202da63e0192f9783a0f7521be60c66dc`，随后由父唯一 writer 接线。最终候选以 PR head 为准。
+- 原子任务 `node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021`，协调登记 YUK-1568 评论 `4528709`。
+- 父接 `src/server/questions/submit-question.ts` 与 `src/capabilities/practice/server/tools/submit-question.ts`；另两 held `parts.ts`/`draft-contract.ts` 不需改动。不触 provider、questions/write.ts、embedding 或旧父树。
 
-- `src/server/questions/edit-question.ts`（owned）— save 内核化。
-- `src/server/questions/shared-submit.ts`（新）— submit 事务内核 + 声明组原子链。
-- `src/server/questions/submit-decision.ts`（新）— 提交判定层（原 submit-question.ts helper 的完整迁移体）。
-- `src/server/questions/typed-group.ts`（新）— 声明身份绑定 + 父子 question 行投影。
-- `scripts/capability-boundary-baseline.json` — 两条 sourceSizeRecords 登记。
+## 实际产品行为
 
-Held（父串行接，本 commit 未动）：`src/server/questions/submit-question.ts`、`src/server/questions/parts.ts`、`src/server/questions/draft-contract.ts`、`src/capabilities/practice/server/tools/submit-question.ts`（#1925 fixed23e 保护清单内）。
+声明候选原先依次 save、submit、最后单独写候选回执。现在由 `persistDeclaredQuestionGroup` 统一管理调用方 claim、身份绑定、草稿保存、根行和真实子行、唯一发布口、verify outbox、域回执和候选 canonical 回执，在同一个事务内提交。调用方只提供声明、来源注入和终态映射，不负责排内部写入顺序。提交成功后才 drain verify；失败保留 durable intent，不重入生成。
 
-## 模块职责与接线点
+- `edit-question.ts`：既有完整 save 事务体成为 `saveDraftEditInTx`；原 `saveDraftEdit` 外部签名保留，事务外转换 `TxAbort`。save 回执 envelope 不新增 task_run_id。
+- `shared-submit.ts`：唯一 submit 事务内核与声明组合入口。旧无 producer 请求指纹字段集保持不变；producer 仅承载确定性组 id 和是否物化子行，来源、归因、难度、URL claim、供给信息仍由 `sourced` 权威提供。
+- `submit-decision.ts`：迁移原来的契约转换屏障、准入判定、判分层保留、展示推导、来源和近似去重。#1935 已合注释随职责迁移。
+- `typed-group.ts`：新组声明的身份绑定和真实 child 投影。单 part 的 groupId 等于绑定 part_id；多 part 有根及每 part 一条真实 question 行，不造 part__unit 伪子行，不逐 child 重发布。
+- `submit-question.ts`：既有提交事务边界保留；内核只接受 Tx，普通 API 负责 commit/rollback 后返回和 drain。
+- Practice 工具：现役 declared 分支消费完整组合入口；原 flat 路径和阶段性候选校验保留。外层最终回执在锁内复查，不能覆盖已经原子提交的候选回执。向量输入戳和可观测 canary 仍在 commit 后 best-effort；其失败不会重放已提交业务。
 
-### edit-question.ts（1298 → 1320 行，已登记）
+## 身份、回滚与重放
 
-- `saveDraftEditInTx(tx, params)`：原 `saveDraftEdit` 事务体整体提升为可信内核入口。请求形状校验、`pg_advisory_xact_lock(hashtext(request_id))` 认领、回执重放/复用冲突、草稿解析、双 CAS、ops 应用、create/edit 事件与块投影、回执写入全部原样。`Tx` 参数显式声明提交层级。
-- `TxAbort` 改为 `export`：组合入口把 save 失败折叠进外层原子回滚。
-- `saveDraftEdit(db, params)`：现有公开 API 面不变 —— 开外层事务 + `saveDraftEditInTx` + 事务外 TxAbort→result 转换。
-- `writeReceiptEvent` 事件 envelope 与 main 逐字段一致（父定向修复撤回了曾加的 `task_run_id`：canonical taskRunId 与实际 logTaskRunId 在 #1925 严格分离，不能无依据当真实 run 外键）。
+- part/material/unit 在文档内唯一；slot 按 part，option/criterion 按 unit。作用域键使用 JSON `[scope, local]`，避免斜杠分隔符碰撞；字典无 prototype，任意合法字符串不会隐式命中对象属性。key 与 blank_order 只解析所属作用域，不根据内容猜绑定。
+- namespace 来自原 candidate request_id，save/submit 仍用 `:save`/`:submit`。canonical taskRunId 不换成实际日志 run id。旧回执保持不变。
+- 锁序：调用方 request → save request → submit request → 既有域锁。candidate 回执与业务同 commit，重复同指纹返原回执，异指纹拒收。
+- `duplicate_source`/`duplicate_exact` 等已完成去重的业务冲突提交其 KC merge、URL release 和冲突回执，保留可修草稿。
+- 发布口在行投影之后拒绝时抛 `SubmitTransactionAbort`，最外事务回滚后才转 conflict；save 的 `TxAbort` 同样在事务外转换。projection/DB 异常继续抛出。不能把以上异常在事务内部吞掉而留下半个根/子行。
+- unpublished withheld 是合法存储终态：保留草稿 ref/version、原因与 issues，不宣称可出。
 
-### submit-decision.ts（349 行，新）
+## #1925 整合保护
 
-从 submit-question.ts 原样提取的判定层：`canonicalJson`、`runAdmissionChecks`（+`AdmissionCheckInput/Result`）、`SOURCE_KIND_TO_QUESTION_SOURCE`、`deriveKind`、`draftCarriesFigure`、`ScoringRevision`、`conversionWithheld`、`storedScoringCopied`、`admissionForContentEdit`、`scoringLayersUnchanged`、`contractBarrierIssues`、`presentationForDraft`、`attributableSourceIssue`、`nearDupComparableText`、`nearDuplicateInKnowledge`。仅可见性提升为 export，逻辑零改动；main(#1935) 定稿注释随函数一并移植，职责处语义对齐。facade 接线时 submit-question.ts 的同名本地副本删除并改为 re-export。
+未合 #1925 固定 `23e103b82ed7b80dac50379d11f3df2481e4fc24` 的工具 diff 独立封存于仓库外 `review/stage1-yuk1568-s3-intx-20261021/integration-protection.json` 及相邻源码/patch。其源码 SHA `270e1a43bbc17364bd4b12ca8664ab881bab7e5d5a5346d3732a6787c414cf45` 与当时 main 工具 SHA 不同，原因是未合 PR 的实质差量，不是清单录制时点错误。
 
-### typed-group.ts（410 行，新）
+本片不整体合入未合的 #1925。后合的一方按实际 main 逐 hunk 保留：
 
-- `bindDeclaredGroupIds(doc, {namespace})`：声明文档局部 id（part/unit/slot/item/material/criterion + 根组 `group`）按 `sha256('yuk1568:bind:'+namespace ‖ scope ‖ local)` 前 20 hex 铸确定性真实 id（`bd_<domain>_<h20>`）。重复检测按 schema 作用域收窄（父定向修复）：`part_id`/`material_id`/`unit_id` 文档级唯一（unit_id 是判分契约扁平寻址身份，跨 part 重复令 scoring_basis 歧义）；`slot_id` 按所属 part 作用域；`item_id` 按所属 select unit 作用域（不同 select unit 可各有 A/B）；`criterion_id` 按所属 rubric unit 作用域。引用闭包同域解析：`accepted_item_ids` 只解析本 unit item、`blank_order` 只引用本 part 的 blank slot、`material_refs`/`material_ids` 解析本 part 可见 material —— dangling/同域重复一律 `{ok:false, issues}`，不从内容/标签/下标推断身份。**单 part 组的 groupId 恒等其已绑定 `part_id`**（根行=该 part 的真实 question 行，不另铸根、不造 `part__unit` 伪子行）；多 part 才铸独立确定性根 + 每 part 真实子行。`doc.base`/`doc.presentation` 存在即拒绝（presentation 的 block_id/bind 内嵌声明 id，重绑会留悬空引用；presentation 由提交链 `presentationForDraft` 从契约生成）。不注入缺省 blank_order/answer_shape，不碰显示序与下标语义。
-- `insertTypedGroupChildren(tx, seed)`：根行 `FOR UPDATE` 锁（parts.ts 根→子锁序）→ 绑定 part_id 撞任一既有 question 行抛 `TypedGroupProjectionError` → 每 part 一条 `question` 子行：`parent_question_id`=组 id、`part_index`=声明序、`kind='question_part'`、`draft_status='draft'`、`version=0`、内容列由单 part 文档走 `draftCanonicalIdentity`/`draftDocumentToStructuredQuestion`（choices 只在恰好一个 select 单元的 part 落列）、`withAnswerClass`。`created_by` 保持 NULL（ADR-0006 v2 part 写口约定），provenance 落 `metadata.produced_by`/`declared_part_id`/`draft_block_id`；`idMap`（声明原 id→真实 id）仅在实际投影/回执持久化时传递。
+- sourcing_web 且 logTaskRunId 存在时，created_by 归 SourcingTask 的真实 run；其余 fallback 保持。
+- candidate 和 declared 成功事件的 difficulty_reason 与 `task_run_id=logTaskRunId??taskRunId` 均保留。
+- request/claim/paid/verify 的 canonical taskRunId 不替换。发布后事件失败不得驱动重放。
 
-### shared-submit.ts（1058 行，新；已登记）
+## 深模块与机器门
 
-- `submitDraftQuestionInTx(tx, input, ctx, opts?)`：原 `submitDraftQuestion` 事务体完整内核形态 + `opts.producer`（`TrustedNewGroupProjection`）扩展面。原语义逐行保留：锁内回执、block 行锁、draft_version CAS、`expected_revision` 钉底/pinned base、准入组级 blocker、来源归属校验、`applyScoringEditPlan` 判分层原样拷贝、`contractBarrierIssues`、integrity seal、来源 URL claim（`claimHttpSourceDuplicate` onTerminal:'release'）、`mergeExactQuestionDuplicateKnowledgeIds`、近似去重、根行 insert/update、唯一 `publishQuestionGroup` seam、草稿终态 lifecycle 事件、verify outbox intent、回执事件（envelope 与 main 逐字段一致，无 `task_run_id`）。
-- producer 扩展面收窄到最小可信投影输入（父定向修复，删 `qualityGate`/`paidOutput`/`rowSource`/`dedupActor`/`canonicalContentHash`/`createdBy`/`difficulty`/`sourceRef`/`metadata` 覆盖旋钮）：只剩 `newGroupId`（缺省铸 cuid2；typed 路径恒取绑定派生值）与 `materializeParts:'parent-parts'`（`doc.parts>1` 时根行 INSERT 后同事务投影子行；单 part 组 groupId=part_id 无子行）。route/metadata/difficulty/claim/provenance 仍由 `input.sourced` 权威承载 —— 无第二覆盖通道。producer 仅在确实指定时进 `submitRequestFingerprint`；无 opts 请求指纹与 main 逐字节一致，旧 `:submit` 回执重放不受影响（旧回执不改写）。
-- `submitRequestFingerprint / findSubmitReceipt / claimSubmitRequestId / writeSubmitReceiptEvent / drainSubmitVerifyIntents`：与既有同名导出同语义，供 candidate/compat 提交路径与 facade 复用。
-- `drainSubmitVerifyIntents(db, result)`：事务外 source_verify 派发（按 `verify_enqueued` 而非 receipt.status 门槛）；失败留 durable intent。
-- `persistDeclaredQuestionGroupInTx(tx, params)`：caller claim（可选）→ 绑定 → save → submit → caller 回执，全在同一事务。`expected_draft_version: save.draft_version` 与旧 live caller 同口径；`expected_revision:null` 显式钉新组首提交 CAS。锁序：caller request_id → saveRequestId → submitRequestId → 域内行锁/副作用锁。
-- `submit_conflict` 是**已提交**业务终态（父定向修复 #6，不再整体回滚）：duplicate_source/duplicate_exact 的 KC merge 与 URL claim-release 副作用按旧 submit tx 口径落库、冲突回执照常写，草稿保留可修 'draft'；只有真实内部错误（`TypedGroupProjectionError`/DB 错误）抛出并整体回滚 —— 绝不交半个草稿/根/子行，也绝不把已执行 merge 回滚掉。
-- `caller` 槽位（父定向修复 #7）：调用方传 `requestId`/`fingerprint`/`receipt(outcome)` 回调后，其 canonical request_id 在事务最先 advisory-lock + replay/reuse 检查（同指纹回执直返 `replayed`，异指纹 `request_id_reused`，均不重跑域工作）；每个已提交域终态（含 declaration_failed/save_failed/submit_conflict/completed）落库前经回调写调用方 canonical 回执 —— domain+receipt 同一 commit，无「域已提交而顶层回执缺失」crash 窗口。回调返回 null 表示该终态不写调用方回执。无 defer/skip 开关、无新 registry。
-- `persistDeclaredQuestionGroup(db, params)`：Db 外层入口 —— 开最外事务 + commit 后 drain verify intent；结果集 `replayed|request_id_reused|declaration_failed|save_failed|submit_conflict|completed`。
+完整事务职责有现役工具 consumer；不另建 registry，不增加跨 capability 值依赖或 capability→server 边。submit 原 1175 行的判定、投影和事务分别归完整模块，新文件均小于1500行。
 
-## 父接线 TEXT（held 文件逐 hunk）
+工具从1247到1292行的增长是原子回执终态映射，已评估拆分：声明持久化已移到完整内核，来源注入与候选输出留原工具，避免新入口和额外 server 边。edit/shared/tool 的 sourceSizeRecords 仅登记实际大小和职责理由。
 
-### A. `src/server/questions/submit-question.ts`
+现行架构门发现原 facade 的新转出；无外部 consumer 的 runAdmissionChecks 与类型已删，剩 canonicalJson、deriveKind、claimSubmitRequestId、writeSubmitReceiptEvent、persistDeclaredQuestionGroup 五个精确站点已由协调精确裁为 stable_contract；批准工件 coordinator-resume-20261021/k1-five-stable-contract-classification.json，SHA d9ca5adcd999f3cd2e0f7f2e5e18fb80b0e08f8cb2357de717dd69100ae647df。旧 claim/receipt 的 caller 仍掌握锁序，这项残余负担不称已解决；不按文件泛放，不修改审计逻辑。
 
-1. 删除判定层本地副本（现 `submit-decision.ts` 内同名实现）：`canonicalJson`、`runAdmissionChecks`、`AdmissionCheckInput/Result`、`SOURCE_KIND_TO_QUESTION_SOURCE`、`deriveKind`、`draftCarriesFigure`、`ScoringRevision`、`conversionWithheld`、`storedScoringCopied`、`admissionForContentEdit`、`scoringLayersUnchanged`、`contractBarrierIssues`、`presentationForDraft`、`attributableSourceIssue`、`nearDupComparableText`、`nearDuplicateInKnowledge`、`NEAR_DUP_POOL_LIMIT`。
-2. 删除 claim/回执本地副本：`DRAFT_SUBMIT_ACTION`、`parseExpectedRevision`、`documentOfBlock`、`findSubmitReceipt`、`claimSubmitRequestId`、`writeSubmitReceiptEvent`。
-3. `submitDraftQuestion` 主体替换为薄 wrapper：
+## 验证和交付触发
 
-```ts
-export async function submitDraftQuestion(db: Db, input: SubmitDraftInput, ctx: SubmitContext): Promise<SubmitResult> {
-  const out = await db.transaction(async (tx) => submitDraftQuestionInTx(tx, input, ctx));
-  await drainSubmitVerifyIntents(db, out);
-  return out;
-}
-```
+子线 eecf 的 tsc/lint/build/schema/boundary/draft-status 记录属于接线前历史。父 frozen install 0，接线后 tsrs 两配置 0；初次边界审计因工具增长与shared大小记录不符失败，已按实测修正；五站点分类已批准，登记后审计待复核。最终 lint/build/audits、独立 R1 与 exact-head CI 待新 head，不能复用旧绿。
 
-   （原尾部 verify drain 块移入 `drainSubmitVerifyIntents` —— 已在新模块。）
-4. 保持既有再出口契约：`canonicalJson`、`runAdmissionChecks`/`AdmissionCheck*`、`deriveKind`、`draftCanonicalIdentity`、`revisionToDraftDocument`、`claimSubmitRequestId`、`writeSubmitReceiptEvent` 改为 `export { ... } from './submit-decision'/'./shared-submit'` —— `tools/submit-question.ts`、`tools/edit-question.ts`、`tools/store-sourced-question.ts`、`jobs/source_verify.ts`、`edit-submit.db.test.ts` 的已登记 import 边复用，不加新边。
-5. `SubmitDraftInput`/`SubmitResult`/`SubmitUnitOutcome`/`SubmitContext` 类型留在本文件（shared-submit 对其只做 type-only import，无运行时环）。
+下一可验收产物是含实际 declared consumer 的完整 PR。触发条件：父静态门、精确出口分类、R1/既有P0/P1裁决及当前 head GitHub CI Gate。owner 2026-10-21 已取消 last-push/17分钟等待；不为 advisory 新建 timer、等待或重跑，至多 R1+R2 预算不变。
 
-### B. `src/capabilities/practice/server/tools/submit-question.ts`（#1925 保护语义必须保留）
+测试/断言（含临时脚本）、DB 重放/并发/回滚、复合组真实 serving、producer actual-output、provider/paid、部署均 NOT_RUN。既有 edit-submit DB case 随公开入口接到内核，但未在本机执行。需要新断言时另报文本方案，测试不作为产品准备前置。
 
-声明候选分支现状（约 890-1010）：两事务 `saveDraftEdit` → `submitDraftQuestion`。接线为单原子链：
+## 后续主交付和运行边界
 
-```ts
-const requestId = input.request_id;                       // 现确定性 id，勿改
-const { document } = declaredCandidateDocument(q, input.source_route, knowledgeIds); // 现投影勿改
-const callerFingerprint = /* 现 tx4 顶层回执的 fingerprint 算法原样 */;
-const result = await persistDeclaredQuestionGroup(db, {
-  document,
-  idNamespace: `yuk1568-candidate:${requestId}`,
-  saveRequestId: `${requestId}:save`,
-  submitRequestId: `${requestId}:submit`,
-  availability: input.availability,
-  sourced: { /* 现有 sourced 注入体逐字段原样（canonical_content_hash/created_by/difficulty/metadata/supply_trace/source_claim） */ },
-  ctx: { actorRef: routeConfig.mergeActorRef, actorKind: 'agent', sessionId, taskRunId, causedByEventId, now },
-  // 顶层候选 canonical 回执并入同一事务（替掉 commit 后独立 tx4）：
-  caller: {
-    requestId,
-    fingerprint: callerFingerprint,
-    // 终态→现有候选回执组装：subject={kind:'question',id:result.question_id ?? `candidate:${candidate.candidate_id}`}、
-    // receipt=结果 SubmitResult、ctx=旧顶层回执口径 {actorRef:callerActor?.ref ?? 'agent:submit_question', actorKind:'agent',
-    // sessionId, taskRunId, causedByEventId}（≠ 域写口的 mergeActorRef）；不写回执的终态 return null。
-    receipt: (outcome) => /* … */,
-  },
-});
-// result: completed | submit_conflict | save_failed | declaration_failed | replayed | request_id_reused
-```
-
-- `replayed` ⇒ 直接回执（工具原有幂等重放分支语义不变，现在免重跑域工作）。
-- `request_id_reused` ⇒ 同 request_id 不同内容 ⇒ 冲突终态。
-- `completed` ⇒ 按 `submit.status` 映射：published-withheld/admitted/pending 走现有回执组装；`withheld && published===false` ⇒ `draft_unpublishable` + `save.draft_ref`（保留可修草稿终态）。
-- `submit_conflict` ⇒ 冲突终态（重复源/exact/near_dup/claim 冲突语义不变；已执行的 KC merge/URL release 已随事务提交 —— 与旧两事务链可见副作用一致）。
-- `save_failed`/`declaration_failed` ⇒ 拒绝终态，如实带 issues。
-- #1925 语义钉：sourcing_web 且 `logTaskRunId` 存在时 `created_by={by:ai,task_kind:SourcingTask,task_run_id:logTaskRunId}`；candidate 与 declared 成功事件都落 `difficulty_reason=explainDifficultyEvidence(...)` 与 `task_run_id=logTaskRunId ?? taskRunId`；canonical request/claim/paid identity 不用 logTaskRunId 替换。
-- 事件 `subject`：`writeSubmitReceiptEvent` 已支持 `{kind:'question'}`；工具侧候选成功事件保持 `question` subject 与 payload 形状。
-
-### C. `src/server/questions/parts.ts`（如需）
-
-`createQuestionPart` 不动；typed 首发子行由内核投影承担（同一 publish seam 覆盖，不调 `publishQuestionGroupFromRow` 逐子重发）。`db/schema.ts` 中 `parent_question_id`/`part_index` 注释把 parts.ts 列为唯一写口 —— typed-group 现为第二写口（同一投影约定），父接线时可顺手补注释。
-
-### D. `src/server/questions/draft-contract.ts`
-
-无需改动；内核只消费其既有导出。
-
-## 仍缺证据（如实）
-
-- 本机测试/断言：NOT_RUN（owner 规则：不写不断言脚本；`edit-submit.db.test.ts` 仍走旧 facade，未覆盖新内核路径 —— 父接线后由现有 case 间接覆盖）。
-- 真实 DB 重放/并发/回滚实测：NOT_RUN（逻辑核对：save 原子段、submit 原子段、组合链段均有回执/锁/PK 兜底；TypedGroupProjectionError 穿透外层回滚，TxAbort 只在 save 无写路径折成 save_failed，业务冲突终态提交不回滚）。
-- `parent_published`/`admitted` 复合组下游消费（serving 对父/子完整性依赖）：NOT_RUN —— 现有消费方待父接线后验证。
-- proposal-appliers 的 save→submit 顺序链是否应改走原子链：父决定（本 commit 未动）。
-- 非供给链 typed 新组（producer 缺省）暂不投影子行 —— 与 main 同行为；如要扩展 materializeParts 覆盖面父裁决。
-- caller 槽位尚无 live consumer（父接线时由 declared 候选分支消费）；`persistDeclaredQuestionGroup` Db wrapper 与 InTx 内核均保留，父接线后消费 caller。
-
-## 验证记录（本线）
-
-- `pnpm exec biome format --write`（4 文件）exit 0
-- `pnpm typecheck`（tsc --noEmit + server/start tsconfig）exit 0
-- `pnpm lint` exit 0（181 warnings = main 既有基线，我文件 0 条）
-- `pnpm audit:capability-boundaries` exit 0（新边 0；sourceSizeRecords 2 条登记；>1500 文件 12→12）
-- `pnpm audit:schema` exit 0（stub unallowed 0；`parent_question_id`/`part_index` 实写路径保持）
-- `pnpm audit:draft-status` exit 0（insert 站点含 draft_status）
-- `pnpm build` exit 0
-- 以上命令均经 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh` 串行，Node heap ≤3072MiB。
+- K1 后续：按 YUK-1594 已定「统一候选、同门准入」接实际 consumer；不扩独立 QuizGen typed writer。其他生产端与现役复合 serving 的完整验收尚缺，不把本片等同 K1 完成。
+- K5 的题目展示/真实发行门持续保留；不依赖 ea21 发布才能继续独立 UI/后端契约开发。任何需要新 K1 typed producer 的复合卷验收明确依赖本片及后续生产端；不推断整卷已验收。
+- YUK-1431/ADR-0070 共用判断只读适配在 K1 第三片后；按真实现役版本封存 θ̂/PFA/FSRS，不把已合算法当 owner 批准切换。YUK-1470 切换仍另批。
+- ea21 发布：迁移线执行、协调裁资源；下一事件为 appendix/build 资源明确裁定。主线不取运营锁。1629 04/05 负正例已接受，不重复；只剩部署状态。
+- 清树/巡检：迁移线按各自授权和活跃绑定处理；本实施树活跃保留，旧 stage1-lead 不写。这些运营事项不阻塞 K1 源码交付，不计作 K1/K5 成果。

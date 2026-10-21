@@ -51,7 +51,7 @@ export type DeclaredIdDomain =
   | 'criterion';
 
 /** domain → 声明局部 id → 已绑定真实 id。带作用域的域（slot→part、
- *  item/criterion→unit）键为 `${scope}/${local}` 复合键。 */
+ *  item/criterion→unit）键为 JSON 编码的 [scope, local]，避免分隔符歧义。 */
 export type BoundIdMap = Partial<Record<DeclaredIdDomain, Record<string, string>>>;
 
 export interface BoundDeclaredGroup {
@@ -109,7 +109,7 @@ export function bindDeclaredGroupIds(
   //   - item / criterion 作用域 = 所属 unit（不同 select unit 各有 A/B 项、
   //     各 rubric criteria 同名都是合法声明；key.accepted_item_ids 只解析
   //     本 unit 的 items）。
-  // 带作用域域的 digest/map key 以 `${scope}/${local}` 区分；ref 解析同样
+  // 带作用域域的 digest/map key 以 JSON [scope, local] 区分；ref 解析同样
   // 限定在声明它的作用域内，跨作用域同名的局部 id 不互相命中。
   const digest = (domain: DeclaredIdDomain, scopedKey: string): string =>
     `bd_${domain}_${createHash('sha256')
@@ -124,7 +124,7 @@ export function bindDeclaredGroupIds(
   const idMap: BoundIdMap = {};
   const seen = new Set<string>();
   const claim = (domain: DeclaredIdDomain, local: string, scope?: string): string => {
-    const mapKey = scope != null ? `${scope}/${local}` : local;
+    const mapKey = scope != null ? JSON.stringify([scope, local]) : local;
     const seenKey = `${domain}\0${mapKey}`;
     if (seen.has(seenKey)) {
       issues.push({
@@ -138,7 +138,7 @@ export function bindDeclaredGroupIds(
     }
     seen.add(seenKey);
     const boundId = digest(domain, mapKey);
-    const domainMap = idMap[domain] ?? {};
+    const domainMap = idMap[domain] ?? (Object.create(null) as Record<string, string>);
     domainMap[mapKey] = boundId;
     idMap[domain] = domainMap;
     return boundId;
@@ -149,7 +149,7 @@ export function bindDeclaredGroupIds(
     at: Omit<BindIssue, 'code'>,
     scope?: string,
   ): string => {
-    const mapKey = scope != null ? `${scope}/${local}` : local;
+    const mapKey = scope != null ? JSON.stringify([scope, local]) : local;
     const boundId = idMap[domain]?.[mapKey];
     if (boundId == null) {
       issues.push({
@@ -272,7 +272,7 @@ export function bindDeclaredGroupIds(
 
 /**
  * 投影失败哨兵：抛出即要求外层事务整体回滚（绝不提交半个 root+子集）。
- * 由最外 Db 入口在事务外转成冲突结果。
+ * 保留为内部错误向上传递，不在事务内折为成功或已提交冲突。
  */
 export class TypedGroupProjectionError extends Error {
   constructor(

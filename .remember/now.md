@@ -1,12 +1,12 @@
-# YUK-1568 S3 共享 save/submit 事务内核，2026-10-21
+# K1 父接线，2026-10-21
 
-任务ID node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021；YUK1568评论4528709登记本线唯一writer。隔离树 t3-12b32ff3，分支 feat/yuk-1568-shared-submit-intx-20261021，merge base origin/main 102e77e42（#1935 已合），merge commit 8d95b2fc1。T3原分支引用 t3/12b32ff3 保留，无force/reset。
+唯一父writer在t3-12b32ff3/feat-yuk-1568-shared-submit-intx-20261021；旧stage1-lead ee4b92bea与原dirty now不写。子线eecf79ada已释放，父正常整合main3d5fa20a得1763d642后接submit-question与Practice工具；parts/draft-contract保持。下一具体candidate以父提交SHA为准，完整内容/不足见docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
 
-Owned：src/server/questions/edit-question.ts（save内核化+Db wrapper；task_run_id envelope 已按父定向撤回）；新模块 shared-submit.ts（submit InTx内核+最小producer投影[仅newGroupId/materializeParts]+原子链persistDeclaredQuestionGroup[caller canonical回执同事务槽位]+drain）、submit-decision.ts（判定层迁移+main#1935定稿注释）、typed-group.ts（声明id按schema作用域绑定+父子行投影）；baseline sourceSizeRecords+2。Held只读未动：submit-question.ts/parts.ts/draft-contract.ts/practice tools/submit-question.ts（#1925 fixed23e保护语义已在实施文档钉死父接线要求）。
+实际接线：声明候选claim→bind/save→根/真实child→唯一publish+outbox→域及caller回执同commit。去重业务冲突保KCmerge，publish在投影后冲突/TxAbort穿透外层回滚；commit后drain不重放业务。旧无producer指纹与canonical taskRunId保留，#1925 fixed23e归因diff单独封存，未合全PR。父补scope JSON键/null-prototype防局部id分隔符及对象属性歧义。
 
-边界：producer 只承载组id+子行物化（sourced仍权威承载route/metadata/difficulty/claim）；单part组groupId=绑定part_id无子行，多part独立root+真实child；item/criterion按unit、slot按part作用域查重；submit conflict=已提交业务终态（KC merge/URL release副作用保，绝不回滚已执行merge）仅内部错误整体回滚；caller槽位供父在同tx写canonical候选回执（锁序caller→save→submit→域锁，同指纹replayed/异指纹reused不重跑）；指纹无opts与main逐字节一致旧回执不动；withheld保留草稿终态、无skip/defer开关无新registry。完整接线TEXT+缺证清单见 docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
+父frozeninstall/tsrs两配置exit0；首次boundary报两条sourceSize差异，architecture报6转出（已删无consumer一个，剩5待协调精确分类）。最终lint/build/audits/R1/Gate待父提交，不复用子绿。不写测试/断言脚本，不开DB/TEST/provider/部署。原子事务和复合serving真实验收NOT_RUN。
 
-实测缺：本机测试/断言全NOT_RUN（owner规则）；真实DB重放/并发/回滚NOT_RUN；published复合组下游消费NOT_RUN；producer缺省路径typed新组暂不投影子行（=main行为）；proposal-appliers是否改走原子链父裁决。typecheck/lint/build+schema/capability-boundaries/draft-status审计经heavy.sh全exit0，lint181warnings=main基线。
+Owner2026-10-21取消17分钟等待/timer/advisory等待重跑，保现行门/R1至多R2/exact-head及P0P1裁决，不改1939负责的根规则。ea21发布迁移/协调负责，04/05已接受不重复；清树巡检不阻开发。K1四生产端未齐，K5可独立开发，依赖typed的复合验收待相应产出；1431共用判断后接，1470切换仍待批准。无新runtime/额外writer。
 
 # 录入助手永久身份与未结费用修复，2026-10-20
 
