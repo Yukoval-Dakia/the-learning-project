@@ -1,21 +1,10 @@
-// YUK-1005 — sourced-question markup normalizer.
+// Converts sourced (jyeoo/MathJye) markup at the ingest seam so learner-facing
+// fields render as markdown instead of HTML and third-party image URLs:
 //
-// jyeoo (and similar sources) ship learner-facing fields in proprietary "MathJye"
-// markup: <table> fraction stacks, image-sprite radicals (img.jyeoo.net
-// formula-part PNGs with a border-top vinculum cell), and raw <sup>/<sub>. The
-// UI renders prompt_md / choices_md / reference_md as markdown — raw MathJye
-// leaks as unreadable HTML+image-URL soup AND depends on third-party image
-// availability. This module converts that markup family at the INGEST seam
-// (insertSourcedDraft) so stored rows carry clean markdown:
+//   fraction table → \frac, radical table → \sqrt, <sup>/<sub> → unicode/LaTeX,
+//   other tags → transparent (children kept).
 //
-//   fraction table   <td border-bottom>NUM</td><td>DEN</td>   → $\frac{NUM}{DEN}$
-//   radical table    sprite-cell + <td border-top>CONTENT</td> → $\sqrt{CONTENT}$
-//   <sup>/<sub>                                             → unicode ²/₂ (^{x} fallback)
-//   every other tag                                        → transparent (children kept)
-//
-// The parser is a lenient tag tokenizer (not a full HTML parser): malformed
-// input degrades to best-effort text extraction, never throws. Content that is
-// already clean markdown passes through byte-identical.
+// The tokenizer is lenient and never throws; clean input passes through byte-identical.
 
 interface El {
   tag: string;
@@ -67,8 +56,7 @@ function parseMarkup(input: string): MarkupNode[] {
       continue;
     }
     const el: El = { tag, attrs: m[3] ?? '', children: [] };
-    // Attach at open time: unclosed/truncated elements still render whatever
-    // children they accumulated — lenient for malformed source HTML.
+    // Attach at open time so unclosed elements still render their children.
     push(el);
     if (!VOID_TAGS.has(tag) && m[4] !== '/') stack.push(el);
   }
@@ -104,8 +92,7 @@ function decodeEntities(text: string): string {
   });
 }
 
-// Inside a LaTeX run, full-width ASCII variants (＜＞＝（）…) are literal glyphs
-// to KaTeX, not operators — fold U+FF01–FF5E (and ideographic space) to ASCII.
+// Inside LaTeX, full-width ASCII variants are literal glyphs to KaTeX — fold them to ASCII.
 function normalizeMathText(text: string): string {
   return text.replace(/[！-～　]/g, (ch) =>
     ch === '　' ? ' ' : String.fromCharCode(ch.charCodeAt(0) - 0xfee0),
@@ -185,8 +172,7 @@ function mapScript(
   fallback: (s: string) => string,
 ): string {
   const chars = [...text];
-  // All-or-nothing: a partial map (`²k`) is worse than the LaTeX fallback
-  // (`^{2k}`), which at least degrades to honest, unambiguous notation.
+  // All-or-nothing: a partial map (`²k`) is worse than the unambiguous LaTeX fallback.
   return chars.length > 0 && chars.every((ch) => ch in table)
     ? chars.map((ch) => table[ch]).join('')
     : fallback(text);
@@ -201,15 +187,12 @@ function cellsOf(row: El): El[] {
 function renderTable(el: El, inMath: boolean): string {
   const rows = el.children.filter((c): c is El => typeof c !== 'string' && c.tag === 'tr');
   if (rows.length === 0) return renderNodes(el.children, inMath);
-  // Inside a math span, nested math constructs must NOT re-open `$…$` — a nested
-  // `$` would terminate the outer LaTeX run and leak raw markup.
+  // Nested math must not re-open `$…$`; it would terminate the outer run.
   const open = inMath ? '' : '$';
   const close = inMath ? '' : '$';
 
-  // Fraction stack: <tr><td style="border-bottom…">NUM</td></tr><tr><td>DEN</td></tr>.
-  // MathJye renders the horizontal bar as the numerator cell's bottom border.
-  // Single-cell rows only: a multi-cell row carrying a border-bottom is a real
-  // table, not a fraction — destructuring [0] would silently drop sibling cells.
+  // Fraction stack: MathJye draws the bar as the numerator cell's bottom border.
+  // Single-cell rows only; a multi-cell bordered row is a real table.
   if (rows.length === 2) {
     const [num] = cellsOf(rows[0]);
     const [den] = cellsOf(rows[1]);
@@ -224,8 +207,7 @@ function renderTable(el: El, inMath: boolean): string {
     }
   }
 
-  // Radical: one row, a zero-font sprite cell (img.jyeoo.net formula-part divs)
-  // followed by a vinculum cell (`border-top`) holding the radicand.
+  // Radical: a zero-font sprite cell followed by a `border-top` vinculum cell.
   if (rows.length === 1) {
     const cells = cellsOf(rows[0]);
     if (
@@ -251,9 +233,8 @@ function renderNodes(nodes: MarkupNode[], inMath = false): string {
     if (SKIP_TAGS.has(node.tag)) continue;
     switch (node.tag) {
       case 'sup':
-        // Inside $…$ the output must be LaTeX (KaTeX does not map unicode
-        // superscripts); at text level unicode scripts keep choices readable
-        // without forcing a math span around e.g. `a²+b²`.
+        // Inside $…$ use LaTeX (KaTeX does not map unicode scripts); plain text keeps
+        // unicode scripts so `a²+b²` does not need a math span.
         out += inMath
           ? `^{${renderNodes(node.children, true)}}`
           : mapScript(renderNodes(node.children, false), SUPERSCRIPT, (s) => `^{${s}}`);
@@ -270,18 +251,14 @@ function renderNodes(nodes: MarkupNode[], inMath = false): string {
         out += renderTable(node, inMath);
         break;
       default: {
-        // A MathJye span is a math boundary: render its whole subtree in math
-        // context so sibling constructs (`\frac{1}{a}` + `+` + `\frac{1}{b}`)
-        // collapse into one `$…$` run instead of adjacent broken runs. If the
-        // subtree produced no actual math (e.g. a span wrapping plain CJK),
-        // emit it unwrapped — CJK inside `$…$` would break KaTeX.
+        // A MathJye span is one math boundary, so sibling constructs share a `$…$`
+        // run. Emit it unwrapped when it produced no math (CJK breaks KaTeX).
         const isMathSpan = /mathjye|mathtag\s*=\s*['"]math['"]/i.test(node.attrs);
         if (isMathSpan) {
           const inner = renderNodes(node.children, true);
           out += /\\frac|\\sqrt|\^\{|_\{/.test(inner) ? `$${inner}$` : inner;
           break;
         }
-        // div / tr / td / thead / tbody / unknown → transparent.
         out += renderNodes(node.children, inMath);
       }
     }
@@ -290,15 +267,12 @@ function renderNodes(nodes: MarkupNode[], inMath = false): string {
 }
 
 /**
- * Normalize sourced (jyeoo/MathJye-family) markup to clean markdown + LaTeX.
- * Idempotent: already-clean input returns unchanged except entity decoding is
- * only applied where entities exist — plain text without tags/entities is
- * returned byte-identical.
+ * Normalize sourced markup to markdown + LaTeX. Idempotent; plain text without
+ * tags or entities returns byte-identical.
  */
 export function sanitizeSourcedMarkup(input: string): string {
   const rendered =
     input.includes('<') || input.includes('&') ? renderNodes(parseMarkup(input)) : input;
-  // Producers also ship pre-baked `$…$` runs containing full-width math chars —
-  // normalize inside every math run, not just the ones we emitted.
+  // Producers also ship pre-baked `$…$` runs, so normalize every math run.
   return rendered.replace(/\$\$[^$]+\$\$|\$[^$]+\$/g, normalizeMathText);
 }

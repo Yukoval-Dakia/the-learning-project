@@ -1,17 +1,7 @@
-// YUK-697 — shared tier-2 web_sourced draft INSERT + cross-KC dedup lifecycle.
-//
-// The sourcing (SourcingTask) and jyeoo_fetch handlers persist an identical draft shape:
-// source='web_sourced', tier-2 provenance (metadata.web_sourced + source_ref_kind='url'),
-// difficulty_evidence, draft_status='draft', canonical_content_hash with a partial-unique
-// arbiter. This helper is the single source of that persistence so the two producers can't
-// drift. Callers own everything BEFORE the insert (trigger resolution, knowledge_ids
-// resolution, the pre-INSERT exact-dup MERGE + near-dup) and AFTER it
-// (writeVerifyDispatchIntent, per-question bookkeeping).
-//
-// YUK-720 (merged from #938): the ON CONFLICT path is a cross-KC dedup — when a concurrent
-// insert won the canonical-hash race, the target KCs are MERGED into the winner (or, if the
-// winner is a terminal-rejected draft, that stale row is released and this INSERT retried).
-// This helper runs that exact lifecycle so sourcing + jyeoo_fetch get identical dedup.
+// Shared tier-2 web_sourced draft INSERT and cross-KC dedup lifecycle. SourcingTask and
+// jyeoo_fetch both use it so their persistence cannot drift; callers own trigger/KC
+// resolution before the insert and verify dispatch after it. On a canonical-hash race the
+// target KCs merge into the winner, or a terminal-rejected draft is released and retried.
 
 import { sql } from 'drizzle-orm';
 import {
@@ -33,8 +23,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
-// question.created_by column type (AgentRef jsonb, notNull) — single-sourced from the
-// schema so the two producers' created_by refs are typed identically.
+// Single-sourced from the schema so both producers type created_by identically.
 type AgentRefValue = (typeof question.$inferInsert)['created_by'];
 
 export interface InsertSourcedDraftInput {
@@ -76,18 +65,8 @@ export type InsertSourcedDraftResult =
     };
 
 /**
- * INSERT one tier-2 web_sourced draft (draft_status='draft'), running the YUK-720 cross-KC
- * dedup lifecycle on an ON CONFLICT race. Returns the built difficulty evidence + supply
- * trace on a fresh insert (including a retry after a terminal-rejected draft was released),
- * or the merge disposition when a concurrent winner absorbed the target KCs. Throws only
- * when an ON CONFLICT fires but no duplicate can be found / the retry still conflicts (a
- * real invariant violation).
- */
-/**
- * YUK-1568 S3 — 本 writer 只服务【未声明】候选（jyeoo_fetch 及未带 parts 的
- * sourcing_web 旧路径）。携带 typed parts/units 声明的候选必须走统一草稿链
- * （saveDraftEdit → submitDraftQuestion）：在这里静默丢掉
- * parts/answer_shape/blank_order 等同用 flat 解释器吞掉声明。fail-closed。
+ * Only un-declared candidates belong to this writer. Typed parts/units must go
+ * through saveDraftEdit → submitDraftQuestion; the flat writer would drop them.
  */
 export function assertNoDraftDeclarations(q: SourcedQuestionT): void {
   if (q.parts != null && q.parts.length > 0) {
@@ -98,6 +77,11 @@ export function assertNoDraftDeclarations(q: SourcedQuestionT): void {
   }
 }
 
+/**
+ * Insert one tier-2 web_sourced draft and run the cross-KC dedup lifecycle on a
+ * canonical-hash race. Returns the built evidence/trace on insert, or the merge
+ * disposition when a concurrent winner absorbed the target KCs.
+ */
 export async function insertSourcedDraft(
   tx: Tx,
   input: InsertSourcedDraftInput,
@@ -107,11 +91,9 @@ export async function insertSourcedDraft(
 
   assertNoDraftDeclarations(q);
 
-  // Preserve an EXPLICIT judge_kind_override; only derive the structural default when absent
-  // (never clobber e.g. 'keyword' with the default). YUK-1003 exception: a producer 'exact'
-  // pin on a NON-CHOICE row whose reference has no bare-answer head is structurally
-  // unwinnable (verbatim compare can never match a worked-solution blob) — demote to the
-  // derived route and record the demotion on the row for audit.
+  // Preserve an explicit judge_kind_override; only derive the default when absent. A
+  // producer 'exact' pin on a non-choice row without a bare-answer head is unwinnable,
+  // so demote it to the derived route and record the demotion for audit.
   let judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
   let judgeKindDemotion: { declared: 'exact'; applied: string; reason: string } | undefined;
   if (
@@ -140,9 +122,8 @@ export async function insertSourcedDraft(
     ? withSupplyTraceDifficultyEvidence(input.supplyTrace, difficultyEvidence)
     : undefined;
 
-  // §2.1 web_sourced provenance. whitelist_match only demotes at selection time; it never
-  // blocks ingestion or relaxes the verify gate. extract is REQUIRED (source_verify grounds
-  // the declared URL against it deterministically, no refetch).
+  // whitelist_match only demotes at selection time. extract is required because
+  // source_verify grounds the declared URL against it without refetching.
   const webSourced: WebSourcedProvenanceT = {
     url: q.source_url,
     title: q.source_title,
@@ -152,10 +133,8 @@ export async function insertSourcedDraft(
     extract: q.extract,
   };
 
-  // YUK-1005 — normalize source markup (jyeoo MathJye tables / sprite radicals /
-  // raw <sup>) to markdown+LaTeX at the ingest seam, so stored rows render
-  // through MathMarkdown instead of leaking HTML/image-URL soup. The transform
-  // is idempotent; flag it only when it actually changed something.
+  // Normalize source markup at the ingest seam so rows render through MathMarkdown;
+  // flag it only when the idempotent transform changed something.
   const promptMd = sanitizeSourcedMarkup(q.prompt_md);
   const referenceMd = sanitizeSourcedMarkup(q.reference_md);
   const choicesMd = q.choices_md ? q.choices_md.map(sanitizeSourcedMarkup) : null;
@@ -164,8 +143,7 @@ export async function insertSourcedDraft(
     referenceMd !== q.reference_md ||
     (q.choices_md ?? []).some((c, i) => c !== choicesMd?.[i]);
 
-  // Row WITHOUT draft_status — it is added at each .values() call site below so
-  // audit:draft-status can statically prove the gate on both the original + retry INSERT.
+  // draft_status is added at each .values() site so audit:draft-status sees both INSERTs.
   const questionRow = withAnswerClass({
     id,
     kind: q.kind,
@@ -177,9 +155,7 @@ export async function insertSourcedDraft(
     judge_kind_override: judgeKind,
     knowledge_ids: knowledgeIds,
     difficulty: q.difficulty,
-    // source_ref = the fetched URL; source_ref_kind='url' disambiguates the overloaded
-    // source_ref column（合约三 = SourceRefKind 契约，见 src/core/schema/provenance.ts
-    // §「合约三：source_ref disambiguation」+ deriveSourceTier）. Both land tier 2.
+    // source_ref_kind disambiguates the overloaded source_ref column; both land tier 2.
     source_ref: q.source_url,
     created_by: createdBy,
     metadata: {
@@ -195,18 +171,14 @@ export async function insertSourcedDraft(
     updated_at: now,
   });
 
-  // Option B — sourced drafts do NOT enter the pool / FSRS until source_verify passes.
-  // draft_status is kept explicit at each .values() site so audit:draft-status can prove the
-  // gate statically. NOTE: its INSERT_HEAD_RE tolerates only whitespace/chained calls between
-  // `.insert(question)` and `.values(` — a comment there hides the site from the scanner, so
-  // keep those two adjacent (these notes live above the chain, not inside it).
+  // Sourced drafts stay out of the pool/FSRS until source_verify passes. Keep
+  // `.insert(question)` and `.values(` adjacent: audit:draft-status scans between them.
   const insertOnce = () =>
     tx
       .insert(question)
       .values({ ...questionRow, draft_status: 'draft' })
-      // Scope the arbiter to the canonical-hash partial unique index (WHERE ... IS NOT NULL)
-      // so a bare conflict (e.g. the PK) can't be misread as a hash collision. The `where`
-      // predicate is REQUIRED for Postgres to infer the partial unique index as arbiter.
+      // Scope the arbiter to the partial unique index; the `where` predicate is required
+      // for Postgres to infer it and keeps PK conflicts from looking like hash collisions.
       .onConflictDoNothing({
         target: question.canonical_content_hash,
         where: sql`${question.canonical_content_hash} is not null`,
@@ -215,9 +187,8 @@ export async function insertSourcedDraft(
 
   const inserted = await insertOnce();
   if (inserted.length > 0) {
-    // YUK-1043 — 统一发布链：新 web_sourced 草稿同事务铸首版 revision。
-    // 草稿未核验 ⇒ admission withheld/unverified_rules（D1：未解决不自动准入；
-    // source_verify 通过后由 verify/promote 路径重新发布为准入态）。
+    // Mint the first revision in the same transaction. Unverified drafts stay withheld;
+    // verify/promote republishes them as admitted after source_verify passes.
     await publishQuestionGroupFromRow(tx, {
       rootId: id,
       admission: { state: 'withheld', reason: 'unverified_rules' },
@@ -228,8 +199,7 @@ export async function insertSourcedDraft(
     return { status: 'inserted', difficultyEvidence, supplyTrace };
   }
 
-  // ON CONFLICT — a concurrent insert won the canonical-hash race (YUK-720). Merge the
-  // target KCs into the winner, or release a terminal-rejected draft and retry this INSERT.
+  // A concurrent insert won the hash race: merge into it, or release and retry.
   const raced = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
     canonicalContentHash,
     knowledgeIds,

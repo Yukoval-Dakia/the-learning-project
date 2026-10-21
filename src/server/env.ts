@@ -18,16 +18,13 @@ const server = {
   API_PORT: optionalString,
   API_SMOKE_BASE_URL: optionalString,
   AUTO_INTERVENTION_EXPANSION_ENABLED: optionalString,
-  // YUK-677 — optional READ-ONLY connection string for report-only audit scripts
-  // (audit:threshold-calibration). Point it at a read-only role/replica when running
-  // against a corpus-bearing DB; falls back to DATABASE_URL when unset. The script
-  // additionally pins the session `default_transaction_read_only=on` either way.
+  // Optional read-only DB URL for report-only audits; falls back to DATABASE_URL and
+  // pins the session to read-only either way.
   AUDIT_READ_DATABASE_URL: z.string().url().optional(),
   BACKUP_IMPORT_MAX_BYTES: optionalString,
   BANK_GAP_EVIDENCE_SECRET: optionalString,
   B3_GATE_CONFIRM_CLONE: optionalString,
-  // YUK-590 parity knob honoured by the pi adapter's retry cap (was the SDK
-  // subprocess env; now read in-process — see pi-agent-adapter.ts).
+  // Retry cap honoured by the in-process pi adapter (was the SDK subprocess env).
   CLAUDE_CODE_MAX_RETRIES: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,
   CONFUSABLE_CONTRAST_ENABLED: optionalString,
@@ -58,12 +55,9 @@ const server = {
   JUDGE_CALIBRATION_WINDOW_DAYS: optionalString,
   JUDGE_FALLBACK_PROVIDER: optionalString,
   JUDGE_PROVENANCE_SECRET: optionalString,
-  // YUK-998 — jyeoo-rs spawn 墙钟按 caller 语义区分：JYEOO_SPAWN_TIMEOUT_MS 是
-  // in-band caller（jyeoo_fetch_candidates tool / supply_execute executor 路由）的
-  // 反卡死上界（默认 120s；grade 路线 ~45s+/题串行，拉 N 题须显式抬到 ≥ N×90s）。
-  // JYEOO_BACKFILL_TIMEOUT_MS 只作用于 `pnpm jyeoo:backfill` 批量 caller（优先级高于
-  // JYEOO_SPAWN_TIMEOUT_MS；两者都未设时 backfill 默认 session_max×90s，--max 10 ⇒
-  // 900s）。解析与推荐值详见 jyeoo-supply-config.ts。
+  // jyeoo-rs spawn wall clocks: JYEOO_SPAWN_TIMEOUT_MS bounds in-band callers
+  // (default 120s; grade routes need ≥ N×90s for N questions), while
+  // JYEOO_BACKFILL_TIMEOUT_MS applies only to `pnpm jyeoo:backfill`.
   JYEOO_BACKFILL_TIMEOUT_MS: optionalString,
   JYEOO_DAILY_FETCH_BUDGET: optionalString,
   JYEOO_RS_BINARY: optionalString,
@@ -73,8 +67,7 @@ const server = {
   KC_DEDUP_DISTANCE_MAX: optionalString,
   KC_DEDUP_MAX_PAIRS: optionalString,
   KC_DEDUP_WINDOW_DAYS: optionalString,
-  // Optional tracing controls. Unsupported SDK global-context flags are declared
-  // for inventory, but the tracing owner still refuses to initialize when set.
+  // Tracing controls; the tracing owner still refuses unsupported global-context flags.
   LMNR_DEBUG: optionalString,
   LMNR_DEV_TRANSCRIPTS: optionalString,
   LMNR_PROJECT_API_KEY: optionalString,
@@ -116,11 +109,9 @@ const server = {
   R2_BUCKET: optionalString,
   R2_ENDPOINT: z.string().url().optional(),
   R2_SECRET_ACCESS_KEY: optionalString,
-  // YUK-1359 — pg-boss 自自动化的一次性 infra 模式开关（schedule/supervise/
-  // migrate/registerInstance 四个 automation owner 共用一个显式开关）。缺省
-  // enabled = 与历史构造逐字节一致；disabled 只用于迁移验收期的隔离 app
-  // 运行时（restore acceptance）。解析见 resolveBossAutomationMode，构造
-  // 映射见 src/server/boss/client.ts。不从 RW_WORKER 推断。
+  // One switch for pg-boss's four automation owners. Disabled is only for isolated
+  // restore-acceptance runs; parsing and construction live in resolveBossAutomationMode
+  // and src/server/boss/client.ts.
   RW_BOSS_AUTOMATION: z.enum(['enabled', 'disabled']).optional(),
   RW_STATIC_DIR: optionalString,
   RW_WORKER: optionalString,
@@ -148,9 +139,8 @@ const server = {
   WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD: optionalString,
   WORKFLOW_JUDGE_OBSERVE_ENABLED: optionalString,
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
-  // YUK-1529 — worksheet_render job 打开的打印页 origin（worker 侧）。生产
-  // compose 显式设 http://app:8787；本地 dev:local 缺省 http://localhost:5173
-  // （vite 同时服务 SPA 并代理 /api）。
+  // Print-page origin for worksheet_render (worker side); production compose sets the
+  // app service and local dev defaults to the Vite origin.
   WORKSHEET_RENDER_APP_ORIGIN: z.string().url().optional(),
   XIAOMI_API_KEY: optionalString,
   XIAOMI_TOKEN_PLAN_API_KEY: optionalString,
@@ -179,9 +169,8 @@ export function getServerEnv(): ReturnType<typeof createServerEnv> {
 }
 
 /**
- * YUK-1007 — API_PORT 的单一解析点（从 server/index.ts 内联逻辑平移，语义
- * 逐字保留：trim → 空串→默认 8787 → 非正整数 throw）。admin config 读面的
- * runtime 分区（facts seam）与 API 入口共用本函数，端口事实不会漂移两份。
+ * Single parse point for API_PORT (trim → default 8787 → reject non-positive integers),
+ * shared by the API entrypoint and the admin config runtime facts.
  */
 export function resolveApiPort(rawApiPort: string | undefined): number {
   const trimmed = rawApiPort?.trim();
@@ -195,11 +184,9 @@ export function resolveApiPort(rawApiPort: string | undefined): number {
 export type BossAutomationMode = 'enabled' | 'disabled';
 
 /**
- * YUK-1359 — RW_BOSS_AUTOMATION 的单一解析点（与 resolveApiPort 同构）。
- * 未设 / 空串 / 'enabled' → 'enabled'（默认，行为与此前完全一致）；
- * 'disabled' → 关闭 pg-boss 自身的自动化子系统（构造参数见
- * src/server/boss/client.ts）。其余取值 throw——skipValidation（VITEST）
- * 路径不经 zod 枚举，所以本函数必须自己拒绝非法值，不能只靠 schema 兜底。
+ * Single parse point for RW_BOSS_AUTOMATION: unset/empty/'enabled' → 'enabled';
+ * 'disabled' turns off pg-boss automation for isolated restore-acceptance runs.
+ * Invalid values throw because the VITEST skipValidation path bypasses zod.
  */
 export function resolveBossAutomationMode(rawAutomation: string | undefined): BossAutomationMode {
   const trimmed = rawAutomation?.trim();

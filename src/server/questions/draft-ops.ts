@@ -25,23 +25,14 @@ import {
   sha256Hex,
 } from '@/core/schema/question-draft';
 
-// ====================================================================
-// YUK-1468 — edit_question ops 引擎（纯函数；无 IO）
-// ====================================================================
+// edit_question ops engine (pure, no IO).
 //
-// 语义（统一设计 §5 edit_question / 附录 B）：
-//   - target 按稳定 id 寻址（question/part/unit/item/material/criterion），
-//     绝不按数组下标或显示 label；
-//   - 批次原子：任一 op 失败整批丢弃，不写任何内容；
-//   - 语义身份替换必须铸新 id：item 文本、material 内容（asset/content_md）
-//     的修改自动 remint 内容寻址 id 并级联更新文档内引用（key、rule 的
-//     per_item 权重、material_ids/material_refs）——同一个 op 内完成，
-//     不产生断引用；直接改写 *_id 字段 = identity_change_attempt；
-//   - metadata 是任意扩展面，但保留权威字段（id/key/points/rule/method/
-//     admission/gold_certified 等）不允许经 metadata 自授。
-//
-// 不完整草稿可以保存：缺 key/rule/材料以 issue 呈现；只有【本批新引入】的
-// 断引用 / 重复身份 / 非法形状才算 op 错误（pre-existing 未决不追加罚）。
+// Targets are addressed by stable id, never array index or display label. A batch is
+// atomic: any failure discards all ops. Rewriting semantic content (item text, material
+// content) remints the content-addressed id and cascades refs in the same op; direct
+// *_id writes are identity_change_attempt. Metadata cannot self-grant authority fields.
+// Incomplete drafts can be saved; only newly introduced dangling refs or duplicates
+// are op errors.
 
 // ---------- target ----------
 
@@ -55,7 +46,7 @@ const TargetMaterial = z.object({ kind: z.literal('material'), id: z.string().mi
 const TargetCriterion = z
   .object({ kind: z.literal('criterion'), unit_id: z.string().min(1), id: z.string().min(1) })
   .strict();
-/** presentation 树内的 block（另一 lane 的契约；只允许 metadata 面操作）。 */
+/** Presentation block; this lane allows metadata ops only. */
 const TargetBlock = z.object({ kind: z.literal('block'), id: z.string().min(1) }).strict();
 
 export const EditTarget = z.discriminatedUnion('kind', [
@@ -127,7 +118,7 @@ export const EditOp = z.discriminatedUnion('op', [
     .object({
       op: z.literal('move'),
       target: EditTarget,
-      /** unit 移动的目标 part；part/item 重排时省略。 */
+      /** Target part when moving a unit; omitted for reorders. */
       parent_id: z.string().min(1).optional(),
       before_id: z.string().min(1).optional(),
       after_id: z.string().min(1).optional(),
@@ -158,9 +149,9 @@ export interface OpIssue {
 export interface AppliedChange {
   op: EditOpT['op'];
   target: EditTargetT;
-  /** 被改动的字段/集合名（save receipt 的 changed_fields）。 */
+  /** Changed fields/collections for the save receipt. */
   fields: string[];
-  /** 语义身份重铸（item/material 文本变化 → 新 id + 级联引用）。 */
+  /** Semantic identity remint (item/material content change → new id + cascaded refs). */
   identity_remap?: { from: string; to: string };
 }
 
@@ -170,7 +161,7 @@ export type ApplyOpsResult =
 
 // ---------- 保留字段 ----------
 
-/** metadata 自授禁区：权威/权限/判分/准入字段不能经 metadata 写入。 */
+/** Authority/scoring/admission fields that metadata must not self-grant. */
 const RESERVED_METADATA_KEYS = new Set([
   'id',
   'part_id',
@@ -195,7 +186,7 @@ const RESERVED_METADATA_KEYS = new Set([
   'published_by',
 ]);
 
-/** set 允许改写的字段白名单（逐 kind；*_id/结构字段不在列 —— 身份不可改）。 */
+/** Per-kind set whitelist; *_id and structural fields are absent by design. */
 const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
   question: new Set(['source']),
   part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids', 'blank_order']),
@@ -218,7 +209,7 @@ const SETTABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
   block: new Set(),
 };
 
-/** clear 允许清空的字段 → 空值形状。 */
+/** Per-kind clear whitelist. */
 const CLEARABLE_FIELDS: Record<EditTargetT['kind'], ReadonlySet<string>> = {
   question: new Set(['knowledge_ids']),
   part: new Set(['prompt_md', 'question_no', 'explanation_md', 'material_ids', 'blank_order']),
@@ -308,7 +299,7 @@ function criterionOf(unit: DraftUnitT, id: string) {
   return unit.rubric?.criteria.find((c) => c.criterion_id === id);
 }
 
-/** located/member 取数 —— locate 保证存在性的层级用 require* 抛 OpFailure，不用非空断言。 */
+/** locate guarantees existence here; throw OpFailure instead of using non-null asserts. */
 function requirePart(located: Located): DraftPartT {
   if (located.part == null) fail('target_not_found', 'part of target not found');
   return located.part;
@@ -357,7 +348,7 @@ function findPresentationBlock(node: unknown, id: string): Record<string, unknow
 
 // ---------- 身份重铸级联 ----------
 
-/** item 文本/坐标变化 ⇒ 新内容寻址 id；级联更新同 unit 的 key 与 rule per_item 权重。 */
+/** Item text change → new content-addressed id; cascade the unit key and per_item rule. */
 function remintItemId(unit: DraftUnitT, oldId: string, newText: string): string {
   const newId = mintDraftItemId(newText);
   if (newId === oldId) return oldId;
@@ -376,7 +367,7 @@ function remintItemId(unit: DraftUnitT, oldId: string, newText: string): string 
   return newId;
 }
 
-/** material 内容变化 ⇒ 新内容寻址 id；级联更新 part.material_ids 与 unit.material_refs。 */
+/** Material content change → new content-addressed id; cascade part/unit refs. */
 function remintMaterialId(doc: QuestionDraftDocumentT, oldId: string, next: DraftMaterialT): void {
   const newId = mintDraftMaterialId(
     next.kind,
@@ -461,8 +452,8 @@ function integrityIssues(doc: QuestionDraftDocumentT): DocIntegrityIssue[] {
         });
       }
     }
-    // YUK-1568：blank_order 必须恰覆盖本 part 的 blank 槽各一次（不跨 part、
-    // 不指向非 blank 槽、不重复、不缺项）。只认本 part 单元的 slot_id。
+    // blank_order must cover each blank slot of this part exactly once; only this
+    // part's slot ids count.
     if (part.blank_order != null) {
       const seen = new Set<string>();
       const blankSlotIds = new Set<string>();
@@ -591,9 +582,8 @@ function applySet(
           if (!parsed.success) fail('invalid_value', 'material_ids must be string[]');
           part.material_ids = parsed.data;
         } else if (field === 'blank_order') {
-          // YUK-1568：显式默认逻辑序（slot_id 列表）；null/undefined = 撤销声明。
-          // 交叉引用（恰覆盖本 part blank 槽、不跨 part、不重复）由批末
-          // integrityIssues + 发布 barrier 双层校验。
+          // Explicit logical order (slot ids); null/undefined clears the declaration.
+          // Coverage is validated by integrityIssues and the publish barrier.
           if (value == null) {
             part.blank_order = undefined;
           } else {
@@ -649,9 +639,8 @@ function applySet(
         if (field === 'content_md') {
           if (value != null && typeof value !== 'string')
             fail('invalid_value', 'content_md must be a string or null');
-          // 内联文本材料（content 即字节本体）：asset 身份随内容重算 —
-          // 绝不留旧 asset_id/digest 指向旧字节。二进制资产材料：内容改
-          // 必须同 op 附带匹配 asset ref，否则拒绝（asset 不能静默陈旧）。
+          // Inline text material: recompute asset identity from content so it never
+          // points at old bytes. Binary material requires a matching asset ref.
           const inline = material.content_md != null || material.asset.asset_id.startsWith('txt_');
           if (inline) {
             material.content_md = (value as string | undefined) ?? undefined;
@@ -675,7 +664,7 @@ function applySet(
             identityRemaps.push({ from: target.id, to: material.material_id });
           }
         } else if (field === 'asset') {
-          // 显式换字节：校验 {asset_id,digest} 并随资产身份 remint。
+          // Explicit byte swap: validate {asset_id,digest} and remint the identity.
           const parsedRef = VersionedAssetRef.safeParse(value);
           if (!parsedRef.success) fail('invalid_value', 'asset must be { asset_id, digest }');
           material.asset = parsedRef.data;
@@ -729,9 +718,8 @@ function applySet(
 }
 
 /**
- * 改键时如果没带归一化，沿用这一单元上已有的归一化。已发布题的草稿是从当前
- * revision 播种的，所以省略归一化不会掉回 nfkc 关闭的新题默认。
- * 作者这次写明的 case_sensitive / trim 盖过继承来的 casefold / trim_outer。
+ * Inherit an existing normalization when a key edit omits one, so re-saving a seeded
+ * draft does not fall back to the new-question defaults. Explicit case/trim wins.
  */
 function inheritOmittedBlankNormalization(
   previous: DraftUnitT['key'],
@@ -842,7 +830,7 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
         ])
         .safeParse(value);
       if (!parsed.success) fail('invalid_value', 'response_spec.kind must be select|blank|free');
-      // 完整 shape 由文档级 QuestionDraftDocument.parse 复核（批末统一校验）。
+      // Full shape is revalidated by the document-level parse at batch end.
       unit.response_spec = value as DraftUnitT['response_spec'];
       return;
     }
@@ -853,8 +841,8 @@ function applyUnitSet(unit: DraftUnitT, field: string, value: unknown): void {
       return;
     }
     case 'answer_shape': {
-      // YUK-1568：answer_shape 只属于 blank 作答面；null/undefined = 撤销声明。
-      // 未知版本/字段在 BlankAnswerShape 上 parse 失败 —— 不能 strip 后当未声明。
+      // answer_shape belongs to blank units; null/undefined clears it. Unknown
+      // versions must fail parse rather than be stripped into "undeclared".
       if (unit.response_spec.kind !== 'blank') {
         fail(
           'invalid_value',
@@ -1045,7 +1033,6 @@ function applyAdd(
   value: unknown,
   changes: AppliedChange[],
 ): void {
-  // criteria 集合在 rubric 缺失时先创建空 rubric。
   if (target.kind === 'unit' && collection === 'criteria') {
     const unit = locate(doc, target)?.unit;
     if (unit != null && unit.rubric == null) unit.rubric = { criteria: [] };
@@ -1179,9 +1166,8 @@ function textFieldOf(
         get: () => (material as Record<string, unknown>)[field] as string | undefined,
         set: (v) => {
           (material as Record<string, unknown>)[field] = v;
-          // 内联文本材料的 asset 身份 = 内容指纹 —— content_md 改写同步重算，
-          // 不留指向旧字节的 asset_id/digest（二进制材料无 content_md 可达
-          // anchor，replace_text 自限于内联文本）。
+          // Inline text asset identity is the content fingerprint, so recompute it;
+          // replace_text can only reach inline text, never binary material.
           if (field === 'content_md') {
             material.asset = {
               asset_id: mintDraftAssetId('txt', v ?? ''),
@@ -1246,8 +1232,7 @@ function applyReplaceText(
         ? { from: target.id, to: handle.material.material_id }
         : undefined
       : target.kind === 'item' && handle.reminted?.() != null
-        ? // item label 是派生身份 —— 文本替换触发 remint 时如实上报 remap，
-          // computeInvalidatedScope 随之作废该 unit 的 rule 校验。
+        ? // Item label is derived identity; report the remint so rule checks invalidate.
           { from: target.id, to: handle.reminted() as string }
         : undefined;
   changes.push({
@@ -1370,8 +1355,8 @@ function applyMove(
       const fromPart = requirePart(located);
       const toPart = parentId != null ? doc.parts.find((p) => p.part_id === parentId) : fromPart;
       if (toPart == null) fail('target_not_found', `target part '${parentId}' not found`);
-      // unit 跨 part 移动：slot.part_id 随之变化 ⇒ slot_id 内容寻址部分保持
-      // 原值（slot_id 是稳定身份，不从 part 前缀推导）。
+      // Crossing parts changes slot.part_id, but slot_id is stable identity and is
+      // not derived from the part prefix.
       if (toPart !== fromPart) {
         fromPart.units.splice(fromPart.units.indexOf(unit), 1);
         toPart.units.push(unit);
@@ -1401,9 +1386,8 @@ function applyMove(
 // ---------- 主入口 ----------
 
 /**
- * 应用一批 ops 到文档（深拷贝，输入文档不被修改）。原子语义：任何 op 失败 ⇒
- * 返回 issues，调用方丢弃整个产物。批次内按序应用；批末统一跑完整性检查
- * （断引用/重复身份）与全文档 schema 校验。
+ * Apply a batch to a deep copy of the document. Any failure returns issues and the
+ * caller discards the result; integrity and full-document validation run at batch end.
  */
 export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): ApplyOpsResult {
   const beforeIssues = new Set(integrityIssues(doc).map((i) => `${i.code}:${i.detail}`));
@@ -1455,7 +1439,7 @@ export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): Apply
           target: op.target,
           locations: err.locations,
         });
-        break; // 原子：首个错误即终止整批。
+        break; // Atomic: stop at the first error.
       }
       throw err;
     }
@@ -1495,16 +1479,16 @@ export function applyEditOps(doc: QuestionDraftDocumentT, ops: EditOpT[]): Apply
 // ---------- 失效域（edit-impact 表） ----------
 
 export interface InvalidatedScope {
-  /** 需要重跑的独立 solve / calibration 单元。 */
+  /** Independent solve/calibration units to rerun. */
   solve_units: string[];
   calibration_units: string[];
-  /** 需要重跑的 rule 核验单元。 */
+  /** Rule verification units to rerun. */
   rule_verification_units: string[];
-  /** 需要重索引的检索字段。 */
+  /** Retrieval fields to reindex. */
   retrieval_fields: string[];
-  /** 需要重渲染的部分。 */
+  /** Parts to re-render. */
   display_parts: string[];
-  /** presentation 是否需要重新验证。 */
+  /** Whether presentation needs revalidation. */
   presentation_validation: boolean;
 }
 
@@ -1522,7 +1506,7 @@ const SOLVE_AFFECTING = new Set([
   'gap_after_codepoint',
   'axes',
   'text',
-  // YUK-1568：答案声明改变响应语义，等同判分输入变化。
+  // answer_shape changes response semantics, so it counts as a scoring input.
   'answer_shape',
 ]);
 const RULE_AFFECTING = new Set([
@@ -1538,8 +1522,8 @@ const METHOD_AFFECTING = new Set(['method']);
 const RETRIEVAL_FIELDS = new Set(['knowledge_ids', 'explanation_md', 'kind']);
 const PRESENTATION_AFFECTING = new Set(['block', 'presentation']);
 
-/** CAS 冲突的 relevant_changes：如实返回 ops 目标在服务端现值。
- * field = '<kind>:<id>[.<op-field>]'；current = 现值（不存在 ⇒ null）。 */
+/** CAS relevant_changes: current server values for op targets.
+ * field = '<kind>:<id>[.<op-field>]'; current = value or null. */
 export function relevantChangesForOps(
   doc: QuestionDraftDocumentT,
   ops: EditOpT[] | undefined,
@@ -1571,7 +1555,7 @@ export function relevantChangesForOps(
   return out;
 }
 
-/** target → 服务端现有节点（仅 relevant_changes 用；找不到 ⇒ null）。 */
+/** Target → current server node for relevant_changes; null when missing. */
 function nodeOfLocated(
   doc: QuestionDraftDocumentT,
   target: EditTargetT,
@@ -1658,7 +1642,7 @@ export function computeInvalidatedScope(changes: AppliedChange[]): InvalidatedSc
       if (METHOD_AFFECTING.has(field) && unitId != null) calibration.add(unitId);
       if (RETRIEVAL_FIELDS.has(field)) retrieval.add(field);
       if (PRESENTATION_AFFECTING.has(field) || target.kind === 'block') presentation = true;
-      // YUK-1568：blank_order 只改默认展示/DTO 顺序与缺省 presentation，不改判分。
+      // blank_order only affects display/DTO order and the default presentation.
       if (field === 'blank_order') {
         if (partId != null) display.add(partId);
         presentation = true;

@@ -32,10 +32,8 @@ function contentHash(value: unknown): string {
 }
 
 /**
- * Canonical content hash of authoritative source bytes: `sha256:<hex>`. The one
- * authority binding a persisted provenance `content_hash` to the exact bytes a
- * locator was validated against — so a caller cannot address bytes from source A
- * while recording a `content_hash` minted from source B.
+ * Canonical `sha256:<hex>` of authoritative source bytes, binding a persisted
+ * provenance hash to the exact bytes a locator was validated against.
  */
 export function canonicalSourceContentHash(bytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -44,9 +42,8 @@ export function canonicalSourceContentHash(bytes: Uint8Array): string {
 export interface PrepareQuestionGenerationInput<T> {
   source: QuestionAnswerAnchorT['source'];
   /**
-   * Authoritative source bytes the locator is validated against (UTF-8). Every
-   * caller must supply these; `null` fails closed for any text-bearing locator
-   * so the generic path cannot bypass locator validation.
+   * Authoritative source bytes the locator is validated against (UTF-8);
+   * `null` fails closed for any text-bearing locator.
    */
   authoritativeBytes: Uint8Array | null;
   canonicalAnswer: QuestionAnswerAnchorT['canonical_answer'];
@@ -68,14 +65,11 @@ export async function prepareQuestionGeneration<T>(
   db: Db,
   input: PrepareQuestionGenerationInput<T>,
 ): Promise<{ anchor: QuestionAnswerAnchorT; plan: QuestionGenerationPlanT; generated: T }> {
-  // Fail closed on an unvalidatable locator BEFORE any anchor/plan write or
-  // generation call — the generic path cannot bypass source-locator validation.
+  // Fail closed before any anchor/plan write or generation call.
   validateSourceLocatorBytes(input.source.locator, input.authoritativeBytes);
-  // Bind the recorded provenance hash to the exact validated bytes: the caller-
-  // supplied content_hash MUST be the canonical hash of the authoritative source
-  // bytes, else the locator could address bytes from A while provenance claims B.
-  // authoritativeBytes is non-null here — validateSourceLocatorBytes fails closed
-  // on null above; the guard also narrows the type for the hash call.
+  // Bind the recorded hash to the validated bytes so locator and provenance cannot
+  // point at different sources. The guard above narrows authoritativeBytes to non-null.
+
   if (
     input.authoritativeBytes &&
     canonicalSourceContentHash(input.authoritativeBytes) !== input.source.content_hash
@@ -149,9 +143,7 @@ export async function prepareQuestionGeneration<T>(
     const generated = await input.generate({ anchor, plan });
     return { anchor, plan, generated };
   } catch (error) {
-    // Best-effort durable failure marker: a cleanup throw (pool exhaustion, etc.)
-    // must NOT mask the original generation error — log it and always rethrow the
-    // original so the caller sees the real cause.
+    // Best-effort failure marker: a cleanup throw must not mask the generation error.
     try {
       await markQuestionGenerationFailed(db, plan);
     } catch (cleanupError) {
@@ -188,10 +180,8 @@ const NO_COMPARATOR_POLICY = {
 } as const;
 
 /**
- * Persist the exact provenance tuple without claiming objective correctness.
- * Requires a `Tx`: the FOR UPDATE lock below only spans the select→insert→update
- * sequence when they share one transaction — under a bare `Db` the lock releases
- * at select end and a concurrent failure marker could interleave.
+ * Persist the provenance tuple without claiming objective correctness. The required
+ * `Tx` keeps the FOR UPDATE lock through the select→insert→transition sequence.
  */
 export async function bindGeneratedQuestion(
   db: Tx,
@@ -209,10 +199,8 @@ export async function bindGeneratedQuestion(
   ) {
     throw new Error('generation plan answer anchor does not match supplied anchor');
   }
-  // Lock the exact plan row FOR UPDATE at transition entry: a concurrent
-  // markQuestionGenerationFailed (pending_generation → failed) now blocks until
-  // this transaction commits or rolls back, so it can never interleave between
-  // the binding write and the pending_generation → generated transition below.
+  // Lock the plan row FOR UPDATE so a concurrent failure marker cannot interleave
+  // between the binding write and the pending_generation → generated transition.
   const [persistedPlan] = await db
     .select({ id: question_generation_plan.id })
     .from(question_generation_plan)
@@ -300,10 +288,8 @@ export async function bindGeneratedQuestion(
       ),
     )
     .returning({ id: question_generation_plan.id });
-  // Assert the transition won: exactly one still-pending row moved to generated.
-  // Zero rows means a concurrent failure marker raced this transition; throwing
-  // rolls back the binding (and the caller's question + proposal writes) so the
-  // loser can never commit partial artifacts against a failed plan.
+  // Zero rows means a concurrent failure marker won; throwing rolls back the binding
+  // so no partial artifacts commit against a failed plan.
   if (transitioned.length !== 1) {
     throw new Error(
       'generation plan transition lost a race: no pending_generation row to mark generated',
