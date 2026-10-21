@@ -19,7 +19,7 @@ export async function checkDedup(db: Db, row: QuestionRow): Promise<CheckOutcome
     return { check: 'dedup', verdict: 'pass', reason: 'no knowledge_ids — dedup not applicable' };
   }
   // Pull existing ACTIVE pool questions that share ANY knowledge point. Mirrors
-  // due-list's `knowledge_ids @> [id]::jsonb` containment precedent (due-list.ts:215),
+  // due-list's `knowledge_ids @> [id]::jsonb` containment precedent,
   // OR'd per id for ANY-overlap. Exclude the row itself + drafts. LIMIT keeps the
   // comparison bounded.
   const overlapClauses = knowledgeIds.map(
@@ -31,7 +31,7 @@ export async function checkDedup(db: Db, row: QuestionRow): Promise<CheckOutcome
     .where(
       and(
         ne(question.id, row.id),
-        // Pool-visibility (红线-4, NULL≡active; legacy active rows carry NULL — a bare
+        // Pool visibility (NULL≡active; legacy active rows carry NULL — a bare
         // ne() would drop them). Shared notDraftPredicate (@/db/predicates).
         notDraftPredicate(question.draft_status),
         or(...overlapClauses),

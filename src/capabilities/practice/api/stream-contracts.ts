@@ -6,7 +6,7 @@ export const PracticeStreamKnowledgeIdSchema = z.string().trim().min(1).max(200)
 export const PracticeStreamQuerySchema = z.object({
   // `?date=` is treated like an omitted date by the existing handler.
   date: z.union([z.literal(''), z.literal('today'), PracticeStreamCalendarDateSchema]).optional(),
-  // YUK-535 — an explicit KC scope creates/recovers a separate on-demand review session.
+  // an explicit KC scope creates/recovers a separate on-demand review session.
   kc: PracticeStreamKnowledgeIdSchema.optional(),
 });
 
@@ -44,13 +44,13 @@ const PracticeStreamViewItemSchema = z.object({
   knowledge_name: z.string().nullable(),
   paper_title: z.string().nullable(),
   verdict: z.enum(['again', 'hard', 'good']).nullable(),
-  // YUK-1054 — 双轨裁决（§9）。verdict 仍是原始 FSRS rating；effective judge 判
+  // 双轨裁决。verdict 仍是原始 FSRS rating；effective judge 判
   // （链解析后仍 live 的最新判 coarse_outcome）在此透出。
   verdict_effective: z.string().nullable(),
   verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
-  // YUK-1510 — open question whose answer is already recorded (settled or queued), not yet done.
+  // open question whose answer is already recorded (settled or queued), not yet done.
   answer_recorded: z.boolean(),
 });
 
@@ -104,7 +104,7 @@ const PersistedPracticeStreamItemSchema = z.object({
   verdict_effective_state: z.string().nullable(),
   completed_at: z.string().datetime().nullable(),
   total_slots: z.number().int().nonnegative().nullable(),
-  // YUK-1510 — open question whose answer is already recorded (settled or queued), not yet done.
+  // open question whose answer is already recorded (settled or queued), not yet done.
   answer_recorded: z.boolean(),
 });
 

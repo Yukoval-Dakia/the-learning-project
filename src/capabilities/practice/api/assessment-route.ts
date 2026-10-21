@@ -1,6 +1,6 @@
-// YUK-1052 — issueAssessment / saveSubmission / 自动保存的 route handler。
+// issueAssessment / saveSubmission / 自动保存的 route handler。
 // 薄层：只做 HTTP 整形 + zod 解析 + 域状态 → ApiError 映射；业务全在
-// capabilities/practice/server/assessment/{issue,submit}.ts（YUK-1052: capability→server 边界，模块归 practice 自有）。
+// practice/server/assessment/{issue,submit}.ts。
 
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
@@ -37,7 +37,7 @@ async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
   return parsed.data;
 }
 
-// ---------- POST /api/issuances — issueAssessment ----------
+// ---------- POST /api/issuances ----------
 
 export async function createIssuance(req: Request): Promise<Response> {
   try {
@@ -88,7 +88,7 @@ export async function createIssuance(req: Request): Promise<Response> {
           `question group '${body.group_id}' is not scoring-admitted for auto_score issuance`,
           422,
           undefined,
-          // YUK-1445 —— typed gate reason（公共枚举）进 details；issues 文本仍是诊断。
+          // typed gate reason（公共枚举）进 details；issues 文本仍是诊断。
           out.serving_reason != null ? { serving_reason: out.serving_reason } : undefined,
         );
       case 'container_ref_required':
@@ -123,7 +123,7 @@ export async function createIssuance(req: Request): Promise<Response> {
   }
 }
 
-// ---------- GET /api/issuances/[id] — pending 恢复读面 ----------
+// ---------- GET /api/issuances/[id] ----------
 
 export async function getIssuance(
   _req: Request,
@@ -140,7 +140,7 @@ export async function getIssuance(
   }
 }
 
-// ---------- POST /api/issuances/[id]/responses — saveResponseDraft ----------
+// ---------- POST /api/issuances/[id]/responses ----------
 
 export async function saveDraft(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -183,7 +183,7 @@ export async function saveDraft(req: Request, params: Record<string, string>): P
   }
 }
 
-// ---------- POST /api/submissions — saveSubmission ----------
+// ---------- POST /api/submissions ----------
 
 export async function createSubmission(req: Request): Promise<Response> {
   try {

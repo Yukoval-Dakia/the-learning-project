@@ -24,7 +24,7 @@ export const QuestionListQueryFieldsSchema = z.object({
   source_tier: z.array(SourceTierSchema).default([]),
   sort_by: z.enum(['created_at', 'source_tier', 'difficulty']).optional(),
   sort_dir: z.enum(['asc', 'desc']).optional(),
-  // YUK-1514 — 'not_servable' lists only held questions (in-memory serve gate,
+  // 'not_servable' lists only held questions (in-memory serve gate,
   // not SQL-paginated; cursor pagination is rejected upstream for it).
   status: z.enum(['all', 'active', 'draft', 'not_servable']).optional(),
   group_by_family: z.boolean().default(false),
@@ -48,7 +48,7 @@ export const QuestionListQuerySchema = QuestionListQueryFieldsSchema.refine(
     message: 'expand_root cannot be combined with sort_by',
   });
 
-// ── YUK-1514 — serving hold projection (serving-holds UI contract v2) ────────
+// ── serving hold projection (serving-holds UI contract v2) ───────────────────
 export const QuestionHoldReasonSchema = z.enum([
   'awaiting_admission',
   'admission_failed',
@@ -114,7 +114,7 @@ const QuestionListBaseSchema = z.object({
   notation: z.string().nullable(),
   knowledge_labels: z.array(z.object({ id: z.string(), name: z.string() })).nullable(),
   is_composite: z.boolean(),
-  // YUK-1514 — every list item carries its serving projection (group-level for
+  // every list item carries its serving projection (group-level for
   // composite children).
   serving: QuestionServingSchema,
 });
@@ -152,7 +152,7 @@ export const QuestionListResponseSchema = z.object({
   total: z.number().int().nonnegative(),
   truncated: z.boolean(),
   page: QuestionListPageSchema,
-  // YUK-1514 — pagination-independent hold counts; present only when
+  // pagination-independent hold counts; present only when
   // status=not_servable or include_serving_counts=true.
   serving_counts: QuestionServingCountsSchema.optional(),
   computed_at_sec: z.number(),
@@ -193,7 +193,7 @@ export const QuestionDetailResponseSchema = z
       z.object({
         id: z.string(),
         kind: z.string(),
-        // YUK-1035 — part-ness authority (FK), never the display-only kind label.
+        // part-ness authority (FK), never the display-only kind label.
         parent_question_id: z.string().nullable(),
         part_index: z.number().int(),
         prompt_md: z.string(),
@@ -212,7 +212,7 @@ export const QuestionDetailResponseSchema = z
           id: z.string(),
           variant_depth: z.number().int().nonnegative(),
           kind: z.string(),
-          // YUK-1035 — part-ness authority (FK) for members that are themselves
+          // part-ness authority (FK) for members that are themselves
           // composite parts; the UI must not string-match kind.
           parent_question_id: z.string().nullable(),
           is_self: z.boolean(),
@@ -271,9 +271,9 @@ export const QuestionDetailResponseSchema = z
           .object({
             primary: z.string(),
             confidence: z.number().nullable(),
-            // YUK-1018 — misc_ id 显示回填（active misconception title）。
+            // misc_ id 显示回填（active misconception title）。
             primary_label: z.string().nullable(),
-            // YUK-1020 — 副归因 id + misc_ 显示回填（id→title Record map）。
+            // 副归因 id + misc_ 显示回填（id→title Record map）。
             secondary: z.array(z.string()),
             secondary_labels: z.record(z.string(), z.string()),
           })
@@ -316,7 +316,7 @@ export const QuestionDetailResponseSchema = z
     created_at_sec: z.number(),
     updated_at_sec: z.number(),
     computed_at_sec: z.number(),
-    // YUK-1514 — same serving projection as the list items.
+    // same serving projection as the list items.
     serving: QuestionServingSchema,
   })
   .strict();
@@ -417,7 +417,7 @@ export const CreateHintRequestBodySchema = z.object({
   hint_index: z.number().int().min(0).max(MAX_HINT_INDEX).optional(),
   issuance_id: z.string().min(1).optional(),
 });
-// YUK-1409 T4 — generation failures resolve to typed degraded states instead
+// generation failures resolve to typed degraded states instead
 // of a 502. Success keeps the original {hint_request_id, text_md} shape.
 export const HintFallbackReasonSchema = z.enum([
   'timeout',

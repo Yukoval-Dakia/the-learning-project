@@ -1,6 +1,5 @@
-// YUK-1496 C2 — model_slice_admission_run：模型判分切片的留出题准入 run
-// （统一设计 §4 准入门第 4 步；ADR-0073 D2「每科 ≥30 道留出题的模型级准入，
-// 与单题标定互不替代」；stage1 G3「准入后登记可查的已准入判分切片」）。
+// model_slice_admission_run：模型判分切片的留出题准入 run
+// （ADR-0073 D2「每科 ≥30 道留出题的模型级准入，与单题标定互不替代」）。
 //
 // 输入是一套【冻结】留出题：每科 ≥30 道未调参题，带独立参考分。job 用生产
 // 同源的执行端口（createAdmissionRunExecutor —— 与正式判分同一装配边界，见
@@ -8,9 +7,9 @@
 // 事件证据（experimental:model_slice_admission_run，幂等锚 run_id），只有
 // 阈值全过且非 dry_run 才登记切片。dry run 绝不准入；没有任何自动准入路径。
 //
-// 付费说明：本 job 调真实模型，由 lead 在周预算内运行；本 PR 不运行它。
+// 付费说明：本 job 调真实模型，由 lead 在周预算内运行。
 //
-// severe error 定义（D17 零容忍方向翻转）：判出分 > unit 满分；参考 0 分而判
+// severe error 定义（零容忍方向翻转）：判出分 > unit 满分；参考 0 分而判
 // 出 > 0（假得分）；参考满分而判出 0（假零分）。pending/无法判定 = 不一致
 // （拉低 agreement），不算 severe —— 诚实 pending 不是判错。
 
@@ -46,9 +45,9 @@ import {
 } from '../server/judge/evaluate-submission';
 
 /**
- * 准入阈值（config value）。min_items 来自统一设计 §4「每科至少 30 留出题」；
- * max_severe_errors=0 来自 D17 zero severe errors；min_agreement_ratio 是初始
- * 政策值（设计未定数），随第一刀真实留出题实测修订。
+ * 准入阈值（config value）。min_items = 每科至少 30 道留出题；
+ * max_severe_errors=0 = 零容忍；min_agreement_ratio 是初始政策值（设计未定数），
+ * 随第一刀真实留出题实测修订。
  */
 export const MODEL_SLICE_ADMISSION_THRESHOLDS = {
   min_items: 30,
@@ -497,7 +496,7 @@ export async function runModelSliceAdmission(
   }
 
   // 3b) 学科一致性（付费前置栅栏）：留出题必须真属于切片声明的学科。学科沿
-  //     BR-4 canonical bridge 解析 —— revision → 根题 → knowledge_ids[0] →
+  //     canonical bridge 解析 —— revision → 根题 → knowledge_ids[0] →
   //     effective domain → subject profile id；根题缺失、无知识标注或域不可
   //     解析都当场失败，绝不在付费之后才发现留出题集不属于本切片学科。
   const revisionRows = await db

@@ -1,12 +1,10 @@
-// U5 (YUK-203, §4.10 Q8) — GET /api/papers: the 今日/往日 paper list
-// aggregation (paper artifacts + linked review session + derived pos/right-
-// wrong/gen). The legacy /api/practice route is mounted through a compatibility
-// wrapper. Its POST handler remains here only for old clients; canonical clients
-// create the session through POST /api/review-sessions.
+// GET /api/papers: 今日/往日 paper list aggregation (paper artifacts + linked
+// review session + derived position/right/wrong counts). The legacy
+// /api/practice route is mounted through a compatibility wrapper.
 //
-// Handler logic lives in server modules (Review.startReviewSession +
-// getPracticeList) so the route module only exports recognized handlers
-// (next build / YUK-67).
+// The POST handler remains here only for old clients; canonical clients create
+// the session through POST /api/review-sessions. Handler logic lives in server
+// modules so this file stays a thin route.
 
 import { getPracticeList } from '@/capabilities/practice/server/practice-read';
 import { db } from '@/db/client';

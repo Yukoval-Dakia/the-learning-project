@@ -1,11 +1,9 @@
-// YUK-402 inc-4a — POST /api/review/drafts/[id]/force-enable: owner manual gate,
-// override (skip verify) promote path.
-//
-// docs/superpowers/specs/2026-06-18-inc4-owner-manual-gate-design.md §2.
+// POST /api/review/drafts/[id]/force-enable: owner manual gate override (skip
+// verify, promote).
 //
 // Owner force-enable: skip the AI verify and promote directly, evidence-first —
 // requires a non-empty `reason` (留痕). verifyAndPromote's override branch writes
-// actor_kind:'user' + skipped_verify:true + reason and enforces the YUK-400 B-section
+// actor_kind:'user' + skipped_verify:true + reason and enforces the B-section
 // guards (only raw-pool-promotable sources / true drafts / non-archived KC /
 // non-soft-archived drafts may be force-promoted). Auth is enforced upstream by the
 // /api/* internal-token middleware.

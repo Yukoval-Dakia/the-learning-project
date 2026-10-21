@@ -1,7 +1,7 @@
-// ADR-0013 — end review session via explicit close OR sendBeacon on pagehide.
+// Ends a review session via explicit close or a pagehide sendBeacon (ADR-0013).
 //
-// sendBeacon sends Content-Type: text/plain by default; we accept any body and
-// only parse if Content-Type is JSON, defaulting to status='completed'.
+// sendBeacon defaults to Content-Type: text/plain, so any body is accepted and a
+// non-JSON payload means status='completed'.
 
 import type { z } from 'zod';
 
@@ -10,8 +10,7 @@ import { closeReviewSession } from '../server/session-operations/review-session'
 import { EndReviewSessionBodySchema } from './contracts';
 
 // Compatibility export: the summary-dispatch contract lives in
-// server/session-operations/review-session.ts now; importers on this path
-// keep working unchanged.
+// server/session-operations/review-session.ts.
 export { enqueueReviewSessionSummary } from '../server/session-operations/review-session';
 
 async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionBodySchema>> {
@@ -28,9 +27,8 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionB
     }
     return parsed.data;
   }
-  // sendBeacon default: text/plain or other — interpret as completed.
-  // Try parsing as JSON anyway in case the client sent JSON without setting the
-  // header (sendBeacon Blob with type='application/json' is the explicit way).
+  // sendBeacon default: text/plain or other — interpret as completed, but try
+  // JSON first in case the client sent it without setting the header.
   const text = await req.text().catch(() => '');
   if (text.length > 0) {
     try {
@@ -38,7 +36,7 @@ async function parseBody(req: Request): Promise<z.infer<typeof EndReviewSessionB
       const parsed = EndReviewSessionBodySchema.safeParse(json);
       if (parsed.success) return parsed.data;
     } catch {
-      // fall through to default
+      // Invalid JSON falls back to the default status below.
     }
   }
   return { status: 'completed' };

@@ -1,4 +1,4 @@
-// YUK-1529 — worksheet_render job：服务端无头 Chromium 渲染作答卷。
+// worksheet_render job：服务端无头 Chromium 渲染作答卷。
 //
 // 流程（与 UI 线验证过的渲染配方逐字一致）：
 //   1. playwright-core 开 /print/worksheet/<token>（Asia/Tokyo context，
@@ -10,10 +10,10 @@
 //   5. 对象级 canonicalize（抹掉 Chromium 每次渲染都打上的墙钟元数据）→ sha256
 //      → pdf_digest；
 //   6. PDF 写 R2（content-addressed key，重跑安全）；
-//   7. 走 #1773 既有 archiveWorksheetRegionMap write-once 存档：
+//   7. 走既有 archiveWorksheetRegionMap write-once 存档：
 //      同图同 digest ⇒ existing，异 ⇒ 冲突如实抛出。
 //
-// 网络边界（R1 P1-2）：
+// 网络边界：
 //   - context.route('**/*') 对同源请求走 route.fetch({ maxRedirects: 0 }) —
 //     Playwright 自动跟随 3xx 时不会再进 route handler，同源页面 302 到外站
 //     会绕过 allowlist；拿到原始 3xx 后显式裁决 Location，离站即 abort 并记录；
@@ -25,7 +25,7 @@
 //     里也不接受任意 URL。
 //   被 abort 的 URL 全部进 job 结果的 aborted_urls —— 泄漏可见。
 //
-// 挂死保护（R1 P1-4）：整段浏览器过程有一个总 deadline（远小于 agent 档 2h
+// 挂死保护：整段浏览器过程有一个总 deadline（远小于 agent 档 2h
 // expire），并监听 pg-boss job.signal；任一触发即主动 browser.close()（挂起的
 // page 操作随之 reject），job 诚实失败且不存档；finally 兜底关 browser。
 //
@@ -62,7 +62,7 @@ import type { Db } from '@/db/client';
 // src/ui/lib/api.ts TOKEN_STORAGE_KEY —— 打印页的 /api 调用从这里读 token。
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 
-// R1/CI-1：tests/dbos-* 等 harness 用自己的 --external 清单 esbuild 打 worker
+// tests/dbos-* 等 harness 用自己的 --external 清单 esbuild 打 worker
 // entry —— 静态 import 会把 chromium-bidi 内部文件拖进那些 bundle 里
 // `Could not resolve`。运行期 lazy require 让所有 bundler 都看不到它；
 // dist/worker.cjs 在 worker 镜像里从 flat COPY 的 node_modules 解析。
@@ -84,7 +84,7 @@ const READY_TIMEOUT_MS = 120_000;
  * 真实渲染在秒级，超此上限只能是挂死；触发即关 browser 并诚实失败。 */
 const RENDER_DEADLINE_MS = 180_000;
 
-// ---------- 渲染 origin 只允许内部宿主（R1 P1-2） ----------
+// ---------- 渲染 origin 只允许内部宿主 ----------
 
 /** loopback 与 compose 内部服务名；不接受来自 job 数据或 env 的任意外站。 */
 const ALLOWED_RENDER_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'app']);
@@ -114,7 +114,7 @@ function resolveRenderOrigin(raw: string): string {
 
 // ---------- PDF 字节解析 / canonicalize / 产物验真 → server/worksheet/pdf-fidelity.ts ----------
 //
-// YUK-1572：约 1200 行纯算法（classic xref/页树、内容流解释器、canonicalize、
+// 约 1200 行纯算法（classic xref/页树、内容流解释器、canonicalize、
 // 锚点/A4/页数硬校验）迁至 server/worksheet/pdf-{structure,content,fidelity}.ts；
 // 以下 re-export 保持既有导入路径兼容，实现与错误时序逐字未动。
 
@@ -221,7 +221,7 @@ export async function renderWorksheetPage(
         }
         return await route.fulfill({ response });
       } catch (error) {
-        // Grok QA P1-2：route.fetch 在 app 不可达时 reject，未接住的回调 reject
+        // route.fetch 在 app 不可达时 reject，未接住的回调 reject
         // 会变成 worker 进程的 unhandledRejection → 整个 worker 连同其他队列的
         // in-flight job 一起被杀。catch 住、记录、abort（自身也 guard），让请求
         // 经 page.goto/资源失败走正常诚实失败路径。
@@ -233,7 +233,7 @@ export async function renderWorksheetPage(
       }
     });
     // WebSocket 不经 route() —— 单独拦：非本站一律关掉并记录。回调内任何异常
-    // 同样不能漏成 unhandledRejection（P1-2）。
+    // 同样不能漏成 unhandledRejection。
     await context.routeWebSocket(
       () => true,
       (ws) => {
@@ -346,7 +346,7 @@ export async function renderWorksheetPage(
         throw error;
       })) as WorksheetRegionMapDraft;
 
-    // Grok QA P1-1：隐藏测量区 .ws-stage-host（含 297mm 横向样张）若留在 DOM，
+    // 隐藏测量区 .ws-stage-host（含 297mm 横向样张）若留在 DOM，
     // Chromium 会把 ≥3 页的卷面 shrink-to-fit ~0.73 —— 区域图仍按 1:1 存，PDF
     // 缩水，write-once 存档永久脏。先取图（上面）→ 移除 stage → 再出 PDF。
     const stageGone = await page.evaluate(() => {
@@ -515,7 +515,7 @@ export async function runWorksheetRender(
     }
   } catch (error) {
     if (error instanceof WorksheetRenderPermanentError) {
-      // 冻结输入的确定性失败 —— 完结 job 不 retry（P3），原因落 job.output。
+      // 冻结输入的确定性失败 —— 完结 job 不 retry，原因落 job.output。
       return {
         status: 'failed_permanent',
         export_token: input.export_token,

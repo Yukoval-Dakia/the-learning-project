@@ -1,25 +1,23 @@
-// YUK-489 (P4a) — idempotent reference-answer backfill. P3 decoupled cold-start-
-// bridge ③ (reference-answer generation) from KC tagging: a prompt-only OCR
-// question now persists with reference_md = null (auto-enroll.ts ~:760,
-// image-candidate-accept.ts ~:717/794). THIS job fills those nulls nightly,
+// Idempotent reference-answer backfill. Cold-start bridge ③ (reference-answer
+// generation) is decoupled from KC tagging: a prompt-only OCR question now
+// persists with reference_md = null. THIS job fills those nulls nightly,
 // independently of tagging, by REUSING the existing solver
 // generateReferenceSolution (NO new task/prompt) — it merges rubric_json + sets
 // reference_md + stamps reference_solution_source:'ai_generated', and swallows
-// LLM/parse errors into {status:'skipped_error'} (solution-generate.ts §2.4).
+// LLM/parse errors into {status:'skipped_error'}.
 //
 // Trigger = reference_md IS NULL (mirror embed_backfill / answer_class_backfill's
 // NULL-predicate). Idempotent: a row with reference_md already set is never in
 // scan; a second run with none left is a no-op.
 //
-// SUBJECT-RESOLVABILITY GATE (spec case 5): generateReferenceSolution resolves
-// the subjectProfile via resolveSubjectProfileForKnowledgeIds(db, knowledge_ids),
-// which falls back to the DEFAULT profile for an empty/orphaned id list (it does
-// NOT throw — see subject-profile.ts:11-12). The P4a contract is stricter: only
-// attempt rows with ≥1 knowledge_id so the profile is genuinely resolvable; rows
-// with no knowledge_id are EXCLUDED by the SELECT PREDICATE
+// SUBJECT-RESOLVABILITY GATE: generateReferenceSolution resolves the subjectProfile
+// via resolveSubjectProfileForKnowledgeIds(db, knowledge_ids), which falls back to
+// the DEFAULT profile for an empty/orphaned id list (it does NOT throw). The
+// contract is stricter: only attempt rows with ≥1 knowledge_id so the profile is
+// genuinely resolvable; rows with no knowledge_id are EXCLUDED by the SELECT PREDICATE
 // (jsonb_array_length(knowledge_ids) > 0) — never fetched, so they cannot consume the
-// LIMIT budget and, with oldest-first ordering, starve newer generate-able rows
-// (augment #569). Gating in app code after the SELECT had exactly that starvation bug.
+// LIMIT budget and, with oldest-first ordering, starve newer generate-able rows.
+// Gating in app code after the SELECT had exactly that starvation bug.
 //
 // PER-ROW FAILURE CONTRACT (mirror embed_backfill): a single row's
 // skipped_error leaves that row's reference_md NULL (next nightly run retries) and
@@ -84,7 +82,7 @@ export async function runReferenceAnswerBackfill(
     .where(
       and(
         isNull(question.reference_md),
-        // Subject-resolvability gate pushed into the PREDICATE (augment #569): a row with no
+        // Subject-resolvability gate pushed into the PREDICATE: a row with no
         // knowledge_id has no resolvable subject (the solver would fall back to the default
         // profile + generate against a guess), so it must never be fetched. Gating in app code
         // instead (a post-SELECT skip) let knowledge_ids=[] rows consume the LIMIT budget and,
@@ -92,14 +90,14 @@ export async function runReferenceAnswerBackfill(
         // knowledge_ids is jsonb → jsonb_array_length. NOTE this is a seq-scan predicate, NOT
         // index-accelerated: the GIN(jsonb_path_ops) index on knowledge_ids only serves `@>`
         // containment, not a function call / "non-empty" test. That is fine here — the nightly
-        // batch is bounded (LIMIT) and the question table is single-user scale (OCR #571).
+        // batch is bounded (LIMIT) and the question table is single-user scale.
         sql`jsonb_array_length(${question.knowledge_ids}) > 0`,
       ),
     )
     // Oldest-first: an LLM-per-row job at batch 50 needs fairness — without a stable order a
     // repeatedly-failing (skipped_error) or perpetually-overflowed row could starve across nightly
     // runs. created_at ASC guarantees the oldest generate-able null-reference rows are retried
-    // first (OCR #569). Combined with the predicate gate above, the LIMIT now returns only
+    // first. Combined with the predicate gate above, the LIMIT now returns only
     // generate-able rows, so no-knowledge_id rows can never crowd them out.
     .orderBy(asc(question.created_at))
     .limit(limit);
