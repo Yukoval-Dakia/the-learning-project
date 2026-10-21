@@ -167,12 +167,14 @@ export default function NoteReaderPage({
   read = getNotePage,
   save = saveBodyBlocks,
   readAiChanges = getAiChanges,
+  undo = undoAiChange,
 }: {
   id: string;
   navigate: (to: string) => void;
   read?: typeof getNotePage;
   save?: typeof saveBodyBlocks;
   readAiChanges?: typeof getAiChanges;
+  undo?: typeof undoAiChange;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -275,7 +277,7 @@ export default function NoteReaderPage({
   });
 
   const undoM = useMutation({
-    mutationFn: (eventId: string) => undoAiChange(id, eventId),
+    mutationFn: (eventId: string) => undo(id, eventId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['note-page', id] });
       void qc.invalidateQueries({ queryKey: ['note-ai-changes', id] });
