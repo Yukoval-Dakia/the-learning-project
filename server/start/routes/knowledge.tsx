@@ -1,6 +1,7 @@
 import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
 import { loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
+import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadKnowledgePage().then((defaultPage) => ({ default: defaultPage })));
@@ -17,7 +18,7 @@ function KnowledgePage() {
   return (
     <StartWorkbenchShell pathname="/knowledge">
       <Suspense>
-        <Page navigate={startNavigate} />
+        <Page navigate={startNavigate} readTree={startWorkbenchClient.getTree} />
       </Suspense>
     </StartWorkbenchShell>
   );

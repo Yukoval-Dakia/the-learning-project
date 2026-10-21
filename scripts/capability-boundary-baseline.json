@@ -800,6 +800,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-475be1dd-9ef1-4dec-883f-8272e2d37d52",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "KnowledgeTreeQuerySchema",
+      "targetModule": "src/capabilities/knowledge/api/contracts.ts",
+      "targetSymbol": "KnowledgeTreeQuerySchema",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "The authenticated Start knowledge-tree reader imports the exact subject query schema used by the retained HTTP tree route.",
+      "rationale": "Knowledge owns subject validation and the tree snapshot. Share its existing schema without duplicating validation, SQL, mastery or ordering; preserve the original code-only HTTP 400 envelope.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-af189bc5-df07-446b-a276-65ea7d4e1197",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [

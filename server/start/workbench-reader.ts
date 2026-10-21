@@ -45,13 +45,20 @@ function knowledgeTimestampJson(value: Date | string): string {
   return typeof value === 'string' ? value : value.toISOString();
 }
 
-export const readStartKnowledgeTree = () =>
-  withStartDb(async (db) => {
-    const { loadTreeSnapshot } = await import('@/capabilities/knowledge/public');
+export const readStartKnowledgeTree = async (input?: { subject?: string }) => {
+  const { KnowledgeTreeQuerySchema, loadTreeSnapshot } = await import(
+    '@/capabilities/knowledge/public'
+  );
+  const parsed = KnowledgeTreeQuerySchema.safeParse(input ?? {});
+  if (!parsed.success) {
+    // Preserve the HTTP tree route's code-only validation envelope.
+    throw Response.json({ error: 'validation_error' }, { status: 400 });
+  }
+  return withStartDb(async (db) => {
     const { isLearnerVisibleKnowledgeId } = await import(
       '@/kernel/read-models/learner-knowledge-visibility'
     );
-    const rows = await loadTreeSnapshot(db);
+    const rows = await loadTreeSnapshot(db, parsed.data.subject);
     return {
       rows: rows
         .filter((row) => isLearnerVisibleKnowledgeId(row.id))
@@ -64,6 +71,7 @@ export const readStartKnowledgeTree = () =>
         })),
     };
   });
+};
 export const readStartConjectures = () =>
   withStartDb(async (db) => {
     const { loadPrepDeskConjectures } = await import('@/capabilities/shell/public');

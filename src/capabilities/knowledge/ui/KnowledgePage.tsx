@@ -39,6 +39,7 @@ const LazyMeshGraph = lazy(async () => {
 
 export interface KnowledgePageProps {
   navigate: (to: string) => void;
+  readTree?: typeof getTreeForSubject;
 }
 
 export const KNOWLEDGE_INBOX_HREF = '/inbox';
@@ -65,7 +66,10 @@ function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth
   return out;
 }
 
-export default function KnowledgePage({ navigate }: KnowledgePageProps) {
+export default function KnowledgePage({
+  navigate,
+  readTree = getTreeForSubject,
+}: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
   const [subject, setSubject] = useState('all');
@@ -74,11 +78,11 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
 
   const treeQ = useQuery({
     queryKey: ['knowledge-tree', subjectQuery],
-    queryFn: () => getTreeForSubject(subjectQuery),
+    queryFn: () => readTree(subjectQuery),
   });
   const fullTreeQ = useQuery({
     queryKey: ['knowledge-tree', undefined],
-    queryFn: () => getTreeForSubject(),
+    queryFn: () => readTree(),
     enabled: subjectQuery !== undefined,
   });
   const edgesQ = useQuery({

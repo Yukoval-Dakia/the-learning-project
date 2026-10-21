@@ -33,6 +33,7 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+export { KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {

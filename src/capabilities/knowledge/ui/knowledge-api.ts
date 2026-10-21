@@ -30,7 +30,7 @@ export const getTreeForSubject = (subject?: string) =>
     method: 'GET',
   });
 
-export const getTree = () => getTreeForSubject();
+export const getTree = (subject?: string) => getTreeForSubject(subject);
 
 // ── A5 S2 (YUK-354) FrontierRail wire（learnable_frontier 横幅）─────────────
 // 后端 server/frontier-read.ts loadFrontierRail。band 字段（mastery_lo/hi/
