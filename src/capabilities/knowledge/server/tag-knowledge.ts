@@ -8,6 +8,7 @@
 // The naming model call runs outside any DB transaction. Creation is event-first and
 // projected in the same transaction.
 
+import { questionEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -18,7 +19,6 @@ import {
   embedText,
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/embed';
-import { questionEmbedText } from '@/server/ai/embed-source';
 // Projection parity assert: throws in dev/test, warns in prod.
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { getKnownSubjects } from '@/subjects/profile';
