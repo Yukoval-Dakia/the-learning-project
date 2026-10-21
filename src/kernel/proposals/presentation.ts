@@ -18,10 +18,8 @@ type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
-// YUK-1404 — named bounds for the additive sub-question / option previews on
-// block previews. Lists carry at most these entries; the *_count fields keep
-// the TRUE structured totals, so a truncated list is always shorter than its
-// count — the UI never mistakes a preview list for the full set.
+// Bounds for sub-question and option previews. The *_count fields keep true totals,
+// so a truncated list is always shorter than its count.
 const BLOCK_SUB_QUESTION_PREVIEW_MAX = 3;
 const BLOCK_OPTION_PREVIEW_MAX = 4;
 const SUB_QUESTION_EXCERPT_CAP = 80;
@@ -32,9 +30,8 @@ export interface ProposalBlockPreview {
   label: string;
   excerpt: string;
   /**
-   * YUK-1404 — TRUE structured totals (never the preview-list lengths). null
-   * when the block has no structured tree (legacy rows) — the UI must not
-   * guess a count it cannot know.
+   * True structured totals, never preview lengths. null for legacy rows with no
+   * tree, so the UI does not guess a count it cannot know.
    */
   sub_question_count: number | null;
   option_count: number | null;
@@ -44,16 +41,15 @@ export interface ProposalBlockPreview {
 }
 
 /**
- * YUK-1404 — bounded sub-question preview: learner label + text excerpt ONLY.
- * No answers / analysis / student-work flags / figure ids ever enter this
- * projection (learner-visible read surface).
+ * Bounded learner preview: label + excerpt only. No answers, analysis, work flags,
+ * or figure ids enter this projection.
  */
 export interface ProposalBlockSubQuestionPreview {
   label: string;
   excerpt: string;
 }
 
-/** YUK-1404 — bounded option preview: the option's own label + text ONLY. */
+/** Bounded option preview: the option's own label and text only. */
 export interface ProposalBlockOptionPreview {
   label: string;
   text: string;
@@ -73,14 +69,9 @@ export interface ProposalPresentation {
     merged: ProposalBlockPreview[];
     continuity_label: string | null;
     /**
-     * YUK-1404 — the session's subject render notation (renderConfig.notation)
-     * from the canonical subject registry, so the UI gates the KaTeX chain like
-     * every other subject-aware face. Explicit-first: when the learner picked a
-     * subject at upload, that stored signal alone decides (retired-but-registered
-     * subjects keep their notation; a stored id that no longer resolves → null,
-     * never a guess). Otherwise null unless every question linked to the exact
-     * ingestion session resolves to the same registered canonical subject —
-     * never a math/default guess.
+     * Subject render notation from the canonical registry. An explicit upload
+     * subject alone decides; otherwise null unless every question linked to the
+     * ingestion session resolves to the same registered subject.
      */
     notation: string | null;
   } | null;
@@ -108,27 +99,10 @@ function textOf(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
-// YUK-1404 P1 — a raw slice could cut inside a math span and leak a dangling
-// `$` / `$$` / `\(` opener or raw TeX into the learner preview. Truncation
-// backs off to just before the span the cap would split (never synthesizing a
-// closing delimiter). Math spans are NOT hand-scanned: they are the position
-// spans of the `inlineMath` / `math` nodes produced by the renderer's own
-// pipeline (unified + remark-parse + remark-math — what react-markdown runs
-// with, micromark 3.1), so the grammar is the actual one: whitespace-padded
-// and digit-adjacent dollars are math, `$$$…$$$` is one span, a `$` after an
-// even run of backslashes opens, unclosed flow `$$` may span blank lines and
-// runs to EOF, code spans/fences win, and only a CommonMark line-anchored
-// ``` / ~~~ run is a fence (inline backticks are not). The explicit legacy
-// `\(...\)` / `\[...\]` forms never reach that parser as math, so they are
-// protected with their ORIGINAL offsets via the renderer normalizer's own
-// grammar (LATEX_DELIMITED in src/ui/lib/math-markdown.tsx, mirrored below):
-// the renderer rewrites exactly those spans into dollar math before parsing.
-// Guard spaces and the display-block reflow exist only in normalized
-// coordinates, so AST spans found there are mapped back piecewise (rewrite
-// interiors are covered by their whole source span) — offsets are never
-// shifted blindly. Preview read-side only: the stored source is never
-// rewritten, and text whose cap touches no active span stays byte-identical
-// to the plain slice.
+// A raw slice could cut inside a math span and leak a dangling delimiter or raw
+// TeX. Spans come from the renderer's own unified/remark-math pipeline; legacy
+// \(...\) / \[...\] spans use the renderer normalizer's grammar and original
+// offsets. Preview read-side only: the stored source is never rewritten.
 
 /** Minimal structural mdast view — only type/children/position are read. */
 interface MathAstNode {
@@ -268,9 +242,8 @@ function activeMathSpans(value: string): Array<[number, number]> {
   const spans: Array<[number, number]> = rewrites.map(
     (rewrite) => [rewrite.sourceStart, rewrite.sourceEnd] as [number, number],
   );
-  // The parse is the only non-trivial cost, and dollars are its only trigger.
-  // A parse failure must never 500 the read path — fall back to the legacy
-  // spans (the renderer would fail on the same content anyway).
+  // A parse failure must never 500 the read path; the legacy spans still protect
+  // explicit \(...\) / \[...\].
   if (effective.includes('$')) {
     try {
       const astSpans: Array<[number, number]> = [];
@@ -424,7 +397,7 @@ function noteUpdateSummary(change: Record<string, unknown> | null): string | nul
 
 function questionEditSummary(change: QuestionEditChange): ProposalSummaryItem[] {
   const edit = change.edit;
-  // YUK-1468 — 统一契约提案（edit_request）：ops 摘要 + 编辑面目标。
+  // Unified edit_request proposals: ops summary plus the edit-surface target.
   if (edit == null) {
     const request = change.edit_request;
     if (request != null) {
@@ -806,7 +779,7 @@ function blockPreview(block: QuestionBlockPreviewRow): ProposalBlockPreview {
     id: block.id,
     label: position.join(' · '),
     excerpt: truncate(prompt ?? '题面暂缺', BLOCK_EXCERPT_CAP),
-    // YUK-1404 — true totals; null when the block predates structured storage.
+    // True totals; null when the block predates structured storage.
     sub_question_count: tree ? (tree.sub_questions?.length ?? 0) : null,
     option_count: tree ? (tree.options?.length ?? 0) : null,
     sub_questions: (tree?.sub_questions ?? [])
@@ -872,11 +845,8 @@ type IngestionSessionQuestionRow = {
 };
 
 /**
- * YUK-1404 — the explicit upload-subject signal stored by initiateUpload: a
- * nonempty `learner_selected_subject_id` string on the session-bound
- * source_document provenance. Anything else (key absent, null, non-string —
- * including every legacy session) reads as "no explicit signal", which keeps
- * the derived fallback below available exactly as before this feature existed.
+ * The explicit upload subject stored by initiateUpload. Anything else (absent,
+ * null, non-string, legacy sessions) means no explicit signal.
  */
 function explicitUploadSubjectOf(provenance: unknown): string | null {
   const value = recordOf(provenance)?.learner_selected_subject_id;
@@ -884,25 +854,13 @@ function explicitUploadSubjectOf(provenance: unknown): string | null {
 }
 
 /**
- * YUK-1404 — each block-merge proposal's notation, from its exact ingestion
- * session, batched (deduplicated session ids, chunked IN queries — no per-card
- * N+1). EXPLICIT FIRST: when the learner picked a subject at upload, the
- * session-bound source_document.provenance.learner_selected_subject_id alone
- * decides — read-side resolvability is the registry's resolvable-all set
- * (retired-but-registered subjects keep their original rendering), a stored id
- * that no longer resolves at all pins the session to null, and the derived
- * path below never runs for that session (no guessed fallback, no
- * stem/formula inference).
+ * Each block-merge session's notation, batched by session id.
  *
- * Sessions with NO explicit signal (omitted/null upload, legacy rows) keep the
- * previous derived view (no learning_session column): the session's linked
- * questions (stamped `metadata.ingestion_session_id` at enroll/import) carry
- * knowledge_ids → effective domain → canonical subject via the shared bridge.
- * A session resolves only when EVERY linked question maps to the SAME
- * registered canonical subject (aliases included); mixed subjects, any
- * unresolved question (no knowledge ids / no domain), any unregistered subject,
- * an unknown session, and a session with no linked questions (observe mode) all
- * yield null — plain text, never an inferred or fallback math profile.
+ * An explicit upload subject wins: a registered id keeps its rendering, an
+ * unresolvable one pins null, and the derived path never runs for that session.
+ * Sessions without an explicit signal derive from their linked questions: all must
+ * map to the same registered canonical subject, otherwise null (plain text, never a
+ * guessed math profile).
  */
 async function loadIngestionSessionNotations(
   db: DbLike,
@@ -911,8 +869,7 @@ async function loadIngestionSessionNotations(
   const notationBySession = new Map<string, string | null>(sessionIds.map((id) => [id, null]));
   if (sessionIds.length === 0) return notationBySession;
 
-  // The exact ingestion session rows — a session id with no
-  // learning_session(type='ingestion') row stays null even if stale question
+  // A session id with no ingestion session row stays null, even if stale question
   // metadata still references it.
   const knownSessions: Array<{ id: string; source_document_id: string | null }> = [];
   for (const chunk of chunksOf(sessionIds)) {
@@ -928,8 +885,8 @@ async function loadIngestionSessionNotations(
   }
   if (knownSessions.length === 0) return notationBySession;
 
-  // YUK-1404 explicit signal: read the session-bound source_document provenance
-  // (chunked IN; a missing/deleted document row simply has no signal).
+  // Read the session-bound source_document provenance; a missing or deleted
+  // document simply has no signal.
   const documentIds = [
     ...new Set(
       knownSessions
@@ -955,9 +912,8 @@ async function loadIngestionSessionNotations(
     if (explicit !== null) explicitBySession.set(session.id, explicit);
   }
   for (const [sessionId, rawSubjectId] of explicitBySession) {
-    // Wider-than-selectable on purpose: retired-but-registered subjects keep
-    // their notation; an id that resolves to nothing pins null. Either way the
-    // derived fallback never runs for an explicit session.
+    // Retired-but-registered subjects keep their notation; an unresolvable id pins
+    // null. Either way the derived fallback never runs for an explicit session.
     const canonical = resolveKnownSubjectId(rawSubjectId);
     notationBySession.set(
       sessionId,
@@ -970,8 +926,8 @@ async function loadIngestionSessionNotations(
     .filter((id) => !explicitBySession.has(id));
   if (derivedSessionIds.length === 0) return notationBySession;
 
-  // The sessions' linked questions in stable (created_at, id) order — the same
-  // metadata linkage import-completion's pendingCaptures query relies on.
+  // Linked questions in stable (created_at, id) order — the same metadata linkage
+  // import completion relies on.
   const sessionQuestions: IngestionSessionQuestionRow[] = [];
   for (const chunk of chunksOf(derivedSessionIds)) {
     sessionQuestions.push(
@@ -992,12 +948,9 @@ async function loadIngestionSessionNotations(
     );
   }
 
-  // Canonical bridge per question, then per-session consensus: every linked
-  // question must map to the same REGISTERED canonical subject id. The bridge
-  // yields a canonical id, an unregistered raw domain, or null; only a genuine
-  // registry hit (resolveKnownSubjectId) counts as resolved, so unresolved,
-  // unregistered, and disagreeing sessions all stay null. The notation helper
-  // is therefore only ever called with a registered canonical id.
+  // Every linked question must map to the same registered canonical subject.
+  // Unresolved, unregistered, and disagreeing sessions stay null, so the notation
+  // helper only ever sees a registered id.
   const subjectByQuestion = await batchResolveSubjectDisplayIds(
     db,
     sessionQuestions.map((row) => ({ id: row.id, knowledge_ids: row.knowledge_ids ?? [] })),
