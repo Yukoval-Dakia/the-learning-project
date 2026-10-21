@@ -1,15 +1,12 @@
-// T-RA — pre-submit RatingAdvisor preview route (YUK-98).
+// T-RA — pre-submit RatingAdvisor preview route.
 //
-// This endpoint stores the frozen submission and candidate, returns the derived
-// advisory, and deliberately avoids activation/FSRS writes. The committed review
-// rating remains user-controlled through /api/review/submit.
+// Stores the frozen submission and candidate, returns the derived advisory, and
+// deliberately avoids activation/FSRS writes: the committed review rating stays
+// user-controlled through /api/review/submit.
 //
-// YUK-100 (W-05 follow-up, 2026-05-27): cause SoT wiring.
-// YUK-101 (iter2 fix F8 / F13): cause resolution lives in
-// `resolveAdviceCauseForQuestion()` (src/server/review/cause-context.ts) so
-// this route and `submit/route.ts` share one read policy. F8 changed the
-// scan from limit:1 to a recent-attempt window so a user who labelled an
-// older failure isn't silently masked by a label-less re-failure.
+// Cause resolution lives in `resolveAdviceCauseForQuestion()` so this route and
+// submit share one read policy. It scans a recent-attempt window rather than the
+// latest row, so an older labelled failure is not masked by a label-less retry.
 
 import { eq } from 'drizzle-orm';
 import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server/activity-ref';
@@ -64,17 +61,14 @@ export async function POST(req: Request): Promise<Response> {
     } = await previewFormalAttempt(db, 'advice_preview', questionId, body.assessment, req.signal);
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
-    // YUK-100 (W-05) + YUK-101 (iter2 F8 / F13) — Resolve effective cause via
-    // the shared `resolveAdviceCauseForQuestion` helper. It scans the recent
-    // failure-attempt window and folds `effectiveCauseCategoryForFailureAttempt`
-    // (CC-1 single-owner helper — active user_cause wins over latest active
-    // agent judge) until it finds a non-null cause. Returns null when no
-    // recent failure carries any cause; the advisor then keeps the default
-    // partial-credit bucket.
+    // Resolve effective cause via the shared `resolveAdviceCauseForQuestion`
+    // helper. It folds `effectiveCauseCategoryForFailureAttempt` over a
+    // recent-attempt window (active user_cause wins over the latest active agent
+    // judge) until it finds a cause; null keeps the default partial-credit bucket.
     const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
     const advice = judgeResultToRatingAdvice(invoked.result, {
       causeCategory,
-      // YUK-739 — lean/anchors resolve through the subject's own rating_lean /
+      // lean/anchors resolve through the subject's own rating_lean /
       // ratingPolicy declarations.
       subjectProfile,
     });

@@ -1,4 +1,4 @@
-// U5 (YUK-203, §4.5) — POST /api/practice/[id]/answer: autosave a paper answer
+// POST /api/practice/[id]/answer: autosave a paper answer
 // draft (upsert the live draft for the slot). `id` is the paper artifact id.
 // The answering page calls this as the user types / advances between slots.
 
@@ -81,7 +81,7 @@ export async function createAnswerDraft(
         ) {
           throw new ApiError('coordinate_mismatch', 'draft does not match issued paper slot', 409);
         }
-        // YUK-1573 — a slot the paper page cannot render takes no paper draft; refused
+        // a slot the paper page cannot render takes no paper draft; refused
         // before saveResponseDraft / autosaveAnswerDraft write anything.
         await assertIssuedPaperSlotsRenderable(tx, paperArtifactId, [slot.issuance_id]);
         const saved = await saveResponseDraft(tx, {

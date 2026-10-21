@@ -12,7 +12,7 @@ import { submitReviewAnswer } from '../server/review-operation';
 import { CreateAttemptBodySchema } from './contracts';
 
 /**
- * #8 — EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
+ * EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
  * used to key on the bare `status === 202`, which silently assumes every 202 this route can
  * ever produce is a pending-judge body with no `review_event`; the day another 202 appears
  * for an unrelated reason, that heuristic hands the client a raw body and skips the resource
@@ -33,7 +33,7 @@ export interface DurableJudgePendingResponse {
   };
 }
 
-/** Build the 202-pending response for `runId` (body + Location + the #8 divert header). */
+/** Build the 202-pending response for `runId` (body + Location + the divert header). */
 function durablePendingResponse(runId: string): Response {
   const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
   const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
@@ -97,11 +97,11 @@ export async function createAttempt(req: Request): Promise<Response> {
 
 export async function createAttemptResource(req: Request): Promise<Response> {
   const inner = await createAttempt(req);
-  // YUK-594 — a durable divert returns 202-pending, whose body has NO `review_event`;
+  // A durable divert returns 202-pending, whose body has NO `review_event`;
   // canonicalResourceResponse derives Location from `review_event.id`, so it would blow
   // up on the pending shape. Pass it through untouched — durablePendingResponse already set
   // its own Location header (the run's SSE stream), which is the correct resource.
-  // #8 — keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
+  // keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
   // this route must still go through the resource wrapper rather than leak a raw body.
   if (inner.headers.get(DURABLE_DIVERT_HEADER) === DURABLE_DIVERT_JUDGE) return inner;
   return canonicalResourceResponse(inner, {

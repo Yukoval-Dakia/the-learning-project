@@ -1,4 +1,4 @@
-// YUK-1507 — one durable admission batch per group/base digest.
+// one durable admission batch per group/base digest.
 // The publisher event outbox enqueues pinned revisions. Queue retries replay a
 // complete result receipt, never paid solves. Unknown batches require reconciliation.
 import { randomUUID } from 'node:crypto';
@@ -253,7 +253,7 @@ export async function runAdmissionForQuestion(
             resolveQuestionAdmissionPolicyId(),
           ]),
           sql`${question_admission_verification.evidence}->>'pack' = 'question_admission'`,
-          // YUK-1547 — bind the terminal verdict to the CURRENT content through
+          // bind the terminal verdict to the CURRENT content through
           // the publisher-written revision_digest column (authoritative after
           // resolved-contract publication: the receipt's base_contract_digest
           // stays the paid INPUT digest), falling back to the legacy evidence
@@ -294,7 +294,7 @@ export async function runAdmissionForQuestion(
         }),
       ),
     );
-    // YUK-1568（第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
+    // 声明 answer_shape 的题由共享比较核心判定支持后
     // 才可发起付费 claim —— 未实现 notation、未知/坏声明在 claim/付费发送
     // 之前强制关闸，覆盖 enqueue 之外的 manual re-dispatch 与 direct
     // invocation。既有 receipt 的应用与审计（claim 内 receipt/historical 分
@@ -449,7 +449,7 @@ export async function runAdmissionForQuestion(
       }
       const admitted = decision.admission.state === 'admitted' && result.resolved !== undefined;
       const now = new Date(receipt.recorded_at);
-      // YUK-1547 — admitted publishes the PAID resolved contract (typed keys /
+      // admitted publishes the PAID resolved contract (typed keys /
       // deterministic executors), bound to its paid_effect row through the
       // shared builder. Publishing the frozen base input admitted a still
       // human_review revision; a blocked build keeps the receipt (fail-closed)

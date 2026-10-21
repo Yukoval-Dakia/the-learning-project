@@ -1,28 +1,16 @@
 /**
- * YUK-384 — static hub-sync writer ownership audit.
+ * Static hub-sync writer ownership audit.
  *
- * PostgreSQL topology triggers (drizzle/0071) own hub-sync correctness: every
- * write to `knowledge` / `knowledge_edge` dirties the affected hubs via fan-out.
- * That is only safe if the FULL set of topology writers is INVENTORIED, so this
- * lexical/static audit enforces four ownership rules:
+ * PostgreSQL topology triggers own hub-sync correctness: every knowledge/knowledge_edge write
+ * dirties the affected hubs. That is safe only if the full set of topology writers is inventoried,
+ * so this audit enforces four rules:
+ *   UNINVENTORIED_TOPOLOGY_WRITER — topology write in a path not in the allowlist.
+ *   RECONCILIATION_OWNER_BYPASS — hub_sync_reconciliation write outside its sole owner.
+ *   INTERNAL_APPLY_MARKER_BYPASS — app.hub_sync_internal_apply set outside that owner.
+ *   DIRECT_HUB_ACTOR_APPLY — persistNoteRefineApply called with actorRef 'hub_auto_sync'.
  *
- *   UNINVENTORIED_TOPOLOGY_WRITER — a knowledge/knowledge_edge write in a path
- *     that is not in the allowlist (each allowlisted writer is justified by the
- *     trigger fan-out that covers it).
- *   RECONCILIATION_OWNER_BYPASS  — a write to `hub_sync_reconciliation` outside
- *     the sole owner `src/capabilities/notes/server/hub-sync-reconciliation.ts`.
- *   INTERNAL_APPLY_MARKER_BYPASS — setting `app.hub_sync_internal_apply` outside
- *     that same owner.
- *   DIRECT_HUB_ACTOR_APPLY       — a `persistNoteRefineApply` call with
- *     `actorRef: 'hub_auto_sync'` anywhere (the reconciler owns hub apply; there
- *     is NO escape hatch).
- *
- * Usage:
- *   pnpm audit:hub-sync-writers          # exit 0 clean, exit 1 with findings
- *   pnpm audit:hub-sync-writers --json   # JSON findings
- *
- * Scans tracked `.ts` / `.tsx` under `src/` and `scripts/` (test files and this
- * audit's own source — which necessarily carries rule marker strings — excluded).
+ * Scans tracked .ts/.tsx under src/ and scripts/, excluding tests and this audit's own source
+ * (which necessarily carries the marker strings).
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -257,9 +245,8 @@ function listSourceFiles(root: string): string[] {
       }
       if (!/\.(ts|tsx)$/.test(entry)) continue;
       if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(entry)) continue;
-      // Generated artifacts (e.g. api-schema.generated.ts) are type-only
-      // documents — they can never own a hub-sync write path, but their
-      // mega-unions recurse trustedType into a stack overflow (YUK-1051).
+      // Generated artifacts are type-only and can never own a hub-sync write; their mega-unions
+      // also recurse trustedType into a stack overflow.
       if (/\.generated\.tsx?$/.test(entry)) continue;
       // This audit's own source contains rule marker strings and synthetic patterns.
       if (normalizePath(relative(root, abs)) === 'scripts/audit-hub-sync-writers.ts') continue;
@@ -270,10 +257,7 @@ function listSourceFiles(root: string): string[] {
   return out;
 }
 
-/**
- * Scan `root` for hub-sync ownership violations. `allowlist` inventories the
- * known topology writers; anything else is a finding.
- */
+/** Scan `root` for hub-sync ownership violations; the allowlist inventories known writers. */
 export async function auditHubSyncWriters(input: {
   root: string;
   allowlist: AllowlistEntry[];
@@ -371,7 +355,7 @@ async function main(): Promise<void> {
   process.exitCode = 1;
 }
 
-// Run as CLI only (not when imported by the test).
+// CLI-gate: only run when invoked directly (not when the test imports it).
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void main();
 }

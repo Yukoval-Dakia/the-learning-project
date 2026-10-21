@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-21：K1（YUK-1568）R1 两 P1 修复 + writer 登记收口，普通整合 main 1b180c3fb（仅本文件/now 文本冲突，产品无冲突）；CI 09e04 head run39611151600 已终态——16 job 绿、contracts 仅 writer 登记 3 项、deps audit 过（2low+8moderate）。迁移线回归首次上传 Start 入口见 main 记录。
+> Linear 是权威 tracker。2026-10-21：K1 R1两P1修复已接回，父补save锁内恢复判定、正常整合main c9c8a39e（含1952/1945/1943）；准备最终静态门与唯一R2。录入历史后端独立writer并行；不做例行hash/运维。
 
 ## NOW
 
-- **第一天能用 / 首次上传 Start 入口（YUK-1358）**：当前功能分支 `feat/yuk-1358-onboarding-upload-start` 从 main `def2aeb51` 开始。下一交付仅 `/onboarding/upload` 新 Start route、生成 routeTree、旧 SPA 对应 document handoff已完成；typecheck/lint/build通过（181 warnings）。独立审查/PR CI待执行；复用原组件/HTTP/TokenGate，视觉、上传付费与默认 agent 不变。Stage1 无占用且解除旧暂缓；协调已确认 UI 仅有 RecordRoute 异处注释，三文件入口壳由迁移独占实施，不扩为 record/drafts 或全 RPC。浏览器验收另排，未新建测试或 runtime。
+- **录入历史长期还原**：SWE-2 MAX 独立隔离任务 `stage1-ingestion-history-persistent-read-swe2-max-20261021` 推进已批准 G1–G7/G13 后端读面/持久事实；不占 K1 树，不改 UI、周预算或 paid，测试/runtime 未授权。
+
+- **第一天能用 / 知识列表与详情 Start 入口（YUK-1358）**：分支 `feat/yuk-1358-knowledge-start` 基于 main `1b180c3fb`。owned：新 `server/start/routes/knowledge.tsx`、`knowledge.$id.tsx`、生成 routeTree、旧 router 的 Knowledge 两段。列表→详情→返回、ID、query/hash、TokenGate 和原 HTTP 保持；不改任何知识组件/视觉/领域操作，也不触 RecordPage/VisionTab/Copilot/PfPaper/K1。已查开放 PR 与 UI 未推 diff，无对应 hunk 重叠。源码与生成路由已完成，typecheck/lint/build通过（181 warnings）；独立R1/PR CI待完成，浏览器/DB/provider/部署 NOT_RUN，无测试新增。
 
 - **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` K1 writer，PR1949 已开。R1（review-r1-3116e69ec）两 P1 已修：**F1** 升级前同 :save request 的原未绑定文档半成品经 saveDraftEditInTx 原指纹重放恢复 + 原 submit 语义（无 producer）续完，caller 回执同事务补齐；**F2** typed 声明组子行晋升——kernel `promoteVerifiedGroupPartRows` 按当前 revision 冻结 structure.part_ids 交集晋升（root→child 锁序、non-tombstone、继承证据入 metadata），source_verify promote 分支接入 + 根同款 FSRS enroll。writer-registry 按真实闭包迁移：submit-question stale 删、shared-submit 3 写点登记（child INSERT 字面量已移入 seam 函数闭包）。普通整合 main 1b180c3fb。本地 typecheck/lint/build/schema/boundary/architecture/draft-status 全 0；真实 DB/serving/provider 仍 NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
 
@@ -46,7 +48,9 @@
 
 ## NEXT
 
-- **K1 下一交付**：父静态门/精确出口分类→独立R1→exact-head Gate；不等17分钟、不重复旧审查。四生产端未全交付；K5可独立契约开发继续，复合题真实验收依赖相应typed产出。1431只读共用判断按原顺序后接，1470替换不偷切。ea21/清树/巡检由迁移与协调持有，下一事件为资源裁定；不构成源码暂停条件。
+- **K1 下一交付**：父静态门→唯一R2验证两P1→exact-head Gate；不等17分钟、不重复旧审查。四生产端未全交付；K5可独立契约开发继续，复合题真实验收依赖相应typed产出。1431只读共用判断按原顺序后接，1470替换不偷切。ea21/清树/巡检由迁移与协调持有，下一事件为资源裁定；不构成源码暂停条件。
+
+- **迁移入口验收**：首次上传 #1950 已合 main `1b180c3fb`，本地检查/R1/exact Gate过；真实浏览器入口与部署未验。知识入口完成源码/CI后仍按此证据边界，不为验收重做环境包。
 
 - **PR1891**：普通push后交父定向验证及新head CI；不merge/watch/部署。历史OCR归属/费用实际数量未查，需运营核对，未证持续503，默认助手禁开。queued session恢复跟进仍归YUK-1638，不能豁免费用闭环。
 

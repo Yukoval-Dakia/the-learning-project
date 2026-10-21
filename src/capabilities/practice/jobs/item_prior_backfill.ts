@@ -1,8 +1,7 @@
-// B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill（retained pg-boss
-// handler）。
+// ItemPriorTask cold-start prior backfill (retained pg-boss handler).
 //
-// YUK-1355: delegate execution to ../server/item-prior-durable-operation.ts.
-// Job data normalization, yield reporting and retained failure behavior stay here.
+// Delegates execution to ../server/item-prior-durable-operation.ts; job data
+// normalization, yield reporting and retained failure behavior stay here.
 // The DBOS candidate consumes only admission reads and cannot dispatch paid work.
 //
 // 幂等：applyItemPrior 用 onConflictDoNothing（item_calibration_question_unique），
@@ -41,9 +40,8 @@ type DepsOverride = {
    */
   method?: ItemPriorMethod;
   /**
-   * YUK-1034 — feature 路径每题重复采样次数。默认 DEFAULT_REPS=3（owner
-   * 2026-09-24 拍板启用，eval 封存见 docs/planning/2026-09-24-item-prior-reps-eval.md：
-   * median-of-3 把 within-question SD 0.361→0.173，≈+$0.0004/题）。详见
+   * feature 路径每题重复采样次数。默认 DEFAULT_REPS=3：median-of-3 把
+   * within-question SD 0.361→0.173，≈+$0.0004/题。详见
    * item-prior-durable-operation.ts 的 sampleFeaturePriorDraft。
    */
   reps?: number;
@@ -52,7 +50,6 @@ type DepsOverride = {
 /**
  * Backfill cold-start difficulty anchors for questions that have no hard-track
  * `item_calibration` row yet. Picks at most `maxPerRun` candidates per run.
- * 契约不变：签名与 DepsOverride 形状保持，内部委托抽取后的 operation。
  */
 export async function runItemPriorBackfill(
   db: Db,
@@ -61,7 +58,7 @@ export async function runItemPriorBackfill(
   const method = deps.method ?? 'feature';
   const reps = normalizeReps(deps.reps);
   if (method === 'llasa' && reps > 1) {
-    // YUK-1034 — reps 只挂在 feature 路径；llasa+reps 不静默吞掉，warn 留痕。
+    // reps 只挂在 feature 路径；llasa+reps 不静默吞掉，warn 留痕。
     console.warn('[item_prior_backfill] reps>1 ignored for method=llasa', { reps });
   }
   return runItemPriorBackfillOperation(db, {
@@ -77,17 +74,17 @@ export function buildItemPriorBackfillHandler(
 ): (jobs: Job<{ method?: ItemPriorMethod; reps?: number }>[]) => Promise<JobYieldOutput> {
   return async (jobs) => {
     try {
-      // YUK-376 — opt-in：pg-boss send('item_prior_backfill', { method: 'llasa' })
+      // opt-in：pg-boss send('item_prior_backfill', { method: 'llasa' })
       // 触发 LLaSA 学生模拟路径（写 source='llm_prior_llasa'）；缺省/未知值恒回
       // 'feature'，cron 与既有 send 调用零变更。
       const method = normalizeMethod(jobs[0]?.data?.method);
-      // YUK-1034 — { reps: N } 覆盖默认：feature 路径同题 N 次采样 median
+      // { reps: N } 覆盖默认：feature 路径同题 N 次采样 median
       // 聚合；缺省/非法值回退 DEFAULT_REPS=3（nightly cron 不带 job data →
       // 生产默认 median-of-3），显式 { reps: 1 } 为单次调用 opt-out。
       const reps = normalizeReps(jobs[0]?.data?.reps);
       const result = await runItemPriorBackfill(db, { method, reps });
       console.log('[item_prior_backfill] result', result);
-      // YUK-779 — the counters already existed; nothing acted on them. An empty
+      // the counters already existed; nothing acted on them. An empty
       // candidate set early-returns with considered:0 → level `idle`; a 限流风暴
       // fails every question → calibrated:0 → level `stalled` (loud + job output).
       // Invariant holds: considered === calibrated + skipped_failed.

@@ -42,7 +42,6 @@ export const mathProfile: SubjectProfile = {
     teachingStyle: '先检查条件和目标，再给推导路径，最后总结方法触发信号。',
     checkQuestionPolicy: '检查题应聚焦一个公式、条件判断或关键变形。',
     learningIntentPolicy: '把模糊目标改写成可练习的题型、知识点或解题步骤。',
-    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },

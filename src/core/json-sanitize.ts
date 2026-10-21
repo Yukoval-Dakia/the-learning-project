@@ -1,21 +1,10 @@
-// Shared JSON string-literal control-character sanitizer.
-//
-// LLM outputs sometimes embed bare control characters (U+0000–U+001F) inside
-// JSON string literals instead of their escape sequences. The JSON spec forbids
-// unescaped control characters in strings, so JSON.parse throws "Bad control
-// character in string literal". This utility rescans the raw JSON text with a
-// lightweight state machine that tracks whether the cursor is inside a string
-// literal (handling \" escaped quotes) and replaces any bare control characters
-// it finds with their legal JSON escape sequences.
-//
-// Usage:
-//   const sanitized = sanitizeJsonStringLiterals(rawText);
-//   // then retry JSON.parse(sanitized)
+// Escape bare control characters inside JSON string literals. LLM output sometimes
+// contains U+0000–U+001F raw, which JSON.parse rejects; a lightweight state machine
+// tracks string context and legalizes only those characters, leaving structure alone.
 
 /**
- * Escape bare control characters (U+0000–U+001F) found inside JSON string
- * literals. Characters outside string literals are left untouched so structural
- * tokens (, : [ { etc.) are never mangled.
+ * Escape bare control characters (U+0000–U+001F) inside string literals. Outside a
+ * string nothing is touched, so structural tokens cannot be mangled.
  */
 export function sanitizeJsonStringLiterals(text: string): string {
   const out: string[] = [];
@@ -28,8 +17,7 @@ export function sanitizeJsonStringLiterals(text: string): string {
 
     if (inString) {
       if (ch === '\\') {
-        // Consume the backslash and whatever follows (escape sequence).
-        // We pass both characters through unchanged — they are already legal.
+        // Pass the escape pair through unchanged; it is already legal.
         out.push(ch);
         i++;
         if (i < text.length) {
@@ -40,14 +28,13 @@ export function sanitizeJsonStringLiterals(text: string): string {
       }
 
       if (ch === '"') {
-        // Closing quote — exit string context.
         inString = false;
         out.push(ch);
         i++;
         continue;
       }
 
-      // Inside a string literal: escape any bare control character.
+      // Inside a string literal: escape bare control characters.
       if (code < 0x20) {
         switch (ch) {
           case '\n':
@@ -60,7 +47,7 @@ export function sanitizeJsonStringLiterals(text: string): string {
             out.push('\\t');
             break;
           default:
-            // Other control chars (U+0000–U+001F except \n \r \t): use \uXXXX form.
+            // Other control chars use the \uXXXX form.
             out.push(`\\u${code.toString(16).padStart(4, '0')}`);
         }
         i++;
@@ -70,7 +57,7 @@ export function sanitizeJsonStringLiterals(text: string): string {
       out.push(ch);
       i++;
     } else {
-      // Outside a string: only watch for the opening quote.
+      // Outside a string, only the opening quote matters.
       if (ch === '"') {
         inString = true;
       }

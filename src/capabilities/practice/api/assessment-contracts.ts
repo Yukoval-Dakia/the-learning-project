@@ -1,6 +1,5 @@
-// YUK-1052 — issueAssessment / saveSubmission / 自动保存的 API 契约（wire 层）。
-// request/response zod 形状直接复用 core/schema/assessment 的契约类型 —
-// wire 不发明第二套载荷；ResponseSet/GroupEvidence/PracticeIssuanceDto 原样透传。
+// issueAssessment / saveSubmission / 自动保存的 wire 契约。
+// 形状直接复用 core/schema/assessment —— wire 不发明第二套载荷。
 
 import { z } from 'zod';
 
@@ -33,7 +32,7 @@ export const IssueAssessmentBodySchema = z.object({
   claim: z.object({ claimed_by_ref: z.string().min(1) }).optional(),
 });
 
-// YUK-1091：wire schema 直接复用 core AssessmentIssuance —— handler 返回的
+// wire schema 直接复用 core AssessmentIssuance：handler 返回的
 // AssessmentIssuanceT 把冻结坐标嵌套在 `issuance.binding` 下（且不含
 // container_occurrence_ref）；另造平铺 schema 会让生成客户端读不到真字段。
 export const AssessmentIssuanceSchema = AssessmentIssuance;
@@ -41,14 +40,14 @@ export const AssessmentIssuanceSchema = AssessmentIssuance;
 export const IssuanceCreatedSchema = z.object({
   status: z.enum(['issued', 'replayed']),
   issuance: AssessmentIssuanceSchema,
-  /** 作答期公开 DTO（无答案键/私有 rubric/执行计划 —— §7.1 公私边界）。 */
+  /** 作答期公开 DTO（无答案键、私有 rubric、执行计划）。 */
   practice_dto: PracticeIssuanceDto,
   /** 发题时观测到的 admission generation（激活 CAS 用）。 */
   admission_generation_observed: z.number().int().nullable(),
 });
 
 /**
- * 学习者网页提交的作答集（YUK-1496/1497）：`state:'unknown'`（看不清）只由
+ * 学习者网页提交的作答集：`state:'unknown'`（看不清）只由
  * 作答卷/拍照回收产生，网页作答面不能自称看不清。回收侧直接调领域写入器，
  * 不经这两个 HTTP 入口。
  */
@@ -60,7 +59,7 @@ const LearnerResponseSet = ResponseSet.refine(
   { message: "state 'unknown' is reserved for worksheet/photo capture" },
 );
 
-// ---------- 自动保存草稿（D11：saving/saved/error 仅服务端 ack） ----------
+// ---------- 自动保存草稿 ----------
 
 export const SaveResponseDraftBodySchema = z.object({
   /** 草稿声明的联合判分组锚点（paper 联判共享；null/缺省 = 未定组）。 */
@@ -124,7 +123,7 @@ export const IssuanceStateSchema = z.object({
   issuance: AssessmentIssuanceSchema.nullable(),
   /** 恢复快照补回作答期公开 DTO（由 issuance 冻结绑定 + pinned revision 重建）。 */
   practice_dto: PracticeIssuanceDto.nullable(),
-  /** YUK-1445 —— practice_dto 被 serving gate 收回时的 typed 原因（公共枚举；
+  /** practice_dto 被 serving gate 收回时的 typed 原因（公共枚举；
    * 诊断 detail 不透出）。有已接收提交 ⇒ null。 */
   unavailable_reason: z.enum(SERVING_UNAVAILABLE_REASONS).nullable(),
   /** 发题时观测到的 admission generation（恢复后激活 CAS 的锚点；未知 = null）。 */

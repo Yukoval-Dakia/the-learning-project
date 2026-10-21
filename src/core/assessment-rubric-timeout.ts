@@ -1,26 +1,20 @@
 /**
- * QA r4 真实留出题（PR #1740 comment 6243725363，head c1158779d，
- * opencode-go/mimo-v2.6-pro）的延迟和费用。准入循环是逐题串行的，墙钟等于
- * 各题耗时之和。
+ * QA r4 holdout latency/cost (PR #1740 comment 6243725363, head c1158779d).
+ * The admission loop is serial, so wall clock is the sum of per-item time.
  *
- * 干跑：7.3 min = 438_000 ms，30/30 返回，90s 处 0 次截尾。
- * 正式跑：14.7 min = 882_000 ms，25 次返回，5 次在 90_000 ms 右截尾（全是
- * 导数题）。截尾占 450_000 ms，其余 25 题合计 432_000 ms（均值 17_280 ms）。
- * 干跑均值 14_600 ms。两次里已经跑完的工作几乎一样，14.7 和 7.3 的差就是
- * 那 5 次被掐断的等待，不是整次调用都变慢一倍。
+ * Dry run: 7.3 min, 30/30 returned, no censoring at 90s.
+ * Live run: 14.7 min, 25 returned, 5 right-censored at 90_000 ms (all derivative
+ * questions). The censored wait accounts for the 450_000 ms gap; completed calls total
+ * 432_000 ms (17_280 mean), close to the dry-run 14_600 ms. Completed calls are all
+ * < 90s; the 5 censored calls only bound their time below.
  *
- * 跑完的调用全部 < 90s。5 次截尾只知道 ≥ 90s。用 17s 均值去拟合单指数分布
- * 对不上（那样 P(X>90s) 约 0.5%，实测是 5/30）。慢的是导数题这一支。
+ * A single timeout is twice the censoring point: for the censored tail the exponential
+ * residual mean is 90s + 90s. `AssessmentRubricJudgeTask.budget.timeout` can override it
+ * through resolveTaskBudget.
  *
- * 单次超时取截尾点的两倍。这 5 次在 90s 时仍在跑，截尾样本能确定的尺度只有
- * 这个截尾点：剩余时间的尺度按已经等掉的截尾点计（指数残差，不再另设形状
- * 参数），条件均值是 90s + 90s = 180s。跑完的调用上界 < 90s，落在这个默认
- * 值里。`task.AssessmentRubricJudgeTask.budget.timeout` 经 resolveTaskBudget
- * 覆盖它。
- *
- * 费用：55 次成功调用账本 $0.0447 = 44_700 µ$。超时没有成交价。重试闸门用
- * 这笔均价的向上取整当 estimated，不用当时 $0.02 的预留去冒充已知费用。
- * runner 的 transientRetries 不重试 budget_timeout，所以这一次重试在执行器里做。
+ * Cost: 55 successful calls cost 44_700 µ$; a timeout has no settled price, so retry
+ * gating reserves the rounded mean rather than the old $0.02 placeholder. The runner
+ * does not retry budget_timeout, so this single retry lives in the executor.
  */
 
 export const QA_R4_RUBRIC_LATENCY = {
@@ -35,18 +29,17 @@ export const QA_R4_RUBRIC_LATENCY = {
 export const QA_R4_SUCCESSFUL_CALLS = 55;
 export const QA_R4_SUCCESSFUL_COST_MICROS = 44_700;
 
-/** 一次成功调用的估计价（µ$）。再留一次估计价仍不超过 cap 时才重试超时。 */
+/** Estimated price of one successful call (µ$). Retry only while one more still fits the cap. */
 export const ASSESSMENT_RUBRIC_ESTIMATED_ATTEMPT_MICROS = Math.ceil(
   QA_R4_SUCCESSFUL_COST_MICROS / QA_R4_SUCCESSFUL_CALLS,
 );
 
-/** 超时后再试一次。非超时失败不走这条。 */
+/** One retry after a timeout; other failures do not use this path. */
 export const ASSESSMENT_RUBRIC_TIMEOUT_RETRIES = 1;
 
 /**
- * 从截尾样本得出单次调用超时。已完成部分的变慢不超过 1.5 倍时，墙钟缺口
- * 就是截尾等待，条件均值用 2×截尾点。样本不再是这个形状时抛错，避免默默
- * 沿用一个对不上的数。
+ * Derive the per-call timeout from the censored holdout. Throws when the sample no
+ * longer has the assumed shape, rather than silently keeping a mismatched number.
  */
 export function assessmentRubricTimeoutFromCensoredHoldout(
   sample: typeof QA_R4_RUBRIC_LATENCY = QA_R4_RUBRIC_LATENCY,
@@ -63,14 +56,14 @@ export function assessmentRubricTimeoutFromCensoredHoldout(
   return sample.censorMs * 2;
 }
 
-/** 一次正式或准入调用的墙钟：单次超时，再加一次完整的超时重试窗口。 */
+/** Wall clock for one admission call: initial timeout plus one full retry window. */
 export function assessmentRubricInvocationWindowMs(timeoutMs: number): number {
   return timeoutMs * (1 + ASSESSMENT_RUBRIC_TIMEOUT_RETRIES);
 }
 
 /**
- * 一次超时之后还能否再付一次。knownSpent 是已经成交的 µ$；unknownAttempts
- * 含刚刚这次没有成交价的超时。下一次按估计价占用，加起来超过 cap 就不重试。
+ * Whether one more paid attempt fits after a timeout. knownSpent is settled µ$;
+ * unknownAttempts includes the just-timed-out call, which has no settled price.
  */
 export function assessmentRubricTimeoutRetryFits(
   knownSpent: number,

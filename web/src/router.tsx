@@ -401,29 +401,35 @@ const worksheetPrintRoute = createRoute({
 });
 
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
-const KnowledgeIndexRoute = lazyNavigableRoute(loadKnowledgePage);
+const KnowledgeIndexRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadKnowledgePage);
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('knowledge'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: KnowledgeIndexRoute,
 });
 
-const KnowledgeDetailRouteC = lazyRouteComponent(async () => {
-  const KnowledgeDetailPage = await loadKnowledgeDetailPage();
+const KnowledgeDetailRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const KnowledgeDetailPage = await loadKnowledgeDetailPage();
 
-  function KnowledgeDetailRouteComponent() {
-    const router = useRouter();
-    const { id } = knowledgeDetailRoute.useParams();
-    return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function KnowledgeDetailRouteComponent() {
+        const router = useRouter();
+        const { id } = knowledgeDetailRoute.useParams();
+        return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+      }
 
-  return { default: KnowledgeDetailRouteComponent };
-});
+      return { default: KnowledgeDetailRouteComponent };
+    });
 
 const knowledgeDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('knowledge-detail'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: KnowledgeDetailRouteC,
 });
 

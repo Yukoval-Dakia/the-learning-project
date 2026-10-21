@@ -1,11 +1,6 @@
-// The single definition of the learner's local calendar day. Every learner-facing
-// day boundary in this project is Asia/Shanghai (a fixed UTC+8, no DST), matching the
-// house cron domain and the overnight-digest / learner-state day buckets. Pure (no DB,
-// no IO) so both the server writer (teaching-brief-interactions.ts) and the offline
-// report script can share ONE source and never drift.
-//
-// `en-CA` formats as a lexically-sortable `YYYY-MM-DD`, so a string range compare over
-// these buckets is also a chronological compare (used by the report's window filter).
+// Single definition of the learner's calendar day: Asia/Shanghai (fixed UTC+8, no DST).
+// Pure, so server writers and offline reports share one boundary and never drift.
+// `en-CA` yields a lexically sortable YYYY-MM-DD; string range compares are chronological.
 
 const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai',
@@ -14,19 +9,18 @@ const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-/** The learner's Asia/Shanghai calendar day (`YYYY-MM-DD`) for an instant. */
+/** The learner's Asia/Shanghai calendar day (YYYY-MM-DD) for an instant. */
 export function learnerLocalDay(at: Date): string {
-  // Fail loud on an invalid Date rather than letting `Intl.format` emit "Invalid Date" — that
-  // string would otherwise flow into a deterministic event id + payload and silently corrupt the
-  // ledger (a bad clock / NaN timestamp must surface, not be persisted as a fake bucket).
+  // Fail loud: "Invalid Date" would become a deterministic event id/payload and corrupt
+  // the ledger instead of surfacing a bad clock.
   if (Number.isNaN(at.getTime())) throw new Error('learnerLocalDay: invalid date');
   return SHANGHAI_DAY_FORMATTER.format(at);
 }
 
-/** True when `day` is a well-formed `YYYY-MM-DD` calendar date (no time, no zone). */
+/** True when `day` is a well-formed YYYY-MM-DD calendar date (no time or zone). */
 export function isLearnerLocalDay(day: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
-  // Round-trip guard: rejects impossible dates (e.g. 2026-02-31) that pass the regex.
+  // Round-trip rejects impossible dates such as 2026-02-31.
   const asUtc = new Date(`${day}T00:00:00.000Z`);
   return !Number.isNaN(asUtc.getTime()) && asUtc.toISOString().slice(0, 10) === day;
 }
@@ -36,16 +30,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
 /**
- * YUK-1522 — the product week: natural Monday 00:00 inclusive through the next
- * Monday 00:00 exclusive, in the learner's product timezone (Asia/Shanghai, the
- * same zone as learnerLocalDay — NOT the dev-account Saturday week). Returned
- * as UTC instants for `col >= from AND col < to` SQL filters; cost rows are
- * attributed by their canonical occurred/finished instant against this window.
+ * Product week: Monday 00:00 inclusive to next Monday 00:00 exclusive, in
+ * Asia/Shanghai (not the dev-account Saturday week). Returns UTC instants for
+ * half-open SQL filters; cost rows use their canonical occurred/finished instant.
  */
 export function learnerLocalWeekWindowUtc(at: Date): { from: Date; to: Date } {
   if (Number.isNaN(at.getTime())) throw new Error('learnerLocalWeekWindowUtc: invalid date');
-  // Shift into BJT wall clock, take midnight, subtract weekday offset to reach
-  // this week's Monday, then shift back to the UTC instant.
   const bjtMs = at.getTime() + BJT_OFFSET_MS;
   const bjtDayStartMs = Math.floor(bjtMs / DAY_MS) * DAY_MS;
   const bjtWeekday = new Date(bjtDayStartMs).getUTCDay(); // 0=Sun … 6=Sat
@@ -55,11 +45,9 @@ export function learnerLocalWeekWindowUtc(at: Date): { from: Date; to: Date } {
 }
 
 /**
- * The half-open UTC instant range `[from, to)` covering the inclusive Asia/Shanghai calendar-day
- * range `[fromDay, toDay]`. `from` is `fromDay` 00:00 BJT; `to` is the START of the day AFTER
- * `toDay` (so `toDay` is fully included). Feed the returned instants straight to a `created_at >=
- * from AND created_at < to` filter — one consistent JS-computed instant pair, no JS/SQL timezone
- * mixing (mirrors overnight-digest-summary's window idiom). Throws on a malformed / inverted range.
+ * UTC half-open range covering the inclusive Asia/Shanghai day range [fromDay, toDay].
+ * `to` is the start of the day after `toDay`, so one JS-computed pair feeds
+ * `created_at >= from AND created_at < to` without JS/SQL timezone mixing.
  */
 export function learnerDayWindowUtc(fromDay: string, toDay: string): { from: Date; to: Date } {
   if (!isLearnerLocalDay(fromDay)) throw new Error(`invalid from day: ${fromDay}`);

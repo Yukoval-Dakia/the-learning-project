@@ -579,13 +579,10 @@ function registeredManifestPaths(root: string): Set<string> {
 type ManifestComposition = {
   readonly roots: CompositionRoot[];
   /**
-   * YUK-882 — `jobs/handlers/load` thunks as `source=>target` pairs. A
-   * registered manifest is itself api-reachable (e.g. via
-   * src/server/proposals/lifecycle-context.ts → @/capabilities), so treating
-   * the thunk's dynamic import as an ordinary runtime edge would falsely pull
-   * every job implementation — and its worker-only provider wires — into the
-   * api closure. The thunk target is a worker composition ROOT instead; the
-   * role/closure traversals below skip exactly these pairs.
+   * `jobs/handlers/load` thunks as `source=>target` pairs. A registered manifest is itself
+   * api-reachable, so treating the thunk's dynamic import as an ordinary runtime edge would pull
+   * every job implementation and its worker-only provider wires into the api closure. The thunk
+   * target is a worker composition root instead; the traversals below skip exactly these pairs.
    */
   readonly jobThunkEdges: ReadonlySet<string>;
 };
@@ -753,8 +750,8 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     }
     if (code.includes('layout_parsing'))
       return [{ kind: 'glm-ocr-layout-parsing-fetch', call, path }];
-    // Public models.dev document (YUK-1563). No credential and no model call.
-    // The split drops the exemption if a second fetch( appears in the file.
+    // Public models.dev document. No credential and no model call. The split drops the exemption
+    // if a second fetch( appears in the file.
     if (
       call === 'fetch' &&
       path === 'src/server/ai/model-catalog.ts' &&
@@ -763,15 +760,13 @@ function findingsFor(path: string, code: string, facts: SourceFacts): ProviderWi
     ) {
       return [];
     }
-    // YUK-1563 provider /models read and the one-shot 1-token auth probe.
+    // Provider /models read and the one-shot 1-token auth probe.
     if (call === 'fetchImpl' && path === 'src/server/ai/provider-models-check.ts') {
       return [{ kind: 'model-catalog-provider-check-fetch', call, path }];
     }
-    // YUK-1630 — provider-transport invokes the current globalThis.fetch with
-    // its budget-pinned dispatcher injected into init, so observer/test
-    // wrappers stay honored instead of bypassed. Same provider wire, not a
-    // new lane; the undici Agent the dispatcher wraps is constructor-injected
-    // per attempt, not a fetch import.
+    // provider-transport invokes the current globalThis.fetch with its budget-pinned dispatcher
+    // injected into init, so observer/test wrappers stay honored. Same provider wire, not a new
+    // lane; the undici Agent is constructor-injected per attempt, not a fetch import.
     if (call === 'fetch' && path === 'src/server/ai/provider-transport.ts') {
       return [];
     }

@@ -1132,9 +1132,9 @@
     {
       "path": "src/capabilities/practice/jobs/source_verify.ts",
       "date": "2026-10-21",
-      "baseBlob": "a3cf667fe619d258308e50358f25db8400a7a792",
-      "from": 1525,
-      "to": 1570,
+      "baseBlob": "97ec140e02266fd6fffd0edebad9b4254364bf7f",
+      "from": 1519,
+      "to": 1564,
       "issue": "YUK-1568",
       "responsibilityReason": "R1-F2 组拥有子行晋升 hunk：promote 分支在根行 ACTIVE+FSRS 之后、lifecycle 发布之前调 promoteVerifiedGroupPartRows（当前 revision 冻结 part_ids ∩ 子行 ∩ draft ∩ non-tombstone）并对晋升子行按根同款纪律 FSRS enroll-if-absent —— 单一 promote 叙事内的既有职责延伸，未新增判定层。"
     },

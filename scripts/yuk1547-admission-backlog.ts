@@ -2457,7 +2457,7 @@ async function drive(opts: {
       // the ledger counted (run_id dedupe — a run is never charged twice), so
       // here we only add THIS item's still-uncounted share. Historical reserve
       // keeps its own per-run bounds; new unknowns use the window reserve.
-      const countedRuns = countedRunIds(ledger); // NormalizedLedger.counted
+      const countedRuns = countedRunIds(ledger);
       const countedInReceipt = runs.filter((run) => countedRuns.has(run.id));
       const uncountedCostKnown =
         costKnownUsd - countedInReceipt.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0);

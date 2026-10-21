@@ -1,16 +1,11 @@
 /**
- * Schema write-path 防漂移 lint
+ * Schema write-path drift lint.
  *
- * 起源：data-assumptions audit (2026-05-15) 发现 5+ stub 字段——schema 定义、零 write path。
- * 本脚本审计 `src/db/schema.ts` 所有业务字段，确保每个都有 INSERT 或 UPDATE write path；
- * 例外通过 `scripts/audit-schema-allowlist.json` 显式声明（含 reason + 解除条件）。
+ * Every business field in `src/db/schema.ts` must have an INSERT or UPDATE write path.
+ * Exceptions are declared in scripts/audit-schema-allowlist.json with a reason and exit condition.
+ * The scan also checks the fixed seed-initialization contract for the 0117/0118 registration.
  *
- * 用法：
- *   pnpm audit:schema          # 报告 + 非零 exit 若有未声明 stub
- *   pnpm audit:schema --json   # JSON 输出
- *   pnpm audit:schema --list   # 只列字段健康表，不 enforce
- *
- * 实现：扫描 src/ + app/ 内所有 .ts/.tsx；另核对 0117/0118 注册 seed 的固定初始化契约。
+ * Scans .ts/.tsx under src/ and app/.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -371,8 +366,8 @@ function judgeControlWriteIssues(index: Map<string, WriteStatement[]>): JudgeIni
   );
 }
 
-// ADR-0058 / YUK-939 intentionally retired this writer, not its historical
-// schema. This fixed inventory is a retention contract, never a dated allowance.
+// ADR-0058 intentionally retired this writer, not its historical schema. This fixed inventory is
+// a retention contract, never a dated allowance.
 const HISTORICAL_TABLE = 'copilot_evidence_checkpoint';
 const HISTORICAL_COLUMNS: Readonly<Record<string, string>> = {
   id: 'text',
@@ -785,12 +780,10 @@ export function validateAllowlistHygiene(
   return { allowlist, issues };
 }
 
-// Drizzle column constructors recognised by parseSchema. The first group are
-// native drizzle-orm/pg-core builders; `vector` is the project customType
-// (src/db/vector.ts, YUK-383) — without it the `embedding: vector(1024)` columns
-// escape parsing entirely and stay invisible to write-path drift detection
-// (YUK-385). Append future project customType constructor names here so their
-// columns are audited automatically.
+// Drizzle column constructors recognised by parseSchema. The first group are native
+// drizzle-orm/pg-core builders; `vector` is the project customType without which
+// `embedding: vector(1024)` columns escape parsing. Add future project customType names here so
+// their columns are audited automatically.
 const PROJECT_CUSTOM_TYPE_CONSTRUCTORS = ['vector'] as const;
 const SCHEMA_CONSTRAINT_HELPERS = new Set(['check', 'primaryKey', 'unique', 'index', 'foreignKey']);
 const NATIVE_COLUMN_CONSTRUCTORS = [
@@ -840,7 +833,7 @@ export function parseSchema(src: string): Field[] {
     COLUMN_CONSTRUCTOR_RE.lastIndex = 0;
     const fieldMatches = block.matchAll(COLUMN_CONSTRUCTOR_RE);
     for (const m of fieldMatches) {
-      // 跳过 schema constraint helpers
+      // Skip schema constraint helpers.
       if (SCHEMA_CONSTRAINT_HELPERS.has(m[2])) continue;
       fields.push({ table: tableName, field: m[1], type: m[2] });
     }
@@ -868,12 +861,11 @@ function walkFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// A single drizzle write statement, scoped to the table it targets. `kind`
-// distinguishes INSERT from UPDATE; `payload` is either a direct object literal
-// or the top-level keys proved by bounded AST construction/caller tracing.
-// Field matching reads top-level syntax keys only, confined to THIS statement
-// (YUK-166: the old file-level matcher ignored table identity and let a write to
-// `mistake_variant.parent_question_id` satisfy `question.parent_question_id`).
+// A single drizzle write statement, scoped to the table it targets. `kind` distinguishes INSERT
+// from UPDATE; `payload` is a direct object literal or the top-level keys proved by bounded AST
+// tracing. Matching reads top-level syntax keys only, confined to this statement: the old
+// file-level matcher ignored table identity and let a write to `mistake_variant.parent_question_id`
+// satisfy `question.parent_question_id`.
 export type WriteStatement = {
   kind: 'insert' | 'update';
   table: string;
@@ -918,10 +910,9 @@ function statementMatchesField(payload: string, field: string): boolean {
   return payloadColumns(payload).has(field);
 }
 
-// Table-aware write-path count (YUK-166). A field counts as written only when a
-// statement targeting ITS OWN table carries it; a same-named column on another
-// table no longer cross-satisfies. Counts are per-file (a file with any matching
-// insert/update statement for the table contributes one).
+// Table-aware write-path count. A field counts as written only when a statement targeting its own
+// table carries it, so a same-named column on another table cannot cross-satisfy. Counts are
+// per-file.
 export function countWriteHits(
   table: string,
   field: string,

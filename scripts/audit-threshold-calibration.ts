@@ -1,60 +1,32 @@
-// pnpm audit:threshold-calibration (YUK-677) — READ-ONLY, REPORT-ONLY distance-distribution
-// replay for the three embedding cosine-distance thresholds that all shipped UNTUNED with
-// their calibration follow-up orphaned on YUK-396 (the poolFetch operator ticket — it never
-// carried calibration scope). This audit is that follow-up.
+// audit:threshold-calibration — read-only distance-distribution replay for three embedding
+// thresholds that shipped untuned.
 //
-//   Axis A — MATCH_THRESHOLD            (tagging-flags.ts, env TAGGING_MATCH_THRESHOLD)
-//            question→KC match-or-propose ceiling. Positives = a question's distance to its
-//            OWN assigned KCs; negatives = its distance to the nearest NON-assigned KC.
-//            The decision replay preserves production order: GLOBAL top-RETRIEVAL_TOP_K
-//            retrieval FIRST (tag-knowledge.ts → matchKnowledgeBySimilarity topK=10), the
-//            effective-domain subject gate SECOND — an in-domain KC ranked beyond the
-//            window is invisible to production and is counted as retrieval-starved.
-//   Axis B — DEDUP_DISTANCE_MAX         (dedup-flags.ts, env KC_DEDUP_DISTANCE_MAX)
-//            KC↔KC near-duplicate ceiling for kc_dedup_nightly merge proposals.
-//   Axis C — MATCHER_COSINE_MAX_DISTANCE (matcher.ts, hard const)
-//            KC-centric query→pool axis. The checked matcher path recalls candidates via
-//            poolFetch(knowledgeId, activeOnly:false) — knowledge_ids @> [KC] INCLUDING
-//            drafts — so the candidate set is by construction same-KC only: a cross-KC
-//            "wrong" serve is structurally impossible, and the ceiling trades ONLY
-//            serve-pool vs residual-generate (宁残余不塞次品). Evidence = KC→own-questions
-//            distances (the KC embedding is the closest corpus-side proxy for the free-text
-//            demand query) + same-KC q↔q pair cohesion + the at-ceiling servable/starved
-//            split. There is NO negative distribution on this axis.
+//   Axis A — MATCH_THRESHOLD: question→KC match-or-propose ceiling. Replays production order:
+//            global top-K retrieval first, then the effective-domain subject gate. An assigned
+//            in-domain KC ranked beyond the window is counted as retrieval-starved, not accepted.
+//   Axis B — DEDUP_DISTANCE_MAX: KC↔KC near-duplicate ceiling for dedup merge proposals.
+//   Axis C — MATCHER_COSINE_MAX_DISTANCE: KC-centric query→pool. Recall is same-KC by
+//            construction, so a cross-KC wrong serve is impossible; the ceiling only trades
+//            serve-pool against residual generation.
 //
-// ⚠ NEVER WRITES. NEVER FLIPS A THRESHOLD. The script only SELECTs knowledge/question
-//   embedding vectors + the auto-tag event log, replays cosine distances IN-MEMORY, and
-//   prints n + quantiles + a mechanically-derived suggested band per axis. The thresholds
-//   themselves are read back from the live flag modules (env overrides included), so the
-//   report always evaluates the value that would actually take effect.
+// NEVER WRITES and never flips a threshold. It reads vectors + the auto-tag event log, replays
+// distances in memory, and prints n/quantiles/suggested bands. Threshold values are read from the
+// live flag modules, so the report evaluates what would actually take effect.
 //
-// Mirrors scripts/audit-calibration.ts (runCli/main/direct-run guard, --json, exit 0 on
-// success / 2 on operational error) and scripts/worker.ts (loadEnv BEFORE anything that
-// could touch the DB).
-//
-// CONNECTION: `AUDIT_READ_DATABASE_URL` (registered in src/server/env.ts) wins when set —
-// point it at a read-only role or replica for a corpus-bearing DB; otherwise falls back to
-// DATABASE_URL. Either way the session is pinned `default_transaction_read_only=on` at the
-// protocol level, so the read-only guarantee does not rest on the role being configured
-// correctly. A dedicated postgres-js client is used (NOT the shared @/db/client pool) so
-// the audit never borrows the app pool and never inherits its write capability.
-//
-// n=1 upper bound (same caveat as audit-calibration): this loads the full embedded corpus
-// into memory and computes pair distances in JS — tractable for the solo-owner deployment.
+// Uses AUDIT_READ_DATABASE_URL when set, else DATABASE_URL. A dedicated client pins the session
+// read-only at the protocol level, so the guarantee does not depend on the role configuration.
+// Loading the full embedded corpus into memory is tractable for the solo-owner deployment.
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-// loadEnv MUST run first — fills process.env from .env/.env.local (empty slots only) and
-// returns the validated server env (worker.ts:29 pattern).
+// loadEnv MUST run first: it fills process.env from .env/.env.local (empty slots only) and returns
+// the validated server env.
 import { loadEnv } from '../server/env';
 
 const env = loadEnv();
 
-// postgres + the pure helpers are side-effect-free at import. The flag modules are NOT
-// statically imported: they read process.env at module top, and ESM hoisting would evaluate
-// them BEFORE loadEnv() fills .env/.env.local — an env-file override would be missed. They
-// are dynamic-imported inside runCli() after loadEnv (the audit-calibration.ts pattern), so
-// the report evaluates the SAME resolved value the runtime would boot with.
+// The flag modules are dynamic-imported after loadEnv: they read process.env at module top, and
+// static ESM hoisting would evaluate them before the env files are loaded.
 import postgres from 'postgres';
 import { fromSqlVector } from '@/db/vector';
 
@@ -71,8 +43,8 @@ export function cosineDistance(a: readonly number[], b: readonly number[]): numb
     na += a[i] * a[i];
     nb += b[i] * b[i];
   }
-  // A zero-norm vector has no direction — pgvector `<=>` returns NaN there too. Surface it
-  // as NaN (filtered + counted by the caller) rather than silently coercing to a distance.
+  // A zero-norm vector has no direction; surface NaN (caller filters and counts it) instead of
+  // coercing to a distance.
   if (na === 0 || nb === 0) return Number.NaN;
   return 1 - dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
@@ -150,7 +122,7 @@ function fmtSummary(label: string, s: DistSummary): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Loader — the thin DB seam (the ONLY non-pure code). Three SELECTs, nothing else.
+// Loader — the thin DB seam. Three SELECTs, nothing else.
 // ─────────────────────────────────────────────────────────────────────────────────────
 
 interface KcVector {
@@ -178,16 +150,16 @@ interface Corpus {
 }
 
 async function loadCorpus(sql: postgres.Sql): Promise<Corpus> {
-  // `embedding::text` makes the wire format the pgvector literal `[a,b,...]` regardless of
-  // driver decoding; fromSqlVector is the house parser (src/db/vector.ts).
+  // `embedding::text` keeps the wire format a pgvector literal regardless of driver decoding;
+  // fromSqlVector is the house parser.
   const kcVectors = await sql<
     Array<{ id: string; name: string; embedding_text: string }>
   >`SELECT id, name, embedding::text AS embedding_text
     FROM knowledge
     WHERE archived_at IS NULL AND embedding IS NOT NULL`;
 
-  // ALL rows (unfiltered) for the effective-domain climb — mirrors batchResolveEffectiveDomains
-  // (archived-INCLUSIVE load so a walk through an archived ancestor resolves identically).
+  // Unfiltered rows for the domain climb, so a walk through an archived ancestor resolves the
+  // same way as batchResolveEffectiveDomains.
   const kcTree = await sql<
     Array<{ id: string; domain: string | null; parent_id: string | null }>
   >`SELECT id, domain, parent_id FROM knowledge`;
@@ -215,9 +187,8 @@ async function loadCorpus(sql: postgres.Sql): Promise<Corpus> {
   >`SELECT (SELECT count(*) FROM question) AS q_total,
            (SELECT count(*) FROM knowledge) AS kc_total`;
 
-  // In-memory effective-domain climb — the exact structural mirror of getEffectiveDomain /
-  // batchResolveEffectiveDomains (domain-bearing ancestor walk, MAX_DEPTH-bounded so a cycle
-  // yields null instead of looping).
+  // Mirrors getEffectiveDomain's domain-bearing ancestor walk; MAX_DEPTH keeps a cycle from
+  // looping.
   const MAX_DEPTH = 32;
   const byId = new Map(kcTree.map((r) => [r.id, r]));
   const domainByKc = new Map<string, string | null>();
@@ -271,19 +242,11 @@ export interface AxisResult {
 }
 
 /**
- * Axis A — question→KC, mirroring production tagKnowledge's decision shape
- * (tag-knowledge.ts): production FIRST retrieves the GLOBALLY nearest
- * `retrievalTopK` KCs (matchKnowledgeBySimilarity, topK=RETRIEVAL_TOP_K) and only THEN
- * drops cross-domain candidates — `nearest in-domain candidate inside the window
- * ≤ ceiling → MATCH`. An assigned in-domain KC ranked beyond the window is invisible
- * to production, so it is counted separately as retrieval-starved rather than allowed
- * to inflate accept-correct. The replay uses each question's PRIMARY assigned KC's
- * effective domain as the target domain (the honest proxy for the caller-resolved
- * subjectRootId). For every embedded question carrying knowledge_ids: distance to each
- * RESOLVABLE assigned KC (positives — domain-agnostic, a labelled pair is evidence
- * wherever it lives), plus the in-window decision distributions (nearest in-domain
- * assigned / NON-assigned / overall). `ceiling` is the threshold under review — used
- * only for the at-ceiling confusion breakdown.
+ * Axis A — question→KC, mirroring production's decision shape: retrieve the global top-K first,
+ * then apply the subject-domain gate inside the window. An assigned in-domain KC ranked beyond the
+ * window is counted as retrieval-starved, never as an accept. The target domain is the primary
+ * assigned KC's effective domain (the proxy for the caller-resolved subject root). Positives are
+ * domain-agnostic labelled pairs; `ceiling` is used only for the at-ceiling breakdown.
  */
 export function analyzeTaggingAxis(
   corpus: Corpus,
@@ -299,8 +262,7 @@ export function analyzeTaggingAxis(
   let taggedQuestions = 0;
   let assignedMissing = 0; // assigned ids that resolve to no active+embedded KC
   let nanDistances = 0;
-  // Confusion breakdown AT the ceiling under review: what the live
-  // `nearest in-window in-domain ≤ T → MATCH` rule would do to THIS corpus.
+  // At-ceiling confusion: what the live `nearest in-window in-domain ≤ T → MATCH` rule would do.
   let acceptCorrect = 0; // nearest in-window in-domain ≤ T and it IS an assigned KC
   let acceptWrong = 0; // nearest in-window in-domain ≤ T but NOT assigned → mis-tag
   let proposeThresholdStarved = 0; // in-window in-domain assigned KC existed but > T
@@ -315,18 +277,15 @@ export function analyzeTaggingAxis(
     for (const id of assigned) {
       if (!kcIndex.has(id)) assignedMissing++;
     }
-    // Production resolves the target subject's effective domain once and drops every
-    // cross-domain candidate BEFORE the threshold read. Proxy: the PRIMARY assigned KC's
-    // domain (knowledge_ids[0] is the canonical primary). Null → cannot scope → keep the
-    // pool unfiltered and count it (matches production only insofar as a subject always
-    // resolves there — the count flags how much of the report is unscoped).
+    // Production scopes to the target subject's effective domain before reading the threshold.
+    // Proxy: knowledge_ids[0], the canonical primary. Null leaves the pool unfiltered and is
+    // counted, since production expects a resolvable subject.
     const targetDomain =
       q.knowledge_ids.length > 0 ? (corpus.domainByKc.get(q.knowledge_ids[0]) ?? null) : null;
     if (targetDomain === null) unscopedQuestions++;
 
-    // Step 1 (production order): GLOBAL nearest-first ranking over ALL active embedded
-    // KCs, truncated to the retrieval window. Positives stay domain-agnostic — they are
-    // collected over the full ranking before the window/domain gates.
+    // Step 1: global nearest-first ranking over all active embedded KCs. Positives are collected
+    // over the full ranking, before the window/domain gates.
     const ranked: Array<{ kcId: string; d: number }> = [];
     for (const kc of corpus.kcs) {
       const d = cosineDistance(q.embedding, kc.embedding);
@@ -339,7 +298,7 @@ export function analyzeTaggingAxis(
     }
     ranked.sort((a, b) => a.d - b.d);
 
-    // Step 2 (production order): the subject-scope gate applies INSIDE the window only.
+    // Step 2: the subject-scope gate applies inside the window only.
     const inDomain = (kcId: string) =>
       targetDomain === null || corpus.domainByKc.get(kcId) === targetDomain;
     let bestAssigned = Number.POSITIVE_INFINITY;
@@ -351,8 +310,8 @@ export function analyzeTaggingAxis(
       const { kcId, d } = ranked[rank];
       if (!inDomain(kcId)) continue;
       if (rank >= retrievalTopK) {
-        // Beyond the production window: only recorded so a ranked-out true positive is
-        // attributed as retrieval starvation, never as an accept/propose decision.
+        // Ranked beyond production's window: attribute as retrieval starvation, never as an
+        // accept/propose decision.
         if (assigned.has(kcId)) assignedBeyondWindow = true;
         continue;
       }
@@ -438,9 +397,8 @@ export function analyzeTaggingAxis(
 }
 
 /**
- * Axis B — KC↔KC. ALL unordered pairs of active+embedded KCs (the dedup scan's candidate
- * universe), the same-domain subset, and the production scan population (pairs touching an
- * auto-created KC — all-time here; the nightly job further narrows to a window).
+ * Axis B — KC↔KC: all unordered pairs of active+embedded KCs (the dedup candidate universe), the
+ * same-domain subset, and the production scan population (pairs touching an auto-created KC).
  */
 export function analyzeDedupAxis(corpus: Corpus): AxisResult {
   const all: number[] = [];
@@ -480,8 +438,7 @@ export function analyzeDedupAxis(corpus: Corpus): AxisResult {
   const allSorted = all.slice().sort((a, b) => a - b);
   const grid = [0.02, 0.05, 0.1, 0.15, 0.2, 0.3];
 
-  // Largest-gap elbow over the closest pairs: the natural seam between a near-identical
-  // cluster and the bulk. Report-only evidence for the human call.
+  // Largest-gap elbow over the closest pairs: evidence for a human call, report-only.
   let elbow: string = 'insufficient data (n<6 pairs)';
   if (allSorted.length >= 6) {
     const window = allSorted.slice(0, Math.min(20, allSorted.length));
@@ -518,25 +475,14 @@ export function analyzeDedupAxis(corpus: Corpus): AxisResult {
 }
 
 /**
- * Axis C — KC-centric query→pool (the checked matcher axis). The production recall is
- * poolFetch(knowledgeId, activeOnly:false): `question.knowledge_ids @> [knowledgeId]`
- * INCLUDING drafts (drafts reach the lazy verify-promote arbitration, so they are real
- * candidates). The cosine ceiling then drops over-distance candidates — 宁残余不塞次品,
- * the shortfall falls to residual generation. Because the WHERE clause already restricts
- * candidates to questions carrying the demand KC, a cross-KC "wrong" serve is
- * STRUCTURALLY IMPOSSIBLE in this path — there is no negative distribution to bound the
- * ceiling from above. The ceiling trades ONLY: serve an in-pool candidate vs starve the
- * demand into residual generation.
- *
- * Evidence: per-KC distances to its own pool questions (the KC `name\ndomain` embedding
- * is the closest corpus-side proxy for the free-text demand query — resolveQueryEmbedding
- * takes a caller-supplied queryEmbedding/queryText that does not exist in the corpus),
- * same-KC q↔q pair cohesion, and the at-ceiling per-KC servable/starved split (a KC is
- * servable iff ≥1 of its pool questions is ≤ ceiling — demand limit≥1 satisfiable).
- * `ceiling` is the threshold under review, used only for the at-ceiling breakdown.
+ * Axis C — KC-centric query→pool. Recall is poolFetch(knowledgeId, activeOnly:false): every
+ * question carrying the KC, drafts included. Cross-KC candidates are structurally excluded, so
+ * there is no negative distribution; the ceiling only trades serving a pool candidate against
+ * starving the demand into residual generation. Evidence is KC→own-question distances plus same-KC
+ * pair cohesion and the at-ceiling servable/starved split.
  */
 export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult {
-  // poolFetch(activeOnly:false) recalls drafts too — the pool is ALL embedded questions.
+  // poolFetch(activeOnly:false) recalls drafts too: the pool is all embedded questions.
   const pool = corpus.questions;
 
   // Group pool questions by assigned KC — one entry per poolFetch(knowledgeId) pool.
@@ -565,10 +511,8 @@ export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult 
     }
   }
 
-  // KC-centric read of the q×k matrix: per KC, distance to each of its OWN pool
-  // questions — the recall set production thresholds on. At-ceiling breakdown over KCs
-  // that HAVE ≥1 pool question: is the demand servable from the pool or starved into
-  // residual generation?
+  // Per-KC distance to its own pool questions: the recall set production thresholds on. The
+  // at-ceiling split asks whether demand is servable from the pool or starved into residual.
   const kcToOwn: number[] = [];
   let kcWithPool = 0;
   let servable = 0; // ≥1 own pool question ≤ ceiling → demand fillable from pool
@@ -595,10 +539,8 @@ export function analyzeMatcherAxis(corpus: Corpus, ceiling: number): AxisResult 
   const ownSorted = kcToOwn.slice().sort((a, b) => a - b);
   const grid = [0.15, 0.25, 0.35, 0.45, 0.55, 0.65];
 
-  // Serve-side evidence only: no negative distribution exists on this axis (cross-KC
-  // questions can never enter the recall pool). The band frames the tradeoff that IS
-  // real — a lower ceiling starves more demands into residual generation; a higher one
-  // serves weaker same-KC candidates.
+  // Serve-side only: no cross-KC negative exists. A lower ceiling starves more demands into
+  // residual; a higher one serves weaker same-KC candidates.
   const own = summarize(ownSorted);
   const band =
     Number.isFinite(own.p50) && Number.isFinite(own.p90)
@@ -667,13 +609,8 @@ function printAxis(spec: ThresholdSpec, result: AxisResult): void {
 }
 
 export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
-  // YUK-1064 audit-only exception: read concrete threshold definitions without
-  // initializing capability public barrels and their shared application DB pool.
-  // The dedicated read-only connection below remains the sole audit connection.
-  // Dynamic imports AFTER loadEnv() — these modules resolve their env overrides at module
-  // top, so they must evaluate only once process.env is fully populated. RETRIEVAL_TOP_K
-  // comes from the same module (single truth: tag-knowledge.ts imports it from there too)
-  // so the axis-A replay uses the live production window, not a driftable copy.
+  // Dynamic imports after loadEnv, so env overrides resolve as they would at runtime. The live
+  // RETRIEVAL_TOP_K keeps axis A aligned with production's window.
   const { RETRIEVAL_TOP_K, matchThreshold } = await import(
     '@/capabilities/knowledge/server/tagging-flags'
   );
@@ -687,9 +624,8 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   const url = env.AUDIT_READ_DATABASE_URL ?? env.DATABASE_URL;
   const usingAuditUrl = env.AUDIT_READ_DATABASE_URL != null;
 
-  // Dedicated read-only client — NOT the shared @/db/client pool. `options` is sent as a
-  // startup parameter: the session itself is pinned read-only + statement-bounded, so the
-  // guarantee holds even when falling back to a read-write DATABASE_URL.
+  // Dedicated read-only client, not the shared app pool. `options` is a startup parameter, so
+  // the read-only + statement-bound guarantee holds even when falling back to a writable URL.
   const isLocal = /localhost|127\.0\.0\.1/.test(url) || /[?&]sslmode=disable\b/.test(url);
   const sql = postgres(url, {
     ssl: isLocal ? false : 'require',
@@ -703,8 +639,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
   try {
     const corpus = await loadCorpus(sql);
     const tagged = corpus.questions.filter((q) => q.knowledge_ids.length > 0).length;
-    // Corpus descriptor only — the axis-C recall pool itself is ALL embedded questions
-    // (poolFetch activeOnly:false includes drafts; the axis reports its own count).
+    // Corpus descriptor only; axis C reports its own recall-pool count (drafts included).
     const nonDraft = corpus.questions.filter((q) => q.draft_status !== 'draft').length;
 
     const axes: Array<[ThresholdSpec, AxisResult]> = [
