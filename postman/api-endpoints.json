@@ -1930,5 +1930,18 @@
         "notes": "202 {accepted, replayed}；已终态（已答/超时）→ 409 ask_already_resolved；选项不存在/空文本/超 500 字/kind 不匹配 → 422 对应 code。需 x-internal-token"
       }
     ]
+  },
+  {
+    "path": "/api/ingestion-sessions/:id/history",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取录入会话的持久历史还原（YUK-1522）：run 进度/终态、逐题 at-finish+当前准入状态、asks+answers",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "200 {session, run, prior_runs, items, asks, evidence}。agent 路径在单个 REPEATABLE READ/READ ONLY 事务内读取 owner+snapshot+ledger+asks+segments+errors，合并 agent_budget.history 中身份匹配当前 run 的快照与同 run 30 天窗内 job_events（run_ref/event_floor 区分当前与 prior runs；prior_runs 整块保留更早 run，含各自 run_ref/event_floor/errors_truncated，无留存上限）；extract 路径读 question_block。state_at_finish 只取冻结证据（item_state 捕获或 'unknown'），preview_md 只取冻结 preview/extracted_prompt_md；current 是当下 servable/hold_reason/held_since/next_action/pending_action —— 两者不合并。items[].draft_ref 是原始 qdraft1 版本 ref，draft_block_id 是归一化 block id。run.errors_truncated=true 表示该 run 持久错误记录曾截断——永久缺证不冒称完整，同时列入 evidence.missing('errors')。ask.resolved=null 即未答，expired_unresolved 标记过期未答（G13）。无法证明的切片留空并列入 evidence.missing（run/items/asks/snapshot/errors），绝不臆造。session 不存在 → 404。需 x-internal-token"
+      }
+    ]
   }
 ]

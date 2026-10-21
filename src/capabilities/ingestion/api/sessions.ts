@@ -4,7 +4,14 @@ import {
   materializeSourcePackage,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
-import { event, learning_session, question_block, source_asset } from '@/db/schema';
+import {
+  event,
+  learning_session,
+  question,
+  question_block,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -14,6 +21,7 @@ import {
 } from '@/kernel/http';
 import { Ingestion } from '@/server/session';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
+import { agentEvidenceSql } from '../server/agent/history';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -22,11 +30,14 @@ const MAX_LIMIT = 100;
 
 /**
  * Lists recent ingestion sessions for the review surface, newest first with a
- * keyset cursor. Only sessions with at least one block are included; sessions with
- * zero observations stay visible so the observe-empty state is not hidden.
+ * keyset cursor. Sessions qualify on durable evidence of either lane: at least
+ * one bound question_block row (extract lane — agent drafts live under the
+ * actor-scoped `draft:` key and count toward the draft leg) or any agent-lane
+ * record (agent_budget operations/grants/history or a surviving run row).
+ * Sessions with zero observations stay visible so observe-empty is not hidden.
  *
- * Counts: observed events (by action, not generated_by), auto-enrolled blocks, and
- * total blocks.
+ * Counts: observed events (by action, not generated_by), auto-enrolled blocks,
+ * total bound blocks, and `item_count` — durable produced items per lane.
  */
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -34,21 +45,32 @@ export async function GET(req: Request): Promise<Response> {
     const limit = clampLimit(url.searchParams.get('limit'));
     const cursor = decodeCursor(url.searchParams.get('cursor'));
 
-    // The block predicate runs in SQL before orderBy+limit so block-less sessions
-    // never consume a limit slot and crowd out older valid ones.
+    // The evidence predicate runs in SQL before orderBy+limit so evidence-free
+    // sessions never consume a limit slot and crowd out older valid ones.
     const sessions = await db
       .select({
         id: learning_session.id,
         entrypoint: learning_session.entrypoint,
         status: learning_session.status,
         source_asset_ids: learning_session.source_asset_ids,
+        started_at: learning_session.started_at,
+        ended_at: learning_session.ended_at,
         created_at: learning_session.created_at,
+        doc_title: source_document.title,
+        agent_lane: sql<boolean>`${agentEvidenceSql(learning_session.id)}`,
       })
       .from(learning_session)
+      .leftJoin(source_document, eq(learning_session.source_document_id, source_document.id))
       .where(
         and(
           eq(learning_session.type, 'ingestion'),
-          sql`exists (select 1 from ${question_block} where ${question_block.ingestion_session_id} = ${learning_session.id})`,
+          sql`(
+            exists (
+              select 1 from ${question_block} qb
+              where qb.ingestion_session_id = ${learning_session.id}
+            )
+            or ${agentEvidenceSql(learning_session.id)}
+          )`,
           cursor
             ? or(
                 lt(learning_session.created_at, cursor.createdAt),
@@ -109,20 +131,75 @@ export async function GET(req: Request): Promise<Response> {
     const blockBySid = new Map(blockAgg.map((b) => [b.sid, b]));
     const obsBySid = new Map(obsAgg.map((o) => [o.sid, o.obs]));
 
-    // SQL already enforced at least one block. Do not post-filter, and keep
-    // zero-observation sessions visible.
+    // Agent sessions on this page: durable items = draft blocks (actor-scoped
+    // `draft:` key) + submitted question roots not already counted via a draft.
+    const agentIds = pageSessions.filter((s) => s.agent_lane).map((s) => s.id);
+    const agentItemCount = new Map<string, number>();
+    if (agentIds.length > 0) {
+      const draftRows = await db
+        .select({ sid: question_block.ingestion_session_id, id: question_block.id })
+        .from(question_block)
+        .where(
+          inArray(
+            question_block.ingestion_session_id,
+            agentIds.map((id) => `draft:ingestion_agent:${id}`),
+          ),
+        );
+      const draftIdsBySession = new Map<string, Set<string>>();
+      for (const row of draftRows) {
+        const sessionId = row.sid.slice('draft:ingestion_agent:'.length);
+        const set = draftIdsBySession.get(sessionId) ?? new Set<string>();
+        set.add(row.id);
+        draftIdsBySession.set(sessionId, set);
+      }
+      const questionRows = await db
+        .select({ source_ref: question.source_ref, metadata: question.metadata })
+        .from(question)
+        .where(
+          and(
+            inArray(
+              question.source_ref,
+              agentIds.map((id) => `ingestion_agent:${id}`),
+            ),
+            sql`${question.parent_question_id} is null`,
+          ),
+        );
+      for (const sid of agentIds) {
+        const draftIds = draftIdsBySession.get(sid) ?? new Set<string>();
+        let roots = 0;
+        let linked = 0;
+        for (const q of questionRows) {
+          if (q.source_ref !== `ingestion_agent:${sid}`) continue;
+          roots += 1;
+          const draftBlockId = (q.metadata as Record<string, unknown> | null)?.draft_block_id;
+          if (typeof draftBlockId === 'string' && draftIds.has(draftBlockId)) linked += 1;
+        }
+        agentItemCount.set(sid, draftIds.size + (roots - linked));
+      }
+    }
+
+    // SQL already enforced at least one evidence leg. Do not post-filter, and
+    // keep zero-observation sessions visible.
     const rows = pageSessions.map((s) => {
       const agg = blockBySid.get(s.id);
+      const blockCount = Number(agg?.total ?? 0);
+      const itemCount = s.agent_lane ? (agentItemCount.get(s.id) ?? 0) : blockCount;
       return {
         id: s.id,
         entrypoint: s.entrypoint,
         status: s.status,
+        path: s.agent_lane ? ('agent' as const) : ('extract' as const),
+        title: s.doc_title ?? null,
+        title_source: s.doc_title != null ? ('source_document' as const) : null,
         source_asset_ids: s.source_asset_ids,
         observation_count: Number(obsBySid.get(s.id) ?? 0),
         auto_enrolled_count: Number(agg?.enrolled ?? 0),
-        block_count: Number(agg?.total ?? 0),
+        block_count: blockCount,
+        item_count: itemCount,
         // Unix seconds, matching the blocks route.
         created_at: Math.floor(s.created_at.getTime() / 1000),
+        started_at: Math.floor(s.started_at.getTime() / 1000),
+        ended_at: s.ended_at == null ? null : Math.floor(s.ended_at.getTime() / 1000),
       };
     });
 

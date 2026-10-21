@@ -9,15 +9,9 @@
 // to deterministic composeDailyStream. composeDailyStream stays the pure legacy/fallback
 // core; this module owns the async signal/LLM/sampler path.
 
-import { inArray } from 'drizzle-orm';
 import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
-import { question } from '@/db/schema';
-import {
-  type CandidateInput,
-  type CollectedSignal,
-  collectCandidateSignals,
-} from './candidate-signals';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { planNonDueSelection } from './non-due-selection-plan';
 import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {
@@ -43,8 +37,8 @@ import {
   presentNonDueQuestion,
   presentPracticePaper,
 } from './stream-item-presentation';
+import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from './task-runtime';
-import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
 
@@ -105,9 +99,7 @@ const DEFAULT_MAX = 30;
 const FRONTIER_QUOTA_RATIO = 0.2;
 
 // ───────────────────────────────────────────────────────────────────────────
-// 候选富化：variant/new_check 候选只带 questionId，需补 kind/knowledge_ids/difficulty
-// 才能算 MFI（candidate-signals 据此聚合 θ̂_min + recall 路由 + b 弱锚）。批量点查
-// question 表（一次 inArray），缺字段 → undefined（信号层退化为 MFI-less，不 throw）。
+// 非到期候选的编排角色与呈现标签；题目信号输入由共享只读 owner 读取。
 // ───────────────────────────────────────────────────────────────────────────
 
 interface NonDueRaw {
@@ -116,65 +108,8 @@ interface NonDueRaw {
   knowledgeLabel?: string;
 }
 
-/** 非到期候选在本模块内部的角色（与 CandidateInput.role 同集，去 'due'/'paper'）。 */
+/** 非到期候选在本模块内部的编排角色。 */
 type SelectionOrchestratorCandidateRole = 'variant' | 'new_check' | 'frontier';
-
-async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<CandidateInput[]> {
-  if (raws.length === 0) return [];
-  const qids = [...new Set(raws.map((r) => r.questionId))];
-  const rows = await db
-    .select({
-      id: question.id,
-      kind: question.kind,
-      knowledge_ids: question.knowledge_ids,
-      difficulty: question.difficulty,
-      // L3 — source 透传到 CandidateInput（family_key 解析所需）。
-      source: question.source,
-    })
-    .from(question)
-    .where(inArray(question.id, qids));
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return raws.map((raw) => {
-    const q = byId.get(raw.questionId);
-    return {
-      refKind: 'question' as const,
-      refId: raw.questionId,
-      // CandidateInput.role 用 core role 集（'diagnostic'/'new_check'/'frontier'/...）。变体
-      // 候选走诊断角色（可换变体 → 进 MFI 评分）；new_check / frontier 候选保各自角色，照常
-      // 经 collectCandidateSignals → MFI/diagnostic 权重 → sampleByWeight（与非到期候选同流）。
-      role:
-        raw.role === 'new_check'
-          ? ('new_check' as const)
-          : raw.role === 'frontier'
-            ? ('frontier' as const)
-            : ('diagnostic' as const),
-      // （fail-open→fail-closed）：DB question.kind 是自由文本标签
-      // （；历史脏数据 / 收缩遗留 / 手填都可能不在 KNOWN 词表内）。
-      // 裸透传会把无法分类的标签原样传给 collectQuestionSignal → rotationClassForKind
-      // 返 undefined → `=== 'recall'` 为假 → recallLocked=false → 题被 sampler 抽样，
-      // 违反铁律③（身份不明的题不得被抽样/MFI 评分）。
-      // 故在此按旋转分类表校验：可分入 recall/application 的 KNOWN 标签 → 传真 kind；
-      // 词表外/缺失 → 传 undefined，落到 collectQuestionSignal 的
-      // `cand.kind ? … : true` 保守分支 → recallLocked（不抽样）。
-      kind: resolveRotatableKind(q?.kind),
-      knowledgeIds: q?.knowledge_ids,
-      difficulty: q?.difficulty,
-      // L3 — source for family_key resolution (undefined → family lookup skipped).
-      source: q?.source,
-    };
-  });
-}
-
-/**
- * 把 DB 读到的 question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成
- * **可旋转分类**的标签或 undefined。词表外的值（含 null/缺失）→ undefined，使
- * collectQuestionSignal 走 fail-closed recall-lock 分支。
- * 边界从「enum 成员」改为「rotationClassForKind 可分类」——同一张 KNOWN
- * 标签表，行为不变。
- */
-function resolveRotatableKind(kind: string | null | undefined): string | undefined {
-  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // 主入口。
@@ -264,7 +199,7 @@ export async function composeSoftmaxStream(
   // 都退 legacy（日常工具不能 throw 出去）。
   let signals: CollectedSignal[];
   try {
-    const candidates = await enrichCandidates(db, nonDueRaws);
+    const candidates = await readStreamSelectionCandidates(db, nonDueRaws);
     signals = await collectCandidateSignals(db, candidates);
   } catch (err) {
     console.warn('[softmax-selection] candidate collection failed → legacy fallback', {
