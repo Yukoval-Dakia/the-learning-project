@@ -296,6 +296,7 @@ export async function executeJudgeWorkflow(
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
 
+export type { PlacementProfileResponse } from './api/placement-contracts';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -307,5 +308,5 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
-
+export { readPlacementProfile } from './server/placement-profile';
 export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';

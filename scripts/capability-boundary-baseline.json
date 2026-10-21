@@ -940,6 +940,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b086d261-5d56-494a-8d85-85857d1031b9",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readPlacementProfile",
+      "targetModule": "src/capabilities/practice/server/placement-profile.ts",
+      "targetSymbol": "readPlacementProfile",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/profile-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start function calls the host-bound profile reader, which dynamically imports this complete operation. The retained HTTP adapter directly calls the same owner.",
+      "rationale": "Practice owns goal validation, scope resolution, complete profile assembly, full-set counts and ordering. Host binding preserves the hydrated registry and optional native loader graph used by HTTP.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c035b586-df8a-48c5-9a21-dce8d2b58fc9",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -1442,6 +1462,46 @@
       "symbols": ["writeJobEvent"],
       "issue": "YUK-1572",
       "owns": "Events owns job-event persistence on the supplied transaction. Copilot owns legacy enqueue-failure compensation under the existing dispatch lock; this dependency moves from api/chat.ts without increasing the owner-pair total.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/placement-profile.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the typed API error contract. Practice owns complete profile reading; HTTP retains errorResponse, so splitting ApiError adds a physical reference rather than being entirely net zero.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/placement-profile.ts",
+      "module": "src/kernel/read-models/mastery-projection.ts",
+      "kind": "value",
+      "symbols": ["getMasteryProjection"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the mastery projection facts. Practice owns scope, profile assembly, counts and ordering; the same dependency moves from the HTTP adapter.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/placement-profile.ts",
+      "module": "src/server/calibration/axis-writer.ts",
+      "kind": "value",
+      "symbols": ["readLearnerAxisStates"],
+      "issue": "YUK-1358",
+      "owns": "Calibration owns the existing read-only axis facts. Practice preserves their optional profile projection; the same dependency moves from the HTTP adapter without changing the axis owner.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/placement-profile.ts",
+      "module": "src/server/coldstart/propagate-priors.ts",
+      "kind": "value",
+      "symbols": ["loadDayOnePriors"],
+      "issue": "YUK-1358",
+      "owns": "Coldstart owns the existing flag, native loader and prior computation. Practice preserves optional prior fields in the complete profile read; the same dependency moves from the HTTP adapter.",
       "date": "2026-10-21"
     }
   ],
