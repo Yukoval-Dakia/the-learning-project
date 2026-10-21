@@ -41,7 +41,6 @@ export const physicsProfile: SubjectProfile = {
     teachingStyle: '先检查物理量与单位是否匹配，再给推导路径，最后做量纲检验。',
     checkQuestionPolicy: '检查题应聚焦一个公式应用、单位换算或量纲分析。',
     learningIntentPolicy: '把模糊目标改写成具体物理量推导、定律应用或单位换算练习。',
-    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },
@@ -117,7 +116,6 @@ export const physicsProfile: SubjectProfile = {
   // First-batch source whitelist candidates; owner confirmation still pending.
   // Subject-specific sites are mostly paywalled, so only these general sources.
   sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
-  // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 yuwen/math); 计算题走通用次序。
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },

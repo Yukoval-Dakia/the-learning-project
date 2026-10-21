@@ -1,4 +1,4 @@
-// YUK-372 L5 (YUK-361 Phase 8 wire-up) — 供给目标发现 + 派发的夜间 job。
+// 供给目标发现 + 派发的夜间 job。
 //
 // 结构上仿 item_prior_backfill.ts：纯发现（discoverSupplyTargets，零写零 LLM）→
 // 确定性缺口扫描得 QuestionSupplyTarget[] → dispatchSupplyTargets 把每个目标派到
@@ -6,21 +6,19 @@
 // （OCR）两条创建路径产生的「KC 前沿但缺题」缺口都被此夜扫兜住——无需每条创建路径埋
 // hook。
 //
-// ── 红线：成本（G-COST）─────────────────────────────────────────────────────
+// ── 红线：成本 ───────────────────────────────────────────────────────────────
 // 这个 cron 让付费获取（Tavily web 找题 + LLM 生成/验证）**自动**发生。唯一的防 job-spam
-// 闸是 dispatcher 的 7d query-based fingerprint cooldown（recentDispatchExists，commit
-// 30784420 review FINDING #1/#2）：同一未满足缺口在 7 天窗内只真派一次后台 job，其余扫描
-// 命中 cooldown → status='skipped'，不再 boss.send。本 job **依赖** dispatcher 这层 cooldown
-// 作为成本护栏——绝不在此处绕过 dispatcher 直发队列。YUK-758 起本 job 无自身 cron，由夜间
-// orchestrator 在标定链（item_prior → recalibration）之后触发，让缺口判定读到 firm 过的
-// b_calib（manifest.ts 的 dependsOn 硬边即此保证）。（旧注「mastery 夜链」已删——该 job
-// 从不存在，mastery_state 在线写入；YUK-377 复审 §6.4。）
+// 闸是 dispatcher 的 7d query-based fingerprint cooldown（recentDispatchExists）：同一未满足
+// 缺口在 7 天窗内只真派一次后台 job，其余扫描命中 cooldown → status='skipped'，不再
+// boss.send。本 job **依赖** dispatcher 这层 cooldown 作为成本护栏——绝不在此处绕过
+// dispatcher 直发队列。本 job 无自身 cron，由夜间 orchestrator 在标定链（item_prior →
+// recalibration）之后触发，让缺口判定读到 firm 过的 b_calib（manifest.ts 的 dependsOn
+// 硬边即此保证）。
 //
-// ── 红线：草稿排除（G5）+ 只读消费（G3）─────────────────────────────────────
-// 候选 KC 的题池由 discoverSupplyTargets → loadQuestionPool 提供，后者已带 draft 过滤
-// （commit 4cdf0577）。本 job **不**新增任何绕过该过滤的 active-surface 查询。dispatcher
-// 只 enqueue 既有队列 + emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 +
-// 派发，不污染标定轴。
+// ── 红线：草稿排除 + 只读消费 ────────────────────────────────────────────────
+// 候选 KC 的题池由 discoverSupplyTargets → loadQuestionPool 提供，后者已带 draft 过滤。
+// 本 job **不**新增任何绕过该过滤的 active-surface 查询。dispatcher 只 enqueue 既有队列 +
+// emit 观测事件，永不写题的 b 锚（item difficulty）——纯只读消费 + 派发，不污染标定轴。
 
 import type { Job } from 'pg-boss';
 import type { DispatchResult } from '@/capabilities/practice/public';
@@ -62,7 +60,7 @@ type DepsOverride = {
   /** dispatcher 注入（DB 测试可注入 fake enqueue / cooldown / tavilyAvailable）。 */
   dispatchDeps?: DispatchDeps;
   /**
-   * Codex review F3 — 本轮最多派发多少个供给目标（防一次 cron 打爆付费队列）。default 25。
+   * 本轮最多派发多少个供给目标（防一次 cron 打爆付费队列）。default 25。
    */
   maxPerRun?: number;
   /**
@@ -70,11 +68,11 @@ type DepsOverride = {
    * 不走发现器的深度阈值，也不用 maxPerRun 截断。
    */
   returnStock?: boolean;
-  /** YUK-761 — 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
+  /** 尾部 placement starter 恢复清扫器的注入（DB 测试可注入 fake dispatch / now）。 */
   placementRecovery?: PlacementStarterRecoveryDeps;
 };
 
-// ── 红线：per-run 派发硬顶（G-COST，Codex review F3）──────────────────────────
+// ── 红线：per-run 派发硬顶 ───────────────────────────────────────────────────
 // 这是**防事故硬顶**，不是紧限：cron 让付费获取（Tavily web 找题 + LLM 生成/验证）自动发生，
 // 而 dispatcher 的 7d fingerprint cooldown 在**首跑**（cooldown 尚未生效前）拦不住——首跑会把
 // discoverSupplyTargets 发现的**全部**缺口一次性 boss.send，首部署 / 大缺口积压时可一次性 flood
@@ -88,9 +86,9 @@ const DEFAULT_MAX_PER_RUN = 25;
 export interface QuestionSupplyNightlyResult {
   /** discoverSupplyTargets 发现的供给目标**总数**（缺口数，per-run cap 之前）。 */
   discovered: number;
-  /** 本轮实际进入派发的目标数（= min(discovered, maxPerRun)，F3 硬顶后）。 */
+  /** 本轮实际进入派发的目标数（= min(discovered, maxPerRun)，硬顶后）。 */
   considered: number;
-  /** per-run cap 截掉、留待下轮的目标数（discovered − considered，F3 观测）。 */
+  /** per-run cap 截掉、留待下轮的目标数（discovered − considered）。 */
   deferred: number;
   /** 真派到后台队列的目标数（status='dispatched'）。 */
   dispatched: number;
@@ -101,7 +99,7 @@ export interface QuestionSupplyNightlyResult {
   /** 派发抛错的目标数（status='failed'）。 */
   failed: number;
   /**
-   * YUK-761 — 尾部 placement starter claim 恢复清扫结果（重驱 stranded pending_dispatch +
+   * 尾部 placement starter claim 恢复清扫结果（重驱 stranded pending_dispatch +
    * 收割 zombie retry_scheduled）。见 server/placement-starter-recovery.ts。
    */
   placementStarterRecovery: PlacementStarterRecoveryResult;
@@ -273,7 +271,7 @@ async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promis
     },
   });
   if (targets.length === 0) return emptyTally();
-  // F3 per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
+  // per-run 硬顶：targets 已按 priority 降序（target-discovery.ts），slice top-N 即派最高
   // 优先级的 N 个，其余留下轮（截掉的目标不 dispatch ⇒ 无 fingerprint 落库 ⇒ 无 cooldown 副作用）。
   const dispatchTargets = targets.slice(0, deps.maxPerRun ?? DEFAULT_MAX_PER_RUN);
   if (dispatchTargets.length === 0) return emptyTally(targets.length);
@@ -283,7 +281,7 @@ async function runSupplyDiscoveryAndDispatch(db: Db, deps: DepsOverride): Promis
 
 /**
  * 端到端夜扫：发现供给目标 → 写 observe-only inventory dual-read → 派发到既有获取面 →
- * **收尾**跑 placement starter claim 恢复清扫（YUK-761）。不新增 AI task；shadow 写入失败由
+ * **收尾**跑 placement starter claim 恢复清扫。不新增 AI task；shadow 写入失败由
  * discovery seam 隔离，不改变 targets 或派发。空目标时供给腿零派发早返回（不触付费 job），
  * 但收尾清扫**照跑**——stranded claim 的存在与今夜有无供给缺口无关。
  */
@@ -312,21 +310,21 @@ export async function runQuestionSupplyNightly(
     );
   }
 
-  // YUK-761 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（YUK-452
-  // Phase B 建好但一直无消费者的基建）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与
-  // 供给腿同属「缺题自愈」职责，且共享同一 DLQ 重试语义。清扫器自身分 leg / claim / 内层三环
-  // 隔离失败，并对每个 claim 做条件 UPDATE 领取（幂等、不双发）。
+  // 收尾步：消费 placement_starter_claim_recovery_idx / next_reconcile_at（基建早已建好但
+  // 一直无消费者）。挂在这只既有 nightly job 尾部而非新开 cron 面——它与供给腿同属「缺题
+  // 自愈」职责，且共享同一 DLQ 重试语义。清扫器自身分 leg / claim / 内层三环隔离失败，并对
+  // 每个 claim 做条件 UPDATE 领取（幂等、不双发）。
   //
   // **宿主隔离（必须）**：整轮清扫的 top-level 抛错在此就地吞掉 + loud log，绝不冒泡。理由有
   // 二：① 供给腿此刻**可能已经派出付费 job**，让 job 失败 → pg-boss 重投 → 整轮供给发现 + 派发
   // 重跑（只有 dispatcher 的 7d fingerprint cooldown 挡着，不是白挡但也不该主动去撞）；
-  // ② YUK-758 起 question_supply_nightly 是编排 DAG 成员，节点 failed 会让其**硬下游按
-  // skipped 语义整片跳过**——爆炸半径从「一只 job」变成「一条子树」。恢复清扫是尽力而为的
+  // ② 本 job 是编排 DAG 成员，节点 failed 会让其**硬下游按 skipped 语义整片跳过**——
+  // 爆炸半径从「一只 job」变成「一条子树」。恢复清扫是尽力而为的
   // 后台卫生工作，没有任何资格拿走那条子树。失败留在 errored 标里由日志/结果面暴露。
   //
   // 仍存在的、**故意不修**的缺口：本 job 作为 DAG 成员若被硬上游 failed/skipped 连带跳过，
   // 整个节点（含本清扫）今夜不跑。这对清扫器无害——claim 持久、游标已过期，下一轮自然接上；
-  // 为它另开一条 cron 面就是「新开 cron 面」的反面教材，且与本票范围相悖。
+  // 为它另开一条 cron 面只会再添一个需要守护的调度面。
   let placementStarterRecovery: PlacementStarterRecoveryResult;
   try {
     placementStarterRecovery = await sweepStalePlacementStarterClaims(db, deps.placementRecovery);
@@ -338,7 +336,7 @@ export async function runQuestionSupplyNightly(
     placementStarterRecovery = emptyPlacementStarterRecoveryResult({ errored: true });
   }
 
-  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义与 YUK-761 之前逐字一致。**但先把
+  // 供给腿的原错在清扫跑完后照常冒泡 → pg-boss DLQ 重试语义保持不变。**但先把
   // 清扫状态喊出来**：一旦从这里 throw，下面的 return 不会发生，handler 的消费检查也就永远看不到
   // 这一轮的 placementStarterRecovery——恰恰在「供给腿也炸了」这种最该看清全貌的时刻信号最哑。
   if (supplyError !== undefined) {
@@ -350,13 +348,13 @@ export async function runQuestionSupplyNightly(
 }
 
 /**
- * YUK-761 — emit the recovery sweep's failure/degradation signal at the job boundary.
+ * emit the recovery sweep's failure/degradation signal at the job boundary.
  *
- * Isolating the sweep keeps it from taking the host (and, since YUK-758, the host's whole
- * hard-downstream DAG subtree) down. But a flag nobody reads is the same as no signal at all: the
- * job would report success with its recovery step silently dead — precisely the 建成不通电 shape
- * this ticket exists to close, one level up. Hence explicit, greppable lines. Deliberately never
- * throws: staying green on a sweep failure is the entire point of the isolation.
+ * Isolating the sweep keeps it from taking the host (and, as a DAG member, the host's whole
+ * hard-downstream subtree) down. But a flag nobody reads is the same as no signal at all: the
+ * job would report success with its recovery step silently dead — precisely the wired-but-dead
+ * shape this guard exists to prevent, one level up. Hence explicit, greppable lines. Deliberately
+ * never throws: staying green on a sweep failure is the entire point of the isolation.
  *
  * Called from BOTH exits — the normal one and the supply-error one — so the signal does not
  * disappear exactly when the run is worst.

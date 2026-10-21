@@ -542,6 +542,22 @@
       "from": 51,
       "to": 50,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-21",
+      "from": 12,
+      "to": 10,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-21",
+      "from": 50,
+      "to": 49,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -931,6 +947,30 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/harness-scoreboard.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": [
+        "errorResponse"
+      ],
+      "issue": "YUK-1557",
+      "owns": "HTTP error envelope for the harness scoreboard read route",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/harness-scoreboard.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": [
+        "writeEvent"
+      ],
+      "issue": "YUK-1557",
+      "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/observability/api/custom-providers.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
@@ -1009,6 +1049,51 @@
       "to": 1610,
       "issue": "YUK-439",
       "responsibilityReason": "Settlement writes the sealed calibration evidence row from the verdict already used for grading (theta abstain does not exclude evidence), captures the PRE-attempt theta snapshot, and deletes evidence on revert with a same-transaction posterior-to-prior repair when the last row is removed. Grading and FSRS bodies are unchanged."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "date": "2026-10-21",
+      "baseBlob": "f89e7490fdffbd02aba58a50e08d70a651fad623",
+      "from": 1939,
+      "to": 1940,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the per-question difficulty sentence on the quiz_gen store event; no new responsibility, one event payload field."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "4e773f14f1c7828c717a4cc59f4d1da67c687570",
+      "from": 1247,
+      "to": 1267,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Record the SourcingTask run identity and the one-line difficulty reason on the submit_question store event / created_by; the publication and verify paths are unchanged."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-21",
+      "baseBlob": "99be5acde14abcc87e6f715e21e56ade31c7f304",
+      "from": 4966,
+      "to": 4974,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Add nullable system_config.expires_at for temporary overrides; additive column, no new table or writer family."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-21",
+      "baseBlob": "8ad42e79918f59b7bc9ede7bf60b220753581ba8",
+      "from": 2045,
+      "to": 2055,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stamp the active ai_task_runs.id onto domain and remote-MCP tool logs so one run owns its tool evidence."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-21",
+      "baseBlob": "213b6c6b7607e57af0a236e98c9ff8a33d28850a",
+      "from": 1453,
+      "to": 1479,
+      "issue": "YUK-1557",
+      "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
     },
     {
       "path": "src/db/schema.ts",
@@ -1205,7 +1290,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 387,
+      "total": 384,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -1240,7 +1325,7 @@
         "ingestion -> records": 1,
         "ingestion -> session": 8,
         "knowledge -> advisory-locks": 5,
-        "knowledge -> ai": 12,
+        "knowledge -> ai": 10,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
@@ -1261,7 +1346,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 50,
+        "practice -> ai": 49,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,

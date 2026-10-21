@@ -1,6 +1,5 @@
 // Inverse pure mapping between SubjectProfile and the six trait payloads, plus
-// the assembly version. Browser-safe. Assembly reproduces the existing profile
-// shape so server consumers see no change.
+// the assembly version. Browser-safe.
 
 import type { SubjectProfile } from './profile-schema';
 import type { SubjectTraitPayloads } from './trait-schemas';

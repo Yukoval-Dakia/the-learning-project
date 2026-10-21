@@ -21,6 +21,8 @@ export const DifficultyEvidence = z
     confidence: z.number().min(0).max(1),
     observed_at: z.string().datetime({ offset: true }).optional(),
     source_route: z.string().min(1).optional(),
+    /** YUK-1557 — one-line producer rationale; absent falls back to the deterministic basis sentence. */
+    reason: z.string().trim().min(1).max(500).optional(),
   })
   .superRefine((evidence, ctx) => {
     if (evidence.scale === 'loom_difficulty_1_5' && (evidence.value < 1 || evidence.value > 5)) {
@@ -65,6 +67,7 @@ export function buildProducerDifficultyEvidence(
   difficulty: number,
   sourceRoute: string,
   observedAt?: Date,
+  reason?: string,
 ): DifficultyEvidenceT {
   // Parse through the producer schema so the item_calibration boundary is enforced
   // by construction, even if a future edit parameterizes basis/value here.
@@ -76,7 +79,18 @@ export function buildProducerDifficultyEvidence(
     confidence: PRODUCER_ESTIMATE_CONFIDENCE,
     ...(observedAt ? { observed_at: observedAt.toISOString() } : {}),
     source_route: sourceRoute,
+    ...(reason ? { reason } : {}),
   });
+}
+
+/**
+ * YUK-1557 — the one-line answer to "why is this question difficulty N?".
+ * Deterministic from stored evidence; a producer-supplied reason wins.
+ */
+export function explainDifficultyEvidence(evidence: DifficultyEvidenceT): string {
+  if (evidence.reason) return evidence.reason;
+  const source = evidence.source_route ? ` via ${evidence.source_route}` : '';
+  return `${evidence.basis} ${evidence.value} on ${evidence.scale}${source} (confidence ${evidence.confidence})`;
 }
 
 export function buildSourceLabelDifficultyEvidence(input: {

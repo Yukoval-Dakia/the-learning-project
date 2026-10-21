@@ -29,6 +29,7 @@ import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
+  explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 
@@ -36,11 +37,7 @@ import {
   type NormalizedAuthorStructured,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
-import {
-  type QuizGenMetadataT,
-  type QuizGenPlanT,
-  type QuizGenQuestionT,
-} from '@/core/schema/quiz_gen';
+import type { QuizGenMetadataT, QuizGenPlanT, QuizGenQuestionT } from '@/core/schema/quiz_gen';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -484,7 +481,7 @@ async function prepareQuizGeneration(params: RunQuizGenParams) {
   const exaCfg = buildExa();
   const piToolMounts: PiToolMount[] = [
     piDomainMount(domainMountOptions),
-    ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES)] : []),
+    ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES, db)] : []),
   ];
   const allowedTools = [
     ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
@@ -1566,6 +1563,10 @@ async function emitQuizGenerationEvent(
       plan_cost_micro_usd: costUsdToMicroUsd(evidence.planRunResult?.cost_usd),
       stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
       difficulty_evidence: difficultyEvidenceByQuestion,
+      difficulty_reason_by_question: difficultyEvidenceByQuestion.map((entry) => ({
+        question_id: entry.question_id,
+        reason: explainDifficultyEvidence(entry.evidence),
+      })),
       exact_duplicate_count: exactDuplicates.length,
       exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
         (duplicate) => duplicate.knowledge_merge_status === 'merged',

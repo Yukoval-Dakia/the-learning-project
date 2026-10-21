@@ -1,8 +1,8 @@
-// YUK-193 — POST /api/questions/[id]/solve/[sid]/hint
+// POST /api/questions/[id]/solve/[sid]/hint
 //
 // Request an escalating Socratic hint for an active solve session. Reuses the
 // teaching orchestrator's TeachingTurnTask, seeded with the worked solution, to
-// return the minimal next step WITHOUT revealing the full solution (spec §3.2).
+// return the minimal next step WITHOUT revealing the full solution.
 import { SolveError, planSolveHintOutcome } from '@/capabilities/practice/server/solve-session';
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
@@ -31,7 +31,7 @@ export async function createHintRequest(
     }
     const hintIndex = parsed.data ? parsed.data.hint_index : 0;
 
-    // YUK-1409 T4 — generation failures resolve to typed fallback/unavailable
+    // generation failures resolve to typed fallback/unavailable
     // help instead of an upstream 502; session/state errors keep their status.
     const outcome = await planSolveHintOutcome({
       db,

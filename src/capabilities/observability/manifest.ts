@@ -49,6 +49,7 @@ import {
   JobEventParamsSchema,
   JobEventStreamResponseSchema,
 } from './api/event-contracts';
+import { HarnessScoreboardResponseSchema } from './api/harness-scoreboard-contracts';
 import {
   AdminSubjectParamsSchema,
   AdminSubjectSchema,
@@ -492,6 +493,15 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-config').then((m) => m.GET),
       },
       {
+        method: 'GET',
+        path: '/api/admin/harness-scoreboard',
+        operationId: 'getHarnessScoreboard',
+        responses: { 200: HarnessScoreboardResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/harness-scoreboard').then((m) => m.GET),
+      },
+      {
         method: 'PATCH',
         path: '/api/admin/config',
         operationId: 'writeAdminConfig',
@@ -613,6 +623,22 @@ export const observabilityCapability = defineCapability({
         load: () =>
           import('@/server/boss/handlers/ai_task_run_reconcile').then(
             (m) => m.buildAiTaskRunReconcileHandler,
+          ),
+      },
+      // YUK-1557 / ADR-0075 C6-2 — zero-AI daily harness scoreboard projection.
+      // 05:10 sits after the night chain and before the morning reader traffic.
+      {
+        name: 'harness_scoreboard_daily',
+        schedule: {
+          cron: '10 5 * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'harness_scoreboard_daily',
+          singletonSeconds: 21_600,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/harness_scoreboard_daily').then(
+            (m) => m.buildHarnessScoreboardDailyHandler,
           ),
       },
     ],

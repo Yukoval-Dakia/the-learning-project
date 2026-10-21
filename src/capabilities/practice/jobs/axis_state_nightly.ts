@@ -1,4 +1,4 @@
-// YUK-445 (A11 — 谨慎 / 速度-精度轴) — nightly trigger for the EZ-diffusion axis descriptor.
+// Nightly trigger for the EZ-diffusion axis descriptor.
 //
 // runAxisStateBatch (src/server/calibration/axis-writer.ts) folds scored RT-bearing attempts
 // per primary KC and upserts the slow-varying (drift_v, boundary_a, ter) descriptor for every
@@ -8,7 +8,7 @@
 // touches no LIVE estimation engine and needs no dark-ship flag.
 //
 // provenance='adaptive' (the only live response source today) → boundary_a + ter persisted,
-// drift_v left NULL (confounded by adaptive item selection — A11 hard boundary). A non-adaptive
+// drift_v left NULL (confounded by adaptive item selection). A non-adaptive
 // probe-set would run a second batch with provenance='probe' to fill drift_v.
 //
 // cron 05:40 Asia/Shanghai: a clear slot after the data-prep chain (item_prior 04:20 /

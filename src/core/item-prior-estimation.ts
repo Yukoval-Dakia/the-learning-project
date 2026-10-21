@@ -1,5 +1,5 @@
 // 冷启动题目先验的确定性解释与合成；不执行任务或写入状态。
-// retained / staged 共用文本解释和成功 rep 集合的合成规则。
+// retained / staged 共用文本解释与成功 rep 的合成规则。
 
 import {
   ItemPriorDraft,
@@ -30,13 +30,10 @@ export function parseItemPriorOutput(text: string): ItemPriorDraftT {
   return parsed.data;
 }
 
-// ─── YUK-376 — LLaSA 学生模拟变体的解析 barrier ───────────────────────────
-//
-// 两段式：brace-slice + ItemPriorLlasaDraft Zod parse（模拟作答明细），再走
-// 本模块的确定性 1PL MLE 反推折回 ItemPriorDraftT。
-// 与上面 parseItemPriorOutput 同样的失败语义——throw 由 backfill job 当该题
-// 本轮跳过（不写 row，下轮重试）；覆盖度不足（distinct θ 档 < 4）在 invert
-// 侧 throw，同路径处理。
+// YUK-376 — LLaSA simulation parsing barrier. Brace-slice + schema parse, then the
+// deterministic 1PL MLE below folds the observations back into an ItemPriorDraft.
+// Failures throw and the backfill skips/retries this item; insufficient tier coverage
+// throws in the inversion.
 
 function parseItemPriorLlasaOutput(text: string): {
   simulation: ItemPriorLlasaDraftT;
@@ -64,31 +61,17 @@ function parseItemPriorLlasaOutput(text: string): {
   return { simulation: parsed.data, prior: inversion.prior, inversion };
 }
 
-// YUK-376 — LLaSA 学生模拟 → b 的确定性反推（纯函数，零 IO）。
-//
-// LLaSA（EMNLP 2024）间接学生模拟：ItemPriorLlasaTask 让 LLM 扮演多档能力
-// 学习者作答并自判对错，产 ItemPriorLlasaDraft；本模块把 (θ, correct) 观测
-// 点用 1PL（Rasch）极大似然反推成 ItemPriorDraftT（b_logit/confidence/
-// reasoning），供 applyItemPrior 走既有写路径（source='llm_prior_llasa'）。
-//
-// 反推口径（全部确定性，可复算）：
-//   - 观测 = 每条 simulated response 一个 (θ_j, y_j∈{0,1}) Bernoulli 点；
-//     p(θ)=σ(θ−b)，b̂ = argmax_b Σ_j [y_j·log σ(θ_j−b) + (1−y_j)·log(1−σ(θ_j−b))]，
-//     在 [-4,4] 网格（步长 0.01）上求 argmax（1PL 对数似然对 b 凹，网格足够）。
-//   - 删失（censoring）：全对 → b̂ 落到 -inf，约定报 min(θ)−1 并标 censored='low'；
-//     全错 → max(θ)+1，censored='high'。删失值是「至少比最外档还易/难一档」的
-//     保守读数，不是点估计——confidence 相应压低。
-//   - 覆盖度硬门：distinct θ 档 < LLASA_MIN_TIERS → throw（当本轮失败，调用方
-//     走既有 skip/retry 语义）——档位太少时反推没有形状信息。
-//   - confidence 启发式（写进 confidence 列的只是先验把握，不是真值）：
-//     interior 0.65 / censored 0.40 为基底，逐档 p̂ 单调不减 +0.15、
-//     存在相邻档 p̂ 下降（违反 1PL 单调性）−0.15，clamp [0.2, 0.85]。
-//     封顶 0.85：学生模拟仍是 LLM 先验，永远不该高置信。
+// YUK-376 — LLaSA simulation → b: deterministic 1PL (Rasch) MLE over a [-4,4] grid.
+// Each simulated response is a Bernoulli point (θ_j, y_j). All-correct/all-wrong is
+// censored to min(θ)−1 / max(θ)+1, with lower confidence. Fewer than four distinct θ
+// tiers throws. Confidence is heuristic: 0.65 interior / 0.40 censored base, ±0.15
+// for monotonicity, clamped to [0.2, 0.85] because an LLM prior should never be
+// high-confidence.
 
-/** 反推所需的最少 distinct θ 档数（5 档设计里容许缺 1 档）。 */
+/** Minimum distinct θ tiers (the 5-tier design tolerates one missing). */
 const LLASA_MIN_TIERS = LLASA_ABILITY_TIERS.length - 1;
 
-/** b 网格搜索界：±4 比 prompt 软引导的 ±3 外沿再多一档，删失读数落 ±3。 */
+/** b grid bounds: one tier beyond the prompt's ±3 soft guide. */
 const B_GRID_MIN = -4;
 const B_GRID_MAX = 4;
 const B_GRID_STEP = 0.01;
@@ -115,12 +98,11 @@ interface LlasaInversion {
 const sigmoid = (x: number): number => 1 / (1 + Math.exp(-x));
 
 /**
- * 把一次 LLaSA 模拟（ItemPriorLlasaDraft）折回 ItemPriorDraftT。
- * throws：distinct θ 档覆盖不足（< LLASA_MIN_TIERS）——调用方按既有失败语义
- * 当本轮跳过/重试，不写 row。
+ * Fold one LLaSA simulation into an ItemPriorDraft. Throws on insufficient tier
+ * coverage; the caller skips/retries.
  */
 function invertLlasaSimulation(draft: ItemPriorLlasaDraftT): LlasaInversion {
-  // 逐档聚合（theta_level 保留模型给的实际值，含插值档）。
+  // Aggregate per tier, keeping the model's actual theta values.
   const byTier = new Map<number, { correct: number; total: number }>();
   for (const r of draft.simulated_responses) {
     const cell = byTier.get(r.theta_level) ?? { correct: 0, total: 0 };
@@ -151,7 +133,7 @@ function invertLlasaSimulation(draft: ItemPriorLlasaDraftT): LlasaInversion {
   let logLik: number;
 
   if (totalCorrect === 0) {
-    // 全错：b 高于最强档。保守读数 = max θ + 1（删失，非点估计）。
+    // All wrong: b is above the strongest tier. Censored reading, not a point estimate.
     censored = 'high';
     bHat = strongest.theta + 1;
     logLik = points.length * Math.log(1 - sigmoid(strongest.theta - bHat));
@@ -160,7 +142,7 @@ function invertLlasaSimulation(draft: ItemPriorLlasaDraftT): LlasaInversion {
     bHat = weakest.theta - 1;
     logLik = points.length * Math.log(sigmoid(weakest.theta - bHat));
   } else {
-    // 1PL MLE 网格 argmax。
+    // 1PL MLE grid argmax.
     let best = -Infinity;
     let bestB = 0;
     for (let b = B_GRID_MIN; b <= B_GRID_MAX + 1e-9; b += B_GRID_STEP) {
@@ -178,10 +160,10 @@ function invertLlasaSimulation(draft: ItemPriorLlasaDraftT): LlasaInversion {
     logLik = best;
   }
 
-  // 单调性：逐档 p̂ 随 θ 不减（并列算不减）。
+  // Monotonicity: per-tier p̂ must not decrease with θ (ties count as monotone).
   const monotone = tiers.every((t, i) => i === 0 || t.p_hat >= (tiers[i - 1]?.p_hat ?? 0) - 1e-9);
 
-  // confidence 启发式（见文件头）。censored 压低 + 非单调压低。
+  // Confidence heuristic: censored or non-monotone lowers it.
   let confidence = censored === null ? 0.65 : 0.4;
   confidence += monotone ? 0.15 : -0.15;
   confidence = Math.min(0.85, Math.max(0.2, Math.round(confidence * 100) / 100));
@@ -205,39 +187,26 @@ function invertLlasaSimulation(draft: ItemPriorLlasaDraftT): LlasaInversion {
   };
 }
 
-// YUK-1034 — feature→b 同题 N 次重复采样的 median 聚合（纯函数，零 IO）。
-//
-// 实测动机（YUK-376 eval，docs/planning/2026-09-23-llasa-prior-eval.md 封存）：
-// feature→b 单次采样 within-question SD ≈ 0.30 mean / 0.28 median（30 题 × 3
-// reps，xiaomi/mimo-v2.5-pro）。同法 N 次采样取 b_logit median 是已验证的最便宜
-// 降噪杠杆——不改估计目标、不引入新链路，实测分布下 median-of-3 有效 SD 期望
-// ~0.17，成本随 reps 线性（≈+$0.0004/题·rep）。
-//
-// 聚合口径（全部确定性，可复算）：
-//   - b_logit：各成功 rep 的 median（偶数个 → 两中位均值，标准定义；奇偶对称
-//     不偏向任何一侧 rep）；
-//   - confidence：同取 median——重复采样压的是估计方差，不是模型自知把握，
-//     聚合置信度保持中位水平，不凭空拔高；
-//   - reasoning：取 b_logit 最接近 median 的那次 rep 的原文（该 rep 的特征
-//     分析最能代表聚合结论），追加聚合 provenance 后缀（成功/尝试数 + 各次
-//     b_logit）。reasoning 不落 item_calibration 列（applier 只写
-//     b/confidence）；各 rep 原始输出由各自 ai_task_run 行持久留痕，此处
-//     provenance 保证聚合值在任何 draft 消费点可读、可审计。
-//   - 失败 rep 由调用方丢弃后才进本函数；drafts 为空 → throw（调用方按既有
-//     单题失败语义 skip/重试，与单次失败同路径）。
+// YUK-1034 — median aggregation of N feature→b samples for one question. Measured
+// within-question SD was ≈0.30; median-of-3 cuts it to ≈0.17 at linear cost and
+// without changing the estimation target. Deterministic:
+//   - b_logit / confidence: median (even counts average the two middles).
+//   - reasoning: the rep closest to the median b, plus a provenance suffix. Raw rep
+//     outputs remain in ai_task_run.
+// Empty drafts throw; callers apply their normal per-item skip/retry.
 
 interface ItemPriorRepAggregation {
-  /** 聚合后的 draft：b_logit/confidence 取 median，reasoning 含 provenance 后缀。 */
+  /** Aggregated draft: median b/confidence, reasoning plus provenance. */
   draft: ItemPriorDraftT;
-  /** 各成功 rep 的 b_logit（升序）。 */
+  /** Successful rep b logits, ascending. */
   rep_b_logits: number[];
-  /** 聚合掉的成功 rep 数（= rep_b_logits.length）。 */
+  /** Number of successful reps aggregated. */
   succeeded: number;
-  /** 调用方声明的总尝试 rep 数（含失败丢弃）。 */
+  /** Total attempted reps, including discarded failures. */
   attempted: number;
 }
 
-/** 已升序数组的中位数；偶数个取两中位均值。空数组 → NaN（调用方保证非空）。 */
+/** Median of an ascending array; even counts average the middles. Empty → NaN. */
 function medianOfSorted(xs: readonly number[]): number {
   const n = xs.length;
   if (n === 0) return Number.NaN;
@@ -248,8 +217,8 @@ function medianOfSorted(xs: readonly number[]): number {
 const fmtB = (x: number): string => String(Number(x.toFixed(3)));
 
 /**
- * 把同一道题的 N 次 feature→b 采样折成一个 ItemPriorDraftT。
- * throws：drafts 为空（全部 rep 失败）——调用方按既有失败语义当本轮跳过。
+ * Fold N feature→b drafts into one. Throws when all reps failed; callers apply the
+ * normal per-item skip semantics.
  */
 function aggregateItemPriorRepDrafts(
   drafts: readonly ItemPriorDraftT[],
@@ -262,8 +231,8 @@ function aggregateItemPriorRepDrafts(
   const repBLogits = byB.map((d) => d.b_logit);
   const bMedian = medianOfSorted(repBLogits);
   const confMedian = medianOfSorted(drafts.map((d) => d.confidence).sort((a, b) => a - b));
-  // 代表 rep = b_logit 离 median 最近者。升序遍历 + 严格小于 ⇒ 平局确定性取
-  // 较小侧首个，不依赖输入顺序。
+  // Representative = closest b to the median. Ascending scan + strict less-than keeps
+  // ties deterministic and input-order independent.
   const representative = byB.reduce((best, d) =>
     Math.abs(d.b_logit - bMedian) < Math.abs(best.b_logit - bMedian) ? d : best,
   );
@@ -281,15 +250,14 @@ function aggregateItemPriorRepDrafts(
   };
 }
 
-/** 完成文本解释；方法专属的模拟结果与反推诊断留在本模块内。 */
+/** Explain the completion text; method-specific simulation/inversion stays local. */
 export function parseItemPriorDraft(method: 'feature' | 'llasa', text: string): ItemPriorDraftT {
   return method === 'llasa' ? parseItemPriorLlasaOutput(text).prior : parseItemPriorOutput(text);
 }
 
 /**
- * 合成已成功解释的 drafts；按计划次数选择首份或 median，而非成功份数。
- * feature 计划多次但全失败时，保留原聚合错误供 retained caller 处理；
- * staged caller 仍在进入本函数前处理空集合的 no-anchor 状态。
+ * Compose already-explained drafts: first draft for LLaSA/single-rep, median otherwise.
+ * Selection is by planned rep count, not success count.
  */
 export function aggregateItemPriorDrafts(
   method: 'feature' | 'llasa',

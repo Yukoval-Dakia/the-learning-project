@@ -92,7 +92,7 @@ export async function runJudgeRun(
   // 崩溃 → pg-boss redeliver。此时重跑 deferred settlement 会因 event PK=run_id 冲突炸，
   // 且会重复判分/双写 FSRS。守卫：attempt event 已存在 → 回填已发生，补齐缺失的
   // DONE 终态（供 SSE/poll 消费）后早返，绝不重判重写。见 recoverAlreadyPersisted；
-  // 同一条恢复路径也是 #1 重复投递竞态（catch 里）的落点。
+  // 同一条恢复路径也是重复投递竞态（catch 里）的落点。
   if (await attemptAlreadyPersisted(db, runId)) {
     return await recoverAlreadyPersisted(db, runId, meta.deliveryId);
   }
@@ -109,7 +109,7 @@ export async function runJudgeRun(
     },
   });
 
-  // #2 — tracks whether the backfill tx COMMITTED. If it did but the terminal DONE
+  // tracks whether the backfill tx COMMITTED. If it did but the terminal DONE
   // write then fails, we must rethrow (not write a misleading FAILED) so pg-boss
   // redelivers and the idempotency guard reconstructs the real DONE.
   let persistedOk = false;
@@ -135,7 +135,7 @@ export async function runJudgeRun(
     throw new NonRetryableJudgeRunError('unsupported judge_run caller');
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
-    // #2 — the backfill COMMITTED but the terminal DONE write threw: the run SUCCEEDED,
+    // the backfill COMMITTED but the terminal DONE write threw: the run SUCCEEDED,
     // only its terminal notification failed. Do NOT write a misleading FAILED — rethrow
     // so pg-boss redelivers and the idempotency guard reconstructs the real DONE from
     // the persisted judge event. (Writing FAILED here would be a lie about a committed run.)
@@ -147,7 +147,7 @@ export async function runJudgeRun(
       );
       throw err;
     }
-    // #1 (major) — DUPLICATE-DELIVERY RACE. pg-boss can hand the same job to a second
+    // DUPLICATE-DELIVERY RACE. pg-boss can hand the same job to a second
     // worker while the first is still inside its slow LLM call (expire window exceeded).
     // Both pass the entry guard (no attempt event yet). Worker A commits + writes DONE;
     // worker B's deferred settlement then dies on the event PK (id=runId already inserted).
@@ -167,7 +167,7 @@ export async function runJudgeRun(
     // A malformed job payload (Zod parse of body/profile/question snapshot, or an invalid
     // date) is a permanent defect: re-delivery would just re-fail identically and waste the
     // retry budget. Classify ZodError as non-retryable alongside our explicit marker.
-    // W5 #Tu1cZ — a persistence VALIDATION failure is permanent, not transient. Settlement
+    // a persistence VALIDATION failure is permanent, not transient. Settlement
     // throws `ApiError('corrupt_state', …, 422)` when an existing FSRS card cannot be parsed;
     // that is deterministic, so every redelivery re-runs a PAID judge before failing the same
     // way, burning the whole retry budget and ending as `retries_exhausted` — which also buries
@@ -190,13 +190,13 @@ export async function runJudgeRun(
           'judge_disposed',
           'attempt_conflict',
         ].includes(err.code));
-    // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
+    // will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
     // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"
     // rule into "every failure writes terminal FAILED", which told poll/SSE clients the run
     // was dead while pg-boss had a redelivery queued that would likely write DONE.
     const willRetry = !nonRetryable && meta.retryCount < meta.retryLimit;
-    // #6 — the raw error message stays SERVER-SIDE. The generic SSE face
+    // the raw error message stays SERVER-SIDE. The generic SSE face
     // (`/api/jobs/judge_run/[id]/events`) streams job_event payloads verbatim to clients, so
     // a DB error string / internal path / provider response fragment in `payload.error` was
     // leaking straight out. The payload now carries only a classified code; the raw message
@@ -264,7 +264,7 @@ export async function runJudgeRun(
     // `judge_run_dlq`. Either way no further delivery will change the outcome, so the run is
     // honestly dead and replay/UI must be told.
     //
-    // #3 (codex) — 这条终态写**不可吞错**（原先走 bestEffort）：非 retryable 分支写完就
+    // 这条终态写**不可吞错**（原先走 bestEffort）：非 retryable 分支写完就
     // return success，一旦这条 FAILED 写失败被吞掉，pg-boss 认为 job 成功、run 却无任何
     // 终态 → poll/SSE 永远 pending。与 DONE 侧同语义：写失败 → 抛出 → 重投递重试终态写
     // （耗尽则 DLQ 暴露），绝不静默成功。
@@ -298,7 +298,7 @@ export async function runJudgeRun(
 }
 
 /**
- * #6 — client-safe failure classification. The FAILED job_event payload is streamed
+ * client-safe failure classification. The FAILED job_event payload is streamed
  * verbatim over the generic SSE face, so it carries one of these coarse codes instead of
  * the raw error text (which is logged server-side only).
  */
@@ -310,7 +310,7 @@ function classifyJudgeRunFailure(err: unknown): string {
 }
 
 /**
- * W5 #Tu1cZ — is this a DETERMINISTIC persistence failure that redelivery cannot fix?
+ * is this a DETERMINISTIC persistence failure that redelivery cannot fix?
  *
  * Keyed on the ApiError `code`, not the HTTP status: 422 is also used for transient-ish
  * semantic rejections elsewhere, whereas `corrupt_state` specifically means stored state
@@ -328,7 +328,7 @@ async function attemptAlreadyPersisted(db: Db, runId: string): Promise<boolean> 
 }
 
 /**
- * 「回填已提交」的统一恢复路径——入口幂等守卫与 catch 里的重复投递竞态（#1）共用。
+ * 「回填已提交」的统一恢复路径——入口幂等守卫与 catch 里的重复投递竞态共用。
  *
  * 若终态 DONE 已在（崩在 DONE 写**之后**）→ 不再补写：一条精简的 {already_persisted}
  * DONE 会成为最后一条 DONE，terminalJudgeRunResult 就会丢掉真判词（poll/SSE 失去
@@ -373,10 +373,10 @@ async function bestEffortWriteJobEvent(
 }
 
 /**
- * #2 / #3 — terminal job_event 写，**故意不吞错**（与 bestEffort 相反）。一个失败的终态
+ * terminal job_event 写，**故意不吞错**（与 bestEffort 相反）。一个失败的终态
  * 写会让 run 卡在无终态（poll/SSE 永远 pending），故 throw 让上游触发 redelivery →
  * 幂等守卫重建终态。**所有**终态写都走它：happy-path DONE、already_persisted 恢复
- * DONE、以及 catch 里的 FAILED（#3：FAILED 曾走 bestEffort，写失败被吞 + 非 retryable
+ * DONE、以及 catch 里的 FAILED（FAILED 曾走 bestEffort，写失败被吞 + 非 retryable
  * 分支照常 return success ⇒ pg-boss 丢 job 而 run 无终态）。
  */
 async function writeTerminalJobEvent(
@@ -407,7 +407,7 @@ async function writeTerminalJobEvent(
 }
 
 /**
- * W5 #Tuey9 — in-process retry budget for a TERMINAL job_event write.
+ * in-process retry budget for a TERMINAL job_event write.
  *
  * Why this exists: redelivery is not a universal safety net for the terminal write. On the
  * FINAL delivery (`retryCount === retryLimit`) the pg-boss budget is already spent, so a
@@ -430,7 +430,7 @@ async function writeTerminalJobEvent(
  * committed and is never re-executed here, so there is no risk of a second judge or a second
  * FSRS write.
  *
- * Residual (documented, W3/YUK-777): if the DB is unreachable for the whole window we cannot
+ * Residual (documented): if the DB is unreachable for the whole window we cannot
  * durably record ANY terminal marker anywhere, so the run stays pending until the
  * domain-state-scan sweeper picks it up. No in-process scheme can close that.
  */
@@ -463,7 +463,7 @@ export function buildJudgeRunHandler(
   deps: JudgeRunDeps = {},
 ): (jobs: JobWithMetadata<JudgeRunJobData>[]) => Promise<void> {
   return async (jobs) => {
-    // #11 — per-job isolation. `batchSize:1` (handlers.ts) means today's batch is always a
+    // per-job isolation. `batchSize:1` (handlers.ts) means today's batch is always a
     // single job, so a throw could only ever abort "the rest of" an empty remainder. That
     // safety is INCIDENTAL, not designed: bump batchSize and one retryable throw would
     // abandon every later job in the batch (pg-boss fails the whole batch, and the skipped
@@ -474,7 +474,7 @@ export function buildJudgeRunHandler(
     for (const job of jobs) {
       const data = job.data;
       if (!data?.run_id || !data?.caller || !data?.submit) {
-        // W4 #TtZ8i — a silent `continue` returned success to pg-boss, which CONSUMED the job
+        // a silent `continue` returned success to pg-boss, which CONSUMED the job
         // with no terminal job_event anywhere: the file's core invariant (every run reaches
         // DONE/FAILED for poll/SSE) was violated precisely where nothing could ever fix it,
         // and `runJudgeRun`'s own malformed-payload guard (which DOES write FAILED) was

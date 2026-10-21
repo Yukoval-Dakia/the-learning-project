@@ -223,6 +223,20 @@
           "response": []
         },
         {
+          "name": "GET /api/admin/harness-scoreboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/harness-scoreboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "harness-scoreboard"]
+            },
+            "description": "harness 计分板：最近一次每日 M1–M6 确定性投影 + 记账健康检查\n\n**Notes:** 只读，需 x-internal-token。scoreboard=null 表示尚未跑过 harness_scoreboard_daily；stale>36h 为过期。m3/m4 的 basis=proxy 与 note 说明原始表只能给出代理口径；health 含缺失 numTurns/cache token、重复工具行、Exa 行与失败运行 null cost 计数。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/admin/judge-calibration",
           "request": {
             "method": "GET",
@@ -380,10 +394,10 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "admin", "config"]
             },
-            "description": "原子写入或重置注册配置（原生 provider/model 终态校验）\n\n**Notes:** 需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。",
+            "description": "原子写入或重置注册配置（原生 provider/model 终态校验）\n\n**Notes:** 需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。set 可带可选 expires_at（未来 ISO 时刻）；过期行在读取时 fall through 到 env/default，行本身保留审计。重复/未知键400、部署固定键409、非法模型/预算/过期时间422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"changes\": [\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.provider\",\n      \"value\": \"opencode-go\"\n    },\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.model\",\n      \"value\": \"glm-5.3-flash\"\n    }\n  ],\n  \"note\": \"Use the native Go preset\"\n}",
+              "raw": "{\n  \"changes\": [\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.provider\",\n      \"value\": \"opencode-go\"\n    },\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.model\",\n      \"value\": \"glm-5.3-flash\",\n      \"expires_at\": \"2026-11-01T00:00:00.000Z\"\n    }\n  ],\n  \"note\": \"Use the native Go preset\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -1,14 +1,11 @@
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
-// Phase 1d — weekly review report endpoint.
+// GET /api/review/weekly: weekly review report.
 //
 // Aggregates review event activity over a sliding window (default 7d, max 90d):
-//   - Per-day count + correct rate
-//   - Overall FSRS rating distribution
-//   - Top knowledge_ids by attempt:failure count in window
-//   - Top cause categories from effective failure causes
-//   - Total AI cost (cost_micro_usd sum across events in window)
+// count/correct rate per day, FSRS rating distribution, top knowledge_ids by
+// failure count, top effective cause categories, and total AI cost.
 //
-// Single-shot per page load; computed at request time (no view). Acceptable for
+// Single-shot per page load; computed at request time (no view). Acceptable at
 // single-user scale where the window is bounded and the event table is small.
 
 import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
@@ -87,7 +84,7 @@ export async function GET(req: Request): Promise<Response> {
       const cat = effectiveCauseForFailureAttempt(failure)?.primary_category;
       if (cat) causeCounts.set(cat, (causeCounts.get(cat) ?? 0) + 1);
     }
-    // YUK-1018 — misc_ category id 的显示回填（active misconception title）。
+    // misc_ category id 的显示回填（active misconception title）。
     const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
     const topCauses = [...causeCounts.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -171,7 +168,7 @@ export async function GET(req: Request): Promise<Response> {
       },
       totals: {
         reviews: reviews.length,
-        // YUK-1054 — failures 计【当前仍 effective 判错】的 attempt；已翻转的
+        // failures 计【当前仍 effective 判错】的 attempt；已翻转的
         // 原始执行收据不计入（双轨：原始 raw attempts 仍在流里，不改写历史）。
         failures: failures.length,
         cost_usd: totalCostMicroUsd / 1e6,

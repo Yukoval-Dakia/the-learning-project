@@ -1976,11 +1976,21 @@ export class PiAgentAdapter implements ExecutionAdapter {
     try {
       for (const mount of mounts) {
         if (mount.type === 'domain') {
-          tools.push(...buildPiDomainAgentTools(mount.options));
+          tools.push(
+            ...buildPiDomainAgentTools({
+              ...mount.options,
+              // YUK-1557 — the runner owns the active run identity; it stamps
+              // every bridge row even when a tool's spend owner uses another id.
+              logTaskRunId: args.runId,
+            }),
+          );
         } else if (mount.type === 'custom') {
           tools.push(...mount.tools);
         } else {
-          const handle = await deps.connectRemoteMcp(mount, args.initializeTimeoutMs);
+          const handle = await deps.connectRemoteMcp(mount, args.initializeTimeoutMs, {
+            taskRunId: args.runId,
+            taskKind: args.kind,
+          });
           remoteHandles.push(handle);
           tools.push(...handle.tools);
         }

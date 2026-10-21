@@ -418,7 +418,7 @@ export type CommitCandidateResult =
  */
 async function commitCandidate(
   db: Db,
-  ctx: { taskRunId: string; causedByEventId: string | null },
+  ctx: { taskRunId: string; logTaskRunId?: string; causedByEventId: string | null },
   input: Parameters<typeof executeStoreSourcedQuestion>[1],
   storeDeps: StoreSourcedQuestionDeps = {},
 ): Promise<CommitCandidateResult> {
@@ -427,6 +427,7 @@ async function commitCandidate(
       {
         db,
         taskRunId: ctx.taskRunId,
+        ...(ctx.logTaskRunId ? { logTaskRunId: ctx.logTaskRunId } : {}),
         ...(ctx.causedByEventId !== null ? { causedByEventId: ctx.causedByEventId } : {}),
       },
       input,
@@ -718,7 +719,13 @@ async function runWebRoute(
     ];
     const commit = await commitCandidate(
       run.db,
-      run,
+      {
+        // YUK-1557 — the store event / created_by must name the SourcingTask run
+        // that produced this candidate, not the deterministic executor scope id.
+        taskRunId: result.taskRunId ?? run.taskRunId,
+        logTaskRunId: result.taskRunId ?? run.taskRunId,
+        causedByEventId: run.causedByEventId,
+      },
       {
         source_route: 'sourcing_web',
         candidate: webCandidateToStoreInput(candidate),

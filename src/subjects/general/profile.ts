@@ -5,9 +5,8 @@ import type { SubjectProfile } from '../profile';
 // notation, generic Chinese voice. The sample subjects (yuwen/math/physics) are
 // examples, not the product's identity.
 //
-// `general` is deliberately not in KNOWN_SUBJECT_IDS: nodes are never tagged
+// `general` is deliberately not in BUILTIN_IDS: nodes are never tagged
 // with it, so it is never a goal-scope candidate or a derived subject axis.
-// Registry-backed fields reuse the minimal legal set already proven by yuwen.
 export const generalProfile: SubjectProfile = {
   id: 'general',
   version: '1.0.0',
@@ -38,7 +37,6 @@ export const generalProfile: SubjectProfile = {
     teachingStyle: '先给出依据，再解释判断过程，最后给出可复用规则。',
     checkQuestionPolicy: '检查题应短小，聚焦一个概念或判断点。',
     learningIntentPolicy: '把模糊目标改写成可练习的具体能力。',
-    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },
@@ -111,7 +109,6 @@ export const generalProfile: SubjectProfile = {
       meta_cause_prior: null,
     },
   ],
-  // The neutral subject declares the universal 3-state mapping.
   ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',

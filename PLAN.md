@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-20：录入助手 PR1891 五项P1源码修复，已正常整合main并完成静态构建/8审计；草稿待父定向验证，默认禁开。
+> Linear 是权威 tracker。2026-10-21：首次上传 Start 入口 #1950 已合（浏览器未验）；迁移线继续知识列表/详情完整入口切片，保持原组件和 HTTP。
 
 ## NOW
+
+- **第一天能用 / 知识列表与详情 Start 入口（YUK-1358）**：分支 `feat/yuk-1358-knowledge-start` 基于 main `1b180c3fb`。owned：新 `server/start/routes/knowledge.tsx`、`knowledge.$id.tsx`、生成 routeTree、旧 router 的 Knowledge 两段。列表→详情→返回、ID、query/hash、TokenGate 和原 HTTP 保持；不改任何知识组件/视觉/领域操作，也不触 RecordPage/VisionTab/Copilot/PfPaper/K1。已查开放 PR 与 UI 未推 diff，无对应 hunk 重叠。源码与生成路由已完成，typecheck/lint/build通过（181 warnings）；独立R1/PR CI待完成，浏览器/DB/provider/部署 NOT_RUN，无测试新增。
 
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 
@@ -41,6 +43,8 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- **迁移入口验收**：首次上传 #1950 已合 main `1b180c3fb`，本地检查/R1/exact Gate过；真实浏览器入口与部署未验。知识入口完成源码/CI后仍按此证据边界，不为验收重做环境包。
 
 - **PR1891**：普通push后交父定向验证及新head CI；不merge/watch/部署。历史OCR归属/费用实际数量未查，需运营核对，未证持续503，默认助手禁开。queued session恢复跟进仍归YUK-1638，不能豁免费用闭环。
 

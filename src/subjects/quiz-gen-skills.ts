@@ -57,11 +57,10 @@ export async function resolveQuizGenSkillsForSubject(
   const subjectSkillsDir = join(skillsRoot, subjectId, 'skills');
   let names: string[];
   try {
-    // A missing directory throws ENOENT; the catch degrades to undefined.
     const candidates = (await readdir(subjectSkillsDir, { withFileTypes: true }))
       .filter((d) => d.isDirectory() && d.name.startsWith('quiz-gen-'))
       .map((d) => d.name);
-    // Check SKILL.md concurrently rather than doing sync IO in the filter.
+    // Check SKILL.md concurrently; a sync filter would block the event loop.
     const hasSkillFile = await Promise.all(
       candidates.map((name) =>
         access(join(subjectSkillsDir, name, 'SKILL.md')).then(

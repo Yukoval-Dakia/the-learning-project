@@ -285,9 +285,9 @@ export interface RunTaskCtx {
    */
   parentTaskRunId?: string;
   /**
-   * Disable runner-owned tool logging. `runTask` records only the SDK-native Task
-   * spawn; MCP DomainTools keep their bridge-owned authoritative input/output row.
-   * Streaming runners retain their existing input-only logging contract.
+   * Disable runner-owned tool logging. The runner records only the SDK-native
+   * Task spawn; DomainTools, custom mounts and remote MCP write their own
+   * authoritative input/output row (YUK-1557: one row per executed call).
    */
   autoLogToolCalls?: boolean;
   /**
@@ -641,12 +641,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   const modelStarted = Date.now();
   let firstTokenAt: number | undefined;
   const outputStats = emptyStreamTextStats();
-  const settleAbortUsage = async () => {
-    if (args.kind !== 'NoteGenerateTask') return;
-    if (!args.lifecycle.aborted || args.lifecycle.sawTerminalResult) return;
-    await args.lifecycle.recordAbortedUsage({
+  const settleUnobservedUsage = async () => {
+    // YUK-1557 — a stream cut/provider failure with no usage frame still
+    // submitted a prompt; persist a bounded estimate, never a null cost.
+    // A provider-reported usage/cost frame wins (recordEstimatedUsage no-ops).
+    await args.lifecycle.recordEstimatedUsage({
       promptText: args.usagePrompt ?? '',
       output: outputStats,
+      priceOrigin: args.lifecycle.aborted ? 'timeout-estimate' : 'failure-estimate',
     });
   };
 
@@ -782,7 +784,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       break;
     }
   } catch (error) {
-    await settleAbortUsage();
+    await settleUnobservedUsage();
     throw error;
   } finally {
     const endedAt = Date.now();
@@ -795,7 +797,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 
   if (!args.lifecycle.sawTerminalResult) {
     if (args.lifecycle.aborted) {
-      await settleAbortUsage();
+      await settleUnobservedUsage();
       throw new Error(args.abortedWithoutTerminalMessage);
     }
     throw new AgentRunError({
@@ -1024,6 +1026,14 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
       // It has an admission row but no YUK-841 cost attempt and is never retried
       // by the runner's provider-transient loop.
       if (!lifecycle.started) throw err;
+      // YUK-1557 — failures outside consumeProviderAttempt (startup/transport)
+      // still need non-null estimated cost evidence.
+      const fallbackPrompt = promptFromInput(actualInput);
+      await lifecycle.recordEstimatedUsage({
+        promptText: typeof fallbackPrompt === 'string' ? fallbackPrompt : '',
+        output: emptyStreamTextStats(),
+        priceOrigin: 'failure-estimate',
+      });
       const boundError = bindAgentRunError({
         error: err,
         kind,
@@ -1119,12 +1129,14 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
             const encoder = new TextEncoder();
             let resultText = '';
             let shouldClose = true;
+            let usagePromptText = '';
 
             try {
               const actualInput = ctx.middleware?.beforeRun
                 ? await ctx.middleware.beforeRun(kind, input, ctx)
                 : input;
               const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+              usagePromptText = typeof promptText === 'string' ? promptText : '';
               const callOptions = buildQueryOptions(
                 kind,
                 ctx,
@@ -1139,7 +1151,8 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                   kind,
                   ctx,
                   lifecycle,
-                  shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+                  shouldRecordToolCall: (block) =>
+                    isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
                   onTextDelta: (text) => {
                     controller.enqueue(encoder.encode(text));
                     resultText += text;
@@ -1184,6 +1197,11 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
               return result;
             } catch (error) {
               if (lifecycle.started) {
+                await lifecycle.recordEstimatedUsage({
+                  promptText: usagePromptText,
+                  output: emptyStreamTextStats(),
+                  priceOrigin: 'failure-estimate',
+                });
                 const boundError = bindAgentRunError({
                   error,
                   kind,
@@ -1331,11 +1349,13 @@ async function streamTaskCollectingImpl(
   let terminalText: string | undefined;
 
   return lifecycle.withTracing(async () => {
+    let usagePromptText = '';
     try {
       const actualInput = ctx.middleware?.beforeRun
         ? await ctx.middleware.beforeRun(kind, input, ctx)
         : input;
       const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+      usagePromptText = typeof promptText === 'string' ? promptText : '';
       const callOptions = buildQueryOptions(
         kind,
         ctx,
@@ -1351,7 +1371,8 @@ async function streamTaskCollectingImpl(
           ctx,
           lifecycle,
           notifySessionId: true,
-          shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+          shouldRecordToolCall: (block) =>
+            isSpawnToolName(block.name) && ctx.autoLogToolCalls !== false,
           onTextDelta: (text) => {
             onDelta(text);
             resultText += text;
@@ -1418,6 +1439,11 @@ async function streamTaskCollectingImpl(
       return result;
     } catch (error) {
       if (!lifecycle.started) throw error;
+      await lifecycle.recordEstimatedUsage({
+        promptText: usagePromptText,
+        output: emptyStreamTextStats(),
+        priceOrigin: 'failure-estimate',
+      });
       const successSettlementFailed = error instanceof AttemptSettlementError;
       const boundError = bindAgentRunError({
         error,

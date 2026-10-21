@@ -1,8 +1,7 @@
 // Resolves the subject-level Note skill pack shared by the three note tasks.
 // A missing pack returns undefined so callers fall back to prompt prose; never
 // throws. The directory keeps its historical `note-<id>` name and is exposed
-// under the namespaced key. The exact directory match keeps it disjoint from the
-// quiz-gen packs.
+// under the namespaced key, disjoint from the quiz-gen packs.
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
