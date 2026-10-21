@@ -1,6 +1,7 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   ArtifactAiChangeParamsSchema,
@@ -195,9 +196,11 @@ export const notesCapability = defineCapability({
     handlers: [
       {
         // Coverage repair only: dirties or cancels cursors; the reconciler owns
-        // every apply.
+        // every apply. Batch layer (ADR-0067 D2): dormant learners skip it; the
+        // every-minute recovery floor below is a leak fallback, not batch work.
         name: 'hub_auto_sync_nightly',
         schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic'),
         queue: 'llm',
         load: () =>
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubAutoSyncNightlyHandler),

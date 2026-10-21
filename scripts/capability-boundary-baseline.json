@@ -527,12 +527,12 @@
       "direction": "decrease"
     },
     {
-      "direction": "decrease",
       "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-21",
       "from": 13,
-      "to": 12
+      "to": 12,
+      "direction": "decrease"
     },
     {
       "debt": "capabilityToServer",
@@ -540,6 +540,14 @@
       "date": "2026-10-21",
       "from": 51,
       "to": 50,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> calibration",
+      "date": "2026-10-21",
+      "from": 3,
+      "to": 2,
       "direction": "decrease"
     }
   ],
@@ -854,6 +862,16 @@
       "issue": "YUK-439",
       "owns": "Joint calibration batch: recompute each question b posterior from the difficulty_calibration_evidence ledger under the agent prior, write item_calibration posterior columns, and run the A5 KB drift audit/renormalization. The practice job owns only nightly scheduling/yield; this edge replaces the prior same-responsibility trigger import of the retired AIPW firm-up (recalibration.ts), not a second business dependency.",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/manifest.ts",
+      "module": "src/kernel/nightly-eligibility.ts",
+      "kind": "value",
+      "symbols": ["nightlyEligibility"],
+      "issue": "YUK-1560",
+      "owns": "夜间任务资格判定的确定性阈值、四档活跃度分类与各类别决策（ADR-0075 D6）；调用方只声明 job 类别，不能改阈值",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -1079,7 +1097,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 387,
+      "total": 386,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -1138,7 +1156,7 @@
         "practice -> ai": 50,
         "practice -> assessment": 1,
         "practice -> boss": 18,
-        "practice -> calibration": 3,
+        "practice -> calibration": 2,
         "practice -> coldstart": 1,
         "practice -> events": 1,
         "practice -> fsrs": 6,

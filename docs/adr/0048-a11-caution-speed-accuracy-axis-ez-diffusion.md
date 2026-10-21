@@ -5,6 +5,7 @@
 > 重编号为 **0048**；两篇 on-topic 0047 合并为 `0047-kg-load-bearing-borrow.md`。
 
 **Status**: Accepted (owner 2026-07-23, YUK-678) — 六决策点按推荐默认全收（见文末「Owner 裁决」）。ratify 的是 A11 的**描述符-only 身份**（零引擎触碰）：本 acceptance **不**授权任何 A11 输出进 θ̂ / p(L) / 选题调度，**不**翻任何 flag。owner 保留逐条翻案权。
+**Amendment 2026-10-21（YUK-1560 / ADR-0075 D7）**: `axis_state_nightly` 夜写与 batch writer 已删除；`learner_axis_state` 只保留历史行，merge 时 rename/freeze，`placement-profile` 继续只读。描述符-only 身份不变；恢复条件见 ADR-0067「A38 EZ 轴信号是否值得恢复」。
 **Part of**: YUK-445 · 学习者全面档案 — n=1 firm-up · P5 效率/描述符 · Wave2 axis2。
 **Decision source**: YUK-445 body + 「🛠 实施讨论 · grounded 2026-06-27」comment（对照 main 代码核对）。审计修正：A10（YUK-444 confidence 轴）已 HOLD，本 ADR 只覆盖 A11。
 **Related**: ADR-0035（mastery_state 三维 + 四引擎——θ̂/p(L)/difficulty 三正交轴；A11 是与 θ̂ **正交**的第四类描述符，非第三轴的替代）· `docs/design/2026-06-19-comprehensive-learner-profile.md` §1（`learner_axis_state` 表形状）/§7（P5 路线）/§8（诚实天花板）· `docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`（A11 在 Tier-3 preprint/by-analogy）。
@@ -42,13 +43,13 @@ per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 �
 
 - **纯闭式模块** `src/server/calibration/ez-diffusion.ts`（与 auc/ece/replay 同目录，PURE + unit-test，含 Wagenmakers App 的 Pc∈{0,1} edge-correction + 退化裁决）。该 TS 形态已登记为 ADR-0046「豁免登记」R2 的成文豁免（owner 2026-08-27，YUK-679 LIGHT；描述符-only 红线存续期间有效，触发 port 的条件见该段）。
 - **新表 `learner_axis_state`**（5 处登记面：schema.ts / migration 0053 / audit:schema write-path / export FK_ORDER + SCHEMA_VERSION 4.10→4.11 / tests ALL_TABLES）：`(drift_v, boundary_a, ter, n_obs, provenance)` + (subject_kind, subject_id) 唯一。A10（HOLD）未来加 `calibration_curve_json` 列（additive 列，不 bump）= 本表第二 writer。
-- **batch writer** `src/server/calibration/axis-writer.ts`（advisory-lock 独立 namespace `axis_state:`）+ nightly job `axis_state_nightly`（practice manifest，cron 05:40 Asia/Shanghai）= 唯一 live writer。
+- **batch writer（2026-10-21 已删）** `src/server/calibration/axis-writer.ts`（advisory-lock 独立 namespace `axis_state:`）+ nightly job `axis_state_nightly`（practice manifest，cron 05:40 Asia/Shanghai）曾是唯一 live writer；YUK-1560 停夜写后只剩 merge 时的 rename/freeze。
 - **读出面**：`placement-profile` 每 KC 投影附 `axis` 字段（profile 投影，非新路由）。
 
 ## 后果
 
 - ✅ θ̂ 之外多一个正交着力点（教研团可说「过度求稳」而非只「不会」）。
-- ✅ 端到端非死代码：writer（nightly job）+ reader（placement-profile）都 live。
+- ✅ reader（placement-profile）仍 live；writer（nightly job）已按 YUK-1560 退役。
 - ⚠️ `drift_v` 在 probe-set 源到位前恒 NULL（已知 defer，非缺陷）。
 - ⚠️ **`boundary_a`/`ter` 在自适应流里也吃 Pc-pinning**：EZ 闭式 `a = s²·logit(Pc)/v` 是 Pc 的直接函数，自适应选题把 Pc 钉在目标带 → estimator 层面 `a` 的数值同样带选题偏差，并非只有 `drift_v` 被混淆。latent-trait 层面「谨慎度是 response-style，跨难度更稳」可辩（故仍作描述符保留），但 estimator 层面不免疫——见决策点 5。因 A11 不喂任何 LIVE 引擎，此偏差不构成正确性 blocker（描述符身份兜底）。
 - ⚠️ Tier-3 就绪度：A11 输出不可进算法；任何「让 a/Ter 修正 A1 的 d」是**独立 flagged follow-up**（YUK-449 territory），不在本 ADR scope——触 LIVE SRT 引擎，需 dark flag + V-A1-fwd byte-identical 锚。
