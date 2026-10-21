@@ -17,6 +17,7 @@ import {
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
+  getStartTeachingBrief,
   getStartTodayCost,
   getStartWorkbenchSummary,
   undoStartArtifactAiChange,
@@ -67,6 +68,7 @@ export const startWorkbenchClient: WorkbenchClient = {
     getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
   getActiveProbes: () => getStartActiveProbes(transport),
+  getTeachingBrief: () => getStartTeachingBrief(transport),
   getRecentAiChanges: () => getStartRecentAiChanges(transport),
   undoAiChange: async (artifactId, eventId) => {
     const result = await undoStartArtifactAiChange({ ...transport, data: { artifactId, eventId } });

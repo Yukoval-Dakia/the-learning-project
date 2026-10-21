@@ -16,7 +16,11 @@ export { loadPrepDeskConjectures } from './server/prep-desk';
 export { loadActiveProbes } from './server/prep-desk-probes';
 export { type ProposalInboxQuery, readProposalInbox } from './server/proposal-inbox-read';
 export { type LearnerSubjectRow, loadLearnerSubjects } from './server/subjects-list';
-export { isCandidateError, validateAckableOutcome } from './server/teaching-brief';
+export {
+  isCandidateError,
+  loadTeachingBrief,
+  validateAckableOutcome,
+} from './server/teaching-brief';
 export type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,
