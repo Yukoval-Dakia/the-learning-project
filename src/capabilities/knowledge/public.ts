@@ -1,12 +1,6 @@
 // Stable server contract for consumers outside the knowledge capability.
 
 export { isDirectTreePair } from '@/core/topology-gate';
-export type {
-  CuratedAtomic,
-  HubMeshAtomicInput,
-  HubMeshEdge,
-} from '@/kernel/hub-mesh';
-export { resolveHubMeshAtomics } from '@/kernel/hub-mesh';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {
   FailureAttempt,
