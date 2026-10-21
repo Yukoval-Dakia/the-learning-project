@@ -1,96 +1,46 @@
 // A5 (YUK-441) — graph-Laplacian smoothing prior over per-KC ability θ̂.
 //
-// Pure, no IO, cross-subject (core/ boundary). This is the load-bearing math for
-// "用着用着就 firm up": an UNOBSERVED KC's ability estimate is pulled toward the
-// mean of its ALREADY-OBSERVED neighbours along the knowledge graph, while a KC
-// with direct evidence stays anchored to its own θ̂ (the likelihood dominates the
-// smoothing prior). The 全家族最干净的 n=1 机制 — a prior over a SINGLE learner's
-// ability vector, with NO cross-subject parameters (no a/slip/guess/φ).
+// Pure, cross-subject. An unobserved KC's estimate is pulled toward observed
+// neighbours along related_to edges, while direct evidence dominates for observed
+// KCs. Constraints:
+//   1. Proper GMRF θ ~ N(μ₀, (λL + κI)⁻¹). The bare λL prior is improper: L has a
+//      constant null space, so the κI ridge is what makes the level identifiable.
+//   2. Only symmetric related_to edges enter. contrasts_with is a reverse signal and
+//      prerequisite is directed (A6); the caller filters relation_type.
+//   3. Mean only. Posterior variance is not returned until the V-A5-LOKO gate shows
+//      the shrunk variance is calibrated.
+//   4. λ→0 returns independent per-KC estimates; with κ→0 observed nodes are identity.
 //
-// ── HARD MATH CONSTRAINTS (math dossier 2026-06-20 + YUK-441 dossier comment) ──
-//
-//   (1) PROPER GMRF, not the bare improper prior. The bare smoothing prior
-//       `p(θ) ∝ exp(−½ λ θᵀLθ)` is IMPROPER: a graph Laplacian L has a null space
-//       (constant shifts — L·c·1 = 0), so the OVERALL LEVEL is unidentifiable and
-//       a fully-unobserved component never firms up to an absolute mastery. We
-//       upgrade to the proper GMRF prior `θ ~ N(μ₀, (λL + κI)⁻¹)`: the κI ridge
-//       makes the precision matrix positive-DEFINITE (identifiable level), anchored
-//       at the prior mean μ₀.
-//
-//   (2) SYMMETRIC / UNDIRECTED edges ONLY. L must be symmetric PSD, so only
-//       `related_to` (symmetric) edges enter. `contrasts_with` is a REVERSE signal
-//       (易混项 — mixing it in would pull confusable items together and poison
-//       firm-up); `prerequisite` is DIRECTED (→ A6 / prereq-propagation.ts). Both
-//       are EXCLUDED from this Laplacian. The wiring layer (mastery/state.ts) is the
-//       single place that filters relation_type='related_to'; this module is purely
-//       structural and trusts its caller to pass symmetric edges only.
-//
-//   (3) SOFT LAYER — mean-only. {@link gmrfPosteriorMean} returns ONLY the posterior
-//       MEAN θ̃ (the moved point estimate). It deliberately does NOT return a
-//       shrunken posterior variance: until the V-A5-LOKO gate passes (MSE < λ=0
-//       baseline ∧ 90% coverage ∈ [85%,95%] ∧ λ-posterior > 0), the graph-shrunk
-//       variance is NOT trusted as calibrated (ADR-0035 corollary: an
-//       uncalibrated-looking confidence is a soft signal masquerading as hard). The
-//       caller keeps the original per-KC θ̂ standard error untouched.
-//
-//   (4) λ→0 退回独立. As the smoothing strength λ→0 the cross-KC coupling vanishes
-//       (the system becomes diagonal — each KC solved independently); with κ→0 too
-//       the observed nodes return EXACTLY to θ̂ (identity). A KC with strong direct
-//       evidence (large observation precision dₖ) stays near θ̂ at ANY λ — the
-//       likelihood overrides the prior ("有直证 likelihood 立刻盖过").
-//
-// PHASE-DEFERRED — λ/κ are conservative owner-supplied priors (n=1 admissible:
-//   owner-fixed constants, NOT cross-subject fits), hardcoded behind the dark flag
-//   pending V-A5-LOKO tuning. λ too large抹平 real misconception differences; κ is a
-//   small properness ridge. These are placeholders, NOT calibrated truth.
+// λ/κ are owner-supplied fixed priors, not cross-learner fits, and stay dark behind
+// GRAPH_LAPLACIAN_ENABLED until V-A5-LOKO tuning.
 
 /**
- * FLAG — A5 graph-Laplacian smoothing of the surfaced per-KC ability θ̂.
- *
- * Module-level const dark-ship flag (mirrors SRT_ENABLED / HIERARCHICAL_ELO_ENABLED
- * / THETA_GRID_ENABLED — NO config table, NO env). Default FALSE: getMasteryProjection
- * is BYTE-IDENTICAL to today (no neighbour fetch, no smoothing, no borrowed entries).
- * Flipping it to true is the "act flip" gated on V-A5-LOKO GO; the wiring is built +
- * electrified to live now (defer-flip, not defer-build).
+ * Dark flag for A5 smoothing. False leaves getMasteryProjection byte-identical (no
+ * neighbour fetch, no smoothing); the wiring is already live behind the flag.
  */
 export const GRAPH_LAPLACIAN_ENABLED = false;
 
 /**
- * PHASE-DEFERRED — graph smoothing strength λ (owner-supplied fixed prior).
- *
- * Larger λ ⇒ more borrowing from neighbours (faster firm-up of unobserved KCs) but
- * risks抹平 real per-KC ability differences and masking misconceptions. Conservative
- * small default; the V-A5-LOKO gate tunes it against held-out KC MSE. n=1 admissible
- * (owner-fixed constant, no cross-learner fit).
+ * Smoothing strength λ. Larger borrows more from neighbours but can flatten real
+ * per-KC differences; owner-fixed pending V-A5-LOKO tuning.
  */
 export const GRAPH_LAPLACIAN_LAMBDA = 0.5;
 
 /**
- * PHASE-DEFERRED — properness ridge κ (owner-supplied fixed prior).
- *
- * The κI term that makes the GMRF precision `λL + κI` positive-DEFINITE (constraint
- * (1)): it anchors the otherwise-unidentifiable level of a fully-unobserved component
- * to μ₀. Kept SMALL so it barely shrinks observed KCs (they are dominated by their own
- * observation precision) while still rescuing the level of unobserved islands. Must be
- * > 0 whenever any node is unobserved, else the system is singular.
+ * Properness ridge κ. Anchors the otherwise-unidentifiable level of unobserved
+ * islands; must be > 0 whenever a node is unobserved. Small so observed KCs barely
+ * shrink.
  */
 export const GRAPH_LAPLACIAN_KAPPA = 0.01;
 
 /**
- * YUK-559 (S4 / RP8) — the per-connected-component node-count cap for the A5 dense GMRF
- * solve. `solveDense` is O(n³) time / O(n²) memory over the requested-induced `related_to`
- * connected component; a batch tree read (`tree.ts`, up to LOAD_TREE_SNAPSHOT_LIMIT nodes)
- * can induce a whole-tree component and hit a scalability cliff. A component LARGER than
- * this cap is left UN-smoothed (fail-safe-to-no-smoothing) so the cliff never runs.
- *
- * OWNER-FIXED, **未经数据校准的保守初值（非拟合结果）**: 256 caps a single dense solve at
- * ~1.7e7 flops. n=1 admissible (a fixed structural guard, not a cross-learner fit). The
- * true value is an owner decision (spec §7 open question 2, alongside a future sparse
- * CG solver / per-request localisation). Flag dark ⇒ this guard never fires today.
+ * Per-component node cap for the dense O(n³) solve. A component larger than this is
+ * left unsmoothed so a whole-tree read cannot hit the scalability cliff. Owner-fixed
+ * conservative value; flag dark means it never fires today.
  */
 export const GRAPH_SMOOTH_COMPONENT_CAP = 256;
 
-/** A symmetric (undirected) graph edge — A5 admits ONLY these (related_to). */
+/** A symmetric related_to edge. */
 export interface SymmetricEdge {
   a: string;
   b: string;
@@ -107,14 +57,9 @@ export interface LaplacianSystem {
 }
 
 /**
- * Build the weighted graph Laplacian L = D_deg − W over `nodeIds`, using ONLY the
- * symmetric edges whose BOTH endpoints are in `nodeIds`. Off-diagonal Lᵢⱼ = −wᵢⱼ,
- * diagonal Lᵢᵢ = Σⱼ wᵢⱼ — so L is symmetric, PSD, and each row sums to 0 (the
- * constant null space that makes the bare prior improper; see file header (1)).
- *
- * Edges referencing a node outside `nodeIds`, self-loops (a == b), and non-positive
- * weights are skipped. Parallel edges between the same pair accumulate (their weights
- * add) — duplicate `related_to` edges reinforce smoothing rather than error.
+ * Build L = D_deg − W from the symmetric edges whose endpoints are both in
+ * `nodeIds`. Out-of-set endpoints, self-loops and non-positive weights are skipped;
+ * parallel edges accumulate.
  */
 export function buildLaplacian(nodeIds: string[], edges: SymmetricEdge[]): LaplacianSystem {
   const n = nodeIds.length;
@@ -159,28 +104,9 @@ export interface GmrfInput {
 }
 
 /**
- * Proper-GMRF posterior MEAN θ̃ (constraint (3): MEAN ONLY — no variance is returned).
- *
- * Model: prior θ ~ N(μ₀, (λL + κI)⁻¹); likelihood θ̂ₖ ~ N(θₖ, dₖ⁻¹) for observed k
- * (dₖ from `observationPrecision`). The posterior mean solves the SPD linear system
- *
- *     (D + λL + κI) θ̃ = D θ̂ + κ μ₀·1        (λL μ₀·1 = 0 since μ₀ is uniform)
- *
- * where D = diag(dₖ). Properties (file header):
- *   - λ=0  ⇒ (D + κI) diagonal ⇒ each θ̃ₖ = (dₖθ̂ₖ + κμ₀)/(dₖ+κ): INDEPENDENT (no
- *     neighbour coupling). With κ=0 too and dₖ>0 ⇒ θ̃ₖ = θ̂ₖ exactly (identity).
- *   - λ>0  ⇒ unobserved nodes (dₖ=0) borrow from observed neighbours through L.
- *   - dₖ → ∞ ⇒ θ̃ₖ → θ̂ₖ (direct evidence overrides the smoothing prior).
- *
- * SPD ⇒ a single dense Gaussian-elimination solve is exact and stable. COST NOTE
- * (YUK-559 / RP8 — corrects the earlier "small neighbourhoods … a few KCs" claim, which
- * was STALE for batch-read callers): the solve is O(n³) time / O(n²) memory over the
- * ENTIRE node set passed in, and the node set is REQUEST-SHAPED, not bounded — a single
- * KC page induces a ~1-hop star, but a whole-tree read (mastery/state.ts loadEdgesFor
- * Projection over up to LOAD_TREE_SNAPSHOT_LIMIT requested KCs) can pass the whole
- * related_to connected component. Callers running on request-shaped node sets MUST
- * partition by connected component and cap component size — see
- * {@link smoothThetaByComponent} + {@link GRAPH_SMOOTH_COMPONENT_CAP}.
+ * Proper-GMRF posterior mean only (constraint 3). Solves the SPD system
+ * (D + λL + κI) θ̃ = D θ̂ + κ μ₀·1, where D is the observation-precision diagonal.
+ * λ=0 gives the independent shrink; λ>0 lets unobserved nodes borrow through L.
  */
 export function gmrfPosteriorMean(input: GmrfInput): Map<string, number> {
   const { nodeIds, thetaHat, observationPrecision, L, lambda, kappa } = input;
@@ -205,9 +131,8 @@ export function gmrfPosteriorMean(input: GmrfInput): Map<string, number> {
 }
 
 /**
- * Convenience wrapper: build L from symmetric edges and return the GMRF posterior
- * mean over `nodeIds`. λ=0 ⇒ the returned map equals the per-node independent shrink
- * (identity on observed nodes when κ=0). Pure.
+ * Convenience wrapper: build L and return the GMRF posterior mean. λ=0 equals the
+ * independent shrink.
  */
 export function smoothTheta(
   nodeIds: string[],
@@ -230,30 +155,22 @@ export function smoothTheta(
   });
 }
 
-/** The result of a component partition (YUK-559 / S4 + C3 O(E) edge bucketing). */
+/** Result of a component partition. */
 export interface ComponentPartition {
-  /** connected components over the symmetric graph; every node in EXACTLY one. */
+  /** connected components; every node in exactly one. */
   components: string[][];
   /**
-   * the admitted edges of each component, index-aligned with {@link components}. An edge
-   * is bucketed into the component of its endpoints iff BOTH endpoints are in `nodeIds`
-   * and share a root (`find(a) === find(b)`) — this is EXACTLY the `memberSet.has(a) &&
-   * memberSet.has(b)` admission the previous `edges.filter(...)` used (self-loops route
-   * to their node's component; a weight≤0 edge whose only-path across two components was
-   * itself lands in NEITHER; out-of-set endpoints are dropped), and edges keep their
-   * original relative order within each bucket → downstream Laplacian float accumulation
-   * is bit-identical.
+   * Admitted edges per component, index-aligned. An edge lands in the component of
+   * its endpoints when both are in `nodeIds` and share a root; within a bucket the
+   * original order is preserved so Laplacian float accumulation is bit-identical.
    */
   componentEdges: SymmetricEdge[][];
 }
 
 /**
- * YUK-559 (S4 + C3) — partition `nodeIds` into connected components over the SYMMETRIC
- * edge graph AND bucket the admitted edges per component in ONE O(E) pass (no per-component
- * `edges.filter`). Every node appears in EXACTLY one component; a node touched by no admitted
- * edge is its own singleton component. Only edges with BOTH endpoints in `nodeIds`, a≠b, and
- * weight>0 CONNECT nodes (union) — matching {@link buildLaplacian}'s edge admission, so the
- * component structure equals the block structure of the graph Laplacian. Pure.
+ * Partition `nodeIds` into connected components and bucket admitted edges in one
+ * O(E) pass. Edges union nodes only when both endpoints are in `nodeIds`, a≠b, and
+ * weight>0, matching buildLaplacian's admission.
  */
 export function partitionByComponent(
   nodeIds: string[],
@@ -311,9 +228,8 @@ export function partitionByComponent(
 }
 
 /**
- * YUK-559 (S4) — connected components over the SYMMETRIC edge graph. Thin wrapper over
- * {@link partitionByComponent} (public API unchanged). Every node appears in EXACTLY one
- * component; a node touched by no admitted edge is its own singleton. Pure.
+ * Connected components over the symmetric edge graph. Thin wrapper over
+ * partitionByComponent; isolated nodes are singletons.
  */
 export function connectedComponents(nodeIds: string[], edges: SymmetricEdge[]): string[][] {
   return partitionByComponent(nodeIds, edges).components;
@@ -330,17 +246,9 @@ export interface ComponentSmoothResult {
 }
 
 /**
- * YUK-559 (S4 / RP8) — component-partitioned {@link smoothTheta}. Solves each connected
- * component (over the symmetric graph) INDEPENDENTLY. This is MATHEMATICALLY IDENTICAL to
- * a single whole-set solve for all under-cap components: the GMRF precision (D + λL + κI)
- * is block-diagonal across components (no edge crosses a component; D and κI are diagonal),
- * so a per-component solve equals the whole solve restricted to that component. It is a
- * PURE equivalent rearrangement that also turns O(n³) into ΣO(nᵢ³).
- *
- * A component whose node count EXCEEDS `componentCap` is left UN-smoothed
- * (fail-safe-to-no-smoothing: those nodes keep their raw θ̂, or `priorMean` when absent)
- * and its size recorded in `skippedComponentSizes` — the request-shaped O(n³) dense-solve
- * cliff (spec RP8) never runs on a pathological component. Pure.
+ * Component-partitioned smooth. The precision is block-diagonal across components, so
+ * per-component solves are exactly equivalent to one whole-set solve; oversized
+ * components are left unsmoothed (raw θ̂, or priorMean when absent) and reported.
  */
 export function smoothThetaByComponent(
   nodeIds: string[],
@@ -365,8 +273,7 @@ export function smoothThetaByComponent(
       skippedComponentSizes.push(component.length);
       continue;
     }
-    // componentEdges[i] is EXACTLY the old `edges.filter(memberSet.has(a)&&memberSet.has(b))`
-    // (same edges, original order) → buildLaplacian float accumulation is bit-identical.
+    // `componentEdges[i]` preserves admitted-edge order, so float accumulation is identical.
     const solved = smoothTheta(
       component,
       componentEdges[i],
@@ -382,10 +289,8 @@ export function smoothThetaByComponent(
 }
 
 /**
- * Solve the dense linear system A x = b by Gaussian elimination with partial
- * pivoting. A is square n×n; the system here is SPD (D + λL + κI) so it is always
- * non-singular when κ > 0 (or when every node is observed with dₖ > 0). Pure: A and b
- * are copied, never mutated. Returns x.
+ * Dense Gaussian elimination with partial pivoting. SPD here, so it is nonsingular
+ * when κ>0 or every node is observed. Copies A and b; never mutates the caller.
  */
 export function solveDense(A: number[][], b: number[]): number[] {
   const n = b.length;

@@ -12,12 +12,12 @@ export const COPILOT_SHARED_SUBJECT_DIR = '_shared';
 export const COPILOT_SKILL_NAME = 'copilot';
 export const COPILOT_QUIZ_GEN_SKILL_NAME = 'quiz-gen';
 
-// Dialogue methodology first, then the quiz-gen pack.
+// Copilot methodology first, then the quiz-gen pack.
 const COPILOT_SHARED_SKILL_NAMES = [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME] as const;
 
 /**
- * Resolve the shared Copilot skill bodies. Returns the found subset, or undefined
- * when neither pack exists so callers can fall back to prompt prose.
+ * Resolve the shared Copilot skill bodies; undefined when neither pack exists so
+ * callers can fall back to prompt prose.
  */
 export async function resolveCopilotSkillDocs(
   skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
@@ -30,7 +30,7 @@ export async function resolveCopilotSkillDocs(
       if (body.length === 0) continue;
       found.push({ name: namespacedSkillName(COPILOT_SHARED_SUBJECT_DIR, name), body });
     } catch {
-      // Missing pack: per-pack degradation, never throws.
+      // Missing pack.
     }
   }
   return found.length > 0 ? found : undefined;

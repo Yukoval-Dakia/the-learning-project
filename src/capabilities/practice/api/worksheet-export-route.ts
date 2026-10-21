@@ -1,7 +1,6 @@
-// YUK-1523（P5）— 作答卷导出的 route handler。薄层：HTTP 整形 + zod 解析 +
-// 域状态 → ApiError 映射；业务全在 capabilities/practice/server/worksheet/
-// （发放编排 = 既有 issueAssessment；区域图校验/存档在 region-map-validate +
-// export-store）。
+// 作答卷导出的 route handler。薄层：HTTP 整形 + zod 解析 + 域状态 → ApiError 映射；
+// 业务全在 practice/server/worksheet/（发放编排 = 既有 issueAssessment；区域图
+// 校验/存档在 region-map-validate + export-store）。
 
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
@@ -48,7 +47,7 @@ function parseParams<T>(params: Record<string, string>, schema: ZodType<T>): T {
   return parsed.data;
 }
 
-// ---------- POST /api/worksheet-exports — 创建导出（= 逐题发放） ----------
+// ---------- POST /api/worksheet-exports ----------
 
 export async function createWorksheetExportRoute(req: Request): Promise<Response> {
   let idempotencyKey = '';
@@ -69,7 +68,7 @@ export async function createWorksheetExportRoute(req: Request): Promise<Response
     switch (out.status) {
       case 'created':
       case 'replayed':
-        // YUK-1529 — 服务端渲染 job：导出提交后入队（重放也再入队——job 幂等，
+        // 服务端渲染 job：导出提交后入队（重放也再入队——job 幂等，
         // 同图同 digest 走 existing，这也是失败渲染的显式重试入口）。
         // 入队失败不让已提交的导出 500：同一 idempotency_key 重 POST 会重放并再入队。
         try {
@@ -106,7 +105,7 @@ export async function createWorksheetExportRoute(req: Request): Promise<Response
         { status: 422 },
       );
     }
-    // R2 P1：重试后仍同 key 抢插（双重并发窗口）——如实 409 可重试，绝不 500。
+    // 重试后仍同 key 抢插（双重并发窗口）——如实 409 可重试，绝不 500。
     if (err instanceof WorksheetIdempotencyRaceError) {
       return errorResponse(
         new ApiError(
@@ -120,7 +119,7 @@ export async function createWorksheetExportRoute(req: Request): Promise<Response
   }
 }
 
-// ---------- GET /api/worksheet-exports/[token] — 状态读面（渲染器恢复） ----------
+// ---------- GET /api/worksheet-exports/[token] ----------
 
 export async function getWorksheetExportRoute(
   _req: Request,
@@ -138,7 +137,7 @@ export async function getWorksheetExportRoute(
   }
 }
 
-// ---------- POST /api/worksheet-exports/[token]/region-map — 区域图存档 ----------
+// ---------- POST /api/worksheet-exports/[token]/region-map ----------
 
 export async function archiveWorksheetRegionMapRoute(
   req: Request,
@@ -171,7 +170,7 @@ export async function archiveWorksheetRegionMapRoute(
         throw new ApiError('internal_error', 'unexpected region map archive status', 500);
     }
   } catch (err) {
-    // R2 P1：write-once 冲突在域层抛出（事务回滚，无孤儿页行）—— 必须在这里
+    // write-once 冲突在域层抛出（事务回滚，无孤儿页行）—— 必须在这里
     // 映成 409 响应 RETURN 出去；再 throw 会逸出或 500。
     if (err instanceof RegionMapArchiveConflictError) {
       return errorResponse(new ApiError('archive_conflict', String(err.message), 409));
@@ -180,7 +179,7 @@ export async function archiveWorksheetRegionMapRoute(
   }
 }
 
-// ---------- GET /api/worksheet-exports/[token]/pdf — 已存档 PDF 下载 ----------
+// ---------- GET /api/worksheet-exports/[token]/pdf ----------
 
 export async function getWorksheetExportPdfRoute(
   _req: Request,
@@ -225,7 +224,7 @@ export async function getWorksheetExportPdfRoute(
   }
 }
 
-// ---------- GET /api/worksheet-exports/[token]/pages/[page] — P6 读面 ----------
+// ---------- GET /api/worksheet-exports/[token]/pages/[page] ----------
 
 export async function getWorksheetPageRoute(
   _req: Request,
@@ -233,7 +232,7 @@ export async function getWorksheetPageRoute(
 ): Promise<Response> {
   try {
     const parsed = parseParams(params, WorksheetPageParamsSchema);
-    // R1 P2-3：页号必须是严格的十进制正整数（拒绝 "1.5"/"01"/"1e2"/"+1"）——
+    // 页号必须是严格的十进制正整数（拒绝 "1.5"/"01"/"1e2"/"+1"）——
     // parseInt 会截断小数点前的字符，不能作形状门。
     if (!/^[1-9]\d*$/.test(parsed.page)) {
       throw new ApiError(

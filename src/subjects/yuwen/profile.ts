@@ -41,7 +41,6 @@ export const yuwenProfile: SubjectProfile = {
     teachingStyle: '先定位文本证据，再解释判断过程，最后给出可复用规则。',
     checkQuestionPolicy: '检查题应短小，聚焦一个词义、句式或翻译判断。',
     learningIntentPolicy: '把模糊目标改写成可练习的古文阅读或翻译能力。',
-    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },

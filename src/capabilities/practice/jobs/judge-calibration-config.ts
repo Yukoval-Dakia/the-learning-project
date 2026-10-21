@@ -1,6 +1,6 @@
-// YUK-573 — judge-calibration sampling config (design doc §3.5). All knobs are
-// env-overridable; the kill switch is a SEPARATE opt-in using the shared flag grammar (YUK-572
-// dark-ship pattern — cron stays registered, handler no-ops, zero spend).
+// judge-calibration sampling config. All knobs are env-overridable; the kill
+// switch is a SEPARATE opt-in using the shared flag grammar (cron stays
+// registered, handler no-ops, zero spend).
 
 import { canonicalProviderName } from '@/ai/task-spec';
 import { type ConfigValue, getConfig } from '@/core/config/store';
@@ -11,10 +11,10 @@ export const JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV = 'JUDGE_CALIBRATION_SAMPLIN
 
 export const JUDGE_CALIBRATION_DEFAULTS: Pick<JudgeCalibrationConfig, 'batchMax' | 'windowDays'> = {
   // Per-cron-tick cost gate: default 20 single-shot re-judge calls per run,
-  // env-adjustable up to the 50 clamp below (OCR review: the clamp IS the hard
-  // ceiling — keep it near the documented default so a misconfigured env var
-  // cannot starve the shared Max rate limit; MF8's unique index kills retry
-  // amplification; S2 — cost_ledger shows $0 for the oauth lane).
+  // env-adjustable up to the 50 clamp below (the clamp IS the hard ceiling — keep
+  // it near the documented default so a misconfigured env var cannot starve the
+  // shared Max rate limit; the unique index on sampled events kills retry
+  // amplification; the oauth lane shows $0 in cost_ledger).
   batchMax: 20,
   windowDays: 7,
 };
@@ -22,7 +22,7 @@ export const JUDGE_CALIBRATION_DEFAULTS: Pick<JudgeCalibrationConfig, 'batchMax'
 /**
  * The rejudge lane's provider/model come from the resolved system_config
  * overrides (registry codeDefaults when nothing is written) — no duplicate
- * literal default lives here (YUK-1559 C1-10). A non-string/'' resolved value
+ * literal default lives here. A non-string/'' resolved value
  * means a corrupt manual DB row — fail closed instead of silently drifting
  * back to a shadow default.
  */
@@ -36,7 +36,7 @@ function requireConfigString(key: string, value: ConfigValue | undefined): strin
 export function readJudgeCalibrationConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): JudgeCalibrationConfig {
-  // YUK-1007：四键 DB > env > code-default；clamp 仍在 reader 侧（registry
+  // 四键 DB > env > code-default；clamp 仍在 reader 侧（registry
   // schema 校验 DB 写入，但 env 层经 numberEnv 来值仍需本地 clamp，与原
   // readIntInRange 逐位一致）。
   // Project the operator chat pin into sample provenance; the handler's existing

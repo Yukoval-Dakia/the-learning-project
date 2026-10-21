@@ -1,10 +1,7 @@
-// YUK-280 P4 (YUK-203) — GET /api/questions question-bank list.
-// M5-T5a (YUK-321)：平移自 app/api/questions/route.ts（Hono manifest 挂载；旧壳 Task 9 拆）。
+// GET /api/questions question-bank list.
 //
-// docs/superpowers/plans/2026-06-07-yuk280-question-bank-api.md §2 (A1a/A1b/A1c)
-//
-// Multi-axis question-bank list: SQL axes (knowledge_id / source / kind /
-// difficulty / visual_complexity / draft) + in-memory grounding tier filter/sort
+// Multi-axis list: SQL axes (knowledge_id / source / kind / difficulty /
+// visual_complexity / draft) + in-memory grounding tier filter/sort
 // + variant-family aggregate/expand. Auth is enforced upstream by middleware
 // (x-internal-token); the handler mirrors the sibling list routes (zod safeParse,
 // clamp, errorResponse) and the learning-items pagination convention.
@@ -86,7 +83,7 @@ export async function GET(req: Request): Promise<Response> {
     const limit = Math.min(Math.max(q.limit, 1), MAX_LIMIT);
     const offset = Math.max(q.offset, 0);
 
-    // YUK-288 subject 派生轴: resolve the subject profile id to its knowledge-id
+    // subject 派生轴: resolve the subject profile id to its knowledge-id
     // set BEFORE the list query so the list ANDs an OR-of-containment over it.
     // undefined → no subject filter; [] → subject labels no questions → empty list.
     const subjectKnowledgeIds =
@@ -106,7 +103,7 @@ export async function GET(req: Request): Promise<Response> {
       groupByFamily: q.group_by_family,
       expandRoot: q.expand_root,
       includeDrafts: q.include_drafts,
-      // YUK-1514 — not_servable keeps both drafts and actives in the held set
+      // not_servable keeps both drafts and actives in the held set
       // (a draft awaiting verification is a live hold reason).
       draftStatus:
         q.status === 'not_servable' ? 'all' : (q.status as QuestionListDraftStatus | undefined),

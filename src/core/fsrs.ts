@@ -45,15 +45,10 @@ export function scheduleReview(
   };
 }
 
-// Search-grounded QuizGen (T-SQ) §3 / Q6 — enroll-on-active. When a quiz_gen
-// draft is promoted to active, it has NO failure attempts and NO prior reviews,
-// so it lands in NEITHER review-pool slice (overdue material_fsrs_state, nor the
-// never-reviewed-failure-attempt stream). To put it in the pool we materialize a
-// fresh FSRS "new" card via ts-fsrs `createEmptyCard` (the SAME primitive
-// scheduleReview uses for a first review — we do NOT hand-roll FSRS) and persist
-// it via the single-owner upsertFsrsState. due_at = the empty card's due (== now
-// for a New card), so the promoted question is immediately due for its first
-// pass. The next /api/review/submit then drives normal scheduling from this row.
+// Search-grounded QuizGen (T-SQ) enroll-on-active. A promoted quiz_gen draft has no
+// attempts or reviews, so it lands in neither review-pool slice. Materialize a fresh
+// FSRS new card with the same primitive scheduleReview uses and persist it through the
+// single-owner upsert; due_at = now makes it immediately reviewable.
 export interface InitialFsrsState {
   state: FsrsStateData;
   dueAt: Date;
@@ -98,14 +93,10 @@ function stateFromCard(c: Card): FsrsStateData {
   };
 }
 
-// YUK-440 (A13) — public retrievability wrapper. Exposes ts-fsrs get_retrievability
-// (R(t) ∈ [0,1]) WITHOUT leaking the private cardFromState/scheduler (no deep-import of
-// FSRS internals from the conjecture lane). The conjecture reconcile loop uses R(t) for
-// cell salience / display + snapshots it into the probe_result event — it must NOT
-// influence written typed_state (projection purity, §修正-3). A null state (no FSRS card
-// yet) returns 0 (ts-fsrs New-state retrievability = 0). ts-fsrs ^5.4.1:
-// get_retrievability(card, now, format=false) → number — the third arg is REQUIRED false
-// because the default (format=true) returns a percent STRING, not a number.
+// Public retrievability wrapper: exposes ts-fsrs R(t) ∈ [0,1] without leaking the
+// private card/scheduler. Conjecture reconcile uses it for salience, never for typed
+// state (projection purity). A null card means no FSRS state yet → 0. The third
+// argument must be false; the default returns a percent string.
 export function retrievabilityForKc(state: FsrsStateData | null, now: Date): number {
   if (state === null) return 0;
   return scheduler.get_retrievability(cardFromState(state), now, false);

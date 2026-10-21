@@ -24,15 +24,13 @@ export const ARTIFACT_STATE_ACTIONS: readonly string[] = [
   'experimental:note_refine_undo',
 ];
 
-// Pure artifact reducer. Base is artifact_create (runtime) or genesis (backfill), both
-// carrying a full snapshot; the first base wins so a duplicate seed cannot clobber state.
-// body_blocks_edit carries the after state verbatim (last-write-wins, no op-replay, no
-// guard — the guard belongs to the write gate). Every artifact event keys on the artifact
-// id, so the gather is Q1-only. No IO, ids, or clocks: same input gives the same row.
+// Pure artifact reducer. artifact_create and genesis both carry a full snapshot and the
+// first base wins, so a duplicate seed cannot clobber state. body_blocks_edit carries the
+// after state verbatim (last-write-wins; the guard belongs to the write gate). Every
+// artifact event keys on artifact id, so the gather is Q1-only.
 //
-// The legacy note_refine_apply event is the one op-replay exception, and only here:
-// replaying it with the guard off reproduces an already-applied change. New writes use
-// full-snapshot body_blocks_edit instead.
+// The legacy note_refine_apply event is the one op-replay exception: replaying it with
+// the guard off reproduces an already-applied change. New writes use body_blocks_edit.
 const NoteRefineApplyPayload = z.object({
   ops: z.array(NotePatchOp),
   // Verbatim version so a writer change to the bump rule cannot silently drift the fold.
@@ -88,7 +86,7 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
     if (!ARTIFACT_STATE_ACTIONS.includes(fe.action)) continue;
     if (fe.subject_kind !== 'artifact' || fe.subject_id !== artifactId) continue;
 
-    // ---------- BASE: experimental:artifact_create (runtime creation, fork #2) ----------
+    // ---------- BASE: artifact_create (runtime creation, fork #2) ----------
     if (fe.action === 'experimental:artifact_create') {
       if (row !== null) continue; // FIRST BASE WINS
       const c = ArtifactCreateExperimental.safeParse(toParseInput(fe));
@@ -100,7 +98,7 @@ export function foldArtifact(artifactId: string, events: FoldEvent[]): ArtifactR
       continue;
     }
 
-    // ---------- BASE: experimental:genesis (backfill seed of a pre-W3 row) ----------
+    // ---------- BASE: genesis (backfill seed of a pre-W3 row) ----------
     if (fe.action === 'experimental:genesis') {
       if (row !== null) continue; // FIRST BASE WINS
       const g = GenesisExperimental.safeParse(toParseInput(fe));

@@ -1,7 +1,4 @@
-// YUK-216 S2 slice 2 (题源扩展 Strategy D) — tier-2 source_verify handler.
-//
-// docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3 (step 2.7/2.8).
+// tier-2 source_verify handler.
 //
 // Chained behind sourcing (the sourcing handler sends `source_verify`
 // { question_ids } after writing draft questions, mirroring quiz_gen → quiz_verify).
@@ -16,10 +13,8 @@
 // writeEvent → catch). The checks here are mostly DETERMINISTIC (structure / source
 // consistency / dedup); only solve_check spends an LLM call (reusing
 // SolutionGenerateTask as an independent solver via verify-framework's runSolveCheck).
-// This片 keeps the verify handler thin per plan §2.4 — kind_conformance (skill-driven)
-// arrives in slice 4.
 //
-// R4 (YUK-554 review) — tier2 vetoes EVERY solve_check fail (including normalize) BY DESIGN,
+// tier2 vetoes EVERY solve_check fail (including normalize) BY DESIGN,
 // unlike tier3/4's per-axis split in quiz_verify.ts: tier2 references are anchored on real web
 // extracts, tier3/4's are same-model self-authored. See the solveCheckBlocks docblock in
 // verify-framework.ts for the full asymmetry rationale before "unifying" the two.
@@ -96,7 +91,7 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
-// YUK-1568 S3（R1 F2）—— revision→flat 投影原语经同 capability 工具文件
+// revision→flat 投影原语经同 capability 工具文件
 // 再出口（它对 questions seam 的 import 边已登记），本文件不新增
 // capability→server 债。
 import {
@@ -115,7 +110,7 @@ import { projectSourceVerifyResult, solveCheckToOutcome } from './source_verify_
 export interface SourceVerifyJobData {
   question_ids: string[];
   /**
-   * YUK-1514 — owner-initiated recheck (POST .../serving-actions/recheck_source).
+   * owner-initiated recheck (POST .../serving-actions/recheck_source).
    * The command event id bypasses the terminal-event idempotency guard ONLY
    * for this command: at most one paid run per command event, because the
    * guard short-circuits once a terminal event carries the same
@@ -133,7 +128,7 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-// YUK-986 — 阈值本体下沉到 server/question-supply/sourced-dedup.ts；此处 re-export
+// 阈值本体下沉到 server/question-supply/sourced-dedup.ts；此处 re-export
 // 保既有 import 路径。near-duplicate 判定仍用同一 maxNgramOverlap（word-shingle
 // Jaccard, CJK-aware）。
 export { DEDUP_OVERLAP_THRESHOLD };
@@ -144,7 +139,7 @@ export type SourceVerifyPerQuestionStatus =
   | 'skipped:not_found'
   | 'skipped:not_web_sourced'
   | 'skipped:already_verified'
-  /** YUK-1514 — a recheck whose durable paid-attempt claim is 'sending' or
+  /** a recheck whose durable paid-attempt claim is 'sending' or
    * 'unknown' (a prior delivery reached the paid call and never committed an
    * outcome). Never re-paid; the job completes, the hold stays visible. */
   | 'skipped:claim_held';
@@ -154,12 +149,12 @@ export interface RunSourceVerifyParams {
   questionId: string;
   runTaskFn: RunTaskFn;
   imageFetchFn?: SolveCheckImageFetchFn;
-  // YUK-230 — source-grounding re-check seam (single_source_grounding rows only). DB tests
+  // source-grounding re-check seam (single_source_grounding rows only). DB tests
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
   // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
   sourceGroundingFn?: SourceGroundingFn;
   /**
-   * YUK-1514 — owner recheck command id. When set, the terminal-event guard
+   * owner recheck command id. When set, the terminal-event guard
    * below only short-circuits a terminal event that carries THIS id (a
    * redelivered/replayed command never pays twice); the first run for this
    * command proceeds past prior terminal events, and the new terminal event
@@ -167,7 +162,7 @@ export interface RunSourceVerifyParams {
    */
   recheckCommandEventId?: string;
   /**
-   * YUK-1514 — the pg-boss job id that owns this recheck delivery. Becomes the
+   * the pg-boss job id that owns this recheck delivery. Becomes the
    * paid-effect claim's deliveryId: a crash after the paid call but before the
    * terminal event leaves the claim in 'sending'/'unknown', and a redelivery
    * under ANY job id is refused — one paid attempt per command event, never two.
@@ -181,18 +176,17 @@ export interface RunSourceVerifyResult {
 }
 
 /**
- * YUK-1568（第 3 片，S3 处置表 P 分支；R1 F1+F2）—— verify/promote 生命
- * 周期维度更新（admission / suspension / verification / availability），
+ * verify/promote 生命周期维度更新（admission / suspension / verification / availability），
  * 不携内容变更。
  *
- * F1（权威选择）：凡组当前有【已发布 revision】，该冻结四层契约就是唯一
+ * 权威选择：凡组当前有【已发布 revision】，该冻结四层契约就是唯一
  * 内容权威——typed 候选（含不携 answer_shape/blank_order 的普通 parts）
  * 的 5 分/规则/unit 身份/points 不在 flat 行投影里，FromRow 重建会丢；
  * 对 row-归一发布的旧组，冻结层与行归一产物在 converged-writer 不变量下
  * 本就 digest 相同（生命周期更新更不该借机重铸内容 revision）。
  * 只有【从未发布】的真 legacy 组（current_revision_id 为空）走 FromRow。
  *
- * F2（核验输入绑定）：expectedRevision / expectedGeneration 是调用方在
+ * 核验输入绑定：expectedRevision / expectedGeneration 是调用方在
  * 核验【开始时】冻结的「被验证对象」身份（当时的组 current revision +
  *  admission generation）。本 helper 锁后比对——漂移即抛错回滚同事务，
  * 绝不把旧核验结果贴到较新 revision / 误清较新屏障。
@@ -324,14 +318,14 @@ export async function publishVerifyLifecycleUpdate(
 
 // ---------- deterministic checks ----------
 //
-// YUK-1572 — the two PURE pre-checks of this set (structure_completeness +
+// the two PURE pre-checks of this set (structure_completeness +
 // source_consistency, with the CheckOutcome record) moved to
 // ./source_verify_prechecks.ts. What remains here is the checks that cannot
 // be pure: dedup queries the pool and solve_check spends the LLM call.
 
 type QuestionRow = typeof question.$inferSelect;
 
-// ---------- YUK-230 source-grounding gate (single_source_grounding rows) ----------
+// ---------- source-grounding gate (single_source_grounding rows) ----------
 //
 // image_candidate accept (src/capabilities/ingestion/server/image-candidate-accept.ts)
 // materializes a web_sourced draft whose deterministic `source_consistency` n-gram check
@@ -343,7 +337,7 @@ type QuestionRow = typeof question.$inferSelect;
 // SourceGroundingVerifyTask (runSourceGroundingVerify). This is a GROUNDING-presence
 // check, NOT answer judging: the earlier draft fed reference_md as a "student answer" to
 // the multimodal_direct answer judge, which could not catch a VLM that hallucinated a
-// self-consistent 题面 + 答案 unrelated to the image (PR #1063 review, thread 2).
+// self-consistent 题面 + 答案 unrelated to the image.
 //
 // Owner 2026-07-23 决策清单② — accept = 授权自动复核一次; 复核失败 = 打回 draft（不入池）.
 //
@@ -355,7 +349,7 @@ type QuestionRow = typeof question.$inferSelect;
 //     FIRST, then throw so the catch-bottom writes a retriable outcome='error' event and
 //     pg-boss re-runs (既有 verify 错误惯例); a later 'grounded' re-check re-promotes it.
 //     Without the fail-closed demote the row would stay pool-selectable during the retry
-//     window, bypassing this gate (PR #1063 review, thread 1). It is NEVER conflated with
+//     window, bypassing this gate. It is NEVER conflated with
 //     「题面不在图里」. The demote is scoped to THIS single-source row only.
 //
 // The runner's runTask writes its own ai_task_runs + cost_ledger row (real spend,
@@ -384,7 +378,7 @@ export async function runSourceVerify(
 ): Promise<RunSourceVerifyResult> {
   const { db, questionId, runTaskFn } = params;
 
-  // YUK-1568 S3（R1 F2 真收口）—— 核验输入与身份必须同一快照：
+  // 核验输入与身份必须同一快照：
   // 行内容 + 组 current revision/generation + 对应冻结 revision 行在【同一
   // 条 SELECT】内读出（单语句一致性；不持锁跨付费调用）。分开读会拼出
   // 「旧行内容 + 新 revision 身份」——withheld→withheld 编辑铸新 revision
@@ -617,7 +611,7 @@ export async function runSourceVerify(
   // Idempotency: only a TERMINAL verify event short-circuits a re-run (outcome !=
   // 'error'). The catch-bottom writes a TRANSIENT-error event with outcome='error'
   // so a one-off LLM/DB blowup doesn't strand the draft (mirrors quiz_verify).
-  // YUK-1514 — an owner recheck bypasses prior terminal events but stays
+  // an owner recheck bypasses prior terminal events but stays
   // claim-scoped: only a terminal event carrying THIS recheck_command_event_id
   // short-circuits, so a redelivered job / replayed key can never pay twice.
   const existingVerify = await db
@@ -637,7 +631,7 @@ export async function runSourceVerify(
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
 
-  // YUK-1514 — recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
+  // recheck paid-attempt claim (P1-A): a DURABLE claim scoped to
   // the command event, taken BEFORE the paid verifier calls. The terminal-event
   // guard alone could not catch a crash between the paid call and the event
   // commit — the claim can: 'sending'/'unknown' is never re-paid, the job ends
@@ -693,7 +687,7 @@ export async function runSourceVerify(
   const knowledgeNode = knowledgeRows[0] ?? null;
   const subjectProfile = resolveSubjectProfile(knowledgeNode?.domain ?? null);
 
-  // F3 (PR #313) — knowledge survival re-check BEFORE promotion. A draft can sit
+  // knowledge survival re-check BEFORE promotion. A draft can sit
   // between sourcing and verify long enough for its knowledge point to be archived;
   // promoting it anyway enrolls FSRS cards onto a dead node (the same archived guard
   // sourcing.ts:resolveTrigger applies at INGEST time must also gate at PROMOTE time).
@@ -774,7 +768,7 @@ export async function runSourceVerify(
     // `otherwisePromotable` is the tier-2 promote decision BEFORE the source-grounding gate:
     // knowledge survived, no unresolved exact mismatch, image input available, no failing
     // check. It is the SINGLE source for both the grounding-gate trigger below AND the final
-    // `promote` (which just ANDs in the grounding verdict) — PR #1063 review thread 3 (was
+    // `promote` (which just ANDs in the grounding verdict) (was
     // two copy-pasted condition lists).
     const storedHold = readVectorNearHold(metadataRaw);
     const vectorNearHold =
@@ -788,7 +782,7 @@ export async function runSourceVerify(
       !checks.some((c) => c.verdict === 'fail') &&
       vectorNearHold == null;
 
-    // ---- YUK-230 source-grounding gate (single_source_grounding rows only) ----
+    // ---- source-grounding gate (single_source_grounding rows only) ----
     // Runs ONLY when the row is otherwise promotable: a deterministic/solve fail already
     // keeps it draft, so spending the paid vision re-check on a doomed draft is wasted. For
     // a single-source row this is the FINAL, real grounding gate — its source_consistency
@@ -831,7 +825,7 @@ export async function runSourceVerify(
           subjectProfile,
         });
       } catch (err) {
-        // PR #1063 review thread 1 — a BARE throw from the grounding fn (a bug, or a future
+        // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.
         // Fold it into the SAME transient_error branch (demote → throw) as a returned
         // transient_error, so an unexpected throw can never silently leave a pre-promoted row
@@ -878,7 +872,7 @@ export async function runSourceVerify(
               .update(question)
               .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
               .where(eq(question.id, questionId));
-            // YUK-1568 P：已声明 revision 走冻结契约的 typed lifecycle 更新，
+            // 已声明 revision 走冻结契约的 typed lifecycle 更新，
             // 未声明组照旧行归一（helper 内部分派，fail-closed 不变）。
             await publishVerifyLifecycleUpdate(suspendTx, {
               rootId: groupRootId,
@@ -913,7 +907,7 @@ export async function runSourceVerify(
       groundingConfidence = outcome.confidence;
       groundingSummary = outcome.reason_md;
       multimodalGroundingFailed = outcome.status === 'not_grounded';
-      // PR #1063 review thread 3 — push the grounding verdict as a real check so
+      // push the grounding verdict as a real check so
       // toUnifiedVerifyResult's roll-up sees a failing check and yields overall='fail'
       // (previously grounding fail lived only in `promote` + the summary, so a not_grounded
       // row projected overall='needs_review' while its summary said "failed" — a mismatch).
@@ -928,7 +922,7 @@ export async function runSourceVerify(
     // exact solver/reference mismatch survives because SemanticJudge was unavailable
     // or still disagreed below threshold, a web-sourced answer is not safe to auto-
     // promote. Keep it draft for review without relabelling the mismatch as a fail.
-    // YUK-230 — a single-source grounding FAIL (题面 not confirmed in the source image)
+    // a single-source grounding FAIL (题面 not confirmed in the source image)
     // also blocks promotion → the !promote demote path returns the pre-promoted cold-start
     // draft to draft_status='draft' (not into the pool).
     const promote = otherwisePromotable && !multimodalGroundingFailed;
@@ -940,7 +934,7 @@ export async function runSourceVerify(
     const verifyEventId = createId();
     const verifiedBy = aiAgentRef('SourceVerify', { text: '' });
 
-    // YUK-350 (B5 increment C) — project the tier-2 per-check array onto the unified
+    // project the tier-2 per-check array onto the unified
     // verify contract shape. PROVABLY-EQUIVALENT: `promote` is passed IN (already decided
     // above as `knowledgeAlive && no failing check`); the helper only PROJECTS it and
     // ROLLS the per-check array up into an `overall` source-verify previously LACKED
@@ -948,7 +942,7 @@ export async function runSourceVerify(
     // needs_review). The promote predicate is unchanged. The summary names the failing
     // check (or the knowledge-archived gate), giving draft-review.ts a驳回理由 it never
     // had for tier-2 drafts before. SUPERSET: the existing payload keys below are kept.
-    // YUK-230 (thread 3) — grounding fail is now a failing check in `checks[]`, so the generic
+    // grounding fail is now a failing check in `checks[]`, so the generic
     // `failingCheck` branch names it (`source_grounding — <reason_md>`); no separate grounding
     // summary branch is needed, and toUnifiedVerifyResult's roll-up sees the failing check.
     const { failingCheck, unified } = projectSourceVerifyResult({
@@ -962,10 +956,10 @@ export async function runSourceVerify(
 
     let wasDemoted = false;
     await db.transaction(async (tx) => {
-      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
-      // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
+      // G→row lock order: acquire the placement supply scope lock BEFORE
       // the question row lock, matching placement paid admission (advisory lock → plain SELECT) and
       // proposal-appliers. The prior order (row lock first, supply lock only inside the promote
       // branch) let a concurrent /placement/start observe this draft as still-cold while this tx
@@ -1012,7 +1006,7 @@ export async function runSourceVerify(
           `source_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
         );
       }
-      // YUK-1568 S3（R1 F2）—— 锁后复核组身份（锁序 root question →
+      // 锁后复核组身份（锁序 root question →
       // lifecycle 与 publisher/C1 一致）：行版本相同不代表 revision 未变
       // （withheld→withheld 草稿编辑不翻 version 仍铸新 revision）。与核验
       // 开始冻结值不符 ⇒ 整笔回滚：本次核验结果不得贴到较新 revision、
@@ -1036,16 +1030,16 @@ export async function runSourceVerify(
             `now ${verifyLifecycle?.revisionId ?? 'none'}/${verifyLifecycle?.generation ?? 'none'}) — refusing to apply a stale verify verdict`,
         );
       }
-      // YUK-1507 pair-race guard —— promote 成功分支在重发前，同事务锁
+      // pair-race guard: promote 成功分支在重发前，同事务锁
       // question_group_lifecycle（FOR UPDATE，锁序 root question → lifecycle，
       // 与 publisher/C1 一致）读当前维度。三者同时成立时，这份 base 内容已被
-      // question_admission_run（YUK-1445 C1）独立准入，本投递不得重发：
+      // question_admission_run 独立准入，本投递不得重发：
       //   1. lifecycle.scoring_admission_state === 'admitted'；
       //   2. 【当前 revision】上存在 policy question_admission@1 或 @2、outcome='passed'
       //      的 question_admission_verification 行（不匹配历史其他 revision 的
       //      passed 行）；
       //   3. 该行绑定当前已发布 revision 的 integrity_digest —— 权威绑定取
-      //      publisher 写入的 revision_digest 列（YUK-1547 resolved 发布后
+      //      publisher 写入的 revision_digest 列（resolved 发布后
       //      evidence.base_contract_digest 是付费【输入】摘要，不再等于发布
       //      摘要）；旧证据字段仅作 base==published 行的兼容回退
       //      （lifecycle.current_revision_id → question_revision.integrity_digest）。
@@ -1066,7 +1060,7 @@ export async function runSourceVerify(
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
-            // YUK-1037 — a synthetic subject root ('seed:<subj>:root', the
+            // a synthetic subject root ('seed:<subj>:root', the
             // plan-executor coarse-fallback binding) is a structural anchor,
             // never a content KC: skip FSRS enrollment so the question can't
             // mint a due card for an id the subject read axis already excludes
@@ -1096,15 +1090,15 @@ export async function runSourceVerify(
           }
         }
 
-        // YUK-1043 — 统一发布链：verified promote 同事务重发组 revision。
-        // YUK-1507 — 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
+        // 统一发布链：verified promote 同事务重发组 revision。
+        // 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
         // 要两次独立解题一致 + 逐单元标定才 admitted，这里只有 tier-2 确定性
         // checks、没有独立核验，所以发布为 withheld(unverified_rules)＝待准入；
-        // question_admission_run（YUK-1445 C1）经 assessment_publish outbox
+        // question_admission_run 经 assessment_publish outbox
         // 订阅自动入队，双解 + 标定通过后才 admitted。
         // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
-        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
-        // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
+        // suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
+        // 「同版复核通过」行）；retraction_hold 不由本路径接线，publisher 恒保留。
         const groupRootId = row.parent_question_id ?? questionId;
         {
           const [lifecycle] = await tx
@@ -1147,7 +1141,7 @@ export async function runSourceVerify(
                 .from(question_revision)
                 .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
                 .limit(1);
-              // YUK-1547 — after a resolved-contract publication the receipt's
+              // after a resolved-contract publication the receipt's
               // evidence.base_contract_digest is the paid INPUT digest, not the
               // published digest. The authoritative binding is the row's own
               // revision_digest (publisher-written = the revision it verified);
@@ -1225,7 +1219,7 @@ export async function runSourceVerify(
           }
         }
         if (keptIndependentAdmissionRevisionId == null) {
-          // YUK-1568 P：正向 promote 同样只翻生命周期维度；已声明 revision
+          // 正向 promote 同样只翻生命周期维度；已声明 revision
           // 保留冻结契约（不铸新 revision、不丢声明、不因核验通过而 admitted）。
           await publishVerifyLifecycleUpdate(tx, {
             rootId: groupRootId,
@@ -1250,9 +1244,9 @@ export async function runSourceVerify(
           });
         }
       } else {
-        // ---- YUK-479 — auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
+        // ---- auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
         // The cold-start image-upload path (image-candidate-accept.ts) PRE-PROMOTES a
-        // structurally-sound draft to draft_status='active' (no inbox wall, YUK-478) BEFORE this
+        // structurally-sound draft to draft_status='active' (no inbox wall) BEFORE this
         // source_verify runs, relying on source_verify as the deeper grounding gate. Until now
         // source_verify had only a PROMOTE branch, so a FAIL left such a question 'active' →
         // unverified content stayed placement-selectable (the "one-way gate"). Demote it back to
@@ -1260,7 +1254,7 @@ export async function runSourceVerify(
         //
         // SCOPED-BY-CONSTRUCTION (no marker column needed): the ONLY question that can be 'active'
         // when source_verify reaches this !promote branch is a cold-start pre-promote (the same
-        // image_candidate-accept path that also carries single_source_grounding — so a YUK-230
+        // image_candidate-accept path that also carries single_source_grounding — so a
         // grounding FAIL is one of the reasons a pre-promoted draft lands here). A normal
         // web_sourced draft (sourcing.ts) is 'draft' here → the WHERE draft_status='active' guard
         // makes the demote a no-op; an already-verified question is short-circuited by the
@@ -1272,7 +1266,7 @@ export async function runSourceVerify(
         // it stops FUTURE selection; any existing history is untouched. A later re-enqueue is
         // short-circuited by the failure verify event (idempotency), so the question stays out of
         // the pool until a human (verify-and-promote owner override) intervenes.
-        // 并发终验成功（§3.3「旧验证不能改变较新 admission 决定」）⇒ 行已归
+        // 并发终验成功（「旧验证不能改变较新 admission 决定」）⇒ 行已归
         // 那笔成功投递：demote 与 suspend 双双跳过（与 transient 分支同一
         // OVERLAPPING-DELIVERY 守卫，锁内读原子）。
         const promotedElsewhere = current.promotedElsewhere === true;
@@ -1291,7 +1285,7 @@ export async function runSourceVerify(
               .returning({ id: question.id });
         wasDemoted = demotedRows.length > 0;
 
-        // YUK-1045 — verify 挂起串行化（§3.3）：非 promote 的 verify（失败或
+        // verify 挂起串行化：非 promote 的 verify（失败或
         // needs_review）必须同事务把 contract 维度翻 suspended（verify_hold）+
         // admission 折叠 withheld ——「未发出的题」在 contract 读面不可用，且
         // 只挂 suspension，不动 live 去重 claim（挂起不释放 claim）。组未发布
@@ -1299,7 +1293,7 @@ export async function runSourceVerify(
         // promotedElsewhere ⇒ 本投递 stale：不翻 contract 维度（honest：stale
         // 投递也不写核验记录 —— 记录的是「本版核验结果」，不该落在较新决定上）。
         if (!promotedElsewhere) {
-          // YUK-1568 P：hold/suspend 只翻生命周期维度；已声明 revision 走
+          // hold/suspend 只翻生命周期维度；已声明 revision 走
           // 冻结契约的 typed publisher（helper 内部分派，fail-closed 不变）。
           await publishVerifyLifecycleUpdate(tx, {
             rootId: row.parent_question_id ?? questionId,
@@ -1327,7 +1321,7 @@ export async function runSourceVerify(
         }
       }
 
-      // YUK-1514 — close the recheck paid-attempt claim IN THE SAME tx as the
+      // close the recheck paid-attempt claim IN THE SAME tx as the
       // terminal event + publish: a delivery that gets here is the one that
       // paid, and the claim reaching 'applied' is the durable proof no later
       // redelivery may re-pay.
@@ -1359,12 +1353,12 @@ export async function runSourceVerify(
           question_id: questionId,
           tier: 2,
           promoted: promote,
-          // YUK-1514 — marks this terminal run as the paid attempt of an owner
+          // marks this terminal run as the paid attempt of an owner
           // recheck command; the terminal-event guard is claim-scoped on it.
           ...(params.recheckCommandEventId != null
             ? { recheck_command_event_id: params.recheckCommandEventId }
             : {}),
-          // YUK-1507 — C1 先行独立准入命中：本次 success 未重发（未把 admitted
+          // C1 先行独立准入命中：本次 success 未重发（未把 admitted
           // 降回 withheld，也未把行归一 base 重铸到 C1 的 resolved revision 上）。
           // 只记保留的 revision id，不记任何原文内容。
           ...(keptIndependentAdmissionRevisionId != null
@@ -1373,10 +1367,10 @@ export async function runSourceVerify(
                 kept_revision_id: keptIndependentAdmissionRevisionId,
               }
             : {}),
-          // YUK-479 — true when this FAIL demoted a cold-start pre-promoted draft
+          // true when this FAIL demoted a cold-start pre-promoted draft
           // (draft_status active→draft); false on a normal draft FAIL (no-op) and on promote.
           demoted: wasDemoted,
-          // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+          // unified verify contract shape (axes + overall +
           // failure_class? + summary_md + confidence). SUPERSET: the tier-2-specific keys
           // below (checks / knowledge_archived) stay unchanged. `unified.failure_class`
           // (validation_failure when !promote) reproduces the prior inline value
@@ -1397,7 +1391,7 @@ export async function runSourceVerify(
                   archived_knowledge_ids: archivedKnowledgeIds,
                 },
               }),
-          // YUK-230 — the source-grounding re-check verdict (single_source_grounding rows
+          // the source-grounding re-check verdict (single_source_grounding rows
           // only; absent otherwise). triggered_by records the accept-authorization extension
           // (owner 2026-07-23 决策清单②). The real VLM cost is on the runner's own ai_task_runs
           // + cost_ledger row (SourceGroundingVerifyTask); this is the audit trail on the
@@ -1429,7 +1423,7 @@ export async function runSourceVerify(
     // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
     // verify (idempotency guard treats outcome='error' as retriable). A failed write
     // transaction preserves its prior state; the catch path never promotes.
-    // YUK-350 (RL1) — error-safe: promotion happens only inside the try (post-LLM
+    // error-safe: promotion happens only inside the try (post-LLM
     // gate), so reaching this catch guarantees the question was never promoted. The
     // unified system_error projection now ALSO gives tier-2 a symmetric result-layer
     // overall='error' (previously the handler emitted only failure_class); the
@@ -1450,7 +1444,7 @@ export async function runSourceVerify(
           ...(params.recheckCommandEventId != null
             ? { recheck_command_event_id: params.recheckCommandEventId }
             : {}),
-          // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
+          // unified verify contract shape via the system_error
           // projection: { axes:[], overall:'error', failure_class:'system_error',
           // summary_md, confidence:0 }. failure_class is byte-identical to the prior
           // inline; overall/axes/summary_md/confidence are additive.
@@ -1473,7 +1467,7 @@ export async function runSourceVerify(
     } catch (cleanupErr) {
       console.error('[source_verify] catch-block cleanup failed for', questionId, cleanupErr);
     }
-    // YUK-1514 — the recheck claim reached 'sending' but the run threw: the paid
+    // the recheck claim reached 'sending' but the run threw: the paid
     // call may or may not have happened, so the honest terminal state for THIS
     // attempt is 'unknown' — never re-paid under this command event (a later
     // command needs a new key → a new claim identity).

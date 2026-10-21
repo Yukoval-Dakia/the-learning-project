@@ -1,39 +1,21 @@
 /**
- * Draft-status gate audit (YUK-350) — `question` INSERT 漂移 lint
+ * Draft-status gate audit — flags `question` INSERTs that omit draft_status.
  *
- * 起源（W0 C1）：`question.draft_status` 是 NULL≡active 的三态字段——一条新插入的
- * question 若不显式 set draft_status，就是 NULL，被整个 review 池当 active 收。
- * embedded check / teaching check 这类「容器内专用」题若漏 set draft_status，会
- * 静默漏进通用练习池（红线 4）。本脚本扫所有 `.insert(question).values({ ... })`
- * 站点，要求每个站点要么显式携带 draft_status key，要么在 allowlist 里声明
- * （NULL≡active 是该 writer 的合法语义，例如 auto-enroll / import / 错题录入 /
- * 卷题——它们本就是 active 题）。
+ * `question.draft_status` is NULL≡active. A new embedded/teaching question that omits it silently
+ * enters the general practice pool, so every `.insert(question).values({...})` site must either set
+ * the key or be allowlisted with the NULL≡active semantics.
  *
- * 这是 W0 C1 合并后的【唯一】draft-gate 审计（L2 的 audit-question-draft-gate.ts
- * 已废弃合入这里）；NULL-owner 枚举与 allowlist 由本文件单一拥有。
+ * The regex locates the insert head, brace-balances the values object (skipping strings, templates,
+ * and comments), and looks for the key by word boundary (so question_block / question_part do not
+ * match).
  *
- * 用法：
- *   pnpm audit:draft-status          # 报告 + 非零 exit 若有未声明的缺 draft_status 插入
- *   pnpm audit:draft-status --json   # JSON 输出
- *
- * 限制：file-walk + 正则定位 `.insert(question).values({` 头，再 brace-balance 抽
- * 出对象字面量块（跳过字符串 / 模板 / 注释里的花括号），在块内 word-boundary 找
- * draft_status key。仅扫源码（非 test、非 scripts/seed-*），word-boundary 排除
- * question_block / question_part（同名前缀的其它表）。
- *
- * 已知盲点（与 sibling audit-schema 同属正则-shape 限制，当前数据下均不可触发——
- * 已 grep 确认无任何站点命中以下形态——但未来贡献者须知）：
- *   1. 只匹配 INLINE 对象字面量形式 `.values({ ... })`。变量/数组形式 `.values(rows)` /
- *      `.values([...])` 不会被扫到，会静默逃过 gate。新增 bulk/computed-row insert 时必须
- *      改写成 inline 字面量，否则 gate 不覆盖。
- *      （F3，YUK-350：跨行 / 链式断行形态——`.insert(question)` 与 `.values({` 之间夹换行或
- *      `.onConflictDoNothing()` 等链式调用——以前被漏扫，现在 INSERT_HEAD_RE 已容忍，见其注释。）
- *   2. DRAFT_STATUS_KEY_RE 在整块对象（含嵌套）里找 key，不限 top-level。若把
- *      draft_status 作为嵌套对象（如 metadata: { draft_status: ... }）的 key，会被
- *      误判为「已设」。draft_status 必须是 top-level 列 key。
- *   3. 只 walk SRC_ROOT（src/），不扫 scripts/——seed-* 种子数据按设计排除。
- *
- * 详见 docs/design/2026-05-15-data-assumptions.md（draft_status NULL≡active 契约）。
+ * Known blind spots:
+ *   1. Only inline object literals are scanned. `.values(rows)` and `.values([...])` escape; bulk
+ *      inserts must use an inline literal or the gate does not cover them. Cross-line/chained insert
+ *      heads are handled by INSERT_HEAD_RE.
+ *   2. The key regex scans the whole object, including nested keys. A `metadata: { draft_status }`
+ *      would look compliant; draft_status must be a top-level column key.
+ *   3. Only src/ is walked; seed scripts are excluded by design.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -48,7 +30,7 @@ const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-allowlist.json');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
 
-// ---------- allowlist contract (mirrors audit-schema-allowlist.json shape) ----------
+// ---------- allowlist contract (same shape as audit-schema-allowlist.json) ----------
 
 const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
 type ResolveKind = (typeof RESOLVE_KINDS)[number];
@@ -68,9 +50,8 @@ function isIsoDate(value: string): boolean {
 }
 
 /**
- * Validate the allowlist file shape: every entry must carry a non-empty reason +
- * a resolves_when { kind ∈ {pr,phase,manual}, ref non-empty, expected_by ISO date }.
- * Exported pure for unit testing. Returns the list of problems ([] when clean).
+ * Validate the allowlist file shape: each entry needs a non-empty reason and a resolves_when with
+ * kind in {pr,phase,manual}, a non-empty ref, and an ISO date. Pure.
  */
 export function validateAllowlistHygiene(raw: unknown): HygieneIssue[] {
   const issues: HygieneIssue[] = [];
@@ -143,11 +124,8 @@ export function walkSource(root: string, out: string[] = []): string[] {
   return out;
 }
 
-// extractObjectBlock lives in scripts/lib/ts-tokenize.ts now (shared with the read-side
-// audit audit-draft-status-reads.ts, YUK-569) so both draft-status audits use ONE proven
-// comment/string/template-aware scanner. Re-exported here so this module's public surface
-// (and its unit test's `import { extractObjectBlock } from './audit-draft-status'`) stays
-// unchanged; scanQuestionInserts below uses the imported binding directly.
+// extractObjectBlock lives in scripts/lib/ts-tokenize.ts so both draft-status audits share one
+// comment/string/template-aware scanner. Re-exported to keep this module's public surface stable.
 export { extractObjectBlock };
 
 // ---------- scan ----------
@@ -159,42 +137,18 @@ export type InsertSite = {
   hasDraftStatus: boolean;
 };
 
-// `.insert( question )[ .chain(...) ]* .values( {` — tolerant of chained-call line breaks
-// (F3, YUK-350). The OLD matcher `\.insert\(\s*question\s*\)\.values\(\s*\{` required `.values(`
-// to immediately follow `)` with NOTHING between them, so the idiomatic Drizzle cross-line form
-//   tx
-//     .insert(question)
-//     .values({ ... })
-//     .onConflictDoNothing()
-// (and any `.insert(question).<method>(...).values({` shape) silently escaped the scan → the
-// gate could go falsely green on a new cross-line insert that forgot draft_status. This head
-// now allows whitespace/newlines AND zero-or-more intermediate chained method calls between
-// `.insert(question)` and `.values({`:
-//   `\s*` after `)` swallows the line break;
-//   `(?:\.<ident>\(<no-paren args>\)\s*)*` swallows any intermediate `.foo()` chain links.
-// Word-boundary on `question` still excludes question_block / question_part (the `(` after the
-// table name guarantees the boundary). The intermediate-link arg matcher is `[^)]*` (no nested
-// parens) — adequate for the empty-arg Drizzle chain links (`.onConflictDoNothing()`,
-// `.returning()`); a chain link carrying a nested-paren call before `.values` would not be
-// swallowed (acceptable — `.values` normally comes first in Drizzle insert chains).
-//
-// YUK-395: the values object may be wrapped in a single derive helper call —
-// `.values(withAnswerClass({ ... }))` — so allow an OPTIONAL `<ident>(` (with
-// whitespace/newlines) between `.values(` and the `{`. The brace-balance extractor
-// keys off the `{` being the LAST char of the match, so swallowing the wrapper-open
-// paren keeps the `{` as the anchor; the extra close paren after the object `}` is
-// outside the extracted block and irrelevant to the draft_status key scan. Without
-// this, every wrapped site silently escapes the scan and the gate goes falsely green
-// (0 sites scanned).
+// `.insert(question)[.chain(...)]*.values([helper(])?{` — tolerates line breaks and intermediate
+// no-arg chain links, and one wrapper call around the values object. Word-boundary on question
+// excludes question_block/question_part. A chain link with a nested-paren argument would not be
+// swallowed; .values normally comes first in Drizzle insert chains.
 const INSERT_HEAD_RE =
   /\.insert\(\s*question\s*\)\s*(?:\.[A-Za-z_$][\w$]*\([^)]*\)\s*)*\.values\(\s*(?:[A-Za-z_$][\w$]*\(\s*)?\{/g;
-// draft_status as an object KEY (word-boundary, allow quotes), not a substring of
-// another identifier.
+// draft_status as an object key (word-boundary, optional quotes), not part of another identifier.
 const DRAFT_STATUS_KEY_RE = /(^|[^A-Za-z0-9_])(['"]?)draft_status\2\s*:/;
 
 /**
- * Scan one source file for every `.insert(question).values({ ... })` site, returning
- * whether each carries a draft_status key. Exported pure for unit testing.
+ * Scan one file for every `.insert(question).values({...})` site and whether it carries a
+ * draft_status key. Pure.
  */
 export function scanQuestionInserts(file: string, src: string): InsertSite[] {
   const sites: InsertSite[] = [];
@@ -202,9 +156,9 @@ export function scanQuestionInserts(file: string, src: string): InsertSite[] {
   INSERT_HEAD_RE.lastIndex = 0;
   for (const m of src.matchAll(INSERT_HEAD_RE)) {
     const headIdx = m.index ?? 0;
-    // the `{` is the last char of the match.
+    // The `{` is the last character of the match.
     const braceIdx = headIdx + m[0].length - 1;
-    // Regex still sees example text in comments/strings; those are not insert sites.
+    // The regex also matches prose in comments/strings; those are not insert sites.
     if (codeMask[headIdx] === 0 || codeMask[braceIdx] === 0) continue;
     const block = extractObjectBlock(src, braceIdx, codeMask);
     const hasDraftStatus = block !== null && DRAFT_STATUS_KEY_RE.test(block);
@@ -221,10 +175,9 @@ export type DraftGateResult = {
 };
 
 /**
- * Core gate: every question-insert site must either carry draft_status OR live in an
- * allowlisted file. Allowlisted-AND-explicit silently passes (L2→L4 chain-merge guard:
- * after L2 sets draft_status on embedded/teaching, their allowlist entries become
- * harmless-redundant — they must NOT hard-fail). Exported pure for unit testing.
+ * Every question-insert site must set draft_status or live in an allowlisted file. An allowlisted
+ * site that also sets it passes silently: after migration those entries are redundant, not errors.
+ * Pure.
  */
 export function validateDraftGate(
   sites: InsertSite[],
@@ -297,8 +250,7 @@ function main(): void {
   if (!result.ok) process.exit(1);
 }
 
-// CLI-gate (mirrors audit-test-partition.ts): only walk + exit when run as a CLI so the
-// self-test can import the pure functions without the top-level scan firing.
+// CLI-gate: only walk and exit when run directly, so the self-test can import the pure functions.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

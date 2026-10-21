@@ -17,9 +17,9 @@ export function truncateUtf8(value: string, maxBytes: number): string {
 }
 
 /**
- * Bounded raw-arguments evidence for a failed structured submit: the truncated
- * payload plus a digest of the FULL string, so a truncated row still matches
- * the digest recorded in `unresolved_reason` / error messages.
+ * Bounded raw-arguments evidence for a failed structured submit: the truncated payload
+ * plus a digest of the FULL string, so truncated rows still match the digest recorded
+ * in error messages.
  */
 export function rawArgumentsEvidence(
   rawArgs: string,

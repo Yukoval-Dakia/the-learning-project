@@ -1,6 +1,5 @@
 // Pure knowledge-edge reducer. No IO or clocks: the live mesh is passed in and events
-// are sorted internally. The row shape is shared with the genesis seed so the two
-// cannot drift; edges have no version or embed_* columns.
+// are sorted internally. The row shape is shared with genesis; edges have no version.
 
 import { z } from 'zod';
 import {
@@ -33,9 +32,8 @@ function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-// Validate at the boundary. Fields stay optional here; the create/archive branches
-// require their own. An empty relation_type would bypass the topology gate, so it is
-// never projected.
+// Validate at the boundary; create/archive branches require their own fields. An empty
+// relation_type would bypass the topology gate, so it is never projected.
 const GenerateEdgePayload = z.object({
   edge_op: z.enum(['create', 'archive']).optional(),
   from_knowledge_id: z.string().min(1).optional(),
@@ -50,10 +48,9 @@ type GenerateEdgePayloadT = z.infer<typeof GenerateEdgePayload>;
 
 const ARCHIVE_EDGE_OP = 'archive';
 
-// ADR-0034 topology gate, reused as the pure checkEdgeTopology. It runs only when a
-// create adds a live prerequisite edge; genesis seeds are trusted ground truth and are
-// never re-gated, since replay could reject a historically valid row. A reject throws;
-// a warning proceeds (there is no verdict column to stamp).
+// ADR-0034 topology gate runs only when a create adds a live prerequisite edge. Genesis
+// seeds are trusted and never re-gated; replay could reject a historically valid row.
+// Reject throws; warn proceeds because there is no verdict column.
 
 /**
  * Project one edge; caller order is irrelevant. `liveMesh` is the currently live edge
@@ -155,8 +152,8 @@ function reasonOrNull(reasoning: string | null | undefined): string | null {
 }
 
 /**
- * Build a live row from a validated create payload. created_by is reconstructed from
- * the envelope plus propose_event_id; timestamps come from the same-tx event.
+ * Build a live row from a validated create payload. created_by comes from the envelope
+ * plus propose_event_id; timestamps come from the same-tx event.
  */
 function rowFromGenerateEvent(
   edgeId: string,
@@ -184,8 +181,8 @@ function rowFromGenerateEvent(
 }
 
 /**
- * Defensive archived row when no seed is in the slice. Weight is unknown (default 1)
- * and the true create time is lost, so created_at falls back to the archive event.
+ * Defensive archived row when no seed is in the slice. Weight and true create time are
+ * unknown, so created_at falls back to the archive event.
  */
 function archiveRowFromArchiveEvent(
   edgeId: string,
