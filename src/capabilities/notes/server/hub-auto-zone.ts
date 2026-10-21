@@ -1,7 +1,7 @@
 // Hub auto-zone builder and suppression reader. Lives here so the reconciler and
 // the nightly job can share it without an import cycle. Pure: no DB or IO.
 
-import type { CuratedAtomic } from '@/capabilities/knowledge/public';
+import type { CuratedAtomic } from '@/capabilities/notes/server/hub-curation';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 
