@@ -1,16 +1,9 @@
-// Copilot's single persistent execution owner (ADR-0062).
-// HTTP admission commits the input and queues its session head; this worker
-// owns execution, Stop, native session reuse and the live paid/tool loop. Safe
-// STEP progress and provider prose publish during execution; authoritative
-// reply replacement follows the finalized domain outcome commit. Closing a
-// subscriber cannot cancel it.
-// Input/reply writes live in conversation-writes; the execution/finalization
-// policy lives in copilot-execution. Registered tools come from capability
-// manifests before worker pickup, never from an extra chat adapter.
-// Every terminalizing write — the two pre-execution gates, the outcome marker
-// two-phase, the public REPLY/DONE/FAILED receipt and all recovery decisions —
-// belongs to server/copilot-run-settlement.ts; this owner only feeds its paid
-// outcome into that settlement operation.
+// Copilot's single persistent execution owner (ADR-0062). HTTP admission commits
+// the input and queues its session head; this worker owns execution, Stop, native
+// session reuse and the live paid/tool loop. Closing a subscriber never cancels it.
+// Input/reply writes live in conversation-writes; the execution/finalization policy
+// lives in copilot-execution. Every terminalizing write belongs to
+// server/copilot-run-settlement.ts; this owner only feeds its paid outcome into it.
 
 import { createHash } from 'node:crypto';
 import type { Job } from 'pg-boss';
@@ -27,12 +20,10 @@ import {
   createCopilotRunCancellationControl,
   persistCopilotRunCancellationMarker,
 } from '@/capabilities/copilot/server/copilot-run-cancellation';
-// YUK-575 (A1/N3) — the shared free-form run-input assembler. The durable handler
-// assembles the FULL run input at pickup time (YUK-596: pass run_id as a causal
-// history anchor in the job's fixed session; conversation_history / learner-state
-// header / proposal_feedback / ambient all fresh at pickup), byte-parity with
-// inline. Before YUK-575 the durable run shipped a minimal {surface,triggered_by,
-// user_message} with NO session memory.
+// The shared free-form run-input assembler. The durable handler
+// assembles the FULL run input at pickup time (run_id anchors causal history in the
+// job's fixed session; conversation_history / learner-state / proposal_feedback /
+// ambient are all fresh at pickup), byte-parity with inline.
 import {
   type CopilotRunInput,
   assembleCopilotRunInput,
@@ -101,7 +92,7 @@ export type {
   WriteFailedTerminalProjectionFn,
   WriteSuccessfulTerminalProjectionFn,
 } from '@/capabilities/copilot/server/copilot-run-settlement';
-// Compatibility surface: the settlement owner moved to server/copilot-run-settlement;
+// Compatibility surface: the settlement owner lives in server/copilot-run-settlement;
 // existing callers keep importing these symbols from this job module.
 export {
   CLAIMED_EXECUTION_SETTLE_GRACE_MS,
@@ -119,7 +110,7 @@ export type { CopilotRunJobData } from '../server/durable-dispatch';
 // One execution owner resolves the budget. Copilot spend ceilings were removed
 // by owner directive — turns and tool calls are uncapped; the 45-minute
 // wall-clock window remains as the owner-recovery bound and stays below the
-// stuck-run sweeper threshold (STUCK_RUN_THRESHOLD_MS = 1h, asserted in tests).
+// stuck-run sweeper threshold (1h).
 export const DURABLE_BUDGET = DURABLE_COPILOT_EXECUTION_BUDGET;
 
 export interface RunCopilotRunParams {
@@ -129,8 +120,8 @@ export interface RunCopilotRunParams {
   executeCopilotTurnFn?: ExecuteCopilotTurn;
   runTeachingSkillFn?: typeof runTeachingSkill;
   /**
-   * YUK-575 (A1/N3) test seam — 默认 assembleCopilotRunInput。注入 fixture 断言
-   * pickup-time 装配参数（historyAnchorEventId=run_id、ambient 透传等）而不打真 DB。
+   * Test seam — 默认 assembleCopilotRunInput。注入 fixture 断言 pickup-time 装配参数
+   * 而不打真 DB。
    */
   resolveCopilotRunInputFn?: typeof assembleCopilotRunInput;
   /** Test/ops seam for the default-on COPILOT_SUBAGENT_ENABLED kill switch. */
@@ -155,10 +146,10 @@ const CLAIMED_EXECUTION_POLL_MS = 250;
 
 /**
  * An overlapping physical delivery must neither execute nor declare the live
- * owner ambiguous. Wait within the 2h pg-boss lease for the primary + final
- * finalization + settlement owner budget, then re-enter through normal replay guards. If the owner crashed,
- * the expired fence becomes an honest ambiguous terminal; if it committed an
- * outcome/terminal, replay repairs or returns it without paid work.
+ * owner ambiguous. Wait within the 2h pg-boss lease for the owner's settlement
+ * budget, then re-enter through normal replay guards: a crashed owner's expired
+ * fence becomes an honest ambiguous terminal; a committed outcome/terminal is
+ * repaired or returned without paid work.
  */
 async function awaitClaimedCopilotExecution(
   params: RunCopilotRunParams,
@@ -214,8 +205,7 @@ async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilo
     // failed. No terminal means no repair; projection failure cannot undo a
     // paid parent outcome. The existing parent reconciler retries after crashes.
     try {
-      // R1 cleanup：只在 allow 回合结算原生子代理；任何受限用途
-      // （answer_only / crisis）都不该有原生代子代要收敛。
+      // 只在 allow 回合结算原生子代理；answer_only / crisis 不会生成子代理。
       if ((await readEventDerivationPolicy(params.db, params.data.run_id)) === 'allow') {
         await reconcileNativeSubagentsForParent(
           params.db,
@@ -254,7 +244,7 @@ async function executeAcceptedCopilotRun(
     params.createCancellationControlFn ?? createCopilotRunCancellationControl;
   const discardWorkerCursor = await captureWorkerSessionCursor(db, data.session_id);
 
-  // 启动前 replay 一次：F3 terminal-already-present 守卫 + pre-fence 协作取消。
+  // 启动前 replay：terminal-already-present 守卫 + pre-fence 协作取消。
   // 运行中 Stop 由下方 cancellation control 的 poll / SDK hook / DomainTool gate
   // 接管；run handle 是 run_id，所有请求/终态仍写进同一 business_id。
   const priorEvents = await computeReplay(db, {
@@ -263,34 +253,24 @@ async function executeAcceptedCopilotRun(
     lastEventId: 0,
   });
   // Legacy FAILED(reason=error) frames explicitly authorize another paid
-  // delivery. Each such delivery needs a fresh model-attempt identity: both
-  // ai_task_runs and provider_session_admission are terminal ledgers keyed by
-  // task_run_id and must never be reopened. The replay count is deterministic
-  // across overlapping/redelivered workers; the execution fence below still
-  // guarantees that only one owner can use this candidate identity.
+  // delivery. Each delivery needs a fresh model-attempt identity: ai_task_runs and
+  // provider_session_admission are terminal ledgers keyed by task_run_id and must
+  // never be reopened. The replay count is deterministic across overlapping
+  // deliveries; the execution fence still guarantees only one owner uses it.
   const retryableFailureCount = priorEvents.filter(
     (event) => event.event_type === COPILOT_RUN_EVENTS.FAILED && !isCopilotRunTerminalEvent(event),
   ).length;
   const taskRunId =
     retryableFailureCount === 0 ? baseTaskRunId : `${baseTaskRunId}_retry_${retryableFailureCount}`;
 
-  // YUK-364 (bot-review C1) — terminal-already-present 守卫（防成功后重投的重复
-  // 副作用），但**只对 DONE（成功终态）+ cancelled（用户意图终态）跳过**，对普通
-  // FAILED **不跳过**（救活 pg-boss retry）。
+  // Terminal-already-present 守卫（防成功后重投的重复副作用）：只对 DONE 成功终态和
+  // terminal 类 FAILED（除可重试的 reason='error' 外全部 fail-closed）跳过重跑。
   //
-  // YUK-575 (Fix 2 — single-shot)：durable copilot 继承 streamTaskCollecting 的
-  // graceful-degrade（run 失败经 {partial} plain-Error 回来、从不 throw AgentRunError）。
-  // 业务失败仍写 terminal FAILED(reason='exhausted') 后 return-without-throw；只有终态
-  // projection 失败会抛给 pg-boss，重投据 durable reply marker 修复而不重跑 paid work。
-  // 真 transient runner 自动重试延到 YUK-596。terminal 守卫据 replay 末态跳重投：
-  //   • DONE  → 成功终态，跳过返回现有 reply（重投不重跑、不重写，防重复副作用 +
-  //             重复 STARTED/REPLY/DONE，quiz_gen:741-745 同款 hazard）。
-  //   • FAILED(reason='cancelled') → 用户意图的早停终态（cancelled-before-start
-  //             落在这里），按现有终态返回 cancelled，不重跑（取消 deliberate）。
-  //   • FAILED(reason='exhausted') → 单发失败的 deliberate terminal（handleDurableFailure
-  //             写它 + return，不 throw）；此守卫兜「写完 terminal 后、worker 崩溃在
-  //             pg-boss 标 job complete 前」的 EXPIRE_AGENT redeliver，不重跑重烧
-  //             12-min run（下方 priorExhausted）。
+  // durable copilot 继承 streamTaskCollecting 的 graceful-degrade（run 失败经
+  // {partial} plain-Error 回来、从不 throw AgentRunError）。业务失败仍写 terminal
+  // FAILED(reason='exhausted') 后 return-without-throw；只有终态 projection 失败会抛给
+  // pg-boss，重投据 durable reply marker 修复而不重跑 paid work。此守卫兜「写完
+  // terminal 后、worker 崩溃在 pg-boss 标 job complete 前」的 redeliver。
   const priorDone = priorEvents.some((e) => e.event_type === COPILOT_RUN_EVENTS.DONE);
   if (priorDone) {
     return terminalRunResult(priorEvents, taskRunId);
@@ -339,17 +319,14 @@ async function executeAcceptedCopilotRun(
       throw new DurableTerminalProjectionError(runId, 'failure', projectionErr);
     }
   }
-  // YUK-1398（S3）— crisis 回合的确定性终局：不逃模型、不调工具、不进
-  // 执行 fence。分类在接纳点完成（chat.ts），策略经既有投递链验证送达
-  // （acceptedCopilotDerivationPolicy）；此处用同一确定性词法重选模板
-  // （输入已验证 ask.payload.user_message === data.user_message，同类同案）。
-  // 回复经 persistReply 写入：继承 ask 的 crisis 策略（连同直接上下文被
-  // 一切派生读面排除）；REPLY/DONE 投影带 finish_reason='crisis_template'。
-  // 模板正文见 src/core/crisis/config.ts（每条带 review_status，当前全部未审定）。
+  // Crisis 回合的确定性终局：不逃模型、不调工具、不进执行 fence。分类在接纳点
+  // 完成（chat.ts），策略经投递链验证送达（acceptedCopilotDerivationPolicy）；此处
+  // 用同一确定性词法重选模板。回复经 persistReply 写入并继承 ask 的 crisis 策略；
+  // REPLY/DONE 投影带 finish_reason='crisis_template'。模板正文见
+  // src/core/crisis/config.ts。
   if (derivationPolicy === 'crisis') {
     const detectionClass = classifyCrisisExpression(data.user_message);
-    // 四类各有模板（R1 fix 3 拆分后）；'none'（客户端自送策略的 fail-safe）
-    // 按 explicit → full_support，不过度也不漏。
+    // 'none'（客户端自送策略的 fail-safe）按 explicit 处理，不过度也不漏。
     const template = crisisTemplateForClass(
       detectionClass === 'none' ? 'explicit' : detectionClass,
     );
@@ -391,10 +368,10 @@ async function executeAcceptedCopilotRun(
   }
 
   // EXECUTION_STARTED is the load-bearing at-most-once fence committed
-  // immediately before streamRun below. A redelivery that sees the fence but no
-  // durable outcome cannot know whether paid model/tool work committed before a
-  // DB/process failure. Re-running would duplicate cost and potentially external
-  // side effects, so recover to an honest ambiguous terminal instead.
+  // immediately before the paid execution gateway below. A redelivery that sees
+  // the fence but no durable outcome cannot know whether paid model/tool work
+  // committed before a DB/process failure. Re-running would duplicate cost and
+  // potentially external side effects, so recover to an honest ambiguous terminal.
   const priorExecutionFence = priorEvents.find(
     (event) => event.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
   );
@@ -417,8 +394,8 @@ async function executeAcceptedCopilotRun(
   // Worker-touch heartbeat stays early so pickup-stall detection does not
   // mislabel deterministic DB/input assembly as a dead worker. This is not the
   // paid execution fence; EXECUTION_STARTED below owns that stronger contract.
-  // The dispatch lock prevents this advisory heartbeat from landing after a
-  // concurrent pre-fence Stop has already written its terminal suffix.
+  // The dispatch lock prevents this heartbeat from landing after a concurrent
+  // pre-fence Stop has already written its terminal suffix.
   const started = await markCopilotRunStarted(
     db,
     runId,
@@ -433,11 +410,11 @@ async function executeAcceptedCopilotRun(
     return { status: 'cancelled' };
   }
 
-  // YUK-575 (A1/N3/MF-B) — 组装 FULL run input（与 inline byte-parity）。**pickup 时**
-  // 重读 conversation_history / learner-state header(YUK-574) / proposal_feedback（保
-  // 新鲜，不在 dispatch 侧冻结），传 historyAnchorEventId=runId，把历史固定在
-  // dispatch 的 session + 插入边界（durable 时序 = dispatch-写-then-pickup）。
-  // ambient RIDE 自 job payload（S4：request-only、从不 persisted，无处可重读）。
+  // 组装 FULL run input（与 inline byte-parity）。**pickup 时**重读
+  // conversation_history / learner-state header / proposal_feedback（保新鲜，不在
+  // dispatch 侧冻结），传 historyAnchorEventId=runId，把历史固定在 dispatch 的
+  // session + 插入边界（durable 时序 = dispatch-写-then-pickup）。ambient 只随 job
+  // payload 传入（request-only、从不 persisted，无处可重读）。
   const runInput: CopilotRunInput = await assembleRunInput(db, {
     sessionId: data.session_id,
     userMessage: data.user_message,
@@ -460,12 +437,12 @@ async function executeAcceptedCopilotRun(
     streamedProse.trim().length > 0 ? streamedProse : undefined;
   const stopPartialText = (explicit?: string): string | undefined =>
     explicit !== undefined && explicit.length > 0 ? explicit : displayedProse();
-  // Load-bearing execution fence, deliberately placed after every deterministic
-  // setup/read and immediately before the only paid/external-effect gateway.
-  // The claim rechecks under a per-run transaction lock: two overlapping
-  // deliveries cannot both pass a replay-then-append TOCTOU and run tools twice.
-  // A loser must NOT terminalize the run while the winner may still be live;
-  // throwing lets pg-boss retry after the owner either persists DONE or crashes.
+  // Load-bearing execution fence, after every deterministic setup/read and
+  // immediately before the only paid/external-effect gateway. The claim rechecks
+  // under a per-run transaction lock: two overlapping deliveries cannot both pass
+  // a replay-then-append TOCTOU and run tools twice. A loser must NOT terminalize
+  // the run while the winner may still be live; throwing lets pg-boss retry after
+  // the owner either persists DONE or crashes.
   const executionClaim = await claimExecutionFence(db, runId, {
     beforeCancelled: answerOnly ? undefined : discardWorkerCursor,
     beforeExecution: answerOnly ? discardWorkerCursor : undefined,
@@ -657,7 +634,7 @@ async function executeAcceptedCopilotRun(
       );
     }
 
-    // YUK-575 — streamTaskCollecting graceful-degrade：run 出错时它 resolve
+    // streamTaskCollecting graceful-degrade：run 出错时它 resolve
     // { partial:true, error }（plain Error 内含）而非 throw。partial = run 跑了但失败
     // （可能有半程文本）→ terminal-no-retry（handleDurableFailure 写 failure marker +
     // FAILED(exhausted) 后 return）。只有 FAILED projection 写失败才交给 pg-boss；重投
@@ -705,10 +682,10 @@ async function executeAcceptedCopilotRun(
       kind: 'success',
     });
 
-    // YUK-364 (F1) — commit the domain outcome marker first, then project the
-    // public REPLY/DONE in a second transaction; both phases use the same
-    // per-run settlement lock. A projection failure remains repairable from the
-    // marker, while a recovery that wins first blocks a contradictory outcome.
+    // Commit the domain outcome marker first, then project the public REPLY/DONE in
+    // a second transaction; both phases use the same per-run settlement lock. A
+    // projection failure remains repairable from the marker, while a recovery that
+    // wins first blocks a contradictory outcome.
     try {
       const markerClaim = await ensureCopilotOutcomeMarker(
         db,
@@ -776,7 +753,7 @@ async function executeAcceptedCopilotRun(
   } catch (err) {
     if (err instanceof DurableTerminalProjectionError) throw err;
     // streamTaskCollecting graceful-degrades（resolve partial，见上），故这里只捕获
-    // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw（测 MF1/MF2）。
+    // 它之外的 throw（装配 / MCP mount / 事件写），或注入 fixture 的 throw。
     await drainDeltaChain(progressChain, runId);
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation();
@@ -797,7 +774,7 @@ async function executeAcceptedCopilotRun(
   }
 }
 
-/** S3 — 排空 delta 写链（best-effort：一条 delta 写失败不吞掉 run，也不阻 terminal）。 */
+/** 排空 delta 写链（best-effort：一条 delta 写失败不吞掉 run，也不阻 terminal）。 */
 async function drainDeltaChain(chain: Promise<void>, runId: string): Promise<void> {
   try {
     await chain;

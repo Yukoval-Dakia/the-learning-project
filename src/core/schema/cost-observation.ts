@@ -5,7 +5,7 @@ export const CostBreakdownFields = {
   reported_cost: z.number(),
   estimated_cost: z.number(),
   legacy_cost: z.number(),
-  // YUK-977 — basis-specific attempt counts carry the "amount is zero and the
+  // basis-specific attempt counts carry the "amount is zero and the
   // source is known" truth at each aggregation grain (currency/task/day); a
   // zero reported_cost alone cannot distinguish "reported zero" from "no
   // reported rows".

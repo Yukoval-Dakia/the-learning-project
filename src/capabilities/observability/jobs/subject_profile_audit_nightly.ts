@@ -1,7 +1,6 @@
-// YUK-601 PR7 (v3.2 §7) — 夜间装配漂移审计 cron（--strict 语义：invalid > 0 时
-// throw → job 显示 failed，admin jobs 观测面可见；fast 档无 DLQ，掉一拍下个
-// cron 重跑）。与 `pnpm audit:profile --db --strict` 同一审计路径
-// （auditProfilesFromDb），cron 只是它的无人值守形态。
+// Nightly profile assembly audit with strict semantics: any invalid profile throws,
+// so the job shows as failed. Same audit path as the CLI's strict DB mode; the cron
+// is just its unattended form.
 
 import type { Db } from '@/db/client';
 import {

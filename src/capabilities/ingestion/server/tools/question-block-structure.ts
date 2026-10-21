@@ -17,7 +17,8 @@ const GetQuestionBlockStructureInputSchema = z.object({
   blockId: z.string().min(1),
 });
 
-// YUK-1468 — v2 草稿文档的轻量结构投影：与 edit_question ops 同一 id 坐标系
+// Lightweight structure projection for v2 draft documents, using the same id space
+// as the edit_question ops
 //（part/unit/item/material/criterion 稳定 id），不是完整文档回显。
 const V2DocumentOverviewSchema = z.object({
   schema_version: z.literal(DRAFT_DOCUMENT_SCHEMA_VERSION),

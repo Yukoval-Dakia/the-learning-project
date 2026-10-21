@@ -1,19 +1,14 @@
-// YUK-364 (ADR-0041 endurance W1 L2) — durable copilot run 的事件契约 + 状态派生。
+// durable copilot run 的事件契约 + 状态派生。
 //
 // run handle = checkpoint_id = user_ask event id（run_id）。状态不落瘦表，而是
 // 从 `job_events`（business_table='copilot_run', business_id=run_id）的 replay
-// 末事件派生——`job_events` 即 SoT，与 ingestion / echo 同型（裁决：能不加表就
-// 不加，event log 已是 SoT；run card 订阅 UI 是后续 lane，当前无表的消费者）。
-//
-// 纯函数 + 无 DB 依赖（unit 分区）：仿 src/ui/lib/ingestion-phase.ts
-// derivePhaseFromEvents 的同型「从 replay 末事件派生 phase」做法。
+// 末事件派生——`job_events` 即 SoT。
 
-/** job_events.business_table 标签——这一族 durable copilot run 事件的归属键。 */
+/** job_events.business_table 标签。 */
 export const COPILOT_RUN_TABLE = 'copilot_run' as const;
 
-// job_events 是 free-form event_type（不经 domain parseEvent union，见
-// src/server/events/writer.ts / capabilities/ingestion/server/events/extraction-progress.ts）。这些是本族的
-// 事件 type 契约——SSE 客户端 + 状态派生读这套词表。
+// job_events 是 free-form event_type（不经 domain parseEvent union）。下面的词表
+// 是本族事件 type 契约，SSE 客户端与状态派生共用。
 export const COPILOT_RUN_EVENTS = {
   /** enqueue 落地后、handler 拾起前的初态（route dispatch 写）。 */
   QUEUED: 'copilot_run.queued',
@@ -23,13 +18,12 @@ export const COPILOT_RUN_EVENTS = {
   STARTED: 'copilot_run.started',
   /** deterministic setup 完成、紧邻 paid model/tool gateway 的 at-most-once fence。 */
   EXECUTION_STARTED: 'copilot_run.execution_started',
-  /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
+  /** 回合/进度心跳（工具步进等；forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
   /** Root provider prose increments. Nonterminal; REPLY/FAILED authoritatively replaces the draft. */
   DELTA: 'copilot_run.delta',
   /** 终稿 reply 文本就位（done 的前序，分开以便流式消费者先渲染 reply 再收 done）。 */
   REPLY: 'copilot_run.reply',
-  /** 终态：成功。 */
   DONE: 'copilot_run.done',
   /** 终态：失败（含 cancelled）。 */
   FAILED: 'copilot_run.failed',
@@ -48,9 +42,8 @@ export const COPILOT_RUN_TERMINAL_FAILURE_REASONS = [
 
 /**
  * Legacy `reason=error` frames describe one retryable delivery attempt. Every
- * other FAILED payload is fail-closed terminal: a future producer must opt in
- * explicitly to retry semantics rather than accidentally buying another paid
- * model/tool execution.
+ * other FAILED payload is fail-closed terminal: retry semantics require explicit
+ * opt-in, so a producer cannot accidentally buy another paid model/tool run.
  */
 export function isCopilotRunTerminalFailureReason(value: unknown): boolean {
   return value !== 'error';
@@ -59,7 +52,7 @@ export function isCopilotRunTerminalFailureReason(value: unknown): boolean {
 export type CopilotRunEventType = (typeof COPILOT_RUN_EVENTS)[keyof typeof COPILOT_RUN_EVENTS];
 
 /**
- * 派生状态。terminal（done/failed）一旦出现即锁定；否则按已见的最新非终态
+ * 派生状态。终态（done/failed）事件 last-writer-wins，非终态事件不能覆盖；否则按已见的最新非终态
  * 事件推进 queued → started → running。cancel_requested 是「请求」非终态——
  * 真正的终止由 handler 写 failed(reason:cancelled) 体现。
  */
@@ -94,14 +87,9 @@ export function isCopilotRunTerminalEvent(event: CopilotRunStatusEvent): boolean
 
 /**
  * 从 replay/live 事件序列派生 run 状态。终态（done/failed）last-writer wins；
- * 无终态时取已见过的最高非终态阶段。空序列 → 'queued'（enqueue 即写 queued，
- * 但消费者在 queued 事件到达前可能先订阅 → 给最保守的初态）。
- *
- * 纯 + 无依赖：unit-tested in copilot-run-status.test.ts。
- *
- * cancel_requested remains a floating cooperative state until the worker
- * projects FAILED(cancelled); a previously committed DONE/terminal FAILED wins.
- * Reconnect presentation remains a later UI lane.
+ * 无终态时取已见过的最高非终态阶段。空序列 → 'queued'（消费者可能在 queued
+ * 事件到达前先订阅）。cancel_requested 是浮动的协作状态，直到 worker 投影出
+ * FAILED(cancelled)；先前已提交的 DONE/终态 FAILED 优先。
  */
 export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): CopilotRunStatus {
   let status: CopilotRunStatus = 'queued';
@@ -133,14 +121,10 @@ export function deriveCopilotRunStatus(events: CopilotRunStatusEvent[]): Copilot
       case COPILOT_RUN_EVENTS.STEP:
       case COPILOT_RUN_EVENTS.REPLY:
       case COPILOT_RUN_EVENTS.EXECUTION_STARTED:
-      // YUK-575 (N2) — DELTA（流式文本增量）是「run 正在跑」的非终态信号，与 STEP/REPLY
-      // 同级推到 'running'。
       case COPILOT_RUN_EVENTS.DELTA:
-        // CodeRabbit fix — STEP（进度心跳）/ REPLY（终稿就位）是「run 正在跑」的明确
-        // 信号，语义上高于 started。原逻辑 `status==='queued' ? 'started' : 'running'`
-        // 会把「STEP/REPLY 首次出现但还没见过 STARTED」（如 [STEP] 或 [QUEUED, REPLY]，
-        // STARTED 乱序/丢失）错误降级为 'started'。修正：非终态时 STEP/REPLY 无条件
-        // 推到 'running'（与「取最高非终态阶段」一致）。
+        // STEP / REPLY / DELTA are non-terminal "run is going" signals, ranked
+        // above started. While non-terminal they push to 'running'
+        // unconditionally, even when STARTED was lost or arrived out of order.
         if (!terminal) status = 'running';
         break;
       case COPILOT_RUN_EVENTS.QUEUED:

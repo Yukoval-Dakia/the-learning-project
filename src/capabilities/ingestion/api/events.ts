@@ -8,13 +8,11 @@ import { subscribe } from '@/server/events/sse_router';
  * 与 /api/echo/[id]/events 模式一致：Last-Event-ID 头驱动 replay + subscribe
  * sse_router live 事件。客户端断线时通过 req.signal abort 自动 unsub。
  *
- * Resilience guards（YUK-730，对齐 sibling observability/api/job-events.ts）：
- * F1 非数字 Last-Event-ID 经 parseInt 得 NaN，守卫降级为 0（= 全量 replay）；
- * F4 abort 监听器在任何 await 之前注册 + aborted 前检，客户端在初始 replay 期间
- * 断线也能触发 unsub + close，避免 stream + DB 订阅泄漏；F2 初始 replay 与 live
- * subscribe 回调各自 try/catch（记 console.error + 发一个 SSE error 帧并收口，不让流
- * 静默挂死）；unsubscribe + controller.close 收进单一幂等 close()。live NOTIFY 用
- * max(lastEmittedId, event_id-1) 当 replay 游标去重，避免并发 NOTIFY 交叠时重发帧。
+ * Resilience: a non-numeric Last-Event-ID degrades to full replay; abort is wired
+ * before any await and checked before subscribing, so a disconnect during replay
+ * still unsubscribes. Replay and live errors are caught, logged, and closed with an
+ * SSE error frame; unsubscribe and close share one idempotent close(). Live NOTIFY
+ * dedupes with max(lastEmittedId, event_id - 1).
  *
  * 与 sibling 的差异：ingestion 路由 businessTable 恒为字面量 'ingestion_session'
  * （永不空、非用户提供），故不需要 sibling 的 kind/id 400 闸与 business_table

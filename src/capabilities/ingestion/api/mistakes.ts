@@ -1,5 +1,4 @@
-// M5-T5a (YUK-321)：平移自 app/api/mistakes/route.ts（Hono manifest 挂载；旧壳
-// Task 9 拆）。唯一非机械点：the old after() pattern 改写为 fire-and-forget（见 POST 内注释）。
+// Manual mistake capture. The post-response work is fire-and-forget, not after().
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
@@ -47,13 +46,10 @@ export async function POST(req: Request): Promise<Response> {
     }
     const body = parsed.data;
 
-    // P3 (YUK-489) — knowledge_ids are client-supplied + authoritative (manual intent wins). The
-    // schema enforces ≥1, so they are always present here: /api/mistakes carries no subject signal
-    // (no session, no subject param) for the unified `tagKnowledge` to auto-attribute against, so a
-    // manual mistake stays ids-required. Auto-tagging a manual mistake is a YUK-489 follow-up that
-    // needs a request-level subject signal first.
+    // Client ids win, and the schema requires at least one. This route has no
+    // subject signal, so tagKnowledge cannot auto-attribute an empty set.
 
-    // Validate knowledge_ids exist and are not archived
+    // Knowledge ids must exist and be live.
     const foundKnowledge = await db
       .select({ id: knowledge.id })
       .from(knowledge)
@@ -68,22 +64,20 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, body.knowledge_ids);
-    // YUK-1016 — 校验词表 = 声明 ∪ overlay.active：owner accept 的 ov_ 类目
-    // 必须能在手工错题入口被选用（否则收编类目 owner 自己用不了）。
+    // Allowed causes include owner-accepted active overlays; otherwise the owner
+    // could not use an adopted category here.
     assertCauseAllowedForSubjectProfile(
       body.cause,
       await withActiveCauseCategoryOverlays(db, subjectProfile),
     );
 
-    // Validate asset refs
+    // Validate asset refs.
     await assertAssetsExist(body.prompt_image_refs, 'prompt_image_refs');
     await assertAssetsExist(body.wrong_answer_image_refs, 'wrong_answer_image_refs');
 
     const now = new Date();
     const questionId = createId();
-    // mistake_id is preserved on the wire for client back-compat; post-Step-9
-    // it semantically equals the attempt event id (the legacy mistake row is
-    // gone — the attempt event IS the mistake from the read-path's perspective).
+    // Legacy wire name: mistake_id now equals the attempt event id.
     const attemptEventId = createId();
     const mistakeId = attemptEventId;
     const recordId = createId();
@@ -115,10 +109,9 @@ export async function POST(req: Request): Promise<Response> {
           version: 0,
         }),
       );
-      // YUK-1043（复审裁决：可行写口即刻收敛）—— 人工错题 INSERT 同事务铸首版
-      // revision。错题原答不能成为答案键：reference 缺失 ⇒ normalizer 记
-      // conversion_issue ⇒ withheld/unverified_rules（P1-2 分离语义的先行落位：
-      // 题目契约与作答证据分别保留，作答证据在 attempt 事件，不在契约）。
+      // Mint the first revision in the same transaction. A missing reference stays
+      // a conversion issue, so the question starts withheld; the answer evidence
+      // lives on the attempt event, never in the answer key.
       await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
         actorRef: 'mistakes:manual',
@@ -139,8 +132,7 @@ export async function POST(req: Request): Promise<Response> {
           answer_image_refs: body.wrong_answer_image_refs,
           referenced_knowledge_ids: body.knowledge_ids,
           question_snapshot: questionSnapshot,
-          // YUK-407 (Phase 0 red line) — capture the reconstruction-signal slot now;
-          // 'unknown' until the Reconstruction-as-method classifier lands.
+          // Reserve the reconstruction-signal slot until a classifier lands.
           reconstruction_signal: 'unknown',
         },
         caused_by_event_id: null,
@@ -167,11 +159,8 @@ export async function POST(req: Request): Promise<Response> {
           wrong_answer_image_refs: body.wrong_answer_image_refs,
         },
       });
-      // User-supplied cause → experimental:user_cause event (Phase 1c.2).
-      // Lane B JudgeOnEvent requires actor_kind='agent', so user cause cannot
-      // ride the judge channel; it lives in the experimental namespace until
-      // promoted to a KnownEvent. Lives in the same txn as the attempt so the
-      // pair commits atomically.
+      // The judge channel requires an agent actor, so a user cause stays in the
+      // experimental namespace. It commits in the same tx as the attempt.
       if (body.cause !== null && userCauseEventId !== null) {
         await writeEvent(tx, {
           id: userCauseEventId,
@@ -194,16 +183,9 @@ export async function POST(req: Request): Promise<Response> {
       }
     });
 
-    // Lane D (YUK-482): the failure→propose-new-KC side-effect was removed here.
-    // Creating/proposing a knowledge concept is a CONTENT-axis action (driven by
-    // what the material covers), independent of answer correctness. A wrong
-    // attempt is a PERFORMANCE-axis signal → it feeds 错因/attribution + mastery
-    // below, and must NOT drive KC creation. KC creation lives entirely in the
-    // content-driven paths (ingestion cold-start-bridge / image-candidate-accept
-    // matcher / agent proposal tools / KnowledgeReviewTask). The attribution
-    // Failure-learning follow-up is now derived durably from the committed
-    // attempt event. A user-cause event remains authoritative and is filtered
-    // by the practice-owned subscription before any model work is scheduled.
+    // A wrong attempt is performance evidence, not content: it feeds attribution
+    // and mastery but never creates knowledge concepts. Failure learning follows
+    // from the committed attempt through the practice-owned subscription.
 
     return resourceResponse(
       {

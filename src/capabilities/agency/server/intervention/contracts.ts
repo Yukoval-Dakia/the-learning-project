@@ -1,8 +1,7 @@
 // Agency-owned canonical intervention contract surface.
 //
-// The JSON vocabulary itself is cross-capability and therefore lives in core;
-// this module is the Agency lifecycle's named contract seam from the YUK-796
-// design and keeps server callers off table types.
+// The JSON vocabulary is cross-capability and lives in core; this module is the
+// Agency lifecycle's contract seam and keeps server callers off table types.
 
 export type {
   InterventionAuthoringContextT,

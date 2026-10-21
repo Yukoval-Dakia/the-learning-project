@@ -1,22 +1,17 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — conjecture → misconception PROMOTION writer.
+// Conjecture → misconception PROMOTION writer.
 //
-// When the owner ACCEPTS a conjecture (agrees with its direction), this dark,
-// flag-gated hop mints a first-class `misconception` node + a `caused_by`
-// misconception_edge (misc → the KC it corrupts). That is the only thing PR-3 wires
-// into the live accept path; the reconcile ring (misconception-reconcile*.ts) is the
-// pure decision/audit layer, built dark and NOT wired here.
+// When the owner ACCEPTS a conjecture (agrees with its direction), this dark, flag-gated
+// hop mints a first-class `misconception` node + a `caused_by` misconception_edge (misc →
+// the KC it corrupts). The reconcile ring is the pure decision/audit layer, built dark and
+// NOT wired here.
 //
-// SOFT-TRACK ND-5 RED LINE: a minted misconception is `source: 'soft'` — an AI prior
-// the owner agreed with, NOT a confirmed weakness. accept = "agree with the
-// DIRECTION", and only the probe one-shot (a later task) mints a hard-confirmed
-// weakness. The misconception / its edge feed θ̂ / p(L) / FSRS / difficulty / mastery
-// NOTHING (the `.strict()` Zod on MisconceptionInsert / MisconceptionEdgeInsert
-// machine-checks this — no diagnostic column can ride on the row).
+// SOFT-TRACK: a minted misconception is `source: 'soft'` — an AI prior the owner agreed
+// with, NOT a confirmed weakness; only the probe one-shot mints a hard-confirmed weakness.
+// The node / its edge feed θ̂ / p(L) / FSRS / difficulty / mastery NOTHING (the `.strict()`
+// Zod on the insert schemas machine-checks this — no diagnostic column can ride on the row).
 //
-// IMPERATIVE write (no event/fold): misconception has no fold/projection, so this is
-// a direct upsert (like mastery_state / kc_typed_state), provenance lives in the row
-// (evidence event-ptr array + seen + source) — NO known.ts extension, NO new event
-// subject_kind.
+// IMPERATIVE write (no event/fold): misconception has no projection, so this is a direct
+// upsert; provenance lives in the row (evidence event-ptr array + seen + source).
 
 import { createHash } from 'node:crypto';
 
@@ -29,37 +24,27 @@ import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
 
 /**
- * The recurrence threshold the accept must meet to promote.
+ * Recurrence threshold the accept must meet to promote.
  *
- * ⚠️ At k=2 this gate is REDUNDANT with the induction floor: conjectures are only
- * induced when a cause×KC recurs across ≥ CONJECTURE_RECURRENCE_FLOOR (=2) distinct
- * failures (src/capabilities/agency/server/conjecture/evidence.ts), so every existing conjecture already
- * has recurrence_count ≥ 2 and this re-check is always true — it gates nothing. The
- * REAL gate is the flag (MISCONCEPTION_PROMOTE_ENABLED) + the human accept. This const
- * is a PLACEHOLDER for future flag-flip tuning (it only bites at k > 2); do NOT read it
- * as a live runtime gate at k=2.
+ * ⚠️ At k=2 this gate is REDUNDANT with the induction floor: every conjecture already has
+ * recurrence_count ≥ CONJECTURE_RECURRENCE_FLOOR (=2), so the real gate is the flag
+ * (MISCONCEPTION_PROMOTE_ENABLED) + the human accept. The constant only bites at k > 2;
+ * do NOT read it as a live runtime gate at k=2.
  */
 export const K_PROMOTE = 2;
 
 /**
- * Neutral fallback salience weight used when an accepted conjecture carries no usable
- * `confidence` (a legacy / hand-crafted proposal predating the confidence field, or one
- * whose value coerces to NaN). 0.5 = "we agree with the DIRECTION but have no calibrated
- * salience", so we mint at mid-confidence rather than letting the weight Zod throw.
- *
- * WHY this guard exists: `MisconceptionInsert.weight` is `z.number()` (rejects NaN) and the
- * misconception_edge weight is `z.number().min(0).max(1)`. A flag-ON accept of a conjecture
- * with a missing/NaN confidence would otherwise throw a ZodError that rolls back the owner's
- * WHOLE accept transaction → a 500. Fail-loud is wrong here (flag-ON, owner-initiated): clamp
- * to the valid band with this default instead. Flag-OFF is unaffected (the hop never runs).
+ * Neutral salience weight when an accepted conjecture carries no usable `confidence`
+ * (legacy proposal, or one coercing to NaN). 0.5 = "agree with the DIRECTION, no calibrated
+ * salience" — minting at mid-confidence avoids a ZodError that would roll back the owner's
+ * whole accept transaction with a 500. Flag-OFF is unaffected (the hop never runs).
  */
 export const DEFAULT_MISCONCEPTION_WEIGHT = 0.5;
 
 /**
- * Normalize a raw confidence into the [0,1] salience band the soft-track Zod requires:
- * finite values are clamped, NaN / ±Infinity fall back to DEFAULT_MISCONCEPTION_WEIGHT.
- * Both the misconception node weight and its caused_by edge weight consume the result, so
- * neither can ever feed a NaN/out-of-range value into the `.strict()` parse barrier.
+ * Normalize a raw confidence into the [0,1] band: finite values are clamped, NaN / ±Infinity
+ * fall back to DEFAULT_MISCONCEPTION_WEIGHT. Both the node weight and its edge weight consume
+ * the result, so neither can feed NaN/out-of-range into the `.strict()` parse barrier.
  */
 function normalizeConfidenceWeight(raw: number): number {
   if (!Number.isFinite(raw)) return DEFAULT_MISCONCEPTION_WEIGHT;
@@ -67,40 +52,32 @@ function normalizeConfidenceWeight(raw: number): number {
 }
 
 /**
- * Dark-ship flag. Default OFF — when OFF the accept path is effect-identical to today
- * (no misconception, no edge). env-getter (read per-call) so tests can parameterize
- * OFF/ON and the three processes (API / worker / Vite) each see it via their own env;
- * mirrors the sot-flag.ts projectionIsWriter pattern (NOT the const-boolean
- * MISCONCEPTION_RECURRENCE_ENABLED, which cannot be runtime-mocked).
+ * Dark-ship flag. Default OFF — when OFF the accept path is effect-identical to today (no
+ * misconception, no edge). Read per-call so each process sees its own env.
  */
 export function misconceptionPromoteEnabled(): boolean {
-  // YUK-1007：pinned key——DB 层跳过，直读 env > code-default（compose 强制项；
-  // getConfigFlag 等效 parseFlag 语义，'unset/垃圾值 → false' 保守地板不变）。
+  // pinned key——DB 层跳过，直读 env > code-default（compose 强制项；'unset/垃圾值 → false'
+  // 保守地板不变）。
   return getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED');
 }
 
 /**
- * Kill switch for the HARD-confirm track (source: 'soft'→'hard' upgrade). Default OFF,
- * mirrors misconceptionPromoteEnabled (read per-call so each of the three processes sees it
- * via its own env). When OFF, decideDissociation (hard-confirm.ts) is STRUCTURALLY unable to
- * return HARD_CONFIRM, so no evidence-driven hard upgrade can ever fire. This flag only makes
- * the hard track REACHABLE; a soft→hard flip additionally forces a FRESH owner confirmation at
- * the command call site — it is never automatic. YUK-795's nightly accountability reader calls
- * the Tier-1 decision with ownerFreshlyConfirmed=false, so it can consume INSUFFICIENT/EMERGING
- * for ranking but can never perform the protected mutation.
+ * Kill switch for the HARD-confirm track (source: 'soft'→'hard' upgrade). Default OFF; when
+ * OFF, decideDissociation is structurally unable to return HARD_CONFIRM, so no
+ * evidence-driven hard upgrade can fire. A soft→hard flip additionally requires a FRESH owner
+ * confirmation at the command call site — never automatic; the nightly accountability reader
+ * passes fresh=false, so it can rank but never mutate the hard track.
  */
 export function misconceptionHardConfirmEnabled(): boolean {
-  // YUK-1007：DB > env > code-default(false)。
+  // DB > env > default(false)。
   return getConfigFlag('MISCONCEPTION_HARD_CONFIRM_ENABLED');
 }
 
 /**
  * Deterministic misconception id keyed on the conjecture IDENTITY (cause_category ×
- * knowledge_id), NOT the proposal id. So a later re-induction of the SAME cause×KC (a
- * fresh proposal, after the first one is no longer pending) UPSERTs the SAME
- * misconception (bump seen / refresh evidence) instead of minting a duplicate identity.
- * (Re-accept of the SAME proposal never reaches this hop — the rate-event idempotency
- * guard in conjecture-accept.ts short-circuits it.)
+ * knowledge_id), NOT the proposal id: a later re-induction of the same cause×KC UPSERTs the
+ * same misconception (bump seen / refresh evidence) instead of minting a duplicate identity.
+ * Re-accept of the SAME proposal never reaches this hop (rate-event idempotency guard).
  */
 export function misconceptionIdForConjecture(causeCategory: string, knowledgeId: string): string {
   const key = `${causeCategory}::${knowledgeId}`;
@@ -115,10 +92,10 @@ export interface ArchiveSoftMisconceptionResult {
 
 /**
  * Archive an existing soft misconception for this cause×KC identity after the owner edits a
- * later conjecture. The edit disputes the cell's current soft description, so leaving that
- * prior on the live knowledge surface is unsafe. A hard-confirmed row is never touched: probe
- * evidence outranks a wording edit. The node and all of its live edges are archived together
- * under the same per-identity lock, preserving provenance and making the operation reversible.
+ * later conjecture: the edit disputes the cell's soft description, so leaving that prior live
+ * is unsafe. A hard-confirmed row is never touched (probe evidence outranks a wording edit).
+ * Node and its live edges archive together under the same per-identity lock, preserving
+ * provenance and keeping the operation reversible.
  */
 export async function archiveSoftMisconceptionForConjecture(
   tx: Tx,
@@ -173,16 +150,13 @@ export interface PromoteConjectureInput {
   /** The KC the misconception corrupts (caused_by target). */
   knowledgeId: string;
   /**
-   * The conjecture claim — becomes the misconception title (the belief text).
-   *
-   * YUK-785: must be same-source as `evidenceEventIds`. The live accept path satisfies
-   * this by only ever reaching here on a PLAIN accept (an edited accept skips promotion
-   * entirely — see conjecture-accept.ts), so the title is always the induced claim that
-   * those evidence pointers actually support.
+   * The conjecture claim — becomes the misconception title. Must be same-source as
+   * `evidenceEventIds`: the live accept path only reaches here on a PLAIN accept (an edit
+   * skips promotion entirely), so the title is always the claim those pointers support.
    */
   claimMd: string;
   causeCategory: string;
-  /** Internal confidence (0-1) — becomes the salience weight, never rendered as a number. */
+  /** Internal confidence (0-1) — the salience weight, never rendered as a number. */
   confidence: number;
   /** Recurrence count that drove promotion — the `seen` salience count (NOT mastery). */
   recurrenceCount: number;
@@ -192,17 +166,15 @@ export interface PromoteConjectureInput {
   now: Date;
   /**
    * Which track this promotion writes. 'soft' (default) = an AI prior the owner agreed with —
-   * the ONLY value the live accept path passes. 'hard' = an evidence-confirmed weakness,
-   * reachable only when the caller holds a decideDissociation()==='HARD_CONFIRM' verdict AND a
-   * fresh owner confirmation. The nightly accountability caller always passes fresh=false and
-   * therefore cannot mutate this track. The F1 conflict guard makes 'soft' NEVER
-   * downgrade an existing 'hard' row.
+   * the ONLY value the live accept path passes. 'hard' requires a decideDissociation()
+   * 'HARD_CONFIRM' verdict AND a fresh owner confirmation; the nightly accountability caller
+   * always passes fresh=false. The conflict guard makes 'soft' never downgrade a 'hard' row.
    */
   source?: 'hard' | 'soft';
   /**
-   * Explicit reactivation signal (default false). ONLY a true value clears `archived_at` on an
-   * UPSERT conflict. F1 fix: a plain soft re-accept must NOT silently un-archive a node the
-   * retire/reconcile ring soft-archived. Reactivation is immediate + un-gated (design §Tier1-8).
+   * Explicit reactivation (default false). ONLY true clears `archived_at` on an UPSERT
+   * conflict: a plain soft re-accept must NOT un-archive a node the retire/reconcile ring
+   * soft-archived.
    */
   reactivate?: boolean;
 }
@@ -213,20 +185,17 @@ export interface PromoteConjectureResult {
 }
 
 /**
- * Mint (or upsert) a misconception + its caused_by edge from an accepted conjecture.
- * Runs INSIDE the caller's accept transaction (rate event + this hop are atomic, so a
- * crash never strands a misconception-less accept that the idempotency guard then
- * permanently skips).
+ * Mint (or upsert) a misconception + its caused_by edge from an accepted conjecture. Runs
+ * INSIDE the caller's accept transaction (rate event + this hop are atomic, so a crash never
+ * strands a misconception-less accept that the idempotency guard then skips forever).
  *
- *   1. upsert misconception (deterministic id; status='active', source=input.source (default
- *      'soft'), seen=recurrence_count, evidence=conjecture evidence event ids). The F1 conflict
- *      guard keeps `source` monotone (never hard→soft) and preserves `archived_at` unless the
- *      caller passes reactivate:true.
- *   2. createMisconceptionEdge caused_by (misc → knowledge_id), idempotent; un-archives
- *      ONLY on the SAME reactivate:true signal (YUK-537 — node and edge reactivation
- *      are aligned: a plain re-accept preserves both tombstones).
+ *   1. Upsert the misconception (deterministic id; status='active', source=input.source,
+ *      seen=recurrence_count, evidence=conjecture evidence event ids). `source` is monotone
+ *      (never hard→soft) and `archived_at` is preserved unless reactivate:true.
+ *   2. Create the idempotent caused_by edge (misc → knowledge_id), un-archiving ONLY on the
+ *      same reactivate:true signal (node and edge tombstones stay aligned).
  *
- * The whole hop is serialized per misconception identity by a `misc:<id>` advisory lock (F1).
+ * Serialized per misconception identity by a `misc:<id>` advisory lock.
  */
 export async function promoteConjectureToMisconception(
   tx: Tx,
@@ -236,28 +205,19 @@ export async function promoteConjectureToMisconception(
   const source = input.source ?? 'soft';
   const reactivate = input.reactivate ?? false;
 
-  // F1 fix ②: serialize the WHOLE promote (node upsert + caused_by edge below) per misconception
-  // identity in an INDEPENDENT advisory namespace `misc:<id>` (distinct hashtext keyspace from
-  // upsertKcTypedState's `kc_typed:` and mastery_state's `fsrs:`/`mastery:` locks — no
-  // collision), mirroring upsertKcTypedState. The lock is xact-scoped (released at the caller's
-  // tx commit), so two concurrent accepts of the same cause×KC cannot interleave a
-  // downgrade/un-archive race between the neighbor-read and the upsert.
+  // Serialize the whole promote (node upsert + caused_by edge) per misconception identity in
+  // an INDEPENDENT advisory namespace `misc:<id>` (distinct from `kc_typed:` / `fsrs:` /
+  // `mastery:` — no collision). xact-scoped, so two concurrent accepts of the same cause×KC
+  // cannot interleave a downgrade/un-archive race between the neighbor-read and the upsert.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`misc:${misconceptionId}`}))`);
 
-  // Normalize confidence into the [0,1] salience band BEFORE the Zod hop. A legacy /
-  // hand-crafted conjecture missing `confidence` arrives here as NaN (Number(undefined));
-  // feeding that straight into the weight Zod throws and rolls back the owner's whole
-  // accept (a 500). Clamp-with-default keeps the soft-track weight valid on a flag-ON accept.
+  // Normalize confidence BEFORE the Zod hop: a legacy conjecture missing `confidence` arrives
+  // as NaN, which would throw and roll back the owner's whole accept.
   const weight = normalizeConfidenceWeight(input.confidence);
 
-  // 1) Validate via the soft-track `.strict()` Zod, then UPSERT. status='active': the
-  //    owner accepted the direction, so the node is live/shown; source='soft' encodes
-  //    "AI prior the owner agreed with", NOT a confirmed weakness (the read model renders
-  //    source, not status, as the hard/soft badge). On re-induction (a 2nd conjecture for
-  //    the same cause×KC) the deterministic id upserts: refresh seen / evidence (latest
-  //    salience snapshot wins); archived_at is PRESERVED unless the caller passes
-  //    reactivate:true (F1 — a plain re-accept must NOT silently un-archive a retired /
-  //    soft-archived node).
+  // 1) Validate via the `.strict()` Zod, then UPSERT. status='active': the owner accepted the
+  //    direction, so the node is live. source='soft' encodes "AI prior the owner agreed with",
+  //    NOT a confirmed weakness (the read model renders source, not status, as the badge).
   const parsed = MisconceptionInsert.parse({
     id: misconceptionId,
     title: input.claimMd,
@@ -298,25 +258,20 @@ export async function promoteConjectureToMisconception(
         reasoning: parsed.reasoning ?? null,
         weight: parsed.weight,
         status: parsed.status,
-        // F1 fix ①a: `source` is MONOTONE soft→hard — NEVER downgrade a confirmed 'hard' row
-        // back to 'soft'. A plain soft re-accept of a cause×KC already hard-confirmed keeps
-        // 'hard'; an explicit source:'hard' upgrade of a soft row wins. Without this, once the
-        // two tracks coexist a soft re-accept silently demoted a hard node (design §3, F1).
+        // `source` is MONOTONE soft→hard — a confirmed 'hard' row never downgrades on a
+        // plain re-accept; a soft→hard upgrade still applies.
         source: sql`CASE WHEN ${misconception.source} = 'hard' THEN 'hard' ELSE ${parsed.source} END`,
         seen: parsed.seen,
         evidence: parsed.evidence,
         updated_at: input.now,
-        // F1 fix ①b: `archived_at` is NOT unconditionally reset. ONLY an explicit reactivation
-        // clears it; a plain re-accept preserves the current archive state, so a retired /
-        // soft-archived node is never silently resurrected (design §3, F1).
+        // `archived_at` is NOT unconditionally reset: only an explicit reactivation clears it,
+        // so a retired / soft-archived node is never silently resurrected.
         ...(reactivate ? { archived_at: null } : {}),
       },
     });
 
   // 2) caused_by edge: misc → the KC it corrupts. Idempotent upsert through the throat;
-  //    archived_at is cleared ONLY on the same explicit reactivate signal that governs
-  //    the node above (YUK-537 — aligned un-archive semantics), composes the
-  //    heterogeneous topology gate inside the throat.
+  //    archived_at is cleared ONLY on the same reactivate signal (node/edge semantics aligned).
   const edgeId = await createMisconceptionEdge(tx, {
     from_id: misconceptionId,
     to_kind: 'knowledge',

@@ -1,25 +1,19 @@
 import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 import { RetryableError } from '@/core/schema/structured_question';
 
-// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
-// Tencent client is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
-// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
-// No removal planned. Dual engines also enable same-page A/B quality
-// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
+// Tencent OCR client, retained permanently as the selectable
+// EXTRACT_OCR_ENGINE='tencent' engine; dual engines allow same-page A/B quality
+// comparison and per-scenario switching.
 //
-// Tencent OCR v20181119 API. Mark Agent endpoint 支持完形填空 / 阅读理解嵌套布局
-// + 手写答案 bbox + 内置判分 evidence。见 ADR-0002 2026-05-11 修订。
-//
-// 见 Sub 0c plan Step 6（用官方 SDK 而非手写 V3 签名）。
+// Uses the official v20181119 SDK. Mark Agent supports nested cloze/reading
+// layouts, handwriting bboxes, and grading evidence (ADR-0002 revision).
 
 // biome-ignore lint/suspicious/noExplicitAny: SDK 类型在 v4 里没导出 Client 类型，运行时通过
 const OcrClient: any = ocr.v20181119.Client;
 
 function createOcrClient(): InstanceType<typeof OcrClient> {
-  // YUK-139 [M2]: fail fast on missing Tencent OCR creds. Previously these were
-  // passed straight into the SDK as possibly-undefined, which surfaces as an
-  // opaque signature/auth error deep inside the SDK at request time. Validate
-  // up front so a misconfigured deploy fails with a clear, actionable message.
+  // Fail fast on missing credentials; otherwise the SDK reports an opaque auth
+  // error at request time.
   const secretId = process.env.TENCENT_SECRET_ID?.trim();
   const secretKey = process.env.TENCENT_SECRET_KEY?.trim();
   const missing = [!secretId && 'TENCENT_SECRET_ID', !secretKey && 'TENCENT_SECRET_KEY'].filter(

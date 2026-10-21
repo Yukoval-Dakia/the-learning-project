@@ -1,16 +1,9 @@
-// AF S4 / YUK-203 U6 (OQ7, R2) — the narrow ask_check question INSERT, extracted
-// from app/api/teaching-sessions/[id]/turn/route.ts:99-128 so BOTH the legacy
-// teaching route and the Copilot teaching-skill share ONE impl.
+// Narrow ask_check INSERT reachable only through the teaching-skill's
+// TeachingTurnTask composition.
 //
-// This stays a SERVICE-layer DB write reachable only through the teaching-skill's
-// TeachingTurnTask composition — it is NEVER registered as a DomainTool and NEVER
-// added to COPILOT_TOOLS (R2: raw DB mutation is an AF §1.2 non-capability). The
-// caller decides the transaction; this fn only runs the INSERT + its
-// learning_item.knowledge_ids lookup (the clean just-the-INSERT span).
-//
-// SINGLE-SESSION note (Cross-统合 §4.2): when called from the teaching-skill,
-// `sessionId` is the COPILOT session id, so metadata.session_id records the
-// Copilot session as the question's provenance.
+// Service-layer DB write only: never a DomainTool, never in COPILOT_TOOLS. The
+// caller owns the transaction; this fn runs just the INSERT plus the
+// learning_item.knowledge_ids lookup.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
@@ -23,16 +16,9 @@ import type { TeachingStructuredQuestionT } from '../../tasks/teaching-turn';
 export interface MaterializeAskCheckParams {
   structured_question: TeachingStructuredQuestionT;
   learningItemId: string;
-  /**
-   * The conversation session this question belongs to. Legacy route → the
-   * teaching session id; Copilot teaching-skill → the Copilot session id.
-   * Stamped on metadata.session_id as the question's session provenance.
-   */
+  /** Session id stamped on metadata.session_id as question provenance. */
   sessionId: string;
-  /**
-   * The agent message event id this question was created alongside. Stored as
-   * question.source_ref so the question is traceable to its turn.
-   */
+  /** Agent message event id stored as question.source_ref. */
   sourceRef: string;
   /** Fallback prompt when the structured question omits prompt_md. */
   fallbackPromptMd: string;
@@ -46,19 +32,14 @@ export interface MaterializedAskCheckQuestion {
 }
 
 /**
- * Insert the `teaching_check` question carried by an ask_check turn. Behavior is
- * byte-for-byte identical to the legacy inline INSERT (turn/route.ts) EXCEPT for the
- * intentional YUK-350 divergence below: this row now lands draft_status='draft'.
+ * Insert the `teaching_check` question carried by an ask_check turn.
  *
- * YUK-350 (L2, RL2) — a teaching_check is CONTAINER-ONLY: it belongs to its teaching
+ * CONTAINER-ONLY: the row lands draft_status='draft' so it belongs to its teaching
  * session (metadata.session_id provenance, source='teaching_check') and is never
- * selected by the general review pool (every pool path excludes draft). Landing it
- * 'draft' makes the container-only contract explicit and pool-safe (NULL≡active would
- * have made it ambiguously poolable).
- * No promote path is required by design. This is the SINGLE teaching_check INSERT site
- * (verified: no turn/route.ts and no other `source: 'teaching_check'` insert exists in
- * src/). Any future teaching_check writer MUST set draft_status='draft' — enforced by
- * `pnpm audit:draft-status` (it flags any question insert missing draft_status).
+ * selected by the general review pool (every pool path excludes draft; NULL≡active
+ * would have made it ambiguously poolable). There is no promote path by design.
+ * Any future teaching_check writer MUST set draft_status='draft' — enforced by
+ * `pnpm audit:draft-status`.
  */
 export async function materializeAskCheckQuestion(
   tx: Tx,
@@ -87,7 +68,7 @@ export async function materializeAskCheckQuestion(
       difficulty: 2,
       source: 'teaching_check',
       source_ref: sourceRef,
-      // YUK-350 (L2, RL2) — container-only: draft so it never enters the general pool.
+      // Container-only: draft so it never enters the general pool.
       draft_status: 'draft',
       metadata: {
         learning_item_id: learningItemId,

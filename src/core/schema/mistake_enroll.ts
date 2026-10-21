@@ -1,12 +1,12 @@
-// MistakeEnrollTask contract — T-OC slice A1 (YUK-145).
+// MistakeEnrollTask contract.
 //
 // Drafts the mistake metadata a human currently fills by hand at review time for
 // a CAPTURED, ANSWERED question_block: the graded outcome, the question kind, a
 // difficulty estimate, and (on a wrong answer) a cause draft. The draft is
 // produced observe-only and attached to the `experimental:auto_enroll_observed`
 // audit event (see src/server/ingestion/auto-enroll.ts); it never writes a domain
-// row in A1. The "AI drafted N items" review surface + the actual enroll wiring
-// are deferred to A2 (OC-5 UI, YUK-164) behind the OFF enroll flag.
+// row. The "AI drafted N items" review surface + the actual enroll wiring
+// are deferred behind the OFF enroll flag.
 import { z } from 'zod';
 
 import { QuestionKind } from './business';
@@ -30,7 +30,7 @@ export const MistakeEnrollInput = z.object({
 });
 export type MistakeEnrollInputT = z.infer<typeof MistakeEnrollInput>;
 
-// Drafted grade of the captured answer. Maps to EnrollOutcome downstream (A2).
+// Drafted grade of the captured answer. Maps to EnrollOutcome downstream.
 export const MistakeEnrollOutcome = z.enum(['failure', 'partial', 'success', 'unanswered']);
 export type MistakeEnrollOutcomeT = z.infer<typeof MistakeEnrollOutcome>;
 
@@ -42,7 +42,7 @@ export const MistakeEnrollOutput = z.object({
   // Reuses the canonical CauseSchema. Non-null only when wrong_answer ==='failure'
   // (the invoker enforces null otherwise); clamped to allowed_cause_ids server-side.
   cause: CauseSchema.nullable().default(null),
-  // Top-level sortable confidence so the A2 review surface can threshold/sort
+  // Top-level sortable confidence so the review surface can threshold/sort
   // drafts regardless of outcome (cause.confidence only exists on failures).
   overall_confidence: z.number().min(0).max(1),
   reasoning: z.string().default(''),

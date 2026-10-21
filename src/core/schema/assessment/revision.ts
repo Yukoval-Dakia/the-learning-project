@@ -132,7 +132,7 @@ export function validateIssuanceBinding(
   revision: PublishedQuestionRevisionT,
 ): IssuanceBindingIssue[] {
   const issues: IssuanceBindingIssue[] = [];
-  // P1-2：issuance 绑定的 revision 必须就是被校验的 revision ——
+  // issuance 绑定的 revision 必须就是被校验的 revision ——
   // 拿 r1 的绑定去校验 r2 必须当场报错，不得静默放行（否则 DTO 会把 r2
   // 冒充学生所见）。
   if (binding.revision_id !== revision.revision_id) {
@@ -201,8 +201,8 @@ export function validateIssuanceBinding(
     }
   }
 
-  // P1-6：只校验【发出范围内】的选择槽（slot.part_id ∈ binding.part_ids）。
-  // P1-B：发出范围内的表格，其全部单元格槽也必须在发出范围内
+  // 只校验【发出范围内】的选择槽（slot.part_id ∈ binding.part_ids）。
+  // 发出范围内的表格，其全部单元格槽也必须在发出范围内
   // （scope closure）—— 不静默吞掉缺失单元格，也不把未发出的 part 混进来。
   const slotPartById = new Map(
     revision.response_spec.slots.map((slot) => [slot.slot_id, slot.part_id] as const),

@@ -1,8 +1,5 @@
-// YUK-601 (v3.2 §3.5) — GET /api/admin/subjects/:id/traits：六绑定读面。
-// { subjectRevision, bindings: [{ kind, traitId, origin, ownerSubjectId,
-//   seedVersion, revision, effectiveRevision, degraded, payload, sharedBy }] }
-// revision（live）与 effectiveRevision（实际采用）分列——降级中的 trait 在编辑器
-// 可见「实际在用哪份」（v3.2）。业务在 src/server/subjects/admin-read.ts。
+// Six trait bindings per subject. Live revision and effective revision are separate,
+// so a degraded trait still shows what is actually in use.
 
 import { z } from 'zod';
 import { db } from '@/db/client';

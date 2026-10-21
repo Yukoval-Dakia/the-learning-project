@@ -5,79 +5,41 @@ import type { DocxOmittedExternalRef } from '@/core/schema/docx-omission';
 
 import { ApiError } from '@/kernel/http';
 
-// YUK-258/YUK-273 — DOCX routing + converter security preflight. It runs
-// synchronously BEFORE any Pandoc/LibreOffice spawn. A .docx is a zip; we inflate
-// only bounded document XML and relationship parts, analyze every relationship
-// part for external resource relationships, then count MathType OLE objects in
-// word/document*.xml.
+// DOCX routing and converter security preflight, run before any Pandoc/LibreOffice
+// spawn. Only bounded document XML and relationship parts are inflated. Papers with
+// MathType OLE objects route to the page-image path because pandoc cannot extract
+// those formulas; mixed papers route conservatively to 'visual'.
 //
-//   count > 0 → 'visual'  (MathType 卷: formulas are OLE images — pandoc/OMML
-//                          cannot extract them, so the file must go through the
-//                          LibreOffice→PDF→PDFium page-image VLM extract path)
-//   count = 0 → 'text'    (语文/纯文本卷: pandoc directly converts to markdown,
-//                          then the segmenter cuts question_blocks)
-//
-// Empirical (终矩阵 background): zxxk math papers measured 151/151 MathType with
-// zero OMML; 语文 papers measure zero formulas. Mixed papers (some MathType + some
-// extractable text) route conservatively to 'visual' — a MathType formula MUST be
-// read from the page image, and the text line would silently drop it.
-//
-// YUK-1476 (owner 2026-10-11 correction) — external NON-hyperlink relationships in
-// header/footer AND body parts no longer reject the whole upload. Decorative
-// external resources are instead OMITTED from the CONVERTER INPUT COPY
-// (prepareDocxForConversion): the offending <Relationship> entries are removed so
-// pandoc/LibreOffice can never resolve — let alone fetch — an external target.
-// Internal relationships and media parts (embedded body images, internal fallback
-// header/footer images, OLE object binaries) pass through byte-identical, so the
-// MathType→'visual' routing and real embedded question images survive unchanged.
-// The original upload bytes are never mutated; the honest omission facts + both
-// digests flow to the audit via the caller. Every other guard (DOCTYPE / entity /
-// XML validity / duplicate-rels / count & size bounds / missing document.xml /
-// corrupt zip) stays fail-closed 400.
+// External non-hyperlink relationships are omitted from the converter-input copy so
+// neither converter can resolve or fetch their targets. Internal relationships and
+// media pass through byte-identical, and the original upload is never mutated. All
+// other malformed-input guards stay fail-closed 400.
 
 export type DocxLine = 'text' | 'visual';
 
-// MathType OLE ProgID variants all start with `Equation` — `Equation.3`,
-// `Equation.DSMT4` (modern MathType), `Equation.2`, etc. Loose substring on the
-// `ProgID="Equation` prefix catches every variant without enumerating them.
+// Every MathType ProgID variant starts with `Equation`, so a substring match avoids
+// enumerating them.
 const MATHTYPE_PROGID_PREFIX = 'ProgID="Equation';
 
-// XML parts that can host an <o:OLEObject .../>. document.xml is the body; some
-// producers split content across document2.xml — count both if present.
+// Some producers split body content into document2.xml; count both.
 const DOC_XML_PARTS = ['word/document.xml', 'word/document2.xml'];
 
-// Codex-5 / CodeRabbit-C — classification only needs the document body XML, but
-// unzipSync without a filter inflates EVERY archive entry into memory. A ≤20MB
-// .docx with a high-ratio payload (e.g. a deeply-compressed media blob) would
-// then balloon the request worker's heap before any converter timeout. We pass
-// a filter so only DOC_XML_PARTS are inflated, and reject any single body part
-// whose DECOMPRESSED size exceeds this ceiling (a real document.xml for an exam
-// is a few MB at most; 50MB is a generous zip-bomb guard that never trips on a
-// legitimate paper).
+// Inflate only the body parts; a high-ratio media blob must not balloon the heap.
+// The decompressed body ceiling is far above a real exam paper.
 const MAX_DECOMPRESSED_PART_BYTES = 50_000_000;
 
-// Converters may resolve OOXML relationships while rendering, so external
-// resource relationships must never reach either converter (YUK-1476: omitted
-// from the converter-input copy, not passed through). Relationship parts are
-// tiny in normal documents; these bounds prevent the security preflight itself
-// becoming a decompression/count DoS.
+// Relationship parts are tiny in normal documents; these bounds keep the preflight
+// itself from becoming a decompression/count DoS.
 const MAX_RELATIONSHIP_PART_BYTES = 1_000_000;
 const MAX_RELATIONSHIP_TOTAL_BYTES = 4_000_000;
 const MAX_RELATIONSHIP_PARTS = 256;
 const RELATIONSHIP_PART_RE = /(?:^|\/)_rels\/[^/]*\.rels$/i;
 
-// YUK-1476 — the sanitize rebuild inflates EVERY archive entry (not just the
-// classification-filtered ones) so the copy can be re-zipped. This is NOT a
-// whole-archive-inflation zipbomb: the filter below sees each entry's
-// originalSize BEFORE inflation and rejects the archive when the cumulative
-// decompressed total exceeds this ceiling. A legitimate ≤20MB exam paper (media
-// is already-compressed PNG/JPEG; XML compresses ~10x) decompresses to well
-// under 100MB; 200MB is a generous ceiling that still bounds attacker memory.
+// The rebuild needs every entry, so it checks cumulative originalSize before
+// inflation and rejects over this ceiling. A real exam paper stays far below it.
 const MAX_TOTAL_DECOMPRESSED_PART_BYTES = 200_000_000;
 
-// Fixed zip timestamp so the rebuilt copy is deterministic: the same input
-// archive always yields the same converter-input bytes (and therefore the same
-// converter_input digest in the audit). 1980-01-01 is the DOS zip epoch.
+// Fixed timestamp makes the rebuilt copy deterministic, so its audit digest is stable.
 const ZIP_ENTRY_MTIME = new Date('1980-01-01T00:00:00Z');
 
 function decodeXml(bytes: Uint8Array): string {
@@ -87,9 +49,8 @@ function decodeXml(bytes: Uint8Array): string {
   if (bytes[0] === 0xfe && bytes[1] === 0xff) {
     return new TextDecoder('utf-16be').decode(bytes.subarray(2));
   }
-  // XML processors infer BOM-less UTF-16 from the leading '<' NUL pattern.
-  // Mirror that sniffing so a converter cannot see relationship tags that this
-  // preflight decoded as NUL-filled UTF-8 and consequently failed to inspect.
+  // Mirror XML's BOM-less UTF-16 sniffing; decoding as UTF-8 would hide the very
+  // relationship tags this preflight must inspect.
   if (bytes[0] === 0x3c && bytes[1] === 0x00) {
     return new TextDecoder('utf-16le').decode(bytes);
   }
@@ -125,35 +86,26 @@ function externalResourceRelationshipError(part: string): ApiError {
   );
 }
 
-/** Last URI segment of the relationship Type, lowercased (e.g. 'image'). A public schema constant — never the Target. */
-// OPC (ECMA-376 Part 2) mandates this namespace for every relationships part.
-// The serializer re-emits it canonically; a part whose root is NOT bound to it is
-// not a relationships part a converter would read — sanitize-impossible → reject.
+// Every relationships part must be bound to this namespace; a part that is not is
+// not one a converter would read, so sanitization is impossible and it is rejected.
 const OPC_RELATIONSHIPS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
 
+/** Last URI segment of the relationship Type, lowercased (e.g. 'image'). Never the Target. */
 function relationshipTypeCategory(typeUri: string): string {
   const idx = typeUri.lastIndexOf('/');
   return (idx === -1 ? typeUri : typeUri.slice(idx + 1)).toLowerCase();
 }
 
 interface RelationshipPartAnalysis {
-  /** DOCTYPE present — entity-expansion / parser-divergence attack shape; always reject. */
+  /** Entity-expansion/parser-divergence shape; always reject. */
   hasDoctype: boolean;
-  /** External NON-hyperlink relationships (the resource-loading kind converters must never see). */
+  /** Resource-loading relationships converters must never see. */
   externalResourceRels: Array<{ id: string; type: string }>;
-  /**
-   * Parsed <Relationships> node with PREFIX-STRIPPED names (detection view —
-   * namespace-agnostic superset). Null when the root element is not
-   * <Relationships> — such a part carries no strippable relationships.
-   */
+  /** Prefix-stripped detection view; null when the root is not <Relationships>. */
   relationshipsNode: Record<string, unknown> | null;
   /**
-   * P1-1 (R1) — TRUE namespaced shape parsed WITHOUT removeNSPrefix, so xmlns
-   * declarations and prefixed names stay visible. fast-xml-parser with
-   * removeNSPrefix:true silently DROPS xmlns declarations, which made the
-   * previous serializer emit a namespace-less <Relationships> that
-   * namespace-aware readers (pandoc/LibreOffice/ElementTree) could not resolve.
-   * Null when no element root exists at all.
+   * True namespaced shape, parsed without removeNSPrefix so xmlns declarations
+   * survive serialization. Null when there is no element root.
    */
   namespaced: { rootName: string; node: Record<string, unknown> } | null;
 }
@@ -176,7 +128,7 @@ function parseRelationships(xml: string): Record<string, unknown> | null {
   return parsed.Relationships ?? null;
 }
 
-/** True-shape parse: prefixes and xmlns declarations preserved (P1-1). */
+/** True-shape parse: prefixes and xmlns declarations preserved. */
 function parseRelationshipsNamespaced(
   xml: string,
 ): { rootName: string; node: Record<string, unknown> } | null {
@@ -202,18 +154,16 @@ function parseRelationshipsNamespaced(
 }
 
 /**
- * Validate + analyze one relationship part. Throws the SAME 400s as the
- * pre-YUK-1476 preflight (invalid numeric reference / invalid XML); returns the
- * facts the omission decision needs: prepareDocxForConversion rejects DOCTYPE
- * outright and strips external non-hyperlink relationships from the copy.
+ * Validates and analyzes one relationship part, throwing 400 for invalid
+ * references or XML. Returns the facts needed to reject DOCTYPEs and strip external
+ * non-hyperlink relationships.
  */
 function analyzeRelationshipPart(bytes: Uint8Array): RelationshipPartAnalysis {
   const xml = decodeXml(bytes);
-  // Custom entities can make raw-text validation diverge from a converter's XML
-  // parser. OOXML relationship parts do not require DTDs, so reject them outright.
+  // OOXML relationship parts need no DTD, and entity tricks must not create parser
+  // divergence, so DOCTYPE is rejected outright.
   const hasDoctype = /<!DOCTYPE\b/i.test(xml);
-  // fast-xml-parser normalizes some forbidden numeric references permissively;
-  // validate every numeric reference against XML 1.0 before object parsing.
+  // fast-xml-parser is permissive with some forbidden references; check them first.
   decodeNumericXmlEntities(xml);
 
   const validation = XMLValidator.validate(xml, { allowBooleanAttributes: false });
@@ -237,9 +187,8 @@ function analyzeRelationshipPart(bytes: Uint8Array): RelationshipPartAnalysis {
     const targetMode =
       typeof rawTargetMode === 'string' ? decodeNumericXmlEntities(rawTargetMode) : '';
     if (targetMode.toLowerCase() !== 'external') continue;
-    // External hyperlinks are inert clickable metadata; converters do not fetch
-    // them while rendering. Unknown/resource-loading external types are stripped
-    // from the converter copy (YUK-1476) — never resolved, never fetched.
+    // External hyperlinks are inert clickable metadata. Other external types are
+    // stripped from the converter copy and never fetched.
     const rawType = normalizedAttributes.get('type');
     const type = typeof rawType === 'string' ? decodeNumericXmlEntities(rawType).toLowerCase() : '';
     if (!type.endsWith('/hyperlink')) {
@@ -251,7 +200,7 @@ function analyzeRelationshipPart(bytes: Uint8Array): RelationshipPartAnalysis {
   return { hasDoctype, externalResourceRels, relationshipsNode, namespaced };
 }
 
-/** The <Relationship> child elements of a parsed <Relationships> node (always an array via isArray). */
+/** The <Relationship> children of a parsed <Relationships> node. */
 function relationshipElementsOf(node: Record<string, unknown>): Array<Record<string, unknown>> {
   const raw = node.Relationship;
   if (raw == null) return [];
@@ -265,10 +214,8 @@ interface ClassificationScan {
 }
 
 /**
- * Pass-1 bounded scan behind prepareDocxForConversion: inflate ONLY document
- * body XML + relationship parts under the existing
- * count/size/duplicate bounds, then validate + analyze every relationship part
- * (same 400s as the pre-YUK-1476 preflight).
+ * Bounded scan that inflates only body XML and relationship parts, then validates
+ * and analyzes every relationship part.
  */
 function scanForClassification(docxBytes: Uint8Array): ClassificationScan {
   const docXmlParts = new Set<string>(DOC_XML_PARTS);
@@ -277,9 +224,7 @@ function scanForClassification(docxBytes: Uint8Array): ClassificationScan {
   const relationshipPartNames = new Set<string>();
   let entries: Record<string, Uint8Array>;
   try {
-    // Only inflate document body XML + relationship parts. The filter runs before
-    // inflation, so media/styles/etc. are skipped and size/count bounds can reject
-    // suspicious relationship manifests without allocating their contents.
+    // The filter runs before inflation, so bounds can reject without allocating.
     entries = unzipSync(docxBytes, {
       filter: (file: UnzipFileInfo) => {
         if (docXmlParts.has(file.name)) {
@@ -311,8 +256,7 @@ function scanForClassification(docxBytes: Uint8Array): ClassificationScan {
       },
     });
   } catch (err) {
-    // Re-throw our own zip-bomb 400 unchanged; map any fflate parse failure to
-    // the generic corrupt-docx 400.
+    // Keep our own 400s; map fflate parse failures to the corrupt-docx 400.
     if (err instanceof ApiError) throw err;
     throw new ApiError('validation_error', '无法解析 DOCX（文件可能损坏或不是有效 .docx）', 400);
   }
@@ -328,8 +272,7 @@ function scanForClassification(docxBytes: Uint8Array): ClassificationScan {
 function classifyLineFromEntries(entries: Record<string, Uint8Array>): DocxLine {
   const present = DOC_XML_PARTS.filter((p) => entries[p] != null);
   if (present.length === 0) {
-    // A real .docx always carries word/document.xml. Its absence means the upload
-    // is a zip but not a Word document (or a corrupt one) → reject, don't guess.
+    // A real .docx always has word/document.xml; absence means it is not a Word doc.
     throw new ApiError(
       'validation_error',
       '无法解析 DOCX（缺少 word/document.xml，可能不是有效 .docx）',
@@ -340,7 +283,7 @@ function classifyLineFromEntries(entries: Record<string, Uint8Array>): DocxLine 
   let mathTypeCount = 0;
   for (const part of present) {
     const xml = decodeXml(entries[part]);
-    // Count non-overlapping occurrences of the ProgID prefix.
+    // Count non-overlapping occurrences.
     let from = 0;
     for (;;) {
       const idx = xml.indexOf(MATHTYPE_PROGID_PREFIX, from);
@@ -353,14 +296,10 @@ function classifyLineFromEntries(entries: Record<string, Uint8Array>): DocxLine 
   return mathTypeCount > 0 ? 'visual' : 'text';
 }
 
-// ---------- YUK-1476: converter-input sanitization ----------
-
 /**
- * Result of preparing a DOCX upload for conversion. `converterBytes` is the ONLY
- * byte sequence that may be handed to pandoc/LibreOffice: the original upload
- * when nothing was omitted, otherwise the sanitized rebuild. It is guaranteed to
- * contain zero external non-hyperlink relationship targets (enforced as a
- * post-condition on the rebuilt copy, not just assumed).
+ * `converterBytes` is the only sequence that may be handed to pandoc/LibreOffice:
+ * the original upload when nothing was omitted, otherwise the sanitized rebuild,
+ * which is re-checked to contain zero external non-hyperlink targets.
  */
 export interface DocxConversionPrep {
   line: DocxLine;
@@ -378,19 +317,15 @@ function sha256Hex(bytes: Uint8Array): string {
 }
 
 /**
- * Inflate every archive entry under the cumulative decompressed-size ceiling.
- * originalSize is known per entry BEFORE inflation, so a high-ratio (zipbomb)
- * archive is rejected without allocating its payload — this is the same
- * pre-inflation bound technique the pass-1 filter uses, extended to all entries
- * because the rebuild needs every part's bytes.
+ * Inflates every entry under a cumulative ceiling. originalSize is known before
+ * inflation, so a zipbomb is rejected without allocating its payload.
  */
 function unzipAllBounded(docxBytes: Uint8Array): Record<string, Uint8Array> {
   let totalOriginalBytes = 0;
   try {
     return unzipSync(docxBytes, {
       filter: (file: UnzipFileInfo) => {
-        // Directory entries carry no content; drop them (standard zips work fine
-        // without explicit directory records and every OOXML consumer accepts that).
+        // Directory entries carry no content, and OOXML readers accept zips without them.
         if (file.name.endsWith('/')) return false;
         totalOriginalBytes += file.originalSize;
         if (totalOriginalBytes > MAX_TOTAL_DECOMPRESSED_PART_BYTES) {
@@ -437,25 +372,13 @@ function relationshipAttrSnapshots(node: Record<string, unknown>): string[] {
 }
 
 /**
- * Deterministically re-serialize a relationship part without the omitted
- * <Relationship> elements, PRESERVING the OPC namespace (R1 P1-1).
- *
- * fast-xml-parser with removeNSPrefix:true silently DROPS xmlns declarations, so
- * the sanitizer works from the TRUE-SHAPE parse (removeNSPrefix:false) where
- * prefixes and xmlns declarations stay visible. The root element's namespace is
- * resolved from its own declarations (a root has no ancestor to inherit from)
- * and MUST be the OPC relationships namespace, in default-ns or prefixed form;
- * anything else — foreign namespace, missing declaration, prefixed attributes,
- * mixed child prefixes, non-Relationship children — is sanitize-impossible and
- * rejects fail-closed (the external relationship still rejects the upload,
- * never a bypass). The output re-emits the namespace CANONICALLY as
- * <Relationships xmlns="…package/2006/relationships"> so any namespace-aware
- * reader (pandoc, LibreOffice, ElementTree) can address every surviving
- * relationship. UTF-8 with a fixed prolog (the original may have been UTF-16).
- *
- * Round-trip verified: the output must re-validate, re-parse, contain ZERO
- * external non-hyperlink relationships, and keep every surviving relationship's
- * attributes byte-equal to the original parse.
+ * Re-serializes a relationship part without the omitted elements while preserving
+ * the OPC namespace, using the true-shape parse because removeNSPrefix drops xmlns.
+ * The root must declare the OPC namespace; unprefixed attributes and consistent
+ * child naming are required. Any shape that cannot be rewritten faithfully fails
+ * closed rather than risk a bypass. Output is canonical UTF-8 with a fixed prolog,
+ * then round-trip verified: re-parsed, zero external relationships, and surviving
+ * attributes byte-equal.
  */
 function serializeSanitizedRelationshipPart(
   analysis: RelationshipPartAnalysis,
@@ -466,7 +389,7 @@ function serializeSanitizedRelationshipPart(
   if (namespaced == null || analysis.relationshipsNode == null) throw fail();
   const { rootName, node } = namespaced;
 
-  // Root namespace resolution: must be declared on the root element itself.
+  // A root has no ancestor, so the namespace must be declared here.
   const rootPrefix = rootName.includes(':') ? rootName.slice(0, rootName.indexOf(':')) : '';
   const rootNsAttr = rootPrefix === '' ? 'xmlns' : `xmlns:${rootPrefix}`;
   const declaredRootNs = typeof node[rootNsAttr] === 'string' ? (node[rootNsAttr] as string) : null;
@@ -475,8 +398,7 @@ function serializeSanitizedRelationshipPart(
 
   const omitIds = new Set(analysis.externalResourceRels.map((rel) => rel.id));
 
-  // The detection view (prefix-stripped) and the true-shape view must agree on
-  // the element count; divergence (mixed child prefixes/forms) → refuse.
+  // Both parses must see the same element count; mixed prefixes/forms refuse.
   const childRaw = node[childName];
   const children: Array<Record<string, unknown>> =
     childRaw == null
@@ -497,8 +419,7 @@ function serializeSanitizedRelationshipPart(
         if (typeof value === 'string' && value.trim() !== '') throw fail();
         continue;
       }
-      // Prefixed attributes cannot be faithfully re-emitted unprefixed (and are
-      // invalid OPC); non-string values are child elements — both refuse.
+      // Prefixed attributes are invalid OPC; non-strings are child elements.
       if (name.includes(':') || typeof value !== 'string') throw fail();
       attrs.push([name, value]);
     }
@@ -510,9 +431,8 @@ function serializeSanitizedRelationshipPart(
     );
   }
 
-  // Root attributes: skip the child array + whitespace text; DROP all xmlns*
-  // declarations (the canonical OPC xmlns is emitted below); keep unprefixed
-  // non-declaration attributes verbatim. Anything else refuses.
+  // Drop xmlns declarations (the canonical one is emitted below), keep unprefixed
+  // attributes verbatim, and refuse anything else.
   const rootAttrs: string[] = [];
   for (const [name, value] of Object.entries(node)) {
     if (name === childName) continue;
@@ -527,8 +447,7 @@ function serializeSanitizedRelationshipPart(
 
   const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="${OPC_RELATIONSHIPS_NS}"${rootAttrs.length > 0 ? ` ${rootAttrs.join(' ')}` : ''}>${keptElements.join('')}</Relationships>`;
 
-  // Round-trip verification (detection view): valid, zero external resource
-  // relationships, kept attribute set survives exactly.
+  // Round-trip: valid, no external relationships, kept attributes survive exactly.
   const rebuiltBytes = new TextEncoder().encode(xml);
   const roundTrip = analyzeRelationshipPart(rebuiltBytes);
   if (roundTrip.hasDoctype || roundTrip.externalResourceRels.length > 0) throw fail();
@@ -544,19 +463,10 @@ function serializeSanitizedRelationshipPart(
 }
 
 /**
- * Post-condition on the rebuilt archive: re-run the pass-1 classification scan
- * against the COPY and require zero DOCTYPE / external resource relationships
- * anywhere. Defense in depth — a serializer bug surfaces as a loud 400, never as
- * an external target reaching a converter.
- *
- * The prefix-stripping detection view is a SUPERSET of what any namespace-aware
- * converter reads: a converter addresses only elements in the OPC relationships
- * namespace, while the stripped parse sees `Relationship` elements in EVERY
- * namespace (prefixed or default). Zero found in the superset ⟹ zero visible to
- * the converter — this holds regardless of namespace trickery, which is why the
- * post-condition may stay on the stripped parser (P1-1 fixed the SERIALIZED
- * shape separately; addressability is asserted by the namespace-aware readback
- * in route-classify.test.ts).
+ * Post-condition on the rebuilt archive: zero DOCTYPE or external relationships
+ * anywhere. A serializer bug becomes a loud 400 instead of a live target. The
+ * prefix-stripped view is a superset of what a namespace-aware converter reads, so
+ * zero here means zero visible to the converter.
  */
 function assertConverterInputClean(converterBytes: Uint8Array): void {
   const { relationshipParts } = scanForClassification(converterBytes);
@@ -568,19 +478,13 @@ function assertConverterInputClean(converterBytes: Uint8Array): void {
 }
 
 /**
- * YUK-1476 — classify a DOCX upload AND produce the byte sequence converters may
- * see. External NON-hyperlink relationships in ANY relationship part
- * (header/footer/body/glossary/…) are omitted from the converter-input copy;
- * the original bytes are never mutated and never reach pandoc/LibreOffice once
- * the caller forwards `converterBytes`. Internal relationships, media parts,
- * [Content_Types].xml and word/document*.xml pass through untouched, so real
- * embedded body images and MathType OLE routing survive byte-identical. External
- * HYPERLINK relationships stay (inert metadata — converters never fetch them).
- *
- * Fail-closed rejections preserved: corrupt zip, missing word/document.xml,
- * DOCTYPE / invalid entities / invalid relationship XML, duplicate relationship
- * parts, count/size bounds, and the new cumulative decompression ceiling that
- * bounds the rebuild. Sanitization-impossible shapes also reject (never bypass).
+ * Classifies a DOCX and produces the bytes converters may see. External
+ * non-hyperlink relationships in any part are omitted from the copy; the original
+ * upload is never mutated. Internal relationships, media, content types, and body
+ * XML pass through untouched, so embedded images and MathType routing survive.
+ * Hyperlinks stay because converters never fetch them. Malformed archives,
+ * DOCTYPEs, invalid XML/entities, duplicate parts, size/count overruns, and
+ * sanitization-impossible shapes all reject.
  */
 export function prepareDocxForConversion(docxBytes: Uint8Array): DocxConversionPrep {
   const { entries, relationshipParts } = scanForClassification(docxBytes);
@@ -589,8 +493,7 @@ export function prepareDocxForConversion(docxBytes: Uint8Array): DocxConversionP
   const partsToRewrite = new Map<string, RelationshipPartAnalysis>();
   const omissions: DocxOmittedExternalRef[] = [];
   for (const { part, analysis } of relationshipParts) {
-    // DOCTYPE stays a hard reject even when we could otherwise strip: entity
-    // tricks must not ride the omission path.
+    // DOCTYPE stays a hard reject so entity tricks cannot ride the omission path.
     if (analysis.hasDoctype) throw externalResourceRelationshipError(part);
     if (analysis.externalResourceRels.length === 0) continue;
     partsToRewrite.set(part, analysis);

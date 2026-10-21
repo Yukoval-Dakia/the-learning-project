@@ -1,7 +1,5 @@
-// YUK-1007 — observability 自有配置键的 consumer-effective 事实（真实 reader
-// 调用）。与其它 capability 的 config-effective-facts 同构，经本 capability 的
-// public 入口透出给组合根 facts seam（本文件 import backup-import → db/client，
-// 只在 boot 后的 facts 装配 / DB 测试环境加载，绝不进 unit 读面测试链）。
+// Effective config values from the real reader. This imports the backup route, so it
+// loads only in post-boot fact assembly or DB tests, never the unit read path.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { maxBackupUploadBytes } from '../api/backup-import';
 

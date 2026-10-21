@@ -1,29 +1,12 @@
-// P5 (YUK-489) — dedup-on-maintenance. Auto-approve of new KCs (the unified
-// tagging PROPOSE path, P2/P3 — live) accrues near-duplicate KCs over time: two
-// uploads that name the same concept slightly differently each mint their own
-// child KC under the subject root. This DEDICATED nightly job detects near-dup KC
-// pairs by pgvector cosine distance and emits MERGE PROPOSALS (pending inbox
-// items) for the human to accept — reusing the live `applyMerge` accept path via
-// the standard propose writer.
+// Nightly near-duplicate KC detection. Unified tagging can mint several KCs for the
+// same concept, so this scans recent KCs by cosine distance and proposes merges for
+// the human to accept.
 //
-// IRON RULE — PROPOSE-ONLY, NEVER auto-merge. A merge is DESTRUCTIVE: applyMerge
-// archives the `from` KCs, sets `into.merged_from[]`, and (YUK-543) repairs 9 downstream
-// attribution surfaces per absorbed id (question/learning_item/goal knowledge_ids,
-// knowledge_edge endpoints, mastery/fsrs/axis/kc_typed per-KC state, misconception edge
-// targets). That stays behind the human accept gate. The enforcement here is STRUCTURAL:
-// this file MUST NOT import or call `applyMerge`. It only writes propose events via
-// `writeKnowledgeProposeEvent`. (A reviewer greps this file for `applyMerge` → zero hits.)
+// Propose-only by construction: this file must not import or call applyMerge, which
+// archives KCs and repairs downstream attribution. Only the accept path may do that.
 //
-// Why a dedicated job (not feeding a candidate table to KnowledgeReviewTask):
-// observability (its own audit event), zero-LLM deterministic detection, and
-// structural propose-only. Mirrors the `reference_answer_backfill` (P4a) file
-// shape: `run<Name>(db, opts)` returning a counts object + `build<Name>Handler(db)`
-// builder; per-pair best-effort; nightly JobDecl.
-//
-// Detection reuses the `<=>` cosine fragment + `toSqlVector` pattern from
-// match-similarity.ts, but NOT matchKnowledgeBySimilarity itself — that is a
-// single-query top-K retriever; pairwise dedup needs a SELF-JOIN (a different
-// query shape).
+// Detection is deterministic and needs a pairwise self-join, so it does not reuse the
+// single-query top-K similarity retriever.
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -41,27 +24,19 @@ import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 
 export interface KcDedupNightlyResult {
-  /** unordered near-dup pairs the SELF-JOIN returned (within distance, ≤ maxPairs). */
   scanned_pairs: number;
-  /** pairs for which a merge proposal event was successfully written. */
   merge_proposals_created: number;
-  /** pairs NOT proposed: already proposed within the window (cross-run dedup) OR the
-   *  propose write threw (best-effort; counted, batch continues). */
+  /** Already proposed in the window, or the propose write failed. */
   skipped: number;
 }
 
-/** Inject `writeKnowledgeProposeEvent` in tests to capture WHAT is proposed
- *  without exercising the full event-write stack. Returns the new proposal id. */
+/** Test seam capturing what is proposed without the full event stack. */
 export type ProposeFn = (db: Db, entry: WriteProposalEntry) => Promise<string>;
 
 export interface RunKcDedupNightlyOpts {
-  /** cosine-distance ceiling; default dedupDistanceMax(). */
   distanceMax?: number;
-  /** recent-auto-created lookback window in days; default dedupWindowDays(). */
   windowDays?: number;
-  /** per-run proposal cap; default dedupMaxPairs(). */
   maxPairs?: number;
-  /** propose writer seam; default writeKnowledgeProposeEvent. */
   proposeFn?: ProposeFn;
 }
 
@@ -78,19 +53,9 @@ type NearDupPairRow = {
 };
 
 /**
- * Detect near-duplicate auto-created KC pairs by cosine distance and PROPOSE a
- * merge for each. PROPOSE-ONLY: writes pending `experimental:knowledge_merge`
- * proposals (human-acceptable via the live applyMerge accept path) — it NEVER
- * archives or merges a KC itself. Returns {scanned_pairs, merge_proposals_created,
- * skipped} and writes one `experimental:kc_dedup_scan` audit event with the counts.
- *
- * Budget: the scan is bounded to pairs where at least one side is a KC minted
- * within `windowDays` — either auto-tagged (`experimental:auto_tag_kc_created`)
- * or proposal-minted (propose_new / split, resolved via materialized_id_index
- * anchor → event). It must also still be live (non-archived). This keeps the
- * nightly cost proportional to recent minting churn, not the whole tree.
- * Note: proposal-minted KCs arrive with embedding=null; they enter the window
- * immediately but only become pair-eligible after embed_backfill fills them.
+ * Detect and propose merges for near-duplicate recent KCs; never merges itself.
+ * One side must be minted within the window, which bounds cost to recent churn.
+ * Proposal-minted KCs enter the window immediately but only pair once embedded.
  */
 export async function runKcDedupNightly(
   db: Db,
@@ -101,21 +66,9 @@ export async function runKcDedupNightly(
   const maxPairs = opts.maxPairs ?? dedupMaxPairs();
   const proposeFn = opts.proposeFn ?? writeKnowledgeProposeEvent;
 
-  // Pairwise SELF-JOIN over non-archived, embedded `knowledge` rows:
-  //   - `a.id < b.id` enumerates each unordered pair exactly once.
-  //   - at least ONE side is in the recent-auto-created set (the budget bound):
-  //     a live KC whose id appears as subject_id of an `experimental:auto_tag_kc_created`
-  //     event inside the window. We confirm "still live" by joining only against
-  //     non-archived knowledge rows (the WHERE archived_at IS NULL on a/b), so an
-  //     auto-created KC later archived is excluded.
-  //   - cosine distance within the ceiling.
-  // ORDER BY distance ASC, LIMIT maxPairs → propose the closest pairs first.
-  //
-  // `<=>` is pgvector cosine distance (match-similarity.ts pattern); the recent
-  // set is materialized inline as a CTE of distinct subject_ids. Bind the window
-  // as days via make_interval so the parameter is a plain number (no string
-  // interpolation into the SQL text).
-  // Drizzle + postgres returns the row array directly; execute carries its selected row type.
+  // Pairwise self-join over live embedded rows: a.id < b.id visits each unordered
+  // pair once, at least one side must be recently minted, and distance must be under
+  // the ceiling. Closest pairs are proposed first, capped per run.
   const pairRows = await db.execute<NearDupPairRow>(sql`
     WITH recent_auto AS (
       SELECT DISTINCT subject_id AS id
@@ -166,15 +119,9 @@ export async function runKcDedupNightly(
   let merge_proposals_created = 0;
   let skipped = 0;
 
-  // Cross-run idempotency (OCR #1/#5): build a skip-set of unordered KC pairs ALREADY
-  // proposed for merge within the window. The raw writeKnowledgeProposeEvent path does NOT
-  // enforce a cooldown (proposalGateCandidate in review.ts returns null for merge — there is
-  // no merge dedup anywhere), so without this a still-unresolved pair would re-propose every
-  // night → duplicate pending inbox items. Semantics: accept → the `from` KC is archived
-  // (excluded by the scan's archived filter next run); reject → not re-proposed within the
-  // window (respects the rejection); pending → no duplicate. After the window a still-present
-  // dup may re-propose (acceptable). The merge event payload carries top-level `into_id` +
-  // `from_ids` (proposals.ts generic branch spreads `...rest` into event_override.payload).
+  // Cross-run dedup: the propose writer has no merge cooldown, so an unresolved pair
+  // would otherwise produce a duplicate pending item every night. After the window a
+  // remaining duplicate may be proposed again.
   const priorMergeRows = await db.execute<{
     payload: { into_id?: string; from_ids?: string[] } | null;
   }>(sql`
@@ -190,35 +137,22 @@ export async function runKcDedupNightly(
   }
 
   for (const pair of pairRows) {
-    // Coerce driver-native shapes defensively: the `postgres` driver returns
-    // timestamptz as Date and numeric/int as number, but raw-execute results can
-    // surface them as strings depending on type parsing — normalize like
-    // mastery/state.ts wraps `Number(beta)`.
+    // Normalize raw-execute values, which may arrive as strings by type parser.
     const aCreatedMs = new Date(pair.a_created_at).getTime();
     const bCreatedMs = new Date(pair.b_created_at).getTime();
     const distance = Number(pair.distance);
 
-    // into/from selection (deterministic): keep the OLDER KC as `into_id` (the
-    // more-established attribution target), merge the NEWER as `from_ids:[newer]`.
-    // Tie-break a created_at tie by lexical id (smaller id = into) so the choice
-    // is stable across runs regardless of row order.
+    // Keep the older, better-attributed KC as the merge target; tie-break by id.
     const aOlder = aCreatedMs < bCreatedMs || (aCreatedMs === bCreatedMs && pair.a_id < pair.b_id);
 
     const intoId = aOlder ? pair.a_id : pair.b_id;
     const fromId = aOlder ? pair.b_id : pair.a_id;
     const fromVersion = Number(aOlder ? pair.b_version : pair.a_version);
 
-    // expected_versions: applyMerge (proposals.ts ~:414-418) requires
-    //   `for (const fromId of payload.from_ids) if (!(fromId in expected_versions)) throw`
-    // — i.e. EXACTLY one entry per from_id; the INTO version is NOT required (the
-    // into row is re-read live + version-bumped without an optimistic check). So we
-    // map ONLY the from_id → its current version. (Stale-at-accept-time is handled
-    // by applyMerge's own `WHERE version = expected_versions[fromId]` guard, which
-    // makes the accept a no-op-throw if the KC changed between propose and accept.)
+    // applyMerge needs exactly one version per from_id and none for the target; its
+    // own guard rejects an accept when the KC changed since proposal.
     const expected_versions: Record<string, number> = { [fromId]: fromVersion };
 
-    // Cross-run dedup: this unordered pair already has a merge proposal within the window
-    // → skip rather than pile up a duplicate pending item (OCR #1/#5).
     if (proposedPairKeys.has([intoId, fromId].sort().join('::'))) {
       skipped += 1;
       continue;
@@ -239,9 +173,7 @@ export async function runKcDedupNightly(
       });
       merge_proposals_created += 1;
     } catch (err) {
-      // Best-effort per-pair: a single propose-write failure is counted + skipped,
-      // the batch continues (mirrors reference_answer_backfill's per-row contract).
-      // Never abort the whole scan over one bad pair.
+      // Best effort per pair; one failed write must not abort the scan.
       console.error('[kc_dedup_nightly] propose failed for pair', pair.a_id, pair.b_id, err);
       skipped += 1;
     }
@@ -253,17 +185,9 @@ export async function runKcDedupNightly(
     skipped,
   };
 
-  // Observability (design §8): one audit event per scan with the counts. Action
-  // `experimental:kc_dedup_scan` is NOT folded by proposalWhere() (inbox.ts ~:176
-  // folds only `propose` / `experimental:knowledge_%` / `experimental:proposal` /
-  // `experimental:propose_learning_intent`) — a generic `experimental:kc_dedup_scan`
-  // matches none, so it is audit-only, never a pending inbox item. The merge
-  // proposals themselves (action `experimental:knowledge_merge`) ARE folded → those
-  // are the human-acceptable items.
-  // Best-effort (OCR #2): a failed audit write must NOT throw — the merge proposals already
-  // committed above, and throwing would send the job to pg-boss DLQ whose retry would re-scan
-  // (the idempotency skip-set above bounds the damage, but a needless retry is still wrong for
-  // a counts-only observability write). Log + continue with the real result.
+  // One audit event per scan. The action is not folded, so it stays out of the inbox;
+  // only the merge proposals are user-actionable. A failed audit write must not throw,
+  // because the proposals already committed and a retry would rescan.
   try {
     await writeEvent(db, {
       id: newId(),
@@ -272,9 +196,7 @@ export async function runKcDedupNightly(
       actor_ref: 'kc_dedup_nightly',
       action: 'experimental:kc_dedup_scan',
       subject_kind: 'knowledge',
-      // No single KC is the subject of a scan; pin a stable sentinel so the audit
-      // row has a non-null subject_id (writeEvent requires one) without implying a
-      // target KC. The counts live in the payload.
+      // A scan has no single KC; this sentinel satisfies the non-null subject.
       subject_id: 'kc_dedup_scan',
       outcome: 'success',
       payload: {
@@ -296,12 +218,8 @@ export async function runKcDedupNightly(
   return result;
 }
 
-// pg-boss handler builder (mirrors buildReferenceAnswerBackfillHandler /
-// buildAnswerClassBackfillHandler): takes the db injected by
-// register-capability-jobs, runs the scan, logs counts. Per-pair propose
-// failures are already absorbed inside runKcDedupNightly (counted as skipped),
-// so a throw HERE is a genuine infra fault (DB down, etc.) → propagates to
-// pg-boss for DLQ retry; the next nightly run re-scans the window.
+// Per-pair failures are absorbed above, so a throw here is an infra fault and should
+// reach pg-boss for retry.
 export function buildKcDedupNightlyHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {

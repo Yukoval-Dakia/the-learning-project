@@ -11,16 +11,16 @@ import type { RevisionRegistryEntry } from './revision-registry';
 import type { RawEventRow, RecordClassification } from './types';
 
 // ====================================================================
-// YUK-1572 — 历史迁移 apply · 冻结 snapshot 提取 + 内容/坐标 fidelity
-// 校验（自 apply.ts 迁出；函数体逐字不变）
+// 历史迁移 apply · 冻结 snapshot 提取 + 内容/坐标 fidelity
+// 校验
 // ====================================================================
 //
 // 「frozen snapshot + coordinates fidelity validation」决策的唯一 owner：
 //   - 分类记录 → 冻结 snapshot / 可机械比对内容面的提取（attempt /
 //     durable review / pending 三形态 payload 遍历，提取规则逐字保留）；
-//   - snapshot → revision 内容可推导性验证（P1-2 + YUK-1100：题干/选项/
+//   - snapshot → revision 内容可推导性验证（题干/选项/
 //     参考答案机械比对，超机械比对面走 question_asserted，不冒充已验证）；
-//   - registry 坐标对 revision 契约的普适校验（P1-2b/c：part/slot/unit
+//   - registry 坐标对 revision 契约的普适校验（part/slot/unit
 //     关联 + 契约自身确定性校验子集）。
 // 改任何 fidelity 规则（归一化口径、判据种类、坐标约束、快照提取形态）
 // 只应发生在本文件。
@@ -125,14 +125,14 @@ export interface SnapshotTransformationIssue {
 }
 
 /**
- * digest_verified 的内容可推导性（review P1-2）：registry 只证明「拿到过同一份
+ * digest_verified 的内容可推导性：registry 只证明「拿到过同一份
  * snapshot」；本函数再证明【目标 revision 的学习者所见内容可由该 snapshot 机械
  * 推导】—— solo 单 part：题干 trim/空白归一后逐字一致；选择题面：slot 选项
  * 文本与 snapshot.choices_md 序列一致（归一）；非选择题面不得出现选择题槽。
  * 评分依据/材料 digest 无法机械证明（§3.1 版本化 integrity 不等于 snapshot 字段），
  * 超出机械比对面的必须走 question_asserted 显式断言 —— 不冒充 digest_verified。
  *
- * YUK-1100（review P1）：snapshot.reference_md 一并纳入比对 —— 题干/选项相同
+ * snapshot.reference_md 一并纳入比对 —— 题干/选项相同
  * 而答案不同的同题面 snapshot 不得绑定到答案不同的 revision。只在【答案可机械
  * 推导】的计分单元判据上比对（text_key/option_set_key/numeric_key，镜像
  * evaluation.ts 确定性比较器的归一化语义）；rule_reference/holistic_level/
@@ -219,7 +219,7 @@ const OPTION_MARKER_RE = /^[（(]?\s*([A-Za-z]{1,6})\s*[)）.．、:：]?\s*/;
 const NUMERIC_HEAD_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
 
 /**
- * snapshot.reference_md ↔ 计分单元判据的机械比对（YUK-1100）：只处理答案可由
+ * snapshot.reference_md ↔ 计分单元判据的机械比对：只处理答案可由
  * 参考文本确定性推导的判据；其余判据（rule_reference 等）无答案可机械比对，
  * 保持既有纪律 —— 不在此判定。
  */

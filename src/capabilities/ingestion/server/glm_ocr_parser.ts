@@ -6,15 +6,9 @@ import type { GlmLayoutBlock, GlmLayoutResponse } from './glm_ocr';
 import type { LayoutQuality, ParsedFigureBox } from './tencent_mark_parser';
 
 /**
- * Parser for GLM-OCR `layout_parsing` response → the SAME downstream contract the
- * handler already consumes from Tencent (YUK-253). The VLM `StructureTask` layer,
- * the fallback path, and the figure crop/attach pipeline are all untouched —
- * GLM swaps only the per-page OCR engine.
- *
- * GLM gives 4-number ABSOLUTE px `bbox_2d: [x1,y1,x2,y2]`; this is the GLM
- * analogue of the Tencent `flat8ToBBox` (which hard-asserts 8 numbers and is
- * therefore not reusable here). `glmBBox` emits the identical 0-1 normalized
- * `BBoxT` shape `cropAndUploadFigures` expects.
+ * Parses GLM-OCR layout_parsing into the same downstream contract as Tencent; only
+ * the per-page OCR engine differs. GLM supplies absolute px bbox_2d, converted to
+ * the normalized BBoxT the crop path expects.
  */
 
 export type GlmParsedPage = {
@@ -62,15 +56,11 @@ export function glmBBox(b: [number, number, number, number], w: number, h: numbe
 }
 
 /**
- * Union of member-block bboxes → one enclosing BBoxT.
+ * Unions member-block bboxes into one enclosing box.
  *
- * PHASE-DEFERRED (YUK-253): this is the 题级 bbox 并集 machinery the locked
- * decision asks for. It is NOT wired into `page_spans` this lane — current
- * `applyExtractionResult` writes a full-page `{0,0,1,1}` bbox (ADR-0002) and
- * does not consume a per-question bbox; wiring it would change block-model
- * semantics ("分层语义不许动"). Staged here + retained per-block bbox so the
- * machinery exists for when ADR-0002's full-page-bbox constraint is relaxed.
- * See the §8 follow-up issue "题级 bbox into page_spans".
+ * Not wired into page_spans yet: extraction writes a full-page bbox (ADR-0002), and
+ * changing that would alter block semantics. Kept with per-block boxes for when the
+ * full-page constraint is relaxed.
  */
 export function bboxUnion(boxes: BBoxT[]): BBoxT {
   if (boxes.length === 0) {

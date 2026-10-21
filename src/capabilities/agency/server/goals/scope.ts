@@ -1,12 +1,8 @@
-// YUK-143 / ADR-0025 — North-Star GoalScopeTask orchestrator (ND-2).
-//
-// Mirrors src/server/knowledge/propose_edge.ts: load a knowledge-grid snapshot
-// (nodes + mastery + mesh edges), run GoalScopeTask (single structured-output
-// call, no tool loop), validate, and write a `goal_scope` AiProposal. The user
-// confirms/edits/dismisses it in the existing proposal inbox; accepting it
-// materializes the `goal` row (see accept.ts). Everything is evidence-logged
-// and reversible (ADR-0025). Any failure is swallowed + logged so a transient
-// LLM outage never breaks the goal-create entry point.
+// North-Star GoalScopeTask orchestrator. Loads a knowledge-grid snapshot (nodes +
+// mastery + mesh edges), runs GoalScopeTask (single structured-output call, no tool
+// loop), validates, and writes a `goal_scope` AiProposal. The user confirms/edits/
+// dismisses it in the proposal inbox; accepting materializes the `goal` row (accept.ts).
+// Any failure is swallowed + logged so a transient LLM outage never breaks goal-create.
 
 import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
@@ -14,22 +10,20 @@ import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import type { GoalScopeIntent } from '@/kernel/task-intents';
-// M5 seam（YUK-319 T2 记录）：跨包深 import knowledge 内部模块——M5 收紧包边界时
-// 应换走 knowledge 包对外导出面；M4 等价平移期原样保留。
 import type { ToolContext } from '@/kernel/tools/types';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { parseGoalScopeOutput } from '../../tasks/goal-scope';
 import { type TaskTextRunFn, writeRetryableAiFailureLedger } from '../ai-runtime';
 
 export type { GoalScopeOutput } from '../../tasks/goal-scope';
-// YUK-879 — the GoalScope output contract is owned by the agency TaskSpec
-// module; re-exported here for the existing db-test import surface.
+// The GoalScope output contract is owned by the agency TaskSpec module; re-exported
+// here for the existing db-test import surface.
 export { GoalScopeOutputSchema, parseGoalScopeOutput } from '../../tasks/goal-scope';
 
 export interface RunGoalScopeAndWriteParams {
   db: Db;
   goalTitle: string;
-  /** nullable — cross-subject goals are allowed (ND-1). */
+  /** nullable — cross-subject goals are allowed. */
   subjectId?: string | null;
   runTaskFn: TaskTextRunFn;
   env?: unknown;
@@ -43,32 +37,22 @@ export interface RunGoalScopeAndWriteResult {
   goal_id: string | null;
   scope_count: number;
   /**
-   * YUK-779 — success/failure discriminant, mirroring runEdgeProposeAndWrite's `ok`.
-   * `false` ONLY when this pipeline SWALLOWED an error (its catch-all below).
+   * Success/failure discriminant. `false` ONLY when this pipeline SWALLOWED an error
+   * (its catch-all below).
    *
-   * Why it must exist: `proposal_id === null` is produced by BOTH the benign
-   * cold-start no-op (empty tree → no LLM call at all) and a swallowed LLM/parse
-   * fault. Without this flag the nightly job reports `proposed: 0` for both, so a
-   * rate-limit storm is indistinguishable from "nothing to propose tonight".
-   *
-   * NOTE the deliberate asymmetry: a benign no-op returns `ok: true`. "The fallible
-   * step returned normally without producing output" is a legitimate conclusion, not
-   * a failure — see src/server/boss/job-yield.ts for the full 判据.
+   * `proposal_id === null` is produced by BOTH the benign cold-start no-op (empty tree,
+   * no LLM call) and a swallowed LLM/parse fault; without this flag the nightly job
+   * reports `proposed: 0` for both. A benign no-op returns `ok: true` — the fallible
+   * step returned normally without output.
    */
   ok: boolean;
   /**
-   * YUK-779 — true once GoalScopeTask was actually CALLED.
+   * True once GoalScopeTask was actually CALLED.
    *
-   * Same shape as runEdgeProposeAndWrite's flag, and for the same reason: this
-   * function ALSO returns before reaching the model when the knowledge tree is empty
-   * (buildGoalScopePreparation → `tree.length === 0` → null → the `!prepared` no-op),
-   * with `ok: true` and a zero result — indistinguishable from "the model declined".
-   *
-   * Today the nightly's own `skipped_no_weak` gate shadows that path (an empty tree
-   * yields no ≥5-KC domain, so the job returns before ever calling this). The flag is
-   * kept exact anyway: the shadowing is incidental — it depends on a *different*
-   * function's gate ordering, and a TOCTOU (tree non-empty at the job gate, emptied by
-   * the time this re-reads it) still reaches it.
+   * This function also returns before the model when the knowledge tree is empty, with
+   * `ok: true` and a zero result. The nightly's own `skipped_no_weak` gate shadows that
+   * path today, but the flag stays exact: the shadowing depends on a different
+   * function's gate ordering, and a TOCTOU can still reach it.
    */
   llm_attempted: boolean;
 }
@@ -78,8 +62,8 @@ const EMPTY_RESULT: RunGoalScopeAndWriteResult = {
   goal_id: null,
   scope_count: 0,
   ok: true,
-  // false by default — every early return spreading EMPTY_RESULT stopped short of
-  // the model. Only the live path flips it, immediately before the call.
+  // false by default — every early return stopped short of the model; only the live
+  // path flips it, immediately before the call.
   llm_attempted: false,
 };
 
@@ -124,8 +108,8 @@ export async function prepareGoalScopeTask(ctx: ToolContext, intent: GoalScopeIn
 export async function runGoalScopeAndWrite(
   params: RunGoalScopeAndWriteParams,
 ): Promise<RunGoalScopeAndWriteResult> {
-  // YUK-779 — 必须在 try 之外：catch 也要如实回答「刚才到底调没调模型」，否则一个
-  // 发生在 LLM 之前的吞掉的故障会被报成 idle，把真实吞错隐形。
+  // 必须在 try 之外：catch 也要如实回答「刚才到底调没调模型」，否则一个发生在 LLM
+  // 之前的吞掉的故障会被报成 idle，把真实吞错隐形。
   let llmAttempted = false;
   try {
     const prepared = await buildGoalScopePreparation(params.db, {
@@ -135,7 +119,7 @@ export async function runGoalScopeAndWrite(
     if (!prepared) return { ...EMPTY_RESULT };
     const { input, tree } = prepared;
 
-    // YUK-779: 紧挨调用之前置位，成功与吞错两条路都能如实回答「试过」。
+    // 紧挨调用之前置位，成功与吞错两条路都能如实回答「试过」。
     llmAttempted = true;
     const result = await params.runTaskFn('GoalScopeTask', input, {
       subjectProfile: params.subjectProfile,
@@ -174,16 +158,14 @@ export async function runGoalScopeAndWrite(
       goal_id: goalId,
       scope_count: scope.length,
       ok: true,
-      // 从局部量派生而非硬编码 true（PR #1076 review），与 runEdgeProposeAndWrite 的
-      // 同名字段一致：其余出口（EMPTY_RESULT 默认、`!prepared` 早返、catch-all）都从
-      // llmAttempted 取值，唯独这里硬编码就成了同一含义的第二个真源。它今天等价，
-      // 靠的是「赋值点恰好在上面几行」——那是**位置**，不是不变量。
+      // 从局部量派生而非硬编码 true：其余出口（EMPTY_RESULT 默认、`!prepared` 早返、
+      // catch-all）都从 llmAttempted 取值，硬编码会成为同一含义的第二个真源。
       llm_attempted: llmAttempted,
     };
   } catch (err) {
     console.error('runGoalScopeAndWrite: failed (no proposal written)', err);
     await writeRetryableAiFailureLedger(params.db, 'GoalScopeTask');
-    // YUK-779: `ok: false` is the ONLY thing that distinguishes this swallowed fault
+    // `ok: false` plus `llm_attempted: true` distinguish this swallowed post-LLM fault
     // from the benign `!prepared` no-op above (both yield proposal_id: null).
     return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }

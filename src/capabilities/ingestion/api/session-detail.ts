@@ -8,13 +8,10 @@ import { ApiError, errorResponse } from '@/kernel/http';
 import { resolveDocumentDerivationPolicy } from '@/kernel/read-models/usage-policy';
 
 /**
- * YUK-1408 (S1 read side) — the subset of the usage-receipt payload the wire
- * exposes: WHICH categories fired and HOW MANY spans, never values. The
- * policy_version / channels stay inside the event for audit; the live
- * derivation_policy is resolved off the document separately (a consent
- * withdrawal after the receipt was written must show immediately). A
- * malformed payload throws — same fail-loud discipline as getEvents' strict
- * read-parse — rather than silently reporting an empty receipt.
+ * The wire subset of a usage receipt: fired categories and counts, never values.
+ * Policy version and channels stay in the event; the live derivation policy is read
+ * from the document so a withdrawal shows immediately. A malformed payload throws
+ * rather than reporting an empty receipt.
  */
 const UsageReceiptPayloadSchema = z.object({
   engine: z.string().optional(),
@@ -36,9 +33,8 @@ async function readUsageReceipt(sourceDocumentId: string) {
     limit: 1,
   });
   if (!receipt) return null;
-  // Recovery preserves an honest unknown receipt in the event stream. The
-  // existing nullable read contract cannot present missing sink data as zero
-  // redactions, nor parse that recovery evidence as a normal counted receipt.
+  // Recovery keeps an honest unknown receipt; missing sink data must not read as
+  // zero redactions or as a normal counted receipt.
   if (
     'redaction_accounting' in receipt.payload &&
     receipt.payload.redaction_accounting === 'unavailable'
@@ -47,8 +43,8 @@ async function readUsageReceipt(sourceDocumentId: string) {
   const payload = UsageReceiptPayloadSchema.parse(receipt.payload);
   return {
     derivation_policy: await resolveDocumentDerivationPolicy(db, sourceDocumentId),
-    // 学习者需要被如实告知「原图是否原样交给了 AI」：拍照 / PDF 的识别引擎
-    // 必须看原图才能识别（page_images:'raw'），只有识别出的文字会先脱敏。
+    // The learner must know whether the original image went to AI: engines need the
+    // raw page image, and only extracted text is redacted.
     engine: payload.engine ?? null,
     channels: payload.channels ?? null,
     redacted_fields: payload.redacted_fields,

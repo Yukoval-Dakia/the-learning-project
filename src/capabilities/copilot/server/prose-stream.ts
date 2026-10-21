@@ -61,7 +61,7 @@ export function createCopilotProseStream(emit: (text: string) => void) {
   return { push, finish };
 }
 
-/** Also removes legacy learning/presentation comments without interpreting their content. */
+/** Strips internal comments without interpreting their content. */
 export function stripCopilotInternalComments(text: string): string {
   let visible = '';
   const stream = createCopilotProseStream((chunk) => {

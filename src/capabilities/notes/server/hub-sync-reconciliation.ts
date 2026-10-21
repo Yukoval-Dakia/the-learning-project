@@ -13,16 +13,16 @@ import {
   normalizeMalformedAutoZoneContainer,
   suppressedArtifactIds,
 } from '@/capabilities/notes/server/hub-auto-zone';
+import {
+  type HubMeshAtomicInput,
+  type HubMeshEdge,
+  resolveHubMeshAtomics,
+} from '@/capabilities/notes/server/hub-curation';
 import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
 import { getConfig } from '@/core/config/store';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
-import {
-  type HubMeshAtomicInput,
-  type HubMeshEdge,
-  resolveHubMeshAtomics,
-} from '@/kernel/hub-mesh';
 import { listKnowledgeMeshEdges, loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 
 export interface HubSyncClaim {

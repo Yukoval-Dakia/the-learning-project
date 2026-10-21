@@ -1,28 +1,13 @@
-// YUK-284 (C3) — independent single-shot 解题提示 service (脱离 copilot 展示形式).
+// Standalone single-shot solve-hint service: not routed through chat and has no
+// UI seed, but runSolveSkill keeps its signature so a question-page hint entry can
+// call it directly.
 //
-// 正名 (was: "the Copilot solve skill" / 行为包). As of C3, solve is NO longer a
-// chat-routed behavior pack: chat.ts removed the skill_context:{skill:'solve'} branch
-// because solve had NO UI seed (a dead入口). This module stays as a standalone service
-// — runSolveSkill(params) keeps its signature ({db, questionId, hintIndex?} →
-// SolveSkillResult) so a FUTURE 题目页 inline「给点提示」入口 can call it directly. That
-// UI 触发点 is OUT OF SCOPE this wave (本期只做服务端摘出); see YUK-284 plan §9.
-//
-// AF S4 / YUK-203 U6 (OQ6, R4/R7 — Cross-统合 §4.3) — solve service behavior.
-//
-// Provides the escalating-hint behavior. It does NOT reuse
-// planSolveHint (tutor-session-bound: takes a sessionId, calls Tutor.getTutorQuestionId,
-// gates on status==='active') — that would force a live tutor session into the
-// Copilot path (R3/R7 violation). Instead it calls TeachingTurnTask DIRECTLY via
-// the shared session-free seed helper buildSolveHintInput(question, hintIndex).
-//
-// R4 (load-bearing): hints ONLY. Grading/judging is NEVER routed through the
-// Copilot turn — it stays on the memory-denied invoker.ts path on the tutor
-// session. This module writes NO judge/attempt event and opens/mutates NO tutor
-// session (R7: the Copilot path writes only type='conversation').
-//
-// R6: the TeachingTurnTask call runs allowedTools:[] → no memory tool. The input
-// (prompt_md + reference_md) carries no memory content, so the hint turn is not
-// memory-bearing and cannot bias grading.
+// Hints ONLY. Grading is never routed through the Copilot turn; this module writes
+// no judge/attempt event and opens or mutates no tutor session. It calls
+// TeachingTurnTask directly via the session-free buildSolveHintInput seed — not the
+// tutor-session-bound planSolveHint, which would require a live tutor session — with
+// allowedTools:[] → no memory tool, and the prompt/reference input carries no
+// memory content, so the hint cannot bias grading.
 
 import { eq } from 'drizzle-orm';
 
@@ -41,24 +26,16 @@ type RunAgentTaskFn = (
 
 export interface RunSolveSkillParams {
   db: Db;
-  /** The solve ref id — a question id (skill_context.ref.id). */
+  /** Question id (skill_context.ref.id). */
   questionId: string;
-  /**
-   * 0-based hint count so far for this question in the Copilot conversation —
-   * escalates the ask. The caller derives it from prior solve-skill turns; for a
-   * first ask it is 0 (the userMessage itself is the implicit ask).
-   */
+  /** 0-based hint count so far for this question; escalates the ask. Defaults to 0. */
   hintIndex?: number;
 }
 
 export interface SolveSkillResult {
-  /** The non-revealing hint markdown to surface as the Copilot reply. */
+  /** Non-revealing hint markdown to surface as the Copilot reply. */
   text_md: string;
-  /**
-   * The real task_run_id returned by the TeachingTurnTask runner. The caller
-   * writes this onto the reply event for cost-tracing + observability
-   * (PR #305 review comment #3).
-   */
+  /** Real task_run_id from the TeachingTurnTask runner, for cost tracing. */
   task_run_id: string;
 }
 
@@ -67,8 +44,7 @@ export interface RunSolveSkillDeps {
 }
 
 /**
- * Run one solve-skill hint turn inside the Copilot session. Returns a
- * non-revealing hint; writes no judge/attempt event and touches no tutor session.
+ * Run one hint turn; returns a non-revealing hint and writes no judge/attempt event.
  */
 export async function runSolveSkill(
   params: RunSolveSkillParams,
@@ -94,13 +70,12 @@ export async function runSolveSkill(
 
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
-  // Reuse the SAME session-free seed (question face + reference only) the tutor
-  // route uses (OQ6 "reuse the seed logic, not the tutor-bound entry").
+  // Reuse the tutor route's session-free seed (question face + reference only).
   const input = buildSolveHintInput(q, hintIndex);
   const result = await run('TeachingTurnTask', input, {
     db,
     subjectProfile,
-    // R4/R6/OQ5: empty tool list → no memory, no tool budget, single structured turn.
+    // Empty tool list → no memory, no tool budget, single structured turn.
     allowedTools: [],
   });
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // ====================================================================
-// YUK-1568（第 1 片）— K1 blank 答案声明 answer_shape 的唯一定义
+// YUK-1568 — K1 blank 答案声明 answer_shape 的唯一定义
 // ====================================================================
 //
 // answer_shape 是【公开输入语义】：一个 blank 槽回答“什么数学对象”。它不携带
@@ -10,8 +10,8 @@ import { z } from 'zod';
 //
 // 单一权威：本文件是 answer_shape 的唯一 Zod 定义；草稿
 // （question-draft.ts DraftBlankSpec）与冻结契约（response.ts BlankSlot）复用
-// 同一份 schema，不再出现两套同名字段。比较器是第 2 片（blank-answer-compare，
-// 仅 grade / admission 消费），本片只做声明、往返与保护。
+// 同一份 schema，不再出现两套同名字段。比较器在 blank-answer-compare
+// （仅 grade / admission 消费）；本文件只做声明、往返与保护。
 //
 // 纪律（设计 §2.2 / yuk1568-k1-answer-semantics-plan.md）：
 //   - value 是封闭的判别联合，不是任意递归表达式语言；notation 只能在该
@@ -96,7 +96,7 @@ const AffineLineAnswerShape = z
  * item=point 时必须声明 axes（成员点的维数与坐标轴，有序且不重复）；
  * item=affine_line 时必须声明 variables（成员直线的有序变量绑定，恰两个且
  * 互不相同）。axes / variables 只属于各自的 item，其它 item 携带即声明错误
- *（R1 P1-2：iqsi 的 finite_set(affine_line) 必须能完整声明成员直线绑定）。
+ *（iqsi 的 finite_set(affine_line) 必须能完整声明成员直线绑定）。
  */
 const FiniteSetAnswerShape = z
   .object({

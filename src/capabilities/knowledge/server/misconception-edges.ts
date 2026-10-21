@@ -1,31 +1,16 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — misconception_edge single-owner write throat.
+// Single write throat for misconception_edge. All inserts and archives go through
+// here; raw inserts elsewhere are forbidden.
 //
-// The HETEROGENEOUS-edge analog of edges.ts (knowledge_edge, ADR-0005/0010). ALL
-// INSERTs / archives into `misconception_edge` go through this module; raw
-// `db.insert(misconception_edge)` outside it is forbidden.
+// from_kind is always 'misconception'. Weight is confidence salience, never mastery,
+// and this edge feeds no learning model. archived_at is the only time dimension.
 //
-// RED LINES (mirror misconception-edge.ts / the schema):
-//   - from_kind is ALWAYS 'misconception' (RT1 invariant) — pinned here.
-//   - weight is CONFIDENCE-only salience (0-1, DB CHECK + Zod), NEVER mastery; this
-//     edge feeds θ̂/p(L)/FSRS/difficulty/mastery NOTHING (ADR-0035 SOFT track).
-//   - archived_at is the ONLY time dimension (soft-archive, no bi-temporal).
+// Identity is the DB unique index, not an id, so re-proposing the same edge upserts
+// and refreshes weight instead of failing. That matters because promotion reruns on
+// re-induction of the same cause. An upsert never un-archives unless the caller
+// explicitly reactivates, so a retired edge is not silently resurrected.
 //
-// IDENTITY = the DB unique index (from_kind, from_id, to_kind, to_id,
-// relation_type), NOT a deterministic id. So a re-propose of the SAME edge UPSERTs
-// (refreshes weight) instead of throwing 23505. This is the deliberate divergence
-// from createKnowledgeEdge (which 409s on dup): the promotion writer re-runs on
-// re-induction of the same cause×KC, so a repeat caused_by edge MUST be idempotent,
-// not a hard conflict that strands the accept.
-//
-// YUK-537 (edge-side mirror of the node-side F1 guard, PR #688): the UPSERT does
-// NOT unconditionally un-archive. `archived_at` is cleared ONLY when the caller
-// passes reactivate:true; a plain re-propose preserves the tombstone (an edit-retract
-// retire or a superseded tombstone is never silently resurrected by a single re-accept).
-//
-// Endpoints are loose text-refs (no enforced FK — polymorphic across
-// misconception/knowledge/event per ADR-0036); existence is the caller's
-// responsibility (the promotion writer passes a just-upserted misconception +
-// a real knowledge_id). The topology gate validates endpoint KINDS, not existence.
+// Endpoints are loose text refs (polymorphic, no FK); the gate checks their kinds,
+// not their existence.
 
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
@@ -48,40 +33,22 @@ type AgentRefT = z.infer<typeof AgentRef>;
 const FROM_KIND = 'misconception' as const;
 
 export interface CreateMisconceptionEdgeInput {
-  /** The source misconception id (from_kind is pinned to 'misconception'). */
   from_id: string;
   to_kind: 'misconception' | 'knowledge' | 'event';
   to_id: string;
   relation_type: string;
-  /** CONFIDENCE-only edge salience, 0-1. Defaults to 1. */
+  /** Confidence salience, 0-1. */
   weight?: number;
   created_by: AgentRefT;
   proposed_by_ai?: boolean;
-  /** Caller-supplied write instant (house convention — no defaultNow). */
   now?: Date;
-  /**
-   * Explicit reactivation signal (default false). ONLY a true value clears `archived_at`
-   * on an UPSERT conflict — the edge-side mirror of PromoteConjectureInput.reactivate
-   * (node-side F1, PR #688). A plain re-propose preserves the tombstone, so a single
-   * re-accept never resurrects an archived caused_by edge.
-   */
+  /** Only true clears the archive tombstone on an upsert. */
   reactivate?: boolean;
 }
 
 /**
- * Insert (or upsert / reactivate) one misconception_edge through the single-owner
- * throat. Composes, in order:
- *   1. canonical ordering for SYMMETRIC misc↔misc confusable_with (smaller id is
- *      from_id) so A↔B and B↔A collapse to one unique-index row,
- *   2. Zod vocabulary + RT1 from_kind literal + weight-range + soft-track `.strict()`
- *      validation (MisconceptionEdgeInsert),
- *   3. the heterogeneous topology gate (checkMisconceptionEdgeTopology) against the
- *      LIVE neighbor edges (reject → ApiError 400; warn → proceed, DB unique idx owns dedup),
- *   4. an idempotent UPSERT keyed on the unique index (refreshes weight on
- *      re-propose, never a 23505; un-archives ONLY on an explicit reactivate —
- *      YUK-537, mirroring the node-side F1 guard).
- *
- * @returns the edge id — the EXISTING row's id on conflict-update, a fresh id on insert.
+ * Insert or upsert one edge: canonicalize symmetric ids, validate, run the live
+ * topology gate, then upsert. Returns the existing row id on conflict.
  */
 export async function createMisconceptionEdge(
   db: DbLike,
@@ -91,9 +58,7 @@ export async function createMisconceptionEdge(
   const proposedByAi = input.proposed_by_ai ?? false;
   const weight = input.weight ?? 1;
 
-  // 1) Canonical ordering — confusable_with is SYMMETRIC. Only misc↔misc can be
-  //    reordered (from_kind is pinned to 'misconception'); order so the smaller id
-  //    is from_id, collapsing A↔B and B↔A onto one unique-index row.
+  // confusable_with is symmetric, so order ids to collapse A<->B onto one row.
   let fromId = input.from_id;
   let toId = input.to_id;
   if (
@@ -104,9 +69,7 @@ export async function createMisconceptionEdge(
     [fromId, toId] = [toId, fromId];
   }
 
-  // 2) Validate vocabulary + RT1 from_kind literal + weight 0-1 + soft-track `.strict()`.
-  //    Throws ZodError on a miss (the throat re-validates even though the promotion
-  //    writer pre-shapes the input — defense in depth).
+  // Revalidate even though callers pre-shape input; defense in depth.
   const parsed = MisconceptionEdgeInsert.parse({
     id: newId(),
     from_kind: FROM_KIND,
@@ -122,8 +85,7 @@ export async function createMisconceptionEdge(
     archived_at: null,
   });
 
-  // 3) Topology gate against the LIVE neighbor edges (archived_at IS NULL) touching
-  //    either endpoint. reject → throw; warn → proceed (caller / unique idx own dedup).
+  // Gate against live neighbors: reject throws, warn proceeds.
   const neighbors = await db
     .select({
       from_kind: misconception_edge.from_kind,
@@ -158,12 +120,7 @@ export async function createMisconceptionEdge(
     );
   }
 
-  // 4) Idempotent UPSERT — re-propose of the same (from,to,relation) refreshes
-  //    weight/updated_at instead of throwing 23505. `.returning` yields the
-  //    surviving row id (the existing id on conflict-update, the fresh id on insert).
-  //    YUK-537 (F1 edge mirror): `archived_at` is NOT unconditionally reset — ONLY an
-  //    explicit reactivation clears it; a plain re-propose preserves the current
-  //    archive state, so a retired / superseded edge is never silently resurrected.
+  // Upsert refreshes weight; archive state changes only on explicit reactivation.
   const rows = await db
     .insert(misconception_edge)
     .values({
@@ -201,21 +158,13 @@ export async function createMisconceptionEdge(
 
 export interface ArchiveMisconceptionEdgeResult {
   id: string;
-  /** true if THIS call flipped archived_at NULL→now; false if already archived (idempotent no-op). */
+  /** False when the edge was already archived. */
   archived: boolean;
 }
 
 /**
- * Soft-delete one misconception_edge (set archived_at; never a hard DELETE — read
- * APIs filter `isNull(archived_at)`, so an archived edge leaves the live mesh but
- * the row survives for retract). Mirrors archiveKnowledgeEdge.
- *
- * Idempotent: the UPDATE is guarded on `isNull(archived_at)`, so re-archiving an
- * already-archived edge changes zero rows and returns `{ archived: false }`. This
- * is the SUPERSEDE removal the misconception reconcile ring performs (imperative,
- * no fold).
- *
- * @throws ApiError('not_found', 404) when no edge with `id` exists at all.
+ * Soft-delete by setting archived_at; rows survive for retract. Idempotent, and used
+ * by the reconcile ring's supersede removal. Missing ids are 404.
  */
 export async function archiveMisconceptionEdge(
   db: DbLike,
@@ -243,8 +192,7 @@ export async function archiveMisconceptionEdge(
   return { id, archived: true };
 }
 
-/** Repoint live misconception edges during a KC merge. This is the only owner
- * of collision/reactivation semantics for misconception_edge. */
+/** Repoint live edges during a KC merge; owns collision and reactivation semantics. */
 export async function rewireMisconceptionEdgesForKnowledgeMerge(
   tx: Tx,
   fromId: string,

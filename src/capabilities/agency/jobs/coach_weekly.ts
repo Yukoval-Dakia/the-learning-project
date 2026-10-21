@@ -1,6 +1,4 @@
-// Wave 5 / T-D6/B — coach_weekly pg-boss handler.
-//
-// Sunday weekly variant of coach_daily. Re-uses runCoach() but runs with
+// coach_weekly pg-boss handler: Sunday weekly variant of coach_daily, running with
 // runKind='weekly' to set the weekly_reflection slot on TodayPlan.
 
 import type { Job } from 'pg-boss';

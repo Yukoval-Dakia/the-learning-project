@@ -1,4 +1,4 @@
-// YUK-216 S2 (题源扩展 Strategy D) — slice 2 在线检索线 (SourcingTask → tier 2).
+// 题源扩展：在线检索线 (SourcingTask → tier 2)。
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §3 / §5
 // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3 + 实证 2.
@@ -12,14 +12,14 @@
 // QuizGenQuestion is PROVENANCE: a sourced question carries its origin URL/title
 // (WebSourcedProvenance) instead of generator source_refs.
 //
-// OF-1 回填 (YUK-223 issue / YUK-227 S3 Slice C): HTML/TEXT sources are extracted
+// OF-1 回填：HTML/TEXT sources are extracted
 // inline and INSERTed as drafts (the `questions` path below). Image-type sources —
 // pages whose question stem lives in an image that tavily_extract cannot lift as
 // plain text — are NOT auto-extracted (守 ADR-0002: VLM 抽图是用户授权的付费动作).
 // Instead the agent reports them as `image_candidates`; the handler turns each into
 // an `image_candidate` proposal (proposal inbox), and a VLM extraction runs ONLY on
 // explicit user accept. See docs/superpowers/plans/2026-06-06-yuk227-s3-image-
-// reachability.md §2 Slice C + §4 cost gate.
+// reachability.md §2 + §4 cost gate.
 import { z } from 'zod';
 import { QuestionKind, Rubric } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
@@ -58,13 +58,13 @@ export const SourcedQuestion = z.object({
   // passage the prompt + reference were restructured from). Folded into
   // metadata.web_sourced.extract so source_verify's source_consistency check can run a
   // DETERMINISTIC prompt↔source overlap WITHOUT refetching the network (mirrors the
-  // quiz_gen source_pack snippet → quiz_verify maxNgramOverlap precedent). REQUIRED
-  // (F2, PR #313): without an extract the declared source_url has no deterministic
+  // quiz_gen source_pack snippet → quiz_verify maxNgramOverlap precedent). REQUIRED:
+  // without an extract the declared source_url has no deterministic
   // anchor and a fabricated URL would promote to tier 2 unchecked — source_verify
   // fails any web_sourced row lacking a non-empty extract, so the producer must supply
   // it (aligned with WebSourcedProvenance.extract being required).
   extract: z.string().min(1),
-  // YUK-1568 S3 — 可选 typed 声明：同一道题的统一草稿 parts/units，直接复用
+  // 可选 typed 声明：同一道题的统一草稿 parts/units，直接复用
   // question-draft 的 DraftPart（answer_shape 经 DraftBlankSpec、blank_order
   // 经 DraftPart 携带；不另造评分或 schema 体系）。声明是承诺：producer 只写
   // 题面有根据的小问/槽位/分值/答案对象，缺小问、缺单位、缺分值、缺槽位保持
@@ -74,7 +74,7 @@ export const SourcedQuestion = z.object({
 });
 export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 
-// ---------- image-type source candidate (YUK-227 S3 Slice C) ----------
+// ---------- image-type source candidate ----------
 //
 // A real-question source the agent located but could NOT lift as plain text because
 // the question stem lives inside an image (e.g. a scanned 试卷 PNG, a 图表 题). The
@@ -84,8 +84,7 @@ export type SourcedQuestionT = z.infer<typeof SourcedQuestion>;
 // determines "image-type" by inference: tavily_extract returned empty/near-empty text
 // for a URL that the search result indicates carries questions (Tavily's hosted MCP
 // search response shape is not parsed in our code — buildTavilyMcpServer only mounts
-// the remote server — so the agent, not the handler, classifies the source; see plan
-// §6 F1(c) + §6.1).
+// the remote server — so the agent, not the handler, classifies the source).
 export const SourcingImageCandidate = z.object({
   // The page URL whose question(s) are image-only. Required: without it there is no
   // asset to download on accept (mirrors SourcedQuestion.source_url being required).
@@ -105,7 +104,7 @@ export type SourcingImageCandidateT = z.infer<typeof SourcingImageCandidate>;
 // `question` row + metadata.web_sourced provenance and chains a tier-2 verify job.
 export const SourcingTaskOutput = z
   .object({
-    // YUK-227 S3 Slice C (FIX-9b) — relaxed from min(1) to min(0): a run may find
+    // Relaxed from min(1) to min(0): a run may find
     // ONLY image-type sources (0 text questions) and still be a valid, useful result
     // (it yields image_candidate proposals). The explicit .min(0) makes the relaxation
     // match this comment (a bare z.array() already allows 0, but the explicit bound
@@ -122,7 +121,7 @@ export const SourcingTaskOutput = z
     query_plan: z.array(z.string().min(1)),
     // ISO string (same shape as quiz_gen source_pack.searched_at — string, not Date).
     fetched_at: z.string().min(1),
-    // Tavily→Exa 换装（2026-09-13）：新报告写 'exa'；历史行保留 'tavily' 可 parse。
+    // Tavily→Exa 换装：新报告写 'exa'；历史行保留 'tavily' 可 parse。
     tool: z.enum(['tavily', 'exa']),
   })
   .superRefine((value, ctx) => {

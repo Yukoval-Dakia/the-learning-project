@@ -1,14 +1,12 @@
-// YUK-1398 (Stage 1 · B6 S2/S3) — Copilot 接纳面的危机守卫服务件。
+// Copilot 接纳面的危机守卫服务件。
 //
-// 职责边界（最小）：
-//   - `classifyCopilotTurn`：在 HTTP 接纳点对 user_message 做确定性分类；
-//     命中时强制 derivation_policy='crisis'（覆盖客户端送来的任何值）。
-//   - `writeCrisisGuardEvent`：在同一事务里写一条**非身份化**守卫事件
-//     （类别 / 模板版本 / 审定状态 / 入口 / 配置版本），供后续专家审定对账。
-//     绝不写原始文本——原文只存在于既有会话事件里。
+// `classifyCopilotTurn` 在 HTTP 接纳点对 user_message 做确定性分类，命中时强制
+// derivation_policy='crisis'（覆盖客户端送来的任何值）。`writeCrisisGuardEvent`
+// 在同一事务里写一条非身份化守卫事件（类别 / 模板版本 / 审定状态 / 入口 / 配置
+// 版本），绝不写原始文本——原文只存在于既有会话事件里。
 //
-// 回应模板不在这里：见 `src/core/crisis/config.ts`（单一版本化文件，
-// 每条模板带 review_status，审定人只改那个文件）。
+// 回应模板不在这里：见 `src/core/crisis/config.ts`（单一版本化文件，每条模板带
+// review_status，审定人只改那个文件）。
 
 import {
   CRISIS_GUARD_CONFIG_VERSION,
@@ -19,7 +17,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 
-/** 守卫事件的动作名（未进 RESERVED_EXPERIMENTAL_ACTIONS：走通用 ExperimentalEvent 解析，零 schema 变更）。 */
+/** 守卫事件的动作名（走通用 ExperimentalEvent 解析，零 schema 变更）。 */
 export const CRISIS_GUARD_EVENT_ACTION = 'experimental:crisis_guard' as const;
 
 /** 回应入口标识（事件里只存这个，不存原文）。 */
@@ -51,7 +49,7 @@ export interface CrisisGuardEventInput {
   eventId: string;
   now: Date;
   /**
-   * R1 addendum：危机分类命中时被丢弃的附件类型（目前只有 review_answer）。
+   * 危机分类命中时被丢弃的附件类型（目前只有 review_answer）。
    * 只记类型，不记任何原文/摘要。
    */
   droppedAttachmentKind?: 'review_answer';

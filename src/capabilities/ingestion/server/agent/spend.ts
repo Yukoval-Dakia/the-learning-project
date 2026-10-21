@@ -49,12 +49,10 @@ export async function readAgentWeekSpend(tx: Tx, from: Date, to: Date) {
 }
 
 /**
- * Discover legacy OCR once and retain its identity on an existing ingestion
- * session. Only an exact tool run_ref -> attempt_id is attribution evidence.
- * All unbound GLM OCR is potentially relevant: absence of an old agent window
- * is not proof of independence (the old streams may already have been pruned).
- * This rejects agent starts, never independent OCR or its existing billing.
- * Called under the start budget lock; the denial transaction must commit it.
+ * Discovers legacy OCR once and retains its identity on the session. Only an exact
+ * run_ref-to-attempt_id link is evidence; unbound GLM OCR may still belong to an old
+ * run whose window was pruned. This blocks agent starts, never independent OCR or
+ * its billing. Called under the budget lock; the denial must commit.
  */
 export async function retainHistoricalOcrLiabilities(tx: Tx, hostSessionId: string): Promise<void> {
   const saved = new Map<string, { sessionId: string; identity: HistoricalOcrIdentity }>();
@@ -226,10 +224,10 @@ function requireTaskOwner(budget: AgentBudgetEnvelope | null, taskRunId: string,
 }
 
 /**
- * The agent's own write-ahead liability survives off/observe untracked acquire.
- * beforeRequest binds the *exact* attempt at the actual request callback, even
- * when lifecycle persistence failed open. No row or any ordinary catch leaves
- * the liability pending. Resolution is derived only from canonical priced cost.
+ * The agent's write-ahead liability survives an untracked acquire. beforeRequest
+ * binds the exact attempt at the request callback even if lifecycle persistence
+ * failed open. Missing rows or ordinary catches leave it pending; only canonical
+ * priced cost resolves it.
  */
 export async function withAgentProviderLiability<T>(
   db: Db,

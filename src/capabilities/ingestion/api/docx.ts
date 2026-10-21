@@ -20,23 +20,13 @@ import { Ingestion } from '@/server/session';
 import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
 import { IngestionDerivationPolicy } from './contracts';
 
-// YUK-258 — DOCX ingestion endpoint. ONE .docx multipart upload → classify into
-// text / visual line → build a ready-to-review ingestion session.
+// DOCX ingestion endpoint: one multipart upload becomes a ready-to-review session.
 //
-//   text line (语文/纯文本卷, zero MathType):
-//     pandoc → markdown → segment into question_blocks → persist embedded images +
-//     evidence page images → initiateDocxTextUpload (uploaded→extracted直达).
-//   visual line (MathType 卷):
-//     LibreOffice→PDF→PDFium page images (= expandPdf equivalent) →
-//     initiateUpload(entrypoint='docx') → enqueueExtraction(tencent_ocr_extract).
-//
-// Unlike PDF, this endpoint is SELF-CONTAINED: it builds the session itself
-// (the client does NOT then call /api/ingestion). Returns
-// `{ session_id, line, page_count }`.
-//
-// All external conversion is收口在 the converter seam (getDocxConverter); render +
-// asset persistence reuse #332. The route runs synchronously — segmentation is
-// sub-second; the converter has its own 60s timeout guard.
+// Text papers convert through pandoc to markdown, segment into blocks, and reach
+// extracted directly. MathType papers render page images and run the standard OCR
+// extraction. Unlike PDF, this endpoint builds its own session and returns
+// `{ session_id, line, page_count }`. Conversion runs synchronously with its own
+// timeout guard.
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -47,11 +37,8 @@ export async function POST(req: Request): Promise<Response> {
     if (!(file instanceof File)) {
       throw new ApiError('validation_error', 'file is required', 400);
     }
-    // Accept the canonical docx mime, plus empty type when the filename ends in
-    // .docx (browsers send '' for drag-and-drop / some OS pickers). This is NOT
-    // the security gate: prepareDocxForConversion validates the zip /
-    // word/document.xml and 400s a misnamed non-docx.
-    // 400s a misnamed non-docx.
+    // Accept the docx mime or an empty type with a .docx filename (drag-and-drop).
+    // This is not the security gate: prepareDocxForConversion validates the zip.
     const isDocxMime =
       file.type === DOCX_MIME || (file.type === '' && file.name.toLowerCase().endsWith('.docx'));
     if (!isDocxMime) {
@@ -68,8 +55,7 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    // YUK-1408 — optional consent field ('allow' | 'answer_only'); invalid
-    // values are rejected rather than silently coerced into 'allow'.
+    // Optional consent ('allow' | 'answer_only'); invalid values are rejected.
     const rawPolicy = form?.get('derivation_policy');
     const derivationPolicy =
       rawPolicy == null || rawPolicy === ''
@@ -85,15 +71,12 @@ export async function POST(req: Request): Promise<Response> {
           })());
 
     const docxBytes = new Uint8Array(await file.arrayBuffer());
-    // Deterministic, sub-ms: zip-parse + security preflight + MathType OLE count.
-    // YUK-1476 — external NON-hyperlink relationships (header/footer/body) are
-    // omitted from a sanitized CONVERTER INPUT COPY; pandoc/LibreOffice only ever
-    // see converterBytes, never the original external targets. Throws 400 on a
-    // corrupt / non-docx zip and on every preserved fail-closed guard.
+    // Deterministic zip parse, security preflight, and MathType count. External
+    // non-hyperlink relationships are omitted from the converter copy, so converters
+    // never see their targets. Corrupt archives and other guards fail with 400.
     const prep = prepareDocxForConversion(docxBytes);
     const line = prep.line;
-    // YUK-1476 (R1 P1-2) — the SAME honest omission facts (both digests + omitted
-    // facts) are forwarded on BOTH lines so every docx receipt is identical.
+    // Forward the same digests and omissions on both lines so receipts match.
     const externalRefOmission =
       prep.omissions.length > 0
         ? {
@@ -110,11 +93,9 @@ export async function POST(req: Request): Promise<Response> {
       // Visual line: page images ARE the extract input. Render + persist (=
       // expandPdf equivalent), then run the standard upload+extract flow.
       const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
-      // YUK-1404 (B2/R1) — Word goes through pandoc to Markdown on BOTH lines;
-      // a MathType doc additionally carries the rendered page images. Pandoc is
-      // TOLERANT on the visual line (P2-3): a conversion failure must not
-      // reject uploads that the OCR path used to accept — the package simply
-      // attaches without markdown, flagged. The legacy pipeline is untouched.
+      // Word converts through pandoc on both lines; MathType also carries rendered
+      // pages. Pandoc is tolerant here: a failure must not reject an upload the OCR
+      // path accepts; the package attaches without markdown and is flagged.
       let markdown: string | null = null;
       let media: { path: string; bytes: Uint8Array }[] = [];
       let markdownAbsentReason: string | undefined;
@@ -146,7 +127,7 @@ export async function POST(req: Request): Promise<Response> {
           renderedPdfAssetId: evidence.pdfAssetId,
         });
       } catch (err) {
-        // P2-8 — the session row exists: mark it failed, don't orphan it.
+        // The session row exists, so mark it failed rather than orphaning it.
         await markSessionPackageFailed(db, sessionId, err);
         throw err;
       }
@@ -165,30 +146,22 @@ export async function POST(req: Request): Promise<Response> {
 
     // Text line: pandoc → markdown → segment.
     const { markdown, media } = await converter.docxToMarkdown(prep.converterBytes);
-    // YUK-1408 — usage receipt facts: which redaction categories fire on this
-    // document's extraction text. The markdown itself stays raw (it is the
-    // stored source of record); models only ever see it through the shared
-    // call-site redaction backstops.
+    // Record which redaction categories fired. Stored markdown stays raw; models see
+    // it only through the call-site redaction backstops.
     const receiptRedaction = redactIngestionText(markdown);
     const segmented = segmentMarkdown({
       markdown,
-      // The converter media manifest has no dimensions; the noise filter keeps
-      // dimensionless media (拿不准默认存). Tiny-image filtering activates only when
-      // a future converter supplies width/height.
+      // The manifest has no dimensions, so keep dimensionless media by default.
       media: media.map((m) => ({ path: m.path })),
     });
     if (segmented.length === 0) {
-      // No question cut → reject; do NOT create a half-baked session.
+      // No question cut: reject rather than create a half-built session.
       throw new ApiError('validation_error', 'DOCX 未能切出任何题', 400);
     }
 
-    // Persist embedded images → asset ids, keyed by their NORMALIZED relative
-    // media path (coderabbit-b: segmentMarkdown looks these up via
-    // normalizeMediaPath, so the map key must use the same normalization or refs
-    // silently drop when a converter emits './media/…' or an absolute path).
-    // YUK-1404 (B2/R1): shared persistPackageMedia helper — same per-image byte
-    // cap; skipped media are reported via `omitted` and land in the package's
-    // omitted_media provenance instead of a console.warn.
+    // Key assets by normalized media path: segmentMarkdown looks up the same
+    // normalization, so './media/…' and absolute paths still resolve. Skipped media
+    // are reported through omitted_media provenance.
     const persisted = await persistPackageMedia(db, r2, media);
     for (const m of persisted.omitted) {
       console.warn(`[docx] skipping embedded image ${m.path}: ${m.reason}`);
@@ -198,7 +171,7 @@ export async function POST(req: Request): Promise<Response> {
       pathToAssetId.set(normalizeMediaPath(m.path), m.asset_id);
     }
 
-    // Evidence page images (原图同步存储不变式 — text line也存证).
+    // Evidence page images: the text line also keeps the originals.
     const evidence = await persistDocxPageEvidence(db, r2, converter, prep.converterBytes);
 
     const blocks = segmented.map((s) => ({
@@ -211,8 +184,7 @@ export async function POST(req: Request): Promise<Response> {
     const { sessionId, sourceDocumentId } = await initiateDocxTextUpload(db, {
       evidenceAssetIds: evidence.assetIds,
       blocks,
-      // YUK-1476 — honest omission audit (both digests + omitted facts) on the
-      // text-line session; only present when the converter input was sanitized.
+      // Omission audit on the text line, present only when sanitized.
       externalRefOmission,
       derivationPolicy,
       usageReceipt: {
@@ -221,9 +193,7 @@ export async function POST(req: Request): Promise<Response> {
       },
     });
 
-    // YUK-1404 (B2/R1) — attach the unified 'word' source package: original +
-    // converter input + source.md + media + page images, with ast1 refs
-    // rewritten into body_md. The legacy blocks flow is unchanged.
+    // Attach the word package with ast1 refs rewritten into body_md.
     try {
       await attachWordSourcePackage(db, r2, {
         sourceDocumentId,
@@ -236,11 +206,9 @@ export async function POST(req: Request): Promise<Response> {
         renderedPdfAssetId: evidence.pdfAssetId,
       });
     } catch (err) {
-      // P2-8 — the session row exists: don't orphan it. The text line has
-      // already committed its blocks and reached 'extracted'; the package is
-      // additive, so a package failure there is recorded on the document and
-      // the completed upload still answers 201 (a 500 would invite a duplicate
-      // re-upload). Pre-output sessions are marked failed and the error stands.
+      // Do not orphan the session. The text line already committed blocks and
+      // reached extracted, so record a package failure on the document and still
+      // answer 201; a 500 would invite a duplicate upload. Pre-output sessions fail.
       const outcome = await markSessionPackageFailed(db, sessionId, err);
       if (outcome !== 'kept_extracted') throw err;
     }

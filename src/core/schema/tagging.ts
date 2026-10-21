@@ -1,8 +1,7 @@
 /**
- * TaggingTask + WorkflowJudge schemas — T-OC slice 3 (YUK-145, OC-4).
+ * TaggingTask + WorkflowJudge schemas.
  *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` + ADR-0026.
+ * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` + ADR-0026.
  *
  * TaggingTask is a single-shot structured-output AI task (NOT multimodal): it
  * looks at an extracted question's text + an optional knowledge_hint + a
@@ -80,7 +79,7 @@ export type WorkflowJudgeRouteT = z.infer<typeof WorkflowJudgeRoute>;
  * The fields the auto-enroll path prefills when routing 'auto'. `outcome`
  * defaults to 'unanswered' (item/material) — the SAFEST signal: a captured exam
  * question with no graded answer is item-bank, never a fabricated attempt. The
- * full outcome-judging (grading the handwritten answer) is out of slice-3 scope.
+ * full outcome-judging (grading the handwritten answer) is out of scope here.
  */
 export const WorkflowJudgePrefilled = z.object({
   knowledge_ids: z.array(z.string().min(1)),

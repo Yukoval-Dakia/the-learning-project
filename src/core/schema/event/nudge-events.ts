@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // ====================================================================
-// NudgeExperimental — YUK-577 copilot 主动开口触发留痕（RESERVED + typed）
+// NudgeExperimental — copilot 主动开口触发留痕（RESERVED + typed）
 // ====================================================================
 //
 // `experimental:copilot_nudge` 是**承重非 report-only**事件：`GET /api/copilot/nudges`
@@ -12,10 +12,10 @@ import { z } from 'zod';
 // §3.3（should#2）；机制先例 = `experimental:grading_checkpoint`（state-snapshot.ts）。
 //
 // 判定器（copilot/server/nudge-triggers.ts）是唯一 writer；确定性代码零 LLM。
-// `caused_by_event_id` = 触发源 event（ingestion extract event / [cut-2] attempt event），
+// `caused_by_event_id` = 触发源 event（ingestion extract event / attempt event），
 // 既是 evidence-first 证据链，也是 per-source 幂等唯一键（partial unique index，§3.3）。
 
-/** kind 判别子——读模型据此分派呈现 + 频控 scope。cut-1 只产 ingestion_complete。 */
+/** kind 判别子——读模型据此分派呈现 + 频控 scope。 */
 export const NudgeKind = z.enum(['ingestion_complete', 'kc_wrong_streak']);
 export type NudgeKindT = z.infer<typeof NudgeKind>;
 
@@ -30,9 +30,9 @@ export const NudgePayload = z.object({
   expires_at: z.string().datetime(),
   // 承重：surfacing gate（§3.7）。true = shadow 期证据行，GET /nudges 必须排除；owner 读它校准参数。
   shadow: z.boolean(),
-  // 承重：静默窗读模型 backstop（§3.2 / Q7）。判定时的 open-practice-session 态，供读模型 defer interrupt-sensitive kind。
+  // 承重：静默窗读模型 backstop（§3.2）。判定时的 open-practice-session 态，供读模型 defer interrupt-sensitive kind。
   in_active_session: z.boolean(),
-  // loose：kind 特定证据（ingestion: session_id/block_count；[cut-2] streak: kc_id/streak_n/attempt_event_ids）。
+  // loose：kind 特定证据（ingestion: session_id/block_count；streak: kc_id/streak_n/attempt_event_ids）。
   evidence: z.record(z.string(), z.unknown()),
 });
 export type NudgePayloadT = z.infer<typeof NudgePayload>;
@@ -41,7 +41,7 @@ export const NudgeExperimental = z.object({
   actor_kind: z.literal('agent'),
   actor_ref: z.literal('copilot_nudge_trigger'),
   action: z.literal('experimental:copilot_nudge'),
-  // ingestion→learning_session；[cut-2] streak→knowledge。
+  // ingestion→learning_session；streak→knowledge。
   subject_kind: z.enum(['learning_session', 'knowledge']),
   subject_id: z.string(),
   outcome: z.null().optional(),

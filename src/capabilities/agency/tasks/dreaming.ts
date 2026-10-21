@@ -1,11 +1,7 @@
-// YUK-879 — DreamingTask contract, owned by the agency capability (Foundation D
-// lineage). The nightly handler supplies the surface-specific DomainTool
-// allowlist; mutations ride propose_* tools, so the free-text tail is a report,
-// not a parsed artifact — the owned output schema is the raw text. Prompt text
-// is byte-identical to the former central quarry entry.
+// DreamingTask output is raw report text: mutations ride propose_* tools, so the
+// free-text tail is a report, not a parsed artifact.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';
@@ -28,8 +24,7 @@ export const dreamingTaskSpec = {
     needsToolCall: true,
     isMultimodal: false,
     // The nightly handler supplies the surface-specific DomainTool allowlist
-    // from src/server/ai/tools/allowlists.ts so this registry default stays
-    // empty for tests and non-nightly callers.
+    // from src/kernel/tools/allowlists.ts; registry default stays empty.
     allowedTools: [],
     prompt: {
       kind: 'inline',

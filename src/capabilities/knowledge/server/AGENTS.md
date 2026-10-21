@@ -8,11 +8,10 @@
 | `tree.ts` | parent_id 层级 backbone 读写 |
 | `domain.ts` | 知识域 / subject scoping |
 | `edges.ts` / `propose_edge.ts` | mesh edge CRUD + 提议（5 类 `relation_type` + `experimental:*`）|
-| `hub-mesh.ts` | hub auto-zone / AutoLinksContainer 计算（hub_auto_sync_nightly 消费）|
 | `node-page.ts` | 单节点页面聚合 reader |
 | `proposals.ts` | 知识节点 propose event + accept/dismiss（content-driven：cold-start-bridge / image-candidate-accept / agent proposal-tools / KnowledgeReviewTask 的写路径）|
 | `failure-learning-context.ts` | 给 Practice Failure Learning 的有界、保序、active-only knowledge reader + 归因候选用已晋升 misconception reader（YUK-1015）|
-| `review.ts` | KnowledgeReviewTask（维护流 producer）+ legacy `write_proposal` MCP tool 入口 |
+| `review.ts` | KnowledgeReviewTask（维护流 producer）：经 `knowledge_review` surface 挂共享 `propose_knowledge_*` 工具 |
 | `rubric-validator.ts` | 知识 rubric 校验 |
 | `seed.ts` | 种子知识树 |
 | `subject-profile.ts` / `subject-resolution.ts` | SubjectProfile 解析（profile-driven task 用）|

@@ -1,39 +1,13 @@
-// ADR-0034 §3 — write-time reconciliation ring (knowledge-edge structural layer).
+// Knowledge-edge reconciliation: decide whether a candidate edge keeps both or
+// semantically supersedes a live neighbor.
 //
-// Spec: docs/adr/0034-knowledge-structure-consistency-gate-supersedes-bitemporal.md §3
+// This is semantic, not topological. Cycles, direction and transitive redundancy
+// are rejected upstream by the topology gate before this runs.
 //
-// This is INCREMENT 1: the PURE decision layer ONLY. It builds the reconcile
-// prompt and calls GLM to judge how a candidate knowledge_edge relates to its
-// live neighbor edges, then returns a typed decision. It does NOT wire into
-// `runEdgeProposeAndWrite` (propose_edge.ts) and does NOT touch the schema —
-// that wiring is increment 2+. Nothing here imports propose_edge.ts.
-//
-// WHY a SEPARATE module from src/server/memory/reconcile-llm.ts (ADR-0034 §备选
-// 末条, the rejected "use mem0 P2 reconcile ring directly" option): mem0's ring
-// acts on a personalization collection (soft profile, goes stale, recency-
-// supersede bias). Knowledge edges are STRUCTURE (timeless, strong schema). The
-// two action spaces differ — mem0 has {KEEP_BOTH, SUPERSEDE, MERGE, RETRACT_NEW}
-// (MERGE rewrites memory text, RETRACT_NEW drops a noisy duplicate), but a
-// structural edge has NO text body to MERGE and "drop the new one" is what the
-// topology/rubric gates already do upstream. So this ring's action space is
-// {KEEP_BOTH, SUPERSEDE} ONLY. We REUSE the GLM call shape, ReconcileParseError,
-// and applyConfidenceThreshold from reconcile-llm.ts (same skeleton, ADR-0034 §3
-// "复用 P2 reconcile 骨架"), but redefine the prompt + action space + parse for
-// the structural domain.
-//
-// RING DOMAIN = NON-TOPOLOGICAL SEMANTIC CONTRADICTION. Topology (cycle /
-// direction contradiction / transitive redundancy) is already hard-rejected by
-// topology-gate.ts BEFORE the ring runs (propose_edge.ts checkEdgeTopology). The
-// ring asks a different question: does this new edge semantically CORRECT /
-// contradict a live edge such that the old edge should be retired (SUPERSEDE),
-// even though both are topologically valid? e.g. a stronger-evidence
-// `prerequisite` edge that the learner's trajectory now shows is wrong-direction
-// in MEANING (not graph topology), or a `contrasts_with` edge that a later, more
-// precise edge subsumes.
-//
-// HOMOGENEOUS edges ONLY: both endpoints are knowledge_id (ADR-0010 同构边). The
-// heterogeneous misconception edge (RT1, from_kind/to_kind polymorphic) gets its
-// OWN ring — do NOT pre-build for it here (ADR-0034 §后果 "异构边闸归 RT1").
+// The action space is only KEEP_BOTH and SUPERSEDE. Memory's MERGE/RETRACT_NEW
+// verbs do not apply to structural edges: there is no text to merge, and dropping
+// the candidate already belongs to the upstream gates. Only homogeneous edges are
+// covered; misconception edges get their own ring.
 
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import {
@@ -53,15 +27,8 @@ export function isEdgeReconcileInvariantError(error: unknown): boolean {
   return isDirectProviderAttemptInvariantError(error);
 }
 
-// Structural-edge action space: KEEP_BOTH | SUPERSEDE ONLY.
-//   - KEEP_BOTH: the candidate and the live neighbor describe different, coexisting
-//     structural relations — keep both edges live.
-//   - SUPERSEDE: the candidate is a semantic CORRECTION of an existing live edge;
-//     the old edge is now wrong/outdated and should be retired (archived). The
-//     decision CARRIES the superseded old edge id so the caller (increment 2+) can
-//     archive exactly that row.
-// MERGE / RETRACT_NEW are deliberately ABSENT — they are text-memory verbs with no
-// structural-edge analog (see module header).
+// KEEP_BOTH keeps coexisting relations; SUPERSEDE marks one old edge as wrong and
+// carries its id so the caller can archive exactly that row.
 const VALID_ACTIONS = new Set(['KEEP_BOTH', 'SUPERSEDE']);
 const CONFIDENCE_THRESHOLD = 0.6;
 
@@ -75,12 +42,7 @@ export type EdgeRelationType =
   | 'applied_in'
   | 'derived_from';
 
-/**
- * A candidate homogeneous knowledge_edge being proposed. Both endpoints are
- * knowledge_id (同构边). No real edge UUID is exposed to the LLM — the candidate
- * has no id of its own yet (it is not persisted), and neighbors are referenced by
- * sequential index only (see buildEdgeReconcilePrompt).
- */
+/** A proposed edge. It has no id yet, and the model sees names, never ids. */
 export type EdgeCandidate = {
   from_knowledge_id: string;
   to_knowledge_id: string;
@@ -93,15 +55,11 @@ export type EdgeCandidate = {
 };
 
 /**
- * A live neighbor edge already in the mesh, surfaced as a reconcile candidate.
- * `edge_id` is the REAL knowledge_edge row id — kept on the typed neighbor so the
- * decision can carry it back as `superseded_edge_id`, but it is NEVER written into
- * the prompt (the prompt uses sequential `neighbor_index` only).
+ * A live neighbor. `edge_id` is for carry-back only and is never put in the prompt;
+ * the model references neighbors by `index`.
  */
 export type EdgeNeighbor = {
-  /** Sequential index used in the prompt (0..n). */
   index: number;
-  /** REAL knowledge_edge.id — for carry-back only, never exposed to the LLM. */
   edge_id: string;
   from_knowledge_id: string;
   to_knowledge_id: string;
@@ -112,23 +70,15 @@ export type EdgeNeighbor = {
 
 export type EdgeReconcileDecision = {
   action: EdgeReconcileAction;
-  /**
-   * The prompt-space index of the neighbor this decision acts on. Required (non-
-   * null) for SUPERSEDE; null for KEEP_BOTH.
-   */
+  /** Required for SUPERSEDE; null for KEEP_BOTH. */
   neighbor_index: number | null;
-  /**
-   * The REAL knowledge_edge.id of the superseded edge — resolved from
-   * `neighbor_index` against the neighbor list AFTER parsing (the LLM only ever
-   * sees / emits indices). Only meaningful for SUPERSEDE; null for KEEP_BOTH.
-   */
+  /** Resolved from `neighbor_index` after parsing; null for KEEP_BOTH. */
   superseded_edge_id: string | null;
   confidence: number;
   reason: string;
 };
 
-// Reuse the SAME error type name + shape as reconcile-llm.ts so callers can
-// catch one ReconcileParseError contract across both rings.
+// Same name and shape as the memory ring's error, so callers catch one contract.
 export class ReconcileParseError extends Error {
   constructor(
     message: string,
@@ -171,20 +121,10 @@ function describeEdge(e: {
 }
 
 /**
- * Build the structural-edge reconcile prompt.
- *
- * Per-RELATION rules (the candidate's relation_type drives the framing — owner
- * ruling: cover ALL relation types, not just prerequisite). The ring's job is
- * NON-TOPOLOGICAL semantic contradiction; topology (cycle/direction/transitive)
- * is already hard-rejected upstream by topology-gate.ts, so the prompt explicitly
- * scopes the judge AWAY from graph-shape reasoning.
- *
- * Prompt wording RED LINE (inherited from reconcile-llm.ts §108-111): NEVER
- * simultaneously contain "smart memory manager" AND "Compare newly retrieved
- * facts" — that pair is the mem0 3.0.7 LangchainLLM residual sniff that would
- * hijack the call into the old MemoryUpdateSchema. This ring shares the GLM
- * endpoint, so the same red line applies. Neighbors are referenced by sequential
- * index 0..n only — never expose real edge UUIDs to the LLM.
+ * Build the prompt. Rules are framed per relation type, and graph-shape reasoning
+ * is explicitly out of scope. Never put both "smart memory manager" and "Compare
+ * newly retrieved facts" in the prompt: that pair triggers the memory schema
+ * sniff on this shared GLM endpoint. Neighbors stay index-only.
  */
 export function buildEdgeReconcilePrompt(
   candidate: EdgeCandidate,
@@ -199,7 +139,6 @@ export function buildEdgeReconcilePrompt(
 
   const lines: string[] = [];
 
-  // SCOPE — the ring is semantic only; topology is handled elsewhere.
   lines.push('SCOPE:');
   lines.push(
     '- Graph SHAPE problems (cycles, reversed direction, redundant transitive paths) are ALREADY handled by a separate gate. Do NOT reason about graph shape here.',
@@ -209,7 +148,6 @@ export function buildEdgeReconcilePrompt(
   );
   lines.push('');
 
-  // ACTION SPACE — KEEP_BOTH | SUPERSEDE only.
   lines.push('ACTION SPACE (only these two):');
   lines.push(
     '- KEEP_BOTH: the candidate and every neighbor describe different, coexisting structural relations. This is the default when in doubt.',
@@ -219,7 +157,6 @@ export function buildEdgeReconcilePrompt(
   );
   lines.push('');
 
-  // PER-RELATION RULES — cover ALL relation types.
   lines.push('PER-RELATION RULES (the candidate relation_type is given below):');
   lines.push(
     '- prerequisite: SUPERSEDE only when the candidate states a corrected learning-order dependency that a neighbor prerequisite edge got semantically wrong (e.g. the dependency was attributed to the wrong concept). Mere co-existing dependencies are KEEP_BOTH.',
@@ -235,13 +172,11 @@ export function buildEdgeReconcilePrompt(
   );
   lines.push('');
 
-  // CONFIDENCE
   lines.push(
     'Each decision carries a confidence score from 0 to 1. Below 0.6 the system downgrades to KEEP_BOTH (no destructive supersede on low confidence).',
   );
   lines.push('');
 
-  // OUTPUT FORMAT — single decision for the candidate.
   lines.push('OUTPUT JSON shape:');
   lines.push('{');
   lines.push('  "decision": ');
@@ -254,7 +189,6 @@ export function buildEdgeReconcilePrompt(
   lines.push('For SUPERSEDE, neighbor_index MUST be the index of the neighbor being retired.');
   lines.push('');
 
-  // CANDIDATE EDGE
   lines.push('CANDIDATE EDGE:');
   lines.push(`relation_type=${candidate.relation_type}`);
   lines.push(`edge: ${describeEdge(candidate)}`);
@@ -263,7 +197,6 @@ export function buildEdgeReconcilePrompt(
   }
   lines.push('');
 
-  // LIVE NEIGHBOR EDGES (indexed 0..n — NO real edge UUIDs exposed)
   lines.push('LIVE NEIGHBOR EDGES (around the candidate endpoints):');
   if (neighbors.length === 0) {
     lines.push('No existing neighbor edges.');
@@ -277,12 +210,9 @@ export function buildEdgeReconcilePrompt(
 }
 
 /**
- * Parse GLM's JSON response into a typed decision. Throws ReconcileParseError on:
- * non-JSON body, missing decision object, action outside enum, SUPERSEDE without
- * a valid neighbor_index. The superseded_edge_id is resolved from neighbor_index
- * against `neighbors` (the LLM only ever emits indices). A SUPERSEDE that names a
- * neighbor_index not present in the neighbor list is a parse error (hallucinated
- * index) so the caller can safe-degrade the batch to KEEP_BOTH.
+ * Parse the model response. Bad JSON, a missing decision, an unknown action or a
+ * SUPERSEDE with a missing/hallucinated neighbor index all throw, so the caller can
+ * degrade rather than act on a bad decision.
  */
 export function parseEdgeReconcileResponse(
   raw: string,
@@ -340,7 +270,7 @@ export function parseEdgeReconcileResponse(
     };
   }
 
-  // KEEP_BOTH — neighbor_index is irrelevant; normalize to null.
+  // KEEP_BOTH carries no target.
   return {
     action: 'KEEP_BOTH',
     neighbor_index: null,
@@ -350,11 +280,7 @@ export function parseEdgeReconcileResponse(
   };
 }
 
-/**
- * Apply the confidence threshold: a SUPERSEDE below the threshold is downgraded
- * to KEEP_BOTH (no destructive action on a low-confidence judgment). Mirrors
- * reconcile-llm.ts applyConfidenceThreshold, scoped to this ring's 2-action space.
- */
+/** Downgrade a low-confidence SUPERSEDE to KEEP_BOTH; never destroy on doubt. */
 export function applyConfidenceThreshold(
   decision: EdgeReconcileDecision,
   threshold: number = CONFIDENCE_THRESHOLD,
@@ -372,16 +298,10 @@ export function applyConfidenceThreshold(
 }
 
 /**
- * Call GLM chat/completions to judge edge reconciliation. Returns a typed
- * decision with the confidence threshold already applied. Throws
- * ReconcileParseError on bad JSON / shape, RetryableError / PermanentError on
- * HTTP failures (mirrors reconcile-llm.ts / glm_ocr.ts classification).
- *
- * SAFE-DEGRADE CONTRACT: empty neighbors short-circuits to KEEP_BOTH WITHOUT a
- * GLM call (no neighbor to contradict → nothing to reconcile). For a non-empty
- * neighbor set, a parse failure surfaces as ReconcileParseError so the caller
- * (increment 2+) can degrade the whole batch to KEEP_BOTH — the ring never
- * fabricates a destructive SUPERSEDE on an unparseable response.
+ * Judge an edge against its neighbors, with the confidence threshold applied.
+ * Bad JSON/shape throws ReconcileParseError; HTTP failures throw retryable or
+ * permanent errors. Empty neighbors skip the model and keep both, so an
+ * unparseable response can never fabricate a destructive supersede.
  */
 export async function judgeEdgeReconcile(
   candidate: EdgeCandidate,
@@ -393,9 +313,6 @@ export async function judgeEdgeReconcile(
     providerAttempt?: EdgeProviderAttemptOptions;
   } = {},
 ): Promise<EdgeReconcileDecision> {
-  // No neighbors → nothing to reconcile against → KEEP_BOTH. Skip the GLM call
-  // entirely (cheaper + deterministic); a topologically-valid edge with no live
-  // neighbor cannot semantically contradict anything.
   if (neighbors.length === 0) {
     return {
       action: 'KEEP_BOTH',

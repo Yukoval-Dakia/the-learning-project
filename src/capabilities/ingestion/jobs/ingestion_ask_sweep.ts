@@ -11,17 +11,15 @@ import { enqueueAgentContinuation, enqueueAgentResume } from '../server/agent/di
 import { STALE_SEGMENT_MS } from '../server/agent/ledger';
 import { failSessionForUnknownPaidAttempt } from '../server/agent/run';
 
-// YUK-1522 (R8) — ask sweeper (fast queue, every minute).
+// Ask sweeper (fast queue, every minute).
 //
-//   1. Expired open asks resolve honestly as {kind:'skipped', by:'timeout'}
-//      (durable ask.resolved + session-stream ask_resolved in one tx), then the
-//      session's run is resumed so it can withhold-or-continue.
-//   2. `resume_requested` markers with no later `running` segment get
-//      re-dispatched — the durable backstop for post-commit enqueue failures.
-//   3. `continue_requested` markers (written in the same tx as an early_exit
-//      close) get re-dispatched with a deterministic job id — a lost
-//      continuation send can never wedge the session (R2-4).
-//   4. A 'running' segment left open past the segment lifetime (worker died
+//   1. Expired asks resolve as skipped-by-timeout in one tx, then the run resumes
+//      so it can withhold or continue.
+//   2. resume_requested markers with no later running segment are re-dispatched,
+//      backing up post-commit enqueue failures.
+//   3. continue_requested markers are re-dispatched with a deterministic job id, so
+//      a lost continuation cannot wedge the session.
+//   4. A running segment past its lifetime (worker died
 //      mid-model, or post-model bookkeeping crashed — bookkeeping is
 //      deliberately never retried as a paid re-run):
 //      or an old failed segment whose session settlement never committed:

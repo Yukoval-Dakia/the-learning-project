@@ -1,11 +1,8 @@
-// YUK-384 — durable hub-sync reconciler health read model (operator contract).
+// Operator health read for hub-sync reconciliation, one filtered aggregate.
 //
-// One PostgreSQL aggregate over `hub_sync_reconciliation` using filtered
-// aggregates. Generation lag crosses the TypeScript boundary as TEXT (bigint-safe,
-// never a JS number). Ages are floored whole seconds; a null age means "no such
-// row" (no dirty / no invalid). Operator alerts documented in the rollout doc key
-// off these fields: oldest dirty > 5m, expired leases persisting > 2 recovery
-// cycles, invalid document > 15m, and a monotonically growing ready backlog.
+// Generation lag crosses the boundary as text to stay bigint-safe. Ages are whole
+// seconds; null means no such row. Operator alerts use these fields: stale dirty
+// rows, lingering expired leases, stale invalid documents and a growing ready backlog.
 
 import { sql } from 'drizzle-orm';
 
@@ -31,11 +28,9 @@ export interface HubSyncHealth {
   max_generation_lag: string;
   last_acknowledged_at: string | null;
   last_repair_key: string | null;
-  // False iff the durable-dirty topology triggers are NOT installed — the load-bearing
-  // fingerprint of a `drizzle-kit push` bootstrap (which diffs schema.ts only and silently
-  // omits the hand-written 0071 triggers/functions/partial indexes). A false here means the
-  // whole reconciler is inert (hubs never re-dirty) despite the tables existing. See the
-  // rollout doc: this feature MUST be provisioned with `pnpm db:migrate`, never db:push.
+  // False means the hand-written dirty triggers are missing, as happens with a
+  // schema-push bootstrap. The reconciler is then inert even though tables exist;
+  // provision with migrations, never push.
   triggers_installed: boolean;
 }
 
@@ -59,8 +54,7 @@ type HealthRow = {
 };
 
 export async function readHubSyncHealth(db: Db): Promise<HubSyncHealth> {
-  // Provisioning fingerprint: all THREE durable-dirty triggers present iff the hand-written
-  // 0071 migration ran (db:migrate). A db:push bootstrap creates the tables but not these.
+  // All three dirty triggers exist only when the hand-written migration ran.
   const trig = await db.execute<{ installed: boolean }>(sql`
     select (
       select count(*) from pg_trigger

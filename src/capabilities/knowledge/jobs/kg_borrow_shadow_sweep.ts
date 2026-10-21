@@ -1,42 +1,15 @@
-// YUK-559 (S3, worklist #6) — the kg-borrowing SHADOW sweep: a weekly, REPORT-ONLY,
-// FLAG-INDEPENDENT shadow of the A5/A6 soft layer.
+// Weekly shadow of the dark A5/A6 borrowing layer. Both flags are off, so the live path
+// produces no data to decide a flip. This sweep runs the same pure math regardless of
+// flags and emits one summary event, without changing live behavior.
 //
-// PURPOSE (spec Q6′-L / RP7). The A5/A6 KG-borrowing soft layer is dark (both flags
-// false), so today it produces ZERO data — a "wait for data before flipping the flag"
-// dead loop. This sweep breaks it: it re-runs the SAME pure math (smoothThetaByComponent /
-// propagatePrereq) the live path would run, over the live mastery_state + edges, WITHOUT
-// checking the flags, and emits ONE summary event carrying the distribution the owner
-// needs to decide the flip ("翻 A5/A6 会改多少 θ、多少 KC 会借、分量多大"). Data门只 gate
-// 翻转不 gate build — the埋点 is electrified DURING dark.
+// The payload attributes the counterfactual three ways: A5 only, A6 only, and joint. It
+// also snapshots the constants and component structure so the owner can re-read the
+// distribution later. Quantiles use the shared type-7 convention; histogram bounds derive
+// from the component cap.
 //
-// PAYLOAD SHAPE (C4/C5/C7 — this is a FOLD-INERT observation payload, zero consumers):
-//   - THREE-VARIANT attribution {a5_only, a6_only, joint}: one shared A5 dense solve, then
-//     a5_only = A5 θ̃, a6_only = propagatePrereq(bare θ̂), joint = propagatePrereq(A5 θ̃). The
-//     owner sees each flag's marginal effect + the joint separately.
-//   - quantiles are type-7 (linear interpolation, `@/core/theta` quantile) — same convention
-//     as the rest of the codebase; min/max are the sorted endpoints.
-//   - the component-size histogram buckets are DERIVED from the component cap (powers of two
-//     up to the first ≥ cap, then one overflow bucket); component metrics are top-level (A5
-//     structural quantities), reported once — not per variant.
-//
-// SAFETY INVARIANTS:
-//   - FLAG-INDEPENDENT but READ-ONLY: it never writes mastery_state / knowledge_edge; its
-//     ONLY write is ONE fold-inert summary event (subject_kind 'kg_borrow_shadow', queried
-//     by NO gather → structurally fold-inert). It mirrors the live path's STRUCTURAL gating
-//     (A5 runs iff related_to edges present; A6 iff directed edges present) but omits the
-//     dark FLAG check — so it computes the counterfactual, never changes live behaviour.
-//   - ingest_at = now (ADR-0021 opt-out): a forensic/experimental breadcrumb, NOT user
-//     activity — without the stamp the memory outbox poller (WHERE ingest_at IS NULL) would
-//     feed it to Mem0 + brief-regen (F1).
-//   - threshold_deferred: the payload constants (λ/κ/λ_down/λ_up/cap) are owner-fixed n=1
-//     priors, snapshotted with each event so the owner can re-read the distribution later;
-//     no live behaviour is gated on this event.
-//   - COMPONENT CAP: A5 partitions by related_to connected component and SKIPS any component
-//     over SHADOW_BORROW_COMPONENT_CAP (the skipped sizes ARE the RP8 scale data the owner
-//     wants). Aligned with the live guard's GRAPH_SMOOTH_COMPONENT_CAP (M3′).
-//   - DARK-SHIP RESILIENCE: the whole run is wrapped — a compute or emit failure logs and
-//     degrades to NO-OP (mirror propagate-priors.ts). The shadow is pure observability
-//     (no consumer), so a missed week is acceptable; it must never crash the worker.
+// Read-only: the only write is the fold-inert summary event, stamped to opt out of memory
+// ingestion. Components over the cap are skipped and their sizes reported. A failed run
+// logs and no-ops; a missed week must never crash the worker.
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -61,8 +34,7 @@ import { quantile } from '@/core/theta';
 import type { Db } from '@/db/client';
 import { knowledge_edge, mastery_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-// C9 single source — the borrow epsilon, admitted relation-type set, and edge split are the
-// live soft layer's exports so the shadow can never drift from the live path.
+// Shared with the live layer so the shadow cannot drift.
 import {
   BORROW_EPS,
   PROJECTION_EDGE_RELATION_TYPES,
@@ -71,20 +43,13 @@ import {
 
 export const KG_BORROW_SHADOW_ACTION = 'experimental:kg_borrow_shadow';
 export const KG_BORROW_SHADOW_SUBJECT_KIND = 'kg_borrow_shadow';
-// One summary event per run — a fixed subject id keeps the breadcrumb query-stable.
+// Fixed subject id keeps the one-event-per-run breadcrumb query-stable.
 export const KG_BORROW_SHADOW_SUBJECT_ID = 'global';
 
-// Aligned with the live A5 guard's cap (M3′). Same OWNER-FIXED 未经数据校准的保守初值 —
-// a divergence between the shadow's projected skip set and the live guard's would make the
-// shadow lie about the flip, so they share the same constant.
+// Must match the live guard, or the shadow would misreport the flip.
 export const SHADOW_BORROW_COMPONENT_CAP = GRAPH_SMOOTH_COMPONENT_CAP;
 
-// Two-layer guardrail (warning water level only): the shadow loads ALL 'knowledge' mastery_state
-// rows + ALL live typed edges globally (no LIMIT/chunking — it is a global observation). At n=1
-// the graph is thousands of rows, far below this line; a whole-graph load only becomes a memory
-// concern at tens of thousands. If the combined loaded scale crosses this, log a warn (zero
-// intervention — the run proceeds) so a future scale problem is visible before it OOMs. Chunking
-// is deliberately NOT added (weekly job, n=1 scale). Conservative initial value, NOT data-calibrated.
+// Warn-only guard for the unchunked global load; the run proceeds.
 const SHADOW_SWEEP_SCALE_WARN = 50_000;
 
 interface ObservedNode {
@@ -100,13 +65,7 @@ export interface QuantileSummary {
   max: number;
 }
 
-/**
- * Deterministic quantile summary over an UNSORTED sample (null if empty). Pure.
- *
- * C4 — p50/p90/p99 use the shared `@/core/theta` `quantile` (type-7 / linear interpolation
- * between order statistics, the Excel PERCENTILE convention) so the sweep reports the SAME
- * quantile convention the rest of the codebase uses; `min`/`max` are the sorted endpoints.
- */
+/** Deterministic quantile summary; uses the shared type-7 convention. */
 export function quantileSummary(sample: number[]): QuantileSummary | null {
   if (sample.length === 0) return null;
   const sorted = [...sample].sort((a, b) => a - b);
@@ -119,14 +78,8 @@ export function quantileSummary(sample: number[]): QuantileSummary | null {
   };
 }
 
-/**
- * Bucket component sizes into a bounded power-of-two histogram whose boundaries are DERIVED
- * from `cap` (C7): `<=1, <=2, <=4, …` up to the first power of two ≥ `cap`, then a single
- * `>N` overflow bucket. With `cap`=256 the boundaries are `[1,2,4,8,16,32,64,128,256]` + `>256`
- * (byte-for-byte the prior hardcoded set). Pure.
- */
+/** Power-of-two buckets up to the cap, plus one overflow bucket. */
 export function componentHistogram(sizes: number[], cap: number): Record<string, number> {
-  // Power-of-two boundaries up to the first ≥ cap (so the top bucket always covers the cap).
   const buckets: number[] = [];
   let b = 1;
   while (b < cap) {
@@ -149,26 +102,23 @@ export function componentHistogram(sizes: number[], cap: number): Record<string,
   return h;
 }
 
-/** Per-variant move/borrow summary (C5 — one per A5-only / A6-only / joint counterfactual). */
+/** One counterfactual's move/borrow summary. */
 export interface VariantStats {
   observed_moved_count: number;
   would_borrow_count: number;
-  /** Δθ (θ̃ − θ̂) magnitude distribution over MOVED observed KCs. */
+  /** |theta_tilde - theta_hat| over moved observed KCs. */
   delta_theta: QuantileSummary | null;
-  /** the borrowed θ̃ distribution over would-borrow (unobserved) KCs. */
+  /** Borrowed theta_tilde over unobserved KCs. */
   borrowed_theta: QuantileSummary | null;
 }
 
 export interface ShadowBorrowStats {
   observed_count: number;
-  /** A5 ONLY — the symmetric graph-Laplacian smoothing counterfactual (bare θ̂ in). */
   a5_only: VariantStats;
-  /** A6 ONLY — the directed prereq-propagation counterfactual over the bare θ̂. */
   a6_only: VariantStats;
-  /** JOINT — A5 smoothing THEN A6 propagation (what the live soft layer would do). */
+  /** A5 smoothing then A6 propagation, matching the live layer's order. */
   joint: VariantStats;
-  // Component metrics are A5 STRUCTURAL quantities (the related_to partition) — reported ONCE
-  // at the top level (not per variant): they describe the graph, not a counterfactual.
+  // Structural A5 quantities, reported once rather than per variant.
   component_count: number;
   component_size_max: number;
   component_size_histogram: Record<string, number>;
@@ -176,11 +126,7 @@ export interface ShadowBorrowStats {
   skipped_component_sizes: number[];
 }
 
-/**
- * PURE — summarise one variant's θ̃ against the bare observed θ̂: count moved observed KCs
- * (|Δθ| > BORROW_EPS), would-borrow unobserved KCs (|θ̃| > BORROW_EPS), and their quantile
- * distributions. Deterministic, no IO.
- */
+/** Count moved observed KCs and would-borrow unobserved ones, plus distributions. */
 function summariseVariant(
   nodeIds: string[],
   thetaTilde: Map<string, number>,
@@ -196,7 +142,6 @@ function summariseVariant(
       const delta = tilde - obs.theta_hat;
       if (Math.abs(delta) > BORROW_EPS) deltas.push(Math.abs(delta));
     } else if (Math.abs(tilde) > BORROW_EPS) {
-      // Unobserved node that borrowed a non-trivial θ̃ → would materialise a borrowed entry.
       borrowed.push(tilde);
     }
   }
@@ -209,15 +154,9 @@ function summariseVariant(
 }
 
 /**
- * PURE — the shadow computation (C5 THREE-VARIANT ATTRIBUTION): given the observed KC states +
- * typed edges, run ONE shared dense A5 solve and attribute the borrow effect three ways:
- *   - `a5_only`: the A5 smoothed θ̃ (symmetric graph-Laplacian only).
- *   - `a6_only`: `propagatePrereq(bare θ̂)` (directed prereq propagation only).
- *   - `joint`  : `propagatePrereq(A5-smoothed θ̃)` (what the live soft layer would produce).
- * STRUCTURAL gating (mirrors applyKgSoftLayer, flags omitted): no symmetric edges ⇒ A5
- * degenerates (a5_only ≡ identity, joint ≡ a6_only); no directed edges ⇒ a6_only ≡ identity,
- * joint ≡ a5_only. Component metrics are the A5 partition structure, reported once. Deterministic,
- * no IO. Exported for unit tests.
+ * Run one shared A5 solve and attribute the effect three ways. The structural gating
+ * matches the live layer with flags omitted: no symmetric edges degenerates A5, no
+ * directed edges degenerates A6.
  */
 export function computeShadowBorrowStats(
   observed: Map<string, ObservedNode>,
@@ -225,7 +164,6 @@ export function computeShadowBorrowStats(
   directed: DirectedEdge[],
   componentCap: number,
 ): ShadowBorrowStats {
-  // Node set = observed ∪ edge endpoints (unobserved endpoints borrow from observed).
   const nodeIdSet = new Set<string>(observed.keys());
   for (const e of symmetric) {
     nodeIdSet.add(e.a);
@@ -243,7 +181,7 @@ export function computeShadowBorrowStats(
     observationPrecision.set(id, node.theta_precision);
   }
 
-  // A5 — the SINGLE shared dense solve. Degenerate (a5Theta ≡ θ̂) when no symmetric edges.
+  // One shared dense A5 solve; degenerate without symmetric edges.
   let a5Theta = thetaHat;
   let componentSizes: number[] = nodeIds.map(() => 1); // default: singletons (no A5 run)
   let skippedComponentSizes: number[] = [];
@@ -261,7 +199,7 @@ export function computeShadowBorrowStats(
     componentSizes = smoothed.componentSizes;
     skippedComponentSizes = smoothed.skippedComponentSizes;
   }
-  // A6 — propagatePrereq is PURE (fresh map): a6_only over bare θ̂, joint over the A5 θ̃.
+  // A6 over bare theta for a6_only, over A5 theta for joint.
   const a6Theta =
     directed.length > 0
       ? propagatePrereq(nodeIds, thetaHat, directed, PREREQ_PROP_LAMBDA_DOWN, PREREQ_PROP_LAMBDA_UP)
@@ -277,8 +215,7 @@ export function computeShadowBorrowStats(
     a6_only: summariseVariant(nodeIds, a6Theta, observed),
     joint: summariseVariant(nodeIds, jointTheta, observed),
     component_count: componentSizes.length,
-    // C6 — reduce-based max (never Math.max(...spread): a whole-tree partition can exceed the
-    // JS argument-count limit and throw RangeError).
+    // Reduce, not spread: a whole-tree partition can exceed the argument limit.
     component_size_max: componentSizes.reduce((m, s) => (s > m ? s : m), 0),
     component_size_histogram: componentHistogram(componentSizes, componentCap),
     skipped_components: skippedComponentSizes.length,
@@ -287,9 +224,7 @@ export function computeShadowBorrowStats(
 }
 
 export interface KgBorrowShadowReport extends ShadowBorrowStats {
-  /** true when the run was a no-op (empty graph → no summary event written). */
   noop: boolean;
-  /** the summary event id, or null on no-op / failure. */
   eventId: string | null;
 }
 
@@ -314,17 +249,13 @@ const EMPTY_STATS: ShadowBorrowStats = {
 
 export interface RunKgBorrowShadowSweepOpts {
   now?: Date;
-  /** TEST-ONLY: override the component cap so a small seeded graph can trip the skip path. */
+  /** Test-only cap override, so a small graph can trip the skip path. */
   componentCap?: number;
 }
 
 /**
- * Load the live mastery_state 'knowledge' rows + typed edges, run the shadow computation,
- * and emit ONE summary event. FLAG-INDEPENDENT. DARK-SHIP RESILIENCE: any failure logs +
- * degrades to NO-OP (never throws — pure observability, no consumer).
- *
- * Empty graph (no observed rows) → NO-OP (no event). Otherwise emits one
- * `experimental:kg_borrow_shadow` event with ingest_at = now (memory opt-out).
+ * Load live states and edges, compute, and emit one summary event. Empty input is a
+ * no-op; any failure logs and no-ops rather than throwing.
  */
 export async function runKgBorrowShadowSweep(
   db: Db,
@@ -354,9 +285,7 @@ export async function runKgBorrowShadowSweep(
       ]),
     );
 
-    // Load ALL live typed edges (archived_at IS NULL) — the shadow is global, so unlike the
-    // live loadEdgesForProjection it has no incident-to-requested filter. C9: the admitted
-    // relation set + split/orientation-normalise are state.ts's shared exports (single source).
+    // Global live edges, with the same relation set and split as the live projection.
     const edgeRows = await db
       .select({
         from_id: knowledge_edge.from_knowledge_id,
@@ -373,9 +302,6 @@ export async function runKgBorrowShadowSweep(
       );
     const { symmetric, directed } = splitProjectionEdgeRows(edgeRows);
 
-    // Scale water-level warn (guardrail, no intervention): the global load has no LIMIT/chunking,
-    // so surface it if the combined row count crosses the conservative threshold before it becomes
-    // a memory concern. The run proceeds unchanged.
     const loadedScale = observedRows.length + edgeRows.length;
     if (loadedScale > SHADOW_SWEEP_SCALE_WARN) {
       console.warn('[kg_borrow_shadow_sweep] global load scale high — no chunking (guardrail)', {
@@ -395,10 +321,9 @@ export async function runKgBorrowShadowSweep(
       action: KG_BORROW_SHADOW_ACTION,
       subject_kind: KG_BORROW_SHADOW_SUBJECT_KIND,
       subject_id: KG_BORROW_SHADOW_SUBJECT_ID,
-      outcome: null, // observation projection, never a judging outcome (red line).
+      outcome: null,
       payload: {
         ...stats,
-        // owner-fixed n=1 prior snapshot — re-readable from the distribution N weeks later.
         flags: {
           graph_laplacian_enabled: GRAPH_LAPLACIAN_ENABLED,
           prereq_theta_propagation_enabled: PREREQ_THETA_PROPAGATION_ENABLED,
@@ -413,7 +338,7 @@ export async function runKgBorrowShadowSweep(
         threshold_deferred: true,
       },
       caused_by_event_id: null,
-      // ADR-0021 memory opt-out (F1): forensic breadcrumb, not user activity.
+      // Memory opt-out: internal breadcrumb, not user activity.
       ingest_at: now,
       created_at: now,
     });
@@ -426,18 +351,13 @@ export async function runKgBorrowShadowSweep(
     });
     return { ...stats, noop: false, eventId };
   } catch (err) {
-    // DARK-SHIP RESILIENCE (mirror propagate-priors.ts): shadow is pure observability with no
-    // consumer — a failed run logs + degrades to NO-OP, never throws (no DLQ thrash for a
-    // non-critical breadcrumb; a missed week is acceptable).
+    // Observability only: no consumer, so a failed week no-ops instead of hitting the DLQ.
     console.error('[kg_borrow_shadow_sweep] failed; degrading to NO-OP', err);
     return { ...EMPTY_STATS, noop: true, eventId: null };
   }
 }
 
-/**
- * pg-boss handler builder. Self-swallowing (runKgBorrowShadowSweep never throws), so a run
- * failure logs but does not DLQ — matching the "失败自吞 log" DARK-SHIP RESILIENCE contract.
- */
+/** Self-swallowing, so a failed run logs but never DLQs. */
 export function buildKgBorrowShadowSweepHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {

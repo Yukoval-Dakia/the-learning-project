@@ -160,10 +160,8 @@ export async function listKnowledgeEdges(
 }
 
 /**
- * YUK-543 — list the LIVE (archived_at IS NULL) edges that touch `nodeId` on EITHER endpoint
- * (from_knowledge_id = nodeId OR to_knowledge_id = nodeId). Used by the merge-driven edge rewire
- * (rewireKnowledgeEdges) to find every edge whose endpoint must be re-pointed at the merge survivor.
- * READ-ONLY. No LIST_LIMIT — a merge must rewire ALL of a KC's edges, never a truncated subset.
+ * Live edges touching either endpoint. Unbounded: a merge must rewire all of a KC's
+ * edges, never a truncated subset.
  */
 export async function listLiveEdgesTouchingNode(
   db: DbLike,
@@ -202,15 +200,8 @@ export interface LivePrerequisiteEdge {
 }
 
 /**
- * YUK-543 (review R1) — the FULL live prerequisite mesh, UNBOUNDED. READ-ONLY.
- *
- * MUST have no LIST_LIMIT: cycle / direction-contradiction detection (checkEdgeTopology) is only
- * sound against the COMPLETE live prerequisite edge set. `listKnowledgeEdges` truncates at
- * LIST_LIMIT=500 ordered created_at DESC — beyond 500 live prerequisite edges the OLDEST (backbone)
- * edges silently fall out of the mesh, and a rewrite that closes a cycle through a truncated edge
- * gets a false 'ok' verdict instead of the reject-abort it must produce. Same doctrine as
- * `listLiveEdgesTouchingNode` above and the bare unbounded scan `runEdgeProposeAndWrite` uses for
- * its own topology mesh (propose_edge.ts).
+ * The complete live prerequisite mesh. It must stay unbounded: a truncated mesh makes
+ * cycle and direction checks unsound, because a cycle through a dropped edge would pass.
  */
 export async function listAllLivePrerequisiteEdges(db: DbLike): Promise<LivePrerequisiteEdge[]> {
   return await db
@@ -235,16 +226,10 @@ export interface ReactivateKnowledgeEdgeInput {
 }
 
 /**
- * YUK-543 (review R2) — un-archive a tombstone edge whose UNIQUE(from,to,relation_type) slot a
- * merge rewrite needs. `knowledge_edge_unique` is GLOBAL (no partial WHERE archived_at IS NULL), so
- * an archived tombstone blocks a fresh INSERT with 23505 even though no LIVE duplicate exists —
- * blind archive-as-duplicate there would silently evaporate a live relationship. Instead the
- * tombstone is revived in place.
- *
- * Records the complete reactivation event and projects it under the tombstone row lock.
- * Concurrent attempts cannot overwrite a newly live row; failure rolls back the event.
- *
- * @throws ApiError('conflict', 409) when `id` does not exist or is not currently archived.
+ * Revive an archived tombstone whose unique slot a merge rewrite needs. The unique key
+ * is global, so a tombstone blocks a fresh insert even with no live duplicate; treating
+ * it as a duplicate would silently lose a live relationship. Conflict when the edge is
+ * missing or already live.
  */
 export async function reactivateKnowledgeEdge(
   db: DbLike,
@@ -264,8 +249,7 @@ export async function reactivateKnowledgeEdge(
         409,
       );
     }
-    // Replays sort by timestamp then opaque ID. A revival must follow its archive
-    // even when two commands share a millisecond or the supplied clock is stale.
+    // A revival must sort after its archive even with equal or stale clocks.
     const createdAt = await nextEdgeEventTime(tx, id, input.created_at);
     await writeEvent(tx, {
       id: createId(),
@@ -328,21 +312,14 @@ export interface CreateKnowledgeEdgeInput {
 }
 
 /**
- * Insert a knowledge_edge with Zod validation on `relation_type` (must be one
- * of 5 core enums or `experimental:*` per ADR-0010), active-endpoint and direct
- * tree-pair checks, and UNIQUE(from, to, relation_type) violation surfacing as
- * ApiError('conflict', 409).
- *
- * @returns the new edge id (assigned here unless caller pre-computes one).
+ * Insert an edge after validating the relation type, live endpoints and tree-pair
+ * rule. A duplicate unique key surfaces as 409. Returns the new edge id.
  */
 export async function createKnowledgeEdge(
   db: DbLike,
   input: CreateKnowledgeEdgeInput,
 ): Promise<string> {
-  // 1) Validate relation_type via Lane B schema. Throws ZodError on miss;
-  //    callers (routes) translate to ApiError('validation_error', 400) via
-  //    safeParse on the request body upstream — here we re-validate in case
-  //    callers bypass the route-layer parse.
+  // Revalidate here because callers can bypass the route-layer parse.
   const relationParsed = RelationTypeSchema.safeParse(input.relation_type);
   if (!relationParsed.success) {
     throw new ApiError(
@@ -352,10 +329,7 @@ export async function createKnowledgeEdge(
     );
   }
 
-  // 3) FK existence: both endpoints must point at non-archived knowledge nodes.
-  //    Drizzle's `.references()` only declares FK at DDL; here we surface a
-  //    domain-friendly 404 before hitting the DB constraint (and avoid the
-  //    raw pg error code 23503 in errorResponse).
+  // Domain-friendly 404 before the raw FK error.
   const ids = Array.from(new Set([input.from_knowledge_id, input.to_knowledge_id]));
   const found = await db
     .select({
@@ -375,10 +349,7 @@ export async function createKnowledgeEdge(
     );
   }
 
-  // ADR-0011 / YUK-674 — tree is the structural backbone; a mesh edge over a
-  // direct child↔parent pair would represent and weight the same relationship a
-  // second time. Enforce this at the single INSERT owner so CRUD, proposal accept,
-  // supersede and merge-rewire callers cannot bypass the invariant.
+  // A mesh edge over a direct parent-child pair would duplicate the tree backbone.
   const repeatsTreeLink = isDirectTreePair(
     input.from_knowledge_id,
     input.to_knowledge_id,
@@ -422,12 +393,7 @@ export async function createKnowledgeEdge(
       await runEdgeTopologyGate(tx, id, { translateReject: true });
     });
   } catch (err) {
-    // Drizzle wraps the raw postgres-js error in its own Error. The original pg
-    // error code (`23505` = unique_violation per ADR-0010 UNIQUE(from, to,
-    // relation_type)) lives on `.cause.code` and is also re-surfaced on `.code`
-    // by some Drizzle versions; check both. We catch raw vs
-    // `.onConflictDoNothing()` so concurrent dup creates surface clearly (409)
-    // rather than silently dropping the second write.
+    // Drizzle may expose the pg code on the error or its cause; surface duplicates.
     const pgCode =
       (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
     if (pgCode === '23505') {
@@ -463,9 +429,9 @@ export interface EdgeArchiveProvenance {
   ingest_at?: Date;
 }
 
-/** Own one atomic, replayable archive. Existing caller transactions become savepoints.
- * A concurrent loser returns archived:false without publishing a second event.
- * Historical repair belongs to deployment, never a silent inline snapshot.
+/**
+ * One atomic, replayable archive. A concurrent loser returns archived:false without a
+ * second event. Historical repair belongs to deployment, not an inline snapshot.
  */
 export async function archiveKnowledgeEdgeFromEvents(
   db: DbLike,

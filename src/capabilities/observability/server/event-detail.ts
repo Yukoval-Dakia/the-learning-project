@@ -22,8 +22,7 @@ function parseEventId(eventId: string): string {
   return parsed.data.id;
 }
 
-// Preserve every kernel envelope field, including passthrough fields, while
-// making the DTO's date and undefined omission explicit for every consumer.
+// Keep every envelope field, including passthrough, and make date/undefined explicit.
 function eventDto(envelope: EnvelopedEvent): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries({ ...envelope, created_at: envelope.created_at.toISOString() }).filter(
@@ -50,7 +49,7 @@ export async function readEventDetail(db: Db | Tx, eventId: string): Promise<Eve
   });
 }
 
-/** Each invocation creates a fresh correction event; this is not request deduplication. */
+/** Every call creates a fresh correction event; this is not request deduplication. */
 export async function createEventCorrection(
   db: Db | Tx,
   eventId: string,

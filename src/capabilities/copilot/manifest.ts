@@ -22,11 +22,9 @@ import {
   CopilotTurnsResponseSchema,
 } from './api/contracts';
 
-// M5-T3 (YUK-321) — copilot 包：D14 单人格对话面（D13 权限继承框架内）。
-// 统一记忆读取面 = server/chat.ts 既有 ambient context 装配 + server/turns.ts：
-// inline/UI replay 走 current-session reader，durable pickup 走 causal-anchor reader；
-// 两者共享同一 projection（第一实例原则：包边界即读取面——裁决 k）。
-// copilotTools 五条本包工具在 Task 3 与其余四包一并声明。
+// copilot 包：单人格对话面。
+// 统一记忆读取面：inline/UI replay 走 current-session reader，durable pickup 走
+// causal-anchor reader；两者共享同一 projection。
 export const copilotCapability = defineCapability({
   name: 'copilot',
   description:
@@ -40,8 +38,8 @@ export const copilotCapability = defineCapability({
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',
-      // YUK-577 — 主动开口触发线：触发留痕（RESERVED+typed，nudge-events.ts）+ dismiss/opened
-      // 处置留痕（通用 hatch）。KPI 分离：dismiss_rate = dismissed/(opened+dismissed)，不碰 accept_suggestion。
+      // 主动开口触发线：触发留痕 + dismiss/opened 处置留痕（通用 hatch）。
+      // KPI 分离：dismiss_rate = dismissed/(opened+dismissed)，不碰 accept_suggestion。
       'experimental:copilot_nudge',
       'experimental:copilot_nudge_dismissed',
       'experimental:copilot_nudge_opened',
@@ -68,9 +66,10 @@ export const copilotCapability = defineCapability({
         path: '/api/copilot/checkpoints/[eventId]/revert',
         operationId: 'revertCopilotCheckpoint',
         request: { params: CopilotCheckpointParamsSchema },
-        // YUK-497 review F3 — 404 (no_checkpoint) / 409 (truncated/irreversible/legacy/conflict)
-        // return the cascade refusal envelope, NOT the bare {error,message} the spread implies;
-        // override those two statuses with the union that also admits the route's ApiError bodies.
+        // 404 (no_checkpoint) / 409 (truncated/irreversible/legacy/conflict)
+        // return the cascade refusal envelope, not the bare {error,message} the
+        // spread implies; override those statuses with the union that also admits
+        // the route's ApiError bodies.
         responses: {
           200: CopilotCheckpointRevertSuccessSchema,
           ...API_ERROR_RESPONSES,
@@ -151,7 +150,7 @@ export const copilotCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/accept-chip').then((m) => m.POST),
       },
-      // YUK-577 — 主动开口 nudge 面：读（排 shadow/过期/已处置 + 静默窗 backstop）+ 处置（× / 看看）。
+      // 主动开口 nudge 面：读（排 shadow/过期/已处置 + 静默窗 backstop）+ 处置（× / 看看）。
       {
         method: 'GET',
         path: '/api/copilot/nudges',
@@ -181,11 +180,11 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // YUK-364 (ADR-0041 endurance W1 L2) — durable copilot run job（贡献制，无
-  // schedule = 按需 job）。route dispatch（durable 标记）→ boss.send('copilot_run')
-  // → handler 在 worker 进程跑 CopilotTask + 全集工具，进度落 job_events。queue
-  // 'agent' 档（EXPIRE_AGENT，同 quiz_gen 等 tool-call agent job）；注册器固定
-  // batchSize:1 → n=1 单线程串行化。挂载由 register-capability-jobs.ts 收集。
+  // durable copilot run job（贡献制，无 schedule = 按需 job）。route dispatch（durable
+  // 标记）→ boss.send('copilot_run') → handler 在 worker 进程跑 CopilotTask + 全集工具，
+  // 进度落 job_events。queue 'agent' 档（EXPIRE_AGENT，同 quiz_gen 等 tool-call agent
+  // job）；注册器固定 batchSize:1 → n=1 单线程串行化。挂载由
+  // register-capability-jobs.ts 收集。
   jobs: {
     handlers: [
       {
@@ -212,11 +211,11 @@ export const copilotCapability = defineCapability({
             });
         },
       },
-      // YUK-577 — 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
+      // 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
       // boss.send(COPILOT_NUDGE_EVALUATE_QUEUE) → 本 handler 确定性判定 + 写触发留痕。
-      // FAST 档（should#1）：纯-DB 零-LLM，不占 agent 档的 DLQ/retry LLM-记账语义；
-      // 幂等由 partial unique index（caused_by_event_id）保证。queue 名 = 导出常量
-      // COPILOT_NUDGE_EVALUATE_QUEUE，producer 与此处共享（should#8 防跨包漂移）。
+      // FAST 档：纯-DB 零-LLM，不占 agent 档的 DLQ/retry 语义；幂等由 partial unique
+      // index（caused_by_event_id）保证。queue 名 = 导出常量，producer 与此处共享
+      // 以防跨包漂移。
       {
         name: COPILOT_NUDGE_EVALUATE_QUEUE,
         queue: 'fast',
@@ -224,11 +223,11 @@ export const copilotCapability = defineCapability({
           import('./jobs/copilot_nudge_evaluate').then((m) => m.buildCopilotNudgeEvaluateHandler),
       },
       {
-        // YUK-596 — even-minute, zero-LLM convergence floor for accepted
-        // durable runs. The two-minute cadence stays below the 15-minute
-        // liveness bound while avoiding a duplicate manifest cron declaration.
-        // It repairs persisted outcome markers and settles only queue-proven
-        // pre-execution loss or expired ambiguous executions.
+        // Even-minute, zero-LLM convergence floor for accepted durable runs. The
+        // two-minute cadence stays below the 15-minute liveness bound while avoiding
+        // a duplicate manifest cron declaration. It repairs persisted outcome markers
+        // and settles only queue-proven pre-execution loss or expired ambiguous
+        // executions.
         name: 'copilot_run_reconcile',
         schedule: {
           cron: '0-58/2 * * * *',
@@ -242,10 +241,9 @@ export const copilotCapability = defineCapability({
       },
     ],
   },
-  // M5-T3 (YUK-321) — copilot 自有工具（事件流读 + 记忆面读）。
-  // YUK-880 (F3.9b)：author_artifact / update_artifact 的归属声明已移至
-  // notes manifest（实现 = notes/server/tools/author-artifact.ts）；Copilot
-  // 仅保留 allowlist 面授权，不再是 implementation owner。
+  // copilot 自有工具（事件流读 + 记忆面读）。
+  // artifact 工具的归属声明在 notes manifest；Copilot 只保留 allowlist 授权，
+  // 不再是 implementation owner。
   copilotTools: {
     tools: [
       {

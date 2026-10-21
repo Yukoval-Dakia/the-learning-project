@@ -1,31 +1,14 @@
-// Durable copilot run settlement & recovery owner (ADR-0062 / YUK-364 / YUK-575 / YUK-596).
+// Durable copilot run settlement & recovery owner.
 //
-// One module owns every write that can terminalize an accepted run and every
-// decision that turns stored evidence into the canonical outcome:
+// One module owns every write that can terminalize an accepted run: the two-gate
+// pre-execution protocol under the dispatch lock, the settlement lock shared by
+// paid-owner outcome, API Stop and recovery, and the outcome-marker two-phase
+// (domain reply first, public REPLY/DONE or FAILED projection second) so a
+// projection failure is repairable without re-running paid work. Live progress
+// publishes only while no cancel request and no committed outcome marker exist.
 //
-//   job_events (+ optional paid outcome marker) → PersistedDurableReply marker
-//   → public terminal receipt (REPLY+DONE in one transaction, or one FAILED
-//   frame) → RunCopilotRunResult.
-//
-// Responsibilities held here and nowhere else:
-// - the two-gate pre-execution protocol under the dispatch lock (STARTED
-//   heartbeat, then the at-most-once EXECUTION_STARTED fence immediately before
-//   paid work), including pre-execution cancellation projection;
-// - the settlement lock that serializes paid-owner outcome publication against
-//   API Stop and recovery winners;
-// - the canonical outcome marker two-phase (commit domain copilot_reply first,
-//   then project its public suffix, so a projection failure is repairable
-//   without re-running paid work);
-// - every recovery decision: in-flight cancel after tool drain, exhausted
-//   failure, ambiguous_execution, pre_execution_lost, marker repair, and the
-//   bounded reconciler classification;
-// - the checkpoint-anchor (revert) policy shared by live output and repair;
-// - the outcome boundary for live progress: a DELTA/STEP event may only
-//   publish while no cancel request and no committed outcome marker exist.
-//
-// The execution owner (jobs/copilot_run.ts) feeds its final outcome in here;
-// it never appends terminal job_events itself. Injection seams stay explicit
-// per call so tests can pin each stage without this module hiding the order.
+// The execution owner feeds its final outcome in here; it never appends terminal
+// job_events itself.
 
 import { and, asc, eq } from 'drizzle-orm';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
@@ -181,8 +164,8 @@ export async function markCopilotRunStarted(
 /**
  * Atomically claim the one paid/tool execution allowed for a run. The dispatch
  * advisory lock is shared with API enqueue-failure compensation, so a worker
- * cannot pass a stale replay, let enqueue_failed commit, and then start paid
- * work. It also serializes overlapping deliveries before appending the fence.
+ * cannot pass a stale replay, let enqueue_failed commit, then start paid work.
+ * It also serializes overlapping deliveries before appending the fence.
  */
 export async function claimCopilotExecutionFence(
   db: Db,
@@ -284,6 +267,11 @@ async function withinExistingOrNewTransaction<T>(
   return isRootDb(database) ? database.transaction(run) : run(database);
 }
 
+/**
+ * Revert-anchor policy shared by live output and repair: only an ask-only turn with
+ * no materializing tool call gets `checkpoint_event_id`; a failed probe suppresses
+ * the anchor instead of guessing.
+ */
 async function durableCheckpointPayload(
   db: Db | Tx,
   runId: string,
@@ -309,9 +297,9 @@ async function durableCheckpointPayload(
 
 /**
  * Project a persisted successful domain reply into the public job-event stream.
- * REPLY + DONE are one transaction: clients/backlog can never observe a
- * permanently half-written successful terminal. Existing rows are honoured so
- * a pg-boss redelivery repairs only the missing suffix.
+ * REPLY + DONE commit in one transaction, so clients/backlog never observe a
+ * permanently half-written success. Existing rows are honoured so a pg-boss
+ * redelivery repairs only the missing suffix.
  */
 export async function writeSuccessfulTerminalProjection(
   db: Db | Tx,
@@ -376,8 +364,8 @@ export async function writeFailedTerminalProjection(
   }
   const write = options.writeJobEventFn ?? writeJobEvent;
   // An execution fence proves the model/tools may have run, not which external
-  // effects committed. Missing mirrors during a DB outage cannot make that
-  // work safely revertible, so ambiguous recovery never advertises an anchor.
+  // effects committed. Missing mirrors during a DB outage cannot make that work
+  // safely revertible, so ambiguous recovery never advertises an anchor.
   const checkpointPayload =
     projection.reason === 'ambiguous_execution' || projection.checkpointSafe === false
       ? {}
@@ -415,12 +403,11 @@ export type CopilotRunProgressEvent =
   | { kind: 'step'; payload: Record<string, unknown> };
 
 /**
- * Publish live progress under the settlement lock. The outcome boundary is
- * owned here: a queued delta/step is dropped once a cancel request or a
- * committed outcome marker exists, so progress can never cross either
- * boundary even when persistence lags the provider. `onDeltaAccepted` fires
- * inside the lock between the boundary check and the event write, so the
- * caller's streamed-prose accumulation keeps the same ordering as the write.
+ * Publish live progress under the settlement lock. A queued delta/step is
+ * dropped once a cancel request or a committed outcome marker exists, so
+ * progress can never cross either boundary even when persistence lags the
+ * provider. `onDeltaAccepted` fires inside the lock between the boundary check
+ * and the event write, so streamed-prose accumulation keeps the write ordering.
  */
 export async function publishCopilotRunProgressEvent(
   db: Db,
@@ -442,10 +429,9 @@ export async function publishCopilotRunProgressEvent(
 
 /**
  * Serialize every paid-owner outcome and ambiguous recovery for one run. The
- * expensive model/tool loop deliberately runs outside this lock; only its
- * durable settlement is protected. Recovery may win after the owner deadline,
- * but a late owner then observes that terminal under this same lock and cannot
- * append a contradictory reply/DONE.
+ * expensive model/tool loop deliberately runs outside this lock; recovery may win
+ * after the owner deadline, but a late owner then observes that terminal under
+ * the same lock and cannot append a contradictory reply/DONE.
  */
 export async function withCopilotExecutionSettlementLock<T>(
   db: Db,
@@ -617,20 +603,12 @@ export async function handleDurableCancellation(
 }
 
 /**
- * YUK-575 (Fix 2 — single-shot) — durable 失败处理。**无 transient/redeliver 分诊**：
- * durable copilot 继承 streamTaskCollecting 的 graceful-degrade——run 失败经 `{partial}`
- * （plain Error）回来、从不 throw AgentRunError，故每个 durable 失败都是 deliberate
- * TERMINAL（single-shot），与 inline copilot 今天完全一致（inline 共享
- * streamTaskCollecting、从来没有 transient 自动重试，一直 graceful-degrade 成 partial
- * reply）。**真 transient 自动重试**（把 AgentFailureSubtype 穿过 StreamCollectResult
- * 让 pg-boss redeliver）**延到 YUK-596**——那里 durable 成默认（每回合都 durable），
- * single-shot 失败才真正 load-bearing、更重的 runner 契约变更才有正当性。
- *
- * 顺序：先写带 outcome=failure + 重建元数据的 copilot_reply durable marker
- * （partial 有文本则持久化半程文本，否则写聚焦重试提示，让 user_ask 不成
- * conversation_history 的 phantom），再写 load-bearing FAILED projection。若后一步
- * 失败则抛给 pg-boss；重投先命中 marker，只修复 FAILED，不重跑模型/工具，也不重复
- * conversation reply。完整 FAILED 后仍 return-without-throw，保持 single-shot 语义。
+ * Durable failure is deliberate terminal (single-shot): streamTaskCollecting
+ * graceful-degrades and never throws AgentRunError, so there is no transient
+ * triage. Write the failure marker first (partial text if present, else a focused
+ * retry prompt, so the ask never becomes a phantom), then the load-bearing FAILED
+ * projection. If projection fails, pg-boss redelivery finds the marker and repairs
+ * only FAILED — never re-running model/tools or the conversation reply.
  */
 export async function handleDurableFailure(
   db: Db,
@@ -828,12 +806,12 @@ type LockedReconcileDecision =
 /**
  * Converge one accepted durable run without ever invoking model/tools.
  *
- * The dispatch lock makes the pre-execution decision atomic with both API
- * enqueue compensation and the worker's paid-execution fence. Once a fence
- * exists, recovery switches to the settlement lock already used by the paid
- * owner; only dead/missing pg-boss evidence and an expired owner budget may
- * produce `ambiguous_execution`. Legacy worker-touch evidence fails closed to
- * that path because those retained runs predate the explicit fence.
+ * The dispatch lock makes the pre-execution decision atomic with API enqueue
+ * compensation and the worker's paid-execution fence. Once a fence exists,
+ * recovery switches to the settlement lock already used by the paid owner; only
+ * dead/missing pg-boss evidence and an expired owner budget may produce
+ * `ambiguous_execution`. Legacy worker-touch evidence fails closed to that path
+ * because retained runs predate the explicit fence.
  */
 export async function reconcileCopilotDurableRun(
   params: ReconcileCopilotDurableRunParams,
@@ -885,7 +863,7 @@ export async function reconcileCopilotDurableRun(
         .orderBy(asc(job_events.id));
       if (hasCopilotSettlementTerminal(events)) return { observation: 'settled' };
       // A marker can appear after the optimistic read above. Never overwrite it
-      // with delivery-loss copy; project its actual outcome after releasing Gd.
+      // with delivery-loss copy; project its actual outcome after releasing the lock.
       if (await findPersistedDurableReply(tx, runId)) return { observation: 'marker_found' };
 
       const queue = await observeBossJob(COPILOT_RUN_QUEUE, bossJobId, {

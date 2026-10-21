@@ -4,8 +4,7 @@ import { z } from 'zod';
 // LearningSession 多态 envelope (ADR-0008 + ADR-0005 演化)
 // ====================================================================
 //
-// 6 种 session type。Phase 1c.1 仅实装 ingestion / review / conversation 状态机；
-// tutor / explore / create 占位（enum 已固化，行为延后到 Phase 1d/2）。
+// 7 种 session type。explore / create 占位（enum 已固化，行为待实装）。
 
 export const LearningSessionType = z.enum([
   'ingestion',
@@ -36,15 +35,14 @@ export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 
 // review 状态机：started ⇄ paused → completed | abandoned (↳ reopened → started)
 //
-// 'paused' 自 YUK-57 起就由 src/server/session/review.ts 写入/读出（pauseReview-
-// Session / resumeReviewSession），但本 Zod enum 一直漏了它，导致
-// LearningSessionStatusByType.parse({type:'review',status:'paused'}) 抛错。
-// U5 (YUK-203) 补齐——paper attempt session 走 review 状态机，practice 列表读时
-// 过 Zod 校验，paused 卷会爆。这同时修了既有 YUK-57 drift，非仅 paper 需要。
+// 'paused' 由 src/server/session/review.ts 写入/读出（pauseReviewSession /
+// resumeReviewSession）；缺了它 LearningSessionStatusByType.parse({type:'review',
+// status:'paused'}) 会抛错（paper attempt session 走 review 状态机，practice
+// 列表读时过 Zod 校验，paused 卷会爆）。
 export const ReviewStatus = z.enum(['started', 'paused', 'completed', 'abandoned']);
 export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 
-// conversation 状态机 (ADR-0008 + YUK-14 / docs/design/2026-05-24-teaching-idle-state-machine.md)：
+// conversation 状态机 (ADR-0008 / docs/design/2026-05-24-teaching-idle-state-machine.md)：
 //   active <-> idle  → ended | abandoned
 //
 // active   : drawer open, recent user/agent activity
@@ -54,7 +52,7 @@ export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 export const ConversationStatus = z.enum(['active', 'idle', 'ended', 'abandoned']);
 export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 
-// tutor 状态机 (YUK-193 解题陪练 / docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
+// tutor 状态机 (解题陪练 / docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
 //   active → submitted → judged → ended  (+ abandoned terminal)
 // active   : 会话已开，可请求 hint / 提交作答
 // submitted: 已收到一次作答提交，判分进行中（瞬态，submit 路由内同事务推进到 judged）
@@ -64,7 +62,7 @@ export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 export const TutorStatus = z.enum(['active', 'submitted', 'judged', 'ended', 'abandoned']);
 export type TutorStatusT = z.infer<typeof TutorStatus>;
 
-// placement 状态机 (YUK-468 cold-start inc-B / docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3)：
+// placement 状态机 (docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3)：
 //   started → completed | abandoned
 // 一次性有界第一会话流（每科 ~8 题，cap 防疲劳 + 可选 θ SE 收敛即停）。**没有** paused /
 // reopened —— 不同于 review：placement probe 不暂停续答（中断即 abandoned，可重开新一轮）。
@@ -75,7 +73,7 @@ export const PlacementStatus = z.enum(['started', 'completed', 'abandoned']);
 export type PlacementStatusT = z.infer<typeof PlacementStatus>;
 
 // explore / create —— 占位 enum，状态待定。**绝不**用 z.string() 兜底，
-// 也不留空 enum。Phase 1d/2 第一次实装时再展开。先用 'placeholder' 单值标记，避免
+// 也不留空 enum。第一次实装时再展开。先用 'placeholder' 单值标记，避免
 // 误把任意字符串吞进生产数据。
 export const ExploreStatus = z.enum(['placeholder']);
 export type ExploreStatusT = z.infer<typeof ExploreStatus>;

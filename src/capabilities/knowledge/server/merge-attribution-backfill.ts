@@ -1,25 +1,12 @@
-// YUK-543 — retroactive + recurring merge-attribution repair.
+// Merge-attribution resolution and repair. All repair goes through the accept path's
+// repairMergeAttributionForFromId, never raw writes, so the two cannot diverge.
 //
-// applyMerge (post-YUK-543) repairs all 9 downstream attribution surfaces at accept time. Two gaps
-// remain that this module closes with the SAME repair mechanics (repairMergeAttributionForFromId —
-// never raw table writes, so it stays guard-compliant + can never diverge from the live path):
+// Two gaps: merges accepted before accept-time repair left attribution on the archived
+// id (fixed by the one-time backfill), and a grading worker holding a stale pre-merge read
+// can still write to that id (fixed by the recurring sweep's bounded auto-repair).
 //
-//   1. PRE-FIX HISTORY — merges accepted before YUK-543 archived a `from` KC + appended merged_from[]
-//      but LEFT the downstream surfaces (question/learning_item/goal knowledge_ids, edges, per-KC
-//      state, misconception targets) pointing at the now-archived id. The one-time backfill
-//      (scripts/backfill-merge-attribution.ts) repairs them.
-//   2. ASYNC-GRADING RACE RESIDUAL — a background grading worker whose knowledgeIds arg was resolved
-//      from a stale pre-merge read can, AFTER the merge commits, upsert a fresh mastery/fsrs row keyed
-//      to the archived from_id (the in-tx advisory lock narrows but cannot fully close this without
-//      touching the grading path itself). A low-frequency recurring sweep (registered as a knowledge
-//      capability job, jobs/merge_attribution_sweep.ts) DETECTS any such residual AND — per YUK-544
-//      (spec §4 decision 4, Appendix C D-C) — AUTO-INVOKES this same idempotent repair on the drifted
-//      subset (bounded by a per-run hard cap; the rest continues next run). The sweep does NOT re-run
-//      raw table writes: it reuses `repairMergeAttributionForFromId` verbatim, so the recurring
-//      auto-repair and the live accept path can never diverge in HOW they repair.
-//
-// Idempotent by construction: every repair helper queries "rows still referencing fromId" and no-ops
-// when none exist, so a second run finds nothing (the backfill test asserts this).
+// Repairs are idempotent: each helper finds rows still referencing the from_id and no-ops
+// when there are none.
 
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { MergeRepairEntryT } from '@/core/schema/event/known';
@@ -39,35 +26,21 @@ import {
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { repairMergeAttributionForFromId } from './proposals';
 
-// ── merge-chain resolution (spec §4 decision 4b) ─────────────────────────────────────────────────
-
 export interface MergeChainResolution {
   fromId: string;
-  /** the terminal LIVE winner this from_id ultimately merged into, or null when unresolvable. */
+  /** Terminal live winner, or null when unresolvable. */
   winnerId: string | null;
-  /**
-   * YUK-543 review L3 — the FULL hop sequence walked, [fromId, mid…, terminal] (forensic
-   * granularity: which hop of a multi-merge chain went wrong must survive in the repair log, not
-   * be flattened to first→last). On a skip it is the partial chain walked up to the failure point.
-   * The accept-time MergeRepairEntry is inherently single-hop and needs no analog.
-   */
+  /** Full hop sequence, including the partial chain on a skip, for forensic logs. */
   chain: string[];
-  /** why the chain was NOT resolved to a live winner (skip, do not guess). */
   skipReason?: 'archived_terminal' | 'cycle';
 }
 
 /**
- * Resolve every absorbed KC (an id appearing in some node's merged_from[]) to its TERMINAL LIVE
- * winner by walking the merged_from chain (loser → winner → further-merged-winner). When the terminal
- * node is itself archived-but-NOT-merged (an already-inconsistent state) or the chain cycles, the
- * from_id is returned with winnerId=null + a skipReason — logged and skipped, never guessed.
+ * Walk each absorbed KC's merged_from chain to its terminal live winner. A terminal that
+ * is archived without being merged, or a cycle, is skipped rather than guessed.
  */
 export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolution[]> {
-  // YUK-543 review R5 — scoped scan, not a full unbounded-table pull: only ABSORBER rows (non-empty
-  // merged_from) participate in chain resolution. Behaviorally equivalent to the full scan:
-  // absorbedInto is only ever populated from non-empty rows, and every intermediate hop / reachable
-  // terminal is itself an absorber (its merged_from contains the previous hop), so the isLive check
-  // never needs a row this WHERE excludes.
+  // Only absorber rows participate; every reachable hop is itself an absorber.
   const rows = await db
     .select({
       id: knowledge.id,
@@ -77,7 +50,6 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
     .from(knowledge)
     .where(sql`jsonb_array_length(${knowledge.merged_from}) > 0`);
 
-  // absorbedInto[fromId] = the node id that absorbed it (its merged_from contains fromId).
   const absorbedInto = new Map<string, string>();
   const isLive = new Set<string>();
   for (const r of rows) {
@@ -101,7 +73,7 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
       seen.add(cur);
       const next = absorbedInto.get(cur);
       if (next === undefined) {
-        // cur is not absorbed into anything: it is the terminal. It must be LIVE to be a winner.
+        // Nothing absorbs cur, so it is the terminal; it must be live to be a winner.
         resolution = isLive.has(cur)
           ? { fromId, winnerId: cur, chain }
           : { fromId, winnerId: null, chain, skipReason: 'archived_terminal' };
@@ -115,8 +87,6 @@ export async function resolveMergeChains(db: Db | Tx): Promise<MergeChainResolut
   return resolutions;
 }
 
-// ── read-only orphan-surface census (shared by the census report + the bounded auto-repair sweep) ──
-
 export interface OrphanSurfaceCounts {
   questions: number;
   learningItems: number;
@@ -129,10 +99,7 @@ export interface OrphanSurfaceCounts {
   misconceptionEdges: number;
 }
 
-// Exported so the auto-repair sweep (jobs/merge_attribution_sweep.ts) shares the SAME
-// per-surface tally used by the dry-run census here — the sweep's drift-detection predicate
-// (`surfaceTotal(census) > 0`) and its post-repair zero-assertion must count identically to
-// this module, never a re-derived copy that could drift (YUK-544).
+/** Shared tally so census and sweep count identically. */
 export function surfaceTotal(c: OrphanSurfaceCounts): number {
   return (
     c.questions +
@@ -147,12 +114,10 @@ export function surfaceTotal(c: OrphanSurfaceCounts): number {
   );
 }
 
-// OCR O2 — write-mode counterpart of surfaceTotal, derived from the repair's OWN MergeRepairEntry
-// (same-tx snapshot; a separate pre-repair census would double the query count for zero
-// information). Per-KC state counts 1 when the retire outcome touched/detected a from-row
-// ('renamed' | 'frozen' — the same "from-row present" predicate the census booleans encode).
-// Exported (YUK-544 review R1): the auto-repair sweep tallies its repaired surfaces with THIS
-// function too — a re-derived copy in the sweep could silently drift from the backfill's count.
+/**
+ * Write-mode counterpart, from the repair's own same-transaction entry. Per-KC state
+ * counts when the retire outcome touched a from-row.
+ */
 export function repairedSurfaceTotal(entry: MergeRepairEntryT): number {
   return (
     entry.question_ids_rewritten.length +
@@ -173,7 +138,7 @@ async function countRows(db: Db | Tx, whereSql: ReturnType<typeof sql>, table: '
   return rows[0]?.n ?? 0;
 }
 
-/** READ-ONLY census of every surface still referencing `fromId`. Zero writes. */
+/** Census of every surface still referencing `fromId`; zero writes. */
 export async function countOrphanSurfaces(
   db: Db | Tx,
   fromId: string,
@@ -257,52 +222,31 @@ export async function countOrphanSurfaces(
   };
 }
 
-// ── backfill / sweep runner ──────────────────────────────────────────────────────────────────────
-
 export interface MergeAttributionResult {
-  /** distinct absorbed from_ids seen (appearing in some merged_from[]). */
   scannedFromIds: number;
-  /** distinct terminal live winners the from_ids resolved to. */
   winners: number;
-  /** from_ids that resolved to a live winner (repaired in write mode; would-repair in dry-run). */
   resolved: number;
-  /** from_ids skipped (archived-not-merged terminal or a merged_from cycle). */
   skipped: number;
-  /** total downstream surfaces that still referenced an absorbed id (census over resolved from_ids). */
   orphanSurfacesFound: number;
 }
 
 export interface RunMergeAttributionOpts {
-  /**
-   * true = READ-ONLY census (the CLI `--dry-run` mode); false = repair (the one-time backfill).
-   * The recurring sweep (jobs/merge_attribution_sweep.ts) no longer routes through this flag —
-   * since YUK-544 it composes resolveMergeChains / countOrphanSurfaces /
-   * repairMergeAttributionForFromId directly for its census + bounded auto-repair phases.
-   */
+  /** True is the read-only CLI census; false repairs. */
   dryRun: boolean;
   now?: Date;
 }
 
-// ── shared chain grouping (YUK-544 review R3) ────────────────────────────────────────────────────
-// One implementation for the "resolutions → winner groups + forensic chains" pass, consumed by BOTH
-// the backfill runner below and the auto-repair sweep (jobs/merge_attribution_sweep.ts) — the two
-// loops were near-verbatim duplicates differing only in log tag and count collection.
-
+/** Shared grouping so the backfill and the sweep cannot drift apart. */
 export interface GroupedResolutions {
-  /** winner → ALL absorbed from_ids mapping to it — the FULL loser set an edge rewire's
-   *  `mergeFromIds` needs (loser→loser edges collapse rather than dangle), mirroring a
-   *  multi-from_id applyMerge. */
+  /** Winner to its full absorbed set, not just the repaired subset. */
   byWinner: Map<string, string[]>;
-  /** YUK-543 review L3 — full forensic hop sequence per from_id (built over ALL resolutions,
-   *  including skipped ones), kept for repair logs + the sweep's forensic event payload. */
+  /** Full hop sequence for logs and forensic payloads, including skipped chains. */
   chainByFromId: Map<string, string[]>;
-  /** resolved (fromId, winnerId) pairs in resolution order. */
   resolvedFromIds: { fromId: string; winnerId: string }[];
-  /** unresolved chains (archived-not-merged terminal or a cycle) — logged, never guessed. */
   skipped: number;
 }
 
-/** Group resolved chains by terminal winner; warn-log (under `[<logTag>]`) + count the skips. */
+/** Group by winner, logging and counting skips under the caller's tag. */
 export function groupResolvedChains(
   resolutions: MergeChainResolution[],
   logTag: string,
@@ -331,9 +275,8 @@ export function groupResolvedChains(
 }
 
 /**
- * Resolve every absorbed KC to its terminal live winner, then either REPAIR each surface (write mode,
- * via repairMergeAttributionForFromId — the SAME function applyMerge uses) or COUNT the still-dangling
- * surfaces (dry-run — zero writes). Idempotent in write mode: a second run repairs nothing.
+ * Resolve, then repair through the accept path's function or count in dry-run. A second
+ * write run repairs nothing.
  */
 export async function runMergeAttributionBackfill(
   db: Db,
@@ -361,19 +304,13 @@ export async function runMergeAttributionBackfill(
       }
       continue;
     }
-    // Write mode: repair the whole winner group in ONE tx (atomic per winner).
+    // Repair the whole winner group in one transaction, taking the global write lock
+    // first to preserve the accept path's lock order.
     const mergeFromIds = new Set(fromIds);
     await db.transaction(async (tx) => {
-      // YUK-497 review F2 — global learning-state write lock G FIRST at the tx entry, so every
-      // learning-state-touching tx (accept / sweep / this backfill) shares the same G→rows order.
-      // repairMergeAttributionForFromId re-acquires G reentrantly; acquiring it here makes G the
-      // tx's first lock, before any row access inside the repair.
       await acquireLearningStateWriteLock(tx);
       for (const fromId of fromIds) {
-        // OCR O2 — NO pre-repair census here: the repair's own MergeRepairEntry return carries the
-        // exact per-surface counts from the SAME tx snapshot, so a countOrphanSurfaces call before
-        // it would double the query count (9+ queries per fromId) and stretch the lock-holding tx
-        // for zero information. The dry-run branch above keeps the census (it repairs nothing).
+        // No pre-repair census: the entry already carries same-transaction counts.
         const entry = await repairMergeAttributionForFromId(
           tx,
           fromId,
@@ -382,8 +319,7 @@ export async function runMergeAttributionBackfill(
           mergeFromIds,
         );
         result.orphanSurfacesFound += repairedSurfaceTotal(entry);
-        // L3 — forensic repair log carries the FULL chain (which hop went wrong must be
-        // reconstructable from the log alone, not flattened to fromId→winner).
+        // Keep the full chain, so a bad hop is reconstructable from the log alone.
         console.log('[merge-attribution] repaired', {
           fromId,
           winnerId,

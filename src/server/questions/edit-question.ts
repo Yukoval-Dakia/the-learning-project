@@ -34,6 +34,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { OpaqueJsonInput } from '@/kernel/tools/types';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import {
@@ -161,7 +162,9 @@ export const EditQuestionInput = z
   .object({
     action: z.enum(['save', 'validate', 'probe']),
     /** 创建：完整 v2 文档（与 ops/draft_ref/question_id 互斥）。 */
-    document: z.unknown().optional(),
+    // Opaque until save/validate parse it through QuestionDraftDocument; z.json
+    // keeps the tool input a JSON document (YUK-1553 C1-1 registration contract).
+    document: OpaqueJsonInput.optional(),
     /** 编辑：对草稿（draft_ref）或已发布题（question_id）的局部 ops。 */
     ops: z.array(EditOp).optional(),
     draft_ref: z.string().min(1).optional(),

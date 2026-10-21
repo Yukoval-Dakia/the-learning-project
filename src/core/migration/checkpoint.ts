@@ -2,7 +2,7 @@ import { canonicalHash } from './canonical';
 import type { MigrationCapture } from './types';
 
 // ====================================================================
-// YUK-1048 review P1-1 — checkpoint 内容身份
+// checkpoint 内容身份
 // ====================================================================
 //
 // 工件文件名不能只派生自 raw_fact_hash：队列态、订阅 checkpoint/delivery、
