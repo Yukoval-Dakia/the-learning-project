@@ -1,26 +1,7 @@
-// YUK-471 W2 — projectLearningItem: the IO shell around the PURE learning_item fold.
-//
-// Canonical structural writer after YUK-973; there is no per-entity mode switch.
-// It:
-//   1. GATHERS the events that can affect `itemId` (Q1-only via gather.ts — the pure reducer filters
-//      internally, but the shell over-collects so a missed event can never silently drop a mutation),
-//   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),
-//   3. calls foldLearningItem(itemId, foldEvents) (PURE),
-//   4. WRITE-THROUGH: null → DELETE the row; else upsert the projected SNAPSHOT columns.
-//
-// ── EXCLUDED columns (design §3①, mirrors knowledge's embed_* exclusion) ─────────────────────────
-// child_learning_item_ids / ai_score / due_at / reviewed_at are EXCLUDED from the snapshot — no
-// write path / derived state the fold does NOT own. They are omitted from BOTH the INSERT values
-// (left at their column defaults on a fresh row: child_learning_item_ids → [], the others → NULL)
-// AND the UPDATE set (preserved untouched on an existing row), exactly like the node shell drops
-// embed_*. user_pinned IS in the snapshot (genesis carries it verbatim) so it IS written through.
-//
-// The read→fold half lives in the SHARED gather.ts (gatherAndFoldLearningItem) so this shell and
-// scripts/audit-projection.ts reconstruct a learning_item IDENTICALLY — a single gather
-// implementation means the drift auditor can never be blind to a gather bug in the SoT path. This
-// shell adds only the WRITE-THROUGH on top of that shared read→fold (mirrors projectGoal).
-//
-// Db|Tx polymorphic.
+// Write-through shell for the pure `learning_item` fold. The gather is subject-keyed.
+// child_learning_item_ids / ai_score / due_at / reviewed_at are derived state outside the
+// snapshot, so they stay at their defaults on insert and untouched on update. The shared
+// gather lives in gather.ts.
 
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
@@ -40,14 +21,8 @@ import { hasLearningItemGenesisAnchor } from './parity';
 type DbLike = Db | Tx;
 
 /**
- * Project the current structural state of a single `learning_item` from the event log and write it
- * through to the live table. READ→FOLD→WRITE-THROUGH:
- *   - null  → DELETE FROM learning_item WHERE id=itemId (row never existed / fully reverted),
- *   - row   → upsert (insert … onConflictDoUpdate target learning_item.id) the projected snapshot
- *     columns (excluded cols left at default on insert / untouched on update).
- *
- * @param db     Db or Tx (polymorphic — wired sites call it inside the creation/complete/archive tx).
- * @param itemId the learning_item row id to project.
+ * Re-project one `learning_item`. A fold of null deletes the row; otherwise upsert the
+ * snapshot columns.
  */
 export async function projectLearningItem(db: DbLike, itemId: string): Promise<void> {
   const projected = await gatherAndFoldLearningItem(db, itemId);
@@ -59,11 +34,8 @@ export async function projectLearningItem(db: DbLike, itemId: string): Promise<v
 }
 
 /**
- * The GUARDED learning_item write-through (the SoT-flip row writer). Identical to
- * projectLearningItem EXCEPT the null branch: a fold of null DELETEs the live row ONLY when the row
- * HAS a genesis anchor (a genuine revert of an event-sourced item). A fold-null on an UN-anchored
- * row — a pre-event-sourced row the fold is blind to — must NOT delete the live row. Mirrors
- * projectGoalGuarded: lets the flip be activated before every item is backfilled.
+ * Guarded write-through: a fold of null deletes only when the row has a genesis anchor.
+ * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
 export async function projectLearningItemGuarded(db: DbLike, itemId: string): Promise<void> {
   const projected = await gatherAndFoldLearningItem(db, itemId);
@@ -77,10 +49,8 @@ export async function projectLearningItemGuarded(db: DbLike, itemId: string): Pr
   await upsertProjectedLearningItem(db, projected);
 }
 
-// Shared upsert of the projected SNAPSHOT columns. The EXCLUDED columns (child_learning_item_ids /
-// ai_score / due_at / reviewed_at) are deliberately omitted from BOTH the INSERT values (left at
-// their defaults on a fresh row) and the UPDATE set (preserved on an existing row) — the fold does
-// not own those non-structural / derived columns (mirrors the node shell's embed_* exclusion).
+// Upsert the snapshot columns. Derived columns stay at their defaults on insert and
+// untouched on update because the fold does not own them.
 async function upsertProjectedLearningItem(
   db: DbLike,
   projected: LearningItemRowSnapshotT,

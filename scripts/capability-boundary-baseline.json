@@ -501,6 +501,30 @@
       "from": 55,
       "to": 54,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-21",
+      "from": 16,
+      "to": 15,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-21",
+      "from": 54,
+      "to": 51,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-21",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -710,6 +734,39 @@
       "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/settlement-subscription.ts",
+      "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
+      "kind": "value",
+      "symbols": ["loadLatestTrustedInterventionDiagnosticVerdict"],
+      "issue": "YUK-1571",
+      "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/store.ts",
+      "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
+      "date": "2026-10-20"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
+      "kind": "value",
+      "symbols": [
+        "loadLatestTrustedInterventionDiagnosticVerdict",
+        "loadNativeInterventionDiagnosticState"
+      ],
+      "issue": "YUK-1571",
+      "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
       "date": "2026-10-20"
     },
     {
@@ -938,7 +995,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 393,
+      "total": 389,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -963,7 +1020,7 @@
         "copilot -> session": 6,
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
-        "ingestion -> ai": 16,
+        "ingestion -> ai": 15,
         "ingestion -> boss": 6,
         "ingestion -> events": 6,
         "ingestion -> projections": 9,
@@ -994,7 +1051,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 54,
+        "practice -> ai": 51,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
@@ -1022,11 +1079,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 37,
+      "total": 36,
       "byOwnerPair": {
         "agency -> knowledge": 4,
         "agency -> notes": 2,
-        "agency -> practice": 5,
+        "agency -> practice": 4,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,

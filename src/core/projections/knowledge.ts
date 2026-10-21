@@ -10,62 +10,21 @@ import {
 import { KnowledgeMutationProposalChange } from '../schema/proposal';
 import type { FoldEvent } from './fold-event';
 
-// Archive-propose payload shape (writeArchiveProposal: { node_id, expected_version,
-// reasoning }). The archive branch validates the payload through this so a
-// malformed archive event is rejected at the reducer boundary rather than applied
-// blindly off the envelope subject_id (YUK-471 W1 PR-A1, consistency with the
-// other branches' safeParse).
+// Archive is its own propose path, outside the mutation union; validate its payload.
 const KnowledgeArchivePayload = z.object({
   node_id: z.string().min(1),
   expected_version: z.number().int().optional(),
   reasoning: z.string().nullable().optional(),
 });
 
-// ====================================================================
-// foldKnowledgeNode — the W1 structural fold for a single `knowledge` row
-// (YUK-471 Wave 1, PR-A1). PURE node reducer.
-// ====================================================================
-//
-// Projects the current structural state of ONE knowledge node (`nodeId`) from
-// the event log. This is the read-model half of event-sourcing the knowledge
-// tree: instead of mutating the `knowledge` table in place, the accept path
-// appends events, and this fold REPRODUCES the row the imperative appliers
-// (applyProposeNew / applyReparent / applyArchive / applyMerge / applySplit in
-// src/capabilities/knowledge/server/proposals.ts) would have written.
-//
-// BEHAVIOR-PRESERVING (PR-A1): this reducer is NOT wired into any runtime path
-// yet (no double-write, no SoT flip — those are PR-A2 / PR-B). It is a pure
-// function landing with the schema so PR-A2 can build the IO shell (reverse
-// index + DB read) around a verified, deterministic core.
-//
-// PURITY CONTRACT: no IO, no DB, no newId(), no Date.now() / new Date(). Same
-// input → byte-identical output. The reducer NEVER mints ids or timestamps — it
-// reads node ids from the accepting RATE event's payload.materialized_ids (the
-// keystone added by known.ts RateEvent payload #1) and stamps row timestamps
-// from the ACCEPT event's `created_at`. Determinism is what makes fold(events) ==
-// row a checkable invariant.
-//
-// SHARED FoldEvent — the reducer consumes the flat `event`-row projection from
-// ./fold-event (the SAME shape the edge reducer consumes and PR-A2's IO shell
-// builds). The flat columns it reads:
-//   - `id` / `created_at` — accept linkage + canonical replay ordering + row timestamps.
-//   - `subject_kind` / `subject_id` — routing. Present on the SPECIALISED Event
-//     members (ProposeKnowledge, GenesisExperimental …) but DROPPED by the
-//     generic `ExperimentalEvent` member, so the fold reads them off the flat
-//     envelope, not the re-parsed content. The auto-tag KC-create event
-//     (`experimental:auto_tag_kc_created`) is a GENERIC experimental event whose
-//     subject_kind/subject_id only survive on the envelope.
-//   - `caused_by_event_id` — accept linkage (a RATE event names the propose event
-//     it accepts here).
-//   - `action` / `outcome` / `actor_kind` / `actor_ref` / `payload` — typed
-//     re-parse input (the reducer reconstructs the Event-union member per branch
-//     via safeParse, mirroring corrections.ts rowToCorrectEventInput, instead of
-//     trusting a pre-parsed `EventT`).
+// Pure knowledge-node reducer. A mutation applies only when its propose event was
+// accepted; the accepting rate carries the minted node ids and the materialization
+// moment used for row timestamps. Replay order is a deterministic
+// (materialization time, create-before-mutate, expected version, id) order, so the
+// same event set folds to the same row regardless of DB result order. No IO, ids,
+// or clocks: timestamps come from events and ids from accept payloads.
 
-// toParseInput — reconstruct the Zod parse input from the flat FoldEvent columns
-// (mirrors corrections.ts rowToCorrectEventInput). Each per-branch safeParse below
-// feeds this to its dedicated schema so a malformed payload is rejected at the
-// reducer boundary rather than trusted.
+// Rebuild the parse input from the flat row so each branch validates its payload.
 function toParseInput(fe: FoldEvent): unknown {
   return {
     actor_kind: fe.actor_kind,
@@ -131,12 +90,9 @@ function replayTieKey(
   return [2, 0];
 }
 
-// Stable canonical total order. The materialization timestamp (accept time for proposals, envelope
-// time otherwise) is primary. Within one millisecond, a node's creation precedes its explicitly
-// versioned mutations, which are ordered by their previous/expected version; remaining events
-// follow by id. Computing one tuple per event (instead of a pair-specific special case) keeps the
-// comparator transitive. A merge into_id has no expected version in the production contract, so
-// its field-disjoint update must also commute with a same-ms name update.
+// Canonical total order: materialization time, then create-before-mutate, then expected
+// version, then id. The tuple keeps the comparator transitive; field-disjoint updates
+// (merge into_id vs rename) commute within a millisecond.
 function compareReplayEvents(
   a: FoldEvent,
   b: FoldEvent,
@@ -155,30 +111,14 @@ function compareReplayEvents(
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-/**
- * Pure structural fold of a single `knowledge` node from the event log.
- *
- * @param nodeId  the knowledge row id to project
- * @param events  ALL candidate events (flat FoldEvent rows). The reducer internally
- *                SELECTS which affect `nodeId` — callers pass a superset (the
- *                PR-A2 IO shell narrows via a reverse index first, but the reducer
- *                must be correct on a superset too).
- * @returns the projected row, or `null` if `nodeId` was never created/seeded.
- */
+/** Project one node from its events; callers may pass a superset. Null when no base exists. */
 export function foldKnowledgeNode(
   nodeId: string,
   events: FoldEvent[],
 ): KnowledgeRowSnapshotT | null {
-  // ---------- pass 1: accept-resolution index ----------
-  //
-  // A node mutation takes effect ONLY if its propose event was ACCEPTED — i.e.
-  // there is a RATE event with payload.rating==='accept' whose caused_by_event_id
-  // names the propose event. dismiss / rollback (and a propose with no rate at
-  // all) → no effect. We also capture that accept's materialized_ids, which is the
-  // ONLY source of the minted node ids for propose_new / split (the propose event
-  // itself does not carry them — they were minted by the accept path), AND the
-  // accept event's created_at (the materialization moment, used to stamp the
-  // projected row's timestamps — see ACCEPT-TIME note below).
+  // ---------- pass 1: accept resolution ----------
+  // Only accepted proposes apply. The rate carries the minted ids for propose_new/split
+  // and the materialization moment used for timestamps.
   const acceptedProposeIds = new Set<string>();
   const materializedKnowledgeByProposeId = new Map<string, string[]>();
   const acceptedAtByProposeId = new Map<string, Date>();
@@ -191,19 +131,14 @@ export function foldKnowledgeNode(
     const proposeId = fe.caused_by_event_id;
     if (!proposeId) continue;
     acceptedProposeIds.add(proposeId);
-    // The rate event's created_at = the materialization moment (applyX stamps `now`
-    // at accept-time, not at propose-time). Keyed by the propose event id so pass 2
-    // can look it up when applying that propose's effect.
+    // Stamped at accept time, not propose time.
     acceptedAtByProposeId.set(proposeId, fe.created_at);
     const mk = rate.data.payload.materialized_ids?.knowledge;
     if (mk) materializedKnowledgeByProposeId.set(proposeId, mk);
   }
 
   // ---------- pass 2: apply in canonical replay order ----------
-  // Walk source events by materialization timestamp (the accepting rate's time for proposals).
-  // Events for one node that share a millisecond use a total creation/version/id tie order so
-  // causal transitions never depend on random envelope ids or the database's unordered Q1 result.
-  // This is why the fold takes envelope-wrapped FoldEvent rows rather than bare EventT values.
+  // Total tie order makes transitions independent of envelope ids or DB row order.
   const ordered = [...events].sort((a, b) =>
     compareReplayEvents(a, b, nodeId, materializedKnowledgeByProposeId, acceptedAtByProposeId),
   );
@@ -211,15 +146,8 @@ export function foldKnowledgeNode(
   let row: KnowledgeRowSnapshotT | null = null;
 
   for (const fe of ordered) {
-    // ACCEPT-TIME row timestamp. Row created_at/updated_at = the ACCEPT event's
-    // created_at (the imperative applyX stamps `now` at accept-time, not at
-    // propose-time), looked up via the propose event id (fe.id). For seed (genesis)
-    // and auto_tag this falls back to fe.created_at (genesis carries its own
-    // snapshot timestamps; auto_tag is NOT a proposal — its create IS the tag-time
-    // write moment). PR-A2 MUST align the accept-path writer to stamp the row from
-    // the same rate-event created_at (single source) for byte-exact fold==row;
-    // until then sub-ms drift is expected and the parity harness should compare
-    // created_at/updated_at with tolerance or the writer must be aligned.
+    // Accept-time stamp for proposals; genesis and auto_tag fall back to their own event
+    // time. Byte-exact parity requires the writer to use the same rate timestamp.
     const at = acceptedAtByProposeId.get(fe.id) ?? fe.created_at;
 
     // genesis seed
@@ -235,20 +163,14 @@ export function foldKnowledgeNode(
         warnMalformed('experimental:genesis(row)', fe.id, knownRow.error);
         continue;
       }
-      // The seed IS the base state (version, timestamps and all carried verbatim).
       row = { ...knownRow.data, merged_from: [...knownRow.data.merged_from] };
       continue;
     }
 
-    // Subject control-plane rename/reset mirrors display_name onto the canonical knowledge root.
-    // This direct action is not proposal-gated: the owner CAS + control-plane lock authorize it at
-    // write time. previous_name / previous_version are audit evidence, not replay preconditions:
-    // production merge events only guard from_ids and carry no into_id version, so a same-ms merge
-    // and rename cannot always be causally sorted. Their field updates commute; incrementing the
-    // folded version (rather than assigning payload.next_version) accounts for each event exactly
-    // once regardless of their same-ms order. Root-name events remain mutually version-ordered,
-    // preserving the final name across sequential rename/reset transitions. This also lets the
-    // first post-YUK-728 event heal a legacy name-only mirror absent from the historical log.
+    // Root rename/reset is not proposal-gated; the owner CAS and control-plane lock authorize
+    // it at write time. Incrementing the folded version (not assigning payload.next_version)
+    // counts each event once even when a same-ms merge cannot be causally ordered, and lets
+    // the first event heal a legacy name-only mirror.
     if (
       fe.action === 'experimental:subject_root_name_update' &&
       fe.subject_kind === 'knowledge' &&
@@ -269,19 +191,14 @@ export function foldKnowledgeNode(
       continue;
     }
 
-    // auto-tag create — subject_kind / subject_id come from the flat envelope (the
-    // generic ExperimentalEvent member drops them from the re-parsed content).
-    // auto_tag is NOT a proposal: its row timestamp is fe.created_at (the tag-time
-    // write moment), so it does NOT consult acceptedAtByProposeId.
+    // auto-tag create — not a proposal, so its timestamp is the tag time.
     if (
       fe.action === 'experimental:auto_tag_kc_created' &&
       fe.subject_kind === 'knowledge' &&
       fe.subject_id === nodeId
     ) {
       const payload = fe.payload;
-      // A KC with no real name is structurally useless (the auto_tag writer always
-      // supplies one) — warn + skip rather than projecting a row with name='' that
-      // would silently land an empty-name node in the tree.
+      // Never project an empty-name node into the tree.
       if (typeof payload.name !== 'string' || payload.name.length === 0) {
         warnMalformed('experimental:auto_tag_kc_created', fe.id, 'missing or empty name');
         continue;
@@ -290,18 +207,15 @@ export function foldKnowledgeNode(
       const parent_id = typeof payload.parent_id === 'string' ? payload.parent_id : null;
       if (parent_id === null) continue;
       row = createRow(fe.subject_id, name, parent_id, null, fe.created_at);
-      // YUK-1405 — an auto_tag create may declare its own approval status (an
-      // agent-minted KC is an unauthorised new knowledge point → 'pending').
-      // Only 'pending' is honored here: no event can self-declare 'approved'
-      // (that stays the createRow default) or 'rejected' (a rejection is a
-      // human decision, not a creation payload).
+      // Only 'pending' may be declared: an event cannot self-approve, and rejection is a
+      // human decision, not a creation payload.
       if (payload.approval_status === 'pending') {
         row = { ...row, approval_status: 'pending' };
       }
       continue;
     }
 
-    // propose_new (subject_kind from the envelope — uniform with the other branches)
+    // propose_new
     if (fe.action === 'propose' && fe.subject_kind === 'knowledge') {
       if (!acceptedProposeIds.has(fe.id)) continue;
       const p = ProposeKnowledge.safeParse(toParseInput(fe));
@@ -321,20 +235,12 @@ export function foldKnowledgeNode(
       continue;
     }
 
-    // archive (experimental:knowledge_archive) — handled SEPARATELY from
-    // reparent/merge/split because `archive` is NOT a member of the
-    // KnowledgeMutationProposalChange discriminated union (which is only
-    // reparent/merge/split). It is its own propose path (writeArchiveProposal in
-    // proposals.ts) whose event payload is { node_id, expected_version, reasoning };
-    // acceptProposal reconstructs mutation='archive' and calls applyArchive
-    // (archived_at + version+1). This branch MUST precede the generic
-    // `experimental:knowledge_` branch below (archive shares that prefix). Effect
-    // mirrors applyArchive: set archived_at, version+1. The target node id is the
-    // event subject_id (== payload.node_id, asserted by writeArchiveProposal).
+    // archive — its own propose path, not part of the mutation union. Must precede the
+    // generic knowledge_ branch because it shares that prefix; mirrors applyArchive
+    // (archived_at, version +1).
     if (fe.action === 'experimental:knowledge_archive' && fe.subject_kind === 'knowledge') {
       if (!acceptedProposeIds.has(fe.id)) continue; // accepted-only gate
-      // Validate the archive payload (consistency with the other branches' safeParse)
-      // and assert node_id === subject_id (the writer guarantees this) before applying.
+      // The writer guarantees node_id === subject_id; verify instead of trusting it.
       const ap = KnowledgeArchivePayload.safeParse(fe.payload);
       if (!ap.success) {
         warnMalformed('experimental:knowledge_archive', fe.id, ap.error);
@@ -354,7 +260,7 @@ export function foldKnowledgeNode(
       continue;
     }
 
-    // reparent / merge / split (subject_kind from the envelope)
+    // reparent / merge / split
     if (fe.action.startsWith('experimental:knowledge_') && fe.subject_kind === 'knowledge') {
       if (!acceptedProposeIds.has(fe.id)) continue;
       const mutationKind = fe.action.replace(/^experimental:knowledge_/, '');
@@ -382,7 +288,6 @@ export function foldKnowledgeNode(
           break;
         }
         case 'merge': {
-          // into_id: append from_ids to merged_from, version+1
           if (change.into_id === nodeId && row !== null) {
             row = {
               ...row,
@@ -391,7 +296,6 @@ export function foldKnowledgeNode(
               version: row.version + 1,
             };
           }
-          // each from_id: archived_at, version+1
           if (change.from_ids.includes(nodeId) && row !== null) {
             row = {
               ...row,
@@ -403,7 +307,6 @@ export function foldKnowledgeNode(
           break;
         }
         case 'split': {
-          // from_id: archived_at, version+1
           if (change.from_id === nodeId && row !== null) {
             row = {
               ...row,
@@ -412,7 +315,6 @@ export function foldKnowledgeNode(
               version: row.version + 1,
             };
           }
-          // a new split id matching nodeId: CREATE
           const minted = materializedKnowledgeByProposeId.get(fe.id);
           if (minted) {
             for (let i = 0; i < change.into.length; i++) {
@@ -431,16 +333,9 @@ export function foldKnowledgeNode(
   return row;
 }
 
-// createRow — the canonical projected shape an applyProposeNew / applySplit /
-// auto_tag create produces. approval_status defaults to 'approved' — correct
-// for the accept-path appliers (user-accepted proposals) — while auto_tag
-// creates may override to 'pending' from the event payload (YUK-1405:
-// agent-minted KCs are unauthorised new knowledge points, honestly marked).
-// merged_from [], proposed_by_ai true, version
-// 0, created_at === updated_at === the event time. EXCLUDES embed_* (derived
-// maintenance state, not structural truth — KnowledgeRowSnapshot omits them).
-// `domain` is the root anchor: null for child rows (effective domain resolves
-// root-ward), the declared domain string for parent_id=null root proposals.
+// Canonical create shape. approval_status defaults to approved for accept-path appliers;
+// auto_tag may override to pending. `domain` is the root anchor: null for children, the
+// declared domain for root proposals. embed_* is derived maintenance state, not truth.
 function createRow(
   id: string,
   name: string,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   type JudgeAnswerParams,
   runSemanticJudge,
@@ -40,7 +41,6 @@ import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/sch
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import {
   type TaskTextResult,
   type TaskTextRunFn,

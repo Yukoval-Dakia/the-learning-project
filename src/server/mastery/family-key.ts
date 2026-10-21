@@ -1,24 +1,15 @@
-// YUK-372 L3 — family_key 解析的单一真相源（从 personalized-difficulty.ts 的内联派生提炼）。
+// Single source of family_key parsing for the write path and both read paths.
 //
-// family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`（见 personalized-difficulty
-// familyKey）。subject 是**派生轴**（不是存储列）：primaryKnowledgeId 的 effective domain →
-// resolveKnownSubjectId。orphan / 未知 domain → 'unknown' 段（绝不塌进 default profile，防过匹配）。
+// family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`. `subject` is derived,
+// not stored: primaryKnowledgeId's effective domain → resolveKnownSubjectId. Orphans and
+// unknown domains become 'unknown' so they never fall into a default profile.
 //
-// 这层把 recordFamilyObservationForAttempt（写侧）与 candidate-signals / state（读侧）共用同一
-// 解析逻辑——避免读写两侧各自内联一份 subject 派生而漂移。format 不变（仍是 familyKey 的串）。
+// Both paths must resolve archived ancestors the same way (archived-inclusive). An
+// archived-cutoff walk would write `<subject>:...` but read `unknown:...`, silently
+// disabling the family delta for those KCs.
 //
-// 单一真相源对齐的是 **getEffectiveDomain**（archived-INCLUSIVE：按 id 点查、爬过 archived 祖先
-// 取其 domain），不是 resolveSubjectKnowledgeIds（archived-cutoff，walk 停在 archived 祖先）。
-// family_key 必须在「写/θ̂ 单题路径」（resolveFamilyKeyForQuestion → getEffectiveDomain）与
-// 「candidate-signals 批量选题路径」（batchResolveFamilyKeys 内存 walk）两侧对 archived 祖先
-// 收敛到同一键，否则「有效 domain 经 archived 中间祖先解析」的 KC 会写侧 = `<subject>:...`、
-// 读侧 = `unknown:...`，effectiveFamilyB 在选题侧静默 NO-OP（YUK-372 read/write 键漂移修复）。
-// 因此批量 walk **加载全树（不过滤 archived_at）**，让 in-memory climb 能走进 archived 祖先，
-// 与 getEffectiveDomain 的 archived-inclusive 语义一致。
-//
-// G1（NO-OP-safe foundation 的护栏）：getEffectiveDomain 对 orphan id 抛错——本模块**必须**
-// try/catch 兜成 'unknown'，让 subject 派生永不 crash 调用方（state.ts updateThetaForAttempt
-// 主路径绝不能因 subject 解析失败而 abort θ̂）。
+// getEffectiveDomain throws for orphan ids; this module catches that into 'unknown' so
+// subject derivation can never abort a θ̂ update.
 
 import { batchResolveEffectiveDomains, getEffectiveDomain } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
@@ -37,9 +28,8 @@ export interface FamilyKeyInput {
 }
 
 /**
- * 解析单题的 family_key，或 null（无 primaryKnowledgeId / kind / source 任一缺失 → 无法成键）。
- * subject 经 getEffectiveDomain → resolveKnownSubjectId 派生，orphan/未知 → 'unknown'（never
- * crash，never 塌 default）。
+ * family_key for one question, or null when primaryKnowledgeId/kind/source is missing.
+ * Orphan or unknown domain becomes 'unknown' (never a default subject, never a crash).
  */
 export async function resolveFamilyKeyForQuestion(
   db: DbLike,
@@ -48,7 +38,6 @@ export async function resolveFamilyKeyForQuestion(
   const primaryKnowledgeId = input.primaryKnowledgeId?.trim();
   if (!primaryKnowledgeId || !input.kind || !input.source) return null;
 
-  // G1：getEffectiveDomain 对 orphan id 抛错 → try/catch 兜 'unknown'，subject 派生绝不 crash。
   let subject = 'unknown';
   try {
     const domain = await getEffectiveDomain(db, primaryKnowledgeId);
@@ -61,10 +50,8 @@ export async function resolveFamilyKeyForQuestion(
 }
 
 /**
- * 批量解析多题的 family_key → Map<questionId, family_key|null>。一次性加载全量 knowledge 树做
- * **内存** effective-domain walk（不是 per-candidate 的 32-climb DB 往返），subject 派生单遍。
- *
- * orphan / 未知 domain → 'unknown'（同单题路径）。任一 kind/source/primaryKnowledgeId 缺失 → null。
+ * Batch variant. Derives each subject once from a single full-tree read instead of one
+ * DB climb per candidate; missing kind/source/primaryKnowledgeId still yields null.
  */
 export async function batchResolveFamilyKeys(
   db: DbLike,
@@ -73,17 +60,15 @@ export async function batchResolveFamilyKeys(
   const out = new Map<string, string | null>();
   if (items.length === 0) return out;
 
-  // Reuse getEffectiveDomain's canonical batch twin so archived-inclusive traversal AND the
-  // MAX_DEPTH boundary stay byte-identical to the write/θ̂ path. Re-inlining the tree climb here
-  // previously let a domain beyond 32 hops leak into selection while the single path fell back to
-  // `unknown` (YUK-722).
+  // Reuse getEffectiveDomain's canonical batch twin so archived-inclusive traversal and the
+  // MAX_DEPTH boundary stay identical to the single-question path (YUK-722).
   const primaryKnowledgeIds = items.flatMap((item) => {
     const id = item.primaryKnowledgeId?.trim();
     return id && item.kind && item.source ? [id] : [];
   });
   const domainByKid = await batchResolveEffectiveDomains(db, primaryKnowledgeIds);
 
-  // 缓存 primaryKnowledgeId → subject（同一 KC 多题共享）。
+  // Questions of the same KC share one subject lookup.
   const subjectByKid = new Map<string, string>();
 
   for (const item of items) {

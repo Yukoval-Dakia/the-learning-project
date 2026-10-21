@@ -13,7 +13,7 @@ export interface NoteGenerationReference {
   blocks: Array<{ id: string; text_excerpt: string }>;
 }
 
-/** Bounded real targets from the current note family/labels, never model-authored IDs. */
+/** Bounded, real targets from the note family and labels; never model-authored ids. */
 export async function loadNoteGenerationReferences(
   db: Db,
   note: {
@@ -61,8 +61,7 @@ export async function loadNoteGenerationReferences(
   }));
 }
 
-/** Short commit fence, never held across the provider call. Source and bounded
- * supplied targets share one sorted lock order, including mutually linked notes. */
+/** Short fence, never held across the provider call; one sorted lock order. */
 export async function lockCurrentNoteGenerationReferences(
   tx: Tx,
   sourceId: string,
@@ -86,8 +85,8 @@ export async function lockCurrentNoteGenerationReferences(
       title: row.title,
       artifact_type: row.type,
       generation_status: row.generation_status,
-      // Check existence against the whole current body, not a fresh first-eight
-      // preview which could hide an originally supplied block after reordering.
+      // Whole-body existence, not the first-eight preview: reordering must not
+      // hide a block that was originally supplied.
       blocks: bodyBlocksToBlockSummaries(row.body_blocks, 0)
         .filter((block): block is typeof block & { id: string } => typeof block.id === 'string')
         .map((block) => ({ id: block.id, text_excerpt: '' })),

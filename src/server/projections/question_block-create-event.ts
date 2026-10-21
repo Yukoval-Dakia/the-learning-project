@@ -1,20 +1,8 @@
-// YUK-471 W3-C1δ — the question_block CREATE-event writer seam (additive double-write).
-//
-// Every runtime `question_block` creation site (applyExtractionResult OCR INSERT / applyRescue
-// overwrite / docx-ingestion INSERT / import virtual-card INSERT) ALSO emits a self-sufficient
-// canonical `experimental:question_block_create` event in the SAME transaction so the W3-B2 fold
-// (foldQuestionBlock) can reproduce the row from the event log. ADDITIVE: the imperative INSERT/
-// UPDATE captures database defaults for creation; subsequent editing uses the canonical projection.
-// This appends the create event + carries the FULL row snapshot (full-snapshot rule
-// — the fold cannot rebuild a row from the id-only ExtractSourceDocument payload).
-//
-// SAME-TX ROLLBACK NOTE: writeEvent() runs parseEvent() → QuestionBlockCreateExperimental →
-// QuestionBlockRowSnapshot.strict(), which THROWS on a malformed payload INSIDE the caller's tx. So
-// the snapshot MUST be built from a REAL row (the INSERT/UPDATE `.returning()` result), not a
-// hand-assembled object that could drift from DB defaults. A throw here rolls back the imperative
-// row write — that is the intended fail-loud barrier (§10 B5), but it means the snapshot's structured
-// tree + figure bboxes are now validated against the canonical StructuredQuestion / FigureRef schemas
-// (incl. the 0-1 BBox refine) at the write path, where the bare jsonb INSERT did not validate them.
+// Create-event seam for `question_block`. Every creation path also emits a complete
+// canonical create event in the same transaction so the fold can rebuild the row. The
+// payload carries the full row snapshot because the fold cannot rebuild from an
+// id-only source payload. The snapshot must come from the real `.returning()` row; a
+// malformed payload throws inside the caller's transaction and rolls back the write.
 
 import { newId } from '@/core/ids';
 import type { QuestionBlockRowSnapshotT } from '@/core/schema/event/genesis';
@@ -26,16 +14,9 @@ import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-polic
 type QuestionBlockRow = typeof question_block.$inferSelect;
 
 /**
- * Map a LIVE `question_block` row (the `.returning()` shape) → the projected `QuestionBlockRowSnapshot`
- * the create event carries. Two columns are EXCLUDED before the snapshot:
- *   - `extracted_prompt_md` — legacy deprecated (DROP deferred to Step 11.5); markdown views derive
- *     from `structured` at render time (ADR-0002).
- *   - `ordinal` (YUK-221) — positional creation metadata, NOT fold truth: it is assigned once from the
- *     extraction/import array index and never re-derived from events (the fold does not carry it, and
- *     the projection upsert leaves it untouched on conflict). Excluding it keeps `.strict()` green
- *     without threading a non-fold column through the event-sourcing snapshot.
- * Every OTHER column is fold truth. Drop the excluded columns BEFORE the snapshot so `.strict()`
- * (which rejects unknown keys) accepts the payload.
+ * Map a live row to the create-event snapshot. Excludes `extracted_prompt_md` (legacy;
+ * markdown derives from `structured`) and `ordinal` (positional metadata the fold does
+ * not own), so the strict snapshot parse accepts the payload.
  */
 export function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlockRowSnapshotT {
   const { extracted_prompt_md: _legacy, ordinal: _ordinal, ...snapshot } = row;
@@ -43,44 +24,35 @@ export function questionBlockRowToSnapshot(row: QuestionBlockRow): QuestionBlock
 }
 
 export interface WriteQuestionBlockCreateEventParams {
-  /** The freshly INSERTed/overwritten row, from `.returning()` (the authoritative after-state). */
+  /** The freshly inserted/overwritten row, from `.returning()`. */
   row: QuestionBlockRow;
-  /** Creation provenance discriminator (design §3 #6). `rescue` overwrites an existing blockId. */
+  /** Creation provenance; `rescue` overwrites an existing blockId. */
   origin: 'ocr' | 'rescue' | 'docx' | 'import' | 'edit_draft';
   actorKind: 'agent' | 'user' | 'system';
   actorRef: string;
-  /**
-   * The SAME `now` the imperative writer stamps `created_at`/`updated_at` with, so the create event's
-   * created_at aligns with the row's clock (single-clock model; the fold seeds dates from
-   * payload.row, but aligning the event time hardens against a future event-time-reading fold).
-   */
+  /** The same `now` the imperative writer used, so the event clock matches the row. */
   now: Date;
   causedByEventId?: string | null;
 }
 
 /**
- * Emit the canonical `experimental:question_block_create` event for one freshly-created row, in the
- * caller's transaction. `ingest_at = now` opts the row OUT of the memory-ingestion outbox (a
- * structural creation is not a memory-worthy activity — mirrors the variant_gen create seam).
+ * Emit the canonical create event for one freshly created row in the caller's transaction.
+ * `ingest_at = now` opts the row out of the memory outbox.
  */
 export async function writeQuestionBlockCreateEvent(
   tx: Db | Tx,
   params: WriteQuestionBlockCreateEventParams,
 ): Promise<void> {
-  // YUK-1408 — the block snapshot carries extracted document text, so the event
-  // inherits the session's source-document usage policy. 'answer_only' keeps it
-  // out of memory/brief channels through the shared derivation filter. The
-  // ingest_at stamp below already opts the row out of the memory outbox; the
-  // payload marker covers the read-side filters (eventAllowsDerivationSql).
+  // The snapshot carries extracted document text, so the event inherits the session's
+  // usage policy. 'answer_only' keeps it out of memory/brief reads; ingest_at already
+  // opts the row out of the outbox.
   const derivationPolicy = params.row.ingestion_session_id
     ? await resolveSessionDerivationPolicy(tx, params.row.ingestion_session_id)
     : 'allow';
   await writeEvent(tx, {
     id: newId(),
-    // YUK-1408 — bind the creation event to the ingestion session so the shared
-    // derivation filter can resolve the LIVE source-document usage policy on
-    // reads (consent withdrawal is retroactive via the session→document join,
-    // no event mutation). Nullable column; blocks without a session pass null.
+    // Bind the event to the ingestion session so reads resolve the live usage policy;
+    // consent withdrawal applies retroactively via the session→document join.
     session_id: params.row.ingestion_session_id,
     actor_kind: params.actorKind,
     actor_ref: params.actorRef,

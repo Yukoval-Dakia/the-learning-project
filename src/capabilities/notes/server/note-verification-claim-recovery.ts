@@ -1,9 +1,7 @@
-// Recovery query/preparation for the note verification state machine: selecting
-// which claims are recoverable (ordered by availability), and per-claim
-// preparation — epoch reset, expired-lease repair, cap terminalization, and
-// result promotion — before the job redoes or finalizes them.
-// Claim reservation/fencing lives in note-verification-claim-reservation.ts;
-// result persistence/finalization in note-verification-claim-result.ts.
+// Recovery selection and per-claim preparation (epoch reset, expired lease, cap,
+// result promotion). Reservation lives in
+// note-verification-claim-reservation.ts; results in
+// note-verification-claim-result.ts.
 import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';

@@ -216,18 +216,9 @@ export function zodToJsonSchemaCompat(
 }
 
 /**
- * YUK-1547 / YUK-1559 — the tool-parameters wire contract: provider
- * function-calling APIs reject a `parameters` document whose root does not
- * declare `type:"object"` (observed 400: `schema must be a JSON Schema of
- * 'type: "object"', got 'type: null'`).
- *
- * A union of pure object branches compiles to a bare `anyOf`/`oneOf` root —
- * declare the root type and keep the branches untouched; the validation
- * semantics are identical because every branch already requires an object.
- * A root that is genuinely not an object (array / primitive / unconstrained /
- * allOf-only / $ref-only) is a tool-contract violation: it throws with the
- * offending shape so the owning consumer fixes the real contract instead of
- * being masked behind an empty object.
+ * Tool-parameters wire contract: providers reject roots without type:"object".
+ * A union of object branches gets the root type; any other root is a contract
+ * violation and throws instead of being masked as an empty object.
  */
 export function ensureToolParametersObjectRoot(schema: JsonObject): JsonObject {
   if (schema.type === 'object') return schema;
@@ -249,10 +240,8 @@ export function ensureToolParametersObjectRoot(schema: JsonObject): JsonObject {
 }
 
 /**
- * `zodToJsonSchemaCompat` scoped to the tool-parameters boundary: same
- * conversion, plus the object-root contract above. This is the ONLY boundary
- * the root guarantee applies to — ordinary (non-tool) JSON Schema output
- * keeps whatever root the Zod schema produced.
+ * Tool-parameters conversion only; ordinary schema output keeps whatever root Zod
+ * produced.
  */
 export function zodToToolParametersSchema(
   schema: ZodTypeAny,

@@ -9,8 +9,7 @@ export const DerivationFixtureItemSchema = z.object({
   reference_md: z.string().min(1),
   rubric_json: z.object({
     criteria: z.array(z.object({ name: z.string(), weight: z.number(), descriptor: z.string() })),
-    // M2.2 reviewer note: reuse canonical RubricReferenceSolution to avoid
-    // drift between fixture schema and the source of truth in business.ts.
+    // Reuse the canonical schema so fixture and source cannot drift.
     reference_solution: RubricReferenceSolution,
   }),
   difficulty: z.number().int().min(1).max(5),

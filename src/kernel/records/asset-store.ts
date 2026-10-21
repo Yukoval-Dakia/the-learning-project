@@ -3,32 +3,13 @@ import { and, eq, ne, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 
-// Shared content-addressed image-asset write path. Extracted from
-// app/api/assets/route.ts (YUK-250) so both the generic asset upload route and
-// the PDF expansion route (/api/ingestion/pdf) persist `source_asset` rows
-// identically; moved to kernel/records (YUK-1571) because ingestion and the
-// practice jyeoo supply lane share the same object-key lock and row lifecycle
-// — a common protocol, not an ingestion domain decision. kind/provenance stay
-// caller-supplied vocabulary; this module owns only the mechanism:
-//   - SHA-256 over the bytes → content-addressed `storage_key = assets/<sha>`.
-//     Dedup is at the R2 object layer only: re-uploading / re-rendering the same
-//     bytes yields the same storage_key, so r2.put overwrites the same object
-//     (no orphan grows). The DB row is NOT deduped — each call createId()s a new
-//     source_asset row (sha256/storage_key carry no unique constraint), so the
-//     same bytes can back multiple rows. That is intentional: an asset id is the
-//     handle a session pins, and two sessions may legitimately reference the
-//     identical page bytes via distinct rows.
-//   - r2.put(storageKey, bytes, mime);
-//   - INSERT source_asset with dimensions from the stored bytes when recognizable.
-//     Unknown formats/malformed legacy inputs keep nullable dimensions; this
-//     metadata read neither transforms the object nor changes upload acceptance.
-//
-// The return shape is the inserted row, so /api/assets can keep returning
-// `{ asset: row }` byte-for-byte while /api/ingestion/pdf maps over many rows.
+// Shared content-addressed asset write path. Dedup happens only at the object
+// layer (`storage_key = assets/<sha>`); each call still inserts a distinct
+// source_asset row because an asset id is the handle a session pins. kind and
+// provenance stay caller-supplied; this module owns the storage/lock mechanism.
 
-/** Structured blob-handle contract this protocol needs — put + delete only.
- *  `R2Client` (src/server/r2.ts) satisfies it structurally; kernel may not
- *  import the server seam, and the protocol never reads objects back. */
+/** Blob handle this protocol needs. `R2Client` satisfies it structurally; kernel
+ * cannot import the server seam, and the protocol never reads objects back. */
 export interface AssetBlobClient {
   put(key: string, body: Uint8Array, contentType?: string): Promise<void>;
   delete(key: string): Promise<void>;
@@ -41,8 +22,7 @@ export async function lockImageStorageKey(tx: Tx, storageKey: string): Promise<v
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${storageKey}, 0))`);
 }
 
-/** postgres.js surfaces unique violations as code '23505' (possibly wrapped by
- * drizzle); walk the cause chain. Same pattern as copilot_nudge_evaluate.ts. */
+/** postgres.js may wrap unique violations; walk the cause chain for code 23505. */
 export function isUniqueViolation(err: unknown): boolean {
   let e: unknown = err;
   for (let depth = 0; depth < 5 && e !== null && typeof e === 'object'; depth++) {
@@ -53,15 +33,8 @@ export function isUniqueViolation(err: unknown): boolean {
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  // Hash the VIEW's bytes, not `bytes.buffer`. A Uint8Array can be a window into
-  // a larger (pooled) ArrayBuffer with a non-zero byteOffset / partial byteLength
-  // — e.g. PDF page PNGs from pdf-render.ts are sharp().toBuffer() Node Buffers
-  // wrapped as `new Uint8Array(png.buffer, png.byteOffset, png.byteLength)`.
-  // Passing `bytes.buffer` would hash the whole underlying pool, diverging from
-  // the byte_size + r2.put bytes (which use the view) and breaking content
-  // addressing / dedup. `.slice()` copies exactly the view's bytes into a fresh,
-  // non-shared ArrayBuffer (honouring offset/length), giving digest() a clean
-  // BufferSource.
+  // Hash the view's bytes, not `bytes.buffer`: a Uint8Array may be a window into
+  // a larger pooled buffer. slice() copies exactly the view into a clean BufferSource.
   const hash = await crypto.subtle.digest('SHA-256', bytes.slice());
   return Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -70,8 +43,7 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 async function imageDimensions(bytes: Uint8Array) {
   try {
-    // Public ingestion ports are also imported by migration/CLI bundles. Load
-    // the native image package only when an asset actually needs inspection.
+    // Migration/CLI bundles also import this module; load sharp only when needed.
     const { default: sharp } = await import('sharp');
     return await sharp(Buffer.from(bytes)).metadata();
   } catch {
@@ -79,13 +51,8 @@ async function imageDimensions(bytes: Uint8Array) {
   }
 }
 
-// YUK-1404 (B2/R1) — generalized write path. Non-image artifacts of a source
-// package (original docx/pdf, converted markdown, per-page text layers) are
-// first-class source_asset rows too: same content-addressed storage_key, same
-// advisory-lock protocol, kind marks the role. `id`/`storageKey` overrides
-// exist for callers that need a deterministic row identity (pipeline figure
-// crops keep their `figures/<page>-fig-N` contract so figure_attach's key
-// check and idempotent re-runs keep working).
+// Non-image source-package artifacts use the same protocol; kind marks the role.
+// id/storageKey overrides support deterministic row identities such as figure crops.
 export async function persistSourceAsset(
   db: Db,
   r2: AssetBlobClient,
@@ -100,9 +67,8 @@ export async function persistSourceAsset(
   },
 ): Promise<SourceAssetRow> {
   const { bytes, mime } = input;
-  // Read the exact byte view (including pooled-buffer offsets), without decoding
-  // pixels or holding the DB/storage-key lock. Existing unsupported input paths
-  // remain accepted with unknown dimensions; never synthesize a size.
+  // Metadata read does not hold the DB/storage-key lock; unsupported inputs keep
+  // unknown dimensions rather than a synthesized size.
   const dimensions = input.kind === 'image' ? await imageDimensions(bytes) : null;
   const width = dimensions?.width;
   const height = dimensions?.height;
@@ -112,8 +78,8 @@ export async function persistSourceAsset(
   const id = input.id ?? createId();
   const now = new Date();
   const row = await db.transaction(async (tx) => {
-    // The key is shared across source_asset rows. Hold one DB advisory lock from before put
-    // through owner-row commit, closing the unsafe "put complete, owner not visible" window.
+    // One advisory lock spans put through owner-row commit, closing the
+    // "object written, owner not visible" window.
     await lockImageStorageKey(tx, storageKey);
     const hadOwnerBeforePut = input.compensatePutOnInsertFailure
       ? (
@@ -146,8 +112,7 @@ export async function persistSourceAsset(
     } catch (err) {
       if (input.compensatePutOnInsertFailure && !hadOwnerBeforePut) {
         try {
-          // The transaction may already be aborted by the failed INSERT, so use the owner
-          // snapshot taken while holding the key lock instead of issuing another SQL query.
+          // The failed INSERT may have aborted the transaction; use the pre-put snapshot.
           await r2.delete(storageKey);
         } catch (cleanupErr) {
           console.error('[persistImageAsset] failed to compensate R2 put:', cleanupErr);
@@ -156,15 +121,14 @@ export async function persistSourceAsset(
       throw err;
     }
   });
-  // INSERT ... RETURNING always yields the inserted row, but guard the empty-array
-  // case so the Promise<SourceAssetRow> contract can never resolve to undefined.
+  // Guard the empty-array case so the contract cannot resolve to undefined.
   if (!row) {
     throw new Error('persistSourceAsset: INSERT ... RETURNING returned no row');
   }
   return row;
 }
 
-/** Existing image callers retain the same content-addressed owner protocol. */
+/** Image caller shorthand for the same content-addressed owner protocol. */
 export function persistImageAsset(
   db: Db,
   r2: AssetBlobClient,
@@ -174,8 +138,8 @@ export function persistImageAsset(
 }
 
 /**
- * Delete one logical owner and remove the content-addressed object only after its final owner.
- * Every `assets/<sha>` owner mutation shares the same advisory-lock protocol as writes.
+ * Remove one logical owner; delete the object only after its final owner. Shares
+ * the write lock protocol.
  */
 export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string): Promise<boolean> {
   return db.transaction(async (tx) => {
@@ -188,8 +152,7 @@ export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string):
 
     await lockImageStorageKey(tx, snapshot.storageKey);
 
-    // The target may have disappeared while this transaction waited for a concurrent
-    // mutation of the same storage key. Re-read it under the key lock before acting.
+    // The target may have disappeared while waiting for the key lock; re-read.
     const [live] = await tx
       .select({ id: source_asset.id })
       .from(source_asset)

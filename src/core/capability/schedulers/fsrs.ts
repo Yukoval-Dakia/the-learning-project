@@ -1,16 +1,7 @@
-// T-QP (YUK-165, ADR-0014 §5) — the `fsrs` scheduling policy as a registered
-// capability. This is the EXISTING `fsrs_question` behavior, generalized to
-// declare it serves both `question` and `question_part` activity kinds. It does
-// NOT reimplement FSRS: `run()` maps the judge's coarse_outcome onto an FSRS
-// rating (reusing `ratingFromCoarseOutcome`'s mapping — kept inline here so core
-// stays free of any server import) and delegates the actual card transition to
-// the injected `computeNext` (the live path passes `scheduleReview` from
-// `src/server/review/fsrs.ts`). Same math, one source of truth.
-//
-// Because a `question_part` IS a `question` row, the live review/due path already
-// schedules parts via this exact policy with subject_kind='question'. This
-// capability makes that mapping explicit + registry-visible (per ADR-0014 §5) and
-// lets validateProfile assert `schedulingHints.default_policy` resolves here.
+// The registered `fsrs` policy: maps a judge outcome to a rating and delegates the
+// card transition to the injected FSRS step. No FSRS math is reimplemented here, and
+// core stays free of server imports. It serves questions and question parts, which
+// are question rows in the live review path.
 
 import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
@@ -31,18 +22,12 @@ const manifest: CapabilityManifestT = {
   cost_class: 'local',
   latency_class: 'sync',
   stability: 'stable',
-  // The whole point of T-QP: this policy serves plain questions AND parts.
   supports_activity_kinds: ['question', 'question_part'],
 };
 
 /**
- * YUK-739 — coarse judge outcome → FSRS rating. The duplicated inline switch
- * is gone; the mapping is the subject-owned rating policy's universal default,
- * exported from `src/core/schema/profile-decl.ts`
- * (`UNIVERSAL_RATING_FROM_OUTCOME`). This scheduler capability deliberately
- * receives no SubjectProfile (ADR-0014 §5: declaration/validation surface; the
- * live path schedules via the practice route, which resolves the profile), so
- * it pins the tracked universal constant — same values, one source of truth.
+ * Pin the universal default mapping: this declaration surface receives no
+ * SubjectProfile; the live path resolves the profile and schedules through practice.
  */
 function ratingFromCoarseOutcome(outcome: JudgeResultV2T['coarse_outcome']): RatingLabel | null {
   if (outcome === 'partial_unknown') return null;

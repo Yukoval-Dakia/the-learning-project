@@ -16,11 +16,10 @@ import {
   type RecordHeartbeatInput,
 } from './types';
 
-// Process-local presence store — the DEFAULT for dev + the fast unit suite
-// (which vi.mock's presence/pg to this). YUK-384: observably equivalent to
-// PgPresenceStore for session rows — sessions are keyed by (artifactId,
-// sessionId), a session is active while its last heartbeat is within
-// EDITING_HEARTBEAT_TIMEOUT_MS, and the note-refine defer queue is per-artifact.
+// Process-local presence store — the default for dev and the fast unit suite.
+// Observably equivalent to PgPresenceStore for session rows: keyed by
+// (artifactId, sessionId), active while the last heartbeat is within
+// EDITING_HEARTBEAT_TIMEOUT_MS, with a per-artifact defer queue.
 // Intentionally NOT cross-process (the PG store is what shares state).
 export class InMemoryPresenceStore implements PresenceStore {
   private readonly sessions = new Map<string, Map<string, Date>>();

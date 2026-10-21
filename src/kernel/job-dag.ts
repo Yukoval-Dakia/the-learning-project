@@ -1,19 +1,9 @@
-// 夜间任务编排 DAG（YUK-758）——纯拓扑内核，无 IO。
+// 夜间任务编排 DAG —— 纯拓扑内核，无 IO。依赖由 manifest 的 dependsOn 声明，
+// 在此校验并由 orchestrator 消费；运行时驱动在 src/server/orchestration/。
 //
-// 立意：把夜链任务的依赖从「钟表错峰」搬进 manifest 声明贡献制（与路由/工具/事件
-// 同一登记教义）。JobDecl.dependsOn 声明的边在此被校验（缺引用 / 非成员引用 /
-// 自环 / 成环）并被 orchestrator 消费。kernel 保持纯净（manifest.unit 分区不被
-// DB/pg-boss 污染）：本文件只做集合/图算法，运行时驱动在 src/server/orchestration/。
-//
-// 成员语义（membership）：JobDecl 上**存在** `dependsOn` 字段（哪怕 `[]`）即声明
-// 该 job 为编排图成员；字段缺席 = 裸 cron，orchestrator 不碰。`[]` = 根（run 起
-// 步即入队）。每条边引用一个上游 job 名，上游**必须**同为图成员。
-//
-// 边的失败语义（逐边）：默认**硬**（上游失败/跳过 → 下游跳过，留 skip 痕迹）；
-// 标 `soft` 的边 → 上游失败下游**照常执行**，orchestrator 在该节点的调度行上记 stale=true
-// 留痕。下游 handler **不会**收到任何 stale 信号，也不因此改变行为（YUK-778：那条
-// `{ stale: true }` job payload 从来没有消费者，已删）——软边的全部含义就是「不阻塞」。
-// not_needed / degraded 不是硬失败：下游不连坐跳过，按自己的资格决定，并记 stale。
+// 成员：存在 dependsOn（哪怕 []）即为图成员；缺席 = 裸 cron。[] = 根。上游必须
+// 同为图成员。硬边失败会跳过下游；soft 边只表示不阻塞，调度行记 stale，handler
+// 收不到信号。not_needed/degraded 不连坐跳过。
 
 import type { NightlyEligibilityFn } from './nightly-eligibility';
 
@@ -21,7 +11,7 @@ import type { NightlyEligibilityFn } from './nightly-eligibility';
 export interface JobDependency {
   /** 上游 job 名（必须是已声明的图成员）。 */
   job: string;
-  /** 软边：上游失败/跳过时下游仍跑（调度行记 stale，handler 无感）。缺省 false = 硬边。 */
+  /** 软边：上游失败/跳过时下游仍跑，调度行记 stale。缺省 false = 硬边。 */
   soft?: boolean;
 }
 
@@ -58,7 +48,7 @@ export interface JobDag {
   nodes: Map<string, JobDagNode>;
   /** 无上游的根（run 起步入队）。 */
   roots: string[];
-  /** upstream name → 依赖它的下游边列表（反向邻接，orchestrator 推进用）。 */
+  /** 反向邻接：upstream name → 依赖它的下游边。 */
   dependents: Map<string, { job: string; soft: boolean }[]>;
 }
 
@@ -67,16 +57,14 @@ export class JobDagError extends Error {
 }
 
 /**
- * 从成员输入构图。假定输入已通过 {@link validateJobDag}（无缺引用/自环/成环）；
- * 未经校验直接建图不做防御——校验与建图分离，orchestrator 启动路径先校验后建。
+ * 从已校验的成员构图；校验与建图分离，orchestrator 启动路径先校验后建。
  */
 export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
   const nodes = new Map<string, JobDagNode>();
   const dependents = new Map<string, { job: string; soft: boolean }[]>();
   for (const m of members) {
-    // Self-defensive against a duplicate member name even when a caller bypasses
-    // validateComposition (buildOrchestrationDag / tests call buildJobDag directly).
-    // A silent Map overwrite would drop one capability's job from the DAG.
+    // Guard duplicates even when a caller bypasses validateComposition: a silent
+    // Map overwrite would drop one capability's job.
     if (nodes.has(m.name)) {
       throw new JobDagError(`duplicate DAG member name '${m.name}' (${m.owner})`);
     }
@@ -91,8 +79,7 @@ export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
   for (const node of nodes.values()) {
     for (const dep of node.deps) {
       const list = dependents.get(dep.job);
-      // buildJobDag 契约：调用前已过 validateJobDag（dep.job 一定是成员）。若某上游不在
-      // nodes 里，说明调用方跳过了校验——fail fast，绝不发明幻影反向边掩盖集成错误。
+      // Caller skipped validation: fail fast, never invent a phantom edge.
       if (!list) {
         throw new JobDagError(
           `buildJobDag: dependency '${dep.job}' of '${node.name}' is not a declared member (was validateJobDag called?)`,
@@ -106,13 +93,8 @@ export function buildJobDag(members: readonly JobDagMemberInput[]): JobDag {
 }
 
 /**
- * 找一条有向环并返回其节点路径（用于错误信息）；无环返回 null。
- * 三色 DFS：white=未访问 gray=在栈上 black=已完成。gray→gray 命中回边即环。
- *
- * 重复成员名直接抛（YUK-758 review ToTbk）：`adj.set(m.name, ...)` 会让后一条**覆盖**前一条
- * 的边集，于是像 `[a→b, b→a, a→c, c]` 这种输入会退化成 `{a:['c'], b:['a'], c:[]}`，真环
- * `a→b→a` 被静默漏判——对一个**找环**的函数来说，假阴性是最坏的失败模式。与 buildJobDag /
- * validateJobDag 的同名守卫保持一致（本函数同为导出公共入口，测试与未来独立校验路径会直调）。
+ * 找一条有向环并返回节点路径；无环返回 null。重复成员名直接抛，否则 Map 覆盖
+ * 会漏判真环。
  */
 export function findCycle(members: readonly JobDagMemberInput[]): string[] | null {
   const adj = new Map<string, string[]>();
@@ -135,11 +117,11 @@ export function findCycle(members: readonly JobDagMemberInput[]): string[] | nul
     color.set(name, GRAY);
     stack.push(name);
     for (const next of adj.get(name) ?? []) {
-      // 缺引用（next 非成员）不是本函数职责——validateJobDag 先拦。这里跳过未知节点。
+      // 缺引用由 validateJobDag 拦；这里跳过未知节点。
       if (!adj.has(next)) continue;
       const c = color.get(next) ?? WHITE;
       if (c === GRAY) {
-        // 回边：从栈里 next 起截到当前节点即环路径。
+        // 回边：从栈中 next 截到当前节点即环。
         const idx = stack.indexOf(next);
         return [...stack.slice(idx), next];
       }
@@ -172,17 +154,13 @@ export function findCycle(members: readonly JobDagMemberInput[]): string[] | nul
  *  5. 单节点内无重复上游。
  *  6. 全图无环。
  *
- * @param members 图成员（dependsOn 已声明的 job）。
- * @param allJobNames 组合根里**全部** job 名（含裸 cron），用于区分「缺引用」与「引用了非成员」。
+ * @param allJobNames 组合根里全部 job 名，用于区分缺引用与非成员引用。
  */
 export function validateJobDag(
   members: readonly JobDagMemberInput[],
   allJobNames: ReadonlySet<string>,
 ): void {
-  // 重复成员名显式拦（YUK-758 review ToTap）：`new Set(members.map(...))` 会**静默**去重，
-  // 让两条同名成员通过校验，与本函数「校验图成员集」的契约不符。生产路径上
-  // validateComposition 的 jobOwner 唯一性先拦一道，但本函数是导出的公共校验入口
-  // （测试 / 未来独立校验路径直调），契约须自洽——否则返回假阴性「合法」。
+  // 显式拦重复名：Set 去重会静默放过两条同名成员，返回假阴性。
   const memberNames = new Set<string>();
   for (const m of members) {
     if (memberNames.has(m.name)) {

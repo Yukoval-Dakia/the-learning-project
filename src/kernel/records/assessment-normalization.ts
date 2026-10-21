@@ -1,48 +1,17 @@
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
-// YUK-1043 — 统一发布链 · 契约 normalizer（grounding §3.1/§4.4；复审 P1-2/P1-3）。
+// 把 legacy question 工作副本归一为评估契约四层，供 publisher 在同一事务内铸成
+// 不可变 revision。
 //
-// 把 legacy `question` 工作副本（flat 列）转换为 YUK-1046 评估契约四层
-// （structure / response_spec / scoring_basis / execution_plan），供 publisher
-// 在同一事务内铸成不可变 question_revision。
+// 保真：共享题干/rubric 以内联字节进 structure；figure 需调用方核验的实内容
+// digest，缺失即 unverified + conversion issue。每个 part 只用它自己的答案来源；
+// standalone 单叶可回退行级 reference，stem+subs 的无答案叶不继承 root reference，
+// 解析不出时记 unrepresentable_answer，绝不发明键。
 //
-// 保真纪律（P1-2 —— 归一不得丢失或发明权威内容）：
-//   - 题干/共享上下文（复合 root prompt、structured stem、rubric）以
-//     【带字节】的 material 内联进 structure（content_md；复审 P1-2a：不可变
-//     revision 必须自恢复共享段落，不能只留 hash 引用）；figures 引用 asset
-//     store 的真实资产 + 由调用方核验的实内容 digest（无核验值 ⇒ 如实标注
-//     unverified，不伪造）；
-//   - 每个 part 的判分依据来自【它自己的】答案来源（part 行 reference /
-//     structured 叶 answers）。例外（YUK-1099 owner 裁决 B）：【standalone
-//     单叶】（structured root 无 sub_questions）且叶无 answers 时，行级
-//     reference_md 是该题自己的真实答案（import/auto-enroll 形状）——
-//     解析进品格而非 missing_reference 丢弃。stem+subs 的无答案叶仍不
-//     继承 root reference（复审 P1-2b 裁决不变）；兜底 reference 存在但
-//     槽位不可解析 ⇒ unrepresentable_answer（未决，不伪造键）。
-//   - rule_reference.source 按【答案证据】的实际来源映射（复审 P1-2c：
-//     rubric.reference_solution_source='ai_generated' ⇒ system_proposed，
-//     即使题目本身来自 web_sourced —— 题目获取来源 ≠ 答案权威来源，D1）；
-//     web_sourced 页面参考 → official、manual 录入 → manual、其余模型链 →
-//     system_proposed；rubric/placeholder 来源一律不冒充 official；
-//   - judge_kind_override 进入 rule 文本标记行 ⇒ 改判分意图 ⇒ digest 变。
+// rule_reference.source 看答案证据来源而非题目获取来源（ai_generated 永不 official）。
+// 无可用依据的 part 记 conversion_issues，publisher 强制 withheld。
 //
-// 多答案键（P1-3）：reference 头解析出 ≥2 个字母 ⇒ multi_choice 槽
-// （min 1 / max options.length，接受集由 option_set_key 精确表达）+
-// exact_option_set —— 不再把多选键塞进 single_choice（校验器拒绝、合法作答
-// 无法表示）。
-//
-// 未决转换（fail-honest）：无可用品格依据的 part 记入 conversion_issues；
-// publisher 据此强制 withheld —— 显式 unresolved，绝不发明 one-point 规则。
-//
-// 身份纪律（§3.1；复审 P1-3 裁决）：
-//   - part_id：structured 叶 node id / 物理子行 id / 单题行 id。行/node 保留
-//     只是【实体】保留；语义是否连续由 publisher 的 SEMANTIC diff 裁决
-//     （判分相关内容实质变化 ⇒ replaced + 显式映射，绝不静默记 retained）。
-//   - slot_id：`{part_id}::r` 派生 —— part 保留 ⇒ slot 保留。
-//   - option_id：`opt_<sha256(text)>` —— 【仅文本】参与身份（label 是显示
-//     元数据，不是身份输入；复审裁决：relabel 不铸造新身份）。同槽内文本
-//     重复时以序号后缀消歧（病态形状，确定性处理）。
-//   - material_id：内容寻址（sha256(kind\0text)）—— 内容不变 ⇒ 稳定；
-//     内容替换 ⇒ 新身份。
+// 身份：part_id 的语义连续由 publisher 的 semantic diff 裁决；option_id 仅由文本
+// 决定（relabel 不换身份）；material_id 内容寻址。
 
 import { createHash } from 'node:crypto';
 import type {
@@ -70,10 +39,10 @@ import { createProbeV2Criterion } from './assessment-probe-criterion';
 
 type JsonObject = Record<string, unknown>;
 
-/** rule_reference.source 合法值（YUK-1046 scoring.ts）。 */
+/** rule_reference.source 合法值。 */
 export type RuleProvenance = 'official' | 'system_proposed' | 'manual';
 
-/** 转换未决项 —— 有 issue 的组 publisher 强制 withheld（不发明品格依据）。 */
+/** 转换未决项；有 issue 的组 publisher 强制 withheld。 */
 export interface ConversionIssue {
   code: 'missing_reference' | 'unrepresentable_answer' | 'unverified_figure_digest';
   partId: string;
@@ -107,12 +76,7 @@ export interface NormalizedContract {
   response_spec: ResponseSpecT;
   scoring_basis: ScoringBasisT;
   execution_plan: ExecutionPlanT;
-  /**
-   * YUK-1497（review R1）—— 从组根 structured.presentation 提升的冻结展示层。
-   * 在 integrity_digest 计算【之前】入位（digest 覆盖该层）；缺省完全省略
-   * —— 无展示层的 revision digest 逐字节不变。发布 seam 会用同一 schema
-   * 重解析并对 digest 重算比对（不一致即拒发）。
-   */
+  /** 从组根 structured.presentation 提升；digest 覆盖该层，缺省时旧 digest 不变。 */
   presentation?: PresentationT;
   /** 版本化完整性 digest：四层 canonical JSON 的 sha256（§3.1）。 */
   integrity_digest: string;
@@ -120,10 +84,7 @@ export interface NormalizedContract {
   group_id: string;
   /** 未决转换项（空 = 全部 part 有可发布品格依据）。 */
   conversion_issues: ConversionIssue[];
-  /** YUK-1445 — rule_reference statement 的出处，按 scoring_unit_id 键控。
-   *  'reference' = 含印出答案原文（可作 source crosscheck 输入）；
-   *  'rubric'/'placeholder' = 非答案文本（rubric 或「无答案」占位），
-   *  消费侧不得当答案用。仅 rule_reference 单元有项。 */
+  /** 'reference' 含答案原文；'rubric'/'placeholder' 不得当答案用。 */
   rule_statement_origins?: Record<string, 'reference' | 'rubric' | 'placeholder'>;
 }
 
@@ -136,25 +97,19 @@ function sha256Hex(input: string): string {
 }
 
 /**
- * 内容寻址 option id —— 仅【文本】参与身份（P1-3 裁决：label 是显示元数据，
- * relabel 不铸造新身份；文本变 ⇒ 新身份 = 语义替换）。disambiguator 仅用于
- * 同槽内文本重复的病态形状（确定性消歧）。
+ * 仅文本参与 option 身份；label 只是显示元数据。disambiguator 只处理同槽重复文本。
  */
 export function mintOptionId(text: string, disambiguator?: string): string {
   return `opt_${shortHash(disambiguator != null ? `${disambiguator}\0${text}` : text)}`;
 }
 
-/** 内容寻址 material id：素材内容替换 ⇒ 新身份（§3.1）。 */
+/** 内容寻址 material id；内容替换即新身份。 */
 export function mintMaterialId(kind: string, text: string): string {
   return `mat_${shortHash(`${kind}\0${text}`)}`;
 }
 
 /**
- * 答案权威 provenance 映射（P1-2c：看【答案证据】来源，不是题目获取来源）：
- *   - rubric.reference_solution_source === 'ai_generated' ⇒ system_proposed
- *     （solution-generate backfill 的显式留痕 —— AI 补写的答案绝不 official）；
- *   - web_sourced 页面参考 ⇒ official；manual 人工录入 ⇒ manual；
- *   - 其余模型链（quiz_gen / dreaming / mistake_variant / …）⇒ system_proposed。
+ * 答案证据来源决定 provenance，与题目获取来源无关；AI 补写的答案永不 official。
  */
 export function ruleProvenanceFor(
   source?: string | null,
@@ -186,8 +141,7 @@ const LETTER_INDEX: Record<string, number> = {
 };
 
 /**
- * 解析 reference head 为选项下标集合。legacy exact 判分的字母语义：接受
- * "AC"、"A C"、"A,C" 等形式。返回 null = 解析不可得（走 rule_reference）。
+ * 解析 legacy 字母答案头（"AC" / "A C" / "A,C"）；null 表示不可解析，走 rule_reference。
  */
 function parseChoiceAnswerHead(head: string, optionCount: number): number[] | null {
   const tokens = head.replace(/[\s,、，;；/]/g, '');
@@ -211,8 +165,7 @@ interface MaterialBuild {
   issues: ConversionIssue[];
 }
 
-/** 构建组级共享材料（stem 文本 / root figures / root rubric）。文本材料带
- * content_md 字节；figure 用调用方核验的实 digest（缺失 ⇒ unverified + issue）。 */
+/** 组级共享材料（stem/figures/rubric）；figure digest 缺失即 unverified + issue。 */
 function buildSharedMaterials(ctx: {
   stemText: string | null;
   figures: FigureRefT[];
@@ -234,7 +187,7 @@ function buildSharedMaterials(ctx: {
   for (const figure of ctx.figures) {
     const verified = ctx.figureDigests?.[figure.asset_id];
     if (verified == null) {
-      // 不伪造内容 digest：如实标注未核验（publisher 会 withheld 该组）。
+      // 不伪造 digest：标记未核验，publisher 会 withheld 该组。
       issues.push({
         code: 'unverified_figure_digest',
         partId: ctx.partIdForIssues,
@@ -283,11 +236,8 @@ interface LeafInput {
   /** 该 part 自己的答案文本候选（叶 answers / part 行 reference）。 */
   answerTexts: string[];
   /**
-   * YUK-1099（owner 裁决 B）—— answerTexts 来自行级 reference_md 的
-   * standalone 叶兜底（import/auto-enroll 形状：叶无 answers，但 reference_md
-   * 就是真实答案）。此时 reference 是该题自己的已写定答案键 ——
-   * text 槽 exact-capable 时直接铸 text_key（不需 judge_kind_override='exact'），
-   * 选择槽解析不出字母 ⇒ unrepresentable_answer（未决，绝不伪造键）。
+   * answerTexts 来自行级 reference_md 的 standalone 兜底。exact-capable 时直接铸
+   * text_key；选择槽解析不出字母则记 unrepresentable_answer。
    */
   answerFromRowReference?: boolean;
   judgeKindOverride: string | null;
@@ -305,14 +255,12 @@ interface LeafScoring {
   acceptedTexts?: string[];
   ruleStatement?: string;
   ruleProvenance?: RuleProvenance;
-  /** buildRuleStatement 的出处标记：'reference' = statement 含印出答案原文；
-   *  'rubric'/'placeholder' = statement 是 rubric/占位文本（绝非答案 ——
-   *  消费侧不得把它当 source answer 用，YUK-1445）。 */
+  /** 'reference' 含答案原文；'rubric'/'placeholder' 绝非答案。 */
   ruleStatementOrigin?: 'reference' | 'rubric' | 'placeholder';
   issue?: ConversionIssue;
 }
 
-/** 同槽内选项铸造：文本寻址；重复文本以序号消歧（确定性）。 */
+/** 文本寻址的槽内选项；重复文本以序号确定性消歧。 */
 function mintSlotOptions(texts: string[]): ResponseOptionT[] {
   const seen = new Map<string, number>();
   return texts.map((text, idx) => {
@@ -326,8 +274,7 @@ function mintSlotOptions(texts: string[]): ResponseOptionT[] {
   });
 }
 
-/** Migration reads known numeric metadata once; evaluation only reads the published key.
- * No inherited 5% tolerance or legacy partial-grade ladder is invented for new rules. */
+/** 数值键只来自已知 metadata；不继承 5% 容差或旧部分给分阶梯。 */
 function numericKeyFor(row: {
   kind?: string;
   judge_kind_override?: string | null;
@@ -368,7 +315,6 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
   const slotId = `${leaf.partId}::r`;
   const answerText = leaf.answerTexts.find((t) => t != null && t.trim().length > 0) ?? null;
 
-  // ---- 选择槽：先解析答案头（字母数决定 single/multi，P1-3）。----
   if (leaf.choices != null && leaf.choices.length >= 2) {
     const options = mintSlotOptions(leaf.choices);
     const head = answerText != null ? extractAnswerHead(answerText).trim() : '';
@@ -378,7 +324,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
         accepted.length === 1
           ? { slot_id: slotId, part_id: leaf.partId, kind: 'single_choice', options }
           : {
-              // 多答案键 ⇒ multi_choice（min 1 / max 全集；接受集由 key 精确表达）。
+              // 多答案键 ⇒ multi_choice；接受集由 key 精确表达。
               slot_id: slotId,
               part_id: leaf.partId,
               kind: 'multi_choice',
@@ -392,11 +338,8 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
         acceptedOptionIds: accepted.map((idx) => options[idx].option_id),
       };
     }
-    // 选择题但答案头不可解析 → 以 rule 文本承载（不发明键）。rubric/placeholder
-    // 来源 ⇒ provenance 降为 system_proposed（不冒充 official，D1）。
-    // YUK-1099 #3（owner 裁决 B）—— 兜底 reference 存在但解析不出 ⇒ 该槽
-    // 对答案而言是【存在但不可表示】：记 unrepresentable_answer（publisher 强制
-    // withheld），不是 missing_reference，也不伪装成无 issue 的可发布规则。
+    // 答案头不可解析时以 rule 文本承载；standalone 兜底存在但不可表示时记
+    // unrepresentable_answer，不伪造键，也不冒充 official。
     const fallback = buildRuleStatement(answerText, leaf);
     return {
       slot: { slot_id: slotId, part_id: leaf.partId, kind: 'single_choice', options },
@@ -425,7 +368,6 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
     };
   }
 
-  // ---- 文本槽：显式 exact 判分意图 + 可胜 reference ⇒ 确定性 text_key。----
   const slot: ResponseSlotT = {
     slot_id: slotId,
     part_id: leaf.partId,
@@ -438,15 +380,13 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
       slot,
       criterionKind: 'rule_reference',
       ruleStatement: fallback.statement,
-      ruleProvenance: 'system_proposed', // placeholder/rubric 来源不冒充 official
+      ruleProvenance: 'system_proposed',
       ruleStatementOrigin: fallback.origin,
       issue: missingReferenceIssue(leaf),
     };
   }
-  // YUK-1099 #3 —— answerFromRowReference（standalone 叶兜底）= reference_md
-  // 是已写定答案键：exact-capable 时直接铸 text_key，不要求显式 'exact' override
-  // （该行从未标过 exact 判分意图 —— 要求它会把可判分的 import/auto-enroll 题
-  // 误降为 human_review 规则）。非兜底路径仍需 override —— 与未改行为一致。
+  // Standalone 兜底 reference 是已写定答案键：exact-capable 时直接铸 text_key，
+  // 不要求显式 override；非兜底路径仍需 override。
   if (
     (leaf.judgeKindOverride === 'exact' || leaf.answerFromRowReference === true) &&
     isExactCapableReference(answerText)
@@ -454,7 +394,7 @@ function normalizeLeafScoring(leaf: LeafInput): LeafScoring {
     return {
       slot,
       criterionKind: 'text_key',
-      // 接受集 = 该 part 的全部答案文本（多答案 any-of 语义）。
+
       acceptedTexts:
         leaf.answerTexts.length > 0
           ? leaf.answerTexts.map((t) => extractAnswerHead(t))
@@ -482,9 +422,7 @@ function missingReferenceIssue(leaf: LeafInput): ConversionIssue {
   };
 }
 
-/** rule 文本 = 答案原文（reference / 叶 answers）+ judge 意图标记（改任一
- * ⇒ digest 变）。rubric 不进 statement（它以 material 形式进 structure）；
- * 仅当答案缺失时以 rubric 原文充当规则 —— provenance 降为 system_proposed。 */
+/** 答案原文 + judge 意图标记；答案缺失时才用 rubric/占位，provenance 相应降级。 */
 function buildRuleStatement(
   answerText: string | null,
   leaf: LeafInput,
@@ -546,16 +484,13 @@ function executorFor(criterionKind: LeafScoring['criterionKind']) {
     case 'text_key':
       return { kind: 'deterministic', comparator: 'exact_text' } as const;
     default:
-      // 未准入的模型判分能力不冒充（D17）—— 显式 human_review。
+      // 未准入的模型判分不冒充，显式 human_review。
       return { kind: 'human_review' } as const;
   }
 }
 
 /**
- * YUK-1497（review R1）—— 组根 structured.presentation → contract.presentation。
- * 非空必须过 Presentation.safeParse：通过带 zod 解析后的规范形（digest、
- * 发布校验与 INSERT 都落在同一对象上）；失败原样透传 —— 发布 barrier 的
- * 形状门会拒发，绝不静默丢层（丢层会让已保存的展示编辑悄悄变成 noop 发布）。
+ * 组根展示层过 Presentation；失败原样透传，由发布 barrier 拒发（不静默丢层）。
  */
 function promoteStructuredPresentation(raw: unknown): PresentationT | undefined {
   if (raw == null) return undefined;
@@ -572,9 +507,8 @@ function assemble(
   extraIssues: ConversionIssue[],
   presentation?: PresentationT,
 ): NormalizedContract {
-  // Preserve the actual per-part reference bytes for an explicit later reveal.
-  // Comparators may extract an answer head, but teaching must not fetch a newer
-  // mutable reference or synthesize a worked solution from that head.
+  // Freeze answer bytes as private material: a later reveal must not fetch a
+  // newer mutable reference or synthesize a solution from the answer head.
   const frozenMaterials = [...materials];
   const frozenIdsByPart = materialIdsByPart.map((ids) => [...ids]);
   for (const [index, leaf] of leaves.entries()) {
@@ -624,8 +558,6 @@ function assemble(
     response_spec,
     scoring_basis,
     execution_plan,
-    // review R1 —— 展示层在 digest 计算前入位：digest 与层同版本化；
-    // 无层（undefined）时 contractIntegrityDigest 完全省略该键。
     ...(presentation != null ? { presentation } : {}),
     integrity_digest: contractIntegrityDigest({
       structure,
@@ -654,15 +586,12 @@ function assemble(
  */
 function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContract {
   const group_id = row.parent_question_id ?? row.id;
-  // P1-2c —— provenance 看【答案证据】来源：ai_generated backfill 留痕优先。
   const provenance = ruleProvenanceFor(row.source, row.rubric_json);
   const figures = row.figures ?? [];
 
   const structuredRoot = row.structured;
   if (structuredRoot != null) {
-    // structured 树：stem（根节点）文本 + row prompt（若与 stem 不同文）都是
-    // 共享上下文材料；叶 node id 即 part 身份；叶 answers 是唯一答案来源
-    //（P1-2b：无答案叶不继承 root reference —— 未决转换）。
+    // stem + row prompt are shared context; leaf answers are the only answer source.
     const stemText = structuredRoot.prompt_text ?? '';
     const rowPrompt = row.prompt_md.trim();
     const stemMaterialText =
@@ -676,14 +605,8 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       rubric: row.rubric_json,
       partIdForIssues: structuredRoot.id,
     });
-    // YUK-1099 #3（owner 裁决 B）—— structured 是【standalone 单叶】（root 无
-    // sub_questions，叶即根）且叶无 answers 时，行级 reference_md 是该题自己的
-    // 真实答案（import/auto-enroll 形状），喂入答案槽而不是 missing_reference
-    // 丢弃。仅限 standalone：stem+subs 的某个无答案 sub 不继承 root reference
-    //（P1-2b 裁决不变 —— 多叶树下摊派 root 答案会错配）。
-    // 「叶有无自己的答案」= 至少一个非空白答案；`['']` 与 `[]` 同为「无答案」
-    //（standalone 门与下面的答案映射必须用同一判据，否则门放行兜底而映射
-    // 仍发空白答案 —— 内部自相矛盾）。
+    // Standalone 单叶无 answers 时，行级 reference_md 是该题的真实答案；stem+subs
+    // 的无答案叶不继承 root reference。空白 answers 与无 answers 用同一判据。
     const hasNonBlankAnswer = (answers: readonly string[] | null | undefined): boolean =>
       (answers ?? []).some((t) => t != null && t.trim().length > 0);
     const isStandaloneLeaf =
@@ -716,7 +639,7 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       leaves.map(() => sharedIds),
       leaves,
       shared.issues,
-      // review R1 —— 组根 structured.presentation 提升入契约（digest 前入位）。
+
       promoteStructuredPresentation(structuredRoot.presentation),
     );
   }
@@ -746,7 +669,7 @@ function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContr
       },
     ],
     shared.issues,
-    // 无 structured 的行没有展示层草稿位 —— 无层，digest 逐字节不变。
+    // 无 structured 行没有展示层草稿位。
     undefined,
   );
 }
@@ -808,8 +731,6 @@ export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): No
   return contract;
 }
 
-// ---- structured 树的叶收集（stem→subs；standalone→自身） ----
-
 interface LeafNode {
   id: string;
   prompt_text: string;
@@ -832,8 +753,6 @@ function collectLeaves(node: StructuredQuestionT, out: LeafNode[] = []): LeafNod
   return out;
 }
 
-// ---- 物理多 part 组（parent_question_id 子行） ----
-
 export interface PartRow {
   kind?: string;
   judge_kind_override?: string | null;
@@ -842,17 +761,15 @@ export interface PartRow {
   prompt_md: string;
   reference_md: string | null;
   choices_md: string[] | null;
-  /** P1-2c —— part 自己的 structured（单叶时其 options/answers 优先于行级列）。 */
+  /** Part 自己的 structured；单叶时其 options/answers 优先于行级列。 */
   structured?: StructuredQuestionT | null;
-  /** P1-2c —— part 自己的附图（part 私有材料，只挂该 part）。 */
+  /** Part 私有附图，只挂该 part。 */
   figures?: FigureRefT[] | null;
 }
 
 /**
- * 物理多 part 组归一：root（题干/共享上下文 → 材料；root reference 不摊派给
- * part —— 每 part 用自己的答案，P1-2）+ parts（按 part_index 调用方排序）。
- * part 身份 = 子 question 行 id（编辑保留行 id ⇒ 实体保留；语义连续性由
- * publisher 的 semantic diff 裁决，§3.1/P1-3）。
+ * 物理多 part 组归一：root 提供共享材料但不把 reference 摊派给 part；part 身份
+ * 为子行 id，语义连续性由 publisher 的 semantic diff 裁决。
  */
 export function normalizeQuestionGroupToContract(
   root: NormalizableQuestionRow,
@@ -860,10 +777,8 @@ export function normalizeQuestionGroupToContract(
 ): NormalizedContract {
   if (parts.length === 0) return normalizeQuestionRowToContract(root);
 
-  // P1-2c —— 答案证据 provenance（root rubric 的 ai_generated 留痕对全组生效）。
   const provenance = ruleProvenanceFor(root.source, root.rubric_json);
-  // 复合 root 的 prompt 是共享题干材料；root figures（若有）为共享资产；root 级
-  // rubric 同样是权威评分输入（material 版本化，进 digest）。
+  // Root prompt/figures/rubric 都是共享材料，随 digest 版本化。
   const shared = buildSharedMaterials({
     stemText: root.prompt_md,
     figures: root.figures ?? [],
@@ -877,9 +792,7 @@ export function normalizeQuestionGroupToContract(
   const materialIdsByPart: string[][] = [];
   const leaves: LeafInput[] = parts.map((p) => {
     const partMaterials = [...sharedIds];
-    // part 私有 figures（内容寻址；无核验 digest ⇒ 如实 unverified + issue）。
-    // 同一资产跨 part 复用时去重 —— material_id 即内容身份，重复引用同一
-    // 资产不新增 material 行（duplicate_material_id 形状不修入契约）。
+    // Part-private figures; dedupe by content identity so repeated assets add one material.
     const knownMaterialIds = new Set(shared.materials.map((m) => m.material_id));
     for (const figure of p.figures ?? []) {
       const verified = root.figureDigests?.[figure.asset_id];
@@ -916,7 +829,7 @@ export function normalizeQuestionGroupToContract(
     }
     materialIdsByPart.push(partMaterials);
 
-    // part 自己的 structured：单叶树的 options/answers 优先于行级列（P1-2c）。
+    // 单叶 structured 的 options/answers 优先于行级列。
     const structuredLeaf = p.structured != null ? collectLeaves(p.structured)[0] : undefined;
     const choices = structuredLeaf?.options?.map((o) => o.text) ?? p.choices_md ?? null;
     const answerTexts = structuredLeaf?.answers?.length
@@ -926,9 +839,8 @@ export function normalizeQuestionGroupToContract(
         : [];
     return {
       partId: p.id,
-      // YUK-1099 #2 —— prompt 以编辑后的 structured 叶文本为准（edit_node_text
-      // 只写 question.structured，不追更 flat prompt_md —— 发 flat 列会让已
-      // 接受的题面编辑永远进不了 revision，digest 不变即 noop）。
+      // Prefer the edited structured leaf text; flat prompt_md can lag and would
+      // make an accepted edit a noop.
       prompt: structuredLeaf?.prompt_text ?? p.prompt_md,
       choices,
       answerTexts,
@@ -938,7 +850,7 @@ export function normalizeQuestionGroupToContract(
         judge_kind_override: p.judge_kind_override ?? root.judge_kind_override,
       }),
       provenance,
-      rubric: null, // rubric 是 root 级的；part 无自己的 rubric 列
+      rubric: null,
     };
   });
   return assemble(
@@ -947,16 +859,12 @@ export function normalizeQuestionGroupToContract(
     materialIdsByPart,
     leaves,
     issues,
-    // review R1 —— 物理多 part 组同样只从【组根】的 structured.presentation
-    // 提升展示层；part 行自己的 structured 不携带展示层（compose 工具只写
-    // 组根草稿位）。
+    // Only the group root carries presentation; part rows are not promoted.
     promoteStructuredPresentation(root.structured?.presentation),
   );
 }
 
-/** §3.1 完整性 digest：四层 JSON 的 sha256。键顺序保持调用方对象的插入顺序。
- * YUK-1497：contract.presentation 存在时计入 —— 缺省完全省略该键，
- * 旧调用方（无展示层）的 digest 逐字节不变。 */
+/** 四层 + 可选 presentation 的 sha256；无 presentation 时与旧 digest 一致。 */
 export function contractIntegrityDigest(contract: {
   structure: unknown;
   response_spec: unknown;
@@ -1015,11 +923,11 @@ export interface PublishedContractSeal {
   canonical: string;
   /** 旧封存：schema 解析对象的键序（zod）。 */
   legacyParsed: string;
-  /** 旧封存：传进这份函数的对象自己的键序。读库存时这是 jsonb 键序，不是当初调用方的键序。 */
+  /** 旧封存：对象自身键序；从库存读回时是 jsonb 键序，不是当初调用方的键序。 */
   legacyRaw: string;
 }
 
-/** 发布与准入共用的契约封存。旧 revision 仍可能是 legacyParsed 或 legacyRaw。 */
+/** 发布与准入共用的契约封存；旧 revision 可能仍是 legacyParsed/legacyRaw。 */
 export function publishedContractSeal(contract: {
   structure: unknown;
   response_spec: unknown;
@@ -1045,8 +953,8 @@ export function publishedContractSeal(contract: {
 }
 
 /**
- * 只接受从【这份对象】重算出来的封印：规范摘要、schema 键序、该对象自己的键序。
- * 值被改过时这三份都会变。调用方键序和存库 jsonb 键序不是同一份，不能在这里另开一档。
+ * 只接受从这份对象重算的三种封印；值被改过时三者都会变。调用方键序与 jsonb 键序
+ * 不在这里另开一档。
  */
 export function publishedSealAccepts(seal: PublishedContractSeal, digest: string): boolean {
   return digest === seal.canonical || digest === seal.legacyParsed || digest === seal.legacyRaw;

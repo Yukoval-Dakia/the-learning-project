@@ -1,29 +1,11 @@
-// YUK-513 Phase 2 (#123 / inc-E) — dark-ship TS wiring for the Rust `propagatePriors`
-// kernel (crates/calibration-native). Joins the THETA_GRID_ENABLED / POLY_SIGMOID_ENABLED
-// dark-ship family: gated by a module-const flag (DAY_ONE_PRIOR_ENABLED, defined in
-// @/core/theta-grid), default FALSE — so flag-off is BYTE-IDENTICAL to today. The JS path
-// stays the always-on live path; this new Rust kernel ships dark with no UI consumer (PR-3).
+// YUK-513 — dark-ship wiring for the Rust `propagatePriors` kernel.
 //
-// What it does when ON: for a goal's KC scope, propagate a deterministic day-one (n=0)
-// mastery prior over the `prerequisite` sub-DAG — each KC's prior is shrunk toward lower
-// ability by the probabilistic-AND of its prerequisites' expected mastery (ALEKS / Knowledge
-// Space Theory surmise relation), plus the weakest-prerequisite attribution.
-//
-// PURE TOPOLOGY (day-one modeling decision — documented, owner-reversible while dark):
-//   At literal n=0 we have NO per-user evidence and NO per-KC calibrated difficulty, so
-//   b = 0 and θ_global = 0 for EVERY KC. The prior therefore reflects PREREQ STRUCTURE
-//   ALONE (graph depth + conjunction) — which is exactly what inc-E is ("propagate mastery
-//   risk along prereq edges"). This makes day_one_prior a pure deterministic function of
-//   (scope, prereq edges, shrink_coeff): perfectly reproducible, and trivially the
-//   byte-identical-off regression anchor. Difficulty-aware per-KC b is a FUTURE refinement
-//   (the `knowledge` table carries NO difficulty column today — only `question.difficulty`;
-//   aggregating question-level b anchors to a KC-level anchor is deferred until a live
-//   consumer needs it). θ_global stays 0 so the prior is user-INDEPENDENT: the "what we'd
-//   have assumed from structure alone, before any answer" baseline, orthogonal to the live
-//   θ̂ the placement probe writes.
-//
-// n=1 RED LINE (DROP-7): reads nothing per-user, estimates no item parameters; shrink_coeff
-// is an owner-fixed const, NEVER population-fit.
+// Gated by `DAY_ONE_PRIOR_ENABLED` (off by default), so flag-off leaves the live response
+// byte-identical. When on, it propagates a day-one (n=0) mastery prior over the `prerequisite`
+// sub-DAG. At n=0 there is no per-user or per-KC difficulty evidence, so the prior reflects
+// topology alone (b = 0, θ_global = 0): a user-independent baseline, not the live θ̂.
+// shrink_coeff is owner-fixed and never population-fit; the native binding is optional and
+// absent or failed loading degrades to a NO-OP rather than breaking the live read.
 
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -34,15 +16,12 @@ import { DAY_ONE_PRIOR_ENABLED, GRID_THETA } from '@/core/theta-grid';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 
-// ── Owner-fixed shrink coefficient — the single tunable knob of the kernel. NEVER estimated
-//    from data (n=1 red line / locked item parameters): it scales how hard a prereq gap pulls
-//    a dependent KC's prior down (s = gap · shrink_coeff; weight_i = σ(−s·θ)). 1.0 = neutral
-//    documented default (gap maps directly to the logit tilt). Owner-tunable; not derived. ──
+// Owner-fixed: scales how hard a prerequisite gap pulls a dependent KC's prior down
+// (s = gap · shrink_coeff; weight_i = σ(−s·θ)). Never estimated from data.
 export const DAY_ONE_SHRINK_COEFF = 1.0;
 
-// ── Hand-declared napi surface. The crate ships no committed .d.ts (build artifact), so we
-//    mirror the parity tests (native-parity.unit.test.ts:27-55) and declare it by hand. Must
-//    stay in lockstep with crates/calibration-native/src/lib.rs `propagate_priors`. ──
+// Hand-declared napi surface: the crate ships no committed .d.ts. Keep in lockstep with
+// crates/calibration-native/src/lib.rs `propagate_priors`.
 interface NativePrereqEdge {
   prereqIdx: number;
   depIdx: number;
@@ -64,24 +43,18 @@ interface PropagateAddon {
   ): NativeGridPosterior[];
 }
 
-// ── skip-if-absent loader (mirror native-parity.unit.test.ts:24,57-73). The .node is an OPT-IN
-//    dev/CI build artifact (`pnpm build:native`); in any runtime without it (incl. prod today)
-//    this resolves null and the whole surface NO-OPs — the live path is unaffected.
-//    PATH is cwd-relative, verbatim from the parity-test loader. Every context where the artifact
-//    actually exists (vitest, local build:native) runs from the repo root, so it resolves. It is
-//    deliberately NOT switched to an import.meta.url-relative path: esbuild bundles this module
-//    into dist/*.cjs, where such a relative path would no longer hold. A deployment-aware loader
-//    is an explicit PREREQUISITE of flipping the flag on in a deployed server (PR-3+ / YUK-513
-//    activation), out of scope for this dark-ship wiring. ──
+// Skip-if-absent loader. The .node is an opt-in dev/CI artifact (`pnpm build:native`);
+// production has none, so this resolves null and the surface NO-OPs. The path is
+// cwd-relative to match the parity-test loader and the esbuild bundle, so deploying the
+// binding needs a deployment-aware loader first.
 const NODE_PATH = resolve('crates/calibration-native/calibration-native.node');
 function loadAddon(): PropagateAddon | null {
   if (!existsSync(NODE_PATH)) return null;
   try {
     return createRequire(import.meta.url)(NODE_PATH) as PropagateAddon;
   } catch (err) {
-    // exists but fails to dlopen (Node-ABI / platform mismatch / stale artifact) → treat as
-    // absent. A load failure must never break the live read; the JS path is production. Log
-    // once at module load so a present-but-broken artifact is diagnosable, not silently dark.
+    // Present but fails to dlopen (ABI / platform / stale artifact) → absent. A load failure
+    // must never break the live read, but log once so a broken artifact is diagnosable.
     console.error(
       '[loadDayOnePriors] native binding present but failed to load; treating as absent',
       err,
@@ -91,48 +64,31 @@ function loadAddon(): PropagateAddon | null {
 }
 const addon: PropagateAddon | null = loadAddon();
 
-/** A KC's day-one (n=0) propagated mastery prior + weakest-prerequisite attribution. */
+/** Day-one (n=0) propagated mastery prior plus weakest-prerequisite attribution. */
 export interface DayOnePrior {
-  /** Expected mastery probability of this KC's day-one prior: Σ probs·σ(θg+grid−b). With the
-   *  day-one inputs (θg = b = 0) this is Σ probs·σ(GRID_THETA), computed via the SHARED poly σ
-   *  so it equals the Rust kernel's internal E_mastery for this KC bit-for-bit. A display-tier
-   *  scalar (the "inferred-low" magnitude PR-3 reads), NOT a live θ̂. */
+  /** Expected mastery under the day-one inputs; a display-tier scalar, not a live θ̂. */
   mean_mastery: number;
-  /** The weakest prerequisite KC id (argmin E_mastery) — the short-board PR-3 names in the
-   *  "⚠️ inferred-low — weakest prereq: X" badge. Absent for a root KC (no prerequisites). */
+  /** Weakest prerequisite (argmin); absent for a root KC. */
   weakest_prereq_id?: string;
-  /** That weakest prerequisite's E_mastery ∈(0,1). Absent for a root KC. */
+  /** That prerequisite's expected mastery; absent for a root KC. */
   weakest_prereq_mastery?: number;
 }
 
-/**
- * Day-one propagated mastery priors over a goal's KC `scope`, keyed by knowledge_id.
- *
- * Returns null (NO-OP) when the flag is OFF, the native binding is ABSENT, or the scope is
- * EMPTY — callers then simply omit the surface, leaving the response byte-identical to today.
- * PURE topology: b = 0, θ_global = 0, shrink_coeff = DAY_ONE_SHRINK_COEFF for every KC (see
- * file header). The only DB read is the active `prerequisite` edges within scope.
- */
+/** Propagated priors for a goal's KC scope, or null when disabled, unavailable, or empty. */
 export async function loadDayOnePriors(
   db: Db,
   scope: string[],
 ): Promise<Map<string, DayOnePrior> | null> {
-  // Flag/binding checked FIRST so flag-off short-circuits before ANY DB read (the dark-ship
-  // contract: a present binding must not change behaviour while the flag is off).
+  // Check flag/binding first: a present binding must not change behaviour while the flag is off.
   if (!DAY_ONE_PRIOR_ENABLED || !addon) return null;
 
   const ids = Array.from(new Set(scope.map((s) => s.trim()).filter((s) => s.length > 0)));
   if (ids.length === 0) return null;
 
-  // DARK-SHIP RESILIENCE: everything below is wrapped so a flag-ON failure — a DB error, a
-  // native panic / cycle rejection / ABI mismatch, or a binding-drift guard tripping — degrades
-  // to NO-OP (null) + a log line instead of throwing into the LIVE placement-profile read. The
-  // native binding must NEVER break the production path; the loud drift guards stay loud (logged)
-  // but caught here, reconciling "fail loudly" with "never break the live read".
+  // Flag-on failures (DB, native panic/cycle, binding drift) degrade to NO-OP + a log:
+  // this dark-ship surface must never break the live placement-profile read.
   try {
-    // Active `prerequisite` edges with BOTH endpoints in scope. Direction: from = prerequisite,
-    // to = dependent (topology-gate.ts buildPrerequisiteAdjacency builds adj[from] ⊇ {to} as the
-    // learning-order successor map). archived_at IS NULL = live edges only.
+    // Active `prerequisite` edges with both endpoints in scope (from = prerequisite, to = dependent).
     const edgeRows = await db
       .select({
         from: knowledge_edge.from_knowledge_id,
@@ -153,18 +109,14 @@ export async function loadDayOnePriors(
     for (const e of edgeRows) {
       const p = indexOf.get(e.from);
       const d = indexOf.get(e.to);
-      // Defensive: the inArray already scopes both endpoints, so this never drops a row in
-      // practice; it just narrows the types from `number | undefined` to `number`.
       if (p === undefined || d === undefined) continue;
       prereqEdges.push({ prereqIdx: p, depIdx: d });
     }
 
-    // The kernel echoes attribution by the numeric kc_id it was given; pass indices 0..n-1 so a
-    // returned weakestPrereqId maps straight back to ids[]. Day-one inputs: b = 0, θg = 0.
+    // The kernel echoes attribution by input index; pass 0..n-1 so the result maps back to ids[].
     const kcIds = ids.map((_, i) => i);
-    // bPerKc and domainThetaGlobal are semantically distinct kernel inputs (difficulty anchor vs
-    // global ability); keep them as separate array instances even though both are all-zeros at
-    // day-one, so neither aliases the other if a future caller ever varies one.
+    // Keep these separate even though both are zero today: they are different inputs
+    // (difficulty anchor vs global ability) and must not alias if a caller varies one.
     const bPerKc = ids.map(() => 0);
     const domainThetaGlobal = ids.map(() => 0);
     const posteriors = addon.propagatePriors(
@@ -174,8 +126,8 @@ export async function loadDayOnePriors(
       domainThetaGlobal,
       DAY_ONE_SHRINK_COEFF,
     );
-    // The kernel returns exactly one GridPosterior per KC in input order. A shorter array means a
-    // stale/drifted binding — throw (caught below → NO-OP + log) rather than silently drop KCs.
+    // A shorter array means a stale/drifted binding: throw (caught → NO-OP + log) rather
+    // than silently drop KCs.
     if (posteriors.length !== ids.length) {
       throw new Error(
         `propagatePriors returned ${posteriors.length} posteriors for ${ids.length} KCs (binding drift)`,
@@ -185,22 +137,17 @@ export async function loadDayOnePriors(
     const out = new Map<string, DayOnePrior>();
     for (let i = 0; i < ids.length; i++) {
       const post = posteriors[i];
-      // Unreachable given the length guard above (the array has exactly ids.length entries); a
-      // hole would be binding drift — throw (caught → NO-OP + log) rather than silently skip a KC.
+      // A hole is binding drift: throw (caught → NO-OP + log) rather than skip a KC.
       if (!post) {
         throw new Error(`propagatePriors posterior[${i}] is missing (binding drift)`);
       }
       const widx = post.weakestPrereqId;
-      // Bound-check the echoed index: a valid widx is 0 ≤ widx < ids.length. Treat anything
-      // out of range (a binding bug / ABI mismatch) as "no attribution" rather than reading
-      // ids[undefined]. widx may legitimately be 0 → guard on undefined + range, not falsiness.
-      // The condition is inlined so TS narrows widx to `number` for the ids[widx] read.
+      // Out-of-range is binding drift, not attribution. widx may legitimately be 0, so check
+      // undefined + range rather than falsiness.
       const weakestId =
         widx !== undefined && widx >= 0 && widx < ids.length ? ids[widx] : undefined;
       const wm = post.weakestPrereqMastery;
-      // Attribution is a UNIT — id + mastery surface together or not at all. The kernel returns
-      // both Some or both None, but gate on BOTH so the "present-or-absent together" invariant
-      // holds even if a binding bug ever yields a half pair (valid id + missing mastery).
+      // Attribution is a unit: id and mastery surface together or not at all.
       const hasAttr = weakestId !== undefined && wm !== undefined;
       out.set(ids[i], {
         mean_mastery: meanMastery(post.probs),
@@ -215,22 +162,17 @@ export async function loadDayOnePriors(
   }
 }
 
-/** Σ probs·σ(GRID_THETA) — the day-one (θg = b = 0) expected mastery probability, via the
- *  shared poly σ so it equals the Rust kernel's internal E_mastery for this KC bit-for-bit. */
+/** Expected mastery Σ probs·σ(GRID_THETA), matching the Rust kernel bit-for-bit. */
 function meanMastery(probs: number[]): number {
-  // Reject a non-GRID_POINTS pmf loudly: folding a non-renormalized prefix would yield a
-  // plausible-but-wrong scalar with no signal (the binding-drift class the Rust side guards
-  // with debug_assert_eq! in e_mastery_of). The kernel contract guarantees length GRID_POINTS.
+  // A non-GRID_POINTS pmf would fold into a plausible-but-wrong scalar; the kernel
+  // contract guarantees GRID_THETA.length.
   if (probs.length !== GRID_THETA.length) {
     throw new Error(
       `propagatePriors returned a ${probs.length}-length pmf; expected ${GRID_THETA.length} (binding drift)`,
     );
   }
-  // Value-level drift guard (sibling of the length guard above). Validate the PMF itself, not
-  // just the final scalar: a non-normalized pmf (Σ ≠ 1) or negative-but-cancelling masses can
-  // otherwise yield a plausible-looking acc ∈ [0,1] and slip through. The kernel returns a
-  // renormalized posterior of non-negative masses summing to 1, so anything else is binding
-  // drift — throw (caught → NO-OP + log) rather than leak a corrupt scalar to the PR-3 badge.
+  // Validate the PMF itself: non-normalized or negative-but-cancelling masses can still
+  // yield an in-range scalar. Anything else is binding drift, not a display value.
   let acc = 0;
   let mass = 0;
   for (let i = 0; i < probs.length; i++) {
@@ -243,7 +185,7 @@ function meanMastery(probs: number[]): number {
     mass += p;
     acc += p * polySigmoid(GRID_THETA[i]);
   }
-  // Normalization: a posterior sums to 1 (allow a few ULP of f64 fold error).
+  // Allow a few ULP of f64 fold error.
   if (Math.abs(mass - 1) > 1e-9) {
     throw new Error(`propagatePriors pmf sums to ${mass}, not 1 (binding drift)`);
   }

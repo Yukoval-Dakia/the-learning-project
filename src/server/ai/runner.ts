@@ -24,6 +24,7 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
@@ -38,12 +39,7 @@ import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
 import type { R2Client } from '../r2';
-import {
-  AgentRunError,
-  RETRY_ELAPSED_CAP_MS,
-  bindAgentRunError,
-  isApiErrorSuccessResult,
-} from './agent-run-error';
+import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
 import {
   type ModelBinding,
   type PiQueueSources,

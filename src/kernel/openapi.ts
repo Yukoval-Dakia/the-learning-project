@@ -154,8 +154,7 @@ export function generateOpenApiDocument(capabilities: CapabilityManifest[]): Jso
         'x-contract-status': 'builtin',
       },
     },
-    // YUK-1055 — readiness probe：health（进程活性）之外的 runnable 信号，
-    // 报告 DB contract epoch marker 与本代码 epoch 的匹配。
+    // Readiness is more than process liveness: it reports DB contract epoch match.
     '/api/ready': {
       get: {
         operationId: 'getReady',
