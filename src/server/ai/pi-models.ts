@@ -1,5 +1,10 @@
 import type { Api, Model, ThinkingLevelMap } from '@earendil-works/pi-ai';
 import type { Provider } from '@/ai/task-spec';
+import {
+  type CustomProviderProtocol,
+  customProviderDefinitions,
+} from '@/core/config/custom-providers';
+import { catalogModelCost } from './model-catalog';
 import type { ModelProfileReasoning } from './model-profiles';
 import { nativePiModels, piProviderId } from './pi-provider-catalog';
 
@@ -7,6 +12,57 @@ export type LoomPiModel = Model<Api> & {
   maxInputTokens?: number;
   catalogReasoning?: ModelProfileReasoning;
 };
+
+/** Pure-protocol builtin lanes a custom provider clones its transport from. */
+const PROTOCOL_DONOR: Record<CustomProviderProtocol, string> = {
+  'openai-completions': 'deepseek',
+  'anthropic-messages': 'anthropic',
+};
+
+type PiModelFacts = ReturnType<typeof nativePiModels>[string];
+
+/** Facts narrowed to the executable set (endpoint, limits, reasoning, inputs all known). */
+interface ExecutableModelFacts {
+  api: string;
+  baseUrl: string;
+  input: readonly string[];
+  reasoning: boolean;
+  contextWindow: number;
+  maxInputTokens?: number;
+  maxTokens: number;
+  catalogReasoning: ModelProfileReasoning;
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
+/** Undefined when a required fact is missing — the model is then not executable. */
+function executableFacts(facts: PiModelFacts): ExecutableModelFacts | undefined {
+  if (
+    !facts.baseUrl ||
+    facts.contextWindow === undefined ||
+    facts.maxTokens === undefined ||
+    facts.reasoning === 'unknown' ||
+    facts.input.includes('unknown')
+  ) {
+    return undefined;
+  }
+  return facts as ExecutableModelFacts;
+}
+
+function thinkingLevelMapOf(
+  source: Record<string, string | null> | undefined,
+): ThinkingLevelMap | undefined {
+  if (!source) return undefined;
+  const thinkingLevelMap: ThinkingLevelMap = {};
+  for (const level of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    thinkingLevelMap[level] = source[level] ?? null;
+  }
+  return thinkingLevelMap;
+}
+
+/** Anthropic's SDK appends /v1/messages; the API root already includes /v1. */
+function baseUrlForWire(facts: ExecutableModelFacts): string {
+  return facts.api === 'anthropic-messages' ? facts.baseUrl.replace(/\/v1$/, '') : facts.baseUrl;
+}
 
 // Pi owns transport/auth/compat. Its model facts never override the runtime directory.
 export async function createLoomPiModels() {
@@ -31,48 +87,24 @@ export async function createLoomPiModels() {
       const result: LoomPiModel[] = [];
       for (const [modelId, facts] of Object.entries(nativePiModels(lane))) {
         const template = templates.find((model) => model.id === modelId);
-        if (
-          !template ||
-          !facts.baseUrl ||
-          facts.contextWindow === undefined ||
-          facts.maxTokens === undefined ||
-          facts.reasoning === 'unknown' ||
-          facts.input.includes('unknown')
-        )
-          continue;
-        let thinkingLevelMap: ThinkingLevelMap | undefined;
-        if (facts.thinkingLevelMap) {
-          thinkingLevelMap = {};
-          for (const level of [
-            'off',
-            'minimal',
-            'low',
-            'medium',
-            'high',
-            'xhigh',
-            'max',
-          ] as const) {
-            thinkingLevelMap[level] = facts.thinkingLevelMap[level] ?? null;
-          }
-        }
+        const executable = executableFacts(facts);
+        if (!template || !executable) continue;
         result.push({
           ...template,
           id: modelId,
           provider: id,
-          api: facts.api,
-          compat: facts.api === template.api ? template.compat : undefined,
-          // Anthropic's SDK appends /v1/messages; models.dev's API root already includes /v1.
-          baseUrl:
-            facts.api === 'anthropic-messages' ? facts.baseUrl.replace(/\/v1$/, '') : facts.baseUrl,
-          input: facts.input.filter(
+          api: executable.api,
+          compat: executable.api === template.api ? template.compat : undefined,
+          baseUrl: baseUrlForWire(executable),
+          input: executable.input.filter(
             (input): input is 'text' | 'image' => input === 'text' || input === 'image',
           ),
-          reasoning: facts.reasoning,
-          contextWindow: facts.contextWindow,
-          maxInputTokens: facts.maxInputTokens,
-          maxTokens: facts.maxTokens,
-          catalogReasoning: facts.catalogReasoning,
-          thinkingLevelMap,
+          reasoning: executable.reasoning,
+          contextWindow: executable.contextWindow,
+          maxInputTokens: executable.maxInputTokens,
+          maxTokens: executable.maxTokens,
+          catalogReasoning: executable.catalogReasoning,
+          thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
         });
       }
       return result;
@@ -97,6 +129,67 @@ export async function createLoomPiModels() {
             },
           }
         : {}),
+    });
+  }
+  // Custom providers (YUK-1563 part 4): configuration-only lanes. The donor
+  // supplies the protocol transport; the credential env NAME comes from the
+  // definition, model facts from the synthetic catalog bucket. No compat
+  // shims — a custom endpoint gets the plain protocol wire.
+  for (const definition of customProviderDefinitions()) {
+    const base = models.getProvider(PROTOCOL_DONOR[definition.protocol]);
+    if (!base) continue;
+    const id = definition.id;
+    const getModels = (): LoomPiModel[] => {
+      const result: LoomPiModel[] = [];
+      for (const [modelId, facts] of Object.entries(nativePiModels(definition.id))) {
+        const executable = executableFacts(facts);
+        if (!executable) continue;
+        // Catalog rate card copied from the same-id entry; zeros only when the
+        // catalog has no card (cost truth then classifies unknown, not free).
+        const rates = catalogModelCost(definition.id, modelId);
+        result.push({
+          id: modelId,
+          name: modelId,
+          provider: id,
+          api: executable.api,
+          baseUrl: baseUrlForWire(executable),
+          input: executable.input.filter(
+            (input): input is 'text' | 'image' => input === 'text' || input === 'image',
+          ),
+          reasoning: executable.reasoning,
+          contextWindow: executable.contextWindow,
+          maxInputTokens: executable.maxInputTokens,
+          maxTokens: executable.maxTokens,
+          cost: {
+            input: rates?.input ?? 0,
+            output: rates?.output ?? 0,
+            cacheRead: rates?.cache_read ?? 0,
+            cacheWrite: 0,
+          },
+          catalogReasoning: executable.catalogReasoning,
+          thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),
+        });
+      }
+      return result;
+    };
+    models.setProvider({
+      ...base,
+      id,
+      name: definition.displayName,
+      baseUrl: definition.baseUrl,
+      getModels,
+      getAllModels: getModels,
+      auth: {
+        apiKey: {
+          name: `${definition.displayName} API key`,
+          resolve: async ({ ctx, credential, signal }) => {
+            signal.throwIfAborted();
+            const apiKey = credential?.key ?? (await ctx.env(definition.apiKeyEnv));
+            signal.throwIfAborted();
+            return apiKey ? { auth: { apiKey } } : undefined;
+          },
+        },
+      },
     });
   }
   return models;

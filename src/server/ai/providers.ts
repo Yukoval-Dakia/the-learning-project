@@ -1,8 +1,13 @@
 // Task configuration owns model selection. The runtime catalog supplies facts,
 // Pi supplies transport, and credentials stay scoped to the provider.
 
-import { type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
+import { type KnownProvider, type TaskDefinition, canonicalProviderName } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
+import {
+  customProviderDefinition,
+  customProviderDefinitions,
+  looksLikeCustomProviderId,
+} from '@/core/config/custom-providers';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
 import { nativePiModel, piProviderId } from './pi-provider-catalog';
@@ -42,7 +47,7 @@ interface ProviderModelBindings {
 
 type BoundProviderConfig = ProviderConfig & ProviderModelBindings;
 
-const PROVIDERS: Record<Provider, BoundProviderConfig> = {
+const PROVIDERS: Record<KnownProvider, BoundProviderConfig> = {
   anthropic: {
     authMode: 'key',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
@@ -208,15 +213,18 @@ export function isOauthProvider(provider: Provider): boolean {
 /**
  * YUK-608 — is `name` one of the known providers? Narrowing guard so callers that
  * receive an untrusted provider string (env-configured overrides) can validate it
- * before routing, without re-declaring the provider name set.
+ * before routing, without re-declaring the provider name set. Custom providers
+ * (YUK-1563 part 4) count as known while their definition is live in the registry.
  */
 export function isKnownProvider(name: string): name is Provider {
-  return Object.hasOwn(PROVIDERS, name);
+  if (Object.hasOwn(PROVIDERS, name)) return true;
+  return looksLikeCustomProviderId(name) && customProviderDefinition(name) !== undefined;
 }
 
 export function readProviderId(name: string): Provider | undefined {
   const canonical = canonicalProviderName(name);
-  return isKnownProvider(canonical) ? canonical : undefined;
+  if (Object.hasOwn(PROVIDERS, canonical)) return canonical as KnownProvider;
+  return isKnownProvider(canonical) ? (canonical as Provider) : undefined;
 }
 
 /**
@@ -232,7 +240,8 @@ export function readProviderId(name: string): Provider | undefined {
  * env var a lane reads without ever touching its VALUE.
  */
 export function providerCredentialEnvName(provider: Provider): string | undefined {
-  const config = PROVIDERS[provider];
+  if (looksLikeCustomProviderId(provider)) return customProviderDefinition(provider)?.apiKeyEnv;
+  const config = PROVIDERS[provider as KnownProvider];
   if (!config) return undefined;
   return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
 }
@@ -257,12 +266,19 @@ export interface ProviderAuthSurfaceRow {
 }
 
 export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
-  return (Object.keys(PROVIDERS) as Provider[]).map((name) => ({
-    name,
+  const known = (Object.keys(PROVIDERS) as KnownProvider[]).map((name) => ({
+    name: name as Provider,
     authMode: PROVIDERS[name].authMode,
     credentialEnvName: providerCredentialEnvName(name) ?? '',
     implemented: isProviderImplemented(name),
   }));
+  const custom = customProviderDefinitions().map((definition) => ({
+    name: definition.id as Provider,
+    authMode: 'key' as const,
+    credentialEnvName: definition.apiKeyEnv,
+    implemented: isProviderImplemented(definition.id),
+  }));
+  return [...known, ...custom];
 }
 
 // YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway
@@ -290,6 +306,7 @@ const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
  * drift into two hard-coded copies.
  */
 export function isProviderImplemented(provider: Provider): boolean {
+  if (looksLikeCustomProviderId(provider)) return customProviderDefinition(provider) !== undefined;
   return IMPLEMENTED_KEY_PROVIDERS.has(provider) || isOauthProvider(provider);
 }
 
@@ -314,9 +331,11 @@ export function providerAuthProbeModel(provider: Provider): string | undefined {
 
 /** Implemented lanes, stable order. OpenRouter stays out: it is typed-only. */
 export function implementedProviderIds(): readonly Provider[] {
-  return (Object.keys(PROVIDERS) as Provider[])
+  const known = (Object.keys(PROVIDERS) as KnownProvider[])
     .filter((provider) => isProviderImplemented(provider))
     .sort();
+  const custom = customProviderDefinitions().map((definition) => definition.id as Provider);
+  return [...known, ...custom];
 }
 
 /**
@@ -328,6 +347,15 @@ export function providerModelsRoot(
   env: Record<string, string | undefined> = process.env,
 ): string | null {
   if (!isProviderImplemented(provider)) return null;
+  // Custom providers read their own configured endpoint; no probe model exists
+  // and no probe is ever sent for them.
+  if (looksLikeCustomProviderId(provider)) {
+    const definition = customProviderDefinition(provider);
+    if (!definition) return null;
+    return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
+      ? `${definition.baseUrl}/v1`
+      : definition.baseUrl;
+  }
   const model = providerAuthProbeModel(provider);
   if (!model) return null;
   try {
@@ -351,6 +379,14 @@ export function providerModelsRoot(
 // execution kind — a chat task can never resolve onto the typed lane, and a
 // typed task resolves here even though the generic predicate says unimplemented.
 export function isProviderImplementedForTask(provider: Provider, kind: TaskKind): boolean {
+  // Custom providers are chat lanes only: their configured protocol has no
+  // typed wire contract.
+  if (looksLikeCustomProviderId(provider)) {
+    return (
+      ((tasks[kind] as TaskDefinition).execution ?? 'chat') === 'chat' &&
+      customProviderDefinition(provider) !== undefined
+    );
+  }
   // The catalog map's value is the union of every spec's literal shape;
   // `execution` is an optional declared field — read through the interface
   // view (same pattern as TaskDefinition reads in run-lifecycle.ts).
@@ -758,7 +794,40 @@ export function resolveTaskProvider(
   const binding = resolveTaskBinding(kind, override);
   const { provider: providerName, model: modelId } = binding;
 
-  const config = PROVIDERS[providerName];
+  // YUK-1563 part 4 — a custom provider resolves its credential from the
+  // definition's env var NAME (never stored) and its endpoint from the same
+  // definition via the runtime catalog bucket. No probe, no fallback.
+  if (looksLikeCustomProviderId(providerName)) {
+    const definition = customProviderDefinition(providerName);
+    if (!definition) {
+      throw new Error(
+        `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
+      );
+    }
+    const wireReasoning = resolveTaskNativeReasoningParams(
+      kind,
+      providerName,
+      modelId,
+      binding.reasoning,
+    );
+    const apiKey = process.env[definition.apiKeyEnv];
+    if (!apiKey) {
+      throw new Error(
+        `${definition.apiKeyEnv} is required to run task ${kind} (provider=${providerName} — ${definition.displayName}). Place the key in .env.local / container env; it is never stored in the database.`,
+      );
+    }
+    return {
+      authMode: 'key',
+      provider: providerName,
+      model: modelId,
+      apiKey,
+      baseUrl: resolveModelProfile(providerName, modelId).baseUrl ?? definition.baseUrl,
+      ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
+      selectionRule: binding.selectionRule,
+    };
+  }
+
+  const config = PROVIDERS[providerName as KnownProvider];
   if (!config) {
     throw new Error(
       `Unknown provider '${providerName}' for task ${kind}; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
