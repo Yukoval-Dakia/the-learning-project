@@ -139,6 +139,12 @@ export const NotePageResponseSchema = z.object({
   updated_at: z.string().datetime(),
 });
 
+// The HTTP JSON representation keeps history timestamps as ISO strings. Derive
+// the RPC client validator from the same contract without coercing them to Date.
+export const NotePageJsonResponseSchema = NotePageResponseSchema.extend({
+  history: z.array(ArtifactHistoryEntry.extend({ at: z.string().datetime() })),
+});
+
 export const EditArtifactBodyBlocksBodySchema = z.object({
   artifact_version: z.number().int().nonnegative(),
   body_blocks: ArtifactBodyBlocks,
