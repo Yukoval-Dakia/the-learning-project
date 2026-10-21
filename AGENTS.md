@@ -51,13 +51,14 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 - 涉及至少 3 个独立步骤或多轮工具调用时维护 task plan。
 - 外部 SaaS、本机权限或第三方 CLI 先做 30 秒 pre-flight：
   executable、version、required env/auth、target resolution；全通过再执行。
-- Session start 先读 `PLAN.md`、`.remember/now.md`，需要时读
-  `.remember/recent.md` / 当日 done 文件和 `MEMORY.md`。
+- Session start 先核当前 Linear 任务；本 worktree 的 `PLAN.md`、`.remember/now.md`
+  存在时读取，需要时读本地其他交接。缺失时按当前任务需要创建，不从其他线复制状态。
 - 切分支前先 `git fetch origin` 并核对 `git rev-list --count
   HEAD..origin/main`；非 0 就从最新 `origin/main` 切，不从本地 HEAD 切。
-- 单 session 只推动一条 active 线；全局态以 Linear + `PLAN.md` +
-  `.remember/` 为准，不靠会话记忆。
-- 中途发现的 bug/follow-up 当场写入 Linear 或 `PLAN.md` PARKED。
+- 单 session 只推动一条 active 线；全局任务、归属、进度和阻塞以 Linear 为准。
+  `PLAN.md`、`.remember/now.md` 仅记录本 worktree 的私有工作状态，不提交或跨分支合并。
+- 中途发现的 bug/follow-up 当场登记 Linear；暂记本地 `PLAN.md` PARKED 的项，
+  收尾前仍须完成 Linear capture。
 - 并行实施必须每 lane 独立 branch + worktree；不要让多个对等会话写同一工作树。
 - 创建 subagent 时按当前工具**已注册**角色与任务性质分流：实施路径和验收已定的
   机械修改给 Fixer；目标明确但需本地调查、局部方案或调试的非 UI 实施给
@@ -65,8 +66,9 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
   角色不可用时由编排者先收敛任务，再交给可用执行者；同一 diff 不派两个写入者。
 - 具体模型、variant 和请求故障回退由当前工具配置决定；代码质量不达标须重新
   判断任务与角色，不把模型 fallback 当作质量升级。
-- 收尾时对齐 `PLAN.md` 四栏、Linear 状态、`.remember` handoff、开放
-  PR/workflow/worktree；需要落盘的看板更新必须 commit。
+- 收尾时对齐 Linear 状态、开放 PR/workflow/worktree，按需更新本 worktree 的
+  `PLAN.md` 和 `.remember/now.md`。代码、正式设计和交付结论按原流程提交，
+  本地看板与交接文件保持忽略，不纳入 commit。
 
 ## UI design pre-flight
 
@@ -185,8 +187,10 @@ pnpm build
 ## Planning and documentation
 
 - 架构/设计决策写入版本化 planning docs 与 ADR。
-- `PLAN.md` 是 ≤200 行的活看板，不是日志：头部只留最新一条更新；过期叙事滚存
-  到 `.remember/` 或 `docs/planning/`；四栏就地改写，不能靠追加对冲。
+- `PLAN.md` 是本 worktree 可选的 ≤200 行本地活看板，`.remember/now.md` 是本地交接；
+  两者均不由 Git 跟踪，也不充当全局任务真相源。只写本线状态，四栏就地改写，
+  过期过程记录留在本地 `.remember/`。长期需求、已批准设计与决策仍写入版本化
+  planning docs / ADR，不因本地交接而省略。
 - README 是当前 stack 与本地/NAS 入口；runtime 形态改变时同步更新。
 - Single-context domain layout 使用根 `CONTEXT.md` 与 `docs/adr/`。
 - 批量证据外置：新增批量审计/验收证据（日志、tar.gz、截图、actual-output 封存等）

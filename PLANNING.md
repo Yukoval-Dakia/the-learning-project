@@ -2,7 +2,7 @@
 
 > 自用 · 移动 + 桌面双修 · 应试与兴趣并行
 > v0.12 · 2026-05-09 · Learning Orchestrator + Source Layer + Ingestion Layer
-> 历史规划快照（2026-05），现行规划以 Linear 和 PLAN.md 为准
+> 历史规划快照（2026-05），现行任务以 [Linear](docs/agents/issue-tracker.md) 为准；本地 PLAN.md 不随仓库发布
 
 ---
 

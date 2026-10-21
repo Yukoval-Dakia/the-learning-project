@@ -142,6 +142,7 @@ drizzle/.snapshots/
 # Local memory and scheduled-agent output
 .mem0/
 .remember/
+/PLAN.md
 
 # External sample/tutorial clones dropped into the repository root
 /getting-started-with-browserbase/
