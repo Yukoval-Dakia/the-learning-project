@@ -183,7 +183,7 @@ async function buildAnchorResolver(
   const calibrationAvailable = await tableExists('item_calibration');
   const calibById = new Map<
     string,
-    { b: number | null; b_anchor: number | null; b_calib: number | null }
+    { b: number | null; b_anchor: number | null; b_calib: number | null; b_post: number | null }
   >();
   if (calibrationAvailable && ids.length) {
     const cal = await db.execute<{
@@ -191,13 +191,14 @@ async function buildAnchorResolver(
       b: number | null;
       b_anchor: number | null;
       b_calib: number | null;
+      b_post: number | null;
     }>(
       // Codex #7 — track='hard' ONLY. Production's online θ̂ update + candidate-signals
       // read exclusively item_calibration.track='hard' (state.ts:202); the soft-track b
       // never enters p(L)/scheduling (ADR-0035). Reading ALL tracks here would let a
       // soft-track row become the replay anchor, diverging from production. A question
       // has at most one 'hard' calibration row, so this also de-dups the per-question b.
-      sql`SELECT question_id, b, b_anchor, b_calib
+      sql`SELECT question_id, b, b_anchor, b_calib, b_post
           FROM item_calibration
           WHERE track = 'hard'
             AND question_id IN ${sql`(${sql.join(
@@ -206,7 +207,12 @@ async function buildAnchorResolver(
             )})`}`,
     );
     for (const c of cal) {
-      calibById.set(c.question_id, { b: c.b, b_anchor: c.b_anchor, b_calib: c.b_calib });
+      calibById.set(c.question_id, {
+        b: c.b,
+        b_anchor: c.b_anchor,
+        b_calib: c.b_calib,
+        b_post: c.b_post,
+      });
     }
   }
 

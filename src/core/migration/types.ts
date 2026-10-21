@@ -104,6 +104,10 @@ export interface RawItemCalibrationRow {
   b_calib: number | null;
   calibration_n: number;
   calibration_weight: number | null;
+  // YUK-439 — 联合标定后验列（capture 兼容：缺省 undefined 的历史 capture 仍可恢复）。
+  b_post?: number | null;
+  posterior_variance?: number | null;
+  calibration_source?: string | null;
 }
 
 export interface RawFamilyCalibrationRow {

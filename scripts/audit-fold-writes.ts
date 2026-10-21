@@ -388,6 +388,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     role: 'off-path-writer',
     note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',
   },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/joint-calibration.ts',
+    marker: '.update(item_calibration)',
+    role: 'off-path-writer',
+    note: 'YUK-439 joint-calibration batch posterior UPDATE (b_post/posterior_variance/calibration_n/calibration_weight/calibration_source/last_calibrated_at — the production b writer; post-anchor writes surface as audit drift, the documented 方案 A boundary, same as the retired b_calib firm-up).',
+  },
 ];
 
 // ── comment stripping (char-stepped, escape-aware; KEEPS string content) ──────────────────────

@@ -127,7 +127,13 @@
 // drop the immutable event behind every 'cancelled' row's receipt. FK →
 // paid_effect; restores inside the paid-effect tail after its parent.
 // NEW FK_ORDER table → bump 4.29 → 4.30 (migration 0127).
-export const SCHEMA_VERSION = '4.30';
+// YUK-439 (ADR-0043 2026-10-19 Amendment): additive `difficulty_calibration_evidence`
+// table — 联合标定的证据账本 (连续 score + 来源标签 + 判分路由，b_post 批量后验的
+// 输入)。慢热校准资产 (同 label 账本：证据攒不回来，丢了即联合标定降级回先验)，进
+// FK_ORDER 备份 (非 BACKUP_EXCLUDED)。+ item_calibration 的 b_post/posterior_variance/
+// calibration_source additive 列 (随整行 dump/restore，不 bump——表 = bump，列 = 不
+// bump 的既有先例)。NEW FK_ORDER table → bump 4.30 → 4.31。
+export const SCHEMA_VERSION = '4.31';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -246,6 +252,11 @@ export const FK_ORDER = [
   // 软引用 question.id / event.id (text ref，no enforced FK)，位置不受 PG FK 约束；
   // 置于 item_family_calibration 后保持「难度校准簇」相邻可读。
   'difficulty_calibration_label',
+  // YUK-439 (ADR-0043 2026-10-19 Amendment): difficulty_calibration_evidence — 联合
+  // 标定的证据账本 (连续 score + 来源 + 判分路由，b_post 批量后验的输入)。慢热校准
+  // 资产 (证据攒不回来，丢了即降级回先验)，进备份。软引用 (no enforced FK)，置于
+  // 难度校准簇内保持相邻可读。
+  'difficulty_calibration_evidence',
   'material_fsrs_state',
   'memory_brief_note',
   'learning_record',
