@@ -1,7 +1,7 @@
 /**
- * Keep synchronous API work below cloudflared's 100s idle window while leaving
- * cleanup/response headroom. Every central provider session started by one Hono
- * request consumes the same absolute budget; durable workers have no HTTP scope.
+ * Keep synchronous API work inside the shared HTTP provider-session budget while
+ * leaving cleanup/response headroom. Every central provider session started by one
+ * Hono request consumes the same absolute budget; durable workers have no HTTP scope.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { HTTP_PROVIDER_SESSION_BUDGET_MS } from '@/kernel/http';

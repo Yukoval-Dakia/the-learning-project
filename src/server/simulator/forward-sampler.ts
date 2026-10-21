@@ -1,57 +1,44 @@
-// A14/A15 simulator infrastructure (YUK-446 / YUK-447) — synthetic-learner FORWARD SAMPLER.
+// Forward sampler for the A14/A15 simulator — a pure, seeded, deterministic generator
+// of synthetic learner answer sequences.
 //
-// WHAT THIS IS: a pure, seeded, deterministic generator of synthetic learner answer
-//   sequences. Given (latent ability θ*, item difficulty b, KC structure incl. prereq
-//   edges) it samples an ordered outcome trajectory by REUSING the exact same probability
-//   primitives the LIVE engine uses — the 1PL/Rasch ICC `expectedScore` (a≡1), the PFA
-//   logistic `pfaLogit`/`pLearned`, and the SRT continuous outcome `srtOutcome`. It is the
-//   training GROUND for the two non-myopic / open-elicitation methods:
-//     - A14 DAD (YUK-446): a policy net optimising the WHOLE remaining sequence's total
-//       information gain is trained by ROLLING OUT over MANY simulated learners (the
-//       amortised-over-simulation reframe — train on synthetic data, deploy on n=1).
-//     - A15 adaptive elicitation (YUK-447): the PFN / in-context Bayes elicitation policy
-//       likewise needs a learner SIMULATOR to meta-train against before n=1 deployment.
+// Given (latent ability θ*, item difficulty b, KC structure incl. prereq edges) it
+// samples an ordered outcome trajectory by REUSING the live engine's probability
+// primitives: the 1PL/Rasch ICC `expectedScore` (a≡1), the PFA `pfaLogit`/`pLearned`,
+// and the SRT continuous outcome `srtOutcome`. It is the training ground for:
+//   - A14 DAD: a policy net trained by rolling out many simulated learners
+//     (train on synthetic data, deploy on n=1).
+//   - A15 adaptive elicitation: the PFN / in-context Bayes policy needs a learner
+//     simulator to meta-train against before n=1 deployment.
 //
-// WHAT THIS IS NOT (scope fence — owner decision, Wave2 2026-06-27):
-//   - NO policy network / training loop (that is a `scripts/` offline harness, later).
-//   - NO `open_diagnostic_log` table (owner left the "new table vs reuse `event` stream"
-//     question UNSIGNED — this lane builds ZERO tables, ZERO migrations, ZERO 5-surface
-//     registration).
-//   - NO LIVE wiring: this module is never imported by a route / job / selection path. It
-//     touches no DB, no flag, no live engine. It is a pure offline asset.
+// SCOPE FENCE (owner decision): no policy network or training loop (that is an
+// offline `scripts/` harness), no new table/migration, and no live wiring — this
+// module is never imported by a route/job/selection path. It touches no DB, no flag,
+// no live engine; it is a pure offline asset.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────
 // ⚠ SIMULATOR-MISSPECIFICATION — THE HONEST CIRCULARITY (read before trusting any rollout)
 // ─────────────────────────────────────────────────────────────────────────────────────
-// A policy trained against this sampler is ONLY as good as the assumption that the real
-// learner obeys the SAME generative form (conjunctive 1PL ability + PFA practice accrual +
-// KG prereq gating) that this sampler emits. Because the sampler and the live ESTIMATOR
-// share functional family, a policy can look perfect in-simulation while optimising the
-// WRONG information on a learner whose true process differs. Near-zero in-sim regret is
-// therefore NOT evidence of real-world performance.
-//   - This is the `simulator-misspecification` failure class. It is DISTINCT from the
-//     `prior-misspecification` class of A12/A13 (a wrong PRIOR over a correct model, vs.
-//     here a wrong MODEL family). Both issues name this explicitly as their failure mode.
-//   - GUARD: before any DAD/elicitation policy is trusted, it must clear an explicit
-//     misspecification check (e.g. robustness across a FAMILY of perturbed sampler configs,
-//     and a held-out retro-validation à la `audit:calibration` V-A1-fwd forward-AUC replay).
-//     That gate lives DOWNSTREAM of this lane; this module only provides the generator.
+// A policy trained against this sampler is only as good as the assumption that the real
+// learner obeys the SAME generative form. Because the sampler and the live ESTIMATOR
+// share a functional family, a policy can look perfect in-simulation while optimising
+// the WRONG information; near-zero in-sim regret is NOT evidence of real-world
+// performance. Before a DAD/elicitation policy is trusted it must clear an explicit
+// misspecification check (robustness across perturbed sampler configs, held-out
+// retro-validation). That gate lives downstream; this module only provides the generator.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────
-// n=1 ADMISSIBILITY (litmus) — every generative parameter here is admissible because it is
-// an OWNER-FIXED PRIOR or the SYNTHETIC learner's OWN accumulated state. The sampler MUST
-// stay inside the live engine's admissible model family:
-//   - Ability is Rasch/1PL (a ≡ 1). There is NO per-item discrimination `a`, NO slip, NO
-//     guess, NO time-discrimination. Those are cross-examinee variance parameters and are
-//     INADMISSIBLE — do NOT add them to enrich training. Item difficulty `b` is a locked
-//     anchor (zero cross-examinee variance), exactly as in the live Elo/θ̂ path.
-//   - PFA learning-rate (γ/ρ) and the KG prereq penalty / mastery threshold are OWNER-
-//     SUPPLIED design constants (fixed priors), NOT fitted per-learner parameters.
-//   - The RT model is the simplest admissible choice (uniform fraction of the item time-
-//     limit d, where d = the owner-fixed SRT design constant). A richer RT model would risk
-//     smuggling a per-examinee time-discrimination parameter — deliberately NOT done.
-// Consequence: a policy's INFERENCE-time inputs (the synthetic learner's own belief state /
-// answer history) are admissible; the only n=1 risk lives in the misspecification note above.
+// n=1 ADMISSIBILITY (litmus): every generative parameter is an OWNER-FIXED PRIOR or the
+// SYNTHETIC learner's OWN accumulated state, and the sampler must stay inside the live
+// engine's admissible model family:
+//   - Ability is Rasch/1PL (a ≡ 1). No per-item discrimination, slip, guess, or
+//     time-discrimination — those are cross-examinee variance parameters and are
+//     INADMISSIBLE. Item difficulty `b` is a locked anchor.
+//   - PFA learning-rate (γ/ρ) and the KG prereq penalty / mastery threshold are
+//     owner-supplied design constants, not fitted per-learner parameters.
+//   - The RT model is the simplest admissible choice (uniform fraction of the item
+//     time-limit d). A richer model would smuggle in per-examinee time discrimination.
+// Consequence: a policy's inference-time inputs are admissible; the only n=1 risk is
+// the misspecification note above.
 
 import { PFA_GAMMA, PFA_RHO, pLearned, pfaLogit } from '@/core/pfa';
 import {
@@ -73,15 +60,14 @@ export interface SimKc {
   /** Stable KC id (referenced by items + prereq edges). */
   id: string;
   /**
-   * Latent TRUE ability on this KC (logit). Owner-supplied scenario input — the
-   * ground-truth a policy is ultimately trying to assess / exploit. In PFA mode this seeds
-   * the practice accrual; in IRT mode it is the static ability.
+   * Latent TRUE ability on this KC (logit), owner-supplied ground truth. PFA mode seeds
+   * practice accrual from it; IRT mode uses it as static ability.
    */
   trueTheta: number;
   /**
-   * PFA difficulty intercept for this KC (logit). Owner-fixed; defaults to 0 (neutral). In
-   * PFA mode, if absent the item's `b` is used as the difficulty anchor (mirrors the live
-   * "KC representative item difficulty as β" convention in core/pfa.ts).
+   * PFA difficulty intercept for this KC (logit). Owner-fixed; defaults to 0. If absent,
+   * the item's `b` is the anchor (mirrors the live "KC representative item difficulty as β"
+   * convention in core/pfa.ts).
    */
   beta?: number;
   /** KG prerequisite KC ids. Unmet prereqs depress effective ability (see prereqPenalty). */
@@ -116,15 +102,14 @@ export interface SimScenario {
   /** PFA fail learning-rate (owner-fixed, negative). Default {@link PFA_RHO}. */
   pfaRho?: number;
   /**
-   * Logit ability penalty per UNMET prerequisite (KG forward model). Owner-fixed design
-   * constant. Default 0 → KG structure is INERT unless the owner opts in. > 0 means an
-   * item taxing a KC whose prereqs the learner has not yet "mastered" is answered as if
-   * the learner were weaker on that KC.
+   * Logit penalty per UNMET prerequisite (KG forward model), owner-fixed. Default 0 makes
+   * KG structure inert; > 0 means an item taxing a KC whose prereqs are not yet "mastered"
+   * is answered as if the learner were weaker on that KC.
    */
   prereqPenalty?: number;
   /**
-   * Generative "competence" threshold (probability) above which a KC counts as mastered
-   * for prereq gating. Default 0.5 (the cold-start neutral point). Owner-fixed.
+   * Generative competence probability above which a KC counts as mastered for prereq
+   * gating. Default 0.5 (the cold-start neutral point). Owner-fixed.
    */
   masteryThreshold?: number;
 }
@@ -167,20 +152,19 @@ export interface RolloutResult {
   /** Final estimator belief per KC. */
   finalBelief: Record<string, KcBelief>;
   /**
-   * Final GENERATIVE (ground-truth) competence per KC = the probability the TRUE model
-   * would assign at neutral difficulty. For audit/diagnostics — this is the latent a
-   * policy is chasing, never visible to the policy at inference.
+   * Final GENERATIVE (ground-truth) competence per KC: the probability the TRUE model
+   * assigns at neutral difficulty. For audit/diagnostics; never visible to the policy.
    */
   trueCompetence: Record<string, number>;
 }
 
 /**
- * Item-selection policy seam — THIS is where the A14 DAD policy net or the A15 elicitation
- * policy plugs in. Given the current belief state + history + a (policy-private) rng draw,
- * return the index of the next item to present, or null to stop early.
+ * Item-selection policy seam — where the A14 DAD policy net or the A15 elicitation
+ * policy plugs in. Given the current belief state + history + a policy-private rng
+ * draw, return the next item index, or null to stop early.
  *
- * The default policy ({@link roundRobinPolicy}) is a trivial deterministic baseline so the
- * sampler is self-contained and testable WITHOUT a trained policy.
+ * The default ({@link roundRobinPolicy}) is a deterministic baseline so the sampler is
+ * self-contained without a trained policy.
  */
 export type SelectionPolicy = (ctx: PolicyContext) => number | null;
 
@@ -226,9 +210,9 @@ interface EstKcState {
 }
 
 /**
- * Map lookup that throws (instead of a non-null assertion) when a key is missing. Every
- * call site here looks up a KC id that {@link assertValidScenario} has already proven to
- * exist in the state maps, so a miss is an internal invariant break — fail LOUD.
+ * Throwing map lookup (instead of a non-null assertion). Every call site looks up a KC
+ * id that {@link assertValidScenario} proved exists, so a miss is an internal invariant
+ * break — fail LOUD.
  */
 function mustGet<K, V>(map: Map<K, V>, key: K): V {
   const value = map.get(key);
@@ -239,9 +223,9 @@ function mustGet<K, V>(map: Map<K, V>, key: K): V {
 }
 
 /**
- * Validate a scenario fails LOUD on a malformed / inadmissible input rather than silently
- * sampling garbage. (The TS types already exclude inadmissible per-item `a`/slip/guess
- * fields; this guards the numeric/structural contract.)
+ * Reject malformed / inadmissible scenarios instead of silently sampling garbage.
+ * (The TS types already exclude per-item discrimination/slip/guess; this guards the
+ * numeric/structural contract.)
  */
 export function assertValidScenario(scenario: SimScenario): void {
   if (scenario.kcs.length === 0) throw new Error('forward-sampler: scenario has no KCs');
@@ -285,10 +269,8 @@ export function assertValidScenario(scenario: SimScenario): void {
 
 /**
  * GENERATIVE competence of a KC = the probability the TRUE model assigns at neutral
- * difficulty (b=0), used both for prereq-mastery gating and as the latent audit signal.
- *   - irt: σ(trueTheta) — static.
- *   - pfa: p(L) from the learner's OWN accruing success/fail (grows with practice).
- * Reuses the live `expectedScore` (the single sigmoid source) / `pLearned`.
+ * difficulty (b=0), used for prereq-mastery gating and as the latent audit signal.
+ * Reuses the live `expectedScore` (single sigmoid source) / `pLearned`.
  */
 function trueCompetence(
   state: DgpKcState,
@@ -322,11 +304,9 @@ function unmetPrereqCount(
 }
 
 /**
- * TRUE per-KC P(correct) on an item under the generative model, with KG prereq gating.
- *   - irt: σ(trueTheta − prereqPenalty·unmet − b).
- *   - pfa: σ(pfaLogit(beta, γ, ρ, success, fail) − prereqPenalty·unmet). Difficulty enters
- *          via beta (KC β if set, else the item's b — the live "representative b as β").
- * Single sigmoid source = `expectedScore` (respects POLY_SIGMOID flag, same as live).
+ * TRUE per-KC P(correct) under the generative model, with KG prereq gating. Difficulty
+ * enters via beta (KC β if set, else the item's b). Single sigmoid source =
+ * `expectedScore`, so the live POLY_SIGMOID flag behaves identically.
  */
 function trueKcPCorrect(
   item: SimItem,
@@ -361,11 +341,10 @@ export const roundRobinPolicy: SelectionPolicy = (ctx) =>
 // ── Core rollout ──────────────────────────────────────────────────────────────────────
 
 /**
- * Roll out a synthetic learner trajectory using an INJECTED rng (the v-a1-fwd purity
- * pattern — the module never reaches for a global random). Same rng stream + same scenario
- * + same policy ⇒ BYTE-IDENTICAL trajectory.
+ * Roll out a synthetic learner trajectory with an INJECTED rng (never a global random).
+ * Same rng stream + scenario + policy ⇒ BYTE-IDENTICAL trajectory.
  *
- * rng draw ORDER per step (fixed for determinism): policy draw → outcome draw → [RT draw].
+ * Fixed rng draw order per step for determinism: policy → outcome → [RT].
  */
 export function rolloutLearner(
   scenario: SimScenario,
@@ -507,7 +486,7 @@ export function rolloutLearner(
 }
 
 /**
- * Convenience: roll out from an integer seed (constructs a mulberry32 stream internally).
+ * Convenience: rollout from an integer seed (mulberry32 stream constructed internally).
  * Same seed ⇒ identical trajectory — the headline determinism contract.
  */
 export function seededRollout(

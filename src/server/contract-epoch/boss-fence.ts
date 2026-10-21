@@ -1,22 +1,19 @@
 // ====================================================================
-// YUK-1055 — pgboss per-delivery epoch fence + outstanding 处置报告
+// pgboss per-delivery epoch fence + outstanding 处置报告
 // ====================================================================
 //
 // 两个面：
 //   1. fenceAwareJobHandler —— 包住每个 boss.work handler。启动期闸门
-//      （waitForRunnableEpoch in start-worker）管不到「一个还活着的 worker
-//      在 epoch 翻转后继续消费」的情形；per-delivery 检查补上这一刀。
-//      按 ./jobs.ts 的 disposition：
-//        drain     → marker state 非 'active' 时 fenced；active 即可（不挑 epoch）。
+//      （waitForRunnableEpoch）管不到「活着的 worker 在 epoch 翻转后继续消费」，
+//      per-delivery 检查补上这一刀。按 ./jobs.ts 的 disposition：
+//        drain     → state 非 'active' 时 fenced；active 即可（不挑 epoch）。
 //        fenced    → 另要求 marker.epoch === CODE_CONTRACT_EPOCH。
-//        translate → 另要求 job 出生 epoch === marker.epoch（created_on 时刻
-//                    最近一次 'active' marker；见 epoch.ts readJobBirthEpoch）——
-//                    旧合同的 durable payload 绝不按新合同执行（§15 outstanding
-//                    translate）；post-cutover 新投递的同队列 job 照跑。
-//      命中 → console.warn 确定性日志 + ContractEpochFenceError（pg-boss 按
-//      队列 retry 预算重投，耗尽后 failed/DLQ —— 不静默吞、不无限烧）。
+//        translate → 另要求 job 出生 epoch === marker.epoch（见 readJobBirthEpoch）——
+//                    旧合同的 durable payload 绝不按新合同执行，新投递照跑。
+//      命中 → 确定性日志 + ContractEpochFenceError，由 pg-boss 按队列 retry
+//      预算重投，耗尽后 failed/DLQ（不静默吞、不无限烧）。
 //   2. reportOutstandingBossJobs —— cutover 前的存量分级报告（scripts/
-//      contract-epoch.ts `outstanding` 子命令；接 YUK-1042 的处置）。
+//      contract-epoch.ts `outstanding` 子命令）。
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -45,9 +42,9 @@ async function gateJobDelivery(
   const disposition = jobEpochDisposition(queue);
   const surface = `job:${queue}`;
 
-  // 'preparing'/'ready'（maintenance）→ 全类 fenced（维护窗下任何 job 不写）。
-  // 'active' + epoch 不匹配：仅 fenced/translate 类拒绝；drain 类是
-  // epoch-agnostic housekeeping，在哪个 active epoch 下跑都正确。
+  // 'preparing'/'ready'（maintenance）→ 全类 fenced。
+  // 'active' + epoch 不匹配：仅 fenced/translate 类拒绝；drain 是 epoch-agnostic
+  // housekeeping，在哪个 active epoch 下跑都正确。
   const verdict = gateContractEpoch(marker);
   if (!verdict.runnable) {
     if (disposition === 'drain' && verdict.reason === 'epoch_mismatch') return null;
@@ -100,8 +97,7 @@ async function readJobCreatedOn(db: Db, jobId: string): Promise<string | null> {
 /**
  * 把 epoch fence 织进 job handler。在 register-capability-jobs / handlers /
  * memory triggers / orchestrator / subscription dispatch 的 boss.work 处统一套。
- * `handler` 内部逻辑不变；fenced delivery 抛出 ContractEpochFenceError，
- * pg-boss 按该队列 retry 配置决定重投/failed/DLQ。
+ * fenced delivery 抛出 ContractEpochFenceError，重投/failed/DLQ 交给 pg-boss 配置。
  *
  * 泛型 J 透传调用方的 job 形状（Job<ReqData> / JobWithMetadata<ReqData>）——
  * 裸 Job 形参会因 invariance 拒掉 Job<{event_id:…}>[] handler。
@@ -129,7 +125,7 @@ export function fenceAwareJobHandler<J extends Job>(
     );
 }
 
-// ───────────────────────── outstanding 处置报告（YUK-1042 衔接） ─────────────────────────
+// ───────────────────────── outstanding 处置报告 ─────────────────────────
 
 export interface OutstandingJobDisposition {
   queue: string;
@@ -143,8 +139,7 @@ const OUTSTANDING_STATES = ['created', 'retry', 'active', 'failed'] as const;
 
 /**
  * cutover 存量报告：pgboss.job 按 (queue,state) 计数 × disposition。
- * 'failed' 也纳入——存量失败同样是需要处置决定的 outstanding（YUK-1042）。
- * pgboss schema 缺失 → 空数组（不是错误）。
+ * 'failed' 也纳入——存量失败同样需要处置决定。pgboss schema 缺失 → 空数组。
  */
 export async function reportOutstandingBossJobs(db: Db): Promise<OutstandingJobDisposition[]> {
   let rows: { name: string; state: string; count: number | string }[];
