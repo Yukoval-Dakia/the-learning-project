@@ -21,4 +21,5 @@ export {
   ASSESSMENT_RUBRIC_TASK_KIND,
   createRubricModelExecutor,
 } from './rubric-model-executor';
-export { type SettlementObservers, learningSettlement, withdrawCapturedOccurrence } from './settle';
+export { learningSettlement, withdrawCapturedOccurrence } from './settle';
+export type { SettlementObservers } from './settle-apply';
