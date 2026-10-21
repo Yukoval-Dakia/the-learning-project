@@ -5,7 +5,7 @@ import type { SubjectProfile } from '../profile';
 // notation, generic Chinese voice. The sample subjects (yuwen/math/physics) are
 // examples, not the product's identity.
 //
-// `general` is deliberately not in KNOWN_SUBJECT_IDS: nodes are never tagged
+// `general` is deliberately not in BUILTIN_IDS: nodes are never tagged
 // with it, so it is never a goal-scope candidate or a derived subject axis.
 // Registry-backed fields reuse the minimal legal set already proven by yuwen.
 export const generalProfile: SubjectProfile = {

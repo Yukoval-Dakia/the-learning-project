@@ -117,7 +117,6 @@ export const physicsProfile: SubjectProfile = {
   // First-batch source whitelist candidates; owner confirmation still pending.
   // Subject-specific sites are mostly paywalled, so only these general sources.
   sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
-  // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 yuwen/math); 计算题走通用次序。
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },

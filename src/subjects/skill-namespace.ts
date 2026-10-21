@@ -1,6 +1,6 @@
 // Single source for skill injection keys: `<subjectDir>--<pack>`. Bare directory
 // names collide across subjects; the double hyphen is unambiguous because both
-// sides contain only single hyphens. The static audit enforces the naming rule.
+// sides contain only single hyphens.
 
 export const SKILL_NAMESPACE_SEPARATOR = '--';
 
@@ -9,8 +9,8 @@ export function namespacedSkillName(subjectDir: string, skillDirName: string): s
 }
 
 /**
- * Audit anchor: returns null when the first frontmatter name line is absent or
- * differs from the directory name; otherwise the rewritten document (tests only).
+ * Returns null when the first frontmatter name line is absent or differs from
+ * the directory name; otherwise the rewritten document.
  */
 export function rewriteSkillMdName(
   content: string,
@@ -21,7 +21,7 @@ export function rewriteSkillMdName(
   if (lines[0]?.trim() !== '---') return null;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    if (line.trim() === '---') return null; // frontmatter 关闭仍无 name 行
+    if (line.trim() === '---') return null;
     const m = line.match(/^name:\s*(.+?)\s*$/);
     if (m) {
       if (m[1] !== dirName) return null;
