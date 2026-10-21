@@ -1,6 +1,7 @@
 # Migration focus — 2026-10-21
 
-Owner停止手工SHA/重复seal/例行运维，ea21单次隔离build失败已清理且不重试。主线任务是YUK1358首次上传Start入口：new onboarding.upload route、生成routeTree、SPA onboardingUpload handoff，原组件/HTTP保持。Stage1已明确解除原暂缓且无writer；协调已将三个非重叠入口范围分配给迁移，不等待 UI 额度；保留 UI RecordRoute 注释与其它页面差量。当前分支feat/yuk-1358-onboarding-upload-start基于def2aeb51，pnpm frozen install及typecheck/lint/build完成（lint181warnings），三处产品接线已完成，独立R1/PR CI待执行；不新写测试，不启服务/模型。后续以本片真实源码/CI/浏览器分层交付，不把旧运营包当迁移成果。
+首次上传 #1950 已 match-head 合 main1b180c3fb，浏览器/部署NOT_RUN。下一开发为知识列表+详情 Start 入口，分支feat/yuk-1358-knowledge-start，owned仅新knowledge两route/生成routeTree/SPA Knowledge两hunk。复用原KnowledgePage/KnowledgeDetailPage、HTTP、TokenGate、导航和query/hash；父list route遇detail只Outlet，避免重复列表请求和双壳。typecheck/lint/build全部通过（181warnings），独立R1/PR CI待完成。UI未推router只RecordRoute异处注释，未改其内容；开放PR无对应入口占用。不新写测试/useEffect、不运行DB/服务/provider，不做例行SHA/封存/运维。
+
 
 # 录入助手永久身份与未结费用修复，2026-10-20
 
