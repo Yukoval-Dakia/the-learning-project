@@ -41,7 +41,6 @@ export const physicsProfile: SubjectProfile = {
     teachingStyle: '先检查物理量与单位是否匹配，再给推导路径，最后做量纲检验。',
     checkQuestionPolicy: '检查题应聚焦一个公式应用、单位换算或量纲分析。',
     learningIntentPolicy: '把模糊目标改写成具体物理量推导、定律应用或单位换算练习。',
-    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },
