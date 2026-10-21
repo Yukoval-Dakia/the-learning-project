@@ -1,7 +1,6 @@
-// Narrow scheduling read port during migration (capabilities/AGENTS.md facade exception).
-// Agency probe evidence and Practice due/context readers consume the selected projection and
-// retention without interpreting candidate/FSRS storage. Validation and replay stay with the
-// server/fsrs state owner. No CRUD or business ownership moves here; migration debt remains.
+// Narrow scheduling read port during migration: readers consume the selected
+// projection/retention without interpreting FSRS storage. Validation and replay
+// stay with the server/fsrs owner; no business ownership moves here.
 export { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 export { retrievabilityForKc } from '@/server/fsrs/retention';
 export {

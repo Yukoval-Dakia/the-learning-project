@@ -1,14 +1,6 @@
-// YUK-15 — record ↔ proposal evidence loop.
-//
-// When a learning_record is referenced as evidence in an AI proposal, its
-// processing_status flips: raw → linked (at proposal write), linked → actioned
-// (at accept), actioned → linked (at retract). Archived rows are never touched.
-//
-// All helpers accept `DbLike = Db | Tx` so callers can opt into transaction
-// sharing (writeAiProposal pulls record-flip into the same tx as the propose
-// event for atomicity). Accept/retract paths run outside an outer tx — they
-// already committed the rate/correction event before invoking us, so the
-// record-flip is a best-effort follow-up.
+// record ↔ proposal evidence loop: raw → linked at proposal write, linked/raw
+// → actioned at accept, actioned → linked at retract. Archived rows are untouched.
+// Accept/retract run after their event committed, so the flip is best-effort.
 
 import { sql } from 'drizzle-orm';
 import type { AiProposalPayloadT, ProposalEvidenceRefT } from '@/core/schema/proposal';
@@ -19,10 +11,7 @@ import type { LearningRecordProcessingStatus } from './types';
 
 type DbLike = Db | Tx;
 
-/**
- * Filter evidence_refs down to record IDs (deduped). Used by writer + accept +
- * retract paths to extract the records to flip.
- */
+/** Record ids in evidence_refs, deduped. */
 export function extractRecordEvidenceIds(refs: readonly ProposalEvidenceRefT[]): string[] {
   const ids = new Set<string>();
   for (const ref of refs) {
@@ -41,51 +30,32 @@ async function bulkSetStatus(
 }
 
 /**
- * Flip records from `raw` → `linked`. Called by writeAiProposal in the same tx
- * as the propose event so the projection stays consistent.
- *
- * Already-`linked` / `actioned` records are left alone (idempotent: rewriting
- * the same evidence_refs across proposals does not reset progress).
+ * Flip raw → linked in the proposal writer's transaction. Already linked/actioned
+ * rows are left alone, so replaying the same evidence does not reset progress.
  */
 export async function markRecordsLinked(db: DbLike, ids: string[]): Promise<number> {
   return await bulkSetStatus(db, ids, ['raw'], 'linked');
 }
 
 /**
- * Flip records from `linked` / `raw` → `actioned`. Called by acceptAiProposal
- * after the kind-specific owner service materialized.
- *
- * `raw` is included to be defensive: if a producer somehow bypassed
- * writeAiProposal's flip (legacy data, manual events) the accept still wins.
+ * Flip linked/raw → actioned after the owner service materializes. raw is included
+ * so legacy or manually written evidence still reaches the accepted state.
  */
 export async function markRecordsActioned(db: DbLike, ids: string[]): Promise<number> {
   return await bulkSetStatus(db, ids, ['raw', 'linked'], 'actioned');
 }
 
 /**
- * Flip records from `actioned` → `linked` on retract. We do NOT roll all the
- * way back to `raw`; the record may still be evidence for other active
- * proposals, and the more conservative "linked" state preserves that signal.
- *
- * Follow-up B (see plan): if product wants full rollback to `raw`, need a
- * dedup query against remaining propose events.
+ * Flip actioned → linked on retract, not back to raw: the record may still be
+ * evidence for another active proposal.
  */
 export async function rollbackRecordsActioned(db: DbLike, ids: string[]): Promise<number> {
   return await bulkSetStatus(db, ids, ['actioned'], 'linked');
 }
 
 /**
- * Reverse query: given a list of record IDs, count how many active (non-rated)
- * propose events reference each. Used by /api/records to surface
- * "已产生 N 条 AI 提议" on the record card.
- *
- * Counts include accepted + dismissed + pending proposals (anything that ever
- * cited the record). Retracted proposals (action='correct', correction_kind=
- * 'retract') are NOT subtracted here — they remain countable as historical
- * evidence trail; the per-record UI can fetch full history if needed.
- *
- * Naive JSONB scan via `@>` is fine: propose event table is small (single user)
- * and the predicate is index-friendly via the existing GIN on payload.
+ * Count proposals citing each record for the record card. Retractions are not
+ * subtracted: they remain part of the historical evidence trail.
  */
 export async function getProposalCountsForRecords(
   db: DbLike,
@@ -95,9 +65,6 @@ export async function getProposalCountsForRecords(
   for (const id of ids) counts.set(id, 0);
   if (ids.length === 0) return counts;
 
-  // Single SQL scan: pull all propose / experimental:propose_* / experimental:
-  // proposal / experimental:knowledge_% rows and count occurrences of each
-  // record id in payload.ai_proposal.evidence_refs.
   const rows = await db
     .select({
       id: event.id,

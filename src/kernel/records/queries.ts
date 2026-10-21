@@ -122,7 +122,7 @@ export async function createLearningRecord(
   return insertLearningRecord(db, input);
 }
 
-/** Historical associations come from an accepted submission, never from new input tags. */
+/** Historical associations come from the accepted submission, never from new input tags. */
 export async function createAssessmentLearningRecord(
   db: DbLike,
   input: Omit<CreateLearningRecordInput, 'knowledge_ids'> & { submission_id: string },
@@ -432,11 +432,7 @@ export async function archiveLearningRecord(
   });
 }
 
-/**
- * YUK-892 — active (non-archived) learning-record lookup shared by the
- * capability-owned record proposal tools (Practice author-question record seed +
- * Ingestion record links/promotion).
- */
+/** Non-archived record lookup shared by the record-proposal tools. */
 export async function getActiveLearningRecord(
   db: DbLike,
   recordId: string,

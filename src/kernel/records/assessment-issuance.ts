@@ -1,45 +1,18 @@
-// ====================================================================
-// YUK-1052 — issueAssessment（§4.3 Interface：发题时绑定 revision/目标 part/
-// 实际材料/选项展示映射；preselected ≠ issued）
-// ====================================================================
+// 发题编排：组根锁 → 生命周期校验 → 绑定推导 → 不可变 issuance（+ 可选 claim）。
+// 不评分、不写学习状态、不创建 submission。
 //
-// 本模块承载【发题编排】：请求 → 组根行锁 → 生命周期校验 → 绑定推导 →
-// 不可变 issuance 行 + 一次性 claim（如需）。它不评分、不写学习状态、不
-// 创建 submission —— 提交/草稿由 submit.ts 承担。
+// in_progress 一旦写入即永久 serve 记录，绝不回取 latest revision；preselected
+// 不等于 issued。挂起/撤回禁止新 issuance；container_only 必须带 occurrence ref。
+// 所有新发题与重放都要求准入且自动可判，manual 不绕过。
 //
-// 关键语义（grounding §3.1/§3.3/§7.1）：
-//   - in_progress 必须绑定明确版本：本行一旦写入即【永久 serve 记录】，提交时
-//     绝不回取 latest revision（BEFORE UPDATE trigger 冻结绑定列）。
-//   - preselected ≠ issued：只有当本函数实际插入行时才产生 issuance ——
-//     把题选进纸卷/流不代表已发题。
-//   - 选项展示映射：默认 = 声明顺序（§7.3 新 serve 不 shuffle，"以上都对"/
-//     引用字母选项保持原序）；允许调用方给覆盖顺序（必须是声明选项的排列）。
-//   - 材料绑定：只绑发出 part 实际引用的材料，asset_digest 取 revision 冻结
-//     值（判分与学生所见同版）。
-//   - 挂起/撤回（§3.3）：suspended ⇒ 禁止新 issuance（含已选入纸卷但未发出的
-//     槽）；withdrawn 同理。container_only 组必须声明容器 occurrence 引用。
-//   - admission：所有新发题与发题重放都要求准入且自动可判；manual 不绕过。
-//     导入已有学习证据的 capture 走独立来源校验，不代表新发题权限。
-//   - 一次性 claim：claim_policy='one_time' 的组在请求 claim 时原子占用（同
-//     组有 claimed 且未释放的 issuance ⇒ claim_unavailable）；claim 到期/
-//     恢复由 releaseIssuanceClaim（activate.ts）处理，claim 恢复绝不复活被
-//     verify 撤回的题 —— 本函数以 suspended/withdrawn 维度先行拒绝。
-//
-// 幂等（第 1 类“已发”合同）：
-//   - issuance_id 冲突且绑定载荷逐字段一致 ⇒ status='replayed'（不发新 issuance，
-//     不改变 claim —— 重试安全）；
-//   - 同 issuance_id 但绑定/容器 ref 不同 ⇒ status='issuance_id_conflict'
-//     （显式冲突，不覆盖、不静默改判 —— 与 §4.3「同幂等键不同 payload 冲突」同律）。
-//
-// 锁序（与 publish/verify 链一致）：question 组根行 FOR UPDATE → 所有组快照
-// 读。发题/激活与 verify 状态变更串行化落在同一锁点（§3.3）。
-// ====================================================================
+// 幂等：同 issuance_id 且绑定逐字段一致 ⇒ replayed（不改 claim）；绑定不同 ⇒
+// issuance_id_conflict。锁序：question 组根行 FOR UPDATE → 组快照读。
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
-// jsonb 会重排对象键序 —— 绑定载荷比对必须用 canonical 串化，否则每次重试
-// 都被误判成 issuance_id_conflict（同 judgment.ts 的幂等口径）。
+// jsonb reorders keys, so binding equality must canonicalize; otherwise every
+// retry would be misread as a conflict.
 import { stableStringify } from '@/core/migration/canonical';
 import type {
   PracticeIssuanceDtoT,
@@ -82,15 +55,14 @@ function subjectIdFromLookup(lookup: GroupSubjectLookup | undefined): string | n
   return lookup?.kind === 'subject' ? lookup.subject : null;
 }
 
-/** 发题事件 action 名（receipt 即事件载荷；traceable 发题事实）。 */
+/** 发题事件 action；receipt 即事件载荷。 */
 export const ASSESSMENT_ISSUANCE_ACTION = 'experimental:assessment_issuance';
 export const ASSESSMENT_ISSUANCE_VERSION = 1 as const;
 
 type IssuanceRow = typeof assessment_issuance.$inferSelect;
 type RevisionRow = typeof question_revision.$inferSelect;
 
-/** 行 → 公开契约（嵌套 binding；coordinate 列与事件复用同一映射 ——
- *  wire/handlers 永不平铺坐标）。submit.ts 的恢复读面共用。 */
+/** 行 → 公开契约；事件与 wire 共用同一映射，坐标不平铺。 */
 export function issuanceRowToContract(row: IssuanceRow): AssessmentIssuanceT {
   return {
     issuance_id: row.issuance_id,
@@ -120,11 +92,8 @@ export function revisionRowToContract(row: RevisionRow): PublishedQuestionRevisi
     response_spec: row.response_spec,
     scoring_basis: row.scoring_basis,
     execution_plan: row.execution_plan,
-    // YUK-1497（review R1）—— 冻结展示层随行映射。非空列必须过
-    // Presentation.safeParse：通过 ⇒ 带 zod 解析后的规范形；失败 ⇒ 原样
-    // 透传（绝不丢列 —— 丢列会让坏展示层静默降级为逐槽渲染，fail-open）。
-    // 消费面 fail-closed：PublishedQuestionRevision.safeParse 拒收整版；
-    // decideAutomaticServing 形状门以 invalid_presentation 拒绝发题。
+    // Pass a bad presentation through instead of dropping it (dropping would
+    // silently downgrade rendering); consumers fail closed on the whole revision.
     ...(row.presentation != null
       ? {
           presentation: (() => {
@@ -179,8 +148,7 @@ export async function readAutomaticallyServableQuestionIds(
       ),
     );
   const admitted = new Set<string>();
-  // YUK-1496 C2：模型单元的服务判定需要权威切片登记（active 切片 + 当前
-  // 模型 pin）；登记处只读一次，判定的纯性不变。
+  // Model-slice admission is read once; the serving decision stays pure.
   const admission = await resolveModelAdmissionContext(db);
   const subjects = await lookupGroupSubjects(
     db,
@@ -198,10 +166,7 @@ export async function readAutomaticallyServableQuestionIds(
   return admitted;
 }
 
-/**
- * The issuance gate's decision for one (revision, part scope), with the same admission
- * registry and subject inputs issueAssessment uses. Read-only preflight; no effects.
- */
+/** Read-only preflight with the same admission inputs issueAssessment uses. */
 export async function readAutomaticServingDecision(
   db: Db | Tx,
   revision: PublishedQuestionRevisionT,
@@ -244,8 +209,7 @@ export async function readAutomaticIssuanceServingDecisions(
         ? decideAutomaticServing(parsed.data, issuance.part_ids, admission, questionSubject)
         : row.presentation != null && !Presentation.safeParse(row.presentation).success
           ? {
-              // review R1 —— 坏展示层不是泛化的 scoring contract 问题：typed
-              // 原因用 invalid_presentation（与 decideAutomaticServing 形状门同枚举）。
+              // Bad presentation gets its own typed reason, matching the shape gate.
               kind: 'unavailable',
               reason: 'invalid_presentation',
               detail: 'malformed frozen presentation',
@@ -260,7 +224,7 @@ export async function readAutomaticIssuanceServingDecisions(
   );
 }
 
-/** jsonb 键序无关的绑定相等判定（幂等重放的唯一判据 —— claim 不参与）。 */
+/** Key-order-independent binding equality; claim is not part of replay identity. */
 function issuanceBindingEquals(row: IssuanceRow, binding: IssuanceBindingT): boolean {
   return (
     row.revision_id === binding.revision_id &&
@@ -280,10 +244,9 @@ async function loadIssuanceById(tx: Tx, issuanceId: string): Promise<IssuanceRow
 }
 
 /**
- * 发题时观测到的 admission generation 的真相源是发题事件载荷（issuance 行不
- * 存该列；lifecycle 的当前值可能已推进，绝不能冒充“发题时所见”——否则激活
- * CAS 会被绕过）。事件缺失/形态异常时回退到调用方给的候选值（如实标注，
- * 不静默编数）。
+ * The issuance event, not the current lifecycle row, owns the generation observed
+ * at issue time; the current value could bypass activation CAS. Fall back to the
+ * caller's candidate when the event is absent.
  */
 export async function readObservedAdmissionGeneration(
   db: Db | Tx,
@@ -307,39 +270,17 @@ export async function readObservedAdmissionGeneration(
 export interface IssueAssessmentRequest {
   /** 组根 question id（单题 = 自身；复合题 = 父 id）。 */
   group_id: string;
-  /**
-   * 显式目标 revision（缺省 = lifecycle.current_revision_id）。in_progress
-   * 必须绑定明确版本：给出显式值时它必须是该组的 revision，否则
-   * revision_mismatch —— 绝不静默回退到 current。
-   */
+  /** Explicit target revision; must belong to the group, never silently falls back. */
   revision_id?: string;
-  /**
-   * 目标 part 子集（缺省 = 全部 parts）。部分发出时只绑定该范围内的槽位与
-   * 材料；跨 part 的联合判分由 evaluateSubmission 的 issued_part_ids 切分。
-   */
+  /** Target part subset; partial issuance binds only these slots and materials. */
   part_ids?: string[];
-  /**
-   * 选择槽呈现顺序覆盖（slot_id → option_ids 排列）。缺省 = 声明顺序
-   * （§7.3 不 shuffle）。覆盖必须是该槽声明选项的排列，否则 binding_invalid。
-   */
+  /** Slot display order; must be a permutation of the declared options. */
   option_order_overrides?: Record<string, readonly string[]>;
-  /**
-   * 发题模式：
-   *   - 'auto_score'（默认）：自动判分练习；
-   *   - 'manual'：显式手动/自评学习效应，不推断 AI 正确性。
-   * 两种模式均要求评分准入与自动可判；admission generation 原样观测记录。
-   */
+  /** auto_score (default) or manual; both still require admission. */
   mode?: 'auto_score' | 'manual';
-  /**
-   * 容器 occurrence 引用（teaching/probe/intervention/paper 等一次性或容器
-   * 内发题锚点）。container_only 组【必须】提供（否则该题没有合法使用面）。
-   */
+  /** Container occurrence anchor; required for container_only groups. */
   container_occurrence_ref?: string | null;
-  /**
-   * 请求一次性占用（claim_status='claimed' + claimed_by_ref）。one_time 组
-   * 的 claim 是互斥的：同组存在另一个 claimed 且未释放的 issuance ⇒
-   * claim_unavailable（releaseIssuanceClaim 释放后才可再占）。
-   */
+  /** Request a one-time claim; another unreleased claim makes it unavailable. */
   claim?: { claimed_by_ref: string };
   /** 客户端可指定 issuance_id（重试幂等锚）；缺省服务端生成。 */
   issuance_id?: string;
@@ -371,20 +312,16 @@ export type IssueAssessmentResult =
         | 'issuance_id_conflict' // 同 id 不同绑定载荷（不覆盖）
         | 'binding_invalid'; // 绑定与 revision 不一致（unknown part/material/...）
       issues?: string[]; // binding_invalid 时给出具体 issue 列表
-      /** YUK-1445 —— not_admitted 由自动判分 gate 拒绝时的 typed 原因
-       * （公共枚举；诊断 detail 仍只在 issues/message 内部）。 */
+      /** Typed reason when the automatic-scoring gate rejects. */
       serving_reason?: ServingUnavailableReason;
     };
 
 // ---------- 编排主体 ----------
 
 /**
- * issueAssessment：在单一事务内完成 组根锁 → 生命周期校验 → 绑定推导 →
- * 不可变 issuance 落库（+ 可选一次性 claim）。
- *
- * db 可传 Db（自开顶层事务）或 Tx（落到调用方 savepoint，参与更大原子单元
- * —— 如 paper 开卷同事务批量发题）。返回结果不抛 domain 错；契约违背
- * （空 part_ids / 非法 claim 形状）抛 TypeError/Error。
+ * Single transaction: root lock → lifecycle checks → binding → immutable issuance
+ * (+ optional claim). Accepts Db or Tx; domain failures are returned, malformed
+ * contract input throws.
  */
 export async function issueAssessment(
   db: Db | Tx,
@@ -453,7 +390,7 @@ async function issueAssessmentInternal(
   const mode = request.mode ?? 'auto_score';
 
   return await db.transaction(async (tx) => {
-    // 1) 组根行锁（锁序与 publish/verify 一致：question → lifecycle/快照读）。
+    // Lock order matches publish/verify: question root → lifecycle/snapshot reads.
     const [root] = await tx
       .select({
         id: question.id,
@@ -475,7 +412,6 @@ async function issueAssessmentInternal(
       return { status: 'binding_invalid', issues: ['question does not belong to this capture'] };
     }
 
-    // 2) lifecycle + 目标 revision 解析（显式 revision_id 优先 —— 不发 latest）。
     const [lifecycle] = await tx
       .select()
       .from(question_group_lifecycle)
@@ -498,12 +434,11 @@ async function issueAssessmentInternal(
       .where(eq(question_revision.revision_id, revisionId))
       .limit(1);
     if (revRow == null) return { status: 'not_found' };
-    // 显式指定时必须属于该组 —— 拿 A 组的 revision 发 B 组的题是坐标违背。
+
     if (revRow.group_id !== request.group_id) {
       return { status: 'revision_mismatch' };
     }
 
-    // 3) 生命周期维度校验（§3.3：挂起/撤回 ⇒ 不发新 issuance）。
     if (lifecycle != null) {
       if (lifecycle.withdrawn) return { status: 'withdrawn' };
       if (lifecycle.suspended) return { status: 'suspended' };
@@ -520,7 +455,6 @@ async function issueAssessmentInternal(
       return { status: 'not_admitted' };
     }
 
-    // 4) 绑定推导 + 校验（revision 快照 → 发出范围/材料/呈现顺序）。
     const revision = revisionRowToContract(revRow);
     const binding = deriveIssuanceBinding(revision, {
       part_ids: request.part_ids ?? existingIssuance?.part_ids,
@@ -540,8 +474,8 @@ async function issueAssessmentInternal(
       };
     }
 
-    // Neither manual mode nor a replay authorizes another learner-facing serve
-    // of an unsupported frozen contract. Ingestion capture is a separate receipt.
+    // Manual mode and replay never authorize another serve of an unsupported
+    // contract; ingestion capture is a separate receipt.
     if (!capture) {
       const admission = await resolveModelAdmissionContext(tx);
       const subjects = await lookupGroupSubjects(tx, [request.group_id]);
@@ -561,11 +495,8 @@ async function issueAssessmentInternal(
       }
     }
 
-    // 5) 幂等锚点先行解析（P1-2：issuance_id 重试必须先于 claim 互斥判——
-    //    否则 one_time 组的重试会命中自己持有的 claim 被误报
-    //    claim_unavailable）。同 id 同绑定（含容器 ref）⇒ 如实返回既有行
-    //    （claim 状态/issued_at 全取存储值，不从本次请求重建）；同 id 不同
-    //    绑定 ⇒ issuance_id_conflict。
+    // Resolve the idempotency anchor before the claim check, or a one_time retry
+    // would hit its own claim and report claim_unavailable.
     const containerRef = request.container_occurrence_ref ?? null;
     if (request.issuance_id != null) {
       const existing = await loadIssuanceById(tx, request.issuance_id);
@@ -591,9 +522,7 @@ async function issueAssessmentInternal(
     }
 
     // The group-root lock serializes this recheck with publication/withdrawal.
-    // Historical replay above keeps its immutable revision and held evidence.
-    // 新发题必须是当前 revision。过期版本（包括调用方显式钉住的旧版）拒绝；
-    // 已有 issuance 的重放在上面返回，不走到这里。
+    // New issuance must use the current revision; old explicit pins are rejected.
     if (!capture) {
       if (revisionId !== lifecycle?.current_revision_id) return { status: 'revision_mismatch' };
       if (lifecycle?.scoring_admission_state !== 'admitted') return { status: 'not_admitted' };
@@ -613,9 +542,7 @@ async function issueAssessmentInternal(
       }
     }
 
-    // 6) 一次性 claim（one_time 组始终占用）：同组存在未释放 claimed
-    //    issuance ⇒ claim_unavailable。unbounded 组始终可发（claim 只是记录）。
-    //    同 id 重试已在上面收敛——这里查到的 holder 必属另一 issuance。
+    // A one_time group rejects a second unreleased claim; retries converged above.
     const claimPolicy = lifecycle?.claim_policy ?? 'unbounded';
     const claimRequested = claimPolicy === 'one_time' || request.claim != null;
     if (claimRequested && claimPolicy === 'one_time') {
@@ -636,7 +563,6 @@ async function issueAssessmentInternal(
       if (holder != null) return { status: 'claim_unavailable' };
     }
 
-    // 7) issuance 行（不可变绑定；claim 列随后可改）。
     const issuanceId = request.issuance_id ?? `iss_${createId()}`;
     const claimStatus: 'claimed' | 'unclaimed' = claimRequested ? 'claimed' : 'unclaimed';
     const claimedByRef = claimRequested ? (request.claim?.claimed_by_ref ?? issuanceId) : null;
@@ -661,13 +587,11 @@ async function issueAssessmentInternal(
       .returning({ issuance_id: assessment_issuance.issuance_id });
 
     if (inserted.length === 0) {
-      // 同 id 已存在：比对完整绑定载荷 —— 一致 = 幂等重放；不同 = 显式冲突。
-      // （步骤 5 的预检覆盖常规重试；本分支兜底并发窗口内刚落库的碰撞。）
-      // 重放必须用既有行的持久状态（claim 可能已被释放、issued_at 必须回传
-      // 原始值）——绝不能用请求侧值冒充存储事实。
+      // Concurrent insert with the same id: replay must use persisted state,
+      // never request values, because the claim may already have been released.
       const existing = await loadIssuanceById(tx, issuanceId);
       if (existing == null) {
-        // 不可能形状（冲突但行不可见）—— fail-loud。
+        // Conflicted but no visible row: fail loud.
         throw new Error(
           `issueAssessment: issuance '${issuanceId}' conflicted but no row is visible`,
         );
@@ -691,9 +615,6 @@ async function issueAssessmentInternal(
       };
     }
 
-    // 8) 发题事件（同事务 receipt；payload 如实记录冻结坐标与 claim 处置）。
-    //    重放绝不改变 claim —— 若本次请求带 claim 而已有行是 unclaimed，如实返回
-    //    现有状态（调用方决定是否再 claim；claim 请求只对 first-serve 有效）。
     await writeEvent(tx, {
       id: `evt_iss_${createId()}`,
       session_id: null,
