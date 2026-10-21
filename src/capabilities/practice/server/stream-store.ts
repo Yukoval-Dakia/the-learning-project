@@ -1120,12 +1120,14 @@ export async function reRankAfterAnswer(
     if (plan === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Delete only slots that will be refilled; frozen and kept rows stay untouched.
-    await tx.delete(practice_stream_item).where(
-      and(
-        streamPartitionPredicate(date, sessionId),
-        inArray(practice_stream_item.id, plan.deleteIds),
-      ),
-    );
+    await tx
+      .delete(practice_stream_item)
+      .where(
+        and(
+          streamPartitionPredicate(date, sessionId),
+          inArray(practice_stream_item.id, plan.deleteIds),
+        ),
+      );
 
     // Fill vacated positions first, then append after max(position). Skip refs kept in the
     // stream, and record π_i only for rows that actually insert.
