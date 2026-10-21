@@ -1,5 +1,4 @@
-// YUK-1529 — worksheet export PDF 的 blob 读写 seam。
-//
+// worksheet export PDF 的 blob 读写 seam。
 // 写者只有 jobs/worksheet_render 的渲染 job；读者只有
 // GET /api/worksheet-exports/[token]/pdf。R2 key 内容寻址
 // （worksheet-pdf/<sha256-hex>.pdf）：digest 即 key 的唯一真源，

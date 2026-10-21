@@ -1,21 +1,16 @@
-// ADR-0072 D2 — 版本化题库内容引用（bank ref）。
-//
+// D2 — 版本化题库内容引用（bank ref）。
 // ref 指向不可变 `question_revision` 行，绝不指向可变指针（question 行 /
 // question_group_lifecycle）。语法：
-//
-//   qrev1:<revision_id>:<integrity_digest hex 前 12 位>
-//
+// qrev1:<revision_id>:<integrity_digest hex 前 12 位>
 // - revision_id：question_revision 主键（发布 seam 铸造，不可变，cuid）。
 // - digest 前缀：同行 integrity_digest（`sha256:<64hex>`）的 hex 前 12 位。
-//   读取不可变行后核对 digest 前缀，发现 ref 抄写/换 target 错位。
-// - `qrev1` 版本号留给 migration 线重键（ADR-0072 未决问题 1）；携带 digest
-//   使任何未来映射仍可验证内容身份。
-//
+// 读取不可变行后核对 digest 前缀，发现 ref 抄写/换 target 错位。
+// - `qrev1` 版本号留给 migration 线重键（未决问题 1）；携带 digest
+// 使任何未来映射仍可验证内容身份。
 // 解析语义（硬边界 3）：查无此行 → unresolvable；digest 前缀不符 →
 // digest_mismatch（过期/错引，显式错误，绝不回退 latest）；lifecycle
 // withdrawn → withdrawn。suspended 不拦读取，由调用方如实报告状态。
-//
-// 单题 = 1-part 组（YUK-1043 §3.1），question 与 group 共用组版本语法；
+// 单题 = 1-part 组，question 与 group 共用组版本语法；
 // kind（question/group）由 revision 形状派生，不进 ref。
 
 import { and, eq, inArray } from 'drizzle-orm';
@@ -77,7 +72,7 @@ export type BankRefResolution =
  * 批量解析 refs。每个 ref 独立成败（部分成功合法），顺序与输入一致。
  * 一次查询 revision + lifecycle，批量无 N+1。
  *
- * opts.allowWithdrawn（YUK-1468 历史读）：withdrawn 组仍返回 'ok' 决议
+ * opts.allowWithdrawn（历史读）：withdrawn 组仍返回 'ok' 决议
  * （revision 行 + lifecycle 带 withdrawn 标记）——是否授权由调用方决定
  * （bound submission / 私有角色）；search/check 不传 ⇒ 语义不变。
  */

@@ -1,16 +1,8 @@
-// ADR-0032 RP-2 / ADR-0031 (YUK-304 lane B) — the shared tool_quiz artifact
-// writer core.
+// Shared tool_quiz artifact writer.
 //
-// RP-2 (docs/adr/0032-domaintool-surface-redesign.md) scheduled this extraction
-// for "when the second wrapper lands": write_review_plan (review-plan-tools.ts)
-// and write_quiz (write-quiz.ts) now BOTH delegate their artifact INSERT here.
-// The core owns ONLY the constant tool_quiz skeleton — type / parent / source /
-// generation_status / verification_status / history / version / timestamps —
-// plus the single ToolState Zod barrier (RL4: tool_state is jsonb, opaque to
-// audit:schema; the parse is the load-bearing guard). Everything semantic
-// (validation, idempotency/advisory locks, titles, attrs, intent_source /
-// tool_kind values) stays in the wrappers, so write_review_plan's observable
-// behavior is byte-identical to its pre-extraction INSERT.
+// Owns the constant skeleton and the single ToolState Zod barrier; jsonb is opaque to
+// audit:schema, so parsing here is load-bearing. Validation, locks, titles, attrs, and
+// provenance stay in write_review_plan / write_quiz, whose observable behavior is unchanged.
 
 import type { z } from 'zod';
 import { type AgentRef, ToolState } from '@/core/schema/business';
@@ -38,7 +30,7 @@ export interface ToolQuizArtifactParams {
    */
   generatedBy?: AgentRefT;
   /**
-   * YUK-471 W3-C1β — the causing event for the same-tx artifact_create (e.g. the copilot turn's
+   * W3-C1β — the causing event for the same-tx artifact_create (e.g. the copilot turn's
    * caused_by event, threaded from ctx.causedByEventId). Optional: when absent the create event is
    * unchained (a free-standing AI tool_quiz creation).
    */
@@ -51,8 +43,8 @@ export interface ToolQuizArtifactParams {
  * Tx to make the write atomic with sibling writes) and ALL semantic
  * validation — this core never rejects beyond the ToolState parse.
  *
- * YUK-471 W3-C1β — ALSO emits the self-sufficient artifact_create event on the SAME `dbOrTx`
- * (additive double-write, flag OFF). The live caller (write_quiz) passes a Tx (YUK-349: write_review_plan retired), so
+ * W3-C1β — ALSO emits the self-sufficient artifact_create event on the SAME `dbOrTx`
+ * (additive double-write, flag OFF). The live caller (write_quiz) passes a Tx (: write_review_plan retired), so
  * the INSERT + event are atomic; build the snapshot from the RETURNING row so all 22 columns are
  * materialized (rollback-safe — parseEvent throws on a bad snapshot, rolling back the paired INSERT).
  */

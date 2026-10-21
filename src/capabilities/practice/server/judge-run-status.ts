@@ -1,25 +1,9 @@
-// YUK-594 (durable judge main path, W1) — durable judge_run 的事件契约 + 状态派生。
+// Durable judge_run event contract and status derivation.
 //
-// 蓝本：copilot-run-status.ts（YUK-364/575）。judge_run 是 copilot_run 的更薄
-// 同胞——单次无状态 LLM 判分调用，无对话记忆 / 无工具循环 / 无取消 chip 语义，
-// 故词表与 reducer 都更简：queued → started → done|failed。（#12 — 蓝本 copilot_run
-// 有 `running` 中间态，judge_run **没有**：单次调用无「工具循环进行中」阶段可报，
-// JudgeRunStatus / JUDGE_RUN_EVENTS / handler 三处都不产 running。）
-//
-// **事件 ≠ 状态**（W4 #TtWiB）：事件词表比状态多一条 `attempt_failed`——一次投递失败
-// 但重投预算未耗尽。它是**非终态**痕迹（reducer 视同 started），只有 done / failed
-// 能终结 run。状态枚举因此不变：客户端看到 attempt_failed 可以显示「重试中」，但绝
-// 不能据此停止等待。
-//
-// run handle = judge_run id（W2 submit 面：= 该次作答 attempt/outcome event id，
-// 见 submit.ts enqueueDurableJudge）。状态不落瘦表，而是从 `job_events`
-// （business_table='judge_run', business_id=run_id）的 replay 末事件派生——
-// job_events 即 SoT，与 copilot_run / ingestion / echo 同型。
-//
-// 纯函数 + 无 DB 依赖（unit 分区）：仿 copilot-run-status.ts / ingestion-phase.ts
-// 的「从 replay 末事件派生」做法，unit-tested in judge-run-status.test.ts。此模块
-// 也承载 poll-tier 响应 schema（dependency-light，供 manifest 静态导入而不牵入
-// db/client——route 文件本体带 db 依赖，不可被 manifest eager-import）。
+// Events are replayed from job_events, the source of truth. The event vocabulary has one
+// extra member, attempt_failed, for a delivery failure with retries left; it is non-terminal
+// and the reducer treats it like started. Only done/failed end a run.
+// Kept dependency-light for manifest eager imports; no DB client.
 
 import { z } from 'zod';
 
@@ -50,7 +34,7 @@ export const JUDGE_RUN_EVENTS = {
    */
   FAILED: 'judge_run.failed',
   /**
-   * **非终态**：YUK-777 A3 的 reconcile sweeper 为一条「作答已录、判词未落」的 pending
+   * **非终态**： A3 的 reconcile sweeper 为一条「作答已录、判词未落」的 pending
    * attempt 重新投递了一个 judge_run job。
    *
    * 它把 run 拉回 `queued`——这是诚实的：确实有一次全新的投递在飞。不这样做的话，先前
@@ -235,10 +219,10 @@ export const JudgeRunTerminalResultSchema = z
  * #13 — `result` 与 `status` 的耦合由 **discriminated union 在 schema 里表达**（旧形是
  * 平铺 object + 注释约定，schema 允许 `status:'queued'` 携非 null result，codegen/客户端
  * 看不到这条不变量）：
- *   - `status:'done'` → result 是结构化判词；**仍 nullable**，因为 route 对畸形/legacy
- *     DONE payload 做 safeParse 降级（#7 现在会 warn 记录），那一路诚实地报 done+null，
- *     不该被契约判违规。
- *   - `queued|started|failed` → result 恒 null（无判词可给）。
+ * - `status:'done'` → result 是结构化判词；**仍 nullable**，因为 route 对畸形/legacy
+ * DONE payload 做 safeParse 降级（#7 现在会 warn 记录），那一路诚实地报 done+null，
+ * 不该被契约判违规。
+ * - `queued|started|failed` → result 恒 null（无判词可给）。
  */
 export const JudgeRunStatusResponseSchema = z.discriminatedUnion('status', [
   z.object({

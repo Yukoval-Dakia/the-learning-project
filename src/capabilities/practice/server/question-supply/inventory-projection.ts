@@ -316,7 +316,7 @@ export async function writeInventoryShadowComparisonEvents(
 /**
  * Adapter for `discoverSupplyTargets(..., { observeInventory })`. Current scanner targets are
  * already settled before this runs; projections are then loaded, compared, and written only to
- * an internal diagnostic ledger. YUK-697 can reuse the loader boundary without becoming inventory
+ * an internal diagnostic ledger. can reuse the loader boundary without becoming inventory
  * truth or requiring a Phase-B family table.
  */
 export async function runInventoryShadowDualRead(

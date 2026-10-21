@@ -1,25 +1,11 @@
-// Placement probe item selection — cold-start inc-B (YUK-468, PR-2a).
-// docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3 / §5 inc-B (行 151-153).
+// Placement probe item selection. Pure-ish: one bounded SELECT plus shared signal
+// collection; no writes or θ̂/FSRS mutation.
 //
-// Picks the next question for a bounded placement probe over a goal's KG subgraph. The
-// SCORING math is NOT reimplemented here — we hand the goal-subgraph candidates to the LIVE
-// `collectCandidateSignals` (candidate-signals.ts), which folds in the production KLP/MFI
-// switch (A3: cold-start KC evidence < EARLY_KLP_N → KLP posterior-weighted Fisher integral,
-// warm KC → point MFI). This module only (1) finds the candidate questions touching the goal
-// subgraph and (2) picks the max-information one — reusing the same selection signals the
-// daily stream uses, so placement never forks the item-information definition.
-//
-// FRONTIER (MVP): candidates = active, non-draft questions whose knowledge_ids intersect the
-// goal subgraph KC set. Walking the KG frontier ALONG prereq edges is inc-E
-// (the prereq-propagation family — PREREQ_THETA_PROPAGATION_ENABLED);
-// until then the goal-subgraph ∩ KLP-information frontier is
-// the bound. Subject scoping is a DERIVED axis (caller passes the effective-domain KC set via
-// resolveSubjectKnowledgeIds) — NO subject root node (subject = view, not structure).
-//
-// PURE-ish: one bounded SELECT + the shared signal collection. No writes, no θ̂/FSRS mutation
-// (those happen on answer via the existing /api/review/submit path — PR-2b wires the probe to
-// it). Returns null when the goal subgraph has no eligible questions (cold DB) → the caller
-// (start handler, PR-2b) dispatches quiz_gen to source starter questions (§6 Q3).
+// Candidates are active, non-draft questions touching the goal subgraph. Scoring is not
+// reimplemented: collectCandidateSignals supplies the production KLP/MFI signal. Subject
+// scoping is a derived axis passed by the caller; there is no subject root node. Frontier
+// walking along prereq edges is not implemented yet. Returns null when no eligible question
+// exists so the caller can source starter questions.
 
 import { and, notInArray, sql } from 'drizzle-orm';
 import type { SelectionCandidateSignal } from '@/core/selection-signals';
@@ -34,7 +20,7 @@ import { rotationClassForKind } from './variant-rotation';
 type DbLike = Db | Tx;
 
 /**
- * YUK-480 — resolve the learner's self-reported subject `leanings` (effective-domain subject ids
+ * resolve the learner's self-reported subject `leanings` (effective-domain subject ids
  * from the Welcome screen) into the union of their KC sets, for use as `preferKnowledgeIds` in
  * selectNextPlacementItem. subject=view: each leaning resolves through the effective-domain axis
  * (resolveSubjectKnowledgeIds) — NO subject root node. Picks up newly-bridged KCs live (same
@@ -46,7 +32,7 @@ type DbLike = Db | Tx;
  *
  * Takes the top-level `Db` (not a Tx): the leaning→KC derivation is an INDEPENDENT read over the
  * knowledge table (subject effective-domain axis), not part of the session-lock serialization, so
- * /next resolves it on the top-level client outside the row-lock tx — the locked session row is
+ * next resolves it on the top-level client outside the row-lock tx — the locked session row is
  * already in hand (session.leanings).
  */
 export async function resolveLeaningPreferenceKcs(
@@ -65,7 +51,7 @@ export async function resolveLeaningPreferenceKcs(
  * rotation-classifiable label or undefined. Same fail-closed idiom as
  * stream-store.ts:resolveRotatableKind / the softmax side — kind only affects family-key
  * + recall routing in the signal layer, so an unrecognized label degrades to undefined,
- * never throws. YUK-386: the boundary moved from enum membership to
+ * never throws. : the boundary moved from enum membership to
  * rotationClassForKind classifiability — same KNOWN-label table, same behaviour. */
 function toEnumKind(kind: string | null | undefined): CandidateInput['kind'] {
   return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
@@ -85,14 +71,14 @@ export interface SelectPlacementItemInput {
   /** questions already served/answered in THIS probe — excluded so the probe never repeats. */
   excludeQuestionIds?: readonly string[];
   /**
-   * YUK-480 — leaning-preferred KC set (resolved from the learner's self-reported subject
+   * leaning-preferred KC set (resolved from the learner's self-reported subject
    * leanings via resolveLeaningPreferenceKcs). A candidate whose knowledge_ids intersect this
    * set is PREFERRED in selection ORDER — it ranks above non-matching candidates regardless of
    * info score, but WITHIN a preference tier the max-information pick + id tie-break are
    * unchanged, and the REPORTED score/scoreKind stay the TRUE psychometric value (the preference
    * never rewrites the information score). This is a pure presentation-ordering preference
-   * (owner-supplied fixed input, n=1 admissible §0.2 cat 1/2); it NEVER feeds θ̂/p(L)/FSRS
-   * (§3 red line 4). Empty/omitted → ALL candidates tier-equal → selection is BYTE-IDENTICAL to
+   * (owner-supplied fixed input, n=1 admissible cat 1/2); it NEVER feeds θ̂/p(L)/FSRS
+   * (red line 4). Empty/omitted → ALL candidates tier-equal → selection is BYTE-IDENTICAL to
    * the no-preference path (regression anchor). In the common single-subject probe every
    * candidate matches (or none does) → uniform tier → no reordering; it only reorders a probe
    * pool that genuinely spans multiple subjects toward the leaning ones.
@@ -107,7 +93,7 @@ export interface PlacementSelection {
   /**
    * which criterion produced `score` (provenance). Sourced from the signal layer's own
    * scoreKind so it stays in sync as the criterion set grows (e.g. A4 added 'klp_grid',
-   * YUK-436) — do NOT re-narrow this to a literal subset.
+   *) — do NOT re-narrow this to a literal subset.
    */
   scoreKind: SelectionCandidateSignal['scoreKind'];
 }
@@ -133,7 +119,7 @@ export async function selectNextPlacementItem(
     new Set((input.excludeQuestionIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
   );
 
-  // YUK-480 — leaning preference set (empty → no preference → byte-identical to today). Used
+  // leaning preference set (empty → no preference → byte-identical to today). Used
   // ONLY to order selection (a candidate touching a leaning KC ranks above non-matching ones);
   // it does NOT alter the information score nor any θ̂/p(L) write.
   const prefer = new Set(
@@ -158,7 +144,7 @@ export async function selectNextPlacementItem(
       ? and(
           sql`(${kcContainment})`,
           notDraftPredicate(question.draft_status),
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 probe 池。
+          // 契约准入门：suspended/withdrawn 组不进 probe 池。
           questionSuspendedPredicate(question),
           admitted,
           notInArray(question.id, exclude),
@@ -214,10 +200,10 @@ export async function selectNextPlacementItem(
 
   const signals = await collectCandidateSignals(db, candidates);
 
-  // Pick order = leaning tier (YUK-480) ▸ max information score ▸ id tie-break. The leaning tier
+  // Pick order = leaning tier ▸ max information score ▸ id tie-break. The leaning tier
   // is the TOP key: a candidate touching a leaning KC outranks any non-matching one. WITHIN a
   // tier the existing max-info pick + stable id tie-break are untouched, so with an empty
-  // `prefer` (every candidate tier-equal at false) this is byte-identical to the pre-YUK-480
+  // `prefer` (every candidate tier-equal at false) this is byte-identical to the pre-
   // selection. The reported score/scoreKind stay the TRUE info value — the preference reorders
   // WHICH candidate wins, it never rewrites the psychometric score nor touches θ̂/p(L).
   let best: PlacementSelection | null = null;

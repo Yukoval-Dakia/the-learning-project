@@ -50,7 +50,7 @@ export async function submitNativePaperAttempt(db: Db, input: NativePaperAttempt
   ) {
     throw new ApiError('coordinate_mismatch', 'submission differs from the issued paper slot', 409);
   }
-  // YUK-1573 — whole-paper hand-in is refused for every slot of an occurrence whose issued
+  // whole-paper hand-in is refused for every slot of an occurrence whose issued
   // slots include one the paper page cannot render (no partial hand-in). Reads immutable
   // issuance/revision rows only, before the capture transaction writes anything.
   await assertIssuedPaperSlotsRenderable(

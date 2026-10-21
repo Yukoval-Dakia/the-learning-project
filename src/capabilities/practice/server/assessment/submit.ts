@@ -1,42 +1,12 @@
-// ====================================================================
-// YUK-1052 — saveSubmission / saveResponseDraft / pending 恢复（grounding
-// §4.3 Interface + D5/D11 + §7.3 UI 状态纪律）
-// ====================================================================
-//
-// 本模块承载【作答持久化】三个动作：
-//
-//   1. saveResponseDraft(issuance_id, evaluation_group_ref?, response_set,
-//      group_evidence?, expected_save_epoch?) —— D11 服务端自动保存。每
-//      issuance 一行 live draft（upsert 覆盖 mutable 行），ack = 落库成功；
-//      客户端 saving/saved/error 只看本函数返回值（服务端 ack 才恢复 promise）。
-//      expected_save_epoch 是给前端的 stale 防线：带上次 ack 的 epoch 重存时
-//      若服务端已有更新的草稿 ⇒ stale_draft（不静默盖掉别人的新作答）。
-//
-//   2. saveSubmission(issuance_id, evaluation_group_id, idempotency_key,
-//      response_set, group_evidence?) —— §4.3 Interface 正式提交。
-//      幂等（同 (evaluation_group_id, idempotency_key)）：payload 逐字一致 ⇒
-//      replayed（不重写、不重复学习效应、不污染 group.submission_ids）；
-//      不同 ⇒ conflict（revision/issuance/group/response 不一致的显式分支，
-//      绝不覆盖已接收作答）。submission 的 revision/issuance 冗余坐标由复合
-//      FK 冻结在 issuance 行 —— 提交【绝不】回取 latest revision。
-//      单事务原子：evaluation_group upsert → assessment_submission 不可变行 →
-//      初始 evaluation_effective_head（§11）→ 对应草稿清除 → 提交事件。
-//
-//   3. getIssuanceState / listResponseDraftsByGroup —— pending 恢复读面：
-//      issuance + 最新 draft（null = 服务端无未保存草稿）+ 已接收提交摘要。
-//
-// 判定纪律：
-//   - draft/submission 的 response_set 只校验【本次 issuance 发出范围内】的
-//     槽位（scopeResponseSpec + issuance.part_ids）—— 引用未发出槽位 ⇒
-//     invalid_response，拒收；
-//   - 提交时 admission/claim 状态不再复核（§3.3：已接收作答守恒 —— 挂起后
-//     提交仍接收并持久化证据，pending review 交给评估/激活层判定）；
-//   - 草稿只属于 mutable 层：绝不代表已接收作答，D5 守恒只发生在
-//     assessment_submission 落库那一下 ack。
-//
-// 锁序（固定，无环）：advisory(group) → issuance 行 → evaluation_group 行 →
-// draft 行。
-// ====================================================================
+// Answer persistence: saveResponseDraft, saveSubmission, and pending-state reads.
+// Drafts are mutable, one live row per issuance; expected_save_epoch rejects a stale
+// overwrite. Submissions are immutable and idempotent per (evaluation_group_id,
+// idempotency_key): an identical payload replays without new learning effects, a different
+// payload conflicts and never overwrites an accepted answer. Revision and issuance
+// coordinates come from the issuance row, never from the latest revision.
+// The write is one transaction: group upsert, immutable submission, initial effective head,
+// draft clear, submission event.
+// Lock order: advisory(group) -> issuance row -> evaluation_group row -> draft row.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
@@ -59,7 +29,7 @@ import {
   validateResponseSet,
 } from '@/core/schema/assessment';
 // （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
-//  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
+// capability 边界不允许 server import；语义等价：空 effective、generation 0。）
 import type { ServingUnavailableReason } from '@/core/schema/assessment/serving-admission';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -163,7 +133,7 @@ export interface IssuanceState {
   /** 恢复快照所需的作答期公开 DTO（由冻结绑定 + pinned revision 重建）。 */
   practice_dto: PracticeIssuanceDtoT | null;
   /**
-   * YUK-1445 —— practice_dto 被 serving gate 收回时的 typed 原因（公开安全
+   * practice_dto 被 serving gate 收回时的 typed 原因（公开安全
    * 枚举；诊断 detail 不透出）。有已接收提交 ⇒ null（恢复面不受影响）。
    */
   unavailable_reason: ServingUnavailableReason | null;
@@ -246,9 +216,9 @@ export async function saveResponseDraft(
     // 提交 tombstone（P1-3）：submission 行是【该次作答已接收】的持久事实 ——
     // saveSubmission 清草稿后，迟到的 debounced autosave 绝不允许把已提交的
     // 作答重建为 live draft。判定按草稿声明的联合组锚点：
-    //   - 带 ref：同 issuance 同组的提交存在 ⇒ 该次作答已提交，拒收；
-    //   - 无 ref（未定组）：本 issuance 已有任何提交 ⇒ 该草稿所属尝试已被
-    //     清并归档，同样拒收（提交清除谓词本就含未定组草稿）。
+    // - 带 ref：同 issuance 同组的提交存在 ⇒ 该次作答已提交，拒收；
+    // - 无 ref（未定组）：本 issuance 已有任何提交 ⇒ 该草稿所属尝试已被
+    // 清并归档，同样拒收（提交清除谓词本就含未定组草稿）。
     const tombstoneConds = [eq(assessment_submission.issuance_id, request.issuance_id)];
     if (groupRef != null) {
       tombstoneConds.push(eq(assessment_submission.evaluation_group_id, groupRef));
@@ -328,19 +298,19 @@ export async function saveResponseDraft(
 // ---------- 2. 正式提交（saveSubmission） ----------
 
 /**
- * §4.3 saveSubmission：单事务原子提交。
+ * saveSubmission：单事务原子提交。
  *
  * 次序（replay 不污染组内锚点 —— 先判幂等再改组）：
- *   1. advisory 锁 evaluation_group（与评估/激活/DB guard 共用）；
- *   2. 锁 issuance（发题事实不可变读）+ revision 快照；
- *   3. 校验 response_set 对发出 spec；
- *   4. 幂等预检：(group,key) / submission_id —— replay/conflict 直接返回，
- *      不触碰 evaluation_group.submission_ids；
- *   5. 锁组行/冲突安全建组（onConflictDoNothing + 锁内重读）→
- *      assessment_submission 不可变行 → 组行追加 submission_id；
- *   6. 初始 head（仅当组内尚无 head —— 多 submission 组锚定第一份提交，
- *      activation 的 head.submission_id 断言以该锚为准，见 activate.ts）；
- *   7. 清对应 live draft + 提交事件。
+ * 1. advisory 锁 evaluation_group（与评估/激活/DB guard 共用）；
+ * 2. 锁 issuance（发题事实不可变读）+ revision 快照；
+ * 3. 校验 response_set 对发出 spec；
+ * 4. 幂等预检：(group,key) / submission_id —— replay/conflict 直接返回，
+ * 不触碰 evaluation_group.submission_ids；
+ * 5. 锁组行/冲突安全建组（onConflictDoNothing + 锁内重读）→
+ * assessment_submission 不可变行 → 组行追加 submission_id；
+ * 6. 初始 head（仅当组内尚无 head —— 多 submission 组锚定第一份提交，
+ * activation 的 head.submission_id 断言以该锚为准，见 activate.ts）；
+ * 7. 清对应 live draft + 提交事件。
  */
 export async function saveSubmission(
   db: Db | Tx,
@@ -551,17 +521,16 @@ export async function saveSubmission(
         .where(eq(evaluation_group.evaluation_group_id, request.evaluation_group_id));
     }
 
-    // 初始 head（§11 同事务原子）：组内尚无 head 才插 —— 多 submission 组锚定
-    // 第一份提交；组行锁保证这里的 check-then-insert 在组内串行。
+    // Initial head (atomic with the group): insert only when no head exists; the group row
+    // lock serializes the check-then-insert.
     const [head] = await tx
       .select({ evaluation_group_id: evaluation_effective_head.evaluation_group_id })
       .from(evaluation_effective_head)
       .where(eq(evaluation_effective_head.evaluation_group_id, request.evaluation_group_id))
       .limit(1);
     if (head == null) {
-      // 初始 head 行内联插入（§11 首条不变量）：原经
-      // server/assessment/activate.ts 的 insertInitialEvaluationHead，但 practice
-      // capability 不能 import server/*（边界审计）—— 等价内联，语义同函数本体。
+      // Inline the initial head row (first-entry invariant): practice cannot import
+      // server/assessment/activate.ts, so this is the equivalent inline insert.
       await tx.insert(evaluation_effective_head).values({
         evaluation_group_id: request.evaluation_group_id,
         submission_id: submissionId,

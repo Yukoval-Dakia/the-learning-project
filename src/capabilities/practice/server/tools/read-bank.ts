@@ -1,23 +1,21 @@
-// ADR-0072 D1 — read_bank DomainTool：按版本化 ref 批量取内容。
-//
+// D1 — read_bank DomainTool：按版本化 ref 批量取内容。
 // 每个引用是 `question_revision` 的一次不可变内容版本（bank-ref.ts）。解析失
 // 败 / digest 不符 / 已撤回 → 该 ref 显式错误，绝不静默回退 latest（硬边界 3）。
-// 内容分层（提案 §7）：原文/作答契约（structure + response_spec）｜答案与评分
+// 内容分层（提案）：原文/作答契约（structure + response_spec）｜答案与评分
 // 依据（scoring_basis）｜执行计划（execution_plan）｜来源/工作副本元数据（可
 // 变投影，如实标注）。缺图/缺材料在 coverage.unavailable 如实上报，不被「读
 // 到题面」掩盖。每个 ref 独立成败（部分成功合法）。
-//
-// YUK-1468（Stage 1 K3 扩展）：
-//   - 默认响应 = overview（轻量；按需经 include/focus 展开，返回的 part/unit/
-//     material/item/slot 稳定 id 可直接作 edit_question target）；
-//   - focus：按稳定 id 收缩到子树（part/unit/material/item/slot）；
-//   - scoring：answers+rubric+execution 的合并判分层；
-//   - 长文本续读：extent.chars + next_cursor（cursor 钉住读时 revision_id）；
-//   - 私有层（rubric / scoring / execution / visibility=private 材料）由
-//     服务端 callerActor 角色裁决 —— include 永远不能升级角色；
-//   - 历史读：bound submission（submission_id 输入，绑该 revision 的
-//     assessment_submission）授权的已撤回 revision 仍可读，如实标注
-//     historical + new_issuance_allowed=false。
+// （Stage 1 K3 扩展）：
+// - 默认响应 = overview（轻量；按需经 include/focus 展开，返回的 part/unit/
+// material/item/slot 稳定 id 可直接作 edit_question target）；
+// - focus：按稳定 id 收缩到子树（part/unit/material/item/slot）；
+// - scoring：answers+rubric+execution 的合并判分层；
+// - 长文本续读：extent.chars + next_cursor（cursor 钉住读时 revision_id）；
+// - 私有层（rubric / scoring / execution / visibility=private 材料）由
+// 服务端 callerActor 角色裁决 —— include 永远不能升级角色；
+// - 历史读：bound submission（submission_id 输入，绑该 revision 的
+// assessment_submission）授权的已撤回 revision 仍可读，如实标注
+// historical + new_issuance_allowed=false。
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -315,7 +313,7 @@ function projectSlot(slot: SlotLike): z.infer<typeof SlotProjectionSchema> {
   };
 }
 
-// ---------- YUK-1468 — 角色 / cursor / focus ----------
+// ---------- — 角色 / cursor / focus ----------
 
 type ReadRole = 'owner' | 'private' | 'restricted';
 

@@ -1,10 +1,10 @@
-// YUK-1572 — 练习流「读取投影」职责模块（自 stream-store.ts 拆出）。
+// 练习流「读取投影」职责模块（自 stream-store.ts 拆出）。
 // 持久行 → StreamView，本模块拥有三件事：
-//   1. issuance 准入门（filterProspectiveStreamQuestions，含 accepted-answer
-//      recovery）——读路径与 trim/scoped 物化共用同一份「落库行可否服务」判定；
-//   2. 行元数据匹配（resolveStreamItemMetadata：review/judge verdict、knowledge /
-//      paper 名、answer_recorded）——实现细节不导出，调用方不碰 metadata map；
-//   3. 视图装配（buildStreamView / getStreamViewItem）。
+// 1. issuance 准入门（filterProspectiveStreamQuestions，含 accepted-answer
+// recovery）——读路径与 trim/scoped 物化共用同一份「落库行可否服务」判定；
+// 2. 行元数据匹配（resolveStreamItemMetadata：review/judge verdict、knowledge /
+// paper 名、answer_recorded）——实现细节不导出，调用方不碰 metadata map；
+// 3. 视图装配（buildStreamView / getStreamViewItem）。
 // 编排入口（getStream / scoped 物化 / advance / recompose / nightly）留在 stream-store.ts。
 
 import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
@@ -60,13 +60,13 @@ export interface StreamView {
     knowledge_name: string | null;
     paper_title: string | null;
     /**
-     * YUK-1054 — 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
-     * 改判/track 变化）。§9 要求的「原始判轨」对本 surface 就是 review 事件的
+     * 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
+     * 改判/track 变化）。 要求的「原始判轨」对本 surface 就是 review 事件的
      * 原始 rating；effective judge 判单独经 `verdict_effective` 透出。
      */
     verdict: 'again' | 'hard' | 'good' | null;
     /**
-     * YUK-1054 — 双轨裁决（§9）effective 侧。matched review 的 judge 链解析后
+     * 双轨裁决effective 侧。matched review 的 judge 链解析后
      * 仍 live 的最新 judge 的 coarse_outcome（'correct'|'partial'|'incorrect'|
      * 'unsupported'）。无 judge 判或无匹配 review → null。
      */
@@ -76,7 +76,7 @@ export interface StreamView {
     completed_at: string | null;
     total_slots: number | null;
     /**
-     * YUK-1510 — an open question whose answer is already recorded (YUK-1501: the attempt is
+     * an open question whose answer is already recorded (: the attempt is
      * settled, or its background judge is still queued) but whose row is not marked done yet.
      * The same rule the question page uses to make the answer read-only.
      */
@@ -134,12 +134,12 @@ function eventStreamItemId(payload: unknown): string | null {
  * Batch-enrich persisted stream rows without N+1 queries.
  *
  * Review matching rule:
- *  1. Prefer the immutable review.payload.stream_item_id exact key, additionally
- *     checking question, nullable session and the row lifetime window.
- *  2. Historical reviews pre-YUK-336 have no key. They may match only when exactly
- *     one same-question + same-nullable-session review exists between row creation
- *     and its done timestamp. Ambiguity deliberately returns null rather than
- *     displaying another attempt's judgement.
+ * 1. Prefer the immutable review.payload.stream_item_id exact key, additionally
+ * checking question, nullable session and the row lifetime window.
+ * 2. Historical reviews pre- have no key. They may match only when exactly
+ * one same-question + same-nullable-session review exists between row creation
+ * and its done timestamp. Ambiguity deliberately returns null rather than
+ * displaying another attempt's judgement.
  */
 export async function filterProspectiveStreamQuestions(
   db: DbLike,
@@ -233,8 +233,8 @@ async function resolveStreamItemMetadata(
     }
   }
 
-  // YUK-1510 — an in-progress question whose answer is already recorded. Same rule as the
-  // question page (YUK-1501, use-practice-submit answerRecorded): this row's issuance has an
+  // an in-progress question whose answer is already recorded. Same rule as the
+  // question page (, use-practice-submit answerRecorded): this row's issuance has an
   // assessment-attempt anchor whose evaluation is settled (an effective evaluation) or whose
   // judge is still queued (no original evaluation yet). An answer accepted by advice alone, or a
   // review_required attempt still waiting for a self-rating, is not recorded.
@@ -312,9 +312,9 @@ async function resolveStreamItemMetadata(
       current.matchedReviewId = matched.id;
       metadata.set(row.id, current);
     }
-    // YUK-1054 (§9 dual-track) — matched review 的 judge 链解析（effective 判）。
-    // judge 事件锚 subject_id=<review_event_id>；把 matched review ids 收集成
-    // batch 统一解析，再把每条行的 effective 判写回 metadata。
+    // Chain-resolved effective judge for matched reviews: judge events anchor
+    // subject_id=<review_event_id>. Resolve them in one batch and write each row's effective
+    // verdict back to metadata.
     const matchedReviewIds = [
       ...new Set(
         [...metadata.values()]
@@ -400,7 +400,7 @@ export async function buildStreamView(input: {
   budget: { pace: DailyPracticePace; minutes: number };
   scope: StreamScope | null;
   openingLine: string;
-  /** YUK-1622 — measured/default question minutes; omit to read the shared pace. */
+  /** measured/default question minutes; omit to read the shared pace. */
   questionMinutes?: number;
 }): Promise<StreamView> {
   const { db, date, rows, budget, scope, openingLine } = input;

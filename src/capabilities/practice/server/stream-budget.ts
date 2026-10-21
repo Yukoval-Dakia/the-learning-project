@@ -1,5 +1,4 @@
-// YUK-622 — daily practice 的用户时间预算与估时真相源。
-//
+// daily practice 的用户时间预算与估时真相源。
 // pace 是 onboarding/placement 已持久化的自述，只控制「今天排多少练习」，绝不进入
 // theta / p(L) / FSRS。旧用户没有 pace 时按 medium=20 分钟处理。
 

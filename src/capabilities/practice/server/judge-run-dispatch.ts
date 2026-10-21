@@ -1,27 +1,12 @@
-// YUK-777 (A2 / A3 / B2) — the durable judge DISPATCH protocol, in one place.
-//
-// W1/W2 dispatched a judge by doing exactly one durable thing: `boss.send`. That made the
-// pg-boss payload the sole home of the learner's answer between the 202 and a successful
-// backfill, so a run that exhausted its deliveries into `judge_run_dlq` — or whose question
-// was deleted before pickup — lost the answer outright (codex #Tu71c, confirmed). This
-// module inverts that: the answer becomes IMMUTABLE DOMAIN EVIDENCE first, and the queue
-// becomes merely the (retryable, replaceable) delivery mechanism for judging it.
-//
-// The three exported pieces are one protocol, deliberately not three modules:
-//
-//   1. `recordJudgePendingAttempt` — writes the `experimental:judge_pending_attempt` event.
-//      MUST happen before the send. Keeping both halves here is what stops the ordering
-//      invariant from being re-derived (and eventually inverted) at each call site.
-//   2. `enqueueJudgeRun` — the ONE rate-limited entry into the `judge_run` queue. Every
-//      producer goes through it: the submit face, the reconcile sweeper, and (YUK-800) the
-//      manual DLQ re-enqueue. A producer that bypassed it would spend paid inference outside
-//      the AI budget window — precisely the failure mode that hurts most when a provider is
-//      already rate-limiting us.
-//   3. `findStalledJudgePendingAttempts` / `resolveQueueLiveness` — the domain-state scan the
-//      sweeper runs. It keys on the DOMAIN log, never on `job_events`: per design §3.6b a
-//      `job_events`-keyed recovery is structurally blind to the crash window it exists to
-//      cover (send-first ordering can leave a job with no marker, and a marker-first ordering
-//      can leave a marker with no job).
+// Durable judge dispatch protocol.
+// The answer is recorded as immutable domain evidence before any queue send; pg-boss is
+// only the retryable delivery mechanism. Keeping the pieces together stops the ordering
+// invariant from being re-derived at each call site.
+// 1. recordJudgePendingAttempt writes the pending-attempt event before the send.
+// 2. enqueueJudgeRun is the only rate-limited entry into judge_run; every producer uses it
+// so paid inference stays inside the AI budget window.
+// 3. findStalledJudgePendingAttempts / resolveQueueLiveness scan the domain log, never
+// job_events, which cannot see both halves of the send/marker crash window.
 
 import { createHash } from 'node:crypto';
 import { and, asc, eq, gt, lt, notExists, sql } from 'drizzle-orm';
@@ -68,7 +53,7 @@ export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt'
 /**
  * The pg-boss job id for a run handle.
  *
- * **pg-boss job ids are `uuid` COLUMNS.** Our run handles are cuid2s (`newId()`), so passing
+ * **pg-boss job ids are `uuid` COLUMNS.** Our run handles are cuid2s (`newId`), so passing
  * one as `SendOptions.id` makes Postgres throw `invalid input syntax for type uuid` — i.e. W2's
  * `boss.send(..., { id: runId })` would have failed on the very first real submit after
  * `JUDGE_DURABLE_ENABLED` was flipped on, and `getJobById(queue, runId)` would have thrown on
@@ -129,7 +114,7 @@ export interface RecordJudgePendingAttemptInput {
  * late-arrival guard, and a wall-clock stamp taken here would order two attempts by when their
  * request happened to reach this line rather than by when the learner answered.
  *
- * `ingest_at` is stamped (ADR-0021 opt-out) for two reasons. The row is a job-plane ledger
+ * `ingest_at` is stamped (opt-out) for two reasons. The row is a job-plane ledger
  * carrying a frozen judge payload, so feeding it to memory ingestion would push the whole
  * frozen question snapshot into Mem0; and the answer reaches memory anyway through the
  * `review` event the backfill writes. The opt-out also empties `affected_scopes`, which keeps
@@ -181,7 +166,7 @@ export async function recordJudgePendingAttempt(
 
 export interface JudgeRunEnqueueDeps {
   enqueueDbos?: typeof enqueueDbosJudgeDelivery;
-  /** test seam — default `getStartedBoss()`. */
+  /** test seam — default `getStartedBoss`. */
   boss?: JudgeLegacySender;
   /** test seam — default the real process-wide paid-AI budget gate. */
   checkRateLimit?: () => number;
@@ -608,7 +593,7 @@ export async function findStalledJudgePendingAttempts(
 /**
  * Is there evidence of a NEWER attempt on material this attempt would write?
  *
- * B2 (codex #Tu1cY) — the projection-based half of the late-arrival guard reads state that a
+ * the projection-based half of the late-arrival guard reads state that a
  * skipped run never wrote. Run B (newer, covering K1+K2) is judged late because of K2, so it
  * skips EVERY derived write and leaves K1's `last_review` / `last_outcome_at` untouched; the
  * older run A, covering only K1, then reads those stale projections, passes the check, and

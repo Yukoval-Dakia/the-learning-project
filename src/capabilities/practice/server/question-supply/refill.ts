@@ -1,5 +1,4 @@
-// YUK-474 — 动态供题 refill（池见底补题）。
-//
+// 动态供题 refill（池见底补题）。
 // 角色（owner 2026-06-21 拍定，从 day-one 降级为 act/later）：当学习者**取题**（练习流首次
 // lazy-compose）时，其**开放学习 KC**（learning_item status pending/in_progress 引用的
 // knowledge_ids）的**活跃池**（non-draft question）< 阈值 → 复用既有供给机器补题。
@@ -7,7 +6,6 @@
 // + dispatcher 的 dispatchSupplyTarget（route-plan → enqueue 既有 sourcing/quiz_gen 队列，自带
 // 7 天 fingerprint cooldown）。这是 nightly `question_supply_nightly` 全量扫描的**按需补充**
 // （取题瞬间触发的 on-demand refill），**不在 day-one 关键路径**（openable 绝不依赖本模块）。
-//
 // ── fingerprint 共享（关键正确性属性）──────────────────────────────────────────────
 // `Demand{knowledgeId, gapType:'frontier_zero', limit:REFILL_POOL_THRESHOLD}` 经
 // `demandToSupplyTarget` 产出的 target（kind='any' / difficultyBand='near' /
@@ -16,37 +14,33 @@
 // （`scanCoverageGaps`，同 KC，同 `targetFingerprint` 同入参）**逐字相同**。故 dispatcher 的 7 天
 // fingerprint cooldown 在 refill 与 nightly **之间共享**——refill 不会重发 nightly 刚发过的同一
 // KC 缺口，反之亦然。这把「按需 refill」与「夜间基线」收敛到同一把幂等闸，不双付费。
-//   （subjectId 解析路径与 target-discovery `loadFrontierKnowledge`:552-556 同款 try/catch；
-//    即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
-//    shared-fingerprint 是收益而非正确性依赖。）
-//
+// （subjectId 解析路径与 target-discovery `loadFrontierKnowledge`:552-556 同款 try/catch；
+// 即便边缘场景 subjectId 解析有别，refill 仍有**自身** fingerprint 的 7d cooldown 兜 spam，
+// shared-fingerprint 是收益而非正确性依赖。）
 // ── open question 1 / 3：cooldown 竞态（并发取题多次触发）─────────────────────────────
-//   dispatcher 已有 7d 持久 cooldown（查 `event` 表 action='experimental:question_supply'、
-//   payload.status='dispatched'），但它依赖**上次 dispatch 事件已落库**；并发取题在首事件落库前
-//   各自 recentDispatchExists 都返 false → 各派一次。补强：**进程内 in-flight Set（按
-//   knowledgeId）**——同 KC 的 refill 正在飞时，后到的并发请求跳过（in-process 节流，非持久幂等；
-//   持久幂等由 dispatcher 7d cooldown 兜）。两层叠加：进程内挡并发竞态，dispatcher cooldown 挡
-//   跨进程/跨日重复。
-//
+// dispatcher 已有 7d 持久 cooldown（查 `event` 表 action='experimental:question_supply'、
+// payload.status='dispatched'），但它依赖**上次 dispatch 事件已落库**；并发取题在首事件落库前
+// 各自 recentDispatchExists 都返 false → 各派一次。补强：**进程内 in-flight Set（按
+// knowledgeId）**——同 KC 的 refill 正在飞时，后到的并发请求跳过（in-process 节流，非持久幂等；
+// 持久幂等由 dispatcher 7d cooldown 兜）。两层叠加：进程内挡并发竞态，dispatcher cooldown 挡
+// 跨进程/跨日重复。
 // ── open question 2：热路径同步 dispatch 开销 ─────────────────────────────────────────
-//   选 **取题瞬间 best-effort，仅在 compose 真正发生时触发**（getStream 的 `rows.length===0 &&
-//   composeIfEmpty` 分支 = 每用户每天首次打开练习流一次，**非 per-question / 非每次读**）。compose
-//   本身是秒级 LLM；refill 的几个廉价池计数 + cooldown-gated dispatch 相对可忽略，且只在 thin 池
-//   （罕见）才真派。全程 try/catch，refill 失败**绝不**破坏取题。**未选 detached fire-and-forget**
-//   （floating promise 易 unhandled-rejection + 测试竞态）：awaited-best-effort 在「每天一次 + 罕见
-//   thin 条件」下延迟可忽略，且无悬挂 promise 风险（caller 在 compose 事务**提交后**、用 top-level
-//   `db`、await 它——见 stream-store.ts getStream）。
-//
+// 选 **取题瞬间 best-effort，仅在 compose 真正发生时触发**（getStream 的 `rows.length===0 &&
+// composeIfEmpty` 分支 = 每用户每天首次打开练习流一次，**非 per-question / 非每次读**）。compose
+// 本身是秒级 LLM；refill 的几个廉价池计数 + cooldown-gated dispatch 相对可忽略，且只在 thin 池
+// （罕见）才真派。全程 try/catch，refill 失败**绝不**破坏取题。**未选 detached fire-and-forget**
+// （floating promise 易 unhandled-rejection + 测试竞态）：awaited-best-effort 在「每天一次 + 罕见
+// thin 条件」下延迟可忽略，且无悬挂 promise 风险（caller 在 compose 事务**提交后**、用 top-level
+// `db`、await 它——见 stream-store.ts getStream）。
 // ── flag 门（dark-ship / defer-flip）─────────────────────────────────────────────────
-//   `QUESTION_SUPPLY_REFILL_ENABLED`（默认 false）。off → 本模块入口**零 DB 读零 dispatch**，取题
-//   路径 byte-identical 现状。act 侧：day-one 不依赖它，collect（上传/seed）先通电。flip 是 owner
-//   决策（绑生产验收），本 PR 只把实现 + 接线 + flag 做穿到 live（[defer flip not build]）。
-//
+// `QUESTION_SUPPLY_REFILL_ENABLED`（默认 false）。off → 本模块入口**零 DB 读零 dispatch**，取题
+// 路径 byte-identical 现状。act 侧：day-one 不依赖它，collect（上传/seed）先通电。flip 是 owner
+// 决策（绑生产验收），本 PR 只把实现 + 接线 + flag 做穿到 live（[defer flip not build]）。
 // ── n=1 admissibility ────────────────────────────────────────────────────────────────
-//   refill **不引入任何新信号**：判据全是 admissible —— 池题计数（计数）、COVERAGE 阈值常数 2、
-//   cooldown 7d 常数、in-flight 进程内集合。**无**跨被试 a/slip/guess/φ/discrimination；不读写
-//   θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
-//   GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
+// refill **不引入任何新信号**：判据全是 admissible —— 池题计数（计数）、COVERAGE 阈值常数 2、
+// cooldown 7d 常数、in-flight 进程内集合。**无**跨被试 a/slip/guess/φ/discrimination；不读写
+// θ̂/p(L)/选题调度。复用件（demandToSupplyTarget/dispatchSupplyTarget）的内部判据沿用既有
+// GAP_KIND_BASE_PRIORITY 常数，本模块不新增需 population 方差的权重。
 
 import { inArray } from 'drizzle-orm';
 import { getConfigFlag } from '@/core/config/store';
@@ -75,7 +69,7 @@ export const REFILL_MAX_PER_REQUEST = 25;
  * 读 process.env.SELECTION_POLICY 的惯例）。默认 false（dark-ship）。使用全仓统一 flag grammar。
  */
 export function refillEnabled(): boolean {
-  // YUK-1007：DB > env > code-default(false)。
+  // DB > env > code-default(false)。
   return getConfigFlag('QUESTION_SUPPLY_REFILL_ENABLED');
 }
 
@@ -113,14 +107,14 @@ export interface RefillDeps {
   /** 派发 seam。默认 dispatchSupplyTarget（route-plan → enqueue 既有队列，自带 7d cooldown）。 */
   dispatch?: (db: Db, target: QuestionSupplyTarget, deps?: DispatchDeps) => Promise<DispatchResult>;
   /** 透传给 dispatch 的 DispatchDeps。默认带 actorRef='question_supply_refill'（观测区分 refill
-   *  与 nightly；不影响 cooldown——recentDispatchExists 不按 actorRef 过滤，故 fingerprint 共享）。 */
+   * 与 nightly；不影响 cooldown——recentDispatchExists 不按 actorRef 过滤，故 fingerprint 共享）。 */
   dispatchDeps?: DispatchDeps;
   /** id 生成（测试确定化）。默认 newId。 */
   makeId?: () => string;
 }
 
 /** 默认活跃池计数：复用 canonical poolFetch（activeOnly → non-draft），limit=阈值封顶（只需知道
- *  是否 < 阈值，封顶保持廉价）。返回 rows.length。 */
+ * 是否 < 阈值，封顶保持廉价）。返回 rows.length。 */
 async function defaultCountActiveQuestions(db: Db, knowledgeId: string): Promise<number> {
   const rows = await poolFetch(db, {
     knowledgeId,

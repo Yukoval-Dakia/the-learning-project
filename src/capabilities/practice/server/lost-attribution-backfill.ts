@@ -1,7 +1,6 @@
-// YUK-379 (B1) — one-time backfill: re-drive attribution for failure attempts
+// (B1) — one-time backfill: re-drive attribution for failure attempts
 // that were silently lost by the pre-fix swallow bug.
-//
-// WHY. Before YUK-379, runAttributionAndWriteJudgeEvent swallowed every failure
+// WHY. Before , runAttributionAndWriteJudgeEvent swallowed every failure
 // (idempotency read / LLM / parse / write) into a console.error + a
 // `failed_retryable` cost_ledger row and then returned void. That ledger row is
 // triply invisible (task_run_id=NULL → no run-detail join, cost=0 → out of
@@ -9,7 +8,6 @@
 // up with NO judge event and nobody noticing. This census finds those attempts —
 // failure attempts lacking a real (non-`attribution_pending`) judge — and
 // re-enqueues the practice-owned idempotent `attribution_followup` job for each.
-//
 // IDEMPOTENT + SAFE. The re-enqueued job runs runAttributionFollowup →
 // runAttributionAndWriteJudgeEvent, whose getJudgeForAttempt skip-check no-ops
 // when a real judge already exists. So an over-inclusive census wastes at most an
@@ -21,7 +19,6 @@
 // this census checks NOT-EXISTS-ANY real judge — they diverge only for the
 // pathological older-real-judge + newer-pending-placeholder ordering (should
 // not occur; the lifecycle is placeholder-first), where the census errs safe.
-//
 // One-time ops script (scripts/backfill-lost-attribution.ts); NOT wired into any
 // live request path and NOT scheduled.
 
@@ -88,9 +85,9 @@ export async function censusLostAttributions(
     .orderBy(asc(event.created_at), asc(event.id))
     .limit(opts.limit);
 
-  // YUK-1054 (§9 paid fanout 抑制）— 已被改判（effective 判不再是 failure）的
-  // attempt 不该再补归因：原答错已被推翻，付费归因是浪费且会把「correct」当
-  // 失败学。SQL 只按 outcome='failure' 筛 attempt（immutable 执行事实），改判
+  // Paid-fanout suppression: an attempt whose effective judge is no longer failure should
+  // not get backfilled attribution. SQL filters outcome='failure' (immutable execution fact),
+  // so read the effective judge before paying.
   // 后的 effective 判在此二次复核——这是一个 no-LLM 的纯读校验，过度过滤也
   // 只是少补一条本不该要的归因（job 本身仍有自己的 skip 逻辑）。
   const ids = rows.map((r) => r.id);

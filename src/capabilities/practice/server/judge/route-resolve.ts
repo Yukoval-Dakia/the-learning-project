@@ -1,33 +1,7 @@
-// F0 (PR #309 round-3, YUK-215) — leaf judge-route resolution module.
-//
-// `resolveQuestionJudgeRoute` used to live in
-// `@/capabilities/practice/server/judge/question-contract`, which sits inside the judges-barrel
-// cluster (it re-exports / pulls the semantic-judge runner, the `JudgeKind`
-// union from the judges index, etc.). When `app/api/review/submit/route.ts`
-// began importing that resolver DIRECTLY at the top level (PR #309 round-2,
-// commit c46054b1), webpack folded the barrel cluster's chunk into the
-// review-submit module graph in a way that poisoned a shared client chunk:
-// `next build` then crashed while prerendering a PURE-CLIENT page with
-// `TypeError: Cannot read properties of undefined (reading 'call')` from the
-// webpack-runtime `require`.
-//
-// Empirically bisected (rm -rf .next && pnpm build per commit):
-//   5657c52f (parent)  → green
-//   a12c5977 (make-paper round-2) → green
-//   c46054b1 (this import edge)   → red (/coach prerender fails)
-// Repointing the route to a leaf module with NO judges-barrel dependency turns
-// the build green again.
-//
-// This module depends ONLY on `@/core/schema/business` (enums + Rubric) and
-// slim row/profile types — never a judge runner — so any route may import the
-// resolver without dragging the barrel cluster into its chunk graph.
-// `question-contract.ts` and `invoker.ts` re-import the resolver from here, so
-// the public surface and behaviour are unchanged.
-//
-// M5 (YUK-321) 后注：上文 webpack/next build 叙述是历史语境（Next 栈已拆，
-// app/api/review/submit 现为 src/capabilities/practice/api/submit.ts）；esbuild
-// server bundle 无共享 client chunk 问题，但 leaf 拆分维持——依赖图越瘦越好，
-// 且 question-contract/invoker 的 re-import 面未变。
+// Leaf judge-route resolver.
+// Kept free of judge-runner and barrel imports so routes can resolve a route without
+// dragging the judges cluster into their bundle graph. question-contract and invoker
+// re-import it, so the public surface is unchanged.
 
 import type { z } from 'zod';
 
@@ -68,7 +42,7 @@ export interface JudgeRouteQuestionRow {
   choices_md: string[] | null;
   judge_kind_override: string | null;
   image_refs?: string[];
-  // Read by the unit_dimension branch (YUK-1036): the runner's input contract
+  // Read by the unit_dimension branch: the runner's input contract
   // lives here — see hasUnitDimensionReference.
   metadata?: Record<string, unknown> | null;
   // Mirror the rest of JudgeQuestionRow so a full row passes without TS
@@ -92,14 +66,13 @@ export interface JudgeRouteQuestionRow {
 // with the invoker if a new image-aware route lands.
 export const IMAGE_CONSUMING_JUDGE_ROUTES = new Set<JudgeRoute>(['steps', 'multimodal_direct']);
 
-// YUK-589 (High-sec) — the judge routes whose verdict comes from an LLM call.
+// (High-sec) — the judge routes whose verdict comes from an LLM call.
 // The invoker dispatches exactly these four through `runTaskFn`
 // (semantic → runSemanticJudge, steps → runStepsJudge, multimodal_direct →
 // runMultimodalDirectJudge, unit_dimension → runUnitDimensionJudge). `exact` /
 // `keyword` are deterministic local string comparisons that NEVER call a model;
 // `rubric` / `ai_flexible` have no runner — dispatch returns `unsupported`
-// (YUK-374, see UNIMPLEMENTED_JUDGE_ROUTES in question-contract.ts).
-//
+// (, see UNIMPLEMENTED_JUDGE_ROUTES in question-contract.ts).
 // Provenance discipline: when a route's `invoked.execution` metadata is ABSENT,
 // the meaning differs by route class. For a model-backed route it means the LLM
 // call FAILED (provider timeout / crash → coarse_outcome='unsupported'), so the
@@ -134,7 +107,7 @@ function isPreferred(profile: SubjectProfile, route: JudgeRoute): boolean {
   return profile.judgePolicy.preferredRoutes.includes(route);
 }
 
-// YUK-1036 — the two kind labels that triggered the unit_dimension preference
+// the two kind labels that triggered the unit_dimension preference
 // before this ticket ('calculation' is the legacy profile-vocab label,
 // 'computation' the canonical one). They stay ONLY as a grandfathered
 // preference key so rows persisted before/without the metadata contract keep
@@ -146,7 +119,7 @@ const LEGACY_UNIT_DIMENSION_KIND_LABELS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * YUK-1036 — the unit_dimension judge's input contract, mirrored from the
+ * the unit_dimension judge's input contract, mirrored from the
  * runner (core/capability/judges/unit_dimension.ts returns 'unsupported'
  * without it) and enforced by the write-path gate
  * (assertGeneratedQuestionHasJudgeContract in question-contract.ts): the
@@ -154,7 +127,7 @@ const LEGACY_UNIT_DIMENSION_KIND_LABELS: ReadonlySet<string> = new Set([
  * `reference_unit`. The pair has no other producer or consumer, so its
  * presence is the producer's structural declaration that the expected answer
  * is "a number + unit/量纲" — the reliable derived signal for the
- * calculation-type trigger that the kind label used to approximate. YUK-386
+ * calculation-type trigger that the kind label used to approximate.
  * made kind a free-form display label, so equivalent labels (计算题 / 应用题 /
  * word_problem / custom vocab) silently missed the literal label check while
  * carrying exactly this contract.
@@ -172,9 +145,9 @@ export function hasUnitDimensionReference(
  * dependency-light (no judge runners, no capability registry, no DB). Behaviour
  * is byte-for-byte identical to the former question-contract.ts implementation.
  *
- * YUK-391 (kind Step 4): the exact/keyword/semantic/steps classification is a
+ * (kind Step 4): the exact/keyword/semantic/steps classification is a
  * read of the answer-class axis (deriveAnswerClass, core/schema/answer-class.ts
- * — the single source of truth); the profile-aware gates (unit_dimension,
+ * the single source of truth); the profile-aware gates (unit_dimension,
  * derivation steps ladder, multimodal_direct) keep their legacy positions on
  * top of it. Route parity with the pre-convergence chain is pinned cell-for-cell
  * by src/core/schema/answer-class-route-parity.test.ts.
@@ -197,10 +170,10 @@ export function resolveQuestionJudgeRoute(
   if (choices.length > 0) return 'exact';
 
   // Profile-keyed preference: 'unit_dimension' is a subject-declared route
-  // preference for calculation-type questions. YUK-1036 — the primary trigger
+  // preference for calculation-type questions. — the primary trigger
   // is now the unit judge's own input contract (metadata.reference_value:number
   // + reference_unit:string, hasUnitDimensionReference): a structural signal
-  // independent of the free-form kind label (YUK-386), so equivalent semantic
+  // independent of the free-form kind label, so equivalent semantic
   // labels (计算题 / 应用题 / word_problem / custom vocab) carrying the contract
   // no longer miss the route. The two legacy labels stay as a grandfathered
   // preference key — like sourcingRoutePreference's per-kind map, a PREFERENCE
@@ -216,7 +189,7 @@ export function resolveQuestionJudgeRoute(
     return 'unit_dimension';
   }
 
-  // YUK-386 — kind is a free-form display label; classify the RAW label.
+  // kind is a free-form display label; classify the RAW label.
   // The retired enum fallback rewrote unknown labels to 'short_answer' first;
   // both paths land on 'semantic' inside deriveAnswerClass, so dropping the
   // enum gate is byte-identical for every label (unknown → semantic either
@@ -251,16 +224,16 @@ export function resolveQuestionJudgeRoute(
       if (isKeywordConditionalAnswerKind(q.kind)) {
         return 'semantic';
       }
-      // YUK-201 — gated auto-route to multimodal_direct (holistic vision judging).
+      // gated auto-route to multimodal_direct (holistic vision judging).
       // Placed AFTER the profile-declared unit_dimension branch and AFTER the
       // derivation→steps branch so opted-in calculations and derivations keep
       // their specialized routes. Fires only when ALL hold:
-      //   - kind is non-choice (choices short-circuit to 'exact' earlier) and
-      //     non-derivation (handled above);
-      //   - the question carries prompt figures (q.image_refs?.length > 0);
-      //   - the profile declares multimodal_direct as a preferred route;
-      //   - there is NO step-rubric reference_solution (a rubric reference_solution
-      //     belongs to steps@1, never multimodal_direct).
+      // - kind is non-choice (choices short-circuit to 'exact' earlier) and
+      // non-derivation (handled above);
+      // - the question carries prompt figures (q.image_refs?.length > 0);
+      // - the profile declares multimodal_direct as a preferred route;
+      // - there is NO step-rubric reference_solution (a rubric reference_solution
+      // belongs to steps@1, never multimodal_direct).
       if (
         (q.image_refs?.length ?? 0) > 0 &&
         isPreferred(subjectProfile, 'multimodal_direct') &&

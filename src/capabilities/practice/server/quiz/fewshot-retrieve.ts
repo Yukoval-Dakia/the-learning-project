@@ -1,22 +1,9 @@
-// YUK-225 (S2 slice 4) — 规范双轨 轨 2: few-shot 范例检索器.
+// Few-shot example retrieval for generated questions.
 //
-// docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §5 (轨 2)
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §0 实证3 / §5.3
-//
-// 轨 2 mechanism: when generating a (subject, kind) question, retrieve a few REAL,
-// already-pooled questions of the same kind to show the model what a good item of
-// that kind looks like — biased toward the highest-trust source tiers. This is the
-// runtime, data-driven complement to 轨 1 (the static SKILL.md规范包).
-//
-// Implementation (实证3 裁决): SQL 直查既有 jsonb 包含原语，无新检索系统 / 无向量
-// 检索 / 无新索引 / 不动 schema. Mirrors due-list.ts:208-225's
-// `knowledge_ids @> jsonb` + `(draft_status IS NULL OR <> 'draft')` pool filter
-// (legacy active rows carry NULL draft_status — a bare `= 'active'` would drop
-// them; PR #319 F4 aligns this with due-list / source_verify). tier 排序 cannot be
-// expressed in SQL (tier is the deriveSourceTier推导函数), so SQL pulls a wider
-// candidate set (LIMIT CANDIDATE_POOL) filtered by subject+kind+knowledge overlap
-// + active, then the TS layer sorts by (tier → knowledge overlap → recency) and
-// takes the top N (LIMIT 2-4). 0 命中降级: returns [].
+// Fetches real pooled questions of the same subject and kind, biased to high-trust tiers, to
+// show the model the target shape. SQL uses the existing jsonb containment predicate and
+// pool filter; tier ranking happens in TS, so SQL over-fetches and the top few are selected
+// here. No vector search, new index, or schema change. No hits degrade to [].
 
 import { sql } from 'drizzle-orm';
 import {
@@ -47,7 +34,7 @@ export interface FewShotRetrieveParams {
   kind: string;
   /** Knowledge ids the target question probes; used to rank by overlap. */
   knowledgeIds: string[];
-  /** Max examples to return (spec §5: 2-4). Default 3. */
+  /** Max examples to return (: 2-4). Default 3. */
   limit?: number;
 }
 
@@ -129,7 +116,7 @@ export async function retrieveFewShotExamples(
         ELSE 4
       END`;
 
-  // C2 (YUK-569): notDraftPredicate emits a QUALIFIED "question"."draft_status"; safe here only
+  // C2: notDraftPredicate emits a QUALIFIED "question"."draft_status"; safe here only
   // while the FROM is an unaliased single table (FROM question) — the qualified column resolves
   // unambiguously alongside the other bare columns. Alias/join this query → re-check first.
   const rows = await db.execute<CandidateRow>(sql`

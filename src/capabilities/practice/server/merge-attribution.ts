@@ -1,7 +1,7 @@
 /** Practice-owned attribution rewrites used by the knowledge merge workflow.
  *
  * Knowledge owns the merge transaction and its receipt; it does not own the
- * shape or write rules of question/learning-item attribution.  Keeping these
+ * shape or write rules of question/learning-item attribution. Keeping these
  * writes here gives both the live accept path and repair jobs one owner.
  */
 import { asc, eq, sql } from 'drizzle-orm';

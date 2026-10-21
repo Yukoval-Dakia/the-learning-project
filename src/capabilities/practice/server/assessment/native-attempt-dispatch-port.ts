@@ -4,7 +4,7 @@ type Dispatch = typeof dispatchNativeAttempt;
 export type NativeAttemptDispatchOptions = Parameters<Dispatch>[3];
 
 /**
- * YUK-1355 owns queue choice and recovery. The business operation calls this
+ * owns queue choice and recovery. The business operation calls this
  * once after admission. A null result selects synchronous formal commit; a run
  * id means the durable intent already exists, even if delivery needs recovery.
  */
