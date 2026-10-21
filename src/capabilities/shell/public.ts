@@ -19,3 +19,5 @@ export type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,
 } from './server/teaching-brief-interactions';
+
+export { type LearnerSubjectRow, loadLearnerSubjects } from './server/subjects-list';
