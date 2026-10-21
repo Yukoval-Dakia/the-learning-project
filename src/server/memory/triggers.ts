@@ -81,27 +81,25 @@ import {
 } from './reconcile-store';
 import { searchMemories } from './search-memories';
 
-// P5.2 (YUK-143) — per-subject brief refresh lookback for the nightly sweep +
-// regen handler. Bounded initial-build window for never-built subjects (BR-5).
+// Per-subject brief refresh lookback, also the bounded initial build for never-built
+// subjects.
 const BRIEF_REFRESH_LOOKBACK_DAYS = 30;
 const SUBJECT_SCOPE_PREFIX = 'subject:';
 
 export const MEMORY_EVENT_INGEST_QUEUE = 'memory_event_ingest';
 export const MEMORY_BRIEF_REGEN_QUEUE = 'memory_brief_regen';
 export const MEMORY_BRIEF_SWEEP_QUEUE = 'memory_brief_sweep';
-// ADR-0021 outbox queues. Poller fires every minute (pg-boss cron minimum);
-// recovery sweep hourly is unbounded and catches anything the poller missed
-// (e.g., worker restart, single fast-burst > batch size).
+// Outbox poller runs at the pg-boss cron minimum (one minute); the hourly recovery
+// sweep catches whatever a restart or an oversized burst leaves behind.
 export const MEMORY_INGEST_OUTBOX_POLL_QUEUE = 'memory_ingest_outbox_poll';
 export const MEMORY_INGEST_OUTBOX_RECOVER_QUEUE = 'memory_ingest_outbox_recover';
-// Reconcile remains event-driven; YUK-858 recovery shares the existing hourly
-// ingest-outbox floor instead of registering another queue or cron.
+// Reconcile is event-driven; recovery shares the hourly ingest floor rather than
+// registering another queue or cron.
 export { MEMORY_RECONCILE_QUEUE } from './memory-reconcile-handoff';
 
 /**
- * YUK-1007 — memory 模块 cron 声明的**静态投影表**（单一真相源）：
- * registerMemoryHandlers 从本表循环 boss.schedule，admin config 读面
- * （schedules[] 的 infra 行）经组合根 facts seam 投影同一张表。
+ * Static cron declarations: the same table drives boss.schedule registration and
+ * the admin config read face, so the two cannot drift.
  */
 export interface MemoryScheduleDeclaration {
   readonly name: string;
@@ -137,16 +135,11 @@ export const MEMORY_INFRA_SCHEDULES: readonly MemoryScheduleDeclaration[] = [
 
 const OUTBOX_POLL_BATCH = 50;
 const REGEN_SINGLETON_SECONDS = 6 * 60;
-// YUK-729 (#965 round-4, codex P2) — cap the per-event brief-regen fan-out.
-// computeAffectedScopes puts NO ceiling on referenced_knowledge_ids, so a bulk /
-// import-style event could carry hundreds of scopes; without a cap the handler
-// would fire that many boss.send inserts for a single event. Brief regen is
-// best-effort, so a truncated tail is acceptable — the daily 03:00 sweep partially
-// backstops scopes that already have a memory_brief_note row.
+// Cap the per-event brief-regen fan-out: affected scopes are unbounded, so one bulk
+// or import event could enqueue hundreds of jobs. A truncated tail is acceptable;
+// the daily sweep partially backstops scopes that already have a brief row.
 export const MAX_BRIEF_REGEN_SCOPES = 64;
-// Reconcile singleton window — short (reconcile is time-sensitive convergence,
-// unlike the 6-min brief). Owner directive: 90s.
-// Reconcile search topK — owner directive: 30.
+// Reconcile topK. Reconcile is time-sensitive convergence, unlike the 6-minute brief.
 const RECONCILE_TOP_K = 30;
 
 type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
@@ -157,33 +150,10 @@ type BossLike = Pick<PgBoss, 'createQueue' | 'updateQueue'> & {
 };
 
 /**
- * P2 (YUK-342): Deterministic (non-LLM) mapping of event.action → memory kind.
- * Fed into mem0 metadata as payload top-level `kind`, consumed by the reconcile
- * LLM per-kind rules.
- *
- * Confirmed action mappings (from src/core/schema/event/known.ts):
- *   - attempt (AttemptOnQuestion)       → event  (episodic attempt fact)
- *   - review (ReviewOnQuestion)          → event  (episodic review fact)
- *   - judge (JudgeOnEvent)               → weakness (identifies mistake cause)
- *   - propose (ProposeKnowledge/Edge)    → weakness (knowledge gap signal)
- *   - rate (RateEvent/RateKnowledgeEdge) → preference (user accept/dismiss)
- *   - suppress (SuppressArtifactLink)    → preference (user hides link)
- *   - accept_suggestion (AcceptSuggestionChip) → preference (user preference)
- *   - correct (CorrectEvent/Artifact)    → event  (correction is episodic)
- *   - generate (GenerateArtifact/Edge)   → event  (AI output is episodic)
- *   - extract (ExtractSourceDocument)    → event  (OCR extraction is episodic)
- *   - tool_use (ToolUseQuery)            → event  (agent tool call is episodic)
- *
- * Experimental actions (src/core/schema/event/experimental.ts):
- *   - experimental:user_cause → weakness (user fills mistake cause)
- *   - other experimental:*    → event (conservative default)
- *
- * Fallback: any unmapped action → event (conservative, leans KEEP_BOTH).
- *
- * NOTE: `habit` is a valid kind in the reconcile prompt (paired with preference
- * for the single-latest-truth rule) but is NOT currently produced by this
- * deterministic mapper — reserved for a future recurring-behavior signal. Until
- * then preference covers its rule, so the absence is harmless.
+ * Deterministic event action → memory kind. The result travels in the mem0 payload
+ * and drives the reconcile prompt's per-kind rules. Unmapped actions fall back to
+ * `event`, which is conservative. `habit` is reserved for a future recurring-behavior
+ * signal; the prompt covers it with `preference` until then.
  */
 export function mapEventActionToKind(action: string): string {
   switch (action) {
@@ -218,7 +188,6 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
   if (!row) return null;
   return {
     id: row.id,
-    // P3 (YUK-351): thread actor_kind for the extraction gate (below).
     actor_kind: row.actor_kind,
     action: row.action,
     subject_kind: row.subject_kind,
@@ -231,33 +200,9 @@ async function defaultLoadEvent(db: Db, eventId: string): Promise<MemoryEventInp
 }
 
 /**
- * P3 (YUK-351) extraction gate — the write-side invariant for mem0.
- *
- * ADR-0039 §决定 7 invariant (i) + Phase 2 synthesis §6.3 C3 / §7 H6 (owner-locked
- * 2026-06-15): **only user-originated events may feed mem0 extraction; the
- * orchestrator's own output must NEVER enter the extraction source.** This closes
- * the confirmation loop the design flags as a HIGH-severity break of the
- * anti-injection 五防 (project memory `feedback_no_recursive_prompt_injection`):
- *
- *   agent output → event(actor_kind='agent') → mem0 infer:true extracts a
- *   semantic-trait about "the user" → searchMemories feeds it back into the next
- *   orchestration prompt → the model self-confirms its own prior output as a fact.
- *
- * The gate sits at the single write-side seam (buildMemoryEventIngestHandler),
- * BEFORE addEventMemoryOnce's extraction LLM call. It is a pure deterministic function
- * over event.actor_kind (NOT NULL, 'user' | 'agent' — src/db/schema.ts +
- * core/schema/event/known.ts), kept exported + unit-tested per the ADR's "写成
- * extraction gate invariant + 单测" directive.
- *
- * Fail-closed: anything that is not exactly 'user' is rejected (defensive against
- * a future actor_kind value or a malformed row — never silently widen the feed).
- *
- * NOTE — narrowing scope (design §3.7 "喂信号收窄"): the deeper B4 semantic-trait
- * accept gate (a PG pending table + reject/edit face, §7.2 owner pick "落 PG") and
- * "数值留结构表" feed-narrowing are SEPARATE, larger increments (new schema + ADR +
- * UI). This gate implements the load-bearing, owner-locked, code-side C3/H6
- * invariant that the design names as the blocker; the accept-gate UI/table is
- * tracked as a follow-up.
+ * Only user-originated events may feed mem0 extraction (ADR-0039). Agent output
+ * entering extraction would let the model confirm its own prior output as a fact
+ * on the next prompt. Fail closed: anything that is not exactly `user` is rejected.
  */
 export function shouldExtractToMemory(event: Pick<MemoryEventInput, 'actor_kind'>): boolean {
   return event.actor_kind === 'user';
@@ -282,16 +227,12 @@ function editedConjectureMemory(event: MemoryEventInput): EditedConjectureMemory
   return claim && conjectureId ? { claim, conjectureId } : null;
 }
 
-// Single source of truth for the memory `kind` projected from an owner-edited conjecture:
-// used both on the verbatim projection metadata and the reconcile mapping below — the two
-// sites must never drift.
+// One source of truth for the kind projected from an owner-edited conjecture:
+// verbatim projection metadata and reconcile mapping must not drift.
 const CONJECTURE_EDIT_MEMORY_KIND = 'weakness';
 
-// ADR-0021 — outbox poll handler is the sole producer. Dedup is enforced by
-// the `ingest_at IS NULL` partition (a row is enqueued exactly once and the
-// stamp commits in the same tx as the enqueue). singletonKey + the iter2
-// band-aids it required (writeEvent inline retry collapse, tx-rollback orphan
-// slot) are gone.
+// Outbox poll is the sole producer. `ingest_at IS NULL` is the once-only partition:
+// the stamp commits with the enqueue, so no singleton key is needed.
 export async function enqueueEventMemoryIngest(
   boss: Pick<BossLike, 'send'>,
   eventId: string,
@@ -303,20 +244,15 @@ export async function enqueueEventMemoryIngest(
 export async function enqueueBriefRegen(
   boss: Pick<BossLike, 'send'>,
   scopeKey: string,
-  // P5.2 (PR #218 fix) — optional stable sweep timestamp (ISO). The subject
-  // regen path floors its event reload at `now - lookbackDays` for a never-built
-  // subject; threading the SWEEP's `now` (rather than letting regen re-read the
-  // clock at job-run time) closes the race where an event near the 30d lookback
-  // edge is detected at sweep time T but ages out by regen time T+δ. Global jobs
-  // pass no `now` (global path is clock-independent / unchanged).
+  // Optional sweep timestamp: a never-built subject floors its reload at
+  // `now - lookbackDays`. Threading the sweep's now closes the race where an event
+  // near the edge is detected at T but ages out by regen time. Global jobs pass none.
   now?: Date,
 ) {
   await boss.send(
     MEMORY_BRIEF_REGEN_QUEUE,
     now ? { scope_key: scopeKey, now: now.toISOString() } : { scope_key: scopeKey },
     {
-      // singletonKey unchanged — per-scope dedup must still collapse the stale
-      // loop's enqueue (if any) and the per-subject enqueue into one job.
       singletonKey: `memory.regen.${scopeKey}`,
       singletonSeconds: REGEN_SINGLETON_SECONDS,
       singletonNextSlot: true,
@@ -324,10 +260,8 @@ export async function enqueueBriefRegen(
   );
 }
 
-// P2 (YUK-342): the reconcile job payload threads the EXTRACTED memory text +
-// created_ms alongside the id. Searching mem0 by an opaque UUID embeds the UUID
-// string (semantic noise) and rarely retrieves the memory itself — so the text
-// (from add()'s results[].memory) must travel with the id, not be re-derived.
+// The reconcile payload threads the extracted text and created_ms alongside the id.
+// Searching by opaque UUID embeds noise and rarely retrieves the memory itself.
 export type { ReconcileMemInput } from './memory-reconcile-handoff-store';
 
 export function buildMemoryEventIngestHandler(
@@ -347,9 +281,8 @@ export function buildMemoryEventIngestHandler(
   return async (jobs) => {
     for (const job of jobs) {
       const row = await loadEvent(db, job.data.event_id);
-      // YUK-1408 — the live per-event policy (payload + causal root + bound
-      // source-document usage) instead of the frozen write-time payload stamp:
-      // a consent withdrawal after the event was written still gates it here.
+      // Use the live derivation policy, not the write-time stamp: a consent
+      // withdrawal after the event was written still gates it here.
       if (row && (await readEventDerivationPolicy(db, row.id)) !== 'allow') {
         if (deps.replayGrant) throw new MemoryReconcileHandoffError('restricted operator source');
         continue;
@@ -361,19 +294,10 @@ export function buildMemoryEventIngestHandler(
       }
       if (!row) continue;
 
-      // P3 (YUK-351) extraction gate (ADR-0039 §决定 7 (i) / Phase 2 §6.3 C3 / §7 H6):
-      // agent-originated events must NEVER feed mem0 extraction (closes the
-      // confirmation loop). The brief NOTE layer is orthogonal — it reads events
-      // straight from PG (brief.ts:loadEventsFromDb) and legitimately summarizes
-      // agent activity too — so the brief regen fan-out STILL runs for actor-gated
-      // events; only inferred event-memory add + reconcile are skipped for them.
-      //
-      // YUK-1629 — the learner-evidence classification conjoins the actor gate
-      // BEFORE extraction runs: a user-actor question_edit would otherwise pass
-      // shouldExtractToMemory and infer a revision "fact" into mem0, which
-      // searchFacts would then re-feed into a later brief (R1 P1). Excluded
-      // events therefore skip extraction, produce no new reconcile handoff, and
-      // fan out no brief regen below; previously written memories are untouched.
+      // Two gates before extraction: agent-originated events never feed mem0 (the
+      // model must not confirm its own output), and bank-authoring events are not
+      // learner evidence. The brief still summarizes agent activity from PG, so the
+      // brief fan-out below stays independent of the extraction actor gate.
       const learnerEvidence = isLearnerEvidenceAction(row.action);
       const admitToExtraction = learnerEvidence && shouldExtractToMemory(row);
       const editedConjecture = editedConjectureMemory(row);
@@ -383,9 +307,8 @@ export function buildMemoryEventIngestHandler(
       // does not also ask the generic extraction LLM to infer a duplicate preference.
       const ingest = await (async () => {
         if (!admitToExtraction) return null;
-        // Lazily init the Mem0 client only when an event is actually admitted —
-        // the F-4 pattern keeps excluded/gated events off the provider boundary
-        // entirely (and a missing key can't reject the job on their behalf).
+        // Construct the client only for admitted events, so gated events never reach
+        // the provider and a missing key cannot reject the job on their behalf.
         memoryClient ??= createMemoryClient();
         const client = memoryClient;
         const completed = await readIngestCompleted(db, row.id);
@@ -420,9 +343,7 @@ export function buildMemoryEventIngestHandler(
               source: 'conjecture_edit',
               event_id: row.id,
               conjecture_id: editedConjecture.conjectureId,
-              // codex P2 (PR #1039) — mirror inferred event-memory scope metadata: search()
-              // maps scope_key → `affected_scopes contains`, so without this the edited
-              // claim would be invisible to every scoped retrieval.
+              // Mirror inferred scope metadata; scoped search maps scope_key to this field.
               affected_scopes: row.affected_scopes,
               corrected_by_owner: true,
               created_at: row.created_at.toISOString(),
@@ -475,28 +396,11 @@ export function buildMemoryEventIngestHandler(
           ...(persistIntents ? { completion } : {}),
         };
       }
-      // YUK-729 — fan out brief regen with a BOUNDED, SEQUENTIAL, per-scope-isolated
-      // loop. Three properties matter:
-      //  (1) bounded fan-out — slice to MAX_BRIEF_REGEN_SCOPES so an unbounded
-      //      affected_scopes list (bulk/import event) cannot spray hundreds of
-      //      enqueues; a truncated tail is best-effort (partial sweep backstop);
-      //  (2) sequential — one boss.send at a time (concurrency 1), not a
-      //      Promise.allSettled over every scope, so a large event does not slam the
-      //      shared connection pool with concurrent inserts (#965 round-4, codex P2);
-      //  (3) per-scope try/catch — one scope's transient failure neither skips the
-      //      rest nor prevents the retry-visible reconcile path below. Redelivery is now
-      //      protected by the add_started marker and exact event lookup.
-      // Backstop is PARTIAL: listStaleBriefScopes (the daily 03:00 sweep) re-scans
-      // only scopes that ALREADY have a memory_brief_note row, so a first-appearance
-      // scope (or a truncated one) loses just this batch's regen; scopes with an
-      // existing brief row are still swept.
-      // YUK-1629 — question-bank authoring/publish events are not
-      // learner-memory input (learnerEvidence computed above, already applied
-      // to extraction): no brief-regen fan-out at all, so a canonical publish
-      // produces 0 regen jobs / 0 MemoryBriefTask calls. The SAME
-      // classification filters them out of the brief evidence reads
-      // (brief.ts), so the nightly sweep cannot resurrect a question revision
-      // as learning evidence.
+      // Bounded, sequential, per-scope-isolated brief fan-out. The slice caps bulk
+      // events; sequential sends avoid flooding the connection pool; one failure must
+      // not skip the rest or block reconcile. The daily sweep only backstops scopes
+      // that already have a brief row, so a first-appearance tail is best-effort.
+      // Bank-authoring events fan out nothing: they are not learner evidence.
       const regenScopes = learnerEvidence
         ? row.affected_scopes.slice(0, MAX_BRIEF_REGEN_SCOPES)
         : [];
@@ -520,23 +424,11 @@ export function buildMemoryEventIngestHandler(
         );
       }
 
-      // YUK-581 — subject brief bridge. The core learning events never tag a
-      // `subject:*` scope in affected_scopes (attempt/review carry only
-      // referenced_knowledge_ids; record_capture resolves its subject from the
-      // linked learning_record — active-subjects.ts §1.2 / BR-10), so the
-      // affected_scopes fan-out above can NEVER refresh the per-subject brief.
-      // Resolve the qualifying event → subject via the SAME canonical resolver the
-      // nightly sweep uses and enqueue its `subject:<id>` regen, moving subject-
-      // brief freshness from the next-day 03:00 sweep to ≤6min after the activity.
-      // enqueueBriefRegen already dedups per scope_key on a 6-min singleton, so a
-      // burst of same-subject activity collapses to one regen (no extra guard). The
-      // resolver produces a canonical subject-profile id, never a slugged payload
-      // value, so it can never collide with an affected_scopes tag → no double-invoke
-      // guard needed. Best-effort: a resolve/enqueue failure is swallowed + warned so
-      // the ingest job never retries on a bridge failure — a dropped bridge is exactly
-      // what the 03:00 cron sweep now backstops (its role narrows to cold-start / DLQ /
-      // dropped-delivery / dormant coverage). Runs BEFORE the extraction gate `continue`
-      // so it fires for every qualifying event, mirroring the brief-note fan-out above.
+      // Core learning events never tag `subject:*` in affected_scopes, so the
+      // fan-out above cannot refresh a per-subject brief. Resolve the event to its
+      // canonical subject and enqueue that scope, moving freshness from the nightly
+      // sweep to minutes. The 6-minute singleton collapses bursts. Best-effort: a
+      // bridge failure must not make the ingest job retry; the sweep backstops it.
       if ((QUALIFYING_ACTIONS as readonly string[]).includes(row.action)) {
         try {
           const subjectByEventId = await resolveQualifyingEventSubjects(db, [
@@ -573,38 +465,23 @@ export function buildMemoryBriefRegenHandler(
     generateBrief: GenerateBrief;
   },
 ): (jobs: Job<{ scope_key: string; now?: string }>[]) => Promise<void> {
-  // F-4 (PR #232 review) — keep the injected test client here, but DO NOT init
-  // the real Mem0 client at the top of the batch. `createMemoryClient()` throws
-  // when its env (ZHIPU_API_KEY / DASHSCOPE_API_KEY / DATABASE_URL for Mem0) is
-  // missing; doing it before the per-scope try would reject the WHOLE pg-boss
-  // job → nightly retry storm → the F-1 per-scope catch is defeated. Mem0
-  // fact-search is SUPPLEMENTARY — brief regen must still run from events when
-  // Mem0 is unavailable. The lazy `??= createMemoryClient()` now lives inside
-  // searchFacts' own try (below) so a missing-Mem0-key degrades to facts=[].
+  // Do not construct the client at batch start: a missing key would reject the whole
+  // job and defeat the per-scope catch. Mem0 facts are supplementary; brief regen
+  // still runs from events.
   let memoryClient = deps.memoryClient;
   return async (jobs) => {
     for (const job of jobs) {
       const scopeKey = job.data.scope_key;
-      // F-1 (YUK-185, D8): one scope's LLM/provider throw (e.g. resolveTaskProvider
-      // throwing on a missing XIAOMI_API_KEY, providers.ts:88, or any runTask failure
-      // inside the injected generateBrief) must NOT reject the pg-boss job and trigger
-      // a nightly retry storm. The writer/generator stays LOUD (re-throws, never
-      // persists a blank row); the graceful "log + leave old brief intact" posture
-      // lives HERE. Catch per scope, log, continue — the prior brief row is never
-      // overwritten because the upsert in regenerateMemoryBrief is only reached on
-      // success. Mirrors knowledge_propose_nightly.ts:96-99 (per-job try/catch).
+      // One scope's provider/LLM throw must not reject the job and cause a retry
+      // storm. The writer stays loud; this catch logs and continues. The prior brief
+      // survives because the upsert is only reached on success.
       try {
         const searchFacts = async () => {
-          // F-4 (PR #232 review) — self-degrading. Lazily init the Mem0 client
-          // HERE so a missing-key throw stays contained: missing Mem0 env →
-          // facts=[] (brief still generates from events). A missing LLM key
-          // instead throws later inside generateBrief, caught by the F-1
-          // per-scope catch → logged skip. Neither path storms the job.
+          // Lazily construct the client inside this try so a missing Mem0 key
+          // degrades to no facts, while a missing LLM key fails later in generate.
           try {
             memoryClient ??= createMemoryClient();
-            // P3 (YUK-351): read through the searchMemories wrapper so the brief
-            // never fixes already-superseded facts into its long-term summary
-            // (brief.ts:195 design note). Filters soft-superseded + recency-reranks.
+            // Read through the wrapper so superseded facts never enter a long-term summary.
             const result = await searchMemories(memoryClient, `memory brief ${scopeKey}`, {
               topK: 10,
               filters: { scope_key: scopeKey },
@@ -625,34 +502,17 @@ export function buildMemoryBriefRegenHandler(
           }
         };
 
-        // BR-10 (load-bearing) — branch by scope prefix. attempt/review events
-        // never tag `subject:` in affected_scopes (§1.2), so the global path's
-        // affected_scopes-based guard + loader return false / ~0 rows for an
-        // active subject. The subject path instead reads a knowledge-resolved
-        // event window (the SAME resolution as the activity-detection sweep) and
-        // gates on a KNOWLEDGE-resolved freshness check — never the affected_scopes
-        // one. The active-subject sweep already filtered to fresh subjects, and
-        // (since PR #218 FIX 1) listStaleBriefScopes excludes `subject:*`, so the
-        // stale loop no longer enqueues dormant subjects. The guard is retained as
-        // defense-in-depth: a pg-boss singleton re-fire within the dedup window, or
-        // a refreshed_at-vs-latest_evidence_at skew, could still hand this branch a
-        // subject with no genuinely new evidence; the guard makes that a clean skip
-        // (BR-2: no LLM call, no refreshed_at bump for a dormant subject).
+        // Subject scopes need the knowledge-resolved path: attempt/review never tag
+        // `subject:` in affected_scopes, so the affected_scopes guard would return
+        // false for an active subject. The active sweep already filtered, but the
+        // guard still absorbs singleton re-fires and watermark skew.
         if (scopeKey.startsWith(SUBJECT_SCOPE_PREFIX)) {
           const subjectId = scopeKey.slice(SUBJECT_SCOPE_PREFIX.length);
-          // P5.2 (PR #218 fix) — reuse the SWEEP's `now` (threaded via the job
-          // payload) rather than re-reading the clock here. For a never-built
-          // subject the floor is `now - lookbackDays`; if regen recomputed it with a
-          // fresh clock at job-run time (T+δ), an event the sweep detected near the
-          // 30d edge could age out → empty window → silent miss. Sharing the sweep's
-          // `now` keeps detection and reload on the SAME floor. Falls back to a fresh
-          // clock only if the job carries no `now` (e.g., a job from before this fix).
+          // Reuse the sweep's now so detection and reload share the same lookback
+          // floor; a fresh clock here could age an edge event out.
           const now = job.data.now ? new Date(job.data.now) : new Date();
-          // loadSubjectBriefEvents floors at THIS subject's own brief refreshed_at
-          // (lookbackDays only as the never-built fallback), the SAME
-          // subjectEventFloor predicate the detection sweep uses — so any subject
-          // the sweep flagged active reloads ≥1 event here and is never silently
-          // starved by a flat now-30d floor.
+          // loadSubjectBriefEvents floors at this subject's own refreshed_at, the same
+          // predicate detection uses, so a flagged subject always reloads an event.
           const events = await loadSubjectBriefEvents(db, subjectId, {
             lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
             now,
@@ -668,8 +528,7 @@ export function buildMemoryBriefRegenHandler(
           continue;
         }
 
-        // BR-6 — global (and any legacy affected_scopes-tagged scope): unchanged.
-        // Still gated by scopeHasNewEvidence + loaded via loadEventsFromDb.
+        // Global and legacy affected_scopes-tagged scopes.
         if (!(await scopeHasNewEvidence(db, scopeKey))) continue;
         await regenerateMemoryBrief({
           db,
@@ -678,8 +537,7 @@ export function buildMemoryBriefRegenHandler(
           generate: deps.generateBrief,
         });
       } catch (err) {
-        // Leave the prior brief row intact (the upsert is only reached on success)
-        // and move to the next scope — no rethrow, no pg-boss reject/retry storm.
+        // Leave the prior brief intact and continue; rethrowing would retry-storm.
         console.error(`[memory_brief_regen] scope ${scopeKey} failed; leaving prior brief`, err);
       }
     }
@@ -693,12 +551,9 @@ async function gatherCandidates(
 ) {
   const userId = job.data.user_id;
   const newMemInputs = job.data.memories ?? [];
-  // Build the prompt inputs. The new memory's text/kind/created_ms are
-  // THREADED from the ingest job (ReconcileMemInput) — NOT re-derived by
-  // searching the opaque UUID (which embeds noise and rarely retrieves the
-  // memory itself). Candidates ARE found by searching mem0 with the new
-  // memory's extracted text (semantic neighbors), excluding this batch's
-  // own new memories.
+  // New memory text/kind/created_ms are threaded from the ingest job, not re-derived
+  // from the opaque UUID. Candidates are semantic neighbors found by that text,
+  // excluding this batch's own new memories.
   const newMems: NewMemoryEntry[] = [];
   const candidatesByNew = new Map<number, CandidateEntry[]>();
   const newIdSet = new Set(newMemInputs.map((m) => m.id));
@@ -736,7 +591,7 @@ async function gatherCandidates(
           text: r.memory,
           memory_id: r.id,
           created_ms: typeof cms === 'number' ? cms : undefined,
-          // YUK-557 (Q1): carry mem0's fused score for the structural gate.
+          // mem0 fused score, consumed by the structural gate.
           score: typeof r.score === 'number' ? r.score : undefined,
         });
       }
@@ -755,7 +610,6 @@ async function judgeBatch(
   candidatesByNew: Map<number, CandidateEntry[]>,
   judge: typeof judgeReconciliation,
 ): Promise<Awaited<ReturnType<typeof judgeReconciliation>> | null> {
-  // GLM judgment — single call for all new memories + their candidates.
   try {
     return await judge(newMems, candidatesByNew, {
       providerAttempt: createDirectProviderOperationContext({
@@ -767,7 +621,7 @@ async function judgeBatch(
     });
   } catch (err) {
     if (err instanceof ReconcileParseError) {
-      // Failure mode 1: LLM parse failure → degrade entire batch to KEEP_BOTH.
+      // A parse failure degrades the whole batch to KEEP_BOTH, never destructive.
       console.warn(
         `[memory_reconcile] LLM parse failed; degrading ${newMems.length} memories to KEEP_BOTH`,
         err.message,
@@ -786,7 +640,7 @@ async function judgeBatch(
       for (const r of keepRows) await markApplied(db, r.id);
       return null;
     }
-    // RetryableError/PermanentError — rethrow for pg-boss retry (or archive).
+    // Rethrow provider errors so pg-boss can retry or archive.
     throw err;
   }
 }
@@ -797,13 +651,9 @@ function buildReconcilePlannedRows(
   candidatesByNew: Map<number, CandidateEntry[]>,
   uniqueDecisions: Awaited<ReturnType<typeof judgeReconciliation>>,
 ): PlannedRow[] {
-  // Write-ahead: insert planned rows BEFORE applying (crash safety).
-  // Single UNIFIED action synthesis per decision, in fixed order:
-  //   badTarget → per-kind (Q1b) → score-floor (Q1) → final.
-  // reason / old_memory_id / prev_text ALL read the SAME final action, and
-  // every downgrade rewrites `reason` symmetrically so action↔reason never
-  // diverges in the WAL (spec M1 / Lens A A5-1/A5-2). Out-of-range indices
-  // (LLM hallucination) degrade to KEEP_BOTH (existing semantics).
+  // Write-ahead rows are inserted before apply for crash safety. Every field reads
+  // the same final action, and each downgrade rewrites reason too, so action and
+  // reason cannot diverge in the WAL. Out-of-range indices degrade to KEEP_BOTH.
   const plannedRows: PlannedRow[] = [];
   for (const d of uniqueDecisions) {
     const newMem = newMems[d.new_index];
@@ -822,8 +672,7 @@ function buildReconcilePlannedRows(
         old_memory_id: action === 'KEEP_BOTH' ? null : (oldMem?.memory_id ?? null),
         action,
         reason,
-        // Persist recency + the LLM decision (incl. merged_text for MERGE) +
-        // Q1 gate observability (for future data-driven floor calibration).
+        // Keep the model decision and gate observability for later floor calibration.
         llm_raw: {
           ...d,
           execution_policy: 'human_approval_required',
@@ -841,31 +690,20 @@ function buildReconcilePlannedRows(
 }
 
 /**
- * P2 (YUK-342): memory reconcile handler.
- *
- * Consumes a batch of new memory ids, searches for existing candidates per new
- * memory, asks GLM to judge KEEP_BOTH/SUPERSEDE/MERGE/RETRACT_NEW, writes
- * write-ahead audit rows, then consumes them without destructive mutation.
- *
- * Failure modes:
- *   1. LLM parse failure → catch ReconcileParseError → entire batch degrades to
- *      KEEP_BOTH (no destructive actions, only log rows).
- *   2. Write-ahead crash → loadUnappliedLog replays applied_at IS NULL rows at
- *      the start of every job (idempotent resume).
- *   3. Concurrency → singletonKey:'memory.reconcile.self' serializes per user.
+ * Reconcile handler: search candidates per new memory, judge them, write audit rows
+ * ahead of apply, then consume the recommendations without destructive mutation.
+ * Parse failures degrade the batch to KEEP_BOTH; unapplied rows replay at job start;
+ * the per-user singleton serializes runs.
  */
 export function buildMemoryReconcileHandler(
   db: Db,
   deps: {
     memoryClient?: MemoryClient;
-    /** Injectable for tests — defaults to judgeReconciliation */
+    /** Test seam; defaults to judgeReconciliation. */
     judge?: typeof judgeReconciliation;
     /**
-     * YUK-557 (PR #699 CR-1) — injectable Mem0 client factory (default:
-     * createMemoryClient). Tests inject a factory that throws so the m7 "client
-     * unavailable" branch is DETERMINISTIC regardless of the shell env's Mem0 keys:
-     * a bare createMemoryClient() would otherwise succeed on any machine that
-     * happens to carry ZHIPU/DASHSCOPE keys, making m7 depend on ambient env.
+     * Test seam for the client factory. A throwing factory makes the unavailable
+     * branch deterministic instead of depending on ambient Mem0 keys.
      */
     createClient?: () => MemoryClient;
   } = {},
@@ -886,7 +724,7 @@ export function buildMemoryReconcileHandler(
         (await readEventDerivationPolicy(db, job.data.source_event_id)) !== 'allow'
       )
         continue;
-      // F-1 equivalent — per-job try/catch prevents retry storm.
+      // Per-job catch: one batch failure must not take down the worker loop.
       try {
         const userId = job.data.user_id;
         const newMemInputs = job.data.memories ?? [];
@@ -896,8 +734,7 @@ export function buildMemoryReconcileHandler(
 
         if (newMemInputs.length === 0) continue;
 
-        // Lazily init Mem0 client here (same F-4 pattern as brief regen —
-        // missing key degrades gracefully, doesn't reject the whole job).
+        // Lazily construct the client so a missing key skips one batch, not the job.
         let client = memoryClient;
         if (!client) {
           try {
@@ -919,11 +756,8 @@ export function buildMemoryReconcileHandler(
         const decisions = await judgeBatch(db, job, userId, newMems, candidatesByNew, judge);
         if (decisions === null) continue;
 
-        // Dedup decisions by new_index: if GLM returns multiple decisions for the
-        // same new memory, only the first wins. A second planned row for the same
-        // new_index would apply against already-mutated state (e.g. supersede a row
-        // a prior decision already deleted), corrupting the batch. Keep the first,
-        // warn-drop the rest.
+        // Only the first decision per new_index is safe: a second would apply against
+        // already-mutated state. Keep the first and warn-drop the rest.
         const uniqueDecisions = deduplicateDecisions(decisions, (message) => console.warn(message));
 
         const plannedRows = buildReconcilePlannedRows(
@@ -934,31 +768,18 @@ export function buildMemoryReconcileHandler(
         );
         await insertPlannedRows(db, plannedRows);
 
-        // Apply phase: consume recommendations without mutating mem0.
+        // Apply consumes recommendations without mutating mem0.
         await applyPlannedRows(db, userId);
       } catch (err) {
         if (isDirectProviderAttemptInvariantError(err)) throw err;
-        // Retryable failures (GLM timeout / 5xx / transient provider error) MUST
-        // propagate so pg-boss retries the job (the durable dispatcher sets
-        // retryLimit/retryDelay/retryBackoff). The retry is safe: the common
-        // RetryableError site is judge() (BEFORE any planned rows are inserted),
-        // so the batch simply re-runs; and any planned rows from a PRIOR run
-        // replay idempotently via the applyPlannedRows at job start (:584's call
-        // is end-of-apply; the load-bearing replay is the one at job start, not
-        // rows from this attempt). Swallowing here (the prior behavior) made the
-        // job report success → no retry → this batch silently never reconciled.
+        // Retryable failures must propagate so pg-boss retries. Retrying is safe:
+        // judge runs before this attempt's rows are inserted, and prior rows replay
+        // idempotently at job start. Swallowing would report success and lose the batch.
         if (err instanceof RetryableError) throw err;
-        // YUK-353 (item 2): PermanentError (judge auth 401/403, 4xx, non-JSON 2xx)
-        // must ALSO propagate. Previously it fell into the swallow branch below →
-        // the job reported success → pg-boss never archived it and no failed
-        // outcome was recorded, so an auth/config breakage looked like a healthy
-        // no-op reconcile. Rethrowing lets pg-boss exhaust retries and archive the
-        // job (terminal failure surfaces in the boss archive / admin jobs面).
-        // Resume safety is unchanged: any planned rows from a PRIOR run still
-        // replay idempotently via applyPlannedRows at job start.
+        // Permanent errors (auth/4xx/non-JSON) must also propagate: otherwise a
+        // broken config looks like a healthy no-op and never surfaces in the archive.
         if (err instanceof PermanentError) throw err;
-        // Other non-retryable failures (unexpected errors, not in our error
-        // taxonomy): leave planned rows intact for idempotent resume on next job.
+        // Unexpected errors leave planned rows for the next job's replay.
         console.error(
           '[memory_reconcile] job failed (non-retryable); planned rows left for resume',
           err,
@@ -969,11 +790,9 @@ export function buildMemoryReconcileHandler(
 }
 
 /**
- * Consume write-ahead planned rows (applied_at IS NULL) for a user.
- *
- * YUK-690: reconciliation is recommendation-only. New synthesis stores KEEP_BOTH;
- * legacy destructive rows are marked applied without touching mem0 so deployment
- * cannot replay a pre-fix LLM decision into a mutation.
+ * Consume planned rows that are not applied yet. Reconciliation is recommendation-
+ * only: newly synthesized rows are KEEP_BOTH, and legacy destructive rows are marked
+ * applied without touching mem0 so an old decision cannot replay into a mutation.
  */
 async function applyPlannedRows(db: Db, userId: string): Promise<void> {
   const pending = await loadUnappliedLog(db, userId);
@@ -1012,21 +831,16 @@ async function reflectionBriefsOff(db: Db, now: Date): Promise<boolean> {
 export function buildMemoryBriefSweepHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
-  // P5.2 (PR #218 fix) — optional injected `now`. Computed ONCE per sweep and
-  // shared across detection + the per-subject regen jobs it enqueues, so a
-  // never-built subject's 30d lookback floor is identical at detection time and
-  // reload time (closes the 30d-edge race; also makes fixed-NOW tests
-  // deterministic regardless of wall-clock drift). Defaults to a fresh clock.
+  // One now per sweep, shared with the regen jobs it enqueues, so detection and
+  // reload use the same lookback floor. Also keeps fixed-now tests deterministic.
   opts?: { now?: Date },
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
     const now = opts?.now ?? new Date();
 
-    // BR-6 — global + any existing stale (non-subject) brief rows: unchanged
-    // 24h-stale gate. `listStaleBriefScopes` now EXCLUDES `subject:*` rows
-    // (brief.ts), so subject refresh is owned entirely by the capped per-subject
-    // path below and is never enqueued uncapped via this loop. The global brief
-    // is always enqueued here and is NOT subject to maxSubjectsPerRun.
+    // Stale non-subject scopes only: subject refresh is owned by the capped path
+    // below, so this loop cannot bypass maxSubjectsPerRun. The global brief is never
+    // subject to that cap.
     const staleScopes = await listStaleBriefScopes(db, now);
     const reflectionOff = await reflectionBriefsOff(db, now);
     for (const scopeKey of staleScopes) {
@@ -1036,12 +850,9 @@ export function buildMemoryBriefSweepHandler(
       await enqueueBriefRegen(boss, scopeKey);
     }
 
-    // P5.2 (YUK-143) — additive activity-gated per-subject layer (§3.3). Find
-    // subjects whose knowledge-resolved activity is newer than their brief's
-    // refreshed_at (or never-built within the lookback window), sort by activity
-    // recency DESC, and enqueue only the top maxSubjectsPerRun (BR-9). Deferred
-    // subjects remain active and are eligible again next run (no starvation).
-    // enqueueBriefRegen dedups per scope_key on a 6-min singleton window.
+    // Activity-gated subject layer: subjects with evidence newer than their brief
+    // (or never built inside the lookback), most recent first, capped per run.
+    // Deferred subjects stay eligible next run, so nothing starves.
     const activeSubjects = await listActiveSubjectsSinceRefresh(db, {
       lookbackDays: BRIEF_REFRESH_LOOKBACK_DAYS,
       now,
@@ -1050,17 +861,14 @@ export function buildMemoryBriefSweepHandler(
       activeSubjects,
       BRIEF_REFRESH_BUDGET.maxSubjectsPerRun,
     )) {
-      // Thread the sweep's `now` so the regen job reloads on the SAME 30d floor.
       await enqueueBriefRegen(boss, subject.scopeKey, now);
     }
   };
 }
 
-// ADR-0021 — transactional outbox poll handler. Cron fires every minute;
-// SELECT...FOR UPDATE SKIP LOCKED grabs a batch of pending event rows
-// (`ingest_at IS NULL`), enqueues each into MEMORY_EVENT_INGEST_QUEUE, and
-// stamps `ingest_at = now()` in the SAME transaction — so concurrent pollers
-// never double-enqueue and a worker crash before commit reverts the stamp.
+// Transactional outbox poll: one batch of pending rows is locked SKIP LOCKED,
+// enqueued, and stamped ingest_at in the same transaction. Concurrent pollers cannot
+// double-enqueue, and a crash before commit reverts the stamp.
 export function buildMemoryIngestOutboxPollHandler(
   db: Db,
   boss: Pick<BossLike, 'send'>,
@@ -1091,10 +899,9 @@ export function buildMemoryIngestOutboxPollHandler(
   };
 }
 
-// ADR-0021 — recovery sweep. Hourly cron drains any pending rows the
-// per-minute poller missed (worker outage, fast burst > batch limit).
-// Calls the same per-batch poller in a loop until a cycle returns empty,
-// with a safety cap to prevent runaway loops on pathological state.
+// Hourly recovery sweep: drains rows the minute poller missed (outage, burst beyond
+// the batch limit) by calling the poller until a cycle makes no progress, with a cap
+// against pathological loops.
 const OUTBOX_RECOVER_MAX_CYCLES = 1000;
 export async function runMemoryRecoveryFloor(legs: {
   readonly ingest: () => Promise<void>;
@@ -1160,21 +967,13 @@ export async function registerMemoryHandlers(
 ): Promise<void> {
   const generateBrief = deps.generateBrief ?? defaultGenerateBrief;
 
-  // F-2 (YUK-185) — the XIAOMI_API_KEY boot WARN used to live HERE, but tests
-  // also call registerMemoryHandlers (with a stubbed generateBrief), so it
-  // emitted a false "brief regen will fail" line in every such test. PR #232
-  // review (FIX #6) moved the one-time WARN to the prod entry point
-  // (scripts/worker.ts) — the only boot path that actually runs the cron — so
-  // the operator still gets the signal and tests stay quiet.
-
-  // YUK-248: memory_event_ingest invokes mem0's LLM extraction + embedding
-  // pipeline. Give it the shared LLM expiry/retention/retry policy and a DLQ
-  // instead of pg-boss's 15-minute/14-day/no-DLQ defaults.
+  // Ingest runs mem0's extraction + embedding, so give it the shared LLM expiry
+  // policy and a DLQ instead of pg-boss defaults.
   await createJobQueue(boss, MEMORY_EVENT_INGEST_QUEUE, EXPIRE_LLM);
   await boss.work(
     MEMORY_EVENT_INGEST_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    // YUK-1055 — per-delivery epoch fence（disposition 'drain'：epoch-agnostic）。
+    // Epoch-agnostic per-delivery fence (drain disposition).
     fenceAwareJobHandler<Job<{ event_id: string }>>(
       db,
       MEMORY_EVENT_INGEST_QUEUE,
@@ -1217,16 +1016,13 @@ export async function registerMemoryHandlers(
     ),
   );
 
-  // YUK-1007：memory 侧 cron 从 MEMORY_INFRA_SCHEDULES 静态表循环注册（单一
-  // 真相源——admin config 读面经组合根 facts seam 投影同一张表）。
+  // Register the static cron table; registration and admin reads share it.
   for (const decl of MEMORY_INFRA_SCHEDULES) {
     await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
   }
 
-  // Reconcile queue — event-driven, with recovery attached to the hourly floor.
-  // memory_reconcile is newer than the original YUK-248 inventory but has the
-  // same paid-LLM failure mode, so keep the invariant exhaustive for every
-  // queue owned by this registrar.
+  // Reconcile is event-driven and shares the hourly recovery floor. It is a paid
+  // LLM queue, so it gets the same expiry policy as the other memory queues.
   await createJobQueue(boss, MEMORY_RECONCILE_QUEUE, EXPIRE_LLM);
   await boss.work(
     MEMORY_RECONCILE_QUEUE,

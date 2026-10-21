@@ -1,135 +1,9 @@
-// YUK-576 — structured failure carrier + transient/permanent classifier for the
-// runner's single-attempt failures.
-//
-// The classification table is EVIDENCE-FROZEN (design doc §2.3, probes run
-// 2026-07-07 against CLI 2.1.168 / SDK 0.3.168 — see runner.fallback.test.ts
-// fixture provenance):
-//   - API-level errors (4xx / 429 / 5xx / connection-class) ALL terminate as
-//     `SDKResultSuccess { is_error: true, api_error_status: number | null }` —
-//     they NEVER surface as SDKResultError. The runner always wraps that shape
-//     as subtype 'api_error_result'; opt-in controls retry only, never truthfulness.
-//   - `api_error_status === null` is the connection-class marker (mid-stream
-//     socket drop; observed terminal in ~1.5s — the canonical fast transient).
-//   - 429 / 5xx are transient by semantics. YUK-590 caps the CLI's internal
-//     retry count at 2 by default so a terminal normally returns within loom's
-//     task budget; the elapsed gate still prevents slow sync-route double calls.
-//   - `error_during_execution` is PERMANENT (conservative default): probes
-//     proved API failures never land there; it presumably carries CLI-internal
-//     execution errors. `errors[]` is preserved into error_message for future
-//     recalibration.
-//   - 'stream_no_terminal': the SDK message stream ended without a terminal
-//     result message (CLI death / stream drop) — transient, process-level fast
-//     failure. Previously this was silently recorded as a SUCCESS run.
-//   - abort/timeout and everything unrecognized: permanent (whitelist-only
-//     retries — never retry an uncertain failure into a double bill).
+// Server adapters for the shared single-attempt failure contract.
+// Admission retains its runtime class identity; SDK result shapes stay here.
 
+import { AgentRunError } from '@/ai/agent-run-error';
 import { ProviderSessionAdmissionError } from './provider-session-admission';
 import type { SDKMessage } from './sdk-types';
-
-/** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
-type SdkResultErrorSubtype =
-  | 'error_during_execution'
-  | 'error_max_turns'
-  | 'error_max_budget_usd'
-  | 'error_max_structured_output_retries';
-
-export type AgentFailureSubtype =
-  | SdkResultErrorSubtype
-  /** success+is_error terminal (the ONLY shape API errors take — probe-frozen). */
-  | 'api_error_result'
-  /** SDK stream ended without a terminal result message. */
-  | 'stream_no_terminal'
-  /** Lifecycle budget elapsed before a terminal result was observed. */
-  | 'budget_timeout'
-  /** Cross-process session lease/control-plane failure after durable start. */
-  | 'provider_admission'
-  /** Non-SDK exception after the attempt acquired a durable task-run id. */
-  | 'runner_error'
-  /**
-   * YUK-1049 — typed-endpoint contract violation after a transport-level
-   * success: non-JSON body, response schema mismatch, or model/provider drift
-   * from the pinned canonical. PERMANENT by classification (retrying a
-   * deterministic violation only double-bills).
-   */
-  | 'typed_contract_violation';
-
-/**
- * R1 (YUK-576 review) — the sixth retry gate: a transient failure is only
- * retried when it arrived within this window from the FIRST attempt's start.
- * Fixed constant (NOT a budget.timeout ratio): a ratio would silently widen the
- * sync-route wall-clock as budgets grow — exactly the failure mode the gate
- * exists to block. The runner also turns `first attempt + this cap + one full
- * budget.timeout` into the opted-in judge's absolute provider-session deadline,
- * so admission wait and SDK startup consume the same 10s + 90s = 100s bound
- * instead of being added outside it (design doc §3.4). The retry-start deadline
- * remains a separate seam and never truncates an attempt that already started.
- */
-export const RETRY_ELAPSED_CAP_MS = 10_000;
-
-export interface AgentRunErrorFields {
-  kind: string;
-  taskRunId: string;
-  subtype: AgentFailureSubtype;
-  /** Only for 'api_error_result'; null = connection-class (probe-frozen marker). */
-  apiErrorStatus?: number | null;
-  /** SDKResultError.errors, or [result error text] for api_error_result. */
-  errors: string[];
-  /** Known attempt cost; absent means unknown, not zero. */
-  costUsd?: number;
-}
-
-/**
- * Structured single-attempt failure. The message keeps a grep-able
- * `[kind] agent run errored: subtype=…` format; the structured fields carry
- * what the string used to drop (errors[], api status, the attempt's run id).
- * (YUK-1025: 'Agent SDK' renamed — the SDK subprocess is retired.)
- */
-export class AgentRunError extends Error {
-  readonly kind: string;
-  readonly taskRunId: string;
-  readonly subtype: AgentFailureSubtype;
-  readonly apiErrorStatus?: number | null;
-  readonly errors: string[];
-  readonly costUsd?: number;
-
-  constructor(fields: AgentRunErrorFields) {
-    const http =
-      fields.subtype === 'api_error_result' ? ` http=${fields.apiErrorStatus ?? 'null'}` : '';
-    const detail = fields.errors.length > 0 ? ` errors=${fields.errors.join('; ')}` : '';
-    super(`[${fields.kind}] agent run errored: subtype=${fields.subtype}${http}${detail}`);
-    this.name = 'AgentRunError';
-    this.kind = fields.kind;
-    this.taskRunId = fields.taskRunId;
-    this.subtype = fields.subtype;
-    this.apiErrorStatus = fields.apiErrorStatus;
-    this.errors = fields.errors;
-    this.costUsd = fields.costUsd;
-  }
-}
-
-/**
- * run-lifecycle.ts throws this dedicated Error subclass when the provider
- * session wall-clock budget elapses. It deliberately does NOT extend
- * AgentRunError: the runner's `aborted` binding keys off lifecycle state, not
- * error identity, and downstream classification must keep treating it as a
- * non-SDK failure. Recognition is by identity (instanceof), never by message,
- * so an unrelated plain Error that happens to share the message text can
- * never be misclassified as budget exhaustion and downgraded to a degraded
- * reply instead of fail-closed.
- */
-export const PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE =
-  'provider session wall-clock budget elapsed';
-
-export class ProviderSessionWallClockBudgetError extends Error {
-  constructor(phase: string) {
-    super(`${PROVIDER_SESSION_WALL_CLOCK_BUDGET_MESSAGE} ${phase}`);
-    this.name = 'ProviderSessionWallClockBudgetError';
-  }
-}
-
-export function isProviderSessionWallClockBudgetError(error: unknown): boolean {
-  return error instanceof ProviderSessionWallClockBudgetError;
-}
 
 /**
  * Preserve the durable attempt identity for every exception that escapes a
@@ -164,24 +38,6 @@ export function bindAgentRunError(input: {
     subtype: input.aborted ? 'budget_timeout' : 'runner_error',
     errors: [input.error instanceof Error ? input.error.message : String(input.error)],
   });
-}
-
-/**
- * Evidence-frozen transient predicate (design doc §2.3). Whitelist-only:
- * anything not an AgentRunError (budget aborts, config errors, unknown throws)
- * is permanent by default.
- */
-export function isTransientAgentFailure(err: unknown): boolean {
-  if (!(err instanceof AgentRunError)) return false;
-  if (err.subtype === 'stream_no_terminal') return true;
-  if (err.subtype === 'api_error_result') {
-    const status = err.apiErrorStatus;
-    if (status === null || status === undefined) return true; // connection-class
-    if (status === 429) return true;
-    if (status >= 500 && status <= 599) return true;
-    return false; // other 4xx: auth/config/validation
-  }
-  return false; // error_during_execution / error_max_* / anything else
 }
 
 /**

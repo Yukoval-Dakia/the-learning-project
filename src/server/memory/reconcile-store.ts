@@ -5,18 +5,14 @@ import type { Db } from '@/db/client';
 import { memory_reconciliation_log } from '@/db/schema';
 import type { MemoryClient } from './client';
 
-// P2 (YUK-342): softSupersede + write-ahead log data layer for mem0 reconcile.
-// Self-built — does NOT depend on mem0 history. The mem0 pgvector collection
-// table (dynamic name from config) is operated on via raw SQL (sql.raw for table
-// name); memory_reconciliation_log is a drizzle-managed table.
+// Write-ahead reconcile log for mem0. Self-built: the reconciliation log is
+// drizzle-managed, while the mem0 pgvector collection is addressed by raw SQL.
 
 export type ReconcileAction = 'KEEP_BOTH' | 'SUPERSEDE' | 'MERGE' | 'RETRACT_NEW';
 
-// The collection name is interpolated raw into the table identifier (sql.raw).
-// Today it is always config-derived (env/default) or a test constant — both
-// trusted — but guard the raw interpolation so a future caller can't turn it
-// into a SQL-injection vector. Double-quoting alone does not neutralize a name
-// containing a `"`.
+// The collection name is interpolated raw into a table identifier. Callers pass
+// config or test constants today, but guard the interpolation so it cannot become
+// a SQL-injection vector; quoting alone does not neutralize a name containing `"`.
 function assertSafeCollectionName(name: string): void {
   if (!/^[A-Za-z0-9_]+$/.test(name)) {
     throw new Error(`Unsafe mem0 collection name for raw SQL: ${JSON.stringify(name)}`);
@@ -33,30 +29,20 @@ export type PlannedRow = {
   reason: string;
   llm_raw: unknown;
   planned_at: Date;
-  // YUK-557 (Q2b) — write-ahead undo snapshot. Optionality is ONLY for KEEP_BOTH
-  // (no undo target) and type convenience for replay fixtures; every DESTRUCTIVE
-  // row (action !== 'KEEP_BOTH') MUST carry prev_text — it is the recovery floor,
-  // and for MERGE it is the ONLY source of the old row's text (enforced fail-closed
-  // in insertPlannedRows before any write). Captured in the handler's write-ahead
-  // phase (triggers.ts), never at apply-time (replay would read the already-
-  // rewritten payload). SUPERSEDE/MERGE: old row's original text/full payload;
-  // RETRACT_NEW: prev_text = new row's text, prev_metadata = null.
+  // Write-ahead undo snapshot. Only KEEP_BOTH may omit it (no undo target); every
+  // destructive row must carry prev_text, the recovery floor. For MERGE it is the
+  // only source of the old row's text. Captured before any mutation, never at
+  // apply time, so a replay cannot read already-rewritten payload.
   prev_text?: string | null;
   prev_metadata?: Record<string, unknown> | null;
 };
 
-/**
- * Batch INSERT planned rows into memory_reconciliation_log (write-ahead).
- * applied_at left NULL — set by markApplied after the apply step succeeds.
- */
+/** Insert planned rows with applied_at NULL; markApplied runs after the apply step. */
 export async function insertPlannedRows(db: Db, rows: PlannedRow[]): Promise<void> {
   if (rows.length === 0) return;
-  // YUK-557 (Q2b) invariant: every destructive WAL row must carry its undo
-  // snapshot (spec Q2b: the write-ahead side covers all non-KEEP_BOTH actions;
-  // prev_text is the recovery floor — for MERGE it is the ONLY source of the old
-  // row's text). Fail-closed BEFORE insert/apply: nothing has been destroyed yet,
-  // so a missing snapshot is a program bug (a synthesis path that forgot to
-  // capture), never a swallowed data-loss.
+  // Every destructive row must carry its undo snapshot. Fail closed before any
+  // insert: nothing has been destroyed yet, so a missing snapshot is a synthesis
+  // bug, not a data-loss case to swallow.
   for (const r of rows) {
     if (r.action !== 'KEEP_BOTH' && r.prev_text == null) {
       throw new Error(
@@ -74,9 +60,8 @@ export async function insertPlannedRows(db: Db, rows: PlannedRow[]): Promise<voi
       reason: r.reason,
       llm_raw: r.llm_raw as Record<string, unknown> | null,
       planned_at: r.planned_at,
-      // YUK-557 (Q2b) — explicit column map (NOT ...spread): the undo snapshot
-      // columns MUST be listed here or they silently drop AND audit:schema fails
-      // (no write path for the new columns). Undefined → NULL (pre-Q2b callers).
+      // Explicit column map: the undo columns must be listed or they silently drop
+      // (and audit:schema fails). Undefined → NULL for pre-snapshot callers.
       prev_text: r.prev_text ?? null,
       prev_metadata: r.prev_metadata ?? null,
     })),
@@ -85,13 +70,8 @@ export async function insertPlannedRows(db: Db, rows: PlannedRow[]): Promise<voi
 
 /**
  * Soft-supersede a mem0 vector row by merging superseded_by / invalid_at /
- * created_ms into its jsonb payload. Uses `payload || jsonb_build_object(...)`
- * (jsonb merge — never whole-object SET) so existing keys (data, createdAt,
- * hash, etc.) are preserved. Parameters are explicitly `::text` cast.
- *
- * sentinel discipline: superseded_by is NEVER JSON null (P3 filter
- * {$not:[{superseded_by:'*'}]} → NOT(payload ? 'superseded_by') must see the
- * key as present-and-non-null).
+ * created_ms into its jsonb payload. The jsonb merge preserves existing keys.
+ * superseded_by is never JSON null: the read filter checks for a present key.
  */
 export async function softSupersede(
   db: Db,
@@ -117,20 +97,10 @@ export async function softSupersede(
 }
 
 /**
- * Rewrite a surviving memory's text in place (MERGE action). The MERGE outcome
- * keeps the OLD row alive as the canonical merged memory and drops the NEW row
- * (hardDeleteMemory) — so the survivor must stay LIVE: this writes ONLY
- * payload->>'data' (mem0 stores memory text under the 'data' key, NOT 'memory')
- * + bumps created_ms for recency. It deliberately does NOT write superseded_by /
- * invalid_at, because the P3 read path filters out rows carrying those markers
- * — marking the survivor superseded would make the merged memory vanish from
- * reads (the YUK-342 PR #405 MERGE bug this replaces).
- *
- * Known limitation (Codex PR #405 :114): this is a jsonb-only text rewrite — it
- * does NOT re-embed. The survivor's `vector` and any `text_lemmatized`-style
- * columns still reflect the OLD text, so a semantic / lexical search keyed on
- * mergedText's new wording may not rank-match the survivor. Re-embedding on
- * MERGE is deferred to P3 / a future re-embed pass.
+ * Rewrite the surviving memory's text in place for MERGE. The old row stays live;
+ * only payload data and created_ms change, never superseded_by/invalid_at (those
+ * markers would make the survivor vanish from reads). Known limitation: this does
+ * not re-embed, so vector search still reflects the pre-merge text.
  */
 export async function rewriteMemoryText(
   db: Db,
@@ -153,16 +123,9 @@ export async function rewriteMemoryText(
 }
 
 /**
- * Physically delete a mem0 vector row (MERGE drops the new row after rewriting
- * old; RETRACT_NEW drops a duplicate new row).
- *
- * YUK-557 (Q2a): now delegates to mem0's OFFICIAL delete() via client.hardDelete,
- * which writes payload.data into the SQLite memory_history tombstone (is_deleted=1)
- * BEFORE the real vector DELETE — turning the previously no-tombstone raw DELETE
- * into a recoverable delete (副保底; the primary undo source is the WAL prev_text,
- * which is in the backup boundary). Idempotent 'not found' handling lives inside
- * client.hardDelete. The design §3.2 red line never封禁 official delete() (only
- * softSupersede/rewriteMemoryText keep raw SQL, for the update() payload-clobber bug).
+ * Physically delete a mem0 row via the official delete(), which writes a SQLite
+ * history tombstone before the vector delete. The WAL prev_text remains the
+ * primary undo source; "not found" idempotency lives in client.hardDelete.
  */
 export async function hardDeleteMemory(
   client: Pick<MemoryClient, 'hardDelete'>,
@@ -172,14 +135,10 @@ export async function hardDeleteMemory(
 }
 
 /**
- * YUK-557 (Q2b) — read-only snapshot of a mem0 vector row's current payload,
- * captured in the reconcile handler's WRITE-AHEAD phase (before any apply mutates
- * it) so the undo log holds the pre-change state. Returns { text, metadata }
- * where text = payload.data (the memory text) and metadata = the full payload.
- * Missing row (defensive: LLM-referenced id already gone) → null, so the caller
- * leaves prev_metadata NULL and relies on prev_text as the floor. NEVER call this
- * at apply-time: a crash-replay would read the already-rewritten payload and
- * poison the snapshot (spec Q2b / M1, Lens B M1).
+ * Read-only snapshot of a mem0 row's current payload, taken in the write-ahead
+ * phase so the undo log holds pre-change state. Missing row → null; the caller
+ * then relies on prev_text. Never call at apply time: a crash replay would
+ * snapshot the already-rewritten payload.
  */
 export async function capturePrevState(
   db: Db,
@@ -196,7 +155,7 @@ export async function capturePrevState(
   return { text, metadata: payload };
 }
 
-/** UPDATE applied_at = now() — marks a write-ahead row as fully applied. */
+/** Mark a write-ahead row as fully applied. */
 export async function markApplied(db: Db, logId: string): Promise<void> {
   await db
     .update(memory_reconciliation_log)
@@ -205,25 +164,16 @@ export async function markApplied(db: Db, logId: string): Promise<void> {
 }
 
 /**
- * Idempotent replay cursor: load all planned rows that have NOT been applied
- * yet (applied_at IS NULL) for this user. Called at the START of every reconcile
- * job so a crash mid-apply is resumed, not lost.
+ * Idempotent replay cursor: planned rows not yet applied for this user. Runs at
+ * the start of every reconcile job so a crash mid-apply resumes rather than lost.
  *
- * Concurrency: NOT row-locked. Serialization relies on (1) enqueue singletonKey
- * `memory.reconcile.<user>`, (2) a single prod worker with batchSize:1. If two
- * jobs still overlap (the dev double-worker topology, tracked in YUK-345), the
- * apply step is idempotent by design — softSupersede is an idempotent jsonb
- * merge, hardDelete swallows 'not found', markApplied is a no-op once set — so a
- * double-apply wastes work but never corrupts. Add FOR UPDATE SKIP LOCKED here
- * (within a load+apply transaction) only if a real multi-writer prod topology
- * appears.
+ * Not row-locked. Serialization relies on the per-user singleton key and a single
+ * batchSize:1 worker. If jobs still overlap, the apply step itself is idempotent
+ * (jsonb merge, hardDelete treats absence as success, markApplied is once-only).
  */
 export async function loadUnappliedLog(db: Db, userId: string): Promise<PlannedRow[]> {
-  // Explicit 8-column projection (NOT bare .select()): this is the apply/replay
-  // cursor and DELIBERATELY does not carry the undo-snapshot columns
-  // (prev_text/prev_metadata) — apply never consumes them (recovery is an offline
-  // runbook query against the table), and pulling them here would waste bytes on
-  // every replay. YUK-557 (F7).
+  // Deliberately excludes the undo snapshot: apply never reads it (recovery is an
+  // offline query), so pulling it would waste bytes on every replay.
   const rows = await db
     .select({
       id: memory_reconciliation_log.id,
@@ -253,7 +203,7 @@ export async function loadUnappliedLog(db: Db, userId: string): Promise<PlannedR
   }));
 }
 
-/** Build a planned row with a fresh cuid2 id (convenience for the handler). */
+/** Build a planned row with a fresh id. */
 export function makePlannedRow(opts: Omit<PlannedRow, 'id' | 'planned_at'>): PlannedRow {
   return {
     ...opts,
