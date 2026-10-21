@@ -30,6 +30,7 @@ import {
   getAiChanges,
   getNotePage,
   saveBodyBlocks,
+  searchArtifacts,
   undoAiChange,
 } from './notes-api';
 
@@ -168,6 +169,7 @@ export default function NoteReaderPage({
   save = saveBodyBlocks,
   readAiChanges = getAiChanges,
   undo = undoAiChange,
+  searchReferences = searchArtifacts,
 }: {
   id: string;
   navigate: (to: string) => void;
@@ -175,6 +177,7 @@ export default function NoteReaderPage({
   save?: typeof saveBodyBlocks;
   readAiChanges?: typeof getAiChanges;
   undo?: typeof undoAiChange;
+  searchReferences?: typeof searchArtifacts;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -488,6 +491,7 @@ export default function NoteReaderPage({
               noteId={note.id}
               onChange={setDraft}
               rootRef={editSessionRef}
+              searchReferences={searchReferences}
             />
           ) : (
             <NoteDocBody

@@ -40,3 +40,16 @@ export async function readStartNoteAiChanges(
     throw errorResponse(error);
   }
 }
+
+export async function searchStartNoteReferences(
+  input: { q: string; exclude?: string },
+  options: { database?: Db } = {},
+) {
+  try {
+    const { searchArtifactReferences } = await import('@/capabilities/notes/public');
+    const database = options.database ?? (await import('@/db/client')).db;
+    return await searchArtifactReferences(database, { q: input?.q, exclude: input?.exclude });
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
