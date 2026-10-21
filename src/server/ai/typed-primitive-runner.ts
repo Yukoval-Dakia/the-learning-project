@@ -44,6 +44,7 @@ import {
   classifyLifecycleRetry,
   createRunLifecycle,
 } from './run-lifecycle';
+import { emptyStreamTextStats } from './timeout-usage';
 
 /** Worst-case USD reserved per wire attempt when the endpoint's own cost truth is absent. */
 export const TYPED_RESERVE_PER_CALL_USD = 0.005;
@@ -400,6 +401,11 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         if (lifecycle.costBasis === 'unknown') unknownCost = true;
       }
       if (!lifecycle.started) throw error;
+      await lifecycle.recordEstimatedUsage({
+        promptText: JSON.stringify(body),
+        output: emptyStreamTextStats(),
+        priceOrigin: 'failure-estimate',
+      });
       const boundError = bindAgentRunError({
         error,
         kind,

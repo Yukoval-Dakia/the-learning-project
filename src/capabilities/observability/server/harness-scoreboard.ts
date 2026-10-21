@@ -2,8 +2,9 @@
 //
 // The metric definitions live in ADR-0075 §D7 (M1–M7). This module only reads
 // raw tables and folds them; it never invokes a model and never writes business
-// state. `m3`/`m4` explicitly name the parts of the review's definition that the
-// current tables cannot reproduce, instead of presenting a proxy as measured.
+// state. `m3`/`m4`/`m5` explicitly name the parts of the review's definition
+// that the current tables cannot reproduce, instead of presenting a proxy
+// definition as measured.
 //
 // Consumers:
 //   - jobs/harness_scoreboard_daily.ts (daily projection event)
@@ -367,7 +368,7 @@ export async function computeHarnessScoreboard(
           ratio: ratio(values.failed, values.total),
         })),
       basis: 'proxy',
-      note: 'by_task = failed terminal runs / terminal runs. Review M3 counts task-specific rejections (QuizGen/source_consistency/notes/KR); only verifier events expose a raw reject count, so the two cannot be added.',
+      note: 'proxy definition: by_task = failed terminal runs / terminal runs. Review M3 counts task-specific rejections (QuizGen/source_consistency/notes/KR); only verifier events expose a raw reject count, so the two cannot be added.',
     },
     m4_inbox_backlog: {
       pending: asNumber(pending?.count),
@@ -378,7 +379,7 @@ export async function computeHarnessScoreboard(
       proposed_in_window: asNumber(proposedInWindow?.count),
       decided_in_window: asNumber(decidedInWindow?.count),
       basis: 'proxy',
-      note: 'pending/oldest are proposals created before window end with no terminal rate event (correction/staleness folds are not applied); closable/conflict partitions are not exposed by the raw rows.',
+      note: 'proxy definition: pending/oldest are proposals created before window end with no terminal rate event (correction/staleness folds are not applied); closable/conflict partitions are not exposed by the raw rows.',
     },
     m5_duplicate_rate: {
       new_questions: asNumber(newQuestions?.count),
@@ -386,7 +387,7 @@ export async function computeHarnessScoreboard(
       duplicate_ratio: ratio(exactDuplicates, asNumber(newQuestions?.count) + exactDuplicates),
       same_name_knowledge_pairs: sameNameKnowledgePairs,
       basis: 'proxy',
-      note: 'exact duplicates come from experimental:quiz_gen exact_duplicate_count; source/jyeoo duplicate rejections are not counted in this version.',
+      note: 'proxy definition: exact duplicates come from experimental:quiz_gen exact_duplicate_count; source/jyeoo duplicate rejections are not counted in this version.',
     },
     m6_idle_spend: {
       currency: 'USD',

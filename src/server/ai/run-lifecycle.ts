@@ -70,6 +70,8 @@ export interface TerminalResultEvidence {
   tokenCounts: TokenCounts;
   /** YUK-1557 — completed assistant turns; persisted beside the token counters. */
   numTurns?: number;
+  /** YUK-1557 — set when an estimate fills a terminal frame with no usable usage. */
+  priceOrigin?: 'timeout-estimate' | 'failure-estimate';
   /** Distinguishes missing usage from explicitly observed zero token counts. */
   tokenUsageObserved?: boolean;
   costUsd?: number;
@@ -82,7 +84,7 @@ export type ObservedRunUsage = Pick<
   'usage' | 'tokenCounts' | 'numTurns' | 'tokenUsageObserved' | 'costUsd'
 > & {
   /** Set when tokens and any catalog USD came from an aborted stream, not a final usage payload. */
-  priceOrigin?: 'timeout-estimate';
+  priceOrigin?: 'timeout-estimate' | 'failure-estimate';
 };
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
@@ -322,14 +324,22 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Budget abort with no positive provider usage. Persist a non-zero estimate
-   * so the attempt row cannot claim the call was free.
+   * Persist a bounded estimate when a provider call ended without a usable
+   * usage payload. `failure-estimate` covers non-abort failures; `timeout-estimate`
+   * stays reserved for budget aborts.
    */
-  async recordAbortedUsage(input: {
+  async recordEstimatedUsage(input: {
     promptText: string;
     output: Parameters<typeof estimateAbortedUsage>[1];
+    priceOrigin: 'timeout-estimate' | 'failure-estimate';
   }): Promise<void> {
-    if (this.terminal) return;
+    const terminalHasUsableUsage =
+      this.terminal !== undefined &&
+      (this.terminal.tokenUsageObserved === true ||
+        this.terminal.usage.inputTokens > 0 ||
+        this.terminal.usage.outputTokens > 0 ||
+        this.terminal.costUsd !== undefined);
+    if (terminalHasUsableUsage) return;
     const observed = this.observedUsage;
     if (
       observed?.tokenUsageObserved === true &&
@@ -346,14 +356,14 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       );
       if (priced !== null) catalogCost = priced;
     }
-    this.observedUsage = {
-      tokenUsageObserved: true,
-      priceOrigin: 'timeout-estimate',
+    const estimated = {
+      priceOrigin: input.priceOrigin,
       numTurns: 1,
+      tokenUsageObserved: true,
       usage: {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
-        usage_basis: 'estimated',
+        usage_basis: 'estimated' as const,
       },
       tokenCounts: {
         inputTokens: estimate.inputTokens,
@@ -361,6 +371,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       },
       ...(catalogCost !== undefined ? { costUsd: catalogCost } : {}),
     };
+    if (this.terminal) {
+      this.terminal = { ...this.terminal, ...estimated };
+    } else {
+      this.observedUsage = estimated;
+    }
     this.costTruthCache = undefined;
   }
 
