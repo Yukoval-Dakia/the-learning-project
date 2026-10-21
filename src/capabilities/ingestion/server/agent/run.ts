@@ -1,5 +1,10 @@
 import { eq, sql } from 'drizzle-orm';
 
+import {
+  AgentRunError,
+  isProviderSessionWallClockBudgetError,
+  isTransientAgentFailure,
+} from '@/ai/agent-run-error';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
@@ -9,11 +14,6 @@ import {
   resolveDomainToolNames,
   resolveMcpAllowedTools,
 } from '@/kernel/tools/allowlists';
-import {
-  AgentRunError,
-  isProviderSessionWallClockBudgetError,
-  isTransientAgentFailure,
-} from '@/server/ai/agent-run-error';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admission';
 // NOTE: the failure-vocabulary modules are imported from their own files, not
