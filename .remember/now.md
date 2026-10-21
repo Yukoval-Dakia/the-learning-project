@@ -1,12 +1,17 @@
-# K1 父接线，2026-10-21
+# Migration focus — 2026-10-21
 
-唯一父writer在t3-12b32ff3/feat-yuk-1568-shared-submit-intx-20261021；旧stage1-lead ee4b92bea与原dirty now不写。子线eecf79ada已释放，父正常整合main3d5fa20a得1763d642后接submit-question与Practice工具；parts/draft-contract保持。父保存b9d050acd后普通整合main def2（含已合1925），canonical与logTaskRunId区分、两路created_by与难度说明均保留；固定组合candidate3116e69eca8f104b73154e9fc83421e04ad476a6；后续仅文档和批准引用修正，完整内容/不足见docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
+Owner停止手工SHA/重复seal/例行运维，ea21单次隔离build失败已清理且不重试。主线任务是YUK1358首次上传Start入口：new onboarding.upload route、生成routeTree、SPA onboardingUpload handoff，原组件/HTTP保持。Stage1已明确解除原暂缓且无writer；协调已将三个非重叠入口范围分配给迁移，不等待 UI 额度；保留 UI RecordRoute 注释与其它页面差量。当前分支feat/yuk-1358-onboarding-upload-start基于def2aeb51，pnpm frozen install及typecheck/lint/build完成（lint181warnings），三处产品接线已完成，独立R1/PR CI待执行；不新写测试，不启服务/模型。后续以本片真实源码/CI/浏览器分层交付，不把旧运营包当迁移成果。
 
-实际接线：声明候选claim→bind/save→根/真实child→唯一publish+outbox→域及caller回执同commit。去重业务冲突保KCmerge，publish在投影后冲突/TxAbort穿透外层回滚；commit后drain不重放业务。旧无producer指纹与canonical taskRunId保留，#1925 fixed23e归因diff单独封存，未合全PR。父补scope JSON键/null-prototype防局部id分隔符及对象属性歧义。
+# K1 R1-P1 修复收口，2026-10-21
 
-父frozeninstall/tsrs两配置exit0；首次boundary报两条sourceSize差异，architecture报6转出（已删无consumer一个，剩5已获精确stable_contract批准（d9ca5ad工件），不泛放文件）。组合3116的父tsrs/lint/build/schema与最终boundary/architecture/draft-status全0，181warnings；批准字段URL与consumer声明行号的两次红均留证，登记修正不改audit。唯一R1 stage1-k1-shared-submit-codex-r1-3116e69ec-20261021已运行，Gate待push。不写测试/断言脚本，不开DB/TEST/provider/部署。原子事务和复合serving真实验收NOT_RUN。
+K1 writer回到t3-12b32ff3/feat-yuk-1568-shared-submit-intx-20261021（PR1949）。唯一R1（review/stage1-yuk1568-s3-intx-20261021/review-r1-3116e69ec.md）两P1已修、0P0：
 
-Owner2026-10-21取消17分钟等待/timer/advisory等待重跑，保现行门/R1至多R2/exact-head及P0P1裁决，不改1939负责的根规则。ea21发布迁移/协调负责，04/05已接受不重复；清树巡检不阻开发。K1四生产端未齐，K5可独立开发，依赖typed的复合验收待相应产出；1431共用判断后接，1470切换仍待批准。无新runtime/额外writer。
+- **F1 升级前半成品恢复**：persistDeclaredQuestionGroupInTx 在绑定前先查同 :save request 的既有回执（edit-question 新导出 findDraftSaveReceipt 只读查询）；存在即以原始未绑定文档经同一 saveDraftEditInTx 内核原指纹重放恢复 → 原 submit 语义（无 producer ⇒ 旧指纹/平铺投影）续完或重放既有 :submit 回执；不重发布、不另付费核验、caller 回执同事务补齐。指纹不符探测落回绑定链产出诚实 request_id_reused —— 不误把同 request 冲突当 legacy。首发仍走新绑定链。
+- **F2 组拥有子行晋升**：kernel records/assessment-publication 新增 promoteVerifiedGroupPartRows（publisher shim 转发）：晋升集合 = parent_question_id=root ∩ id∈当前已核验 revision 冻结 structure.parts[].part_id ∩ draft ∩ non-tombstone；revision 缺失/异组 fail-loud；metadata 写 source_verify_inherited{event_id,root_question_id} 继承证据；同事务。source_verify promote 分支接入 + 根同款 FSRS enroll-if-absent。旧式组/单 part 恒 no-op；子行不首发 active、无独立 paid verify；serving 门不变（part notDraft ∧ 组 admitted）。question_admission_run 未改（admission 只翻生命周期维度，投影无需动）。
+
+writer-registry 按真实闭包收口（父本机 audit 曾 3 红）：submit-question.ts 已无 content 写（降为 facade）删 stale 登记；shared-submit.ts 登记 publisher-converged（3 写点全在 submitDraftQuestionInTx —— 子行 INSERT 字面量已移入 seam 函数闭包，typed-group 只留 assert 锁/查重与 choices 纯件，零写点不登记）。CI 事实：09e04 head run39611151600 终态，16 job 绿、contracts 仅 writer 登记 3 项（日志 review/stage1-yuk1568-s3-intx-20261021/contracts-completed.log）、deps audit 过（2low+8moderate）——无依赖修复/旧 CI 重跑。
+
+普通整合 main 1b180c3fb（仅 PLAN/now 文本冲突，产品无冲突）。本地 typecheck/lint/build/schema/capability-boundary/architecture/draft-status 全 0；原子事务/复合 serving/真实 DB/provider 仍 NOT_RUN。完整设计见 docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
 
 # 录入助手永久身份与未结费用修复，2026-10-20
 

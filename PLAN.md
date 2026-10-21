@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-21：K1 父独占接线已落，父b9d050acd后整合main def2（含1925）；新组合静态七门0；唯一R1运行，exact CI待收口。17分钟等待已按owner取消。
+> Linear 是权威 tracker。2026-10-21：K1（YUK-1568）R1 两 P1 修复 + writer 登记收口，普通整合 main 1b180c3fb（仅本文件/now 文本冲突，产品无冲突）；CI 09e04 head run39611151600 已终态——16 job 绿、contracts 仅 writer 登记 3 项、deps audit 过（2low+8moderate）。迁移线回归首次上传 Start 入口见 main 记录。
 
 ## NOW
 
-- **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` 唯一父 writer，子线 eecf79ada 已释放；正常整合 main3d5 得1763d642，父接既有submit API与实际 declared sourcing consumer，parts/draft-contract不改。首发根/真实子行/发布/outbox/canonical回执同事务；去重merge终态提交，投影后发布冲突整笔回滚；commit后drain。组合3116e69ec的tsrs/lint/build/schema/boundary/architecture/draft-status全0；五站点分类已登记，R1 stage1-k1-shared-submit-codex-r1-3116e69ec-20261021运行，new-head CI待交付。下一产物是完整consumer PR；真实DB/serving/provider仍NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
+- **第一天能用 / 首次上传 Start 入口（YUK-1358）**：当前功能分支 `feat/yuk-1358-onboarding-upload-start` 从 main `def2aeb51` 开始。下一交付仅 `/onboarding/upload` 新 Start route、生成 routeTree、旧 SPA 对应 document handoff已完成；typecheck/lint/build通过（181 warnings）。独立审查/PR CI待执行；复用原组件/HTTP/TokenGate，视觉、上传付费与默认 agent 不变。Stage1 无占用且解除旧暂缓；协调已确认 UI 仅有 RecordRoute 异处注释，三文件入口壳由迁移独占实施，不扩为 record/drafts 或全 RPC。浏览器验收另排，未新建测试或 runtime。
+
+- **题库供给 / 声明首发原子提交（YUK-1568）**：`t3-12b32ff3` K1 writer，PR1949 已开。R1（review-r1-3116e69ec）两 P1 已修：**F1** 升级前同 :save request 的原未绑定文档半成品经 saveDraftEditInTx 原指纹重放恢复 + 原 submit 语义（无 producer）续完，caller 回执同事务补齐；**F2** typed 声明组子行晋升——kernel `promoteVerifiedGroupPartRows` 按当前 revision 冻结 structure.part_ids 交集晋升（root→child 锁序、non-tombstone、继承证据入 metadata），source_verify promote 分支接入 + 根同款 FSRS enroll。writer-registry 按真实闭包迁移：submit-question stale 删、shared-submit 3 写点登记（child INSERT 字面量已移入 seam 函数闭包）。普通整合 main 1b180c3fb。本地 typecheck/lint/build/schema/boundary/architecture/draft-status 全 0；真实 DB/serving/provider 仍 NOT_RUN。[源码范围、保护与触发](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
 
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 
