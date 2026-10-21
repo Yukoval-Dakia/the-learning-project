@@ -23,29 +23,20 @@ import {
 } from '../server/agent/contract';
 
 /**
- * YUK-1408 — the client-facing consent enum for upload routes. Intentionally a
- * LOCAL literal, NOT the shared `DerivationPolicy` schema: ingestion callers
- * may only ever declare 'allow' | 'answer_only'. If the shared enum later
- * widens (e.g. with 'crisis'), client-sent values here must still be rejected
- * — crisis is a system-write state, never a client consent choice.
+ * Client-facing consent enum. Local on purpose: callers may only declare allow or
+ * answer_only, and widening the shared policy must not admit system states such as
+ * crisis as client consent.
  */
 export const IngestionDerivationPolicy = z.enum(['allow', 'answer_only']);
 
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
   asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
-  // YUK-1404 — explicit optional upload subject. Omitted / null = the learner
-  // did not pick one (legacy clients, skippable choice): the upload ALWAYS
-  // proceeds and no signal is persisted. A non-null value must resolve to a
-  // currently selectable subject (aliases canonicalized) or the request is
-  // rejected 400 before any source_document / learning_session write.
+  // Optional subject. Null or absent means no signal; a value must resolve to a
+  // selectable subject before any write, or the request is rejected.
   subject_id: z.string().nullable().optional(),
-  // YUK-1408 — the learner's consented usage for the uploaded document.
-  // 'allow' (default when absent) lets ingestion-derived records feed
-  // memory/briefs; 'answer_only' stamps every derived event so the shared
-  // derivation filter keeps the document's content out of those channels.
-  // Persisted on source_document.provenance.usage_policy; the consent UI reads
-  // and updates it there.
+  // Consented usage, persisted on document provenance. Allow (default) feeds
+  // derived records into memory/briefs; answer_only keeps them out.
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
@@ -64,21 +55,15 @@ export const IngestionSessionResponseSchema = z.object({
 });
 
 /**
- * YUK-1408 (S1 read side) — the latest `experimental:ingestion_usage_receipt`
- * for the session's source_document. `derivation_policy` is the document's
- * CURRENT live policy (provenance.usage_policy) — a later withdrawal shows
- * immediately — NOT the policy stamped on the receipt. Counts are numbers
- * only; redacted values are never on the wire.
+ * The latest usage receipt for the session document. derivation_policy is the
+ * document's live policy, so a later withdrawal shows immediately. Counts only;
+ * redacted values never go on the wire.
  */
 export const IngestionUsageReceiptSchema = z.object({
   derivation_policy: IngestionDerivationPolicy,
   /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
   engine: z.string().nullable(),
-  /**
-   * What left the server for a model on this extraction: `page_images:'raw'`
-   * means the original page image was sent as-is (OCR/VLM must see it);
-   * only the extracted text is redacted. null on a receipt without channels.
-   */
+  /** Channels that left the server; page images are raw, text is redacted. */
   channels: z
     .object({
       page_images: z.enum(['raw', 'none']),
@@ -106,9 +91,8 @@ export const IngestionOperationSchema = z
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
 
-// YUK-1408 — the docx multipart accepts an optional consent field alongside the
-// file part so the OpenAPI client declares it (the route validates + rejects
-// unknown values; the catchall stays for other form parts).
+// The docx multipart declares optional consent next to the file; the route
+// rejects unknown values, and the catchall admits other form parts.
 export const MultipartDocxUploadSchema = MultipartFileUploadSchema.extend({
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
@@ -136,7 +120,7 @@ export const CreateMistakeBodySchema = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string().min(1, 'wrong_answer_md is required'),
-  // This route has no independent subject signal, so at least one knowledge id stays required.
+  // No subject signal here, so at least one knowledge id is required.
   knowledge_ids: z.array(z.string().min(1)).min(1, 'at least one knowledge_id is required'),
   cause: z
     .object({
@@ -221,12 +205,10 @@ export const MistakeProjectionSchema = z.object({
     .object({
       source: z.enum(['agent', 'user']),
       primary_category: CauseCategory,
-      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
-      // unresolvable → null，渲染层回退 primary_category 裸 id。
+      // Display backfill from active misconception titles; null when not a misc id.
       primary_label: z.string().nullable(),
       secondary_categories: z.array(CauseCategory),
-      // YUK-1020 — secondary_categories 里 misc_ id 的显示回填（id → active
-      // misconception title Record map）；vocab / unresolvable 缺席 → 渲染裸 id。
+      // Display backfill for misc ids; absent entries fall back to raw ids.
       secondary_labels: z.record(z.string(), z.string()),
       user_notes: z.string().nullable(),
       confidence: z.number().min(0).max(1).nullable(),
@@ -339,10 +321,8 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   retractedEventId: z.string(),
 });
 
-// YUK-1522 (R8) — durable ask answer endpoint wire shapes. The binding
-// definitions live in server/agent/contract.ts (single source for the tool,
-// emitter and route); re-exported here so the api/ contracts file stays the
-// one-stop wire surface.
+// Ask answer wire shapes, re-exported from the single agent contract source so
+// this file stays the one-stop wire surface.
 export const IngestionAskAnswerBodySchema = IngestionAskAnswerBody;
 export const IngestionAskAnswerResponseSchema = IngestionAskAnswerResponse;
 export const IngestionAskAnswerHeadersSchema = IngestionAskAnswerHeaders;

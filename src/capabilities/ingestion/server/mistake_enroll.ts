@@ -3,21 +3,12 @@ import {
   parseMistakeEnrollOutput,
 } from '@/capabilities/ingestion/tasks/mistake-enroll';
 /**
- * MistakeEnrollTask invoker — T-OC slice A1 (YUK-145).
+ * MistakeEnrollTask invoker: a single-shot, text-only task that drafts the mistake
+ * metadata a human would fill in review (outcome, kind, difficulty, and cause for a
+ * wrong answer). It holds no DB and takes an injectable runner for tests.
  *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-5) +
- * the A1 blueprint. Single-shot structured-output AI task (NOT multimodal):
- * given a captured, answered question_block (question text + the student's
- * answer), it drafts the mistake metadata a human currently fills by hand at
- * review time — the graded outcome, question kind, difficulty, and (on a wrong
- * answer) a cause draft. Mirrors `runTaggingTask` / `runStructureTask`: a pure
- * invoker with an injectable `runTaskFn` (no DB of its own), so tests stub the
- * LLM seam with no live call.
- *
- * A1 is OBSERVE-ONLY: the caller (auto-enroll observe branch) attaches the draft
- * to the `experimental:auto_enroll_observed` audit event; it NEVER writes a
- * domain row. The actual enroll wiring + the OC-5 review surface are deferred to
- * A2 (YUK-164) behind the OFF `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` flag.
+ * Observe mode only attaches the draft to the audit event; it never writes a domain
+ * row. Enrollment behind the off-by-default flag uses the same draft.
  */
 import {
   type CauseProfileLike,
@@ -85,9 +76,7 @@ export async function runMistakeEnrollTask(
 
   let input: MistakeEnrollInputT;
   try {
-    // YUK-1408 — extracted / learner-answer text is deterministically redacted
-    // before the model sees it; the closed cause taxonomy and KC ids are
-    // internal vocabulary and stay untouched.
+    // Redact question and answer text; the cause taxonomy and KC ids are internal.
     input = MistakeEnrollInput.parse({
       question_md: redactIngestionText(params.questionMd).text,
       reference_md:

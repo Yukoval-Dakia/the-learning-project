@@ -30,7 +30,7 @@ import {
 import { enqueueAgentResume } from './dispatch';
 import { recordAgentExecutionIntent } from './ownership';
 
-// YUK-1522 (R8) — durable ask lifecycle for the ingestion agent.
+// Durable ask lifecycle for the ingestion agent.
 //
 // Asks are projected from job_events rows on the per-ask stream
 // (business_table='ingestion_ask', business_id=ask_id):

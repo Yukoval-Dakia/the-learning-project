@@ -22,9 +22,8 @@ import {
   type IngestionAgentStageT,
 } from './contract';
 
-// YUK-1522 (R8) — run ledger: reconstructs the durable state of an agent run
-// from job_events. Resume segments consume this to rebuild context; the
-// orchestrator consumes it to decide waiting / continue / done.
+// Run ledger: rebuilds an agent run's durable state from job_events. Resume
+// segments use it for context; the orchestrator uses it for waiting/continue/done.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 const TERMINAL_ITEM_STATUSES: readonly IngestionAgentItemStatusT[] = [

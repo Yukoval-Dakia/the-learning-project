@@ -1,27 +1,10 @@
 /**
- * WorkflowJudge auto-enroll config — T-OC slice 3 (YUK-145, OC-4 / OC-5).
+ * WorkflowJudge auto-enroll configuration.
  *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4/OC-5) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §4 + ADR-0026.
- *
- * ============================================================================
- * CRITICAL SAFETY: `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` DEFAULTS TO **OFF**.
- * ============================================================================
- *
- * With the flag at its default, NOTHING auto-enrolls — every captured block
- * routes to the EXISTING human review flow (src/capabilities/ingestion/api/import.ts), so
- * production behaviour is byte-equivalent to today. Auto-enroll only activates
- * when the env var is set EXPLICITLY to `true` or `1` (case-insensitive).
- *
- * This is the **INVERSE** of the WAVE6_TRIGGER_*_ENABLED convention in
- * `src/server/artifacts/note-refine-triggers.ts`, which defaults ON. Auto-enroll
- * writes durable learning data on the user's behalf (events + records), so per
- * OC-5 evidence-first conservative rollout it DEFAULTS OFF (a clone-safety
- * guarantee — nothing auto-enrolls unless the env var is set EXPLICITLY to
- * `true` or `1`). Both OC-5 gates are now satisfied — the "AI auto-enrolled N items"
- * review surface shipped (PR #328: the /record auto_enrolled review tab +
- * revert) and the owner opted in (YUK-164 #4, 2026-06-08) — so it may be enabled
- * per environment as needed. The code default stays OFF regardless.
+ * Auto-enroll writes durable learning data, so it defaults OFF: every block stays
+ * in human review unless the flag is explicitly true or 1. This is the opposite
+ * polarity of the note-refine triggers. The review/revert surface exists and the
+ * owner opted in, but the code default remains OFF per environment.
  */
 
 import { getConfig, getConfigFlag } from '@/core/config/store';
@@ -31,26 +14,17 @@ export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
 /** Env var for the combined-confidence threshold. Default 0.85 (conservative). */
 export const AUTO_ENROLL_THRESHOLD_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD';
 /**
- * Env var that gates the OBSERVE-only path (Strategy D Slice B, YUK-190).
- * Default OFF: observe still spends one or more paid model calls per block, so
- * it must be explicitly enabled just like the mutating auto-enroll path.
+ * Gates the observe-only path. Default OFF: observe still spends paid model calls
+ * per block, so it needs the same explicit opt-in.
  */
 export const OBSERVE_FLAG = 'WORKFLOW_JUDGE_OBSERVE_ENABLED';
 
 /**
- * YUK-482 cut ④ — Env var that gates the STUDENT-ANSWER GRADING path. Default
- * OFF. INDEPENDENT of `AUTO_ENROLL_FLAG`: when this is unset (the default), the
- * detect-student-work branch in `runAutoEnrollForSession` is skipped ENTIRELY →
- * byte-for-byte today's behavior (the existing text-draft outcome). When set to
- * `true` or `1` (case-insensitive) AND a block carries student work
- * (handwriting / a VLM `student_answer_present` signal), the whole page image is
- * graded via the existing `multimodal_direct` judge and the verdict drives a
- * real graded attempt → 错因 (attribution) + mastery (θ̂) chains.
- *
- * Polarity is opt-IN (default off), same as `autoEnrollEnabled` — grading writes
- * durable learning data (attempt + record + θ̂) on the user's behalf, so it must
- * be unmissably OFF by default. It is a SEPARATE knob from auto-enroll so the two
- * can be rolled out independently; do NOT overload `AUTO_ENROLL_FLAG`.
+ * Gates student-answer grading. Default OFF and independent of the auto-enroll
+ * flag: when unset, student-work detection is skipped entirely. When enabled and a
+ * block has student work, the page image goes through the multimodal judge and the
+ * verdict drives a graded attempt, attribution, and mastery. Opt-in because it
+ * writes durable learning data.
  */
 export const STUDENT_ANSWER_GRADING_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED';
 
@@ -58,22 +32,10 @@ export const STUDENT_ANSWER_GRADING_FLAG = 'WORKFLOW_JUDGE_STUDENT_ANSWER_GRADIN
 export const DEFAULT_AUTO_ENROLL_THRESHOLD = 0.85;
 
 /**
- * YUK-486 — singleton debounce window (seconds) for the `auto_enroll` enqueue.
- * Passing `singletonKey: sessionId` + `singletonSeconds` to `boss.send` populates
- * pg-boss's `singleton_on`, engaging the policy-INDEPENDENT partial-unique index
- * (`job_i4`), so two near-simultaneous sends for the same session within this window
- * collapse to ONE job — killing the duplicate-job symptom (dev double-consume:
- * rw:api's embedded RW_WORKER + standalone worker:dev; or an extract retry re-sending).
- *
- * IMPORTANT: a BARE `singletonKey` with no `singletonSeconds` is a NO-OP on a
- * standard-policy queue in pg-boss v12 — every other singleton unique index is gated on
- * a non-standard queue policy, and `auto_enroll` is created with no policy (standard).
- * The seconds are what make the dedup real. CORRECTNESS does NOT depend on this window:
- * the per-block FOR UPDATE claim in `runAutoEnrollForSession` is the structural guarantee
- * against double-INSERT regardless of how many jobs run; this window only reduces
- * redundant (no-op) job runs. 60s comfortably covers the observed same-timestamp
- * double-send and is kept short so it can never suppress a legitimate distinct
- * re-process (there is none — extraction enqueues auto_enroll once per session).
+ * Singleton debounce for the auto_enroll enqueue. A bare singletonKey is a no-op on
+ * a standard-policy queue, so singletonSeconds is required to collapse duplicate
+ * sends. Correctness does not depend on it: the per-block FOR UPDATE claim is the
+ * structural guard. Kept short because extraction enqueues only once per session.
  */
 export const AUTO_ENROLL_SINGLETON_SECONDS = 60;
 
@@ -83,37 +45,23 @@ export const AUTO_ENROLL_MAX_BLOCKS_PER_RUN = 10;
 /** Minimal env shape these readers need (a superset of NodeJS.ProcessEnv). */
 export type FlagEnv = Record<string, string | undefined>;
 
-/**
- * True only when `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` uses an enabled shared literal.
- * Undefined / blank / explicit false / any other value → false.
- *
- * NOTE the polarity: this is opt-IN (default off), the opposite of
- * `noteRefineTriggerEnabled` which is opt-OUT (default on). Auto-enroll is a
- * data-writing action on the user's behalf and must be unmissably OFF by default.
- */
+/** True only for an enabled literal; everything else is false. Opt-in by design. */
 export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
-  // YUK-1007：pinned key——compose 强制 env 层 + code-default（DB 写面 409 拦下，
-  // 面板改动不会静默输给 deploy pin）。env 形参注入照旧。
+  // Pinned key: compose fixes env plus code default; DB writes are rejected with 409.
   return getConfigFlag(AUTO_ENROLL_FLAG, env);
 }
 
-/**
- * Combined-confidence threshold for routing 'auto'. Defaults to
- * `DEFAULT_AUTO_ENROLL_THRESHOLD` (0.85) when unset/invalid. Clamped to [0, 1].
- */
+/** Threshold for routing auto; defaults to 0.85 when unset or invalid, clamped to [0, 1]. */
 export function autoEnrollThreshold(env: FlagEnv = process.env): number {
-  // YUK-1007：pinned key——env 层 > code-default；DB 写面 409。registry envParse
-  // 只返有限值；非有限 → codeDefault，此处与旧 clamp 行为逐位一致。
+  // Pinned key: env beats code default; DB writes are rejected with 409. Non-finite
+  // parses fall back to the code default, matching the previous clamp.
   const resolved = getConfig(AUTO_ENROLL_THRESHOLD_FLAG, env);
   if (typeof resolved !== 'number') return DEFAULT_AUTO_ENROLL_THRESHOLD;
   return Math.min(1, Math.max(0, resolved));
 }
 
 /**
- * True only when `WORKFLOW_JUDGE_OBSERVE_ENABLED` uses an enabled shared literal.
- * Undefined / blank / false / arbitrary values are OFF.
- * Observe is non-mutating, but it is not free: tagging + judging can fan out to
- * multiple paid calls, so an absent flag must preserve the hard no-op.
+ * Observe is non-mutating but not free; an absent flag preserves the hard no-op.
  */
 export function observeEnabled(env: FlagEnv = process.env): boolean {
   return getConfigFlag(OBSERVE_FLAG, env);
@@ -125,11 +73,8 @@ export function autoEnrollJobEnabled(env: FlagEnv = process.env): boolean {
 }
 
 /**
- * YUK-482 cut ④ — True only when `WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED`
- * uses an enabled shared literal. Undefined / blank / explicit false / any other
- * value → false. Opt-IN (default off), mirroring `autoEnrollEnabled`: the
- * student-grading branch writes a real graded attempt + θ̂ on the user's behalf,
- * so absence of the var = today's text-draft behavior, byte-for-byte.
+ * Opt-in: the grading branch writes a graded attempt and mastery, so absence keeps
+ * the text-draft behavior unchanged.
  */
 export function studentAnswerGradingEnabled(env: FlagEnv = process.env): boolean {
   return getConfigFlag(STUDENT_ANSWER_GRADING_FLAG, env);

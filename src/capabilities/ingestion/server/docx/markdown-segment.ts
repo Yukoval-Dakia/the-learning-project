@@ -2,19 +2,13 @@ import { createId } from '@paralleldrive/cuid2';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 
-// YUK-258 — DOCX text-line segmenter. Input = pandoc gfm markdown + extracted
-// media manifest. Output = StructuredQuestionT[] (one per question block) with
-// per-block image references (relative media paths; the persist stage swaps them
-// for asset_ids).
+// DOCX text-line segmenter: pandoc markdown plus the media manifest become one
+// structured block per question, with relative media refs the persist stage swaps
+// for asset ids.
 //
-// The interface shape is intentionally同构 with "markdown + 原位图引用" so a future
-// GLM-OCR markdown path (#333) can reuse this segmenter unchanged. We do NOT
-// depend on #333; this is an independent markdown-cutting implementation.
-//
-// 切题 regex modeled on tencent_mark_parser.ts's OPTION_LINE / SUB_LEADING_NUM
-// patterns (those consume Tencent MarkInfos, not markdown — referenced for shape
-// only). markdown carries no coordinates, so blocks have NO bbox / page_index
-// (degradation path; the caller stamps page_spans=[{page_index:0, fullpage}]).
+// Markdown carries no coordinates, so blocks have no bbox/page_index and the caller
+// stamps a full-page span. The cutting rules follow the Tencent parser's option and
+// sub-number shapes.
 
 export interface SegmentedBlock {
   structured: StructuredQuestionT;

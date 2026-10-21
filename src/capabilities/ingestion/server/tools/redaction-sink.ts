@@ -1,16 +1,11 @@
 import type { IngestionRedactionField, IngestionRedactionResult } from '../privacy-guard';
 import type { ToolContext } from './types';
 
-// YUK-1522 (R8) — run-scoped redaction accounting. Every tool that returns
-// source text into the agent loop (read_source, glm_ocr, preview/ask redaction
-// at the contract boundary) reports its redactIngestionText result here; the
-// orchestrator folds the sink into the per-segment usage receipt so
-// redacted_fields / redaction_counts are true, not decorative.
+// Run-scoped redaction accounting. Tools that return source text report their
+// redaction result here, and the orchestrator folds it into the segment receipt.
 //
-// R2-7: keyed by the ingestion SCOPE ID, not the ToolContext object — the
-// mcp-bridge clones ctx (executeDomainToolCall spreads opts.ctx) and Pi clones
-// it again, so an object-identity WeakMap lookup misses on every real call.
-// scope.id survives cloning and identifies this run's lane exactly.
+// Keyed by ingestion scope id, not the context object: the bridge clones ctx, so
+// object identity would miss on every real call.
 
 export interface AgentRedactionSink {
   readonly fields: Set<IngestionRedactionField>;

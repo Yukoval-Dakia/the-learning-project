@@ -4,27 +4,12 @@ import sharp from 'sharp';
 import { MAX_PDF_PAGES } from '@/core/limits';
 import { ApiError } from '@/kernel/http';
 
-// PDF → page-image renderer (YUK-250). Server-only; imported by the route
-// handler src/capabilities/ingestion/api/pdf.ts, NOT by the pg-boss worker graph
-// (scripts/worker.ts imports only @/db/client + @/server/boss/*). Keep it that
-// way so build:worker stays untouched.
+// PDF → page-image renderer. Server-only; the worker graph must not import it.
 //
-// Library: @hyzyla/pdfium (MIT, zero system deps — PDFium compiled to WASM and
-// bundled in the npm package). We call `PDFiumLibrary.init()` with NO options,
-// so the externalized Node/CJS package loads its WASM from sibling
-// dist/pdfium.wasm via __dirname at runtime.
-// (The base64-embedded variant is the SEPARATE `@hyzyla/pdfium/browser/base64`
-// entry, which this code does NOT use.) Because the wasm is a real on-disk file,
-// '@hyzyla/pdfium' MUST stay external in package.json's build:server command and
-// the Docker runner MUST copy the package (including dist/pdfium.wasm). If
-// esbuild inlines the ESM entry into the CJS server bundle, import.meta.url is
-// rewritten to an undefined shim and the first PDF/DOCX upload fails before the
-// WASM can load. The external CJS export instead resolves the sibling WASM from
-// its own __dirname.
-//
-// Each page renders to a raw BGRA bitmap which we pipe into the existing
-// `sharp` dependency to encode lossless PNG (matches the image/png asset
-// contract; no new image codec dependency).
+// @hyzyla/pdfium bundles PDFium as WASM. It must stay external in the server
+// build and its dist/pdfium.wasm must ship in the Docker image: inlining the ESM
+// entry rewrites import.meta.url and breaks WASM loading on the first upload.
+// Pages render as BGRA bitmaps encoded to PNG by the existing sharp dependency.
 
 // 150 DPI is the OCR/VLM sweet spot — crisp glyphs without blowing up the
 // base64 payload sent per-page to Tencent + the VLM. PDFium's scale=1 ≈ 72 DPI,
@@ -40,10 +25,8 @@ const RENDER_SCALE = 150 / 72;
 // keeps consuming CPU + WASM heap to completion in the background, freeing only
 // in renderPages' own `finally`. Bounded and acceptable on this single-user NAS
 // tool given the 15-page cap (MAX_PDF_PAGES).
-// YUK-522 adds the SEPARATE cooperative path: a client that disconnects (the
-// route threads `req.signal`) aborts between per-page renders via the loop's
-// `signal.aborted` check below. The 30s timeout + page cap stay unchanged —
-// cooperative abort is additive, not a replacement.
+// A disconnected client aborts cooperatively between page renders via the loop's
+// signal check. Timeout and page cap are unchanged; abort is additive.
 export const PDF_RENDER_TIMEOUT_MS = 30_000;
 
 // Per-rendered-page byte ceiling — rendered page assets still flow through the
@@ -131,10 +114,8 @@ async function renderPages(pdfBytes: Uint8Array, signal?: AbortSignal): Promise<
 
     const pages: RenderedPage[] = [];
     for (let i = 0; i < pageCount; i++) {
-      // YUK-522 — cooperative abort between the per-page PDFium WASM calls: a
-      // client disconnect (route-threaded req.signal) bails here instead of
-      // burning CPU/WASM heap on the remaining pages. Additive to — not a
-      // replacement for — the 30s timeout + page cap above.
+      // Abort between WASM calls so a disconnect does not burn the remaining pages.
+      // This is additive to the timeout and page cap.
       if (signal?.aborted) {
         throw renderAbortedError();
       }
@@ -167,9 +148,8 @@ async function renderPages(pdfBytes: Uint8Array, signal?: AbortSignal): Promise<
  * timeout / oversized rendered page). The caller's try/catch → errorResponse
  * turns these into a 400 with the message.
  *
- * `signal` (YUK-522) is the caller's AbortSignal — the route threads `req.signal`
- * so a client disconnect aborts cooperatively between page renders, rejecting
- * with `ApiError('request_aborted', ..., 499)` (WASM handles still freed).
+ * `signal` aborts cooperatively between page renders on disconnect, rejecting with
+ * request_aborted (WASM handles still freed).
  */
 export async function renderPdfToPngPages(
   pdfBytes: Uint8Array,
