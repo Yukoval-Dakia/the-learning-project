@@ -4,14 +4,14 @@ status: accepted
 
 # ADR-0072 — 题库 agent 工具：search_bank / read_bank / check_bank
 
-**Status:** Accepted（设计方向，2026-10-11）；LIGHT 三工具实现已在 `feat/bank-tools-light` 恢复，尚未合入 main，产品验收未完成。当前源码、6-case DB 证据与未交付能力见 [实施回执](../planning/2026-10-11-bank-tools-light-implementation.md#2026-10-12-cloud-接续与验收边界)。
+**Status:** Accepted（设计方向，2026-10-11；2026-10-19 owner 批准 search 内逐条件语义核验）。三工具已在 main；2026-10-22 的 search v2 源码切片与迁移依赖见 [本片实施边界](../planning/2026-10-22-yuk1448-search-semantic-verification.md)，DB/provider/真实产品验收 NOT_RUN，不代表完整 L1/LIGHT。旧 LIGHT 的历史源码、6-case DB 证据与当时未交付能力见 [实施回执](../planning/2026-10-11-bank-tools-light-implementation.md#2026-10-12-cloud-接续与验收边界)。
 **Decision source:** owner 2026-10-11「关键还在给 agent 什么工具」；Coordinator 对题库工具提案的评估意见（YUK-1448 评论，2026-10-11 13:10），其调整逐条采纳为本文决定。
 **Tracking:** [YUK-1448](https://linear.app/yukoval-studios/issue/YUK-1448)。
 **Related:** ADR-0069（单一备题员——本文修订其 D1 工具清单与硬边界 1）、ADR-0070（统一学习者大脑——本文增补其 D1 契约一项批量读面，见 D4）、ADR-0067（教研白板）、ADR-0068（通用学科）、[YUK-1468](https://linear.app/yukoval-studios/issue/YUK-1468)（备题员）、[YUK-1470](https://linear.app/yukoval-studios/issue/YUK-1470)（学习者大脑）、[YUK-1474](https://linear.app/yukoval-studios/issue/YUK-1474)（provider fallback chain，不在本 ADR 范围）；详细设计真相源（随本文同提交版本化）`docs/planning/2026-10-11-question-bank-agent-tools-proposal.md`（下称「提案」，含接口细节、42 条种子查询与机制攻击集）。
 
 ## 背景与问题
 
-题库今天的 agent 检索面与 agent 的需要错位（以下均经 origin/main 代码核实）：`query_questions` 只按结构过滤（knowledge_id / subject / kind / source / 单一 difficulty / draft），且只授予 copilot 两个面——备题员（ADR-0069）等后台 agent 没有任何列库手段；`get_question_context` 把题目内容与学习者状态（attempts / review_history / fsrs_state / records）混在一个响应里，授予面虽宽却不能直接当题库读取面。`listQuestions` 读模型已支持文本子串（ILIKE）、多难度、visual_complexity、source_tier、draft_status、变式族与排序——工具只透出一小部分。语义检索基件已建好却无活消费者：`question.embedding`（vector(1024)、embed_version=2、embed_content_hash）只被 `poolFetch` 的 cosine 分支读取，而该分支的唯一调用者 `matcher()` 无生产调用方（sourcing-sequence / refill 均不传 queryEmbedding）；`solution-generate.ts` 直接 UPDATE `reference_md`，绕过 `editQuestion` 的 hash 失效路径，向量随之过期。全库没有 Postgres FTS（无 tsvector），没有按图、按材料、按「与这题相似」的检索。
+题库今天的 agent 检索面与 agent 的需要错位（本段为 2026-10-11 的历史基线，不是当前 main 状态）：`query_questions` 只按结构过滤（knowledge_id / subject / kind / source / 单一 difficulty / draft），且只授予 copilot 两个面——备题员（ADR-0069）等后台 agent 没有任何列库手段；`get_question_context` 把题目内容与学习者状态（attempts / review_history / fsrs_state / records）混在一个响应里，授予面虽宽却不能直接当题库读取面。`listQuestions` 读模型已支持文本子串（ILIKE）、多难度、visual_complexity、source_tier、draft_status、变式族与排序——工具只透出一小部分。语义检索基件已建好却无活消费者：`question.embedding`（vector(1024)、embed_version=2、embed_content_hash）只被 `poolFetch` 的 cosine 分支读取，而该分支的唯一调用者 `matcher()` 无生产调用方（sourcing-sequence / refill 均不传 queryEmbedding）；`solution-generate.ts` 直接 UPDATE `reference_md`，绕过 `editQuestion` 的 hash 失效路径，向量随之过期。全库没有 Postgres FTS（无 tsvector），没有按图、按材料、按「与这题相似」的检索。
 
 本文是决策记录，不是实施 spec：请求/响应字段、错误与过期语义、检查清单以提案为真相源，本文只钉决定与边界。
 
@@ -33,13 +33,15 @@ status: accepted
 
 题库工具不读、不写、不缓存任何学习者状态（作答、FSRS、mastery、预测）。**对 ADR-0070 D1 契约增补一项批量读面：输入候选 ref 列表，逐 ref 返回 P(correct)、uncertainty 与 prediction version**——备题 agent 把它与 search 结果在 agent 侧组合（覆盖提案 Q42「答对概率约 70%」）。该读面是 ADR-0070 契约的消费者入口，数字仍全部由代码产出（ADR-0070 硬边界 6 不变）；备题 agent 与 Copilot 是契约读者，不成为第二个 learner brain。
 
-### D5 check_bank v1 只做确定性记录/复算检查；语义检查逐项过预注册比较才准入
+### D5 check_bank 保持确定性；search_bank v2 内做逐条件语义核验
 
-v1 检查类别限于：记录关系读取（两题材料引用是否相同、指定字段差异）与已批准的确定性复算。claim 必须忠实解释——「同一篇文章」不归一成「ref 字符串相同」；无法忠实归一化返回 unknown/ambiguous。**语义（模型）检查只有在与 agent 直接 read 的预注册比较中胜出才逐项接入**（提案 §8/§12），接入后 method 标注 model/mixed、证据链保留上游不确定性。工具不替 agent 拆任务、不执行任意候选代码、不在一次检查里自动循环。
+`check_bank` v1 检查类别仍限于记录关系读取与已批准的确定性复算。claim 必须忠实解释；无法忠实归一化返回 unknown/ambiguous，不执行任意候选代码。
+
+2026-10-19 owner 的 YUK-1448 LIGHT → FULL 规格覆盖旧“search 只召回、不模型核验”的阶段限制：唯一 `search_bank` 的显式 v2 在同版、有权限的必要内容上，逐候选核 required/preferred 与同题共同成立，method=model/mixed、原文定位与缺证留存。全局 enforced 仍只列确定性硬过滤，unknown 不计 matched。配置任务无工具，沿现有任务/attempt/费用账，不赋予准入、gold、组卷或发行权。实际对照验收仍须真实 provider；本次 NOT_RUN，不能把源码接线写成质量胜出。版本化组卷→issuance、L2 索引与 L3 缺口仍有未交义务。
 
 ### D6 规模形态：单学习者、≤数万条目——暴力 pgvector + Postgres FTS，不建独立检索服务
 
-向量列已存在（1024 维、无索引——本来就是顺序扫描），加 Postgres FTS（tsvector，今天没有，属功能线新建）与现有 ILIKE / KC 包含 / 标量过滤融合；数万行规模下暴力 cosine 足够，不建 ivfflat/hnsw、不建独立检索服务。图像多向量（ColPali 式）等真实图查询证据出现再上（提案 §10）。检索算法内部可换（融合权重、扩展、阈值），已应用条件与响应语义保持稳定。
+向量列已存在（1024 维、无索引——本来就是顺序扫描），当前 Postgres FTS 使用查询时 tsvector 表达式（无持久 tsvector 列），与现有 ILIKE / KC 包含 / 标量过滤融合；数万行规模下暴力 cosine 足够，不建 ivfflat/hnsw、不建独立检索服务。图像多向量（ColPali 式）等真实图查询证据出现再上（提案 §10）。检索算法内部可换（融合权重、扩展、阈值），已应用条件与响应语义保持稳定。
 
 ## 硬边界（后果）
 

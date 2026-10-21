@@ -1193,6 +1193,16 @@
       "issue": "YUK-1563",
       "owns": "Kernel HTTP error envelope: ApiError typed throw for 4xx custom-provider input failures (invalid slug/URL/env name/protocol, limit reached), serialized uniformly by the route boundary.",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/bank-search-scope.ts",
+      "module": "src/kernel/read-models/knowledge-tree.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectKnowledgeIds"],
+      "issue": "YUK-1448",
+      "owns": "The existing subject→live KC scope resolver stays kernel-owned. The complete hard-scope resolution/SQL responsibility moved from bank-search.ts to bank-search-scope.ts; its former import is removed, so this is a path relocation with zero new kernel dependency count.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -1366,6 +1376,15 @@
       "to": 1146,
       "issue": "YUK-1563",
       "responsibilityReason": "Route the existing /models reader and check reconciliation through catalogProviderFor so custom providers resolve their own bucket id, plus protocol-shaped auth headers for the custom-provider branch. The listing still goes through the same listOne call site; no new fetch site."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-22",
+      "baseBlob": "db4b0f1e40f6b03728036f3c02bf5721599c2434",
+      "from": 5002,
+      "to": 5030,
+      "issue": "YUK-1448",
+      "responsibilityReason": "Add the owner-approved standalone short-lived bank_search_snapshot table before tool_operation; no existing table, field, lock or consumer changes. Search/read/task/snapshot logic stays in complete practice-owned modules; schema declaration remains in the existing single DB schema owner. Integrated after actual main 0132 custom_provider; retain its complete table and append this independent 28-line snapshot declaration (5002→5030)."
     }
   ],
   "compatShims": [
