@@ -12,7 +12,7 @@ export async function GET(): Promise<Response> {
       note:
         latest === null
           ? 'no harness scoreboard projection yet; run harness_scoreboard_daily or the CLI'
-          : 'daily deterministic projection; m3/m4 basis fields state where the raw tables only support a proxy',
+          : 'daily deterministic projection; m3/m4/m5 list the ADR sub-items in parts[], each with its own numerator/denominator and basis',
     });
   } catch (err) {
     return errorResponse(err);

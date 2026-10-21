@@ -890,6 +890,16 @@
       "issue": "YUK-1557",
       "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/harness-scoreboard.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["ProposalInboxRow", "listProposalInboxRows"],
+      "issue": "YUK-1647",
+      "owns": "M4 inbox backlog reuses the kernel inbox projection (status derivation, visibility filtering, as-of replay) instead of re-deriving proposal state in observability",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -991,6 +1001,15 @@
       "to": 1479,
       "issue": "YUK-1557",
       "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
+    },
+    {
+      "path": "src/kernel/proposals/inbox.ts",
+      "date": "2026-10-21",
+      "baseBlob": "f88d528d79ee35d269bb46145f5a4766571521a8",
+      "from": 1058,
+      "to": 1082,
+      "issue": "YUK-1647",
+      "responsibilityReason": "Add an optional asOf bound to the existing inbox projection so the harness scoreboard can replay the pending set at a historical window end; default callers and the projection's ownership stay unchanged."
     }
   ],
   "compatShims": [
