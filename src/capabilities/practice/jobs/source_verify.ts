@@ -80,10 +80,10 @@ import {
   type SuspensionUpdate,
   archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
-  promoteVerifiedGroupPartRows,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/server/questions/publisher';
+import { promoteVerifiedGroupPartRows } from '@/kernel/records/assessment-publication';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';

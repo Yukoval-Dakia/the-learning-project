@@ -20,7 +20,6 @@ export {
   ASSESSMENT_PUBLISH_ACTION,
   archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
-  promoteVerifiedGroupPartRows,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
   restoreGroupLifecycle,

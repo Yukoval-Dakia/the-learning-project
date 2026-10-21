@@ -14,10 +14,12 @@
 
 声明候选原先依次 save、submit、最后单独写候选回执。现在由 `persistDeclaredQuestionGroup` 统一管理调用方 claim、身份绑定、草稿保存、根行和真实子行、唯一发布口、verify outbox、域回执和候选 canonical 回执，在同一个事务内提交。调用方只提供声明、来源注入和终态映射，不负责排内部写入顺序。提交成功后才 drain verify；失败保留 durable intent，不重入生成。
 
-- `edit-question.ts`：既有完整 save 事务体成为 `saveDraftEditInTx`；原 `saveDraftEdit` 外部签名保留，事务外转换 `TxAbort`。save 回执 envelope 不新增 task_run_id。
-- `shared-submit.ts`：唯一 submit 事务内核与声明组合入口。旧无 producer 请求指纹字段集保持不变；producer 仅承载确定性组 id 和是否物化子行，来源、归因、难度、URL claim、供给信息仍由 `sourced` 权威提供。
+- `edit-question.ts`：既有完整 save 事务体成为 `saveDraftEditInTx`；原 `saveDraftEdit` 外部签名保留，事务外转换 `TxAbort`。save 回执 envelope 不新增 task_run_id。`findDraftSaveReceipt` 只读导出供恢复甄别（R1-F1）。
+- `shared-submit.ts`：唯一 submit 事务内核与声明组合入口。旧无 producer 请求指纹字段集保持不变；producer 仅承载确定性组 id 和是否物化子行，来源、归因、难度、URL claim、供给信息仍由 `sourced` 权威提供。typed 多 part 子行 INSERT 字面量在本文件 `submitDraftQuestionInTx`（writer 审计 per-site：写点与 publishQuestionGroup seam 同函数闭包）。
 - `submit-decision.ts`：迁移原来的契约转换屏障、准入判定、判分层保留、展示推导、来源和近似去重。#1935 已合注释随职责迁移。
-- `typed-group.ts`：新组声明的身份绑定和真实 child 投影。单 part 的 groupId 等于绑定 part_id；多 part 有根及每 part 一条真实 question 行，不造 part__unit 伪子行，不逐 child 重发布。
+- `typed-group.ts`：新组声明的身份绑定 + 子行投影守闸/行值规则（`assertTypedGroupChildrenInsertable` 锁根查重、`typedChildChoicesMd` 纯件）。单 part 的 groupId 等于绑定 part_id；多 part 有根及每 part 一条真实 question 行，不造 part__unit 伪子行，不逐 child 重发布。
+- `kernel/records/assessment-publication.ts`（R1-F2）：组生命周期 owner 模块新增 `promoteVerifiedGroupPartRows` —— 晋升集合 = `parent_question_id=root` ∩ `id ∈ 已核验 revision 冻结 structure.parts[].part_id` ∩ draft ∩ non-tombstone，metadata 写 `source_verify_inherited` 继承证据，同事务；revision 缺失/异组 fail-loud；旧式组与单 part 组恒 no-op。capability 侧经既有 `@/kernel/records/*` 直引惯例（edgeRecord 已登记），不新增 shim 导出。
+- `source_verify.ts`（R1-F2 接入点）：promote 分支在根行 ACTIVE+FSRS 之后、lifecycle 发布链之前晋升声明子行，并对晋升子行按根同款纪律 FSRS enroll-if-absent。serving 门不变（part notDraft ∧ 组 admitted——admission 仍由 C1 翻组维度）。
 - `submit-question.ts`：既有提交事务边界保留；内核只接受 Tx，普通 API 负责 commit/rollback 后返回和 drain。
 - Practice 工具：现役 declared 分支消费完整组合入口；原 flat 路径和阶段性候选校验保留。外层最终回执在锁内复查，不能覆盖已经原子提交的候选回执。向量输入戳和可观测 canary 仍在 commit 后 best-effort；其失败不会重放已提交业务。
 
@@ -29,6 +31,13 @@
 - `duplicate_source`/`duplicate_exact` 等已完成去重的业务冲突提交其 KC merge、URL release 和冲突回执，保留可修草稿。
 - 发布口在行投影之后拒绝时抛 `SubmitTransactionAbort`，最外事务回滚后才转 conflict；save 的 `TxAbort` 同样在事务外转换。projection/DB 异常继续抛出。不能把以上异常在事务内部吞掉而留下半个根/子行。
 - unpublished withheld 是合法存储终态：保留草稿 ref/version、原因与 issues，不宣称可出。
+
+## R1 发现与修复（review-r1-3116e69ec，2 P1 / 0 P0）
+
+- **F1 升级前半成品恢复**：旧版链可能已用同一 `:save` request_id 对原始未绑定文档写过 save 回执（submit/顶层回执崩溃缺失）。组合入口在绑定前先查 `findDraftSaveReceipt`；存在即以原文档经同一 `saveDraftEditInTx` 内核原指纹重放恢复 → 原 submit 语义续完（无 producer ⇒ 旧指纹字段集、平铺投影、`expected_draft_version=save.draft_version`、`expected_revision=null`）或重放既有 `:submit` 回执；caller canonical 回执同事务补齐，不重发布/不另付费核验。探测指纹不符（非同源历史）落回绑定链产出同一诚实 `request_id_reused`——不误把所有同 request 冲突当 legacy；确无历史 save 的首发才走新绑定链。恢复终态 `id_map=null` 如实标记无新绑定（caller 映射不读该字段）。
+- **F2 声明子行晋升路径**：typed 声明多 part 组的 `question_part` 子行此前无成功晋升通道（verify_and_promote 对 part 行 `skipped:question_part`、source_verify 只翻根、C1 只翻组 admission 维度）。补 `promoteVerifiedGroupPartRows`（kernel 组生命周期 owner）+ source_verify promote 分支接入，同事务、root→child 锁序、继承证据留痕；不首发 active、不授予子行独立 verify、不伪造 quiz_gen 元数据、不靠 owner override。quiz_verify/owner-override 既有级联约定（verify-and-promote.ts）作为参照口径。
+
+writer-registry 按真实闭包收口：`submit-question.ts`（facade 零写点）stale 登记删除；`shared-submit.ts` 登记 publisher-converged（root insert / root update / typed 子行 insert 三写点均在 `submitDraftQuestionInTx`，per-site seam 同闭包）；`typed-group.ts` 零写点不登记。`source_verify`/`assessment-publication` 新写均为 lifecycle 列（draft_status/metadata），非判分输入列，按 §2 矩阵不需登记。
 
 ## #1925 整合保护
 
@@ -52,7 +61,9 @@
 
 子线 eecf 的 tsc/lint/build/schema/boundary/draft-status 只属接线前历史。父 `3116e69eca8f104b73154e9fc83421e04ad476a6`（普通组合 main def2）经 heavy 串行 tsrs/typecheck、lint（181 warnings）、build、schema 全0。boundary 首次因审批字段要求 HTTP URL 失败，architecture 后因 consumer specifier 行号而非声明行号失败；原日志保留。已将批准原件持久引用到 YUK-1568 评论 `5ba576b6-03a8-4984-a1a3-566600a51080`，登记真实 import/export statement 行号后 boundary、architecture、draft-status 均0；未改审计逻辑。机器实测 server384/cross36、SCC1、超长12，均未增加。最后差量只有文档和批准登记，无产品源码差量。
 
-唯一独立 R1：`stage1-k1-shared-submit-codex-r1-3116e69ec-20261021`，Codex gpt-6.1-sol xhigh，固定产品diff只读，尚未返回。不把父检查当独立审查；exact-head CI 待普通 push 后执行。
+唯一独立 R1：`stage1-k1-shared-submit-codex-r1-3116e69ec-20261021`，Codex gpt-6.1-sol xhigh，固定产品diff只读 —— 已返回，报告 `review/stage1-yuk1568-s3-intx-20261021/review-r1-3116e69ec.md`，2 P1/0 P0，父静态核确认触发成立。两 P1 修法见上节；P1 修复 + writer 登记差量经 heavy 串行 tsrs/typecheck、lint、build、audit:schema、audit:question-writers（3 写点 converged）、audit:capability-boundaries（1 新 capabilityToKernel 边已登 edgeRecords；sourceSize 4 文件登记/更新）、audit:architecture-deepening、audit:draft-status 全 0。
+
+CI 事实（如实记录，不重跑）：09e04 head run39611151600 已终态 —— contracts 与汇总 Gate 外 16 job 全绿；contracts 日志（review/stage1-yuk1568-s3-intx-20261021/contracts-completed.log）确认唯一失败为 writer 登记三项（shared-submit/typed-group 未登记、submit-question stale），本轮已修；pnpm audit:dependencies 过（2 low + 8 moderate），无依赖修复。普通整合 main 1b180c3fb 仅 PLAN/.remember/now 文本冲突，产品无冲突；merge 后全部静态门重跑仍 0。exact-head CI 待本轮 push 后由新 head 执行。
 
 下一可验收产物是含实际 declared consumer 的完整 PR。触发条件：父静态门、精确出口分类、R1/既有P0/P1裁决及当前 head GitHub CI Gate。owner 2026-10-21 已取消 last-push/17分钟等待；不为 advisory 新建 timer、等待或重跑，至多 R1+R2 预算不变。
 
