@@ -18,6 +18,7 @@ import {
   type CollectedSignal,
   collectCandidateSignals,
 } from './candidate-signals';
+import { planNonDueSelection } from './non-due-selection-plan';
 import { applyL3LearningMixGuard, learningMixContextFromInputs } from './post-filter';
 import {
   DEFAULT_TEMPERATURE,
@@ -30,7 +31,7 @@ import {
   parseSelectionOrchestratorOutput,
 } from './selection-orchestrator';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
-import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { fitStreamToTimeBudget } from './stream-budget';
 import {
   type ComposerInputs,
   type StreamPlan,
@@ -327,70 +328,17 @@ export async function composeSoftmaxStream(
     return legacyFallback(inputs);
   }
 
-  // recall-locked passthrough（铁律③）：recall-locked 非到期候选**不进 sampler/MFI**
-  // 它们是原题重背，确定性透传（same question re-shown），从信号收集结果里切出来。
-  // collectCandidateSignals 已给它们 recallLocked:true 且 mfiScore/diagnosticScore
-  // 恒 undefined；这里把它们从 weighted 池剔除，单独确定性纳入。
-  const allRecallLocked = signals.filter(
-    (s) => s.refKind === 'question' && s.recallLocked === true,
-  );
-  const dueMinutes = dueDrafts.reduce(
-    (sum, item) => sum + estimateStreamItemMinutes(item.item_kind, inputs.questionMinutes),
-    0,
-  );
-  const remainingAfterDue =
-    inputs.dailyBudgetMinutes === undefined
-      ? Number.POSITIVE_INFINITY
-      : Math.max(0, inputs.dailyBudgetMinutes - dueMinutes);
-  const recallLimit = Number.isFinite(remainingAfterDue)
-    ? Math.floor(remainingAfterDue / estimateStreamItemMinutes('question', inputs.questionMinutes))
-    : allRecallLocked.length;
-  const recallLocked = allRecallLocked.slice(0, recallLimit);
-  const recallLockedRefs = new Set(recallLocked.map((s) => s.refId));
-  const allRecallLockedRefs = new Set(allRecallLocked.map((s) => s.refId));
-  const samplable = signals.filter(
-    (s) => s.refKind === 'question' && !allRecallLockedRefs.has(s.refId),
-  );
+  const { recallLocked, recallLockedRefs, samplable, effectiveTarget } = planNonDueSelection({
+    signals,
+    dueDrafts,
+    max,
+    dailyBudgetMinutes: inputs.dailyBudgetMinutes,
+    questionMinutes: inputs.questionMinutes,
+    targetCount: config.targetCount,
+  });
 
   // signalByRef：所有非到期题的信号快照（含 recall-locked），物化进 StreamPlanItem.signals。
   const signalByRef = new Map<string, CollectedSignal>(signals.map((s) => [s.refId, s]));
-
-  // ── 容量预算：非到期 sampler 的 targetCount = 容量 − 到期 − recall透传（≥0）。
-  // （卷不得预扣 sampler 预算）：**不扣卷**（paperDrafts.length）。卷是
-  // **可截断尾部**——assemble 把卷放在非到期散题**之后**，capacityGuard 把卷归入
-  // truncatable（被抽中非到期项受保护、卷不受保护），超容量时**先砍卷尾**。若像旧码
-  // 那样把 paperDrafts.length 也从预算里扣掉，会出现：ready 卷一多（如 30 张卷、max=30）
-  // → nonDueBudget=0 → sampler 一道非到期都不抽 → 练习题被卷**饿死**——但卷本就该让位给
-  // 散题（卷是尾部、可截断），方向恰好反了。正确做法：卷不占 sampler 预算，散题先拿满
-  // 预算，capacityGuard 再用剩余容量截断卷尾（见下方 capacityGuard 注释，total 仍受 max
-  // 约束：protected[dues∪sampled] + 截断后的 truncatable[recall+卷] ≤ max，除非 protected
-  // 自身 over-emit）。
-  // recall 透传仍扣：它确定性纳入、assemble 在被抽中散题**之前**，先占掉的容量不该再被
-  // sampler 重复瓜分（否则 sampled + recall 之和会无谓胀大、把卷尾全顶掉）。到期项
-  // hard-present 同样先扣。
-  const fixedCount = dueDrafts.length + recallLocked.length;
-  const nonDueBudget = Math.max(0, max - fixedCount);
-  const fixedMinutes = fixedCount * estimateStreamItemMinutes('question', inputs.questionMinutes);
-  const timeQuestionBudget =
-    inputs.dailyBudgetMinutes === undefined
-      ? nonDueBudget
-      : Math.max(
-          0,
-          Math.floor(
-            (inputs.dailyBudgetMinutes - fixedMinutes) /
-              estimateStreamItemMinutes('question', inputs.questionMinutes),
-          ),
-        );
-
-  // caller-supplied config.targetCount（实验/下采样旋钮）此前被忽略——sampler
-  // 恒用 nonDueBudget。修复：config.targetCount 在场时取 min(config.targetCount, nonDueBudget)
-  // 既尊重 caller 的下采样意图，又让容量（nonDueBudget）仍作上界（不会因 caller 传大值
-  // 而突破容量）。缺省（undefined）→ 仍用 nonDueBudget（原行为）。
-  const boundedNonDueBudget = Math.min(nonDueBudget, timeQuestionBudget);
-  const effectiveTarget =
-    config.targetCount !== undefined
-      ? Math.min(config.targetCount, boundedNonDueBudget)
-      : boundedNonDueBudget;
 
   // ── softmax 主路 + L1 fallback：拿到 WeightedCandidate[]（LLM 权重 OR 统计权重）。
   let fallback: FallbackLevel = 'none';
