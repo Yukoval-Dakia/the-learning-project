@@ -1,5 +1,6 @@
-// Delivery note generator — turns `delivery-evidence` output into (a) a PLAN.md NOW-stanza
-// skeleton and (b) a .remember/ handoff draft, so session closeout stops being hand-assembled.
+// Delivery note generator — turns `delivery-evidence` output into (a) a local PLAN.md
+// stanza and (b) a .remember/ handoff draft. Both are local, uncommitted task notes;
+// shared status belongs in Linear and durable conclusions in versioned documents.
 //
 // The stanza is a DRAFT: TODO markers are intentional — the agent/owner fills the delivery
 // summary, review verdict, paid/deploy declarations. Evidence lines are machine-collected,
@@ -76,7 +77,7 @@ auto-collected ${ev.collectedAt} by \`pnpm delivery:note\`. Read-only evidence; 
 ${formatEvidence(ev)}
 \`\`\`
 
-## PLAN stanza draft (NOW 栏就地改写)
+## Local PLAN stanza draft (可选；NOW 栏就地改写，不提交 Git)
 
 \`\`\`
 ${stanza}
@@ -88,7 +89,7 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.level}: ${a.label} — ${a.
 
 ## closeout checklist
 
-- [ ] PLAN.md NOW 就地改写（stanza 粘贴 + 过期叙事滚存 .remember/）
+- [ ] 按需更新本 worktree 的 PLAN.md / .remember/now.md（本地忽略，不提交 Git）
 - [ ] Linear ${issue.toUpperCase()} 状态对齐（Done / 留 In Progress 须写明缺什么）
 - [ ] PR review threads 回复/resolve；跳过项写 rationale，不冒充已修
 - [ ] 部署状态写明：Mac 生产 SHA / 未部署 / NAS 不动
