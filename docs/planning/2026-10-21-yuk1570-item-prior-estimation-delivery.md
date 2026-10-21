@@ -58,6 +58,25 @@ owner 本次原话（父同线程转达，2026-10-21）：
 该旧 seal 和当时测试待批状态不覆盖。当前批准、测试双边 hash/同一性、最终 diff/commit/原始 argv/UTC/rc
 另封 `item-prior-estimation-approved-delivery/`。
 
-本树无 node_modules，未 install/update/copy；测试运行权限没有扩大，所有本机 tests 仍 NOT_RUN。
-typecheck/lint/build/官方 audit、DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/派审均 NOT_RUN。
-依赖与 heavy 门唯一执行归属、独立 R1、PR/CI/Linear/看板由父接管；本片不改 baseline 或其他配置。
+作者源码交付时缺 node_modules，未自行安装或运行门；该历史记录与旧 seal 保留。
+父普通合入 main `ea21d2f60ba2b212d88c5d596f2e62fdd4810ff9`（#1802），
+组合源码 `d62e8de05e0e258ee863dfbea554a48ee265f1c0` 无冲突，七条本片路径及所有其他 main 条目保留。
+父唯一 frozen install rc0，package/lock/workspace 三 hash 前后相同；其后 heavy.sh 全机两槽、本片串行：
+typecheck/lint/build rc0（lint 181 warnings）；首轮两 audit 仅报实际下降待收紧，红日志保留。
+
+原生 --tighten 实测 practice→AI 51→50、总数388→387；上游389→388不计本片。
+原生工具重排了 main 最后一条 knowledge→AI decrease 的键顺序，父仅恢复其原字节，
+不改变任何原生度量值或新增记录。main 38条 changes 的逻辑及原始 entry 前缀全保留，
+仅追加本片1条；其他账本字段不变，无新stable/compat/白名单。
+最终账本源码 `97c82f47ec9be9c2367d23c04755a1d999ab8ad9` 的 baseline格式、两 audit 全rc0，
+后续仅更新本文件，产品与已通过 type/lint/build 的 d62 完全相同。
+实测387/0/36、SCC1×3、超长12（base12）、new edges0、pass-through1087/+0new。
+
+父证据位于同一仓外 YUK-1570 根下：`63767d1066a4525fb658a2007ebd79e8e318b5d5/parent-takeover/`；
+`d62e8de05e0e258ee863dfbea554a48ee265f1c0/{parent-source-proof,parent-frozen-install,parent-five-gates,parent-native-tighten}/`；
+`82c6e976f55449102822cc37c7210182ec40bfe4/parent-history-order-preservation/`；
+`97c82f47ec9be9c2367d23c04755a1d999ab8ad9/parent-final-audits/`。
+父独立 AST 核14个原声明逐字迁移、35个operation留守声明不变、9组diff只在批准hunk；测试删唯一import后全文同。
+旧路径在受保护 tasks/schema 的注释及TaskSpec说明文字仍有3处，均非代码引用，本片未扩大到这些内容。
+所有本机 tests/DB/TEST/Docker/daemon/provider/runtime/demo/paid 均 NOT_RUN；测试批准不扩大运行范围。
+唯一独立 R1、PR/exact CI由父继续推进，未把本地门通过当成运行或main收益。
