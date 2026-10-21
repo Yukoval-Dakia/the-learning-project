@@ -40,8 +40,6 @@ import {
   embedMany,
 } from '@/server/ai/embed';
 
-export { EMBED_VERSION };
-
 /** 入库已经算过的向量。文本必须是即将落库的题面，否则不要写，留给本任务重算。 */
 export function questionEmbedStamp(
   q: {

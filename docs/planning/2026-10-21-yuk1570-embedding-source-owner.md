@@ -8,7 +8,7 @@ Base：`214ecb0ef1c2d746316af5831ea79bbaa18345ef`。完整57行纯算法从
 消费者：`scripts/embed-inventory.ts`（动态import原位置）、knowledge的
 `proposals.ts`/`tag-knowledge.ts`、practice的`jobs/embed_backfill.ts`、server的
 `ai/solution-generate.ts`/`orchestration/nightly-signals.ts`/`questions/write.ts`。
-backfill既有版本转出及间接consumer保持；测试没有旧模块import pin，未改测试。
+inventory直接从已有core动态import读取版本；backfill旧版本转出删除，其余间接consumer保持。测试没有旧模块import pin，未改测试。
 
 ## 目标与实际收益
 
@@ -35,5 +35,7 @@ provider/paid、effective-domain图读、事务/CAS/恢复/embedding写入失效
 作者包`20261021T113639579649Z/`、父`parent-prepared-acceptance-20261021/`和
 `parent-atomic-exit-20261021/source-proof.json`；旧seal保留。
 
-当前静态diff检查通过；项目门待父统一heavy验证，未将准备证据当门通过。
+父唯一frozen install通过且依赖三hash不变。首轮typecheck/lint/build通过；boundary仅实测下降待登记，architecture另发现原backfill版本转出的新目标站点。总协调批准最窄两文件收口：inventory把版本binding移至已有core import，保两await/模块加载顺序；backfill仅删旧export，排除这些binding/出口后全文一致，无新stable/compat。
+
+原生tighten只登记knowledge→ai12→10、practice→ai50→49、total387→384；39历史changes原entry字节前缀全保→41，其他分类字段不变。父仅恢复native重排的历史entry键序，JSON语义同native；不以此数字作为目标或并行收益。最终门待新源码复验，旧失败raw保留。
 tests/DB/TEST/Docker/provider/runtime均NOT_RUN。首次独立R1与exact-head CI尚未执行。

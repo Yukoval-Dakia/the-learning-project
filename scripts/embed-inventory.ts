@@ -36,8 +36,8 @@ async function main(): Promise<number> {
   const { db } = await import('@/db/client');
   const { question } = await import('@/db/schema');
   const { EMBED_DIMS, EMBED_MODEL } = await import('@/server/ai/embed');
-  const { embedHash, questionEmbedText } = await import('@/core/embed-source');
-  const { EMBED_VERSION, questionVectorInvalidReason } = await import(
+  const { EMBED_VERSION, embedHash, questionEmbedText } = await import('@/core/embed-source');
+  const { questionVectorInvalidReason } = await import(
     '@/capabilities/practice/jobs/embed_backfill'
   );
 
