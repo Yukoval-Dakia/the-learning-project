@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
-import type { ResponseSlotT } from '@/core/schema/assessment/response';
+import { ResponseOption, type ResponseSlotT } from '@/core/schema/assessment/response';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
@@ -98,6 +98,28 @@ export async function freezeBankCandidate(
     part_id: part.part_id,
     material_ids: part.material_ids,
   }));
+  // read_bank's legacy options projection strips unknown option fields. Check
+  // the same immutable revision before trusting that projection as complete;
+  // raw content is used only to detect loss, never sent around reader permissions.
+  for (const slot of item.content.slots) {
+    if (slot.kind !== 'single_choice' && slot.kind !== 'multi_choice') continue;
+    const rawSlots = resolved.revision.response_spec.slots.filter(
+      (raw) => raw.slot_id === slot.slot_id && raw.part_id === slot.part_id,
+    );
+    const raw = rawSlots[0];
+    if (
+      rawSlots.length !== 1 ||
+      raw === undefined ||
+      (raw.kind !== 'single_choice' && raw.kind !== 'multi_choice') ||
+      raw.kind !== slot.kind ||
+      !ResponseOption.strict().array().safeParse(raw.options).success
+    ) {
+      frozen.blockers.push({
+        part_ids: frozen.parts.some((part) => part.part_id === slot.part_id) ? [slot.part_id] : [],
+        reason: `slot:${slot.slot_id}:raw_options_unsupported_or_projection_loss`,
+      });
+    }
+  }
   let remaining = 90000;
   const add = (passage: BankPassage) => {
     if (/!\[|<(?:img|svg|audio|video|picture|source|iframe|object|embed)\b/i.test(passage.text))

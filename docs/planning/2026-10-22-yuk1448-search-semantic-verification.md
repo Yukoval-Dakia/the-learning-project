@@ -126,3 +126,13 @@ passage 定位使用 `/parts/<part>/slots/<slot>/<field path>`，part/slot/axis 
 | `git diff --check` | 0 | 本次没有改 read-bank、core response schema、呈现组件、SQL/schema、backup/restore 或 tests/cases/fixtures/测试配置。 |
 
 各检查 exit 汇总 `/tmp/yuk1448-r1-check-exits.log`。DB/TEST/Docker/provider/browser/runtime/付费/后台/部署、39/K7/owner 盲题、槽位验收 TEXT：全部 NOT_RUN；没有 actual model output。修后 exact-head CI 不观测/不轮询，独立唯一 R2、迁移 metadata、Linear 与 merge 均交父。本片未交义务仍归原 YUK-1448，没有新增独立 follow-up 或新票。
+
+### R2 残留与父定向修复
+
+唯一 R2 对 `2e7df34e` 保持 CHANGES_REQUESTED：旧 choice 的 options 在 read_bank 输出 schema 中先被剥除未知字段，之后 strict 校验不能识别原文损失。原 R2 结论保留，不开启第三审。
+
+父在 freezeBankCandidate 的同版授权读取成功后，按公开 slot_id/part_id 寻找该 immutable revision 的唯一原始 choice slot，并用 canonical ResponseOption.strict 校验未被 reader 剥除的 options。身份不匹配、未知字段或畸形结构给所属 part 留 blocker；无法绑定 part 时全局阻断。原始 revision 仅用于发现损失，不进入模型输入，不扩大 read_bank 权限或改变其 wire。完整授权投影仍走现有 slots/passages；既有选择 part 的 blocker 传播强制 checks/joint unknown，anchor 同样不能作为完整证据使用。
+
+策略变为 `bank-semantic-v3-20261022`，此前 v1/v2 核验快照沿现有 policy 比较 stale。此修复不改变题目评分/准入/paid、测试或迁移登记。父的静态检查另记真实结果；DB/provider/模型输出与畸形槽位验收仍 NOT_RUN，不以源码推演替代运行验证。
+
+父实际检查：typecheck exit2，仍29条且只在旧 bank-tools.db.test.ts；lint 初次 exit1 为新增三元表达式折行，修正后 exit0/181 warnings；build exit0，后续仅上述折行与文档改变。命令均经既有 heavy 限流串行，原始日志在仓库外 `tlp-status/review/stage1-yuk1448-search-semantic-20261022/parent-r2-*.log`。父定向读通 raw revision → strict options → part/global blocker → checks/joint unknown 与旧策略 stale，确认残留的源码修法；这不是第三轮独立审查，原 R2 CHANGES_REQUESTED 不改写。最后实际 main/0133 metadata 的组合仍待原132顺序及owner测试许可，不能合入或部署。

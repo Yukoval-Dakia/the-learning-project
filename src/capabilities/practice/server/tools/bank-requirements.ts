@@ -6,7 +6,7 @@ import {
 } from '../../tasks/bank-search-semantic';
 import { BankSearchScopeSchema } from './bank-search';
 
-export const BANK_SEMANTIC_POLICY = 'bank-semantic-v2-20261022';
+export const BANK_SEMANTIC_POLICY = 'bank-semantic-v3-20261022';
 export const BANK_VERIFICATION_CAP = 20;
 export const BANK_SEARCH_WALL_MS = 180_000;
 export const BankSearchV2NewSchema = z
