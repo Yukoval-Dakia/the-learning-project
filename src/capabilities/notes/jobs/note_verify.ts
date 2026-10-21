@@ -28,19 +28,14 @@ import {
 } from '@/db/paid-effect-control';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 
-// The verification execution itself is backend-agnostic and lives in
-// note-verify-durable-operation.ts (YUK-1355 receipt reference). This file
-// remains the retained pg-boss consumer: job payload contract, handler
-// assembly (runTaskFn default wiring), the retry-visible error mapping, and
-// the hub_sync_recovery result floor. The re-export keeps the historical
-// import surface (tests, manifest) stable.
+// Retained pg-boss consumer. The verification execution is backend-agnostic in
+// note-verify-durable-operation.ts; this file owns the job payload, handler
+// wiring, retry-visible errors, and the recovery result floor.
 //
-// YUK-1355 paid-effect control: every pg-boss delivery is admitted through the
-// shared backend control BEFORE any claim/provider work. The literal is
-// duplicated (not imported from durable/note-verify-family.ts) so the pg-boss
-// worker never transitively imports the DBOS SDK; an offline test pins the two
-// literals equal. note_verification_claim stays the paid authority for notes —
-// this integration is control-only and writes no paid_effect rows.
+// Backend control admits every delivery before any claim or provider work. The
+// family literal is duplicated (rather than imported from the DBOS adapter) so
+// this worker never pulls in the DBOS SDK; note_verification_claim remains the
+// paid authority.
 export const NOTE_VERIFY_PAID_EFFECT_FAMILY = 'note_verify';
 
 const BOOTSTRAP_CONTROL: PaidEffectControlSnapshot = {
@@ -51,12 +46,10 @@ const BOOTSTRAP_CONTROL: PaidEffectControlSnapshot = {
 };
 
 /**
- * Admit one pg-boss note_verify delivery under backend control. When the
- * control table does not exist yet (parent migration not applied), the
- * bootstrap default stands: pg-boss owns generation 0, so the delivery is
- * admitted and behavior is byte-identical to pre-protocol. The missing-table
- * check uses the non-aborting to_regclass probe INSIDE the transaction —
- * never a caught 42P01.
+ * Admit one delivery under backend control. Before the parent migration exists,
+ * pg-boss owns generation 0 and the delivery is admitted. The missing-table
+ * check probes with to_regclass inside the transaction because a caught 42P01
+ * would abort it.
  */
 export async function admitNoteVerifyDelivery(
   db: Db,
@@ -89,13 +82,9 @@ export interface NoteVerifyJobData {
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
   onPassed?: (artifactId: string) => Promise<void>;
-  /** Test seam for the backend-control admission; production supplies none. */
+  /** Test seam for delivery admission; production supplies none. */
   admitDelivery?: (deliveryId: string) => Promise<PaidEffectControlAdmission>;
-  /**
-   * Test seam for the in-transaction admission hook wired into the claim
-   * reservation; production supplies none (default: shared control lock +
-   * owner/generation check inside the reservation transaction).
-   */
+  /** Test seam for the reservation-transaction admission hook. */
   buildControlAdmission?: (deliveryId: string) => (tx: Tx) => Promise<void>;
 };
 
@@ -147,11 +136,9 @@ export function buildNoteVerifyHandler(
       }
       const admission = await admitDelivery(job.id);
       if (admission.kind === 'fenced') {
-        // P1-3: a fenced delivery must NOT be silently consumed — the accepted
-        // job and its unverified artifact stay visible. Throw so pg-boss
-        // redelivers and ultimately routes the job to the DLQ where an
-        // operator sees the family ownership conflict; the other backend owns
-        // the work, and the claim/effect CAS still protects the paid boundary.
+        // A fenced delivery must not be acknowledged: throwing keeps the job and
+        // the unverified artifact visible and eventually lands it in the DLQ for
+        // an operator, while the claim CAS still guards the paid boundary.
         throw new PaidEffectControlFencedError(
           NOTE_VERIFY_PAID_EFFECT_FAMILY,
           admission.reason,

@@ -10,12 +10,9 @@ import {
 } from './note-generate-document';
 
 /**
- * Long notes do not finish inside the old 90s single-call budget (YUK-1531).
- * 30 minutes stays under the 1h stuck-run sweeper and the note_generate queue
- * lease. Operators override it the same way as any other task budget:
- * `task.NoteGenerateTask.budget.timeout` (milliseconds, still below 1h).
- * A value above about 54 minutes is refused by provider-session admission,
- * which reserves wait, startup and abort grace inside that same hour.
+ * 30 minutes stays under the 1h stuck-run sweeper and the queue lease. Operator
+ * overrides go through the normal task budget; values above ~54 minutes are
+ * refused by provider-session admission.
  */
 export const NOTE_GENERATE_TIMEOUT_MS = 30 * 60 * 1000;
 

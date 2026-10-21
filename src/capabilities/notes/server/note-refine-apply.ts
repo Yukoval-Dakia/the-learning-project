@@ -1,17 +1,6 @@
-// YUK-127 / T-88 P4-A — DB-touching wrapper for the NotePatch apply pipeline.
-//
-// The pure apply function `applyNotePatch` lives in
-// `src/core/blocks/apply-note-patch.ts` so unit tests don't drag in the DB
-// chain. This module wraps it with a transactional UPDATE + event write
-// against pg.
-//
-// `persistNoteRefineApply` is the DB-touching wrapper used by the
-// `note_refine` pg-boss handler: it loads the artifact, applies the patch,
-// UPDATEs body_blocks, and writes an `experimental:note_refine_apply` event
-// in a single transaction (per ADR-0006 v2 evidence-first).
-//
-// Mutator vs propose gating is NOT here — P4-B decides which path calls
-// this. P4-A only ships the apply + persist primitives.
+// Transactional wrapper around the pure `applyNotePatch`: updates body_blocks
+// and writes the apply event in one transaction. Mutator-vs-propose gating lives
+// in the job.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
@@ -26,39 +15,27 @@ import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from './note-ai-pr
 
 type DbLike = Db | Tx;
 
-// Re-export so handler code that already imported from this module keeps
-// working without a deep-link to core/.
+// Re-export so existing importers avoid a deep link to core/.
 export { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
 
-// C1a (YUK-358, ADR-0040 决定1) — the accept-path actor. acceptNoteUpdateProposal
-// (src/server/proposals/actions.ts) lands a HUMAN-APPROVED patch through this same
-// persist wrapper with actorRef = NOTE_REFINE_ACCEPT_ACTOR. When the actor is the
-// accept-path, the user_verified guard in applyNotePatch is exempted: a human
-// already approved that exact change through the inbox, so re-rejecting it would
-// be wrong. Every OTHER actor (note_refine AI mutator, hub_auto_sync_nightly,
-// presence-store apply) keeps the guard ON.
+// A human already approved this exact patch in the inbox, so the user-verified
+// guard is exempt for this actor. Every other actor keeps it on.
 export const NOTE_REFINE_ACCEPT_ACTOR = 'note_refine_accept';
 
-// YUK-358 (ADR-0040 决定1) — the AI mutator actor (the default for an auto-apply).
-// The A-track rate breaker (note-refine-breaker.ts) counts ONLY this actor's
-// apply events so the human accept-path (NOTE_REFINE_ACCEPT_ACTOR) never pushes
-// the breaker toward a trip. Kept as a shared const so the apply-default and the
-// breaker count stay the same literal.
+// Default AI mutator actor. The rate breaker counts only this actor, so human
+// accepts never push it toward a trip.
 export const NOTE_REFINE_AUTOAPPLY_ACTOR = 'note_refine';
 
 export interface PersistNoteRefineApplyParams {
   db: DbLike;
   artifactId: string;
   patch: NotePatchT;
-  // Optional task provenance — only set when the patch comes from a
-  // NoteRefineTask LLM run. Manual/test-driven calls leave it undefined.
+  // Provenance, only for an LLM-run patch.
   taskResult?: TaskTextResult;
-  // Optional trigger that caused this refine (mark_wrong attempt event id,
-  // mastery delta event, etc.). Lands on the apply event's caused_by chain.
+  // The trigger that caused this refine; lands on caused_by.
   triggerEventId?: string | null;
-  // Override actor_ref; defaults to 'note_refine'.
+  // Defaults to the AI mutator actor.
   actorRef?: string;
-  // Optional override id for idempotency / test determinism.
   eventId?: string;
   now?: Date;
 }
@@ -100,16 +77,9 @@ function noteRefineReversePatch(bodyBlocks: unknown, previousArtifactVersion: nu
 }
 
 /**
- * Applies a NotePatch to an artifact's body_blocks and writes an
- * `experimental:note_refine_apply` event in the same transaction. The event
- * carries the patch summary so downstream consumers (Living Note timeline,
- * undo UI in P4-D) can reconstruct what changed without re-fetching the
- * artifact diff.
- *
- * Empty patch → no-op, no event written (idempotent under "AI produced
- * nothing actionable"). Missing artifact → skip, no event written. For automated callers, ghost
- * target ops are skipped independently; if none remain, no event is written. Other errors
- * propagate. Human-approved patches remain exact/all-or-nothing.
+ * Applies the patch and writes the apply event atomically. Empty patches and
+ * missing artifacts write nothing. Automated callers skip ghost targets
+ * individually; a human-approved patch stays all-or-nothing.
  */
 export async function persistNoteRefineApply(
   params: PersistNoteRefineApplyParams,
@@ -145,12 +115,8 @@ export async function persistNoteRefineApply(
       };
     }
 
-    // YUK-301 — pre-apply each op against the latest row snapshot. A stale/ghost target skips only
-    // that op; later independent ops continue. This check lives inside the write transaction so it
-    // also covers patches that waited in editing_presence before being flushed. All non-target
-    // failures remain hard failures, including the user_verified boundary below. The human accept
-    // actor preserves all-or-nothing behavior: approval is for an exact patch, so later target drift
-    // still surfaces instead of silently applying only a subset.
+    // Check targets inside the tx so deferred patches are covered. A ghost target
+    // skips only itself; the human accept path stays exact.
     const filtered =
       actorRef === NOTE_REFINE_ACCEPT_ACTOR
         ? {
@@ -190,8 +156,7 @@ export async function persistNoteRefineApply(
       };
     }
 
-    // YUK-95 P5: keep the L2 cross_link backlink index in sync within the same
-    // tx — an AI patch may add/remove crossLinkBlock nodes.
+    // A patch may add or remove cross-links; keep the backlink index in this tx.
     await syncBlockRefsForArtifact(tx, artifactId, newBodyBlocks);
 
     const summary = summarizeNotePatch(effectivePatch);
@@ -296,10 +261,8 @@ export async function listNoteRefineChanges(
   });
 }
 
-// YUK-471 (retract fold/rollback) — accepts Db | Tx so retractAiProposal can run the undo
-// INSIDE its single retract transaction (atomic with the correct event). When passed a Tx the
-// internal `db.transaction(...)` below becomes a nested SAVEPOINT, which composes correctly:
-// it rolls back with the outer tx on error. Existing Db callers are unaffected.
+// Accepts Db | Tx so a retract can run the undo inside its own transaction; the
+// nested transaction becomes a savepoint there.
 export async function undoNoteRefineApplyEvent(
   db: DbLike,
   params: { applyEventId: string; actorRef?: string; now?: Date },
@@ -315,11 +278,7 @@ export async function undoNoteRefineApplyEvent(
     throw new Error(`note refine apply event ${params.applyEventId} not found`);
   }
 
-  // Scope the already-undone check to undo events CAUSED BY this apply event
-  // (caused_by_event_id chain) instead of full-scanning every
-  // `experimental:note_refine_undo` row. The undo event we write below sets
-  // caused_by_event_id = applyEventId, so this is the precise inverse lookup and
-  // does not degrade as the global event log grows.
+  // Chain-scoped lookup keeps this independent of event-log growth.
   const undoRows = await db
     .select()
     .from(event)
@@ -354,8 +313,7 @@ export async function undoNoteRefineApplyEvent(
         id: artifact.id,
         version: artifact.version,
         archived_at: artifact.archived_at,
-        // W3-C1γ — the undo does NOT touch `history`; carry the row's CURRENT history on the
-        // self-sufficient undo event so the fold reproduces the column (history_after below).
+        // The undo leaves history untouched, so carry the current value on the event.
         history: artifact.history,
       })
       .from(artifact)
@@ -365,12 +323,9 @@ export async function undoNoteRefineApplyEvent(
     if (!target) throw new Error(`artifact ${artifactId} not found`);
     if (target.archived_at) throw new Error(`artifact ${artifactId} archived`);
     const nextVersion = target.version + 1;
-    // Optimistic lock: restore only if the artifact is still at the version we
-    // loaded. Mirror persistNoteRefineApply's apply-path pattern — check the
-    // returned row count and, on a concurrent version bump (0 rows updated),
-    // signal version_conflict WITHOUT writing the undo event. Reporting 'undone'
-    // here would be a false success (note not restored) AND would let the
-    // already_undone guard permanently block a real retry.
+    // Restore only from the expected version. On a concurrent bump, report the
+    // conflict without writing the undo event: a false 'undone' would also make
+    // the already-undone guard block a real retry.
     const restored = await tx
       .update(artifact)
       .set({
@@ -386,9 +341,7 @@ export async function undoNoteRefineApplyEvent(
         artifact_id: artifactId,
       };
     }
-    // review 2026-05-29: undo restores previous_body_blocks, which may add/remove
-    // crossLinkBlock nodes vs the applied state — resync the L2 backlink index in the
-    // same tx (mirror the apply-path resync), else the index lags the restored doc.
+    // The restored body may add or remove cross-links, so resync the index here.
     await syncBlockRefsForArtifact(tx, artifactId, payload.previous_body_blocks);
     await writeEvent(tx, {
       id: undoEventId,
@@ -404,12 +357,8 @@ export async function undoNoteRefineApplyEvent(
         restored_from_artifact_version: target.version,
         restored_to_artifact_version: nextVersion,
         source_previous_artifact_version: payload.previous_artifact_version ?? null,
-        // W3-C1γ — the SELF-SUFFICIENT fold fields (NoteRefineUndoExperimental). The undo restored
-        // body_blocks = the apply event's previous_body_blocks, bumped version to nextVersion, and left
-        // `history` UNCHANGED — so foldArtifact reproduces the restore VERBATIM from these (no replay).
-        // The action is reserved (parseEvent fail-loud on the envelope); a malformed restored body
-        // rolls back this whole undo tx (rollback-safe). These three fields are OPTIONAL in the schema
-        // for read-path back-compat with pre-C1γ loose undo events, but the writer ALWAYS emits them.
+        // Self-sufficient fold fields: the undo changes body and version only, so
+        // these let a rebuild reproduce the restore without replaying ops.
         body_blocks: payload.previous_body_blocks,
         next_artifact_version: nextVersion,
         history_after: target.history,

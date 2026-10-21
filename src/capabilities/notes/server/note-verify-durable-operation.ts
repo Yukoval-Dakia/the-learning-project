@@ -1,14 +1,6 @@
-// Note verification durable operation (YUK-1355 receipt reference): the
-// backend-agnostic execution boundary for verifying one note artifact
-// end-to-end against the existing note_verification_claim state machine
-// (reserve -> provider-start fence -> staged result -> finalize, plus the
-// contract-failure fast path and epoch supersede/ambiguous terminals).
-//
-// This module owns no runner wiring and no queue backend: `runTaskFn` is
-// always injected by the consumer (pg-boss handler default, tests, or a
-// future DBOS host assembled by the parent-owned registration). The retained
-// pg-boss consumer lives in ../jobs/note_verify.ts; the DBOS migration
-// candidate adapter lives in src/server/durable/note-verify-family.ts.
+// Backend-agnostic execution boundary for verifying one note against the claim
+// state machine (reserve → provider fence → staged result → finalize). Runner
+// wiring and queue backends are injected by consumers.
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
@@ -57,11 +49,7 @@ export interface RunNoteVerifyParams {
   db: Db;
   artifactId: string;
   runTaskFn: RunTaskFn;
-  /**
-   * Optional in-transaction backend-control admission, threaded into
-   * reserveNoteVerification's reservation transaction (YUK-1355). Production
-   * send entries (pg-boss handler, DBOS adapter) wire it by default.
-   */
+  /** In-transaction backend-control admission; production send paths wire it. */
   controlAdmission?: (tx: Tx) => Promise<void>;
 }
 
@@ -246,9 +234,8 @@ async function loadVerificationInput(db: Db, artifactId: string) {
 }
 
 /**
- * Finalize a staged (result_ready) verification into the artifact exactly once.
- * Shared by the pg-boss recovery floor and any durable-backend replay that
- * finds a staged result: re-entry never re-crosses the provider boundary.
+ * Finalize a staged result exactly once. Re-entry never crosses the provider
+ * boundary again.
  */
 export async function finalizeStagedNoteVerification(
   db: Db,

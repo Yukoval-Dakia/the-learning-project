@@ -1,14 +1,7 @@
-// Phase 2B — async per generated note artifact.
-//
-// Enqueued by the canonical learning_item proposal accept path (one job per
-// atomic/long artifact).
-// Picks up { artifact_id }, loads context (artifact row + parent hub +
-// knowledge node), calls NoteGenerateTask, parses 5 semantic sections, UPDATEs
-// the artifact row to generation_status='ready' + body_blocks.
-//
-// Failures: mark artifact.generation_status='failed' so the UI can surface
-// the broken state instead of stuck-pending. pg-boss retries on throw per
-// queue policy.
+// Async generation of one note artifact. Picks up `{ artifact_id }`, loads the
+// note, parent hub, and knowledge context, calls NoteGenerateTask, and writes
+// the ready body. Failures flip generation_status to 'failed' so the UI never
+// sits on pending; the throw still lets pg-boss retry.
 
 import { createHash } from 'node:crypto';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
@@ -175,10 +168,8 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
       .limit(1);
     const row = rows[0];
     if (!row) return 'absent';
-    // YUK-1508 P1-A — refuse to reopen when the failed body is authored content
-    // that is NOT the untouched fallback (a learner edited the fallback). The
-    // success tx would refuse to place the AI body over it anyway; refusing here
-    // avoids paying for a provider call whose output would be discarded.
+    // Reopening content the learner has touched would discard the provider
+    // output anyway, so refuse before paying for the call.
     if (!mayOverwriteNoteBodyForGeneration(row.body_blocks, row.history, row.version)) {
       return 'refused:learner_edited';
     }
@@ -210,11 +201,8 @@ async function reopenFailedGenerationForRetry(db: Db, artifactId: string): Promi
 }
 
 /**
- * Pure runner — extracted so unit tests can call without pg-boss.
- *
- * Loads the atomic artifact + its parent hub artifact + the knowledge node
- * for context, runs NoteGenerateTask, persists semantic blocks to the artifact row.
- * A failed artifact is atomically reopened for a pg-boss retry; other non-pending states skip.
+ * Runs NoteGenerateTask and persists the ready body. A failed artifact is
+ * atomically reopened for retry; other non-pending states skip.
  */
 export async function runNoteGenerate(
   params: RunNoteGenerateParams,
@@ -251,7 +239,6 @@ export async function runNoteGenerate(
     return { status: 'skipped:not_pending' };
   }
 
-  // Load parent hub (for context)
   let parentHub: { title: string; attrs: unknown } | null = null;
   if (row.parent_artifact_id) {
     const parentRows = await db
@@ -265,7 +252,6 @@ export async function runNoteGenerate(
     parentHub = parentRows[0] ?? null;
   }
 
-  // Load knowledge node for context
   let kNode: { id: string; name: string; domain: string | null } | null = null;
   let kNodes: Array<{ id: string; name: string; domain: string | null }> = [];
   if (row.knowledge_ids.length > 0) {
@@ -293,7 +279,7 @@ export async function runNoteGenerate(
     knowledge_node: kNode,
     knowledge_nodes: kNodes,
     parent_hub: parentHub ? { title: parentHub.title, summary_md: parentSummary } : null,
-    related_knowledge_ids: row.knowledge_ids.slice(1), // Phase 2.5: mesh-walk for related nodes
+    related_knowledge_ids: row.knowledge_ids.slice(1),
     reference_artifacts: referenceArtifacts,
   };
   const subjectProfile = resolveSubjectProfile(kNode?.domain);
@@ -336,23 +322,15 @@ export async function runNoteGenerate(
     assertNoteGenerationReferences(parsed.body_blocks, referenceArtifacts);
     validationMs = Date.now() - validationStarted;
 
-    // W3-C1γ — note_generate is a COMPOUND mutation (body_blocks + generation_status='ready' +
-    // verification_status='queued' + generated_by). To make it fold-visible additively it emits TWO
-    // same-tx events: a body_blocks_edit (the generated body) + a lifecycle(set_generation_status)
-    // carrying the two statuses AND the generated_by provenance (full-row parity, design §2.1 "无排除
-    // 列"). body_blocks_edit's version-monotonicity barrier REQUIRES next > previous, so the UPDATE now
-    // ALSO bumps version (pending→ready IS the note's first content write — a genuine version advance;
-    // verified test-safe: note_generate.db.test asserts statuses/generated_by, not version). The
-    // events opt OUT of memory ingestion (background plumbing).
+    // Compound mutation: body + statuses + provenance must fold as two same-tx
+    // events. body_blocks_edit requires a version advance, so this first content
+    // write bumps it. Both events opt out of memory ingestion (background work).
     const now = new Date();
     const generatedByRef = aiAgentRef('NoteGenerateTask', result);
     const dbStarted = Date.now();
-    // Wrap the body_blocks UPDATE + cross_link index sync + fold events in one tx so the L2 backlink
-    // index never lags the AI-authored note (YUK-95 P5) AND a malformed event rolls back the UPDATE.
-    // YUK-1508 P1-A — the tx returns a discriminated outcome: the AI body may ONLY
-    // take over an empty body or the UNTOUCHED fallback. If the learner (or any
-    // other writer) authored content over the fallback, the run must not clobber
-    // it: flip back to failed (version unchanged) and report skipped:learner_edited.
+    // One tx keeps the backlink index in step with the body and rolls the UPDATE
+    // back if an event payload is malformed. The AI body may only take over an
+    // empty body or the untouched fallback; learner content flips back to failed.
     type SuccessTxOutcome =
       | { kind: 'ready'; rows: Array<{ id: string }> }
       | { kind: 'learner_edited' }
@@ -364,8 +342,7 @@ export async function runNoteGenerate(
         referenceArtifacts,
       );
       assertNoteGenerationReferences(parsed.body_blocks, currentReferences);
-      // Re-read INSIDE the tx (FOR UPDATE) so the event payloads are built from the REAL current
-      // version/body/history the UPDATE is about to advance (rollback-safe, mirror create-event.ts).
+      // Read inside the tx (FOR UPDATE) so events carry the values actually written.
       const beforeRows = await tx
         .select({
           version: artifact.version,
@@ -388,8 +365,7 @@ export async function runNoteGenerate(
       if (!before) return { kind: 'not_pending' }; // concurrently no longer pending
       const clearedFailure = attrsClearingGenerationFailure(before.attrs);
       if (!mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)) {
-        // Authored content over the fallback — keep it. The run's output is
-        // discarded (honestly: status back to failed, version unchanged).
+        // Authored over the fallback: keep it and honestly report failed.
         const kept = await tx
           .update(artifact)
           .set({ generation_status: 'failed', updated_at: now })
@@ -415,8 +391,8 @@ export async function runNoteGenerate(
         return { kind: 'learner_edited' };
       }
       const nextVersion = before.version + 1;
-      // note_generate does NOT push a history entry — carry the CURRENT history so the body_blocks_edit
-      // reducer reproduces the column unchanged (its full-snapshot replace would otherwise blank it).
+      // No history entry here: carry the current one so the full-snapshot event
+      // does not blank the column.
       const historyAfter = (
         Array.isArray(before.history) ? before.history : []
       ) as ArtifactHistoryEntryT[];
@@ -514,33 +490,17 @@ export async function runNoteGenerate(
     );
     const failure = annotateNoteGenerateFailure(err, taskRunId, attempt?.text);
     const failureDbStarted = Date.now();
-    // Mark failed so UI doesn't sit on "pending" forever; pg-boss will still
-    // retry per policy because we rethrow.
+    // Flip to failed so the UI never sits on pending; rethrow so pg-boss still
+    // retries.
     //
-    // W3-C1γ — event-source the failed status flip too (so the fold reproduces generation_status=
-    // 'failed' and NOTHING about artifact stays KNOWN-UNFOLDED). Atomic in its own tx. Best-effort:
-    // a cleanup throw is logged, never masking the original error (which is rethrown so pg-boss
-    // retries per policy). The status flip itself keeps the version; only the YUK-1508 fallback
-    // body write below bumps it (a real content write).
-    //
-    // YUK-1508 (P1-B) — TWO transactions, strictly ordered:
-    //   tx1 flips generation_status='failed' (+ lifecycle event) EXACTLY like the
-    //      pre-fallback code — it must be indestructible: nothing about the
-    //      fallback (material load, body build, refs sync, exposure record) can
-    //      prevent it, or the note would sit in 'pending' forever.
-    //   tx2 then fills an EMPTY body with the deterministic fallback (real material
-    //      only, honestly labelled 「自动生成失败，以下为原材料整理」; see
-    //      note-generation-fallback.ts) — gated on status='failed' AND the version
-    //      tx1 observed, so it can never race another writer. That write DOES bump
-    //      version — it is a real content write through the normal body path
-    //      (body_blocks_edit + syncBlockRefs + history entry), so it is replayable
-    //      and revertible, and a later successful retry replaces the UNTOUCHED
-    //      fallback as a normal new version (the marker block goes away with the
-    //      full-body replace; a learner-edited fallback is never clobbered — P1-A).
-    //      Idempotent: a body that is already written is never re-filled. Any tx2
-    //      throw is logged and swallowed — the note honestly stays 'failed' with no
-    //      fallback. The failed run stays failed — nothing here marks it succeeded;
-    //      the run row keeps its own runner-owned failure record.
+    // Two ordered transactions:
+    //   tx1 records the failure and must be indestructible — nothing about the
+    //      fallback may keep the note pending.
+    //   tx2 fills an EMPTY body with the deterministic fallback (real material
+    //      only, honestly labelled). It bumps the version like any content write,
+    //      so a later retry can replace the untouched fallback, and a learner
+    //      edit is never clobbered. Already-written bodies are left alone, and a
+    //      tx2 failure is logged rather than masking the original error.
     const failedAt = new Date();
     let flipVersion: number | null = null;
     try {
@@ -606,8 +566,8 @@ export async function runNoteGenerate(
       throw failure; // not pending anymore (or flip failed) — nothing to fill
     }
 
-    // P1-B — the material load has its OWN guard: a throw here degrades to a
-    // status-only flip (logged), never strands the note in 'pending'.
+    // Material loading has its own guard: a throw degrades to a status-only flip
+    // instead of stranding the note in pending.
     let fallbackMaterial: Awaited<ReturnType<typeof loadNoteGenerationFallbackMaterial>> | null =
       null;
     try {
@@ -710,8 +670,8 @@ export async function runNoteGenerate(
           );
         }
       } catch (fallbackErr) {
-        // P1-B — a fallback-write throw must never mask the (already committed)
-        // failed flip nor the original error. The note honestly stays 'failed'.
+        // A fallback-write failure must not mask the committed failed flip or the
+        // original error; the note honestly stays failed.
         console.error('[note_generate] fallback body write failed for', artifactId, fallbackErr);
       }
     }
@@ -757,5 +717,4 @@ export function buildNoteGenerateHandler(
   };
 }
 
-// suppress unused
 void (null as SQL | null);

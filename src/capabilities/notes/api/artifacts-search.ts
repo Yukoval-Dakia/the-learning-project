@@ -1,11 +1,6 @@
-// YUK-95 P5 Lane-A — title search backing the in-editor cross_link picker.
-// Returns artifacts whose title matches the `q` query (case-insensitive
-// substring), optionally excluding one artifact id (the one being edited, to
-// avoid self-links). Only LIVE, READY notes are eligible targets: archived
-// (`archived_at != null`) or non-ready (`generation_status != 'ready'`) artifacts
-// are filtered out so the picker never offers a dead/pending link target (FIX 3,
-// P5 review). Small + read-only; the L2 `artifact_block_ref` index is written
-// elsewhere (Lane-0 write-through on save), never here.
+// Title search for the in-editor cross_link picker. Only live, ready artifacts
+// are offered, so the picker never links to a dead or pending target. The L2
+// backlink index is maintained by the write path, never here.
 
 import { and, desc, ilike, inArray, ne } from 'drizzle-orm';
 
@@ -15,12 +10,9 @@ import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 
-// ADR-0033 D1 (YUK-306) — closed allowlist of cross-linkable artifact types.
-// type='interactive' is OPAQUE to the note block-tree mesh: it must never be
-// offered as a cross_link target (a link would write it INTO the mesh via the
-// block_refs write-through). tool_quiz's mesh participation is deliberate
-// (body-blocks.ts tool_quiz embeds); an allowlist (not `ne 'interactive'`)
-// keeps future opaque types out by default.
+// Allowlist, not a denylist: an interactive artifact is opaque to the note mesh
+// and a link would write it into the backlink index, so new opaque types must
+// stay out by default. tool_quiz participates deliberately.
 const CROSS_LINKABLE_TYPES = ['note_atomic', 'note_hub', 'note_long', 'tool_quiz'];
 
 // Escape ILIKE wildcards so user input is matched literally.
@@ -45,12 +37,9 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     const { q, exclude, limit } = parsed.data;
-    // FIX 3 (YUK-95 P5 review): the picker must never offer archived or
-    // pending/failed artifacts as cross-link targets — only live, ready notes.
     const conditions = [
       ilike(artifact.title, `%${escapeLike(q)}%`),
       readyArtifactReferenceCondition,
-      // ADR-0033 D1 (YUK-306) — keep opaque types (interactive) out of the mesh.
       inArray(artifact.type, CROSS_LINKABLE_TYPES),
     ];
     if (exclude) conditions.push(ne(artifact.id, exclude));
