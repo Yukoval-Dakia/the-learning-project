@@ -11,14 +11,18 @@
 //
 //   - `persistDeclaredQuestionGroup(InTx)` —— 新组 save+submit 原子链：
 //     绑定声明身份（typed-group）→ saveDraftEditInTx → submitDraftQuestionInTx
-//     （producer 信任投影 + 父子行物化）在同一个最外事务里完成。Db 入口负责
-//     TxAbort/SharedSubmitAbort 的事务外转换；InTx 入口供已在外事务内的
-//     可信调用方。commit 后才 drain verify intent（drainSubmitVerifyIntents）。
+//     （可信投影面 + 父子行物化）在同一个最外事务里完成。业务终态
+//     （declaration/save/submit conflict）以结果返回、随事务提交 ——
+//     冲突回执与 exact/source KC merge 副作用按旧 submit tx 口径落库；
+//     只有真实内部错误（投影哨兵/DB 错误）抛出回滚，绝不交半个
+//     草稿/根/子行。commit 后才 drain verify intent（drainSubmitVerifyIntents）。
+//     `caller` 槽位把调用方的 canonical receipt 写进同一事务 ——
+//     claim+domain+receipt 一次 commit，commit 前崩溃无「域已提交而
+//     顶层回执缺失」窗口。
 //
 //   - claim/receipt/fingerprint 原语（claimSubmitRequestId、
 //     writeSubmitReceiptEvent、submitRequestFingerprint）—— candidate/compat
-//     提交路径与本内核共用同一 claim 纪律与回执事件形状；回执事件 envelope
-//     统一落 task_run_id。
+//     提交路径与本内核共用同一 claim 纪律与回执事件形状。
 //
 // 判定逻辑（准入/判分层比对/契约屏障/presentation/来源归属/近似去重）在
 // submit-decision.ts；typed 身份绑定与子行投影在 typed-group.ts。
@@ -28,6 +32,7 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
+  DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
   claimHttpSourceDuplicate,
   mergeExactQuestionDuplicateKnowledgeIds,
@@ -80,6 +85,8 @@ import {
 } from '@/server/questions/submit-decision';
 import type { SubmitDraftInput, SubmitResult } from '@/server/questions/submit-question';
 import {
+  type BindIssue,
+  type BoundIdMap,
   TypedGroupProjectionError,
   bindDeclaredGroupIds,
   insertTypedGroupChildren,
@@ -101,67 +108,37 @@ export interface SharedSubmitContext {
 
 /**
  * 可信新组投影（系统侧组装；绝不暴露给模型输入）。仅新组首次提交生效。
- * 与 `sourced` 供给注入可同现（sourced 管 URL claim/dedup 指纹/路由
- * provenance 元数据，producer 管行投影覆盖与子行物化）；字段重叠时
- * producer 优先（canonicalContentHash→hashForDedup、createdBy、difficulty、
- * sourceRef、rowSource），metadata 按 sourced → producer 顺序并入。
+ * 只承载确定性组/part 投影需要的最小可信输入：行内容列、来源归属、
+ * provenance/difficulty/claim 全部仍由 `input.sourced` 与文档按原口径
+ * 权威供给 —— 本对象不做第二覆盖通道。
  */
 export interface TrustedNewGroupProjection {
-  /** 根组真实 id（缺省由内核铸 cuid2）。 */
+  /** 根组真实 id（缺省由内核铸 cuid2）。typed 组路径恒为绑定派生值。 */
   newGroupId?: string;
   /** 'parent-parts'：doc.parts>1 时按声明序投影真实 question 子行。 */
   materializeParts?: 'parent-parts';
-  /** 覆盖 dedup 用的内容指纹（同 sourced.canonical_content_hash 口径）。 */
-  canonicalContentHash?: string;
-  /** mergeExactQuestionDuplicateKnowledgeIds 的 actorRef（缺省 'sourcing'）。 */
-  dedupActor?: 'quiz_gen' | 'sourcing' | 'jyeoo_fetch';
-  /** question.created_by（路由 provenance ref）。 */
-  createdBy?: (typeof question.$inferInsert)['created_by'];
-  /** question.difficulty（缺省列默认 3）。 */
-  difficulty?: number;
-  /** question.source_ref 覆盖（缺省 doc.source?.ref）。 */
-  sourceRef?: string | null;
-  /** question.source 覆盖（缺省按 doc.source.kind 映射/旧行沿用）。 */
-  rowSource?: string;
-  /** 并入 question.metadata 的系统侧键（同 sourced.metadata 纪律）。 */
-  metadata?: Record<string, unknown>;
-  /** 供给质量闸证据（只进 request 指纹；持久化由调用方走 metadata）。 */
-  qualityGate?: unknown;
-  /** 真实 paid-output 身份（只进 request 指纹；持久化由调用方走 metadata）。 */
-  paidOutput?: unknown;
 }
 
 export interface SharedSubmitOptions {
   producer?: TrustedNewGroupProjection;
+  /**
+   * 绑定器产出的 declared→bound 映射（仅给子行投影写 declared_part_id
+   * 留痕）。是 namespace+document 的纯函数结果、由 save 侧 receipt 钉住 —
+   * 不进 request 指纹。
+   */
+  declaredIdMap?: BoundIdMap;
 }
 
-/**
- * 提交阶段的终止哨兵：任何须回滚整事务的失败（投影冲突、save 失败等）
- * 以它抛出，由最外 Db 入口在事务外转换 result —— 事务里绝不吞失败。
- * stage 决定 payload 里哪个字段有效：declare→issues、save→save、
- * submit→submit。
- */
-export class SharedSubmitAbort extends Error {
-  constructor(
-    public readonly stage: 'declare' | 'save' | 'submit',
-    public readonly payload: {
-      issues?: { code: string; detail: string; part_id?: string; unit_id?: string }[];
-      save?: EditQuestionResult;
-      submit?: SubmitResult;
-    },
-  ) {
-    super(`shared-submit abort at ${stage}`);
-    this.name = 'SharedSubmitAbort';
-  }
-}
-
-/** 父子行投影失败由 typed-group 抛出 TypedGroupProjectionError —— 内核不捕获。 */
+/** 父子行投影失败的哨兵类型 —— 内核不捕获，穿透到最外事务要求整体回滚。 */
+export { TypedGroupProjectionError };
 
 // ---------- 请求指纹 / 回执（与 save 同一幂等纪律） ----------
 
 /**
- * 提交请求指纹：request_id 幂等重放的内容绑定。sourced/producer 两通道的
- * 身份字段进指纹；metadata/supply_trace 等簿记（含 attempt 时间戳）不进 ——
+ * 提交请求指纹：request_id 幂等重放的内容绑定。无 opts.producer 时与
+ * main 的 submitDraftQuestion 指纹逐字节一致（同字段集、同缺省形状）；
+ * producer 只在确实指定时才加入指纹。sourced 的身份字段进指纹，
+ * metadata/supply_trace 等簿记（含 attempt 时间戳）不进 ——
  * 同 request_id 重放必须命中同回执。
  */
 export function submitRequestFingerprint(
@@ -176,12 +153,16 @@ export function submitRequestFingerprint(
         expected_revision: input.expected_revision,
         knowledge_ids: input.knowledge_ids,
         availability: input.availability,
+        // Identity fields bind the replay; metadata is bookkeeping with timestamps that
+        // drift across retries, so it stays out of the fingerprint.
         sourced:
           input.sourced != null
             ? {
                 canonical_content_hash: input.sourced.canonical_content_hash,
                 created_by: input.sourced.created_by,
                 difficulty: input.sourced.difficulty ?? null,
+                // source_claim is deterministic (URL + actor), so it participates;
+                // metadata and supply_trace still do not.
                 source_claim:
                   input.sourced.source_claim != null
                     ? {
@@ -191,21 +172,16 @@ export function submitRequestFingerprint(
                     : null,
               }
             : null,
-        producer:
-          opts?.producer != null
-            ? {
+        // producer 是可信投影输入（组 id + 是否物化子行）：指定时才进指纹；
+        // 缺省路径指纹与旧实现完全一致 —— 升级前已存的 :submit 回执不受影响。
+        ...(opts?.producer != null
+          ? {
+              producer: {
                 new_group_id: opts.producer.newGroupId ?? null,
                 materialize_parts: opts.producer.materializeParts ?? null,
-                canonical_content_hash: opts.producer.canonicalContentHash ?? null,
-                dedup_actor: opts.producer.dedupActor ?? null,
-                created_by: opts.producer.createdBy ?? null,
-                difficulty: opts.producer.difficulty ?? null,
-                source_ref: opts.producer.sourceRef ?? null,
-                row_source: opts.producer.rowSource ?? null,
-                quality_gate: opts.producer.qualityGate ?? null,
-                paid_output: opts.producer.paidOutput ?? null,
-              }
-            : null,
+              },
+            }
+          : {}),
       }),
     )
     .digest('hex')}`;
@@ -267,7 +243,7 @@ export async function claimSubmitRequestId(
   return { status: 'reused', existing };
 }
 
-/** 提交回执事件：draft 提交 subject=question_block；candidate 提交 subject=question。 */
+/** Submit receipt event: draft submits target question_block, candidate submits question. */
 export async function writeSubmitReceiptEvent(
   tx: Tx,
   subject: { kind: 'question_block' | 'question'; id: string },
@@ -285,7 +261,6 @@ export async function writeSubmitReceiptEvent(
     subject_kind: subject.kind,
     subject_id: subject.id,
     outcome: 'success',
-    task_run_id: ctx.taskRunId ?? null,
     payload: { request_id: requestId, fingerprint, receipt },
     created_at: now,
     ingest_at: now,
@@ -296,7 +271,7 @@ export async function writeSubmitReceiptEvent(
 
 /**
  * submitDraftQuestion 的完整业务（事务内核形态）。语义与原 Db 入口逐行一致；
- * 扩展面只有 opts.producer（可信新组投影 + 父子行物化）。
+ * 扩展面只有 opts.producer（可信新组投影：绑定组 id + 父子行物化）。
  */
 export async function submitDraftQuestionInTx(
   tx: Tx,
@@ -323,9 +298,8 @@ export async function submitDraftQuestionInTx(
     };
   }
   const expectedRevisionRaw = input.expected_revision;
-  // 校验形状：qrev1:<id>:<digest> 或裸 revision_id；带 ':' 但非 qrev1 或空串
-  // = malformed ⇒ reject（不是 CAS，是请求形状错误）。undefined = 待
-  // doc.base.revision_id 默认填充；null = 期望组尚无已发布 revision。
+  // Shape check: qrev1:<id>:<digest> or a bare revision_id. Malformed values reject;
+  // undefined defers to doc.base.revision_id, null expects no published revision.
   let expectedRevisionId: string | null | undefined;
   if (expectedRevisionRaw === undefined) {
     expectedRevisionId = undefined;
@@ -344,11 +318,10 @@ export async function submitDraftQuestionInTx(
   } else {
     expectedRevisionId = parseExpectedRevision(expectedRevisionRaw);
   }
-  // request_id 幂等：同 id 同内容重放返回同回执，不同内容拒绝。
+  // request_id idempotency: same content replays the receipt, different content rejects.
   const fingerprint = submitRequestFingerprint(input, opts);
   const now = ctx.now ?? new Date();
-  // request_id 认领原子化：advisory xact lock 串行化同 request_id 并发，
-  // 锁内查重放（原 check-then-act 竞态在锁外）。
+  // Serialize same-request_id submissions, then look for a replay inside the lock.
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
   const existing = await findSubmitReceipt(tx, requestId);
   if (existing != null) {
@@ -407,10 +380,8 @@ export async function submitDraftQuestionInTx(
   }
   if (input.knowledge_ids != null) doc.knowledge_ids = input.knowledge_ids;
 
-  // 默认 CAS：draft 钉住的基底 revision 即期望值（防静默 rebase 到未读
-  // 版本）。显式 expected_revision 覆盖；explicit null = 期望尚无版本。
-  // base.revision_id 为 null 表示建草稿时组尚无已发布版本，必须保持 null
-  // 参与比较。`?? undefined` 会把它当成「未钉住」从而关掉 CAS。
+  // Default CAS uses the draft's pinned base revision; explicit expected_revision
+  // overrides it. Keep null distinct from undefined or the CAS turns off.
   const pinnedBaseRevision =
     doc.base == null || doc.base.revision_id === undefined ? undefined : doc.base.revision_id;
   const effectiveExpectedRevision =
@@ -421,13 +392,13 @@ export async function submitDraftQuestionInTx(
   let contract = draftDocumentToContract(doc, groupId);
   const editingExisting = doc.base?.question_id != null || block.imported_question_id != null;
 
-  // 新题的未决转换在读组之前就返回。编辑已发布题要等判分计划：原样拷贝
-  // 已存层时，编码器的转换问题不代表即将发布的契约。
+  // New questions fail fast on conversion issues; edits wait for the scoring plan,
+  // because a verbatim copy of the stored layers may clear them.
   if (!editingExisting && contract.conversion_issues.length > 0) {
     return conversionWithheld(contract, requestId);
   }
 
-  // 组当前状态（CAS + lifecycle 快照；发布 seam 内部复核同一令牌）。
+  // Group state (CAS + lifecycle snapshot); the publish seam rechecks the token.
   const [lifecycle] = await tx
     .select()
     .from(question_group_lifecycle)
@@ -447,7 +418,7 @@ export async function submitDraftQuestionInTx(
     };
   }
 
-  // 判分准入钩子（调用点：dual-solve / calibration lane 在此扩展）。
+  // Admission hook: dual-solve/calibration lanes extend this decision.
   const admission = await runAdmissionChecks(tx, {
     doc,
     unitSummary: contract.unit_summary,
@@ -466,23 +437,22 @@ export async function submitDraftQuestionInTx(
     return withheld;
   }
 
-  // ---- question 工作副本行（投影；revision 才是判分真相） ----
+  // question is the working-copy projection; the revision remains scoring truth.
   const identity = draftCanonicalIdentity(doc);
   const canonicalHash = canonicalQuestionContentHash(identity);
   const structuredProjection = draftDocumentToStructuredQuestion(doc);
   const promptMd = identity.promptMd;
   const referenceMd = identity.referenceMd;
   const choicesMd = identity.choicesMd;
-  // 工作副本行存在与否决定 insert vs update（lifecycle 为空 ≠ 行不存在：
-  // 从未发布过的 legacy 行没有 lifecycle）。
+  // Row presence drives insert vs update; an empty lifecycle does not mean no row.
   const [existingRow] = await tx
     .select({ id: question.id, source: question.source })
     .from(question)
     .where(eq(question.id, groupId))
     .limit(1);
   const isNew = existingRow == null;
-  // 供给链系统注入只对新组首次提交有效；编辑已发布组携带它 = 调用方误用，
-  // 显式冲突拒绝而不是静默丢弃系统注入（sourced-draft-insert 同款纪律）。
+  // System injection is valid only on a new group's first submit; reject misuse
+  // instead of silently dropping it.
   if ((input.sourced != null || opts?.producer != null) && !isNew) {
     const conflict: SubmitResult = {
       status: 'conflict',
@@ -514,10 +484,9 @@ export async function submitDraftQuestionInTx(
     return withheld;
   }
   const questionSource =
-    opts?.producer?.rowSource ??
-    (doc.source != null
+    doc.source != null
       ? (SOURCE_KIND_TO_QUESTION_SOURCE[doc.source.kind] ?? 'quiz_gen')
-      : (existingRow?.source ?? 'manual'));
+      : (existingRow?.source ?? 'manual');
   const [currentRevision] =
     currentRevisionId == null
       ? []
@@ -548,9 +517,8 @@ export async function submitDraftQuestionInTx(
     }
     contract = applied.contract;
   }
-  // 未决转换 ⇒ 不铸 revision。原样拷贝已存层时转换问题已经清掉。
-  // 未发布的 withheld 不写回执。确定性 request_id（proposal-submit）否则会
-  // 重放这次失败，知识点恢复后 accept 仍 422。
+  // Unresolved conversion means no revision. Withheld results are not receipted:
+  // a deterministic request_id would otherwise replay the failure forever.
   if (contract.conversion_issues.length > 0) {
     return conversionWithheld(contract, requestId);
   }
@@ -583,10 +551,8 @@ export async function submitDraftQuestionInTx(
   }).canonical;
   const producer = opts?.producer;
   if (isNew) {
-    // YUK-1568 S3（R1 F3）—— 一页一题来源 URL 的终态 claim 与行 INSERT
-    // 同事务：pg_advisory_xact_lock 持到本事务提交，并发同 URL 候选串行化，
-    // 后到者锁后重查命中本行。复用既有原语（release 终态草稿 + KC merge），
-    // 命中即 duplicate_source 冲突 + 回执（不静默丢 claim）。
+    // Claim the source URL in this transaction so concurrent candidates serialize;
+    // a hit becomes duplicate_source with a receipt rather than a dropped claim.
     if (input.sourced?.source_claim != null) {
       const claimedSource = await claimHttpSourceDuplicate(tx, {
         sourceUrl: input.sourced.source_claim.source_url,
@@ -617,20 +583,16 @@ export async function submitDraftQuestionInTx(
         return conflict;
       }
     }
-    // 供给链注入的 flat 指纹优先于投影身份——与旧 flat 行同一 dedup 口径，
-    // 否则选择题等投影后 reference 变化会丢失对既有行的精确去重命中。
-    const hashForDedup =
-      producer?.canonicalContentHash ?? input.sourced?.canonical_content_hash ?? canonicalHash;
-    // live 去重 claim：canonical hash 占用者存在 ⇒ cross-KC merge（与供给
-    // 链同语义）；否则插入新行。
+    // The injected flat fingerprint wins so exact dedup matches legacy flat rows.
+    const hashForDedup = input.sourced?.canonical_content_hash ?? canonicalHash;
+    // Live dedup claim: merge into the canonical-hash holder, else insert.
     const merged = await mergeExactQuestionDuplicateKnowledgeIds(tx, {
       canonicalContentHash: hashForDedup,
       knowledgeIds: doc.knowledge_ids,
-      actorRef: producer?.dedupActor ?? 'sourcing',
+      actorRef: 'sourcing',
       taskRunId: ctx.taskRunId,
       now,
     });
-    const rowDifficulty = producer?.difficulty ?? input.sourced?.difficulty;
     if (merged?.disposition === 'merged') {
       const conflict: SubmitResult = {
         status: 'conflict',
@@ -664,7 +626,7 @@ export async function submitDraftQuestionInTx(
         const conflict: SubmitResult = {
           status: 'conflict',
           reason: 'near_dup',
-          detail: `n-gram overlap ${near.overlap.toFixed(3)}（KC 池 ${near.poolSize} 题）`,
+          detail: `n-gram overlap ${near.overlap.toFixed(3)} ≥ ${DEDUP_OVERLAP_THRESHOLD}（KC 池 ${near.poolSize} 题）`,
           request_id: requestId,
         };
         await writeSubmitReceiptEvent(
@@ -687,30 +649,23 @@ export async function submitDraftQuestionInTx(
       choices_md: choicesMd,
       knowledge_ids: doc.knowledge_ids,
       source: questionSource,
-      source_ref:
-        producer?.sourceRef !== undefined ? producer.sourceRef : (doc.source?.ref ?? null),
+      source_ref: doc.source?.ref ?? null,
       draft_status: 'draft',
       structured: structuredProjection,
-      // 供给注入的路由 provenance（SourcingTask 等 system ref）；缺省沿用
-      // submit_question 自身 actor——两种都是可信系统侧写入方。
+      // Sourcing provenance when injected, otherwise submit_question's own system ref.
       created_by:
-        producer?.createdBy ??
-        input.sourced?.created_by ??
-        AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
+        input.sourced?.created_by ?? AgentRef.parse({ by: 'ai', task_kind: 'submit_question' }),
       metadata: {
         draft_block_id: block.id,
         submit_source: doc.source ?? null,
         schema_version: 2,
-        // 系统侧 provenance/供给元数据（web_sourced、difficulty_evidence、
-        // 路由与候选身份、向量近重 hold 等）——同一发布事务落行，
-        // source_verify 的确定性来源核对依赖它。
+        // System provenance/supply metadata; source_verify depends on it.
         ...(input.sourced?.metadata ?? {}),
-        ...(producer?.metadata ?? {}),
       },
       created_at: now,
       updated_at: now,
       canonical_content_hash: hashForDedup,
-      ...(rowDifficulty != null ? { difficulty: rowDifficulty } : {}),
+      ...(input.sourced?.difficulty != null ? { difficulty: input.sourced.difficulty } : {}),
     });
     // typed 组首发：多 part 文档在同事务投影真实子行 —— 契约 part_id 即
     // 子行 question.id（绑定器保证），parent_question_id/part_index 是唯一
@@ -721,16 +676,16 @@ export async function submitDraftQuestionInTx(
         document: doc,
         now,
         knowledgeIds: doc.knowledge_ids,
-        difficulty: producer.difficulty ?? input.sourced?.difficulty,
+        difficulty: input.sourced?.difficulty,
         source: questionSource,
-        sourceRef:
-          producer.sourceRef !== undefined ? producer.sourceRef : (doc.source?.ref ?? null),
+        sourceRef: doc.source?.ref ?? null,
         draftBlockId: block.id,
-        producedBy: producer.createdBy ?? input.sourced?.created_by,
+        producedBy: input.sourced?.created_by,
+        idMap: opts?.declaredIdMap,
       });
     }
   } else {
-    // 编辑已发布题：dedup hash 冲突 ⇒ conflict。
+    // Editing a published question: a hash held by another row is a conflict.
     const hashHolder = await tx
       .select({ id: question.id })
       .from(question)
@@ -745,10 +700,8 @@ export async function submitDraftQuestionInTx(
         request_id: requestId,
       };
     }
-    // 工作副本行 = 「当前已准入 revision」的投影。这次编辑不再可发时，
-    // 内容列保持上一份已准入投影（未验证的新答案不进练习池），并把行标回
-    // draft：练习池只认 draft_status / suspended / withdrawn，不认准入。
-    // 真正 admitted 时才更新内容列。
+    // The row projects the currently admitted revision. Unpublishable edits keep the
+    // previous content and mark the row draft; only admitted edits update content.
     if (effectiveAdmission.state === 'admitted') {
       await tx
         .update(question)
@@ -776,7 +729,7 @@ export async function submitDraftQuestionInTx(
     }
   }
 
-  // ---- 唯一发布 seam ----
+  // The single publish seam.
   const publishResult = await publishQuestionGroup(tx, {
     group_id: groupId,
     contract: {
@@ -816,7 +769,7 @@ export async function submitDraftQuestionInTx(
         (publishResult as { current_revision_id?: string }).current_revision_id)
       : undefined;
 
-  // ---- 草稿终态 + verify outbox（fetch 来源） ----
+  // Draft terminal state + verify outbox for fetched sources.
   const nextBlockVersion = block.version + 1;
   await writeQuestionBlockLifecycleEvent(tx, {
     blockId: block.id,
@@ -844,7 +797,7 @@ export async function submitDraftQuestionInTx(
   }
 
   const receipt: SubmitResult = {
-    // 状态判别序：withheld（闸拒） > pending（已提交待验证） > admitted。
+    // Priority: withheld (gate) > pending (awaiting verify) > admitted.
     status:
       effectiveAdmission.state === 'withheld'
         ? 'withheld'
@@ -913,6 +866,28 @@ export async function drainSubmitVerifyIntents(db: Db, result: SubmitResult): Pr
 
 // ---------- 声明组的一次性原子持久化（save + submit 同事务） ----------
 
+/**
+ * 本链可能提交的域终态（replayed / request_id_reused 属于 caller 幂等域，
+ * 不经过这里）。`submit_conflict` 是【已提交】终态：草稿保留为可修
+ * 'draft'、冲突回执与 duplicate_source/duplicate_exact 的 KC merge/URL
+ * claim-release 副作用按旧 submit tx 口径落库 —— 绝不回滚已执行的 merge。
+ */
+export type DeclaredGroupDomainOutcome =
+  | { status: 'completed'; save: EditQuestionResult; submit: SubmitResult; id_map: BoundIdMap }
+  | {
+      status: 'submit_conflict';
+      save: EditQuestionResult;
+      submit: Extract<SubmitResult, { status: 'conflict' }>;
+      id_map: BoundIdMap;
+    }
+  | { status: 'save_failed'; save: EditQuestionResult }
+  | { status: 'declaration_failed'; issues: BindIssue[] };
+
+export type DeclaredGroupPersistResult =
+  | DeclaredGroupDomainOutcome
+  | { status: 'replayed'; receipt: SubmitResult }
+  | { status: 'request_id_reused'; request_id: string; detail: string };
+
 export interface DeclaredGroupPersistParams {
   /** producer 声明文档（局部 id 允许；本函数在 save 指纹前按 namespace 绑定）。 */
   document: QuestionDraftDocumentT;
@@ -926,43 +901,93 @@ export interface DeclaredGroupPersistParams {
   /** 提交的幂等 request_id（如 `${candidateRequestId}:submit`）。 */
   submitRequestId: string;
   availability?: 'general_pool' | 'container_only';
-  /** 供给链注入（原样透传进 submit；与 producer 可同现，重叠字段 producer 优先）。 */
+  /**
+   * 供给链注入（原样透传进 submit）：路由 provenance / flat dedup 指纹 /
+   * difficulty / 一页一题 source_claim / verify supply_trace 的权威通道。
+   */
   sourced?: SubmitDraftInput['sourced'];
-  /** 可信新组投影（materializeParts/newGroupId 缺省由本入口按绑定结果填充）。 */
-  producer?: TrustedNewGroupProjection;
   ctx: SharedSubmitContext;
-}
-
-export type DeclaredGroupPersistResult =
-  | { status: 'completed'; save: EditQuestionResult; submit: SubmitResult }
-  | { status: 'declaration_failed'; issues: { code: string; detail: string }[] }
-  | { status: 'save_failed'; save: EditQuestionResult }
-  | { status: 'submit_aborted'; submit: SubmitResult };
-
-interface PersistOk {
-  save: EditQuestionResult;
-  submit: SubmitResult;
+  /**
+   * 调用方 canonical 幂等域（如 candidate request_id）：声明给出后，
+   * request_id advisory lock + receipt replay/reuse 检查在本事务内最先
+   * 执行；每个【已提交】域终态落库前经 `receipt` 回调写调用方回执 ——
+   * domain 工作与调用方回执同一 commit，commit 前崩溃不留「域已提交而
+   * 顶层回执缺失」窗口。不提供则跳过调用方幂等面（锁序：caller
+   * request_id → saveRequestId → submitRequestId → 域内行锁）。
+   */
+  caller?: {
+    requestId: string;
+    fingerprint: string;
+    /** 终态 → canonical 回执写参；返回 null = 该终态不写调用方回执。
+     *  `ctx` 缺省用 params.ctx；调用方回执归属与域写口 actor 不同的
+     *  场景（如 canonical receipt 的 agent 归因 ≠ merge actor）显式给出。 */
+    receipt: (outcome: DeclaredGroupDomainOutcome) => {
+      subject: { kind: 'question_block' | 'question'; id: string };
+      receipt: SubmitResult;
+      ctx?: SharedSubmitContext;
+    } | null;
+  };
 }
 
 /**
  * 声明组 save+submit 的一次性原子链（事务内核形态）。
- * 绑定 → save → submit 全在同一调用方事务内：任何一步需要回滚都会撤销
- * 草稿行/事件/根行/子行/发布 —— 不存在「草稿已落库但组没建成」的半态。
- * 步骤级失败以 SharedSubmitAbort 抛出，由最外 Db 入口转换终态结果。
+ * caller claim → 绑定 → save → submit → caller receipt 全在同一事务内；
+ * 业务终态以结果返回并随事务提交（冲突回执/merge 副作用不丢）；
+ * 只有真实内部错误（TypedGroupProjectionError / DB 错误）抛出要求整体
+ * 回滚 —— 调用方不得捕获它们当业务结果。
  */
 export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
   params: DeclaredGroupPersistParams,
-): Promise<PersistOk> {
+): Promise<DeclaredGroupPersistResult> {
+  const caller = params.caller;
+  const now = params.ctx.now ?? new Date();
+  const writeCallerReceipt = async (outcome: DeclaredGroupDomainOutcome) => {
+    if (caller == null) return;
+    const write = caller.receipt(outcome);
+    if (write != null) {
+      await writeSubmitReceiptEvent(
+        tx,
+        write.subject,
+        caller.requestId,
+        caller.fingerprint,
+        write.receipt,
+        write.ctx ?? params.ctx,
+        now,
+      );
+    }
+  };
+  // 调用方幂等域先认领：锁内查重放 —— 命中直接回执，指纹不符拒绝。
+  if (caller != null) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${caller.requestId}))`);
+    const existing = await findSubmitReceipt(tx, caller.requestId);
+    if (existing != null) {
+      return existing.fingerprint === caller.fingerprint
+        ? {
+            status: 'replayed',
+            receipt: { ...existing.receipt, replayed: true } as SubmitResult,
+          }
+        : {
+            status: 'request_id_reused',
+            request_id: caller.requestId,
+            detail: `request_id '${caller.requestId}' was used with different content`,
+          };
+    }
+  }
+
   // 身份绑定只在这里发生一次（调用方不得预先绑定再传入——双重绑定会再铸
   // 一轮 id）。绑定是纯确定性工作，放事务内与 save 指纹同序。
   const bound = bindDeclaredGroupIds(params.document, { namespace: params.idNamespace });
   if (!bound.ok) {
-    throw new SharedSubmitAbort('declare', { issues: bound.issues });
+    const outcome: DeclaredGroupDomainOutcome = {
+      status: 'declaration_failed',
+      issues: bound.issues,
+    };
+    await writeCallerReceipt(outcome);
+    return outcome;
   }
   const producer: TrustedNewGroupProjection = {
     materializeParts: 'parent-parts',
-    ...params.producer,
     // 根组真实 id 恒取绑定派生值 —— 声明侧不可自授组身份。
     newGroupId: bound.bound.groupId,
   };
@@ -978,30 +1003,28 @@ export async function persistDeclaredQuestionGroupInTx(
       ctx: params.ctx,
     });
   } catch (err) {
+    // TxAbort = save 侧自选的回滚终态。save 失败路径不携任何持久写入，
+    // 转成已提交 save_failed 与旧链（save tx 无写 + 调用方回执照常落库）
+    // 等价；若未来 save 出现「先写后 abort」路径，这里必须改为向上传播。
     if (err instanceof TxAbort) {
-      throw new SharedSubmitAbort('save', { save: err.result });
+      const outcome: DeclaredGroupDomainOutcome = { status: 'save_failed', save: err.result };
+      await writeCallerReceipt(outcome);
+      return outcome;
     }
     throw err;
   }
   if (save.status !== 'saved' && save.status !== 'noop') {
-    throw new SharedSubmitAbort('save', { save });
-  }
-  const draftRef = save.draft_ref;
-  if (draftRef == null) {
-    throw new SharedSubmitAbort('save', {
-      save: {
-        status: 'rejected',
-        reason: 'draft save returned no draft_ref',
-        issues: [{ code: 'missing_draft_ref', detail: 'save receipt carried no draft_ref' }],
-        request_id: params.saveRequestId,
-      },
-    });
+    const outcome: DeclaredGroupDomainOutcome = { status: 'save_failed', save };
+    await writeCallerReceipt(outcome);
+    return outcome;
   }
 
   const submit = await submitDraftQuestionInTx(
     tx,
     {
-      draft_ref: draftRef,
+      draft_ref: save.draft_ref,
+      // 与旧 live caller 同口径：CAS 钉住刚写出的草稿版本（save 回执版本）。
+      expected_draft_version: save.draft_version,
       request_id: params.submitRequestId,
       // 绑定器已拒绝 doc.base ⇒ 恒为新组首提交：显式钉「尚无已发布
       // revision」，CAS 与首跑/重放路径同一判定。
@@ -1010,69 +1033,29 @@ export async function persistDeclaredQuestionGroupInTx(
       sourced: params.sourced,
     },
     params.ctx,
-    { producer },
+    { producer, declaredIdMap: bound.bound.idMap },
   );
-  if (submit.status === 'conflict') {
-    // conflict 提交须随外层事务回滚（草稿/根/子行/claim 不落半个）。
-    throw new SharedSubmitAbort('submit', { submit });
-  }
-  return { save, submit };
+  const outcome: DeclaredGroupDomainOutcome =
+    submit.status === 'conflict'
+      ? { status: 'submit_conflict', save, submit, id_map: bound.bound.idMap }
+      : { status: 'completed', save, submit, id_map: bound.bound.idMap };
+  await writeCallerReceipt(outcome);
+  return outcome;
 }
 
 /**
- * Db 外层入口：开最外事务，全链成功后 drain verify intent（事务外），并把
- * 步骤级 abort 转成终态结果 —— TxAbort/SharedSubmitAbort 绝不漏到模型面。
+ * Db 外层入口：开最外事务（caller claim/replay/receipt、绑定、save、submit
+ * 一次 commit），commit 成功后 drain verify intent；TypedGroupProjectionError
+ * 等内部错误向上抛出（整体已回滚，不伪装成业务结果）。
  */
 export async function persistDeclaredQuestionGroup(
   db: Db,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
-  let out: PersistOk;
-  try {
-    out = await db.transaction(async (tx) => persistDeclaredQuestionGroupInTx(tx, params));
-  } catch (err) {
-    if (err instanceof SharedSubmitAbort) {
-      if (err.stage === 'declare') {
-        return {
-          status: 'declaration_failed',
-          issues: err.payload.issues ?? [
-            { code: 'invalid_declared_identity', detail: 'declared group identity rejected' },
-          ],
-        };
-      }
-      if (err.stage === 'save') {
-        return {
-          status: 'save_failed',
-          save: err.payload.save ?? {
-            status: 'rejected',
-            reason: 'draft save aborted',
-            issues: [{ code: 'save_aborted', detail: err.message }],
-            request_id: params.saveRequestId,
-          },
-        };
-      }
-      if (err.payload.submit != null) {
-        return { status: 'submit_aborted', submit: err.payload.submit };
-      }
-      throw err;
-    }
-    if (err instanceof TxAbort) {
-      return { status: 'save_failed', save: err.result };
-    }
-    if (err instanceof TypedGroupProjectionError) {
-      // 投影哨兵：整事务已回滚，如实返回提交侧冲突终态（不落半个组）。
-      return {
-        status: 'submit_aborted',
-        submit: {
-          status: 'conflict',
-          reason: 'invalid_request',
-          detail: err.message,
-          request_id: params.submitRequestId,
-        },
-      };
-    }
-    throw err;
+  const out = await db.transaction(async (tx) => persistDeclaredQuestionGroupInTx(tx, params));
+  // 域冲突/失败终态不写 verify intent；只有 completed 可能携带待派发 intent。
+  if (out.status === 'completed') {
+    await drainSubmitVerifyIntents(db, out.submit);
   }
-  await drainSubmitVerifyIntents(db, out.submit);
-  return { status: 'completed', save: out.save, submit: out.submit };
+  return out;
 }

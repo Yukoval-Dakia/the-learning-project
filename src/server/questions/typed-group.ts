@@ -8,9 +8,12 @@
 //    一次性绑定为真实 id：按调用方给的 namespace（既有请求/来源/paid-output
 //    身份派生）sha256 派生 —— 同候选同 namespace 重放铸出同一组 id，
 //    持久层 PK/回执重放是二次兜底。先校验声明引用闭包（material_refs /
-//    blank_order / accepted_item_ids / 域内重复），dangling 一律拒绝，
+//    blank_order / accepted_item_ids / 作用域内重复），dangling 一律拒绝，
 //    绝不改写下标或显示 label 冒充身份、绝不注入缺省 blank_order /
-//    answer_shape。
+//    answer_shape。绑定作用域随 schema 寻址面：part/unit/material 文档级，
+//    slot 按所属 part、item/criterion 按所属 unit。
+//    根组身份：单 part 声明的 groupId = 该 part 绑定 id（根行即题目本身）；
+//    多 part 才铸独立 root id + 每 part 一条真实 child 行。
 //
 // 2) `insertTypedGroupChildren` —— 首发时把已绑定文档的每个 part 落成真实
 //    `question` 子行：`parent_question_id` = 根组 id、`part_index` = 声明序
@@ -47,13 +50,15 @@ export type DeclaredIdDomain =
   | 'material'
   | 'criterion';
 
-/** domain → 声明局部 id → 已绑定真实 id。 */
+/** domain → 声明局部 id → 已绑定真实 id。带作用域的域（slot→part、
+ *  item/criterion→unit）键为 `${scope}/${local}` 复合键。 */
 export type BoundIdMap = Partial<Record<DeclaredIdDomain, Record<string, string>>>;
 
 export interface BoundDeclaredGroup {
   /** 绑定后的完整 v2 文档（可直接进 saveDraftEditInTx 的 document 输入）。 */
   document: QuestionDraftDocumentT;
-  /** 根组 question.id —— 由同一 namespace 派生，供提交内核当 newGroupId。 */
+  /** 根组 question.id —— 由同一 namespace 派生，供提交内核当 newGroupId。
+   *  单 part 声明时为该 part 的绑定 id（根行即该题本身，无独立 root/child）。 */
   groupId: string;
   idMap: BoundIdMap;
 }
@@ -96,37 +101,56 @@ export function bindDeclaredGroupIds(
     });
   }
 
-  const digest = (domain: DeclaredIdDomain, local: string): string =>
+  // 绑定域的作用域按 schema 寻址面定：
+  //   - group/part/unit/material 文档级唯一（unit_id 是判分契约里的扁平寻址
+  //     身份，跨 part 重复会让 scoring_basis 引用歧义 ⇒ 拒）；
+  //   - slot 作用域 = 所属 part（blank_order 只引用本 part 槽；不同 part
+  //     各自声明 's1' 合法）；
+  //   - item / criterion 作用域 = 所属 unit（不同 select unit 各有 A/B 项、
+  //     各 rubric criteria 同名都是合法声明；key.accepted_item_ids 只解析
+  //     本 unit 的 items）。
+  // 带作用域域的 digest/map key 以 `${scope}/${local}` 区分；ref 解析同样
+  // 限定在声明它的作用域内，跨作用域同名的局部 id 不互相命中。
+  const digest = (domain: DeclaredIdDomain, scopedKey: string): string =>
     `bd_${domain}_${createHash('sha256')
       .update(`yuk1568:bind:${params.namespace}`)
       .update('\0')
       .update(domain)
       .update('\0')
-      .update(local)
+      .update(scopedKey)
       .digest('hex')
       .slice(0, 20)}`;
 
   const idMap: BoundIdMap = {};
-  const seen = new Map<DeclaredIdDomain, Set<string>>();
-  const claim = (domain: DeclaredIdDomain, local: string): string => {
-    const set = seen.get(domain) ?? new Set<string>();
-    if (set.has(local)) {
+  const seen = new Set<string>();
+  const claim = (domain: DeclaredIdDomain, local: string, scope?: string): string => {
+    const mapKey = scope != null ? `${scope}/${local}` : local;
+    const seenKey = `${domain}\0${mapKey}`;
+    if (seen.has(seenKey)) {
       issues.push({
         code: 'duplicate_declared_id',
-        detail: `${domain} id '${local}' declared more than once`,
+        detail:
+          scope != null
+            ? `${domain} id '${local}' declared more than once within '${scope}'`
+            : `${domain} id '${local}' declared more than once`,
       });
       return local;
     }
-    set.add(local);
-    seen.set(domain, set);
-    const boundId = digest(domain, local);
+    seen.add(seenKey);
+    const boundId = digest(domain, mapKey);
     const domainMap = idMap[domain] ?? {};
-    domainMap[local] = boundId;
+    domainMap[mapKey] = boundId;
     idMap[domain] = domainMap;
     return boundId;
   };
-  const ref = (domain: DeclaredIdDomain, local: string, at: Omit<BindIssue, 'code'>): string => {
-    const boundId = idMap[domain]?.[local];
+  const ref = (
+    domain: DeclaredIdDomain,
+    local: string,
+    at: Omit<BindIssue, 'code'>,
+    scope?: string,
+  ): string => {
+    const mapKey = scope != null ? `${scope}/${local}` : local;
+    const boundId = idMap[domain]?.[mapKey];
     if (boundId == null) {
       issues.push({
         ...at,
@@ -148,25 +172,35 @@ export function bindDeclaredGroupIds(
     const at = { part_id: part.part_id };
     const boundUnits = part.units.map((unit) => {
       const boundUnitId = claim('unit', unit.unit_id);
-      const boundSlotId = claim('slot', unit.slot_id);
+      // slot 身份属于本 part 的槽空间：同 part 内重复 = 冲突，跨 part 同名合法。
+      const boundSlotId = claim('slot', unit.slot_id, part.part_id);
       const spec = unit.response_spec;
       const boundSpec =
         spec.kind === 'select'
           ? {
               ...spec,
-              items: spec.items.map((item) => ({ ...item, item_id: claim('item', item.item_id) })),
+              items: spec.items.map((item) => ({
+                ...item,
+                item_id: claim('item', item.item_id, unit.unit_id),
+              })),
             }
           : spec;
+      // key 只解析本 unit 的 items（spec 先绑定，引用按本 unit 作用域查表）。
       const boundKey =
         unit.key?.kind === 'select'
           ? {
               ...unit.key,
               accepted_item_ids: unit.key.accepted_item_ids.map((itemId) =>
-                ref('item', itemId, {
-                  ...at,
-                  unit_id: unit.unit_id,
-                  detail: `unit '${unit.unit_id}' key`,
-                }),
+                ref(
+                  'item',
+                  itemId,
+                  {
+                    ...at,
+                    unit_id: unit.unit_id,
+                    detail: `unit '${unit.unit_id}' key`,
+                  },
+                  unit.unit_id,
+                ),
               ),
             }
           : unit.key;
@@ -189,7 +223,7 @@ export function bindDeclaredGroupIds(
                 ...unit.rubric,
                 criteria: unit.rubric.criteria.map((criterion) => ({
                   ...criterion,
-                  criterion_id: claim('criterion', criterion.criterion_id),
+                  criterion_id: claim('criterion', criterion.criterion_id, unit.unit_id),
                 })),
               }
             : unit.rubric,
@@ -205,11 +239,17 @@ export function bindDeclaredGroupIds(
         }),
       ),
       units: boundUnits,
+      // blank_order 只能引用本 part 声明过的槽（跨 part 同名 slot 不命中）。
       blank_order: part.blank_order?.map((slotId) =>
-        ref('slot', slotId, {
-          ...at,
-          detail: `part '${part.part_id}' blank_order`,
-        }),
+        ref(
+          'slot',
+          slotId,
+          {
+            ...at,
+            detail: `part '${part.part_id}' blank_order`,
+          },
+          part.part_id,
+        ),
       ),
     };
   });
@@ -219,7 +259,10 @@ export function bindDeclaredGroupIds(
     ok: true,
     bound: {
       document: { ...doc, parts: boundParts, materials: boundMaterials },
-      groupId: digest('group', 'root'),
+      // 单 part 组 = 根行自身即该题：groupId 就是已绑定 part_id（不另铸
+      // 独立 root id，也没有子行）。多 part 才有独立 root + 每 part 真实
+      // child 行。
+      groupId: boundParts.length === 1 ? boundParts[0].part_id : digest('group', 'root'),
       idMap,
     },
   };

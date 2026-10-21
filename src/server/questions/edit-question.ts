@@ -909,7 +909,6 @@ async function writeReceiptEvent(
     subject_kind: 'question_block',
     subject_id: blockId,
     outcome: 'success',
-    task_run_id: ctx.taskRunId ?? null,
     payload: { request_id: requestId, fingerprint, receipt },
     created_at: now,
     ingest_at: now,

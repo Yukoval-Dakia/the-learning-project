@@ -1,10 +1,10 @@
 # YUK-1568 S3 共享 save/submit 事务内核，2026-10-21
 
-任务ID node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021；YUK1568评论4528709登记本线唯一writer。隔离树 t3-12b32ff3，分支 feat/yuk-1568-shared-submit-intx-20261021，base origin/main 214ecb0ef（refactor YUK-1570 #1936）。T3原分支引用 t3/12b32ff3 保留，无force/reset。
+任务ID node:delegated-task:command%3Amcp%3A1b245de5-ec9a-4684-9829-ec78b93c5e5e%3Adelegate-task%3Astage1-yuk1568-shared-submit-intx-swe2-max-214-20261021；YUK1568评论4528709登记本线唯一writer。隔离树 t3-12b32ff3，分支 feat/yuk-1568-shared-submit-intx-20261021，merge base origin/main 102e77e42（#1935 已合），merge commit 8d95b2fc1。T3原分支引用 t3/12b32ff3 保留，无force/reset。
 
-Owned：src/server/questions/edit-question.ts（save内核化+Db wrapper+receipt task_run_id）；新模块 shared-submit.ts（submit InTx内核+producer投影+原子链persistDeclaredQuestionGroup+drain）、submit-decision.ts（判定层迁移）、typed-group.ts（声明id绑定+父子行投影）；baseline sourceSizeRecords+2。Held只读未动：submit-question.ts/parts.ts/draft-contract.ts/practice tools/submit-question.ts（#1925 fixed23e保护语义已在实施文档钉死父接线要求）。
+Owned：src/server/questions/edit-question.ts（save内核化+Db wrapper；task_run_id envelope 已按父定向撤回）；新模块 shared-submit.ts（submit InTx内核+最小producer投影[仅newGroupId/materializeParts]+原子链persistDeclaredQuestionGroup[caller canonical回执同事务槽位]+drain）、submit-decision.ts（判定层迁移+main#1935定稿注释）、typed-group.ts（声明id按schema作用域绑定+父子行投影）；baseline sourceSizeRecords+2。Held只读未动：submit-question.ts/parts.ts/draft-contract.ts/practice tools/submit-question.ts（#1925 fixed23e保护语义已在实施文档钉死父接线要求）。
 
-边界：sourced/producer可同现（重叠字段producer优先）、投影注入仅新组首提交、part_id=真实child.id、binding一次性namespace派生、conflict→整体回滚、withheld保留草稿终态、无skip_verify/publish:false模型面。完整接线TEXT+缺证清单见 docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
+边界：producer 只承载组id+子行物化（sourced仍权威承载route/metadata/difficulty/claim）；单part组groupId=绑定part_id无子行，多part独立root+真实child；item/criterion按unit、slot按part作用域查重；submit conflict=已提交业务终态（KC merge/URL release副作用保，绝不回滚已执行merge）仅内部错误整体回滚；caller槽位供父在同tx写canonical候选回执（锁序caller→save→submit→域锁，同指纹replayed/异指纹reused不重跑）；指纹无opts与main逐字节一致旧回执不动；withheld保留草稿终态、无skip/defer开关无新registry。完整接线TEXT+缺证清单见 docs/planning/2026-10-21-yuk1568-shared-submit-intx.md。
 
 实测缺：本机测试/断言全NOT_RUN（owner规则）；真实DB重放/并发/回滚NOT_RUN；published复合组下游消费NOT_RUN；producer缺省路径typed新组暂不投影子行（=main行为）；proposal-appliers是否改走原子链父裁决。typecheck/lint/build+schema/capability-boundaries/draft-status审计经heavy.sh全exit0，lint181warnings=main基线。
 

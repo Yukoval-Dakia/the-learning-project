@@ -66,14 +66,14 @@ export interface AdmissionCheckResult {
     | { state: 'withheld'; reason: 'unverified_rules' }
     | { state: 'admitted'; evidence: null };
   per_unit: SubmitUnitOutcome[];
-  /** 组级原因（dead_knowledge_node 等 —— 阻断提交）。 */
+  /** Group-level blockers such as dead_knowledge_node. */
   group_blockers: { code: string; detail: string }[];
 }
 
 /**
- * 判分准入检查。提交不带裁决：可判的 unit 记 verification_pending，整组
- * withheld。question_admission_run 把通过的裁决传进同一决定后，活知识点上
- * 全部 unit admitted 才返回 admitted。死知识点仍是组级 blocker。
+ * Scoring admission check. Submit carries no verdict, so a judgeable group stays
+ * withheld; once question_admission_run supplies passing evidence, a group on live
+ * knowledge nodes can be admitted. Dead knowledge nodes remain group blockers.
  */
 export async function runAdmissionChecks(
   db: Db | Tx,
@@ -125,10 +125,9 @@ export type ScoringRevision = Pick<
 >;
 
 /**
- * 已准入的组，只有判分层原样时才保留证据。答案键、选项、参考答案、rubric、
- * 评分单元都在 scoring_basis / response_spec 里，判分方式在 execution_plan。
- * 题面、展示或材料文本可以变。任一判分层变了，或有 unit 已经不可自动判，
- * 旧证据不再适用，回到 withheld。新题和未准入的组不在这里自动准入。
+ * An admitted group keeps its evidence only while the scoring layers are unchanged.
+ * Prompt, presentation and material text may change; a changed key/rule/executor or a
+ * no-longer-judgeable unit returns the group to withheld. New groups never auto-admit.
  */
 export function conversionWithheld(contract: DraftContract, requestId: string): SubmitResult {
   return {
@@ -167,7 +166,7 @@ export function admissionForContentEdit(
 ): PublishAdmission {
   if (lifecycle?.scoring_admission_state !== 'admitted') return checks.admission;
   const copied = revision != null && storedScoringCopied(revision, contract);
-  // 原样拷贝已存判分层时，编码摘要里的 human_review 不是这次编辑新引入的。
+  // A verbatim copied scoring layer did not introduce the encoder's human_review.
   if (!copied && checks.per_unit.some((unit) => unit.status === 'withheld')) {
     return checks.admission;
   }
@@ -184,12 +183,10 @@ export function admissionForContentEdit(
 }
 
 /**
- * 已存 revision 与这次提交可能不是同一编码：旧行是 option_set_key +
- * single_choice/multi_choice、没有规则；编辑草稿会再编成 select_key + select
- * 并补上印出的规则。先把已存 revision 走同一条草稿往返，再比三层。
- * 即将发布的三层与已存 revision 逐字节相同（题面编辑原样拷贝）时直接算没变，
- * 即使草稿往返本身有损。往返形不成规范契约，或往返丢掉、改写了已存判分字段
- * 且这次发布的层不是那份原件时，视为已变（回 withheld）。
+ * Stored and new revisions may use different encodings (legacy option_set_key/
+ * single_choice versus select_key/select), so run the stored revision through the same
+ * draft round trip before comparing the three layers. Byte-identical published layers
+ * count as unchanged even if the round trip is lossy; an unfaithful trip counts as changed.
  */
 export function scoringLayersUnchanged(
   revision: ScoringRevision,
@@ -215,7 +212,7 @@ export function scoringLayersUnchanged(
   );
 }
 
-/** 发布 seam 会抛的契约错误，在调用前收成 withheld。withheld 时未准入的模型执行器是允许的。 */
+/** Collect publish-seam contract errors up front; unadmitted model executors are allowed while withheld. */
 export function contractBarrierIssues(
   contract: DraftContract,
   presentation: PresentationT | null,
