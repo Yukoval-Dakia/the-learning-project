@@ -980,6 +980,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-73cd2d4f-a00c-472c-9c9b-d9a3258f3cbb",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "loadTeachingBrief",
+      "targetModule": "src/capabilities/shell/server/teaching-brief.ts",
+      "targetSymbol": "loadTeachingBrief",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 152
+        }
+      ],
+      "evidence": "The authenticated Start workbench reader dynamically imports this existing complete loader. The retained HTTP adapter directly calls the same owner.",
+      "rationale": "Shell owns the single teaching brief selection, candidate validity, time windows, state and nullable projection. The live client changes only its read transport while preserving the HTTP fallback and existing interaction writes.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-037efd6f-d678-43c3-960a-e2cc38e815c5",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
