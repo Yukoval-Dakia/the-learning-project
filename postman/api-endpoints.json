@@ -1930,5 +1930,18 @@
         "notes": "202 {accepted, replayed}；已终态（已答/超时）→ 409 ask_already_resolved；选项不存在/空文本/超 500 字/kind 不匹配 → 422 对应 code。需 x-internal-token"
       }
     ]
+  },
+  {
+    "path": "/api/ingestion-sessions/:id/history",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取录入会话的持久历史还原（YUK-1522）：run 进度/终态、逐题 at-finish+当前准入状态、asks+answers",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "200 {session, run, items, asks, evidence}。agent 路径合并 agent_budget.history 持久快照与仍在 30 天窗内的 job_events；extract 路径读 question_block。state_at_finish 是运行终态（agent 状态词或 block 状态词），current 是当下 servable/hold_reason/held_since/next_action/pending_action —— 两者不合并。ask.resolved=null 即未答，expired_unresolved 标记过期未答（G13）。无法证明的切片留空并列入 evidence.missing（run/items/asks/snapshot），绝不臆造。session 不存在 → 404。需 x-internal-token"
+      }
+    ]
   }
 ]
