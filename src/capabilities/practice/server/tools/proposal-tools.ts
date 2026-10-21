@@ -12,7 +12,7 @@ import { z } from 'zod';
 // ADR-0032 D6-B (YUK-203 lane L6) — the pure verify-gate is reused at PROPOSE
 // time (pre-flight against the live tree) and again at ACCEPT time (the applier).
 import type { VariantProposalResult } from '@/capabilities/practice/public';
-import { applyQuestionEdit } from '@/capabilities/practice/public';
+import { applyQuestionEdit } from '@/capabilities/practice/server/question-structure-edit';
 import { QuestionKind } from '@/core/schema/business';
 // P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
 // explicitly via the propose-tool input arg (§4.1/§4.2).

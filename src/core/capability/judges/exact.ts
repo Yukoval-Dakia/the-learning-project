@@ -70,7 +70,6 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     if (choices.length === 0) return null;
     const t = value.normalize('NFKC').trim();
     if (t.length === 0) return null;
-    // `t` is already NFKC + trim; normalize(t) would only re-add toLowerCase.
     const tLower = t.toLowerCase();
 
     // Text equality first, so an option like 'True'/'a + b' is not parsed as a letter.

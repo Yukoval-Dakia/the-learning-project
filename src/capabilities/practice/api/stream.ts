@@ -1,9 +1,9 @@
-// M2 (YUK-316) — 练习流 API（handoff 契约：GET /api/practice/stream?date=today）。
-// 当日为空时 lazy compose（首次打开练习面）；recompose 是手动重排入口
-//（M4 夜链落地后 composer_nightly 接管日常生成，这两个入口保留为兜底/调试面）。
+// 练习流 API: GET /api/practice/stream?date=today.
+// 当日为空时 lazy compose；recompose 是手动重排入口（夜间 composer 接管日常生成，
+// 这两个入口保留为兜底/调试面）。
 //
-// YUK-1358 — 本文件只剩 Request/Response 适配；校验与编排收敛在
-// `../server/stream-operations.ts`（typed operations，Start 等 live consumer 复用）。
+// 本文件只为 Request/Response 适配；校验与编排在
+// `../server/stream-operations.ts`，供其他 live consumer 复用。
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

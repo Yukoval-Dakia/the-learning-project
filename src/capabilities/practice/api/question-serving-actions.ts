@@ -1,8 +1,8 @@
-// YUK-1514 — POST /api/questions/[id]/serving-actions/[command]
-// Command surface for releasing a held question (serving-holds UI contract v2).
+// POST /api/questions/[id]/serving-actions/[command]:
+// command surface for releasing a held question (serving-holds UI contract v2).
 //
-//   reverify            async — re-enqueue the admission run through #1752's
-//                        mechanism (paid-effect claim never re-pays an
+//   reverify            async — re-enqueue the admission run through the
+//                        paid-effect-claim mechanism (never re-pays an
 //                        identical already-paid base)
 //   recheck_source      async — re-dispatch source_verify onto the queue the
 //                        verify-dispatch outbox drains to

@@ -1,6 +1,4 @@
-// YUK-1572 — tier-2 deterministic pre-check cluster, extracted from
-// source_verify.ts (the "deterministic checks" block; the moved rule bodies are
-// verbatim).
+// Tier-2 deterministic pre-check cluster.
 //
 // This module owns the PURE half of the tier-2 check set
 // (CHECK_SETS_BY_TIER[2] = structure_completeness + source_consistency +
@@ -19,12 +17,7 @@
 //
 // SourceVerifyPrecheckInput is exactly the field set these checks read,
 // declared structurally so the module does not import the question table's
-// Drizzle type. It is not a zero-dependency module: the rules still
-// value-import the same helpers they used before (WebSourcedProvenance /
-// deriveSourceTier, normalizeToCanonicalKind, maxNgramOverlap) and
-// type-import the shared VerifyCheck contract. The handler passes the same
-// verify-input object it always passed — a question row, or its
-// frozen-revision flat projection carrying the same fields.
+// Drizzle type.
 
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
@@ -61,14 +54,14 @@ export interface SourceVerifyPrecheckInput {
 // kind='true_false' + reference_md carrying 真/假 with NO choices_md (practice/paper
 // fixtures share this shape, and judge routing dispatches true_false straight to
 // exact). Forcing ≥2 choices onto sourced true_false rows would strand every
-// option-less 判断题 in draft forever (F1).
+// option-less 判断题 in draft forever.
 export function checkStructureCompleteness(row: SourceVerifyPrecheckInput): CheckOutcome {
   const problems: string[] = [];
   if (!row.prompt_md || row.prompt_md.trim().length === 0) problems.push('empty prompt_md');
   if (!row.reference_md || row.reference_md.trim().length === 0) {
     problems.push('empty reference_md');
   }
-  // YUK-386 — kind is a free-form label; fold through the vocab (single_choice /
+  // kind is a free-form label; fold through the vocab (single_choice /
   // multiple_choice → choice) so legacy profile-vocab rows keep the same check,
   // then read the STRUCTURE: a choice-shaped row must carry ≥2 options.
   const choices = row.choices_md ?? [];
@@ -101,10 +94,10 @@ const SOURCE_GROUNDING_MIN_OVERLAP = 0.15;
 // does NOT derive tier 2, omits source_ref, or whose stored content does not ground
 // the declared source page is rejected. The overlap is DETERMINISTIC over the
 // PERSISTED extract — verify never refetches the network (mirrors the quiz_gen
-// source_pack snippet → quiz_verify maxNgramOverlap precedent; spec §4).
+// source_pack snippet → quiz_verify maxNgramOverlap precedent).
 export function checkSourceConsistency(row: SourceVerifyPrecheckInput): CheckOutcome {
   const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-  // F2: extract is the deterministic grounding anchor. A web_sourced row without a
+  // extract is the deterministic grounding anchor. A web_sourced row without a
   // non-empty extract cannot derive tier 2 (WebSourcedProvenance now requires it), so
   // the generic tier check below already rejects it — but check it FIRST so the audit
   // reason names extract precisely rather than the opaque "missing or malformed".
@@ -135,7 +128,7 @@ export function checkSourceConsistency(row: SourceVerifyPrecheckInput): CheckOut
     };
   }
   // A web_sourced question with no source_ref has incomplete provenance — the column
-  // is supposed to carry the fetched URL (合约三). Missing → fail (CR), not pass.
+  // is supposed to carry the fetched URL. Missing → fail (CR), not pass.
   if (!row.source_ref) {
     return {
       check: 'source_consistency',
@@ -150,7 +143,7 @@ export function checkSourceConsistency(row: SourceVerifyPrecheckInput): CheckOut
       reason: `source_ref (${row.source_ref}) disagrees with provenance url (${parsed.data.url})`,
     };
   }
-  // Deterministic content grounding (F2). extract is guaranteed non-empty here (the
+  // Deterministic content grounding. extract is guaranteed non-empty here (the
   // top-of-function guard + the required WebSourcedProvenance.extract contract). The
   // question's prompt+reference must overlap it — a mis-extracted or fabricated source
   // carries an extract that does not echo the question → fail.

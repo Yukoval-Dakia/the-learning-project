@@ -16,8 +16,6 @@ import {
 export const BUILTIN_SUBJECT_IDS = ['general', 'yuwen', 'math', 'physics'] as const;
 export type BuiltinSubjectId = (typeof BUILTIN_SUBJECT_IDS)[number];
 
-// Bump the matching cell whenever that seed's content changes, or deployed rows
-// keep the old payload.
 export const BUILTIN_TRAIT_SEED_VERSIONS: Record<
   BuiltinSubjectId,
   Record<SubjectTraitKind, string>

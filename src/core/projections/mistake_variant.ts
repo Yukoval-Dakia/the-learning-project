@@ -7,12 +7,10 @@ import {
 import { MistakeVariantCreateExperimental } from '../schema/event/mistake-variant-events';
 import type { FoldEvent } from './fold-event';
 
-// Pure mistake_variant reducer. Base is the runtime create or the backfill genesis, first
-// one wins; both snapshot the whole row because cause_category is fold-blind — no downstream
-// event carries it. The accept/verify/dismiss/retract chain is keyed by the base's proposal id.
-//
-// No IO, ids, or clocks; updated_at is the last applied event time, and the table has no
-// version column. Gather is Q1 for the base plus its caused_by chain.
+// Pure mistake_variant reducer. Runtime create and backfill genesis are both full-row
+// snapshots and the first base wins; cause_category is fold-blind, so no later event
+// carries it. The accept/verify/dismiss/retract chain routes by the base's proposal id.
+// No version column; updated_at is the last applied event time.
 
 // Focused parse: only the fields the broken-flip consumes are required.
 const VariantVerifyPayload = z.object({
@@ -88,7 +86,7 @@ export function foldMistakeVariant(
       continue;
     }
 
-    // ---------- BASE: experimental:genesis (backfill seed of a pre-W2 row) ----------
+    // ---------- BASE: genesis (backfill seed of a pre-W2 row) ----------
     if (fe.action === 'experimental:genesis' && fe.subject_kind === 'mistake_variant') {
       if (row !== null) continue;
       const g = GenesisExperimental.safeParse(toParseInput(fe));
@@ -152,7 +150,7 @@ export function foldMistakeVariant(
           updated_at: fe.created_at,
         };
       } else {
-        // pass — touch updated_at only (mirrors variant_verify.ts:303-309).
+        // pass — touch updated_at only.
         row = { ...row, updated_at: fe.created_at };
       }
       continue;

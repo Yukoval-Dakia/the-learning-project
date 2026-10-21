@@ -10,15 +10,13 @@ import {
 } from '../schema/event/question-block-events';
 import type { FoldEvent } from './fold-event';
 
-// Pure question_block reducer. Create applies its full snapshot last-write-wins, because a
-// rescue is a second create for the same block; genesis is a backfill seed and first-base-wins.
+// Pure question_block reducer. Create applies its full snapshot last-write-wins because
+// a rescue re-creates the block; genesis is a backfill seed and first-base-wins.
 //
-// Structured edits are keyed on the primary block and aggregate merge sources: the primary
-// takes the after tree, while an absorbed source only flips to ignored with its version taken
-// verbatim — its structured is never re-authored. updated_at always comes from the event, never
-// a snapshot. No IO, ids, or clocks.
-//
-// Gather is Q1 for this block plus Q2 for edits that absorbed it as a merged source.
+// Structured edits key on the primary block: the primary takes the after tree, while an
+// absorbed source only flips to ignored with its version verbatim. updated_at always
+// comes from the event, never a snapshot. Gather is Q1 plus edits that absorbed this
+// block as a merged source.
 
 // Rebuild the parse input from the flat row so each branch validates its payload.
 function toParseInput(fe: FoldEvent): unknown {
@@ -72,7 +70,7 @@ export function foldQuestionBlock(
   let row: QuestionBlockRowSnapshotT | null = null;
 
   for (const fe of ordered) {
-    // ---------- BASE: question_block_create — last-write-wins, because rescue re-creates ----------
+    // ---------- BASE: question_block_create — last-write-wins; rescue re-creates ----------
     if (
       fe.subject_kind === 'question_block' &&
       fe.subject_id === blockId &&
@@ -126,8 +124,8 @@ export function foldQuestionBlock(
       if (entry === undefined) continue; // this edit did not touch blockId
 
       if (entry.role === 'primary') {
-        // The primary carries the after tree; figures are carried only by ops that re-point them.
-        // A merge appends the absorbed ids to merged_from_block_ids.
+        // The primary carries the after tree; figures change only on re-pointing ops.
+        // A merge appends absorbed ids to merged_from_block_ids.
         const absorbedIds =
           e.data.payload.op === 'merge_questions'
             ? blocks.filter((b) => b.role === 'merged_source').map((b) => b.block_id)
@@ -147,8 +145,8 @@ export function foldQuestionBlock(
         continue;
       }
 
-      // Absorbed source: flip status and take version verbatim. Never overwrite its structured;
-      // the relation is stored forward on the primary's merged_from_block_ids.
+      // Absorbed source: flip status, take version verbatim, never re-author structured;
+      // the relation lives forward on the primary's merged_from_block_ids.
       row = {
         ...row,
         status: entry.status,
@@ -159,9 +157,8 @@ export function foldQuestionBlock(
     }
 
     // ---------- question_block_lifecycle — presence-based apply ----------
-    // A writer carries exactly the columns it touched; undefined keeps the running value, so an
-    // ignore sweep never clears imports. A carried null on imported_* is an explicit revert.
-    // Version is verbatim and updated_at is the event time.
+    // Undefined keeps the running value, so an ignore sweep never clears imports; a
+    // carried null on imported_* is an explicit revert. Version is verbatim.
     if (
       fe.action === 'experimental:question_block_lifecycle' &&
       fe.subject_kind === 'question_block' &&

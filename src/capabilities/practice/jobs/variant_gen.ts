@@ -30,7 +30,7 @@ export function buildVariantGenHandler(
         continue;
       }
       try {
-        // YUK-1054 (§9 paid fanout 抑制)— 判已翻转（effective 判变为 correct）的
+        // 判已翻转（effective 判变为 correct）的
         // attempt 不再产生变体：变体生成只为「真实答错」服务，改判后烧钱是浪费。
         // attempt.outcome 是 immutable 执行事实（永远 'failure'），故必须在 job 时
         // 读 effective 判复核，不能信任排队时刻的 outcome 快照。

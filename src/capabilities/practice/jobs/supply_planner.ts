@@ -1,19 +1,19 @@
-// YUK-987 (985/E2) — supply_planner：供给需求层的 planner cron agent。
+// supply_planner：供给需求层的 planner cron agent。
 //
-// 链路位置（照 spec）：
+// 链路位置：
 //   原始信号读面 → LLM 产出 SupplyPlanV1 → 确定性机器门（supply-plan-gate.ts）
-//   → 门过：run 事件（accepted）+ 逐项 demand 事件（manual 留痕，E3 executor 未落地）
+//   → 门过：run 事件（accepted）+ 逐项 demand 事件（manual 留痕）
 //   → 门拒（≤2 轮有界重生成后仍不过）：run 事件（rejected），当晚零需求事件
 //   → 扫描器安全网：question_supply_nightly 照常 06:00 派发缺口，planner 失败/空
 //     计划不影响它；本 job 与 DAG 无硬边（设计使然，安全网不被 planner 拖死）。
 //   → shadow 对比：同 job 内跑 discoverSupplyTargets（只读确定性扫描），planner
-//     需求 vs 扫描器目标同窗口对比事件，供 YUK-698 Phase D shadow planner 分析。
+//     需求 vs 扫描器目标同窗口对比事件，供 shadow 分析。
 //
 // 读面原则：喂给 LLM 的是原始信号（知识树 + 每 KC 可用/草稿题数 + 掌握信号 +
 // 待处理 placement claim + jyeoo 预算余量），**不喂扫描器结论**——planner 需求
 // 必须独立形成，shadow 对比才有信号价值。
 //
-// 运行留痕：runAgentTask 自动写 ai_task_runs + cost ledger（#71 语义：SDK 上报
+// 运行留痕：runAgentTask 自动写 ai_task_runs + cost ledger（SDK 上报
 // 正成本照记，未上报则 pricebook 估计）；本 job 的 run 事件额外汇总 task_run_ids
 // 与 cost_micro_usd 供日聚合。所有事件 ingest_at=now 显式退出 mem0 事实层
 // （inventory shadow 同款，ops 账本不是学习者事实）。
@@ -347,7 +347,7 @@ export async function runSupplyPlanner(
         action: 'experimental:supply_planner_demand',
         subject_kind: 'knowledge',
         subject_id: item.knowledge_id,
-        // 逐项留痕；E3 起由确定性 executor 消费（supply_execute 队列），
+        // 逐项留痕；由确定性 executor 消费（supply_execute 队列），
         // 完成链路见 experimental:supply_executor 事件。
         outcome: 'manual',
         payload: {
@@ -389,7 +389,7 @@ export async function runSupplyPlanner(
       deps.enqueueSupplyExecute ??
       ((data: Record<string, unknown>) => enqueueSupplyDispatchJob('supply_execute', data));
     try {
-      // 一次内联重试捱瞬时 boss 抖动；二次仍败 → 持久失败事件 + 手动重跑指令（Oracle P1-6）。
+      // 一次内联重试捱瞬时 boss 抖动；二次仍败 → 持久失败事件 + 手动重跑指令。
       executeEnqueued =
         (await enqueueExecute(executePayload)) ?? (await enqueueExecute(executePayload));
     } catch (enqueueError) {

@@ -1,76 +1,35 @@
-// A6 (YUK-442) — prerequisite directed soft propagation over per-KC ability θ̂.
+// A6 (YUK-442) — directed soft propagation over per-KC ability θ̂.
 //
-// Pure, no IO, cross-subject (core/ boundary). The DIRECTED complement to A5's
-// symmetric Laplacian (graph-laplacian.ts): a prerequisite edge k₁→k₂ (k₁ is a
-// prerequisite OF k₂) encodes the SOFT order belief P(master k₁) ≥ P(master k₂).
-//   - 答对高阶 (dependent estimated ABOVE its prereq) → RETRO-CREDIT the prereq up
-//     (cheap implicit evidence: demonstrating the advanced skill implies the prereq).
-//   - 答错先修 / 前置弱 (prereq below the dependent) → PRESS the dependent down
-//     (you likely can't do k₂ if you don't know its prerequisite k₁).
+// The directed complement to A5: a prerequisite edge k₁→k₂ means P(master k₁) ≥
+// P(master k₂). A dependent estimated above its prereq retro-credits the prereq;
+// a weak prereq presses the dependent down. Constraints:
+//   1. Soft order prior, not a hard constraint. LLM edges are revisable, so an
+//      additive one-directional penalty driven by the violation is safer than
+//      clamping θ; it is read-side only and never writes mastery_state.
+//   2. Directed edges only. related_to belongs to A5; this module trusts the caller
+//      to normalise every edge to {from: PREREQ, to: DEPENDENT}.
+//   3. Mean only. The per-KC SE/variance is untouched; propagated confidence is not
+//      calibrated evidence.
+//   4. Both strengths 0 returns identity.
 //
-// ── HARD CONSTRAINTS (YUK-442 dossier + math dossier 2026-06-20) ──────────────
-//
-//   (1) SOFT ORDER PRIOR, NOT a hard constraint. A hard order constraint
-//       (θ₂ ≤ θ₁ enforced) on LLM-generated edges is TOO STRONG — a wrong edge would
-//       SILENTLY corrupt firm-up. We soften to an additive, one-directional PENALTY
-//       /credit driven by the ordering VIOLATION; edges are revisable (this is a
-//       READ-side recompute, never written to mastery_state, so a corrected edge
-//       immediately re-projects — see mastery/state.ts wiring).
-//
-//   (2) DIRECTED edges ONLY: `prerequisite` (and `derived_from` as directed
-//       inheritance, normalised by the caller). `related_to` (symmetric → A5) and
-//       `contrasts_with` (reverse signal) are EXCLUDED. This module is orientation-
-//       normalised: every DirectedEdge is {from: PREREQ, to: DEPENDENT}; the wiring
-//       layer maps relation_type → that orientation (prerequisite: from→to;
-//       derived_from: to→from, since "from 派生自 to" makes the base `to` the prereq).
-//
-//   (3) SOFT LAYER — mean-only, READ-side. Returns an ADDITIVE Δθ per node applied to
-//       the surfaced θ̂ MEAN only; the per-KC standard error / variance is left
-//       untouched (ADR-0035 corollary — do not pass off an uncalibrated propagated
-//       confidence as hard). Never writes mastery_state.theta_hat — the三维正交 red
-//       line keeps the calibration axis clean (propagation is a diagnostic/selection
-//       projection, not baked evidence).
-//
-//   (4) λ→0 退回独立: with both strengths 0 the adjustment is identically 0 (θ̃ = θ̂).
-//
-// n=1 admissible: consumes ONLY the single learner's own θ̂ + KG edge weights
-//   (owner/LLM-supplied FIXED priors) + owner-fixed λ constants. No a/slip/guess/φ,
-//   no cross-learner fit. λ MUST stay owner-supplied — learning λ from data would need
-//   cross-subject variance (inadmissible, red line), so it is hardcoded behind a flag.
-//
-// PHASE-DEFERRED — λ_down / λ_up are conservative owner-supplied placeholders, NOT
-//   calibrated truth. Retro-credit (up) is weaker than the downstream press (down),
-//   mirroring the common "答错的诊断信息量 > 答对" PFA intuition; this is placeholder
-//   direction, tuned later behind the dark flag.
+// λ_down/λ_up are owner-supplied fixed priors, not calibrated truth. Retro-credit is
+// intentionally weaker than the downstream press; both stay behind the dark flag.
 
 /**
- * FLAG — A6 prerequisite directed propagation of the surfaced per-KC ability θ̂.
- *
- * Module-level const dark-ship flag (mirrors GRAPH_LAPLACIAN_ENABLED / SRT_ENABLED).
- * Default FALSE: getMasteryProjection is BYTE-IDENTICAL to today (no prereq edge
- * fetch, no Δθ). The "act flip" is gated on the A6 validation gate; the wiring is
- * built + electrified to live now (defer-flip, not defer-build).
+ * Dark flag for A6 propagation. False leaves getMasteryProjection byte-identical
+ * (no prereq fetch, no Δθ); the wiring is already live behind the flag.
  */
 export const PREREQ_THETA_PROPAGATION_ENABLED = false;
 
-/**
- * PHASE-DEFERRED — downstream-press strength λ_down (owner-supplied fixed prior).
- * How hard a WEAK prerequisite presses its dependent's estimate down per unit of
- * ordering violation × edge weight. Conservative default.
- */
+/** Downstream-press strength λ_down (owner-fixed conservative prior). */
 export const PREREQ_PROP_LAMBDA_DOWN = 0.3;
 
-/**
- * PHASE-DEFERRED — retro-credit strength λ_up (owner-supplied fixed prior).
- * How much a MASTERED dependent retro-credits its prerequisite up per unit of
- * ordering violation × edge weight. Weaker than λ_down (答对 ≺ 答错 information).
- */
+/** Retro-credit strength λ_up, weaker than the press (owner-fixed prior). */
 export const PREREQ_PROP_LAMBDA_UP = 0.15;
 
 /**
- * A directed prerequisite edge, orientation-NORMALISED so `from` is always the
- * PREREQUISITE and `to` the DEPENDENT (from must be mastered before to). The wiring
- * layer is responsible for mapping each relation_type to this orientation.
+ * Directed edge, normalised so `from` is the prerequisite and `to` the dependent.
+ * The wiring layer maps relation_type to this orientation.
  */
 export interface DirectedEdge {
   /** the prerequisite KC (must be mastered first). */
@@ -82,21 +41,14 @@ export interface DirectedEdge {
 }
 
 /**
- * Compute the additive per-node ability adjustment Δθ from directed prerequisite
- * edges. For each edge prereq→dependent with weight w:
+ * Additive Δθ per node from directed prerequisite edges. For prereq→dependent with
+ * weight w and violation = max(0, θ_dependent − θ_prereq):
  *
- *   violation = max(0, θ̂[dependent] − θ̂[prereq])   // ordering breach: dependent > prereq
- *   Δθ[dependent] += −λ_down · w · violation         // press the dependent DOWN
- *   Δθ[prereq]    += +λ_up   · w · violation         // retro-credit the prereq UP
+ *   Δθ[dependent] += −λ_down · w · violation
+ *   Δθ[prereq]    += +λ_up   · w · violation
  *
- * The `max(0, …)` makes it ONE-DIRECTIONAL: when the order already holds
- * (dependent ≤ prereq) the edge contributes nothing. Both directions are driven by
- * the SAME violation magnitude but with independent strengths. Nodes absent from
- * `thetaHat` are treated as latent at `priorMean` (default 0). A node with NO edge
- * gets Δθ = 0 (absent from the returned map ⇒ caller adds 0).
- *
- * Pure — returns a fresh Map of node id → Δθ (only nodes with a non-zero adjustment).
- * λ_down = λ_up = 0 ⇒ empty map (退回独立 / identity).
+ * One-directional: when the order already holds the edge contributes nothing. Nodes
+ * absent from θHat are treated as priorMean. Returns only non-zero adjustments.
  */
 export function prereqAdjustments(
   thetaHat: Map<string, number>,
@@ -124,10 +76,7 @@ export function prereqAdjustments(
   return delta;
 }
 
-/**
- * Apply {@link prereqAdjustments} and return the adjusted θ̃ per node (θ̂ + Δθ) for
- * the requested node set. Nodes with no adjustment pass through unchanged. Pure.
- */
+/** Apply {@link prereqAdjustments} to the requested nodes; unadjusted nodes pass through. */
 export function propagatePrereq(
   nodeIds: string[],
   thetaHat: Map<string, number>,

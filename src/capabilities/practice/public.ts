@@ -175,7 +175,6 @@ export type {
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
 // public ports repointed from central deep imports.
-export { applyQuestionEdit } from './server/proposal-appliers';
 export type { DispatchResult } from './server/question-supply/dispatcher';
 export {
   SUPPLY_DISPATCH_COOLDOWN_DAYS,

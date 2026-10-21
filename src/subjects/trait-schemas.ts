@@ -1,11 +1,6 @@
 // Per-kind strict write-gate schemas and the single source of trait kinds
 // (db/schema imports them so the enums cannot drift). Browser-safe.
 //
-// Field split: charter (languageStyle + flat prompt fragments + note template),
-// judge_policy (kinds/routes/capabilities), cause_taxonomy, source_policy,
-// render_theme, scheduling. id/displayName live on the subject control row;
-// assembly version is computed, never stored.
-//
 // Charter is deliberately a flat named-section object, not nested promptFragments,
 // so a strict top-level gate rejects unknown sections. methodology/rubricGuidance
 // default to '' because empty is the legal initial state; .min(1) would break
@@ -60,7 +55,6 @@ export const CharterTraitSchema = z
         check: z.string().trim().min(1),
       })
       .strict(),
-    // Empty string is legal here (see module header); seeds start empty.
     methodology: z.string().default(''),
     rubricGuidance: z.string().default(''),
   })
@@ -146,7 +140,7 @@ export type SubjectTraitPayloads = {
 
 const SubjectTraitPayloadsSchema = z.object(TRAIT_PAYLOAD_SCHEMAS);
 
-/** Validate the complete persisted/overridden assembly; error paths include the trait kind. */
+/** Validate the complete persisted/overridden assembly; errors name the trait kind. */
 export function parseTraitPayloads(
   raw: Partial<Record<SubjectTraitKind, unknown>>,
 ): SubjectTraitPayloads {

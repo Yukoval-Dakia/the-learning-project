@@ -1,13 +1,8 @@
-// Phase 1d — pg-boss handler for SessionSummaryTask.
+// pg-boss handler for SessionSummaryTask.
 //
-// Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end` alias
-// transitions to completed. Picks the job up async so the LLM call doesn't
+// Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end`
+// alias when the transition reaches completed. Runs async so the LLM call doesn't
 // block the close request (and survives the page being closed mid-flight).
-//
-// YUK-870 (F3.5b) — moved from src/server/boss/handlers/session_summary.ts into
-// the practice capability; the manifest jobs entry now owns the registration
-// (LLM tier queue + 2s/1 worker options, equivalence with the retired central
-// line). Implementation unchanged.
 
 import type { Job } from 'pg-boss';
 

@@ -44,7 +44,6 @@ function serializeObject(value: Record<string, unknown>, depth: number): string 
   const inner = indent(depth + 1);
   const lines: string[] = [];
   for (const [key, fieldValue] of Object.entries(value)) {
-    // Absent keys are omitted, never emitted as undefined.
     if (fieldValue === undefined) {
       continue;
     }

@@ -1,4 +1,4 @@
-// YUK-533 (ADR-0036 RT1 consumer) — confusable-contrast supply discovery + dispatch nightly.
+// confusable-contrast supply discovery + dispatch nightly.
 //
 // Structurally mirrors question_supply_nightly.ts: pure discovery (discoverConfusable
 // ContrastTargets, zero write / zero LLM) → QuestionSupplyTarget[] (one per confusable KC
@@ -6,14 +6,14 @@
 // drafts) or marks manual. The whole job is DARK behind CONFUSABLE_CONTRAST_ENABLED: the
 // discovery returns [] when the flag is OFF, so this nightly is a NO-OP until the flip.
 //
-// ── 红线：成本（G-COST）─────────────────────────────────────────────────────
+// ── 红线：成本 ───────────────────────────────────────────────────────────────
 // This cron makes paid acquisition (LLM quiz_gen) happen automatically. The ONLY job-spam
 // guards are the dispatcher's 7d fingerprint cooldown (recentDispatchExists) + this job's
 // per-run cap (DEFAULT_MAX_PER_RUN). This job DEPENDS on the dispatcher's cooldown as the
 // cost guard — it NEVER bypasses the dispatcher to enqueue quiz_gen directly. cron sits
 // after the question_supply nightly (06:00) so the confusable pass is the last supply lane.
 //
-// ── 红线：propose-only (B5) + 只读消费 (G3) ─────────────────────────────────
+// ── 红线：propose-only + 只读消费 ─────────────────────────────────────────────
 // quiz_gen persists every generated item with draft_status='draft' (NOT the review pool, no
 // FSRS) — never auto-active. This job只 discovers (read-only) + dispatches; it writes no
 // question, no b-anchor, no edge. Pure read-only consumption + dispatch.
@@ -29,11 +29,11 @@ type DispatchDeps = Parameters<typeof dispatchSupplyTargets>[2];
 type DepsOverride = {
   /** dispatcher 注入（DB 测试可注入 fake enqueue / cooldown / webSearchAvailable）。 */
   dispatchDeps?: DispatchDeps;
-  /** 本轮最多派发多少个对比目标（防一次 cron 打爆付费队列，mirror question_supply_nightly F3）。default 25。 */
+  /** 本轮最多派发多少个对比目标（防一次 cron 打爆付费队列，mirror question_supply_nightly）。default 25。 */
   maxPerRun?: number;
 };
 
-// ── 红线：per-run 派发硬顶（G-COST）──────────────────────────────────────────
+// ── 红线：per-run 派发硬顶 ───────────────────────────────────────────────────
 // Accident hard-cap, NOT a tight limit: on the FIRST run (before any cooldown evidence
 // exists) the dispatcher's 7d fingerprint cooldown cannot throttle, so a large confusable
 // mesh would flood the paid quiz_gen queue in one pass. discoverConfusableContrastTargets

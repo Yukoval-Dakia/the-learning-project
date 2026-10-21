@@ -1,4 +1,4 @@
-// POST /api/placement-sessions/[id]/held-release — YUK-1405 L1 (stage「第一天能用」).
+// POST /api/placement-sessions/[id]/held-release.
 //
 // Releases the probe's currently-held issuance: an issued item whose answer was accepted
 // but no judge task/settlement can complete stays 'held' forever without this exit. The
