@@ -120,8 +120,6 @@ export {
 
 export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
-  loadLatestTrustedInterventionDiagnosticVerdict,
-  loadNativeInterventionDiagnosticState,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
