@@ -34,13 +34,12 @@ import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
-  newCheckReasoning,
   statisticalWeights,
-  variantReasoning,
 } from './softmax-selection';
 import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
+import { presentNonDueQuestion } from './stream-item-presentation';
 import {
   type StreamScope,
   type StreamView,
@@ -1244,7 +1243,7 @@ export async function reRankAfterAnswer(
       const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
       slot++;
       const signal = signalByRef.get(s.refId);
-      const source = sourceByRef.get(s.refId) ?? 'variant';
+      const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
       const newRowId = newId();
       const inserted = await tx
         .insert(practice_stream_item)
@@ -1255,13 +1254,10 @@ export async function reRankAfterAnswer(
           position: pos,
           item_kind: 'question' as const,
           ref_id: s.refId,
-          source,
+          source: presentation.source,
           status: 'pending' as const,
           // Rerank changes order only; keep the original reasoning template.
-          reasoning:
-            source === 'new_check'
-              ? newCheckReasoning(labelByRef.get(s.refId))
-              : variantReasoning(labelByRef.get(s.refId)),
+          reasoning: presentation.reasoning,
           added_by: 'composer_live' as const,
           signals: toSignalsJson(signal),
           created_at: now,

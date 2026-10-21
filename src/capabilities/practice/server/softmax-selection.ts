@@ -38,6 +38,11 @@ import {
   type StreamPlanItem,
   composeDailyStream,
 } from './stream-composer';
+import {
+  presentDueQuestion,
+  presentNonDueQuestion,
+  presentPracticePaper,
+} from './stream-item-presentation';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from './task-runtime';
 import { rotationClassForKind } from './variant-rotation';
 
@@ -99,10 +104,6 @@ const DEFAULT_MAX = 30;
 // sampled (floor(0 × ratio)=0 → no extra protection → capacityGuard byte-identical).
 const FRONTIER_QUOTA_RATIO = 0.2;
 
-function kpSuffix(label?: string): string {
-  return label ? `「${label}」` : '这一块';
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // 候选富化：variant/new_check 候选只带 questionId，需补 kind/knowledge_ids/difficulty
 // 才能算 MFI（candidate-signals 据此聚合 θ̂_min + recall 路由 + b 弱锚）。批量点查
@@ -117,25 +118,6 @@ interface NonDueRaw {
 
 /** 非到期候选在本模块内部的角色（与 CandidateInput.role 同集，去 'due'/'paper'）。 */
 type SelectionOrchestratorCandidateRole = 'variant' | 'new_check' | 'frontier';
-
-/** 非到期 slot 角色 → StreamPlanItem.source（frontier/new_check 各自留痕，其余 = variant）。 */
-function sourceForRole(
-  role: SelectionOrchestratorCandidateRole | undefined,
-): StreamPlanItem['source'] {
-  if (role === 'new_check') return 'new_check';
-  if (role === 'frontier') return 'frontier';
-  return 'variant';
-}
-
-/** 非到期 slot 角色 → reasoning 模板。 */
-function reasoningForRole(
-  role: SelectionOrchestratorCandidateRole | undefined,
-  label?: string,
-): string {
-  if (role === 'new_check') return newCheckReasoning(label);
-  if (role === 'frontier') return frontierReasoning(label);
-  return variantReasoning(label);
-}
 
 async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<CandidateInput[]> {
   if (raws.length === 0) return [];
@@ -195,38 +177,6 @@ function resolveRotatableKind(kind: string | null | undefined): string | undefin
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// reasoning 模板（softmax 路径的占位文案；M4 夜链 AI 化后由 composer 写 AI 文案）。
-// ───────────────────────────────────────────────────────────────────────────
-function dueReasoning(label?: string): string {
-  return `我看了你的曲线：${kpSuffix(label)}到了复习边缘，先把它咬住。`;
-}
-// 增量重排（stream-store.reRankAfterAnswer）复用这两个模板——重抽样换进的新候选
-// 需生成与首次 compose 一致的 reasoning 文案（单一真相，不重复 kpSuffix 模板）。
-export function variantReasoning(label?: string): string {
-  return `之前${kpSuffix(label)}翻过车，这道换了说法再来一次。`;
-}
-export function newCheckReasoning(label?: string): string {
-  return `你刚学了${kpSuffix(label)}，自测一道确认真的进脑子了。`;
-}
-// B3 frontier（与 composeDailyStream 的 frontier 尾文案一致——单一真相）。
-// 措辞红线（；Cosyn et al. 2021 JMP 实证 outer-fringe 首答正确率仅 ~27%）:
-// frontier 是「结构可达」信号,不是「容易/该会/正确率高」信号——不要在这段文案引入后者措辞
-// （「前置拿下了、可以开这块」是可达性叙述,非难度承诺）。详见
-export function frontierReasoning(label?: string): string {
-  return `${kpSuffix(label)}的前置你都拿下了，可以开这块新内容了。`;
-}
-function paperReasoning(
-  title: string,
-  source: ComposerInputs['pendingPapers'][number]['source'],
-): string {
-  return source === 'on_demand'
-    ? `你点播的「${title}」排好了——卷内不给即时反馈，交卷统一判。`
-    : source === 'import'
-      ? `你导入的「${title}」在待做里——交卷后统一判分。`
-      : `散题做完后用「${title}」收口——卷内不给即时反馈，交卷统一判。`;
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // 主入口。
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -256,11 +206,7 @@ export async function composeSoftmaxStream(
   const allDueDrafts: Omit<StreamPlanItem, 'position'>[] = dueItems.map((d) => ({
     item_kind: 'question',
     ref_id: d.questionId,
-    source: d.source ?? 'decay',
-    reasoning:
-      d.source === 'intervention'
-        ? '这份针对当前薄弱点的材料已经准备好；先阅读，再完成检验。'
-        : dueReasoning(d.knowledgeLabel),
+    ...presentDueQuestion(d.knowledgeLabel, d.source),
     // 到期项不带选题信号（它们不经 sampler/MFI）——signals 缺省 {}（materialize 兜底）。
   }));
   // 时间预算优先保留最早到期前缀，超预算到期题确定性延后。没有 budget 的显式
@@ -310,8 +256,7 @@ export async function composeSoftmaxStream(
     .map((p) => ({
       item_kind: 'paper' as const,
       ref_id: p.paperId,
-      source: p.source,
-      reasoning: paperReasoning(p.title, p.source),
+      ...presentPracticePaper(p.title, p.source),
     }));
 
   // ── L2 fallback 入口（候选收集本身挂 / catastrophic）：退确定性 composeDailyStream。
@@ -384,8 +329,7 @@ export async function composeSoftmaxStream(
     nonDueDrafts.push({
       item_kind: 'question',
       ref_id: s.refId,
-      source: sourceForRole(role),
-      reasoning: reasoningForRole(role, labelByRef.get(s.refId)),
+      ...presentNonDueQuestion(role, labelByRef.get(s.refId)),
       signals: s as unknown as Record<string, unknown>,
     });
   }
@@ -404,8 +348,7 @@ export async function composeSoftmaxStream(
     nonDueDrafts.push({
       item_kind: 'question',
       ref_id: s.refId,
-      source: sourceForRole(role),
-      reasoning: reasoningForRole(role, labelByRef.get(s.refId)),
+      ...presentNonDueQuestion(role, labelByRef.get(s.refId)),
       signals: signalByRef.get(s.refId) as unknown as Record<string, unknown>,
     });
   }
