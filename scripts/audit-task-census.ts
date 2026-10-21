@@ -39,9 +39,8 @@ export type AuditTaskCensusOptions = {
 export const LIVE_NON_CALLER_CLASSIFICATIONS = {
   AttributionTask:
     'Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.',
-  // YUK-1049 — typed lane: the kind arrives per frozen scoring unit via
-  // ModelExecutorRequest.executor.task_kind (dynamic expression, not a
-  // static runTask call site). The single typed runner entry is
+  // Typed lane: the kind arrives per frozen scoring unit via ModelExecutorRequest.executor.task_kind
+  // (a dynamic expression, not a static runTask site). The single typed runner entry is
   // src/server/assessment/jev-model-executor.ts → runTypedPrimitiveTask.
   JevScoringDecisionTask:
     'Typed-execution task served by runTypedPrimitiveTask (OpenRouter decisions endpoint); its kind is selected per frozen scoring unit via executor.task_kind in jev-model-executor.ts — a dynamic arg the runner-scan cannot resolve statically.',
@@ -121,13 +120,9 @@ export function auditTaskCensus(options: AuditTaskCensusOptions): AuditResult {
     ...(validateInfrastructure && manifestRegistrationEvidence.length === 0
       ? ['No registered manifest job reaches a recognized task invocation']
       : []),
-    // YUK-868 — the transitional "at least one legacy handler reaches a task
-    // invocation" assertion is retired: the verify handlers (quiz_verify /
-    // source_verify / variant_verify — the last task-invoking central
-    // registrations) are now Practice-owned manifest jobs. handlers.ts still
-    // mounts non-task housekeeping handlers; the legacy scanner stays live and
-    // legacyRegistrationEvidence is still reported, it is just no longer
-    // REQUIRED to be non-empty.
+    // The transitional "at least one legacy handler reaches a task invocation" assertion is
+    // retired: the last task-invoking central handlers are now Practice-owned manifest jobs.
+    // handlers.ts still mounts non-task housekeeping; legacy evidence is reported but may be empty.
     ...runLogFailures,
     ...(validateInfrastructure && profileCriticCaller === null
       ? ['ProfileCriticTask must have its exact CLI caller in scripts/compile-profile.ts']

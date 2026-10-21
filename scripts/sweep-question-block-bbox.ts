@@ -1,50 +1,20 @@
-// YUK-471 W3-D §P3 (YUK-502) — one-shot data migration: clamp every persisted question_block
-// `structured` / `figures` bbox into the canonical 0-1 normalized BBox range.
+// One-shot data migration: clamp every persisted question_block `structured` / `figures` bbox into
+// the canonical 0-1 normalized BBox range.
 //
-// WHY. The B3 SoT-flip for question_block is only safe when `pnpm audit:projection` is CLEAN —
-// every block's fold(events) == row. The genesis backfill (scripts/backfill-genesis-events.ts,
-// backfillQuestionBlockGenesis) writes the anchor `experimental:genesis` event for each pre-Wave3
-// (event-LESS) block by snapshotting the live row and validating it at writeEvent's parse barrier
-// against the strict QuestionBlockRowSnapshot. `structured` (the recursive StructuredQuestion tree)
-// and `figures` (FigureRef[]) reuse the canonical schemas, whose BBox carries the 0-1 component
-// bounds PLUS the sum refinements (`x + width <= 1`, `y + height <= 1`). A LEGACY block whose stored
-// bbox overflows those bounds throws at the barrier → the backfill fails loud (batched: one error
-// lists every bad id). The C1-δ flat8ToBBox fix (tencent_mark_parser.ts) prevents NEW overflow rows;
-// this sweep repairs the EXISTING ones so the backfill seeds clean and the flip gate goes green.
+// Why: the question_block genesis backfill snapshots the live row and validates it at writeEvent's
+// parse barrier. The canonical BBox schema requires 0-1 component bounds plus sum refinements
+// (x + width <= 1, y + height <= 1), so a legacy overflowing bbox makes the backfill fail loud.
+// The extraction-side fix prevents new overflow; this sweep repairs existing rows so the backfill
+// seeds clean and the SoT-flip gate can go green.
 //
-// WHAT. Read every question_block row, walk its `structured` tree (each node's optional `bbox` AND
-// each `extraction_evidence.handwriting[].bbox` — both are refined BBox in the strict schema, so an
-// overflow in either fails the backfill) plus every `figures[].source_bbox`, and clamp any
-// out-of-range bbox using the SAME rule C1-δ's flat8ToBBox now applies to new extractions:
-//   x = clamp01(x); y = clamp01(y);
-//   width  = min(clamp01(width),  1 - x);
-//   height = min(clamp01(height), 1 - y);
-// A LEGAL bbox (all components in [0,1] AND sum-safe) clamps to itself → it is left untouched.
+// It walks each block's structured tree (node bbox and handwriting bbox) plus figures[].source_bbox
+// and applies the same clamp as flat8ToBBox: clamp x/y to 0-1, then cap width/height at 1-x / 1-y.
+// A legal bbox clamps to itself and is left untouched, so re-runs write zero rows.
 //
-// OUT OF SCOPE (deliberately not swept):
-//   - `page_spans[].bbox` — the strict snapshot's PageSpan is deliberately TOLERANT (raw 4-number
-//     object, NOT the 0-1 refined BBox), so a coordinate envelope never false-rejects and never
-//     needs clamping (genesis.ts §PageSpan).
-//   - `crop_refs` staleness — a SEPARATE, optional fold-clean fix (design §9 item 3), NOT a flip
-//     blocker. The W3-D runbook §"Ref disambiguation" warns against conflating the two.
-//   - the `question` table (its own structured/figures columns) — NOT a Wave3 fold entity; not in
-//     the audit:projection / backfill-genesis set.
-//   - a NON-finite / structurally-malformed bbox (missing component) — that is a different
-//     corruption the §P3 overflow sweep does not fabricate-repair; it is left for owner inspection
-//     (isFiniteBBox gate below).
-//
-// IDEMPOTENT. The clamp is a fixed point on legal bboxes and on its own output
-// (clamp(clamp(b)) == clamp(b), since clamp01 is idempotent and min(width', 1-x) == width' once
-// width' <= 1-x), so a row is updated only when at least one of its bboxes is genuinely out of
-// range. A re-run after a clean pass clamps zero bboxes and writes zero rows.
-//
-// NOT in the `pnpm test` chain — it needs a populated DB. Run it on a prod-CLONE (and on prod)
-// BEFORE backfillQuestionBlockGenesis / before flipping the question_block SoT. CI coverage is the
-// DB test (src/server/projections/sweep-question-block-bbox.db.test.ts).
-//
-// CLI:
-//   pnpm normalize:qb-bbox            # DRY RUN — report what WOULD be clamped, write nothing
-//   pnpm normalize:qb-bbox --apply    # clamp + persist
+// Out of scope: page_spans[].bbox (the snapshot's PageSpan is deliberately tolerant), crop_refs
+// staleness (a separate fold-clean fix), the question table, and non-finite/malformed bboxes
+// (left for owner inspection rather than fabricated). Needs a populated DB: run on a prod-clone
+// before backfillQuestionBlockGenesis.
 
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';

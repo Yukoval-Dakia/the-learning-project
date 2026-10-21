@@ -1,66 +1,21 @@
 /**
- * YUK-1406 — guarded one-off ops CLI for the two APPROVED select-label display
- * repairs (bare \frac/\dfrac/\sqrt inside select item labels, LIGHT batch).
+ * Guarded one-off ops CLI for the approved select-label display repairs (bare \frac/\dfrac/\sqrt
+ * inside select item labels).
  *
- * What this script is: a narrow republish driver that clones each group's
- * CURRENT frozen revision, changes exactly the approved items[].label_md
- * values, reseals via publishedContractSeal, and mints the new revision through
- * the canonical writer (publishQuestionGroup) inside ONE short transaction.
- * The new revision is published withheld/unverified_rules — no old evidence is
- * carried, no verification row is appended, nothing is paid or enqueued here.
+ * It clones each group's current frozen revision, changes only the approved items[].label_md
+ * values, reseals via publishedContractSeal, and mints the new revision through the canonical
+ * publisher in one short transaction. The revision is published withheld/unverified_rules: no old
+ * evidence carries over, no verification row is appended, nothing is paid or enqueued here.
  *
- * What it deliberately is NOT:
- *   - not edit_question (draft-ops remints item ids on label set/replace);
- *   - not publishQuestionGroupFromRow (row normalization would rebuild the
- *     scoring layer instead of cloning the frozen one);
- *   - not a generic JSON-patch tool — the approved surface is hardcoded in
- *     APPROVED_REPAIR_SET and the manifest must deep-equal it;
- *   - not a global budget gate — STOP only gates THIS CLI's next publish and
- *     cannot recall an already-committed publish or a queued admission job.
+ * Deliberately not edit_question (which remints item ids), not publishQuestionGroupFromRow (which
+ * would rebuild the scoring layer), not a generic JSON patch (the surface is fixed in
+ * APPROVED_REPAIR_SET and the manifest must deep-equal it), and not a global budget gate: STOP only
+ * gates this CLI's next publish and cannot recall a committed publish or queued admission job.
  *
- * Side-effect scope of a successful apply (all inside the publisher seam):
- * question_revision INSERT + question_group_lifecycle UPDATE +
- * experimental:assessment_publish event (admission='withheld'). The existing
- * practice.question-admission-enqueue subscription then does its normal job —
- * a question_admission_run may pay for A/B (+crosscheck where it applies) on
- * the NEW digest; old 'passed' evidence never applies to a new seal. The
- * question row (prompt/choices_md/version) is NOT touched: the admission job's
- * own projection writes it only on a successful admit. Embedding columns are
- * untouched (this path never reaches write.ts's embed-null logic).
- *
- *   plan   — write-free evaluation of every manifest group: frozen CAS, seal
- *            recomputation, slot/item/before identity, dedup probe
- *            (with --request-id), unsettled-admission guard, real serving gate.
- *            Never writes business rows.
- *   apply  — publishes ONE group per invocation (--group is required and must
- *            name a manifest entry). Required operator-identity flags:
- *            --operator, --reason, --request-id, --out, --stop.
- *            STOP file: ENOENT means no stop; an existing file or any other
- *            access error fails closed. Checked before any other apply work
- *            and again inside the transaction immediately before publish.
- *            Serialization: the transaction first takes an operation-scoped
- *            pg_advisory_xact_lock, so two concurrent applies of this CLI
- *            (same request across different groups, or simply both groups at
- *            once) serialize instead of racing past the binding/guard reads;
- *            row locks still follow the publisher's root → lifecycle order.
- *
- * Idempotency lives in DB truth, not in the local receipt: the minted
- * revision's published_by carries request_id + manifest sha + full old/new
- * identity + patch list. Re-running apply with the same --request-id returns
- * the committed identity (already_applied) without minting — even after the
- * admission job has moved the current pointer; the same request id bound to a
- * different group or different manifest content is rejected
- * (request_id_conflict), never silently re-applied.
- *
- * usage:
- *   pnpm exec tsx scripts/yuk1406-repair-select-display.ts plan \
- *     --manifest <file> [--out <dir>] [--request-id <id>]
- *   pnpm exec tsx scripts/yuk1406-repair-select-display.ts apply \
- *     --manifest <file> --group <group_id> --operator <name> --reason "<why>" \
- *     --request-id <id> --out <dir> --stop <path>
- *
- * Env: DATABASE_URL (via scripts/load-env.ts). No provider calls, no pg-boss
- * sends, no paid_effect writes, no HTTP.
+ * apply publishes one group per invocation. It takes an operation-scoped advisory lock and
+ * re-checks the STOP file inside the transaction, so concurrent applies serialize. Idempotency
+ * lives in the minted revision's published_by: the same request id returns the committed identity,
+ * while a different group or manifest content is rejected as a conflict.
  */
 
 import './load-env';

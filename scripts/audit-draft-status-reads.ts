@@ -1,68 +1,19 @@
 /**
- * Read-side draft-status pool-visibility audit (YUK-569 / YUK-538 #14).
+ * Read-side draft-status pool-visibility audit.
  *
- * Sibling of the INSERT-side `audit:draft-status`. That audit enforces that new question
- * INSERTs set draft_status; THIS one enforces that SELECT/UPDATE reads keep routing the
- * fail-open pool-visibility predicate (红线-4, NULL≡active — a row is pool-visible unless it
- * is literally 'draft') through the single shared helper `notDraftPredicate` / `isPoolVisible`
- * (src/db/predicates.ts) instead of hand-copying it. Closes the "SELECT side is unenforced"
- * gap the master register called out (docs/design/2026-07-02-project-logic-master-register.md
- * § draft-status-pool-gate-dup-predicate). Full design:
- * docs/design/2026-07-05-draft-status-pool-predicate-dedup-spec.md §6.
+ * Sibling of `audit:draft-status` (INSERT side). This one enforces that reads route the fail-open
+ * pool-visibility predicate (NULL ≡ active) through `notDraftPredicate` / `isPoolVisible` instead
+ * of hand-copying it.
  *
- * ── Engine A — SQL/Drizzle positive-shape detection (ENFORCED core, §6.2) ──────────────
- * Reuses the shared comment/string/template-aware scanner (scripts/lib/ts-tokenize.ts:
- * analyzeSource) so predicate PROSE in comments / plain strings / docstrings is skipped for
- * free (the register itself + many docblocks quote the predicate — a naïve grep would drown
- * in false positives; §6.4 point 2). It positively detects the three hand-rolled family-1
- * (F1) dialects:
- *   D1  Drizzle  — or(isNull(<expr>.draft_status), ne(<expr>.draft_status, 'draft'))  (either order)
- *   R1  raw SQL  — (… draft_status … IS NULL OR … <> 'draft')  inside a sql`` template
- *   R2  raw SQL  — draft_status IS DISTINCT FROM 'draft'        inside a sql`` template
- * A MIGRATED site reads `notDraftPredicate(<col>)` / `isPoolVisible(row)` and so matches
- * none of D1/R1/R2 (helper-routed sql`` templates are detected + skipped). Family-2 gates
- * (`eq(col,'active'|'draft')`, `=== 'active'`, `!== 'draft'` promote guards, §2.2) are
- * exact-match, not F1 shapes, so they match none of D1/R1/R2 and are never flagged — nor are
- * schema/type/projection mentions (`draft_status: text(...)`, `draft_status: string | null`,
- * `draft_status: question.draft_status`), which are plain code that never matches D1.
+ * Engine A scans SQL/Drizzle shapes for the three hand-rolled F1 dialects (Drizzle
+ * or(isNull,ne), raw `IS NULL OR <> 'draft'`, raw `IS DISTINCT FROM 'draft'`) and reports
+ * UNKNOWN-SHAPE for any other `draft_status` token inside a sql`` template. UNKNOWN is
+ * file-allowlistable so a benign non-predicate read has an escape hatch, but a new one still
+ * fails closed until migrated or consciously allowlisted. The check is shape-based: a novel
+ * Drizzle combinator that does not match D1 would escape.
  *
- * UNKNOWN-SHAPE backstop (§6.2): any `draft_status` token inside a sql`` template that is
- * neither helper-routed nor R1/R2 is reported UNKNOWN-SHAPE (needs triage) rather than
- * silently passing — this catches novel raw-SQL dialects (NOT IN / coalesce(...) /
- * IS DISTINCT FROM 'active' / cross-variable predicates). UNKNOWN is FILE-ALLOWLISTABLE
- * (YUK-569 review finding 1): a genuinely-benign non-predicate raw read of the column
- * (`SELECT COUNT(draft_status)`, `GROUP BY draft_status`) — which is not a pool predicate but
- * still mentions the token inside a sql`` — has an escape hatch (allowlist the file with a
- * reason + resolves_when) instead of hard-failing `pnpm test` with no recourse. A NEW UNKNOWN
- * still fails closed until someone migrates it to the helper or consciously allowlists it, so
- * novel pool predicates cannot proliferate silently. KNOWN LIMITATION (mirrors the INSERT
- * audit's regex-shape blind-spot docblock): the backstop is scoped to sql``-template context;
- * a novel DRIZZLE-combinator dialect in plain code (e.g. not(eq(col,'draft'))) is caught only
- * by D1's positive match, so a genuinely novel drizzle form would escape. Spec Appendix A
- * confirms no such executable dialect exists at baseline; adding one should route through the
- * helper.
- *
- * ── Engine B — JS closed-world ledger — DEFERRED (§6.3 C3) ─────────────────────────────
- * JS twins (`row.draft_status !== 'draft'`) are shape-INDISTINGUISHABLE from F2 promote
- * guards, so JS detection cannot be shape-based. Per the spec's C3 recommendation we ship
- * Engine A as the enforced core and DEFER Engine B (a hand-maintained JSON ledger relocates
- * the copy-paste fragility into a file that must be kept in sync — a weaker win). Post-
- * migration the 2 JS twins route through `isPoolVisible`; this audit emits an INFORMATIONAL
- * (non-blocking) note listing the live `isPoolVisible(...)` call sites as "known shape-
- * uncovered (JS twins route through isPoolVisible)".
- *
- * 用法：
- *   pnpm audit:draft-status-reads          # report-only (exit 0 always)
- *   pnpm audit:draft-status-reads --json   # machine output
- *   pnpm audit:draft-status-reads --strict # exit 1 on any non-allowlisted hand-rolled F1 inline
- *                                          # OR non-allowlisted UNKNOWN-SHAPE OR allowlist
- *                                          # hygiene / helper-def sentinel issue
- *
- * ── OWNER-DECISION note (§6.6) ────────────────────────────────────────────────────────
- * Unlike audit:relations (whose live dead-edge would block a strict-in-test wire), this
- * audit's baseline is provably CLEAN post-migration (spec §5), so `--strict` is wired into
- * `pnpm test` (immediately after audit:draft-status) in the SAME PR — the strict gate cannot
- * block on pre-existing stragglers and it is what actually closes 红线-4 on the read side.
+ * Engine B (JS closed-world ledger) is deferred: JS twins are shape-indistinguishable from
+ * promote guards. Live `isPoolVisible(...)` call sites are reported informationally instead.
  */
 
 import { readFileSync } from 'node:fs';
@@ -84,21 +35,18 @@ const ALLOWLIST_PATH = join(__dirname, 'audit-draft-status-reads-allowlist.json'
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
 
-// Helper definition file(s): the ONE legitimate inline predicate lives here (permanent-by-
-// design, NOT an allowlist entry). Excluded from the F1 scan by path + reverse-checked via a
-// sentinel marker so a rename that forgets to update this constant fails loud (§6.4 point 1).
+// The one legitimate inline predicate lives here (permanent, not allowlisted). Exclude it by path
+// and reverse-check the sentinel marker, so a rename that forgets this constant fails loud.
 export const HELPER_DEF_FILES = ['src/db/predicates.ts'];
 export const HELPER_SENTINEL = '// AUDIT-DRAFT-READS: canonical-definition';
-// A helper-routed sql`` interpolation `${notDraftPredicate(<col>.draft_status)}`. Masked (not
-// whole-span-skipped) before scanning so a MIXED template — a helper call PLUS a separate
-// hand-rolled predicate — still gets the hand-rolled part flagged (CodeRabbit YUK-569).
+// Mask helper-routed interpolations instead of skipping the whole template, so a mixed template
+// (helper plus a separate hand-rolled predicate) still flags the hand-rolled part.
 const HELPER_SQL_INTERPOLATION = /\$\{\s*notDraftPredicate\s*\([^}]*\bdraft_status\b[^}]*\)\s*\}/g;
 
 // ---------- source walk ----------
-
-// walkSource was a verbatim-identical copy of audit-draft-status's; imported
-// from there since YUK-1579 (same EXCLUDE_DIRS constant, same Dirent
-// semantics, same repo-relative output).
+//
+// walkSource is shared with audit-draft-status (same EXCLUDE_DIRS, Dirent semantics, and
+// repo-relative output).
 
 // ---------- Engine A shape detection ----------
 
@@ -107,9 +55,8 @@ export type ReadHit = { file: string; line: number; dialect: Dialect; snippet: s
 export type UnknownHit = { file: string; line: number; snippet: string };
 export type JsTwin = { file: string; line: number };
 
-// D1 — order-agnostic Drizzle or(isNull(<expr>.draft_status), ne(<expr>.draft_status,'draft')).
-// The `<expr>.` prefix + word-safe `.draft_status` excludes bare `draft_status` (that is the
-// raw-SQL R-family) and `_draft_status`-suffixed identifiers (no `.` before `draft_status`).
+// D1 — order-agnostic Drizzle form. The `<expr>.` prefix excludes bare `draft_status` (raw SQL) and
+// `_draft_status`-suffixed identifiers.
 const D1_FWD =
   /\bor\s*\(\s*isNull\s*\(\s*[\w$.]*\.draft_status\s*\)\s*,\s*ne\s*\(\s*[\w$.]*\.draft_status\s*,\s*['"]draft['"]\s*\)/g;
 const D1_REV =
@@ -127,9 +74,8 @@ function snippetAt(src: string, index: number): string {
 }
 
 /**
- * Scan ONE source file for hand-rolled F1 pool-visibility predicates + UNKNOWN-SHAPE
- * draft_status tokens. Helper-definition files return nothing (excluded by design).
- * Exported pure for unit testing.
+ * Scan one source file for hand-rolled F1 predicates and UNKNOWN-SHAPE draft_status tokens.
+ * Helper-definition files return nothing. Pure.
  */
 export function scanReads(file: string, src: string): { hits: ReadHit[]; unknown: UnknownHit[] } {
   if (HELPER_DEF_FILES.includes(file)) return { hits: [], unknown: [] };
@@ -137,8 +83,8 @@ export function scanReads(file: string, src: string): { hits: ReadHit[]; unknown
   const unknown: UnknownHit[] = [];
   const { codeMask, sqlSpans } = analyzeSource(src);
 
-  // D1 (Drizzle) — positive match over the raw source; codeMask guards against a shape that
-  // appears only as PROSE inside a comment / string (the `or(` anchor must sit in real code).
+  // D1 (Drizzle) — match raw source, but require the anchor to be real code, not comment/string
+  // prose.
   for (const re of [D1_FWD, D1_REV]) {
     re.lastIndex = 0;
     for (const m of src.matchAll(re)) {
@@ -153,11 +99,8 @@ export function scanReads(file: string, src: string): { hits: ReadHit[]; unknown
     }
   }
 
-  // R1/R2 + UNKNOWN — one verdict per sql`` template that still mentions draft_status AFTER
-  // masking helper-routed interpolations. Masking (not whole-span skipping) means a MIXED
-  // template — a `${notDraftPredicate(...)}` call PLUS a separate hand-rolled predicate — still
-  // gets the hand-rolled part flagged (CodeRabbit YUK-569). Same-length space masking preserves
-  // absolute indices, so `span.start + rel` and snippetAt(src, ...) report the real line.
+  // R1/R2 + UNKNOWN — one verdict per sql`` template that still mentions draft_status after
+  // masking helper routes. Same-length masking preserves indices for line/snippet output.
   for (const span of sqlSpans) {
     const text = src.slice(span.start, span.end + 1);
     const uncovered = text.replace(HELPER_SQL_INTERPOLATION, (m) => ' '.repeat(m.length));
@@ -187,8 +130,8 @@ export function scanReads(file: string, src: string): { hits: ReadHit[]; unknown
 }
 
 /**
- * Informational (Engine B deferred): live `isPoolVisible(...)` call sites — the JS twins that
- * are shape-uncovered by Engine A. Excludes the helper definition file. Exported for testing.
+ * Informational (Engine B deferred): live `isPoolVisible(...)` call sites, the JS twins Engine A
+ * cannot shape-detect. Excludes the helper definition. Pure.
  */
 export function findJsTwins(file: string, src: string): JsTwin[] {
   if (HELPER_DEF_FILES.includes(file)) return [];
@@ -204,9 +147,9 @@ export function findJsTwins(file: string, src: string): JsTwin[] {
 }
 
 /**
- * Reverse-check the helper-definition files: each must exist AND still carry the sentinel
- * marker, so a rename/refactor that forgets to update HELPER_DEF_FILES fails loud instead of
- * silently un-excluding (or missing) the canonical predicate. Exported pure for testing.
+ * Each helper-definition file must exist and still carry the sentinel, so a rename/refactor that
+ * forgets HELPER_DEF_FILES fails loud instead of silently un-excluding the canonical predicate.
+ * Pure.
  */
 export function checkHelperSentinels(readFile: (relPath: string) => string | null): string[] {
   const problems: string[] = [];
@@ -236,14 +179,9 @@ export type ReadAuditResult = {
 };
 
 /**
- * Core gate: a hand-rolled F1 inline hit OR an UNKNOWN-SHAPE draft_status token fails unless its
- * FILE is allowlisted (file-level exception, same reason+resolves_when contract as the INSERT
- * audit). UNKNOWN is allowlistable so a genuinely-benign non-predicate raw read of the column
- * (`SELECT COUNT(draft_status)` / `GROUP BY draft_status`) has an escape hatch instead of hard-
- * failing `pnpm test` with no recourse (YUK-569 review finding 1) — but a NEW UNKNOWN still
- * fails closed until someone consciously migrates it or allowlists it with a tracked, expiring
- * reason, so novel pool predicates can't proliferate silently. Allowlist-hygiene and helper-def
- * sentinel issues always fail (never allowlistable). Exported pure for unit testing.
+ * A hand-rolled F1 hit or UNKNOWN-SHAPE token fails unless its file is allowlisted. UNKNOWN is
+ * allowlistable so a benign non-predicate read has an escape hatch, while a new one still fails
+ * closed. Allowlist hygiene and helper sentinel issues always fail. Pure.
  */
 export function validateReadGate(
   hits: ReadHit[],
@@ -299,8 +237,8 @@ function main(): void {
   const unknown: UnknownHit[] = [];
   const jsTwins: JsTwin[] = [];
   for (const file of files) {
-    // A concurrent test may clean up an already-enumerated fixture. Skip only
-    // that ENOENT race; permissions and other read failures must still fail loud.
+    // A concurrent test may clean up an already-enumerated fixture; skip only that ENOENT race.
+    // Permission and other read failures still fail loud.
     const src = readFileOrNull(file);
     if (src === null) continue;
     if (src.includes('draft_status')) {
@@ -369,7 +307,7 @@ function main(): void {
       console.log('');
     }
 
-    // Engine B DEFERRED (§6.3 C3) — informational only, never blocks.
+    // Engine B is deferred — informational only, never blocks.
     console.log(
       `NOTE (Engine B deferred): ${jsTwins.length} live isPoolVisible(...) JS-twin call site(s) are shape-uncovered by Engine A (JS twins route through isPoolVisible):`,
     );
@@ -381,8 +319,7 @@ function main(): void {
   if (isStrict && !result.ok) process.exit(1);
 }
 
-// CLI-gate (mirrors audit-draft-status.ts / audit-relations.ts): only walk + exit when run as
-// a CLI so the self-test can import the pure functions without the top-level scan firing.
+// CLI-gate: only walk and exit when run directly, so the self-test can import the pure functions.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

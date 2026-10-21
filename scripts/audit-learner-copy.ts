@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = process.cwd();
 const ALLOWLIST_PATH = 'scripts/audit-learner-copy-allowlist.json';
 
-// 只列学习者会直接看到的 surface。Admin/observability 保留诊断术语；API client、注释和
-// 标识符也不属于本审计范围。新增学习者 surface 时应显式加入这里。
+// Only surfaces learners see directly. Admin/observability keep diagnostic terms; API clients,
+// comments, and identifiers are out of scope. Add new learner surfaces explicitly here.
 export const LEARNER_COPY_FILES = [
   'src/ui/shell/AppTopbar.tsx',
   'src/ui/components/VisionTab.tsx',
@@ -130,8 +130,8 @@ interface CopyAllowlistFile {
 
 function visibleLiterals(text: string): Array<{ value: string; line: number }> {
   const rows: Array<{ value: string; line: number }> = [];
-  // 先去掉整段/单行注释，再按行检查。规则都采用完整词或明确短语，所以不会把
-  // `useIngestionSSE` / `QUESTION_KINDS` 这类内部标识符误判为可见术语。
+  // Strip block/line comments before checking each line. Rules use whole words or explicit phrases,
+  // so internal identifiers like `useIngestionSSE` / `QUESTION_KINDS` are not false positives.
   let inBlockComment = false;
   for (const [index, rawLine] of text.split('\n').entries()) {
     let line = rawLine;
