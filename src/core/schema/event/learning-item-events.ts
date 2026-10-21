@@ -1,18 +1,15 @@
 import { z } from 'zod';
 
-// Learning-item structural mutations are typed, subject-keyed events gathered by Q1.
+// Learning-item structural mutations are typed, subject-keyed events.
 // Creation uses one genesis snapshot. Complete/relearn and exact prior-state restore
 // increment version; archive and attribution repair retain the historical no-bump policy.
 // Status restoration carries the captured pre-accept state instead of synthesizing completion.
 // Reserved action names prevent malformed payloads from falling through generic parsing.
 
-// ── experimental:learning_item_complete ──────────────────────────────────────
-//
 // A completion transition: status→'done', completed_at=event.created_at, version+1. Mirrors
 // acceptCompletionProposal's imperative UPDATE (proposal-appliers.ts:292-301). The reducer applies
 // it ONLY when the row is pending|in_progress (the imperative writer's status precondition); a
-// terminal/other-status row is a no-op (terminal-status guard, design §0 + the mistake_variant
-// BLOCKER lesson).
+// terminal/other-status row is a no-op (terminal-status guard, design §0).
 export const LearningItemCompleteExperimental = z.object({
   actor_kind: z.enum(['user', 'agent', 'system']),
   actor_ref: z.string().min(1),
@@ -29,8 +26,6 @@ export const LearningItemCompleteExperimental = z.object({
 });
 export type LearningItemCompleteExperimentalT = z.infer<typeof LearningItemCompleteExperimental>;
 
-// ── experimental:learning_item_relearn ────────────────────────────────────────
-//
 // A relearn (reopen) transition: status→'in_progress', completed_at=null, version+1. Mirrors
 // acceptRelearnProposal's imperative UPDATE (proposal-appliers.ts:376-385). The reducer applies it
 // ONLY when the row is done|resting (the imperative writer's status precondition); other-status
@@ -50,8 +45,6 @@ export const LearningItemRelearnExperimental = z.object({
 });
 export type LearningItemRelearnExperimentalT = z.infer<typeof LearningItemRelearnExperimental>;
 
-// ── experimental:learning_item_archive ────────────────────────────────────────
-//
 // An archive (tombstone) transition: archived_at=event.created_at, archived_reason=payload.reason,
 // updated_at=event.created_at, NO version bump. Mirrors the actions.ts learning_item retract block
 // (bare UPDATE archived_at + archived_reason + updated_at; WHERE archived_at IS NULL — already-

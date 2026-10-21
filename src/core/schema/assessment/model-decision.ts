@@ -38,7 +38,7 @@ export const AssessmentRuleDecision = z.discriminatedUnion('kind', [
 export type AssessmentRuleDecisionT = z.infer<typeof AssessmentRuleDecision>;
 
 // --------------------------------------------------------------------
-// YUK-1496 C2 — AI rubric（统一设计 §3 free 段 / 附录 A5）
+// YUK-1496 — AI rubric（统一设计 §3 free 段 / 附录 A5）
 // --------------------------------------------------------------------
 
 /**

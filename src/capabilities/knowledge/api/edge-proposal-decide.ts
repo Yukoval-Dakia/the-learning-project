@@ -1,24 +1,8 @@
-// Phase 1c.2 — accept knowledge-edge proposals into knowledge_edge.
+// Decide a knowledge-edge proposal. Accept-class decisions write a rate event and,
+// in the same transaction, the edge row and its chained generate event.
 //
-// Pre-1c.2 the UI tracked accept/reverse/change_type/dismiss decisions in local
-// React state only — the proposal stream was effectively dry-run. This route
-// closes that loop: a single POST writes a rate event (ADR-0011 RateKnowledgeEdge),
-// and for accept-class decisions also inserts the actual knowledge_edge row +
-// a chained generate event (ADR-0011 GenerateKnowledgeEdge) inside one txn.
-//
-// POST /api/knowledge/edges/proposals/[id]
-//   body: { decision: 'accept' | 'reverse' | 'change_type' | 'dismiss',
-//           new_relation_type?: string,    // required when decision='change_type'
-//           user_note?: string }
-//   → 200 { rate_event_id, generate_event_id|null, edge_id|null }
-//   → 200 { …, idempotent: true } when re-submitting the same decision
-//   → 400 validation error (bad decision, missing new_relation_type, etc.)
-//   → 404 propose event not found
-//   → 409 proposal already decided differently / edge collides with existing row
-//
-// `id` is the propose event id (the row in `event` with action='propose' and
-// subject_kind='knowledge_edge'). Chain: rate.caused_by = propose.id,
-// generate.caused_by = propose.id, generate.payload.propose_event_id = propose.id.
+// `id` is the propose event id. Repeating the same decision is idempotent; a
+// different decision or a unique collision is 409.
 
 import { LegacyKnowledgeEdgeDecisionBodySchema } from '@/capabilities/knowledge/api/contracts';
 import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/public';

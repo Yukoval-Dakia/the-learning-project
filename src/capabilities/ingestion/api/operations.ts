@@ -152,9 +152,8 @@ async function ensureOperationDispatched(
             );
             return readReservedResource(operationId);
           }
-          // R2-8 — refuse the paid agent lane up front when the document's
-          // strictest derivation policy forbids derivation (answer_only/crisis);
-          // the segment-entry policy_blocked error is the backstop.
+          // Refuse the paid lane up front when the strictest policy forbids
+          // derivation; segment entry re-checks as a backstop.
           const policy = await resolveSessionDerivationPolicy(db, sessionId);
           if (policy !== 'allow') {
             throw new ApiError(
@@ -163,10 +162,8 @@ async function ensureOperationDispatched(
               422,
             );
           }
-          // YUK-1522 — weekly budget gate: authorizeAgentRunStart runs inside
-          // the dispatch transaction. Expected denials commit the failed
-          // identity/evidence and return before queued/send. The agent job INSERT
-          // uses the same transaction as the grant, owner and queued transition.
+          // The budget gate runs in the dispatch transaction. Denials commit the
+          // failed identity/evidence; the job insert shares the grant/owner/queued tx.
           const dispatch = await Ingestion.enqueueAgentRun({
             db,
             boss,
@@ -185,11 +182,9 @@ async function ensureOperationDispatched(
             409,
           );
         } else if (!(await agentOpOwnsSessionRun(db, sessionId, operationId))) {
-          // YUK-1522 — recovery path: the session is past 'uploaded|failed' and
-          // this op does NOT own its agent run → it can never be paid → explicit
-          // failure, not a fake 'queued' zombie handle. queued|extracting means
-          // another run is in flight (503); past-terminal statuses mean the op
-          // missed its window entirely (409).
+          // Recovery: if another run owns the session this op can never be paid, so
+          // fail explicitly instead of leaving a fake queued handle. In-flight means
+          // 503; past-terminal means the window was missed (409).
           const inFlight = status === 'queued' || status === 'extracting';
           const err = inFlight
             ? {
@@ -241,8 +236,7 @@ async function ensureOperationDispatched(
           OPERATION_QUEUE,
           { operationId, sessionId, request },
           {
-            // Context7 / pg-boss v12: singletonKey on a standard queue only
-            // dedupes when singletonSeconds defines the throttle window.
+            // On a standard pg-boss queue, singletonKey needs singletonSeconds.
             singletonKey: operationId,
             singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
           },
@@ -277,7 +271,7 @@ async function ensureOperationDispatched(
   });
 }
 
-/** POST /api/ingestion-sessions/[id]/operations —— 创建可轮询的录入 operation。 */
+/** Creates a pollable ingestion operation. */
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
@@ -338,7 +332,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
   }
 }
 
-/** GET /api/ingestion-operations/[id] —— one-shot operation 快照。 */
+/** Returns a one-shot operation snapshot. */
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const operationId = params.id;

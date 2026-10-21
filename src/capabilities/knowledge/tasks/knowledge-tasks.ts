@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
+import { resolveMcpAllowedTools } from '@/kernel/tools/allowlists';
 import type { SubjectProfile } from '@/subjects/profile';
 
 export const EdgeProposalSchema = z.object({
@@ -131,12 +132,19 @@ function buildKnowledgeReviewPrompt(profile: SubjectProfile): string {
 当前 SubjectProfile cause taxonomy：
 ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
-可选 mutation 分两类:
-- Tree-shape: propose_new（加新子节点）/ reparent（移到别 parent 下）/ merge（合并冗余）/ split（拆解过粗）/ archive（archive 没用的）。
-- Mesh-shape (ADR-0010): propose_knowledge_edge —— payload = { from_knowledge_id, to_knowledge_id, relation_type }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。
-每 propose 一条，调一次 mcp__loom__write_proposal（工具名 write_proposal；payload.mutation 区分 tree / mesh）。Mesh edge 必须把支撑它的 recent_mistakes[].id 放进工具顶层 evidence_event_ids；不要把 id 只写进 reasoning。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
-不必凑数；如果 tree 已经合理，0 条也行。
-禁止：把节点挂成 root；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
+提议工具有两个（都在 mcp__loom__ server 下，每 propose 一条调一次）：
+- propose_knowledge_mutation —— 树形 mutation：输入 { change, reasoning, evidence_event_ids? }。change.mutation 五选一：
+  * propose_new {mutation:"propose_new", name, parent_id} —— parent_id 用 tree 里已存在节点的 id（本任务禁止 parent_id=null 挂 root）。
+  * reparent {mutation:"reparent", node_id, new_parent_id, expected_version}
+  * merge {mutation:"merge", from_ids, into_id, expected_versions} —— expected_versions 是 {node_id: version}，须含每个 from_id。
+  * split {mutation:"split", from_id, into:[{name,parent_id}], expected_version}
+  * archive {mutation:"archive", node_id, expected_version}
+  expected_version / expected_versions 是并发令牌：填 tree 输入里该节点当前的 version 值。
+- propose_knowledge_edge —— mesh 边 (ADR-0010)：输入 { from_knowledge_id, to_knowledge_id, relation_type, weight?, reasoning, evidence_event_ids }。relation_type 是 5 个核心 enum 之一: prerequisite / related_to / contrasts_with / applied_in / derived_from；新型关系用 experimental:* 命名空间逃逸阀。提议归档已有边用 {op:"archive", edge_id, reasoning}。
+Mesh edge 必须把支撑它的 recent_mistakes[].id 放进 evidence_event_ids；不要把 id 只写进 reasoning。reasoning 必须具体：引用 attempt event id、知识点 id、cause pattern，或指出 tree 结构问题。
+读工具（query_knowledge / expand_knowledge_subgraph / find_knowledge_paths / get_subject_graph_overview / query_events）可用来核对节点当前 version 和已有边，不用硬猜。
+不必凑数；如果 tree 已经合理，0 条也行。工具返回 status 以 skipped: 开头的说明提议未写入，不要原样重试同一条提议。
+禁止：把节点挂成 root（parent_id=null）；编造 tree 不存在的 node id；没有 event evidence 时做破坏性 mutation；跨 subject 混图时强行套单一学科判断。`;
 }
 
 export const knowledgeReviewTaskSpec = {
@@ -150,7 +158,10 @@ export const knowledgeReviewTaskSpec = {
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 12, timeout: 120_000 },
     needsToolCall: true,
     isMultimodal: false,
-    allowedTools: ['mcp__loom__write_proposal'],
+    // YUK-1553 — the registered `knowledge_review` surface (readers +
+    // propose_knowledge_mutation + propose_knowledge_edge), resolved through
+    // the shared DomainTool mount. The private write_proposal tool is retired.
+    allowedTools: [...resolveMcpAllowedTools('knowledge_review')],
     prompt: { kind: 'profile', build: buildKnowledgeReviewPrompt },
   },
   outputSchema: KnowledgeReviewOutputSchema,

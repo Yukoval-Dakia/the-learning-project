@@ -1,39 +1,7 @@
-// Phase 1c.2 Vision MVP — GET /api/ingestion/[id]/blocks
+// GET /api/ingestion/[id]/blocks
 //
-// Returns question_block rows attached to an ingestion session so the /record
-// vision flow can list extracted candidates for the user to review + import.
-//
-// Wire shape (one row per block):
-//   {
-//     id,
-//     ingestion_session_id,
-//     source_asset_ids: string[],
-//     page_spans: Array<{ page_index, bbox: {x,y,width,height}, role? }>,
-//     extracted_prompt_md: string | null,
-//     reference_md: string | null,
-//     wrong_answer_md: string | null,
-//     image_refs: string[],
-//     figures: FigureRef[],
-//     layout_quality: 'structured' | 'partial' | 'text_only',
-//     extraction_confidence: number,
-//     status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled',
-//     knowledge_hint: string | null,
-//     imported_question_id: string | null,
-//     imported_attempt_event_id: string | null,
-//     auto_enroll_observation: {
-//       event_id, outcome, mode, route, confidence, threshold, reasoning,
-//       suggested_knowledge_ids, observed_at,
-//       // mistake_draft is a tolerant projection of the judge's MistakeEnrollOutput
-//       // (auto-enroll.ts:303 writes the raw output under payload.mistake_draft).
-//       // Source field is `wrong_answer` (mistake_enroll.ts:39), NOT `outcome`.
-//       mistake_draft: {
-//         wrong_answer: 'failure' | 'partial' | 'success' | 'unanswered' | null,
-//         difficulty: number | null,
-//         cause: { primary_category, analysis_md } | null,
-//       } | null,
-//     } | null,
-//     created_at: number, // unix sec
-//   }
+// Returns the session's question_block rows for the review/import UI, including a
+// tolerant projection of the judge's auto-enroll observation when present.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
@@ -68,8 +36,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       })
       .from(question_block)
       .where(eq(question_block.ingestion_session_id, sessionId))
-      // YUK-221 — true reading order via the positional ordinal (0-based per
-      // session); id is the stable tiebreak for historical same-ordinal rows.
+      // Reading order is the session ordinal; id tiebreaks historical collisions.
       .orderBy(asc(question_block.ordinal), asc(question_block.id));
 
     const blockIds = rows.map((r) => r.id);

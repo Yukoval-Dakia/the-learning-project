@@ -1,11 +1,6 @@
-// YUK-878 — TeachingTurnTask spec + the single defensive turn parser.
-//
-// Moved verbatim from src/server/orchestrator/teaching.ts (schemas/parser) and
-// the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
-// definition). The Copilot
-// teaching-skill and the legacy teaching route share parseTurnOutput — there is
-// exactly ONE TeachingTurnTask output contract (ask_check/explain/end +
-// structured_question) and this module owns it.
+// TeachingTurnTask spec + the single defensive turn parser. Both the Copilot
+// teaching skill and the teaching-session orchestrator use parseTurnOutput; this
+// module owns the one output contract (ask_check/explain/end + structured_question).
 
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
@@ -21,21 +16,17 @@ const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 const TurnKind = z.enum(['explain', 'ask_check', 'end']);
 export type TurnKindT = z.infer<typeof TurnKind>;
 
-// Kind labels that imply choices_md must be present (checked AFTER the
-// profile-vocab fold — 'single_choice'/'multiple_choice' fold to 'choice';
+// Kind labels that imply choices_md must be present, checked AFTER the
+// profile-vocab fold ('single_choice'/'multiple_choice' fold to 'choice';
 // unknown free-form labels are left untouched).
-// When the LLM sends choices_md as a string (instead of array) and we cannot
-// coerce it, we downgrade these kinds to 'short_answer' to keep the object
-// semantically self-consistent (no choices → not a choice question).
 const CHOICE_BEARING_KINDS = new Set<string>(['choice', 'true_false']);
 
-// Coerce LLM-emitted choices_md from string → string[] when possible.
-// Returns the original value (array / null / undefined) when no coercion needed.
-// Returns null when the string cannot be parsed as a string array.
+// Coerce LLM-emitted choices_md from string → string[] when possible; null means
+// it cannot be recovered as a string array.
 function coerceChoicesMd(raw: unknown): string[] | null | undefined {
   if (raw === null || raw === undefined || Array.isArray(raw))
     return raw as string[] | null | undefined;
-  if (typeof raw !== 'string') return null; // unexpected type → null (graceful)
+  if (typeof raw !== 'string') return null;
   // Model sometimes stringifies the array: '["A. foo","B. bar"]'
   try {
     const parsed = JSON.parse(raw);
@@ -45,7 +36,6 @@ function coerceChoicesMd(raw: unknown): string[] | null | undefined {
   } catch {
     // fall through
   }
-  // Cannot recover a string[]; caller will downgrade kind if needed.
   return null;
 }
 
@@ -59,8 +49,8 @@ const TeachingStructuredQuestion = z
     rubric_json: Rubric.nullish(),
   })
   .transform((q) => {
-    // If choices_md ended up null/undefined and the kind implies choices are
-    // required, downgrade to short_answer so downstream code stays consistent.
+    // Missing choices for a choice-bearing kind: downgrade to short_answer so
+    // downstream code stays consistent.
     if (
       (q.choices_md === null || q.choices_md === undefined) &&
       CHOICE_BEARING_KINDS.has(normalizeToCanonicalKind(q.kind) ?? q.kind)
@@ -149,16 +139,14 @@ export function parseTurnOutput(text: string): TeachingTurnOutputT {
 // ---------- Prompt ----------
 
 // rubricGuidance **仅**注入四个「作者化题目级 rubric」锚点（quiz-gen 生成 /
-// question_author / sourcing 提取 / 教学 ask-check）；judge 读端（QuizVerify 判卷、
-// 既有 rubric_json）与 backfill 路径（solution-generate 等）**显式排除**
-// （v3 §4.1/§4.2——动它们等于改判分行为，必须 calibration-gated 二期）。
+// question_author / sourcing 提取 / 教学 ask-check）；judge 读端与 backfill 路径
+// 显式排除——动它们等于改判分行为，必须 calibration-gated。
 function rubricGuidanceSection(profile: SubjectProfile): string {
   const g = profile.promptFragments.rubricGuidance?.trim();
   return g
     ? `\n科目级 rubric 规范（写 rubric_json 的 criteria/keywords/required_points 时遵循）：${g}`
     : '';
 }
-// methodology → copilot/note 教学 prompt 的方法论段（渐进接入，v3 §4.1）。
 function methodologySection(profile: SubjectProfile): string {
   const m = profile.promptFragments.methodology?.trim();
   return m ? `\n科目方法论：${m}` : '';

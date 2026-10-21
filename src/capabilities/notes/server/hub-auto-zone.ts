@@ -1,14 +1,7 @@
-// YUK-384 — neutral shared home for the hub auto-zone builder + suppression
-// reader. Lifted out of jobs/hub_auto_sync_nightly.ts so BOTH the durable
-// reconciler (server/hub-sync-reconciliation.ts) and the nightly job import from
-// here without an ESM cycle (the nightly job now imports runHubSyncCycle from the
-// reconciler, which used to import these from the job — the reverse edge).
-//
-// Pure given the parsed doc + curated atomics; no DB/IO. See ADR-0020 §9 for the
-// AutoLinksContainer auto-zone contract and ADR-0022 for the crossLinkBlock attr
-// extension (auto / relation provenance).
+// Hub auto-zone builder and suppression reader. Lives here so the reconciler and
+// the nightly job can share it without an import cycle. Pure: no DB or IO.
 
-import type { CuratedAtomic } from '@/capabilities/knowledge/public';
+import type { CuratedAtomic } from '@/capabilities/notes/server/hub-curation';
 import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { NotePatchT } from '@/core/schema/note-patch';
 
@@ -22,9 +15,8 @@ function recordOrEmpty(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Read the hub's `attrs.suppressed_block_refs` — the list of `{ artifact_id }`
- * the user has dismissed from the auto-zone (ADR-0020 §9 dismiss). Returns the
- * set of suppressed target artifact_ids. Tolerant of legacy/partial shapes.
+ * Target artifact ids the user dismissed from the auto-zone. Tolerant of legacy
+ * and partial shapes.
  */
 export function suppressedArtifactIds(attrs: Record<string, unknown> | null): Set<string> {
   const raw = recordOrEmpty(attrs).suppressed_block_refs;
@@ -38,10 +30,8 @@ export function suppressedArtifactIds(attrs: Record<string, unknown> | null): Se
 }
 
 /**
- * Build the desired `crossLinkBlock` child for one curated atomic. The block id
- * is deterministic (`<container_id>__<atomic_artifact_id>`) so reorder/idempotent
- * diffs are stable across runs. Provenance attrs (`auto`, `relation`) feed the
- * Lane-D chip.
+ * The deterministic block id (`<container>__<artifact>`) keeps diffs stable;
+ * the auto/relation attrs carry provenance to the chip.
  */
 function desiredChild(containerId: string, atomic: CuratedAtomic) {
   return {
@@ -85,8 +75,8 @@ function sameChildSet(a: Record<string, unknown>[], b: Record<string, unknown>[]
 }
 
 /**
- * Compute the NotePatch (0 or 1 op) that brings the hub's auto-zone in line with
- * the curated set. Returns `null` when no change is needed (idempotent no-op).
+ * The one-op patch that aligns the auto-zone with the curated set, or null when
+ * it already matches.
  */
 export function buildAutoZonePatch(
   bodyBlocks: unknown,
@@ -133,15 +123,10 @@ export function buildAutoZonePatch(
 }
 
 /**
- * Poison-pill guard: if the doc already has an auto-links container whose `attrs.id`
- * is missing/non-string, a `replace_block` targeting the canonical fallback id
- * (`<hub>__auto_links`) can never match it (blockIdOf → undefined) → applyNotePatch
- * throws target_not_found → the reconciler classifies it retryable → the hub wedges
- * in INFINITE retry. Stamp the canonical id so the reconciler's replace patch targets
- * it and the container is permanently healed on the next apply. Returns the (possibly
- * rewritten) body plus whether anything changed, so the caller can force `changed`.
- * A body that fails to parse, or a container that already has a valid id, is returned
- * untouched (`healed: false`).
+ * Stamp the canonical id on an auto-links container whose attrs.id is missing or
+ * malformed. Without it, the reconciler's replace targets a block it can never
+ * match and retries forever. Returns the body unchanged when there is nothing to
+ * heal.
  */
 export function normalizeMalformedAutoZoneContainer(
   bodyBlocks: unknown,

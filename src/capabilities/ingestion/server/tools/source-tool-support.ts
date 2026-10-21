@@ -13,10 +13,9 @@ import {
 } from '../source-package';
 import type { ToolContext } from './types';
 
-// YUK-1404 (B2/R2) — shared plumbing for the ingestion media/source tools:
-// versioned-ref resolution (digest-mismatch is an explicit error, never a
-// latest-version fallback), ingestion-session scope enforcement, and
-// digest-verified byte loads.
+// Shared plumbing for media/source tools: versioned-ref resolution (a digest
+// mismatch is an error, never a latest-version fallback), session scope checks,
+// and digest-verified byte loads.
 
 export const AssetRefInputSchema = z.union([
   z.string().min(1),

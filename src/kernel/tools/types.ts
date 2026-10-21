@@ -10,11 +10,21 @@
 // out of `experimental:tool_use` per ADR-0011 §1.1). This file is
 // interface-only.
 
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 
 export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
+
+/**
+ * YUK-1553 C1-1 — wire-safe placeholder for an opaque JSON document whose
+ * shape an owner parser validates inside execute (e.g. a question draft).
+ * Runtime admits JSON only; the static type stays `unknown` so internal
+ * callers are not forced through the recursive JSON type. Effectful tools can
+ * use this instead of `z.unknown()`/`z.record(z.string(), z.unknown())`, which
+ * the registration contract rejects.
+ */
+export const OpaqueJsonInput: z.ZodType<unknown> = z.json();
 
 export interface ProposalEffectContract {
   readonly owner_gate: 'FULL';

@@ -1,16 +1,10 @@
-// M4-T4 (YUK-319) — agency 包的提议 accept-applier 真身，从 dispatch 壳
-// （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
-// 纯 dispatch，按 kind 一行委托到这里。
+// agency 包的 proposal accept-applier 真身；dispatch 壳按 kind 一行委托到这里。
 //
 // agency 声明归属的 proposal kinds（manifest.proposals.kinds）：
-//   - learning_item → acceptLearningItemProposal（本文件）
-//   - completion    → acceptCompletionProposal（本文件）
-//   - relearn       → acceptRelearnProposal（本文件）
-//   - goal_scope    → acceptGoalScopeProposal（./goals/accept，YUK-143 起就在
-//     包内，壳 case 直接委托）
-//   - defer         → 有 producer（defer 提议）但无 accept applier：accept 走
-//     壳的 default throw（unsupported_proposal_kind），剩余 producer 语义归
-//     YUK-44。归属声明与 applier 存在性解耦。
+//   - learning_item / completion / relearn → 本文件
+//   - goal_scope → acceptGoalScopeProposal（./goals/accept）
+//   - defer → 有 producer 但无 accept applier：accept 走壳的 default throw
+//     （unsupported_proposal_kind）。归属声明与 applier 存在性解耦。
 //
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
@@ -115,16 +109,13 @@ export interface RelearnAcceptResult {
 }
 
 /**
- * YUK-19 / YUK-93 — learning_item accept materializes a 1-hub + child note
- * LearningItem hierarchy + paired note artifacts through the existing
- * acceptLearningIntent owner service (Phase 2B). acceptLearningIntent writes
- * its own rate event inside the same transaction as the hierarchy/artifact
- * inserts, so this branch must not write a second rate event.
+ * learning_item accept materializes the 1-hub + child note hierarchy through the
+ * acceptLearningIntent owner service, which writes its own rate event in the same
+ * transaction as the hierarchy/artifact inserts — this branch must not write a second one.
  *
- * If the proposal already has an accept rate event (idempotency) we re-derive
- * the materialization result from the persisted rows. acceptLearningIntent's
- * own `proposal_already_rated` guard would otherwise throw on the second
- * call — we beat it to the punch.
+ * If the proposal already has an accept rate event, re-derive the materialization result
+ * from persisted rows; acceptLearningIntent's own `proposal_already_rated` guard would
+ * otherwise throw on the second call.
  */
 export async function acceptLearningItemProposal(
   db: Db,
@@ -221,10 +212,9 @@ export async function acceptLearningItemProposal(
 }
 
 /**
- * Re-derive the LearningIntentMaterializeResult from persisted rows for the
- * idempotent return path. Hub is the row whose `parent_learning_item_id` is
- * null among the learning_items rooted at the proposal id; child note items are
- * split by artifact type. Artifacts mirror.
+ * Re-derive the materialization result from persisted rows for the idempotent return path.
+ * The hub is the row whose `parent_learning_item_id` is null among the learning_items rooted
+ * at the proposal id; child items are split by artifact type.
  */
 async function summarizeLearningItemMaterialization(
   db: Db,
@@ -397,9 +387,9 @@ export async function acceptCompletionProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
-        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state so retract
-        // restores it instead of guessing. completion accepts pending|in_progress; we
-        // record which (and the prior completed_at, normally null) here.
+        // Pin the EXACT pre-accept state so retract restores it instead of guessing.
+        // completion accepts pending|in_progress; record which (and the prior completed_at,
+        // normally null) here.
         materialized_prior_status: item.status,
         materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),
@@ -493,11 +483,10 @@ export async function acceptRelearnProposal(
       payload: {
         rating: 'accept',
         materialized_learning_item_id: learningItemId,
-        // YUK-471 (retract fold/rollback) — pin the EXACT pre-accept state. relearn
-        // accepts done|resting and clears completed_at; without this, retract cannot
-        // tell a `resting` (completed_at was already null) item from a `done` one and
-        // would corrupt it into `done` with a fabricated completed_at. Record both so
-        // retract restores byte-for-byte.
+        // Pin the EXACT pre-accept state. relearn accepts done|resting and clears
+        // completed_at; without both fields, retract cannot tell a `resting` item
+        // (completed_at already null) from a `done` one and would corrupt it into `done`
+        // with a fabricated completed_at.
         materialized_prior_status: item.status,
         materialized_prior_completed_at: item.completed_at ? item.completed_at.toISOString() : null,
         ...(opts.user_note ? { user_note: opts.user_note } : {}),

@@ -50,12 +50,9 @@ export const AutoAppliedProposalDigestSchema = z.object({
   }),
 });
 
-// YUK-1404 — additive block-preview detail: true structured counts + bounded
-// learner-facing sub-question / option previews. The preview lists may be
-// shorter than the count fields (named bounds server-side); the counts are
-// null only for legacy blocks without a structured tree. Only label +
-// excerpt/text cross the wire from these items — no answers / analysis /
-// student work ever enters the preview.
+// Previews may be shorter than the counts; counts are null for legacy blocks
+// without a structured tree. Only label/excerpt/text cross the wire — never
+// answers, analysis, or student work.
 const ProposalBlockSubQuestionPreviewResponseSchema = z.object({
   label: z.string(),
   excerpt: z.string(),
@@ -85,10 +82,7 @@ const ProposalPresentationResponseSchema = z.object({
       primary: ProposalBlockPreviewResponseSchema.nullable(),
       merged: z.array(ProposalBlockPreviewResponseSchema),
       continuity_label: z.string().nullable(),
-      // YUK-1404 — the proposal's exact ingestion-session subject
-      // renderConfig.notation, resolved server-side from the canonical subject
-      // registry. null for unknown/missing session, unresolved subject, or
-      // unregistered subject — the UI must not guess a math default.
+      // Exact session notation; null when unknown so the UI never guesses a math default.
       notation: z.string().nullable(),
     })
     .nullable(),
@@ -276,11 +270,8 @@ const TeachingBriefFindingSectionSchema = z
     claim_md: z.string().min(1),
     knowledge_id: z.string().min(1),
     cause_category: CauseCategory,
-    // YUK-785 — the claim the served probe actually tests, present ONLY after an owner
-    // rewrite (contract §2.1 keeps inapplicable keys ABSENT, never null/empty). The
-    // union-level superRefine below pins where it may appear and that it must differ
-    // from claim_md, so the "edited claim silently inherits the original's probe
-    // evidence" shape fails the wire loudly instead of reading as a normal brief.
+    // The claim the served probe actually tests; absent unless the owner rewrote it.
+    // Keeping the pre-edit probe distinguishable from the rewrite is the point.
     tested_claim_md: z.string().min(1).optional(),
   })
   .strict();
@@ -296,11 +287,8 @@ const TeachingBriefBasisSectionSchema = z
     path: ['evidence_trace'],
   });
 
-// YUK-708 (P0F/4) — the retired outcome's executable next step: acknowledge (dismiss)
-// the delivered result. Contract §2.1 requires the strict schema to be upgraded (not
-// left at `{kind:'none'}`) before the UI may render an ack action. `probe_result_event_id`
-// is the ack target — the same id carried in `current_outcome` — keeping the action
-// self-describing.
+// Acknowledge the delivered result; the id is the same ack target carried in
+// `current_outcome`, so the action is self-describing.
 const OutcomeAcknowledgeActionSchema = z
   .object({
     kind: z.literal('acknowledge_outcome'),
@@ -308,12 +296,9 @@ const OutcomeAcknowledgeActionSchema = z
   })
   .strict();
 
-// YUK-709 (P0F/5) — a confirmed outcome's executable next step: KC-scoped practice
-// (contract §9). Contract §2.1 requires the discriminated union + strict schema to be
-// upgraded in lockstep before the UI may render this action. `knowledge_id` mirrors
-// `finding.knowledge_id` (the /practice?kc target); `probe_result_event_id` mirrors
-// `current_outcome` so the same ack still retires the brief. Both invariants are enforced
-// by the cross-field superRefine below.
+// KC-scoped practice for a confirmed outcome. `knowledge_id` mirrors the finding
+// (the /practice?kc target); the result id lets the same ack retire the brief.
+// The cross-field superRefine below enforces both.
 const OutcomePracticeActionSchema = z
   .object({
     kind: z.literal('practice_scoped'),
@@ -420,11 +405,8 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
       })
       .strict(),
   ])
-  // Cross-field invariants (mirror TeachingBriefBasisSectionSchema's refine): on an outcome
-  // brief the ack action must target the very result the outcome reports, and a confirmed
-  // outcome's practice action must target the same KC the finding names. The checks live on the
-  // whole union so a future projection regression that lets these drift fails the wire loudly
-  // instead of silently.
+  // Actions must target the result/KC the brief actually reports, so a projection
+  // drift fails at the wire instead of producing a plausible-looking brief.
   .superRefine((brief, ctx) => {
     if (
       (brief.state === 'outcome_evidence_for' ||
@@ -439,8 +421,7 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
         path: ['prepared_action', 'probe_result_event_id'],
       });
     }
-    // YUK-709 — the /practice?kc target must be the finding's canonical KC, never a drifted
-    // one, so the CTA can only ever open practice for the point the brief is about.
+    // The CTA may only open practice for the KC the brief is about.
     if (
       brief.state === 'outcome_confirmed' &&
       brief.prepared_action.knowledge_id !== brief.finding.knowledge_id
@@ -451,10 +432,8 @@ export const TeachingBriefSchema: z.ZodType<TeachingBrief> = z
         path: ['prepared_action', 'knowledge_id'],
       });
     }
-    // YUK-785 — the pre-edit-claim disclosure is only meaningful where a probe exists and
-    // only when it actually differs from the displayed claim. A `finding` is still pending
-    // (no accept ⇒ no rewrite ⇒ no probe), and an echo of claim_md would disclose nothing
-    // while making the brief look like it had been checked.
+    // A pending finding has no probe yet, and an echo would make the brief look
+    // checked when it was not.
     if (brief.finding.tested_claim_md !== undefined) {
       if (brief.state === 'finding') {
         ctx.addIssue({
@@ -477,9 +456,7 @@ export const TeachingBriefResponseSchema = z
   .object({ brief: TeachingBriefSchema.nullable() })
   .strict();
 
-// YUK-708 (P0F/4) — acknowledge a delivered outcome. The target is the probe_result
-// event id (the same one on `current_outcome.probe_result_event_id` /
-// `prepared_action.probe_result_event_id`); the ack is keyed on it server-side.
+// Ack target is the probe_result event id; the server keys idempotency on it.
 export const TeachingBriefAckBodySchema = z
   .object({ probe_result_event_id: z.string().min(1) })
   .strict();
@@ -493,12 +470,8 @@ export const TeachingBriefAckResponseSchema = z
   })
   .strict();
 
-// YUK-710 (P0F/6) — the append-only teaching-brief interaction ledger body. A discriminated
-// union on `type`: a `brief_seen` (opened a delivered brief, idempotent per brief × local day)
-// or a `primary_action_started` (started the prepared action). `brief_id` is the stable brief
-// id (= the conjecture proposal event id). No answer / claim text is ever accepted — only the
-// action kind and its scoped identity: result_event_id for practice or probe_question_id for
-// an answer start. No answer content is accepted.
+// Interaction ledger body: opened a brief, or started its prepared action. Only
+// action identity travels — never answers or claim text.
 export const TeachingBriefInteractionBodySchema = z
   .discriminatedUnion('type', [
     z
@@ -513,22 +486,16 @@ export const TeachingBriefInteractionBodySchema = z
         type: z.literal('primary_action_started'),
         brief_id: z.string().min(1),
         action_kind: z.enum(PRIMARY_ACTION_KINDS),
-        // Present only for scoped_practice (the confirmed outcome's probe_result event id) — the
-        // "only scoped_practice may carry it" invariant is enforced by the superRefine below.
+        // scoped_practice only (enforced below).
         result_event_id: z.string().min(1).optional(),
-        // Present only for answer_probe. It distinguishes the initial and recurrence probe
-        // starts while brief_id remains the same conjecture id.
+        // answer_probe only; distinguishes initial and recurrence starts on one brief.
         probe_question_id: z.string().min(1).optional(),
       })
       .strict(),
   ])
-  // The result_event_id join key is meaningful ONLY for scoped_practice — and REQUIRED there. A
-  // both directions live on the union-level refinement:
-  //   - scoped_practice WITHOUT it → reject. The report's confirmed→scoped-practice numerator joins on
-  //     it, and the deterministic event id means a first row written without it could never be
-  //     back-filled (onConflictDoNothing swallows a later retry), so a missing id must fail loudly at
-  //     the boundary rather than silently drop the outcome from the count.
-  // answer_probe similarly requires its question id; accept_probe carries neither identity.
+  // The report joins on result_event_id, and the deterministic event id means a row
+  // written without it could never be back-filled (onConflictDoNothing swallows a
+  // retry), so it is required for scoped_practice and rejected elsewhere.
   .superRefine((body, ctx) => {
     if (body.type !== 'primary_action_started') return;
     if (body.action_kind === 'scoped_practice' && body.result_event_id === undefined) {

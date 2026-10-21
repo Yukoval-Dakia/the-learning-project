@@ -12,12 +12,8 @@ export interface WriteNoteRefineProposalParams {
   summary: NotePatchSummary;
   triggerEventId?: string | null;
   taskResult?: TaskTextResult;
-  // YUK-358 (ADR-0040 决定1) — set when this proposal is the A-track rate
-  // breaker's fallback (auto-apply rate tripped the hard cap), not the normal
-  // count/user_verified divert. Stamps `breaker_tripped: true` into
-  // proposed_change so the inbox / audit can tell a runaway-rate fallback from a
-  // routine over-threshold propose. The user can still accept it (退回人审 NOT
-  // block); the reason_md explains why it landed in the inbox.
+  // Marks the rate-breaker fallback so the inbox and audit can tell it apart from
+  // a routine over-threshold propose. The user can still accept it.
   breakerTripped?: boolean;
 }
 

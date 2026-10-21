@@ -11,13 +11,8 @@ import { CauseCategory } from './blocks';
 /** Canonical action name for mutable question-content audit events. */
 export const QUESTION_EDIT_ACTION = 'experimental:question_edit' as const;
 
-// Note (T-D7 / YUK-126, 2026-05-28): the former ToolUseExperimental schema +
-// `experimental:tool_use` reserved action have been promoted out of this file
-// into KnownEvent as `ToolUseQuery` / `action='tool_use'`. See
-// `src/core/schema/event/known.ts` and ADR-0011 §1.1 promotion record.
-
 // ====================================================================
-// UserCauseExperimental — Phase 1c.2 (待稳)
+// UserCauseExperimental（待稳）
 // ====================================================================
 //
 // 用户在 POST /api/mistakes 时手填错因。actor_kind='user'，作用在 attempt event 上
@@ -25,7 +20,7 @@ export const QUESTION_EDIT_ACTION = 'experimental:question_edit' as const;
 // 与 KnownEvent.JudgeOnEvent (actor_kind='agent') 并存：当两者都对同一 attempt
 // 存在时，业务层 cause 投影优先 user_cause（用户判断盖过 AI）。
 //
-// Stabilization criteria：1c.2 落地 + 真实使用 4 周后 promote 为 KnownEvent.UserCauseOnEvent
+// Stabilization criteria：落地 + 真实使用 4 周后 promote 为 KnownEvent.UserCauseOnEvent
 // （去 experimental: 前缀；payload shape 已经 locked 在这里）。
 
 export const UserCausePayload = z.object({
@@ -49,7 +44,7 @@ export const UserCauseExperimental = z.object({
 export type UserCauseExperimentalT = z.infer<typeof UserCauseExperimental>;
 
 // ====================================================================
-// RecordCaptureExperimental — Phase 1c.2 (待稳)
+// RecordCaptureExperimental（待稳）
 // ====================================================================
 //
 // Direct /record entry is still an activity. The route writes this capture
@@ -64,7 +59,7 @@ export const RecordCaptureExperimental = z.object({
   subject_id: z.string(),
   outcome: z.literal('success'),
   payload: z.object({
-    // YUK-1408 — ingestion-captured records inherit the source document's
+    // Ingestion-captured records inherit the source document's
     // usage policy; absent === 'allow' legacy default.
     derivation_policy: DerivationPolicy.optional(),
     record_kind: LearningRecordKind,
@@ -79,7 +74,7 @@ export const RecordCaptureExperimental = z.object({
 export type RecordCaptureExperimentalT = z.infer<typeof RecordCaptureExperimental>;
 
 // ====================================================================
-// MemoryBriefRefreshExperimental — Phase 1c.2 (待稳)
+// MemoryBriefRefreshExperimental（待稳）
 // ====================================================================
 //
 // Dreaming-maintained memory brief refresh trace. The scheduled handler lands
@@ -145,53 +140,50 @@ export type MasteryProgressExperimentalT = z.infer<typeof MasteryProgressExperim
 // fall through to generic parse and lose schema validation.
 //
 // Adding a new specialised experimental schema? Add its action literal here too.
-//
-// Note (T-D7 / YUK-126, 2026-05-28): `'experimental:tool_use'` removed from this
-// set after promotion to KnownEvent `tool_use` (ADR-0011 §1.1).
 
 export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:user_cause',
   'experimental:record_capture',
   'experimental:memory_brief_refresh',
   MASTERY_PROGRESS_ACTION,
-  // ADR-0044 §3 (YUK-471 Wave 0) — A-class θ̂/FSRS snapshot has a dedicated
+  // ADR-0044 §3 — A-class θ̂/FSRS snapshot has a dedicated
   // StateSnapshotExperimental schema (./state-snapshot.ts). Generic fallback
   // must reject it so malformed snapshot payloads can't lose schema validation.
   'experimental:state_snapshot',
-  // YUK-561 S2 (revert-bracket §4.2) — the reversible grading checkpoint anchor a
+  // Revert-bracket §4.2 — the reversible grading checkpoint anchor a
   // state_snapshot hangs off (dedicated GradingCheckpointExperimental schema,
   // ./state-snapshot.ts). Reserved so a malformed checkpoint payload fails the parse
   // barrier instead of falling through — MUST be registered WITH the writer (every
   // attempt tx writes it, so a barrier miss would crash the whole attempt path).
   'experimental:grading_checkpoint',
-  // YUK-561 S4 (revert-bracket §4.5) — the judge-overturn residual-visibility marker
+  // Revert-bracket §4.5 — the judge-overturn residual-visibility marker
   // (dedicated ReprojectDeferredExperimental schema, ./state-snapshot.ts). The second-
   // instance reprojection engine's worklist row. Reserved so a malformed marker fails
-  // the barrier (O1 owner default: reserved + tiny schema, same discipline as checkpoint).
+  // the barrier (reserved + tiny schema, same discipline as checkpoint).
   'experimental:reproject_deferred',
-  // YUK-471 Wave 1 (Codex #4 parse barrier) — pre-W1 row backfill seed has a
-  // dedicated GenesisExperimental schema (./genesis.ts). The fold trusts genesis
+  // Pre-fold row backfill seed has a dedicated
+  // GenesisExperimental schema (./genesis.ts). The fold trusts genesis
   // as ground truth, so a malformed seed would corrupt the whole projection;
   // generic fallback must reject it so the typed schema always validates the seed.
   'experimental:genesis',
-  // YUK-471 Wave 2 (goal fold) — goal status/scope action events have dedicated
+  // Goal status/scope action events have dedicated
   // typed schemas (./goal-events.ts) so a status/scope transition is fold-visible.
   // The fold trusts these to reproduce version/updated_at; a malformed payload must
   // be rejected at the barrier, not fall through to the loose generic.
   'experimental:goal_status_update',
   'experimental:goal_scope_update',
-  // YUK-728 — load-bearing subject control-plane mirror onto the fold-owned knowledge root.
+  // Load-bearing subject control-plane mirror onto the fold-owned knowledge root.
   // Dedicated schema prevents a malformed version/name transition from falling through generic.
   'experimental:subject_root_name_update',
-  // YUK-471 Wave 2 (mistake_variant fold, critic A4) — the RUNTIME creation BASE event
+  // The RUNTIME creation BASE event
   // (./mistake-variant-events.ts) carries the full initial row INCLUDING the fold-blind
-  // cause_category. It is the runtime analog of the backfill-only experimental:genesis (A4:
-  // genesis must NOT be used on the creation hot path). The fold trusts payload.row as the row's
+  // cause_category. It is the runtime analog of the backfill-only experimental:genesis —
+  // genesis must NOT be used on the creation hot path. The fold trusts payload.row as the row's
   // base/ground truth, so a malformed create payload must be rejected here, not fall through.
   'experimental:mistake_variant_create',
-  // YUK-471 Wave 2 (learning_item fold) — the three status-transition action events
-  // (./learning-item-events.ts) make a complete/relearn/archive fold-visible via Q1 (the
-  // recommended route — no rate-payload side-channel reverse-lookup). The fold trusts them to
+  // The three status-transition action events
+  // (./learning-item-events.ts) make a complete/relearn/archive fold-visible
+  // (the recommended route — no rate-payload side-channel reverse-lookup). The fold trusts them to
   // reproduce status/completed_at/archived_at/version; a malformed payload must be rejected at
   // the barrier, not fall through to the loose generic.
   'experimental:learning_item_complete',
@@ -199,39 +191,39 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   'experimental:learning_item_archive',
   'experimental:learning_item_knowledge_ids_rewrite',
   'experimental:learning_item_state_restore',
-  // YUK-471 Wave 3 (artifact fold, design §3 #2/#3/#4) — the three artifact action events
+  // The three artifact action events
   // (./artifact-events.ts) make every structural artifact mutation fold-visible + self-sufficient:
   // body_blocks_edit (full AFTER-snapshot), artifact_create (runtime creation BASE, unifying the 8
-  // INSERT sites — genesis stays backfill-only, critic A4), artifact_lifecycle (archive/unarchive +
-  // generation_status/verification_status transitions, F1). The fold trusts these to reproduce
+  // INSERT sites — genesis stays backfill-only), artifact_lifecycle (archive/unarchive +
+  // generation_status/verification_status transitions). The fold trusts these to reproduce
   // body_blocks/version/status; a malformed payload must be rejected at the barrier, not fall
   // through to the loose generic. NOTE: the legacy `experimental:artifact_body_blocks_edit`
-  // (body-blocks-edit.ts) is intentionally NOT reserved — its on-disk events lack body_blocks and
-  // keep parsing via the generic fallback; W3-C1 migrates the writer to `experimental:body_blocks_edit`.
+  // is intentionally NOT reserved — its on-disk events lack body_blocks and
+  // keep parsing via the generic fallback.
   'experimental:body_blocks_edit',
   'experimental:artifact_create',
   'experimental:artifact_lifecycle',
-  // YUK-471 Wave 3 (W3-C1γ artifact edit/lifecycle/mutator cutover) — the self-sufficient undo
+  // The self-sufficient undo
   // event (./artifact-events.ts NoteRefineUndoExperimental) carries the RESTORED body_blocks +
   // next_artifact_version + after-history so the fold reproduces a note-refine undo. Reserved so the
   // parseEvent barrier fail-loud on the ENVELOPE. The action name is REUSED (the live writer already
-  // emits it), so the fold fields are OPTIONAL in the typed schema — a pre-C1γ loose undo event still
+  // emits it), so the fold fields are OPTIONAL in the typed schema — a legacy loose undo event still
   // validates here (and via getEvents' strict read-parse) rather than throwing; the migrated writer
   // always emits the fold fields so every NEW undo is self-sufficient (see NoteRefineUndoExperimental
   // docblock). The reducer folds the restore only when body_blocks is carried.
   'experimental:note_refine_undo',
-  // YUK-471 Wave 3 (question_block fold, design §3 #5/#6) — the two question_block action events
+  // The two question_block action events
   // (./question-block-events.ts) move the structured edit off the loose `job_events`
   // `block.structured_edited` row onto the canonical log: edit_question_block_structured (full AFTER
   // snapshot per affected block — a merge's 1+N job_events collapse to ONE canonical event, with the
   // absorbed rows as merged_source, NO merged_into), question_block_create (OCR/rescue/docx/import
-  // creation BASE — genesis stays backfill-only, critic A4). The fold trusts these to reproduce
+  // creation BASE — genesis stays backfill-only). The fold trusts these to reproduce
   // structured/figures/status/version; a malformed payload must be rejected at the barrier, not fall
   // through to the loose generic. NOTE: the legacy `job_events` `block.structured_edited` is a
   // transport row, NOT an `experimental:*` action, so it is unaffected by this reservation.
   'experimental:edit_question_block_structured',
   'experimental:question_block_create',
-  // YUK-471 Wave 3 (W3-D flip prereq, the LAST qb fold-visibility gap) — the lifecycle action event
+  // The lifecycle action event
   // (./question-block-events.ts QuestionBlockLifecycleExperimental) makes the 5 previously-eventless
   // fold-truth mutators fold-visible: reassignFigure (figures re-point), runAutoEnrollForSession /
   // import-enroll / import-ignore / revertAutoEnrolledBlock (status + imported_* transitions). Mirrors
@@ -239,13 +231,13 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // to reproduce figures/status/imported_*/version; a malformed payload must be rejected at the
   // barrier, not fall through to the loose generic.
   'experimental:question_block_lifecycle',
-  // YUK-577 — copilot 主动开口触发留痕。承重非 report-only（GET /nudges 读它驱动 user-facing
+  // Copilot 主动开口触发留痕。承重非 report-only（GET /nudges 读它驱动 user-facing
   // 面 + 频控 + surfacing gate 依赖 payload 承重键），故 RESERVED + 专属 NudgeExperimental schema
   // （./nudge-events.ts）——坏 payload 在 parseEvent barrier fail-loud，不静默退化。see
   // docs/design/2026-07-07-yuk577-proactive-triggers.md §3.3. NOTE: `_dismissed`/`_opened` 承重轻
   // （只锚 nudge id，payload {}），故意 NOT reserved——走通用 hatch 即可。
   'experimental:copilot_nudge',
-  // YUK-777 A2 — record-unjudged-at-submit. The immutable answer evidence the durable
+  // Record-unjudged-at-submit. The immutable answer evidence the durable
   // judge lane writes BEFORE judging (./judge-pending-events.ts). Load-bearing on two hot
   // paths: the reconcile sweeper re-enqueues a judge_run straight from `payload.submit`,
   // and the late-arrival guard reads `payload.knowledge_ids` + `submit.submitted_at` as

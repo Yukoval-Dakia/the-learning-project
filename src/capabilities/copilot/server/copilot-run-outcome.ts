@@ -24,7 +24,7 @@ export type PersistedDurableReply =
       checkpointSafe?: boolean;
     };
 
-/** The same persisted outcome decoder serves paid settlement and native child fencing. */
+/** One persisted outcome decoder for paid settlement and native child fencing. */
 export async function findPersistedDurableReply(
   db: Db | Tx,
   runId: string,

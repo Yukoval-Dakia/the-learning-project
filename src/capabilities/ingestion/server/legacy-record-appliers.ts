@@ -1,8 +1,6 @@
-// M4-T4 (YUK-319) — D11 墓碑：record_links / record_promotion 两 kind 属旧学习
-// 记录（learning_record）域，D11 裁定该域不迁包；appliers 从 dispatch 壳
-// （actions.ts @ src/server/proposals）等价平移至此兜历史数据（搬迁不改逻辑）。
-// 无活 producer；composition 对账以 LEGACY_TOMBSTONE_KINDS 从期望全集减除
-// （src/capabilities/composition.unit.test.ts），不要求任何包声明归属。
+// Tombstone appliers for record_links and record_promotion, which belong to the
+// retired learning_record domain. They exist only to accept historical proposals;
+// no live producer emits these kinds, and composition subtracts them as tombstones.
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -283,13 +281,10 @@ function draftKnowledgeIds(draft: Record<string, unknown>, fallback: string[]): 
     : fallback;
 }
 
-// YUK-503 (YUK-471 W3 test/audit hardening) — validate the promotion draft's body_blocks at the
-// artifact INSERT seam instead of casting `draft.body_blocks as never`. The proposed_change.draft is a
-// free-form `z.unknown` payload (this dispatch shell predates the artifact_create snapshot barrier), so
-// an untyped pass-through would let a malformed TipTap doc reach the materialized artifact row and only
-// fail later (at the fold's strict artifact-create parse, or never if the flag stays OFF). Fail loud at
-// the write seam instead: a PRESENT body_blocks must satisfy the canonical ArtifactBodyBlocks schema;
-// an ABSENT one (undefined) is left to the table default (NULL). Only consulted on target='artifact'.
+// Validate body_blocks at the artifact insert instead of casting. The draft is a
+// free-form payload, so an untyped pass-through could store a malformed document
+// that fails only later. A present value must satisfy ArtifactBodyBlocks; an absent
+// one keeps the NULL default. Only used for target='artifact'.
 function draftBodyBlocks(
   draft: Record<string, unknown>,
   proposalId: string,
@@ -388,9 +383,9 @@ export async function acceptRecordPromotionProposal(
         }),
       );
 
-      // YUK-1043 — 统一发布链（§2 矩阵 legacy dreaming 行）：可达接受路径必须
-      // 生成新契约，不能成为漏网写口。dreaming 内容为 AI 提案、用户接受 ⇒ D9
-      // 手动带 provenance（manual ≠ official，D1）；接受人即人工核验门。
+      // Every reachable accept path must mint the new contract. Dreaming content is
+      // AI-proposed but user-accepted, so it carries manual provenance; the accept is
+      // the human verification gate.
       await publishQuestionGroupFromRow(tx, {
         rootId: materializedId,
         admission: {
@@ -413,9 +408,8 @@ export async function acceptRecordPromotionProposal(
         now,
       });
     } else if (target === 'learning_item') {
-      // YUK-471 W2 — the full initial row snapshot is the genesis BASE state (learning_item has no
-      // fold-blind field; per-id genesis fully seeds the row — design §3②/§3⑥). version defaults to
-      // 0 at the column (the original INSERT did not set it), so the snapshot mirrors that.
+      // The full initial row is the genesis base; learning_item has no fold-blind
+      // field, so per-id genesis seeds the row. Version stays at the column default.
       const liRow = {
         id: materializedId,
         source: 'ai_dream',
@@ -459,12 +453,9 @@ export async function acceptRecordPromotionProposal(
       // Materialize canonical structural state from the events in this transaction.
       await projectLearningItem(tx, materializedId);
     } else {
-      // YUK-471 W3-C1β — INSERT … RETURNING the FULL row (this site relies on table defaults for
-      // parent_artifact_id / attrs / tool_* / verification_* / generated_by / verified_by / history /
-      // archived_at / version), then emit the same-tx artifact_create from the MATERIALIZED row so
-      // every strict snapshot column has a real value (rollback-safe). Chained to the RATE (accept).
-      // Validate the draft body_blocks against the canonical schema (fail loud) instead of an untyped
-      // `as never` pass-through; undefined ⇒ omit (table default NULL).
+      // Insert and return the full row, then emit artifact_create in the same tx from
+      // the materialized row so every strict snapshot column has a real value. The
+      // body_blocks schema check runs at this seam; undefined keeps the NULL default.
       const bodyBlocks = draftBodyBlocks(draft, proposalId);
       const [insertedArtifact] = await tx
         .insert(artifact)

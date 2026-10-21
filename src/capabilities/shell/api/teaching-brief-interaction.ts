@@ -1,13 +1,6 @@
-// YUK-710 (P0F/6) — thin route shell for the append-only teaching-brief interaction ledger.
-//
-// POST /api/prep-desk/brief/interaction — records a `brief_seen` or a `primary_action_started`
-// funnel signal. The heavy lifting (deterministic idempotency, append, mem0 opt-out) lives in
-// the writer (server/teaching-brief-interactions.ts). REST status mirrors the ack route: a fresh
-// append → 201 Created (+ Location); an idempotent repeat (same brief × local day, or
-// action identity × local day; answer identity includes probe_question_id) → 200 OK.
-// An unparseable / malformed body → 400. This is a
-// pure observational write — it never fails on the underlying brief's current state (telemetry
-// must not disappear because the brief just advanced), so it does NOT re-derive the read model.
+// POST /api/prep-desk/brief/interaction route shell. Records one funnel signal;
+// idempotency and the mem0 opt-out live in server/teaching-brief-interactions.ts.
+// It never re-derives the brief, so telemetry survives the brief advancing.
 
 import {
   recordBriefSeen,

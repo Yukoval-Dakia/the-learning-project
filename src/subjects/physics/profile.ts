@@ -1,16 +1,8 @@
 import { UNIVERSAL_RATING_POLICY } from '@/core/schema/profile-decl';
 import type { SubjectProfile } from '../profile';
 
-// P0 (2026-05-23): physics SubjectProfile per spec §5, normalized to actual
-// framework schema:
-//   - font_family / code_highlight use snake_case (spec draft used camelCase)
-//   - schedulingHints needs default_policy (spec draft showed empty {})
-//   - questionKinds excludes 'derivation' (not in SubjectQuestionKindSchema;
-//     adding it = framework schema change, deferred to N+2)
-// judgeCapabilities: ['exact', 'semantic', 'unit_dimension'] at P1. The
-// unit_dimension runner is a skeleton until P2 implements real judging.
-// See docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §5
-
+// Physics profile. `derivation` is absent from questionKinds because it is not in
+// SubjectQuestionKindSchema; adding it is a framework schema change.
 export const physicsProfile: SubjectProfile = {
   id: 'physics',
   version: '1.0.0',
@@ -18,11 +10,9 @@ export const physicsProfile: SubjectProfile = {
   languageStyle: '中文讲解，强调物理量定义、单位与量纲、推导链路。',
   questionKinds: ['single_choice', 'multiple_choice', 'short_answer', 'calculation'],
   judgePolicy: {
-    // YUK-201: multimodal_direct added AFTER unit_dimension so calc questions keep
-    // unit_dimension precedence (the router checks the physics unit_dimension
-    // branch BEFORE the gated multimodal_direct auto-route; see
-    // question-contract.ts §2). multimodal_direct is the real consumer here:
-    // physics calc WITH a diagram and NO step-rubric reference_solution.
+    // unit_dimension stays before multimodal_direct so calculations keep
+    // precedence; multimodal_direct serves diagram-only calc questions with no
+    // step rubric.
     preferredRoutes: ['exact', 'semantic', 'unit_dimension', 'multimodal_direct'],
     notes: [
       '数值题优先 unit_dimension（P1+ capability 落地后）。',
@@ -51,8 +41,7 @@ export const physicsProfile: SubjectProfile = {
     teachingStyle: '先检查物理量与单位是否匹配，再给推导路径，最后做量纲检验。',
     checkQuestionPolicy: '检查题应聚焦一个公式应用、单位换算或量纲分析。',
     learningIntentPolicy: '把模糊目标改写成具体物理量推导、定律应用或单位换算练习。',
-    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
-    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
+    // Empty string is the legal initial state (matches the schema default).
     methodology: '',
     rubricGuidance: '',
   },
@@ -62,7 +51,7 @@ export const physicsProfile: SubjectProfile = {
       label: '单位错误',
       description: '单位换算 / 单位丢失 / 单位错配',
       review_priority: 5,
-      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      // Cause semantics are profile-owned.
       meta_cause_prior: 'representation_failure',
     },
     {
@@ -86,7 +75,6 @@ export const physicsProfile: SubjectProfile = {
       review_priority: 4,
       meta_cause_prior: 'flawed_model',
       rating_lean: 'conceptual',
-      // legacy table keyed by id — 'concept' had a strategy line for every subject
       variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
     },
     {
@@ -114,8 +102,7 @@ export const physicsProfile: SubjectProfile = {
       meta_cause_prior: null,
     },
   ],
-  // YUK-739 — verdict → FSRS rating mapping is profile-owned; physics declares the
-  // universal 3-state mapping explicitly.
+  // FSRS is subject-agnostic today, so physics declares the universal map.
   ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
@@ -125,17 +112,10 @@ export const physicsProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  // YUK-201: + 'multimodal_direct'. validateProfile requires every registry-backed
-  // preferredRoute to also appear in judgeCapabilities (and be registered) — both
-  // satisfied (registered in createDefaultRegistry).
+  // Every registry-backed preferredRoute must also be registered here.
   judgeCapabilities: ['exact', 'semantic', 'unit_dimension', 'multimodal_direct'],
-  // YUK-225 (S2 slice 4) — OF-1 首批源白名单候选 (调研报告
-  // .omc/research/2026-06-05-source-whitelist-candidates.md, owner review pending).
-  //   gaokao.eol.cn      — 中国教育在线·掌上高考, 历年高考物理真题+解析, 官方媒体 / 无登录
-  //                        (形态: 真题多图片嵌入, OCR 抽取有难度); 物理单科专项站多有
-  //                        付费墙(jyeoo 等), 首批不进。
-  //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
-  //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
+  // First-batch source whitelist candidates; owner confirmation still pending.
+  // Subject-specific sites are mostly paywalled, so only these general sources.
   sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn'],
   // physics 首批无专属 quiz-gen skill (OF-3 首批只覆盖 yuwen/math); 计算题走通用次序。
   sourcingRoutePreference: {

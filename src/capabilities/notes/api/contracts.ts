@@ -43,7 +43,7 @@ export const ArtifactSearchResponseSchema = z.object({
 
 export const NoteListQuerySchema = z.object({
   subject: z.string().trim().min(1).optional(),
-  // YUK-919 — 笔记文本搜索（标题或正文，大小写不敏感子串）。空串视同缺省。
+  // Case-insensitive substring over title or body; blank means no filter.
   query: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -70,9 +70,9 @@ const NotePageBacklinkSchema = z.object({
   from_block_id: z.string(),
 });
 
-// JSON Schema output cannot faithfully emit the recursive TipTap node graph.
-// Keep the public wire boundary explicit and one node deep while route handlers
-// still validate writes with the canonical recursive ArtifactBodyBlocks schema.
+// JSON Schema cannot express the recursive TipTap graph, so the wire schema is
+// one level deep; route handlers still validate writes with the canonical
+// recursive ArtifactBodyBlocks schema.
 const ArtifactBodyBlockWireSchema = z
   .object({
     type: z.string(),
@@ -273,8 +273,7 @@ export const DismissHubLinkResponseSchema = z.object({
 
 export const EditingHeartbeatBodySchema = z.object({
   artifact_id: z.string().min(1),
-  // YUK-384 — editing presence is session-qualified; one UUID per mounted editor
-  // session so a heartbeat upserts only that session's row.
+  // One UUID per mounted editor: a heartbeat upserts only its own session row.
   editor_session_id: z.string().uuid(),
   status: z.enum(['editing', 'idle']).default('editing'),
 });

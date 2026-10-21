@@ -4,19 +4,10 @@ import { acceptAskAnswer } from '../server/agent/asks';
 import { IngestionAskAnswerBody, IngestionAskAnswerHeaders } from '../server/agent/contract';
 
 /**
- * YUK-1522 (R8) — POST /api/ingestion-sessions/[id]/asks/[ask_id]/answers
- *
- * Learner answer acceptance for a durable ingestion ask. The durable truth is
- * the ask.resolved + ingestion_agent.ask_resolved pair written in one tx;
- * this route only validates and accepts:
- *   - 202 {accepted:true, replayed:false} on first acceptance;
- *   - 202 {accepted:true, replayed:true} on same-key/same-content replay;
- *   - 409 idempotency_conflict on same-key/different-content;
- *   - 409 ask_already_resolved when the ask is terminal (answer or timeout);
- *   - 422 option_not_found / answer_empty / answer_too_long /
- *     answer_kind_mismatch per the contract.
- * The resume enqueue is post-commit best-effort; the ask sweeper re-dispatches
- * the durable resume_requested marker if the send is lost.
+ * Accepts a learner answer for a durable ingest ask. The route validates and
+ * accepts; the ask resolution and agent event commit in one tx. Replays are
+ * idempotent, terminal asks return 409, and contract violations return 422. The
+ * resume enqueue is post-commit best-effort; the sweeper re-dispatches if lost.
  */
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {

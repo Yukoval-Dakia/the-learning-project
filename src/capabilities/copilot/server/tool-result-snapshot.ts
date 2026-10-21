@@ -40,11 +40,11 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_question_context: 'reader',
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
-  // ADR-0072: bank evidence is agent-facing; content/answers need a UI-owned projection.
+  // Bank evidence is agent-facing; content/answers need a UI-owned projection.
   search_bank: ['scope_applied', 'requirements', 'coverage'],
   read_bank: [],
   check_bank: ['notes', 'supported_kinds'],
-  // YUK-1448: filing verdict is public; the ledger receipt detail stays agent-facing.
+  // Filing verdict is public; the ledger receipt detail stays agent-facing.
   file_bank_gap: ['demand_id', 'status', 'deduplicated', 'reason'],
   get_record_context: 'record',
   get_review_due: 'review',
@@ -75,7 +75,7 @@ const POLICIES: Record<string, ResultPolicy> = {
     'publishable',
     'replayed',
   ],
-  // YUK-1407 — 纠错提案回执（proposal id + 状态给模型；内部评估细节不泄）。
+  // 纠错提案回执（proposal id + 状态给模型；内部评估细节不泄）。
   propose_grading_correction: ['status', 'reason', 'proposal_event_id', 'evaluation_id'],
   attribute_mistake: ['status', 'judge_event_id', 'cause'],
   propose_variant: ['status', 'proposal_ids', 'mistake_variant_ids', 'variant_question_ids'],

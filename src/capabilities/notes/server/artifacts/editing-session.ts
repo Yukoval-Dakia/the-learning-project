@@ -16,13 +16,8 @@ export {
   type EditingStatus,
 } from '@/server/artifacts/presence/types';
 
-// M5-T5c (YUK-321) — Redis 退役（gate 选项 b）：prod 拓扑保持双进程
-// （app + worker），跨进程 presence 改走 PG 表——恒用 PgPresenceStore
-// （gate 前置子任务实施的第三实现，ADR-0023 的 PresenceStore seam 保留）。
-// RedisPresenceStore 已随旧依赖一并移除。
-//
-// Lazy singleton: the store is created once and reused for the life of the
-// process. Don't open a PG connection per call (db is the shared singleton).
+// Presence is process-wide, so the store is a lazy singleton over the shared
+// PG pool; creating one per call would open connections needlessly.
 let store: PresenceStore | undefined;
 
 function getPresenceStore(): PresenceStore {
@@ -56,9 +51,8 @@ export function getEditingSessionSnapshot(
   return getPresenceStore().getEditingSessionSnapshot(artifactId);
 }
 
-// Resets the active store. In the fast unit suite, @/db/client + presence/pg
-// are vi.mock'd so PgPresenceStore resolves to InMemoryPresenceStore (clears
-// the in-memory Map). In pg.db.test.ts, resets the editing_presence table.
+// Unit suites mock the store to an in-memory implementation; DB suites clear the
+// editing_presence table.
 export function resetEditingSessionStateForTests(): Promise<void> {
   return getPresenceStore().reset();
 }

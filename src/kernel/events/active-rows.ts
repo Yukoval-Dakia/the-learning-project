@@ -1,7 +1,5 @@
-// Shared active-row helpers for capability-owned event read models.
-//
-// Concrete semantic projections live with their owning capabilities. Generic
-// envelope storage and correction-status evaluation live in @/kernel/events.
+// Helpers for capability-owned event read models; envelope storage and correction
+// status live in @/kernel/events.
 
 import type { Db, Tx } from '@/db/client';
 import type { event } from '@/db/schema';
@@ -14,8 +12,7 @@ function hasActiveCorrectionStatus(status: CorrectionStatus | undefined): boolea
   return status?.state === 'active';
 }
 
-// Deterministic (created_at, dispatch_seq, id) ordering is shared by
-// capability-owned event read models.
+// Shared deterministic order for capability-owned event read models.
 export function newerEventRow(a: EventRow, b: EventRow): boolean {
   return (
     a.created_at > b.created_at ||
@@ -24,10 +21,7 @@ export function newerEventRow(a: EventRow, b: EventRow): boolean {
   );
 }
 
-/**
- * YUK-1106 — 升序比较器（与 newerEventRow 同一规范序，从它派生，不另立第二
- * 份排序规则）：供需要确定性处理顺序的读模型对行数组排序。返回 -1/0/1。
- */
+/** Ascending form of newerEventRow; one ordering rule, not a second copy. */
 export function compareEventRowsAsc(a: EventRow, b: EventRow): number {
   if (newerEventRow(b, a)) return -1;
   if (newerEventRow(a, b)) return 1;

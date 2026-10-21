@@ -16,11 +16,9 @@ export function isEvidenceResult(result: PriorProbeResult): boolean {
 /**
  * Convert a grading outcome into a conjecture-survival decision.
  *
- * Persistence supplies the immutable prior `probe_result` history; this pure fold
- * alone owns the evidence-strength rule. A wrong answer is only preliminary until
- * a distinct probe question for the same conjecture has already produced
- * compatible evidence. A correct answer keeps the established retirement
- * behaviour.
+ * Prior `probe_result` history is immutable; this pure fold owns the evidence-strength
+ * rule: a wrong answer is only preliminary until a distinct probe question for the same
+ * conjecture has produced compatible evidence. A correct answer retires the conjecture.
  */
 export function resolveProbeResolution(
   outcome: 0 | 1,

@@ -1,5 +1,5 @@
-// M5-T5a (YUK-321)：平移自 app/api/editing-session/blur/route.ts（Hono manifest
-// 挂载；旧壳 Task 9 拆）。等价平移，行为不动。
+// Blur clears this editor's presence and flushes deferred work once no session
+// remains.
 
 import { EditingBlurBodySchema } from '@/capabilities/notes/api/contracts';
 import { markArtifactIdleAndFlush } from '@/capabilities/notes/server/artifacts/editing-session';

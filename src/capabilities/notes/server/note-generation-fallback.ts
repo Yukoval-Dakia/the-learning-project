@@ -1,19 +1,11 @@
-// YUK-1508 (Stage「第一天能用」T3) — deterministic fallback body when note
-// generation fails (provider error, timeout, or output-parse failure — the
-// YUK-981 class). The learner must never be left with a blank note or a bare
-// error: the body is filled from REAL, already-persisted material only — the
-// note's own title, an excerpt of its first source material, the related
-// knowledge-point names, and (when the note was generated from an
-// already-issued question) the frozen reference under the reveal rule in
-// kernel/records/study-reference.ts (the same rule the hint fallback uses).
-// Every piece is labelled with where it came from and the body opens with
-// 「自动生成失败，以下为原材料整理」. No AI content is invented.
+// Deterministic body for a note whose generation failed. The learner gets real,
+// already-persisted material (title, first-source excerpt, knowledge points, and
+// a gated frozen reference) instead of a blank note; every piece is labelled and
+// no AI content is invented.
 //
-// The question linkage is EXPLICIT data on the note row (attrs
-// source_issuance_id + source_question_id, stamped by whatever writer derives
-// a note from an issued question — e.g. a future from_mistake writer). It is
-// never inferred from knowledge-node overlap: inferring would leak a frozen
-// reference into a note the question never fed.
+// The question linkage is explicit attrs on the note, never inferred from
+// knowledge overlap: inferring could leak a frozen reference into a note the
+// question never fed.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
@@ -47,11 +39,11 @@ const MATERIAL_EXCERPT_MAX_CHARS = 400;
 export interface NoteGenerationFallbackQuestion {
   question_id: string;
   issuance_id: string;
-  /** Frozen issued face (public materials + part prompts), not the live question row. */
+  /** Frozen issued prompt, not the live question row. */
   prompt_excerpt: string;
-  /** Frozen reference (sol_*, else issued scoring basis); non-null only when already revealed. */
+  /** Frozen reference; null unless already revealed. */
   reference_md: string | null;
-  /** A frozen reference exists but was not yet revealed — withheld honestly. */
+  /** A reference exists but the learner has not seen it yet, so it is withheld. */
   reference_withheld: boolean;
 }
 
@@ -82,10 +74,9 @@ function questionLinkage(attrs: unknown): { issuanceId: string; questionId: stri
 }
 
 /**
- * Question branch — only for notes whose attrs carry an EXPLICIT
- * source_issuance_id + source_question_id linkage. A missing issuance or a
- * coordinate mismatch leaves the branch off. A non-assistable issuance still
- * contributes the frozen issued face, never the reference.
+ * Only notes carrying an explicit issuance + question linkage take this branch.
+ * A non-assistable issuance still contributes its frozen prompt, never the
+ * reference.
  */
 async function loadFallbackQuestion(
   db: Db,
@@ -121,9 +112,8 @@ async function loadFallbackQuestion(
 }
 
 /**
- * Load every piece of real fallback material for a note. Reads only frozen or
- * display-grade data (knowledge names, hub summary, sibling note excerpts, the
- * frozen issuance); nothing here calls a model or invents content.
+ * Load the real material for a fallback body. Reads frozen or display-grade data
+ * only; never calls a model.
  */
 export async function loadNoteGenerationFallbackMaterial(
   db: Db,
@@ -309,11 +299,9 @@ export function isNoteGenerationFallbackBody(body: unknown): boolean {
 }
 
 /**
- * True when the body is the UNTOUCHED fallback: the marker block is present AND
- * the last history entry is the fallback write itself at the current version.
- * A learner edit (or any later body write) pushes a newer history entry, so this
- * flips false the moment anyone touches the fallback — those edits must never
- * be clobbered by a retry's success body.
+ * True only for the untouched fallback: marker present and the last history entry
+ * is the fallback write at this version. Any later edit flips this false so a
+ * retry cannot clobber learner content.
  */
 export function isUntouchedNoteGenerationFallbackBody(
   body: unknown,
@@ -329,9 +317,8 @@ export function isUntouchedNoteGenerationFallbackBody(
 }
 
 /**
- * May a generation success body (or a retry reopen) take over this note? Only
- * when the body is still empty, or it is exactly the untouched fallback.
- * Anything else is human/agent-authored content the generation must not clobber.
+ * A success body may replace an empty body or the untouched fallback; anything
+ * else is authored content that generation must not overwrite.
  */
 export function mayOverwriteNoteBodyForGeneration(
   body: unknown,

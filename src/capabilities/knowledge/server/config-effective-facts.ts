@@ -1,5 +1,4 @@
-// YUK-1007 — knowledge 拥有键的 consumer-effective 事实（真实 reader 调用，
-// 不复述防御性 fallback 规则）。经 knowledge/public.ts 透出给组合根 facts seam。
+// Effective values from the real readers, exposed to the config facts seam.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { dedupDistanceMax, dedupMaxPairs, dedupWindowDays } from './dedup-flags';
 import { matchThreshold } from './tagging-flags';

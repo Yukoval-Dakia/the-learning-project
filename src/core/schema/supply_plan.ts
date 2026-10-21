@@ -1,4 +1,4 @@
-// YUK-987 (985/E2) — SupplyPlanV1：供给 planner agent 产出的需求计划 artifact。
+// SupplyPlanV1：供给 planner agent 产出的需求计划 artifact。
 //
 // 照 ADR-0038 quiz_gen_plan 范式：LLM 只做规划（要什么题、补哪个知识点、多少道、
 // 偏好哪条获取路线），产出机器可检的 typed JSON；确定性机器门
@@ -29,7 +29,7 @@ export type SupplyPlanRouteT = (typeof SUPPLY_PLAN_ROUTES)[number];
 export const SupplyPlanItemV1 = z.object({
   // 知识图谱里真实存在且未归档的节点 id（机检回查，查无此点整份计划被拒）。
   knowledge_id: z.string().min(1),
-  // 自由文本题面标签（YUK-386；惯用标签见 KNOWN_QUESTION_KIND_IDS），或 'any'
+  // 自由文本题面标签（惯用标签见 KNOWN_QUESTION_KIND_IDS），或 'any'
   // （该格子任意题型可填——'any' 本身也是合法字符串，union 只作语义标注）。
   kind: z.union([QuestionKind, z.literal('any')]),
   difficulty_band: z.enum(['below', 'near', 'above', 'stretch']),

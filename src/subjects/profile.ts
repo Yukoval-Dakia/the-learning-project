@@ -21,17 +21,12 @@ export {
   SubjectQuestionKindSchema,
 } from './profile-schema';
 
-// YUK (wenyan deprotagonist): the neutral default is `general`, NOT a concrete
-// sample subject. A null / unknown domain resolves to `general` (system font,
-// generic voice) instead of inheriting the classical-Chinese privilege.
-// `general` is intentionally a plain SubjectId (not KnownSubjectId): it is the
-// fallback identity, never a node domain, so it stays out of KNOWN_SUBJECT_IDS
-// (goal-scope candidates / derived `?subject=` axis iterate that list).
+// Null / unknown domains resolve to the neutral `general` profile, never to a
+// sample subject. `general` is the fallback identity, so it stays out of the
+// selectable set (goal scope and the derived subject axis iterate that set).
 const DEFAULT_SUBJECT_ID: SubjectId = 'general';
 
-// YUK-599 — builtin 别名的单一来源：registry 构造器与 migrate 的种子 claims
-// （reconcileBuiltinTraits）共用，防两处漂移。YUK-249：wenyan 是改名前 canonical，
-// 降级为 alias 使 legacy domain='wenyan' 数据/旧备份/历史 event payload 归一到 yuwen。
+// Single source for builtin aliases, shared by the registry and trait seeding.
 export const BUILTIN_SUBJECT_ALIASES: Record<string, readonly string[]> = {
   general: [],
   yuwen: ['wenyan', 'classical_chinese', 'chinese_classics'],
@@ -39,16 +34,8 @@ export const BUILTIN_SUBJECT_ALIASES: Record<string, readonly string[]> = {
   physics: ['physical'],
 };
 
-// The generic registry no longer hardcodes any concrete-subject alias. Each
-// sample subject self-declares its aliases at register() time (e.g. yuwen owns
-// the legacy `wenyan` id plus classical_chinese / chinese_classics), so the
-// framework default stays subject-neutral and adding/removing a subject can't
-// strand an orphan alias here. YUK-249: the subject was renamed wenyan → yuwen;
-// the old canonical id `wenyan` is DEMOTED to an alias so legacy domain='wenyan'
-// data, old backup imports, and historical event payloads all resolve to yuwen.
-
-// YUK-599 (v2 §2.2 承接) — 补 NFC：CJK 恒等、无 locale 坑；写门 / DB 入库
-// （display_name_norm、claim.name_norm）/ 内存 Map 键必须共用本函数（导出即合同）。
+// NFC + trim + lowercase. Write gates, DB norm columns, and in-memory map keys
+// must all use this so CJK and case variants resolve identically.
 export function normalizeSubjectKey(value: string): string {
   return value.normalize('NFC').trim().toLowerCase();
 }
@@ -68,8 +55,8 @@ export interface SubjectRegistrationResult {
 
 export interface SubjectRegistrationOptions {
   throwOnInvalid?: boolean;
-  // YUK-598 — DB 行的控制面元数据（hydrate 喂入）；缺省 = 新注册 custom 的默认
-  // { isBuiltin: false, isSelectable: true, retiredAt: null }。
+  // Control-plane metadata supplied by hydration; custom subjects default to
+  // { isBuiltin: false, isSelectable: true, retiredAt: null }.
   meta?: SubjectRegistryEntryMeta;
 }
 
@@ -77,9 +64,8 @@ export interface SubjectRegistryOptions {
   throwOnInvalid?: boolean;
 }
 
-// YUK-598（v2 §2.1 三集合语义）— registry entry 的控制面元数据（DB 行经 hydrate
-// 喂入；未提供时按「新注册 custom」默认）。两谓词独立：general 是**结构性**排除
-// （isSelectable=false 永久），retired 是**状态性**排除（retiredAt 非空，可 restore）。
+// Two independent exclusions: general is structurally unselectable, while a
+// retired subject is unselectable by state and can be restored.
 export interface SubjectRegistryEntryMeta {
   isBuiltin: boolean;
   isSelectable: boolean;
@@ -97,17 +83,12 @@ export class SubjectRegistry {
   constructor(defaultId: SubjectId = DEFAULT_SUBJECT_ID, opts: SubjectRegistryOptions = {}) {
     this.defaultId = defaultId;
     const throwOnInvalid = opts.throwOnInvalid ?? true;
-    // general = neutral default; registered first so it backs the default id.
-    // isSelectable=false = 结构性排除（v2 §2.1：general 是 fallback 身份，不进
-    // 选择器/词表/nightly 候选）。
+    // Registered first so it backs the default id; never selectable.
     this.register(generalProfile, [], {
       throwOnInvalid,
       meta: { isBuiltin: true, isSelectable: false, retiredAt: null },
     });
-    // Each sample subject self-declares its own aliases (归位) — the generic
-    // registry no longer hardcodes any concrete-subject alias table. YUK-249:
-    // `wenyan` is the pre-rename canonical id, now demoted to an alias so legacy
-    // domain='wenyan' data / old backups / event payloads normalise to yuwen.
+    // Sample subjects declare their own aliases; nothing concrete is hardcoded here.
     const builtinMeta: SubjectRegistryEntryMeta = {
       isBuiltin: true,
       isSelectable: true,
@@ -160,9 +141,8 @@ export class SubjectRegistry {
     return { id, valid: true, errors: [] };
   }
 
-  // YUK-599 (v2 §2.2) — alias 抢占显式冲突：同串已被**他科**占用 → throw，
-  // 不再静默覆盖（旧 :118 直接 .set 会让 alias 抢 'math' 静默改写 builtin 自别名）。
-  // `!== id` 谓词放行同科重复声明（幂等重装）。DB claim 表 PK 是第二层兜底。
+  // An alias claimed by another subject is a hard error, not a silent overwrite;
+  // redeclaring an alias for the same subject is idempotent.
   private registerAliases(id: SubjectId, aliases: string[]): void {
     for (const alias of aliases) {
       const key = normalizeSubjectKey(alias);
@@ -178,9 +158,9 @@ export class SubjectRegistry {
   }
 
   /**
-   * YUK-599 (v2 §4 水合) — register-with-replace：同 id 重装（DB wins，装配结果
-   * 覆盖内存旧条目 + 重指 alias）；新 id 走完整 register 校验路径。水合用
-   * `throwOnInvalid: false`（坏行 skip+WARN 不炸进程——never-throws 矩阵）。
+   * Register-or-replace for hydration: an existing id is overwritten and its
+   * aliases repointed, a new id goes through full validation. Hydration passes
+   * throwOnInvalid: false so one bad row is skipped instead of crashing boot.
    */
   upsert(
     profile: SubjectProfile,
@@ -207,9 +187,8 @@ export class SubjectRegistry {
   }
 
   /**
-   * YUK-599 — reconcileCustomIds 防御网的摘除原语：删 profile + 指向它的全部
-   * alias。唯一真实触发 = restore 使 DB 行集收缩；调用方（hydrate）负责
-   * 「builtin 四种子是地板永不摘」的守卫，本方法不自判。
+   * Remove a profile and every alias pointing at it. Only a shrinking DB row set
+   * reaches this; the caller guards that builtin seeds are never removed.
    */
   remove(id: SubjectId): boolean {
     const key = normalizeSubjectKey(id);
@@ -221,11 +200,8 @@ export class SubjectRegistry {
     return true;
   }
 
-  // ── YUK-598（v2 §2.1）三集合读面 ──────────────────────────────────────────
-  // resolvable-all：全部注册科目含 retired（旧数据/event 串永不悬垂）；
-  // active-selectable：排除 general（结构性）+ retired（状态性），两谓词独立。
-  // BUILTIN_IDS（编译期字面常量）在 profile-schema.ts，运行时零权威。
-
+  // resolvable includes retired subjects so old data never dangles; selectable
+  // excludes both structural and retired exclusions.
   getMeta(id: SubjectId): SubjectRegistryEntryMeta | undefined {
     return this.meta.get(normalizeSubjectKey(id));
   }
@@ -243,7 +219,7 @@ export class SubjectRegistry {
     return this.listIds('selectable');
   }
 
-  // YUK-600（v2 §6）— 列举某科目的别名（不含自别名）；knownSubjects 词表用。
+  // Excludes the self-alias.
   listAliasesFor(id: SubjectId): string[] {
     const key = normalizeSubjectKey(id);
     const out: string[] = [];
@@ -268,35 +244,24 @@ export class SubjectRegistry {
   }
 
   /**
-   * Resolve a domain to its canonical subject id ONLY when the domain is a
-   * GENUINE alias/id hit — returns `null` for a null/empty domain OR an
-   * unrecognised string. Unlike `resolve()`, this never falls back to the default
-   * subject, so callers can tell "genuinely yuwen" apart from "untagged /
-   * unknown-domain" (YUK-288: the derived `?subject=` axis must NOT sweep
-   * domainless or unknown-domain nodes into the default subject). Alias-aware
-   * (wenyan / classical_chinese → yuwen) where the bare-equality precedent
-   * (tagging.ts:122) is not.
+   * Canonical id only on a genuine alias/id hit; null for a missing or unknown
+   * domain. Unlike resolve(), this never falls back, so callers can distinguish
+   * a real subject from an untagged node.
    */
   resolveKnownSubjectId(domain?: string | null): SubjectId | null {
     if (!domain) return null;
     const key = normalizeSubjectKey(domain);
     if (key.length === 0) return null;
-    // A known alias maps to its id; a bare profile id is registered as a self
-    // alias (register() does `this.aliases.set(id, id)`), so this single lookup
-    // covers both. A miss means the domain is unrecognised → null (no fallback).
+    // A profile id is registered as its own alias, so one lookup covers both.
     const resolvedId = this.aliases.get(key);
     if (resolvedId === undefined) return null;
     return this.profiles.has(resolvedId) ? resolvedId : null;
   }
 
   /**
-   * YUK-1004 — resolve a domain to its canonical subject id ONLY when it is a
-   * real, currently-selectable subject. Same alias resolution as
-   * `resolveKnownSubjectId`, but additionally requires
-   * `isSelectable === true && retiredAt === null`: `general` self-resolves
-   * (self-alias) yet is the fallback identity, never a knowledge-node domain,
-   * so it — like retired subjects — returns `null` here. This is the write-side
-   * "valid node domain" predicate; read-side resolvability stays wider.
+   * Canonical id only for a currently selectable subject. `general`, retired
+   * subjects, and unknown strings return null; this is the write-side predicate
+   * for a valid knowledge-node domain.
    */
   resolveSelectableSubjectId(domain?: string | null): SubjectId | null {
     const resolvedId = this.resolveKnownSubjectId(domain);
@@ -316,15 +281,14 @@ export class SubjectRegistry {
 
 const defaultRegistry = new SubjectRegistry();
 
-// ⚠️ YUK-598（v2 §9①）：以下两个导出是 **import 期代码快照**，水合后不更新——
-// 这是它们的合同（代码种子地板 / migrate 单写者 / SPA 编译期兜底的取数点），
-// 不是 bug。凡语义是「当前活配置」的读点一律用 resolveSubjectProfile()/registry
-// API；新增消费点前先分清你要的是快照还是活值。
+// Import-time code snapshot; hydration does not update it. Use it only where a
+// compile-time floor is required (seeds, migration single-writer, SPA bootstrap);
+// live reads go through resolveSubjectProfile() or the registry.
 export const subjectProfiles: Record<string, SubjectProfile> = Object.fromEntries(
   defaultRegistry.listProfiles().map((profile) => [profile.id, profile]),
 );
 
-/** @deprecated YUK-598：活值读点用 `resolveSubjectProfile()`；此常量只保留给显式要「代码快照默认档」的场景。 */
+/** @deprecated Use resolveSubjectProfile() for live values. */
 export const defaultSubjectProfile = defaultRegistry.resolve();
 
 export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
@@ -332,33 +296,25 @@ export function resolveSubjectProfile(domain?: string | null): SubjectProfile {
 }
 
 /**
- * Resolve a domain to its canonical subject id ONLY on a genuine alias/id hit;
- * `null` for a null/unknown domain (no default-subject fallback). See
- * `SubjectRegistry.resolveKnownSubjectId`.
+ * Canonical id only on a genuine hit; null for unknown domains, with no default
+ * fallback.
  */
 export function resolveKnownSubjectId(domain?: string | null): SubjectId | null {
   return defaultRegistry.resolveKnownSubjectId(domain);
 }
 
 /**
- * YUK-1004 — canonical subject id ONLY for a real, selectable subject;
- * `general`, retired subjects and unknown strings all resolve to `null`. The
- * write-path "valid knowledge-node domain" predicate — `general` is the
- * fallback identity and must never be persisted as a node domain.
+ * Canonical id only for a selectable subject; general, retired, and unknown all
+ * return null. `general` is the fallback identity and never a persisted domain.
  */
 export function resolveSelectableSubjectId(domain?: string | null): SubjectId | null {
   return defaultRegistry.resolveSelectableSubjectId(domain);
 }
 
 /**
- * YUK-1004 — what a proposed domain should be STORED as `knowledge.domain`,
- * mirroring the createKnowledgeNodeFromEvents seam semantics exactly:
- *   selectable subject (incl. aliases) → canonical id;
- *   `general` in any spelling          → null (inherit; never a node domain);
- *   anything unresolvable              → verbatim (custom subjects pre-
- *     hydration and legacy unconfigured domains are deliberately tolerated).
- * Use this at proposal/plan boundaries; `resolveSelectableSubjectId` stays the
- * strict predicate for positions that MUST be a real subject (a 3a root).
+ * The value to store as knowledge.domain: a selectable subject (or alias) becomes
+ * its canonical id, `general` becomes null (inherit), and anything unrecognized is
+ * kept verbatim so pre-hydration custom subjects still round-trip.
  */
 export function sanitizeProposedNodeDomain(domain?: string | null): string | null {
   const selectable = resolveSelectableSubjectId(domain);
@@ -368,11 +324,9 @@ export function sanitizeProposedNodeDomain(domain?: string | null): string | nul
   return raw || null;
 }
 
-// YUK-600（v2 §6，阻断②）— AI 分类词表：opaque id 互相零语义差 → 判别近随机；
-// display_name 是分类依据，id 是 opaque stable key 原样回传（LLM 禁自造），
-// aliases present 才序列化。**取数红线**：读活 registry（selectable × get +
-// listAliasesFor），不读编译期冻结快照 subjectProfiles；general 永不入词表
-// （selectable 结构性排除）。
+// AI classification vocabulary: opaque ids alone carry no signal, so display
+// names are the labels while ids stay verbatim keys. Read the live selectable
+// registry, never the code snapshot; general is never listed.
 export interface KnownSubject {
   id: string;
   display_name: string;

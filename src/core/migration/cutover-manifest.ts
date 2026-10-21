@@ -9,16 +9,16 @@ import {
 import type { MigrationManifest } from './types';
 
 // ====================================================================
-// YUK-1056 — 统一切换 final backup manifest（grounding §14–§15）
+// 统一切换 final backup manifest（grounding §14–§15）
 // ====================================================================
 //
-// YUK-1048 的 migration manifest 已覆盖 §14 的观测清单（语义计数+PK /
+// migration manifest 已覆盖 §14 的观测清单（语义计数+PK /
 // canonical+edge hash / projection baseline / queues+subscriptions /
 // blobs+digests / unresolved 列表）。本封装把【切换前 final backup】落成一份
 // 自包含工件，在 migration manifest 之外补齐运维面：
 //   - pg_dump 工件身份（file/sha256/bytes/TOC）与 restore-drill 证据引用；
-//   - DLQ tombstone 导出工件 + YUK-1042 处置策略（逐组，含 owner 裁决行）；
-//   - YUK-1055 job epoch disposition 汇总 + 订阅 outstanding 翻译策略；
+//   - DLQ tombstone 导出工件 + 处置策略（逐组，含 owner 裁决行）；
+//   - job epoch disposition 汇总 + 订阅 outstanding 翻译策略；
 //   - owner_actions 清单（裁决/执行待办 —— manifest 自身不声称已完成）。
 //
 // 哈希纪律同 §14：构建输入与输出都是确定性对象；可变运维字段在
@@ -53,7 +53,7 @@ export interface BackupArtifact {
 }
 
 export interface CutoverManifestInput {
-  /** YUK-1048 migration-capture 产物（latest.json 指向的 manifest）。 */
+  /** migration-capture 产物（latest.json 指向的 manifest）。 */
   migration_manifest: MigrationManifest;
   /** pg_dump custom 工件（可选——final backup 执行时必须存在）。 */
   dump: (BackupArtifact & { container_image: string | null; toc_entries: number | null }) | null;
@@ -61,7 +61,7 @@ export interface CutoverManifestInput {
   dlq_export: (BackupArtifact & { rows_exported: number }) | null;
   /** 导出时点 pgboss *_dlq 队列观测计数（与 DLQ_DISPOSITIONS 对账）。 */
   dlq_observed: ReadonlyArray<{ queue: string; rows: number }> | null;
-  /** YUK-1055 分类表快照（queue → drain/translate/fenced）。 */
+  /** 分类表快照（queue → drain/translate/fenced）。 */
   job_epoch_disposition: Record<string, string>;
   code_contract_epoch: string;
   assessment_contract_epoch: string;

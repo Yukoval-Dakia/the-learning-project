@@ -190,7 +190,7 @@ async function numericCorrect(
 /**
  * 单空 exact：blank 作答对 blank_key，按 unit.rule 给分。
  *
- * declaredShape（YUK-1568 第 2 片）：冻结 slot 声明的 answer_shape（由
+ * declaredShape（YUK-1568）：冻结 slot 声明的 answer_shape（由
  * evaluation 按主槽位传入）。带声明时走同一共享比较核心 compareDeclaredBlank
  * （准入 keysAgree / 作者键核验 / 发布闸全部复用它，绝不两套数学）；无声明
  * 文本/数值完全保持原 normalizeBlankText + numericCorrect 行为。

@@ -21,14 +21,11 @@ import { recordAgentRedaction } from './redaction-sink';
 import { requireIngestionScope } from './source-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
-// YUK-1522 (R8) — the two agent-only tools that make the R8 contract durable:
+// The two agent-only contract tools.
 //
-//   report_ingestion_progress — writes ingestion_agent.stage / .item / .error
-//     job_events rows (the SSE contract). Item reports also land an internal
-//     agent.item_state row carrying draft_ref/question_id so a later run
-//     segment can resume mid-item. preview_text is re-redacted through
-//     redactIngestionText and hard-truncated to 80 chars before it becomes
-//     preview_md — raw or personal text can never reach the event payload.
+// report_ingestion_progress writes the SSE stage/item/error events; item reports
+// also persist an internal state row so a later segment can resume mid-item.
+// preview text is redacted and truncated so raw personal text never reaches events.
 //
 //   ask_learner — creates a durable ask (ask.created + ingestion_agent.ask in
 //     one tx) or polls one. The tool NEVER blocks: create returns the ask_id

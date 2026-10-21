@@ -238,7 +238,7 @@ export async function computeHarnessScoreboard(
           select 1 from ${event} r
           where r.action = 'rate'
             and r.caused_by_event_id = ${event.id}
-            and r.created_at < ${to}
+            and r.created_at < ${to.toISOString()}
             and r.payload->>'rating' in ('accept','reverse','change_type','dismiss','rollback')
         )`,
       ),

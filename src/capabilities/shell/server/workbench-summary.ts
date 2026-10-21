@@ -1,11 +1,4 @@
-// M4-T5 (YUK-319)：工作台聚合读模型——today 重生聚合（spec M4 验收：「夜间
-// 跑完，早上工作台有交班条与待审提议」）。新端点不受搬迁红线约束；KPI 口径
-// 对齐旧 today 页前端逻辑（app/(app)/today/page.tsx L135-144，T7 拆除）：
-//   due_count                 = /api/review/due?limit=200 rows.length
-//   pending_attribution_count = /api/mistakes?limit=200 rows.filter(cause===null).length
-//   knowledge_count           = /api/knowledge 树快照行数（non-archived）
-// week_heat 是新聚合——旧页 WeekHeat 因无 activity 聚合端点而 OMITTED
-// （page.tsx L362-366），此处补上服务端实现。
+// Workbench aggregation read model: KPIs, active goal, and the seven-day activity heat.
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { queryReviewDue } from '@/capabilities/practice/public';
@@ -25,7 +18,7 @@ import { listMistakeProjectionRows } from '@/server/records/mistakes';
 import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 
-// 与旧 today 页一致的采样上限：KPI 是「今日量级」信号，不是精确总量。
+// KPI sampling cap: these are magnitude signals, not exact totals.
 const KPI_SAMPLE_LIMIT = 200;
 const ACTIVE_SESSIONS_LIMIT = 6;
 
@@ -33,7 +26,7 @@ export interface WorkbenchSessionRow {
   id: string;
   status: string;
   summary_md: string | null;
-  /** epoch seconds——旧 /api/learning-sessions wire 同口径 */
+  /** Epoch seconds, matching the learning-sessions wire. */
   started_at: number;
   ended_at: number | null;
   duration_ms: number | null;
@@ -41,7 +34,7 @@ export interface WorkbenchSessionRow {
 }
 
 export interface WorkbenchHeatDay {
-  /** BJT 日界的 YYYY-MM-DD */
+  /** YYYY-MM-DD in the Asia/Shanghai day boundary. */
   day: string;
   count: number;
 }
@@ -52,12 +45,10 @@ export interface WorkbenchSummary {
     due_count: number;
     pending_attribution_count: number;
     knowledge_count: number;
-    // active goal 数只服务画像和 KPI；冷启动由 cold_start 证据合同独立裁定。
     goal_count: number;
   };
   cold_start: ColdStartState;
-  // 当前 active goal（最近创建的一条），供 /today 起始画像卡片（YUK-476）取
-  // per-KC profile。null 只表示没有当前目标，不代表冷启动。
+  // Null means no current goal, not cold start.
   active_goal: { id: string; title: string } | null;
   active_sessions: WorkbenchSessionRow[];
   week_heat: WorkbenchHeatDay[];
@@ -92,8 +83,7 @@ interface PersistedColdStartPresence extends Record<string, unknown> {
 }
 
 async function loadPersistedColdStartPresence(db: Db): Promise<PersistedColdStartPresence> {
-  // EXISTS 保持常量级读取：这里只需要知道是否有证据，不应为了冷启动判定扫描
-  // 会持续增长的 event / practice_stream_item 全表求精确 count。
+  // EXISTS keeps this constant-time: cold start needs presence, not exact counts.
   const rows = await db.execute<PersistedColdStartPresence>(sql`
     select
       exists(select 1 from ${goal}) as goal_history,
@@ -121,8 +111,7 @@ async function loadPersistedColdStartPresence(db: Db): Promise<PersistedColdStar
   );
 }
 
-// active goal 状态只服务 KPI 与画像卡片，不参与冷启动裁决。单用户多数只有一条；
-// 多目标取 created_at 最新的一条为「当前」。一次查询同时得计数与首条。
+// Feeds KPI/profile cards only, not cold-start. With multiple goals the newest is current.
 async function loadActiveGoalState(
   db: Db,
 ): Promise<{ count: number; active: { id: string; title: string } | null }> {

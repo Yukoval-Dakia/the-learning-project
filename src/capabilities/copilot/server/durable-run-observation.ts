@@ -23,12 +23,13 @@ function payloadRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Read accepted runs with unfinished execution or an unfinished native child projection.
+ * Read accepted runs with unfinished execution or an unfinished native child
+ * projection.
  *
- * Terminal filtering happens before LIMIT. Otherwise a retained prefix of
- * already-settled rows would make every sweep miss a later stranded run. A
- * terminal parent stays eligible only until its native child projections settle.
- * Duplicate QUEUED frames collapse to the first acceptance row.
+ * Terminal filtering happens before LIMIT; otherwise a retained prefix of settled
+ * rows would make every sweep miss later stranded runs. A terminal parent stays
+ * eligible until its native child projections settle. Duplicate QUEUED frames
+ * collapse to the first acceptance row.
  */
 export async function findOutstandingCopilotDurableRuns(
   db: Db,

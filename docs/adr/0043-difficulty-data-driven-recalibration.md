@@ -110,7 +110,7 @@ spike 报告 `docs/design/2026-06-15-b-anchor-feasibility-spike.md`（5-agent，
 
 ## 2026-10-19 Amendment — agent 先验锚定的 b×θ̂ 在线联合标定（YUK-1625；改写 YUK-439 方向）
 
-**Decision source**：owner 2026-10-19 拍板——**YUK-439 从「A12 LLM 先验→active-PPI 接口」改为「b 与 θ̂ 在线联合标定，由 agent 先验锚定」；模型判分的作答也进入标定；这属于掌握更新，不是答案判分**。本节修订 §4 识别性裁决与 §备选两条否决的适用范围（上文原文保留作 2026-06-15 历史决策记录，冲突处以本节为准）。**本修订只改文档**：不改代码与测试；不改答案判分设计（判分路由、分数语义、更正重放零改动）；不改 agent 产出先验 b 的方式（ItemPriorTask feature→b 照旧）。实施 sequencing 另行排期；落地 PR 按「consumer 迁入、旧开关同 PR 删」的规矩移除 `RECALIBRATION_MIN_LABELS` 硬门控与 `b_calib` 首写语义，`item_calibration`/G4 相关注释随实施对齐。
+**Decision source**：owner 2026-10-19 拍板——**YUK-439 从「A12 LLM 先验→active-PPI 接口」改为「b 与 θ̂ 在线联合标定，由 agent 先验锚定」；模型判分的作答也进入标定；这属于掌握更新，不是答案判分**。本节修订 §4 识别性裁决与 §备选两条否决的适用范围（上文原文保留作 2026-06-15 历史决策记录，冲突处以本节为准）。**本修订只改文档**：不改代码与测试；不改答案判分设计（判分路由、分数语义、更正重放零改动）；不改 agent 产出先验 b 的方式（ItemPriorTask feature→b 照旧）。实施 sequencing 另行排期；落地 PR 按「consumer 迁入、旧开关同 PR 删」的规矩移除 `RECALIBRATION_MIN_LABELS` 硬门控与 `b_calib` 首写语义，`item_calibration`/G4 相关注释随实施对齐。**实施落地：YUK-439**（`difficulty_calibration_evidence` 证据账本 + `item_calibration.b_post/posterior_variance/calibration_source` 后验列 + `src/server/mastery/joint-calibration.ts` 批量写者 + `effectiveB` 读链改 `b_post ?? b_anchor ?? b`；对照重放 `pnpm replay:joint-calibration`）。
 
 ### A1 先验打破平移不变——原否决为何不再覆盖这条路
 

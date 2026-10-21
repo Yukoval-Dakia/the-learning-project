@@ -1,32 +1,12 @@
-// U8 — leave_agent_note channel (AF spec §4 / §4.1, U0 D10/B8).
+// Agent-note channel: out-of-band hints for narrow tasks → background Dreaming /
+// Maintenance runs. Distinct from `needs[]` (structured, durable, on the plan artifact):
+// notes are SOFT, best-effort hints with provenance + expiry, sharing the `signal_kind`
+// vocabulary. They are HINTS, NOT FACTS — readers treat them as attention priors.
 //
-// Out-of-band hint channel for narrow tasks → background Dreaming / Maintenance
-// runs. Distinct from `needs[]` (structured, durable, on the plan artifact,
-// consumed by the next Coach round): agent notes are SOFT, best-effort hints
-// with provenance + expiry for cross-context observations that have no home on
-// a specific plan artifact. Both channels share the `signal_kind` vocabulary so
-// the same observation classifies consistently regardless of carrier (§4.1).
-//
-// Notes are HINTS, NOT FACTS (§4 closing): they have provenance and expiry, and
-// readers must treat them as attention priors, never as durable truth.
-//
-// STORAGE — zero schema change (AF §4 MVP, U0 D10 "S5 rides ExperimentalEvent"):
-//   event(
-//     action='experimental:agent_note',   // generic ExperimentalEvent catch-all
-//     actor_kind='agent',                  // narrow tasks are agents
-//     actor_ref=<source_task_kind>,        // who left it
-//     subject_kind='query',                // not about a single durable record
-//     subject_id=<note id>,                // self-referential, matches dreaming_scan
-//     payload={ target_agents, refs, summary_md, signal_kind, confidence?,
-//               expires_at?, source_task_kind, source_task_run_id? }
-//   )
-// `experimental:agent_note` is intentionally NOT in RESERVED_EXPERIMENTAL_ACTIONS
-// (src/core/schema/event/experimental.ts) so it parses through the generic
-// ExperimentalEvent escape hatch — no new Zod schema, no new table/column.
-//
-// YUK-293 adds a bounded DomainTool pair over this storage seam for Copilot,
-// Dreaming, and Coach. Deterministic writers (quiz_verify, etc.) continue to call
-// owner commands (for example recordQuestionPoolGap) for product-specific hints.
+// STORAGE — zero schema change: one `experimental:agent_note` ExperimentalEvent
+// (intentionally NOT reserved) with payload { target_agents, refs, summary_md, signal_kind,
+// confidence?, expires_at?, source_task_kind, source_task_run_id? }. Deterministic writers
+// call owner commands (e.g. recordQuestionPoolGap) for product-specific hints.
 
 import { createId } from '@paralleldrive/cuid2';
 import { inArray, or, sql } from 'drizzle-orm';
@@ -41,12 +21,9 @@ import {
   readAllAgentNotes,
 } from '@/kernel/read-models/agent-note-hints';
 
-// YUK-1571 — the read side of the agent-note hint channel (readAgentNotes /
-// readAllAgentNotes / rowToAgentNote + their types) moved verbatim to
-// @/kernel/read-models/agent-note-hints. These explicit re-exports keep this
-// module's compat surface (agency-internal consumers + agency/public); the
-// write side (writeAgentNote / recordQuestionPoolGap) and the learner-facing
-// board projection stay owned here.
+// The read side lives in @/kernel/read-models/agent-note-hints; these re-exports keep this
+// module's compat surface (agency-internal consumers + agency/public). The write side and
+// the learner-facing board projection stay owned here.
 export type {
   AgentNote,
   AgentNoteRef,
@@ -76,11 +53,9 @@ export interface WriteAgentNoteInput {
 export type AgentNoteReferenceState = 'open' | 'resolved' | 'unknown';
 
 /**
- * Additive read-model context for the learner-facing observation board.
- *
- * The write protocol remains `{ kind, id }`. Labels and current resolution are
- * derived at read time so historical events stay immutable and every raw ref
- * remains available for audit navigation without becoming learner-facing copy.
+ * Additive read-model context for the learner-facing observation board. Labels and current
+ * resolution are derived at read time, so historical events stay immutable and raw refs stay
+ * available for audit navigation without becoming learner-facing copy.
  */
 export interface AgentNoteBoardRef extends AgentNoteRef {
   label: string;
@@ -93,13 +68,8 @@ export interface AgentNoteBoardRow extends Omit<AgentNote, 'refs'> {
 }
 
 /**
- * Persist one agent note as an `experimental:agent_note` event. Returns the
- * note id (= event subject_id). Idempotent via the underlying writeEvent PK
- * conflict do-nothing (re-running with the same id is safe).
- *
- * The note is a hint, not a fact — it carries provenance (source_task_kind /
- * source_task_run_id / refs) and optional expiry; readers must treat it as an
- * attention prior, never durable truth.
+ * Persist one agent note; returns the new note id (= event id). Each call mints a
+ * separate note, so a pg-boss retry creates a new note rather than deduping.
  */
 export async function writeAgentNote(db: DbLike, input: WriteAgentNoteInput): Promise<string> {
   const noteId = `agent_note_${createId()}`;
@@ -160,13 +130,10 @@ export function recordQuestionPoolGap(
 }
 
 /**
- * Learner-facing board projection for agent notes.
- *
- * Knowledge and question references receive a human label and a current
- * resolution state. A historical question-pool-gap is considered resolved once
- * the referenced knowledge point has at least one usable question
- * (`draft_status IS DISTINCT FROM 'draft'`). The original note and ref ids are
- * neither changed nor discarded; this is an additive read projection only.
+ * Learner-facing board projection: knowledge and question refs get a human label and a
+ * current resolution state. A question-pool-gap is resolved once the referenced KC has at
+ * least one usable question (`draft_status IS DISTINCT FROM 'draft'`). Original note and ref
+ * ids are neither changed nor discarded; this is additive only.
  */
 export async function readAgentNoteBoardRows(
   db: DbLike,

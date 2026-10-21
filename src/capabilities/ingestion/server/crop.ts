@@ -30,19 +30,13 @@ export type CropArgs = {
   db: Db;
 };
 
-// YUK-1404 (B2/R3+R11) — pipeline crops are now REGISTERED source assets.
+// Pipeline crops are registered source assets. Serving admission requires a row
+// whose storage_key matches the figures/ key and whose sha256 is a real hash, so
+// writing only an object would silently withhold every cropped figure.
 //
-// Previously this only wrote `figures/<page>-fig-N.png` to object storage: no
-// source_asset row, no SHA. That missing registration is exactly why
-// serving-admission withheld every photo-cropped figure (figure_attach's
-// public check requires a row whose storage_key matches the figures/ key and
-// whose sha256 is a real content hash).
-//
-// The row keeps the deterministic id/key convention (`<pageAssetId>-fig-<N>` /
-// `figures/<id>.png`) so the existing figure_attach check passes unchanged and
-// re-runs are naturally idempotent: a same-shape row is re-served, a drifted
-// one fails loudly. Derivation lineage lands in provenance
-// (derived_from + op.crop{bbox_norm, bbox_px}) — same provenance shape the
+// The deterministic id/key convention keeps figure_attach unchanged and re-runs
+// idempotent: a matching row is reused, a drifted one fails. Provenance carries
+// the derivation lineage (derived_from plus op.crop bbox) — the same shape the
 // crop_image agent tool writes for its content-addressed derived assets.
 
 const FIGURE_ID_RE = /^[a-z0-9]+-fig-\d+$/i;

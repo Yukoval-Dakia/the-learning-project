@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// YUK-728 — subject control-plane rename/reset mirrors display_name onto the subject's
+// Subject control-plane rename/reset mirrors display_name onto the subject's
 // knowledge root. This is structural fold truth, so the event is reserved and typed rather than
 // falling through the loose ExperimentalEvent escape hatch.
 const SubjectRootNameUpdatePayload = z

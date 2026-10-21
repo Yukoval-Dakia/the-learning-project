@@ -1,28 +1,20 @@
-// YUK-575 (N6/MF-C) — durable run pickup-timeout detection.
+// Durable run pickup-timeout detection.
 //
-// The problem (MF-C): `shouldEnqueueBackgroundJobs()` (runtime-env.ts) only blocks
-// the TEST env (NODE_ENV==='test'||VITEST) — it has ZERO worker-liveness detection,
-// and `boss.send` merely INSERTs a job row whether or not any worker consumes it.
-// So if the worker is down / crash-looping / started without RW_WORKER, a durable
-// run is enqueued but never picked up: the run sits at QUEUED forever (deriveCopilot
-// RunStatus → 'queued'), an infinite spinner with no error. This module is the
-// honest DETECTION primitive: a physical dispatch stamps `pickup_deadline_ms`
-// on DISPATCHED (or, for legacy runs, QUEUED), and this pure predicate flags a
-// run that blew past it without the worker ever touching it. An accepted v2
-// turn waiting behind an active session head has no pickup clock yet.
-//
-// The Dock consumes the same pure contract and surfaces a recoverable "still
-// waiting" state after the deadline. It deliberately does NOT fail the run or
-// dispatch an inline replacement: batchSize:1 means a healthy but busy worker can
-// delay pickup, so the accepted handle remains authoritative and the human may
-// reconnect later without creating a double outcome.
+// `shouldEnqueueBackgroundJobs()` only blocks the TEST env — it has no worker-liveness
+// detection, and `boss.send` merely inserts a job row. If the worker is down / crash-
+// looping / started without RW_WORKER, the run sits at QUEUED forever. A physical
+// dispatch stamps `pickup_deadline_ms` on DISPATCHED (or, for legacy runs, QUEUED), and
+// this pure predicate flags a run that blew past it without any worker touch. The Dock
+// uses the same contract to show a recoverable "still waiting" state; it deliberately
+// does NOT fail the run or dispatch an inline replacement (batchSize:1 means a healthy
+// but busy worker can delay pickup, so the accepted handle stays authoritative).
 
 import { COPILOT_RUN_EVENTS } from './server/copilot-run-status';
 
-/** How long after enqueue a durable run may sit un-picked-up before it is stalled. */
+/** How long a dispatched run may sit un-picked-up before it is considered stalled. */
 export const PICKUP_TIMEOUT_MS = 10_000;
 
-/** Event types that prove the worker TOUCHED the run (picked it up). */
+/** Event types that prove the worker touched (picked up) the run. */
 const WORKER_TOUCHED: ReadonlySet<string> = new Set<string>([
   COPILOT_RUN_EVENTS.STARTED,
   COPILOT_RUN_EVENTS.EXECUTION_STARTED,
@@ -65,14 +57,9 @@ export function getDurablePickupDeadlineMs(events: DurablePickupEvent[]): number
 }
 
 /**
- * Pure predicate: has this durable run stalled un-picked-up past its pickup deadline?
- *
- * true ⟺ a physical dispatch (or legacy QUEUED) carries a numeric deadline, the worker
- * has NOT yet touched the run (no STARTED/EXECUTION_STARTED/DELTA/STEP/REPLY/DONE/FAILED),
- * and `nowMs` is past the deadline. Any worker touch (even a terminal FAILED) →
- * false (the run is not stalled-at-pickup; it ran). No dispatch deadline → false
- * (nothing to judge). Unit-tested in durable-pickup.unit.test.ts; consumed by
- * the PR2 Dock run-state renderer (YUK-596).
+ * True when a physical dispatch (or legacy QUEUED) carries a numeric deadline, the
+ * worker has not touched the run yet, and `nowMs` is past the deadline. Any worker
+ * touch (even a terminal FAILED) → false, as does a missing deadline.
  */
 export function isDurablePickupStalled(events: DurablePickupEvent[], nowMs: number): boolean {
   const deadline = getDurablePickupDeadlineMs(events);

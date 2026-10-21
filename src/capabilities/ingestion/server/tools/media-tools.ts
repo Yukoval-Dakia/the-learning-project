@@ -34,7 +34,7 @@ import {
 } from './source-tool-support';
 import type { DomainTool } from './types';
 
-// YUK-1404 (B2/R2–R5) — the four shared media tools. One tool per capability,
+// The shared media tools. One tool per capability,
 // declared in manifest.ts, allowlisted for the ingestion surface only.
 //
 // Every image the model sees flows through the media bridge: the tool's OUTPUT
@@ -689,7 +689,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     const blocks: GlmOcrBlock[] = [];
     for (const page of response.layout_details ?? []) {
       for (const block of page ?? []) {
-        // YUK-1522 (R8 R1) — OCR'd text is extracted text headed for the
+        // OCR'd text is extracted text headed for the
         // model: redact it like read_source does and record the fired rules.
         const redacted = redactIngestionText(block.content?.trim() ?? '');
         recordAgentRedaction(ctx, redacted);

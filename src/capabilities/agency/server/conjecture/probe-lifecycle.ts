@@ -1,8 +1,8 @@
 import { getFsrsRetrievabilityByIds, selectedForgettingEngine } from '@/kernel/scheduling';
-// Probe drafts remain outside practice pools. Publication freezes their question
-// and response signatures; actual queue delivery creates the native issuance.
-// The per-probe paid claim serializes evaluation. Only answerProbe writes the
-// terminal conjecture result, never practice attempts, FSRS or theta.
+// Probe drafts stay outside practice pools; publication freezes their question and
+// response signatures, and actual queue delivery creates the native issuance.
+// Only answerProbe writes the terminal conjecture result — never practice attempts,
+// FSRS or theta.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -58,14 +58,14 @@ type DbOrTx = Db | Tx;
 // import the persisted vocabulary from core instead of this server implementation.
 export { MAX_CONCURRENT_ACTIVE_PROBES, PROBE_QUESTION_SOURCE, PROBE_RESULT_ACTION };
 
-/** Persisted claim written before a paid probe judge invocation (YUK-691). */
+/** Persisted claim written before a paid probe judge invocation. */
 export const PROBE_JUDGE_STARTED_ACTION = 'experimental:probe_judge_started' as const;
 /** Compensating marker that releases a failed paid-judge claim immediately. */
 export const PROBE_JUDGE_RELEASED_ACTION = 'experimental:probe_judge_released' as const;
 
 /**
  * A failed/ambiguous judge may be retried, but not by a concurrent request burst.
- * Keeping the claim for five minutes bounds paid retries while preserving recovery
+ * The claim is kept for five minutes: bounds paid retries while preserving recovery
  * from a transient provider or non-discriminating result.
  */
 export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
@@ -73,9 +73,9 @@ export const PROBE_JUDGE_CLAIM_TTL_MS = 5 * 60_000;
 // Fifty is a defensive legacy/corruption ceiling, not an expected lifecycle length.
 const MAX_PROBE_HISTORY_FOR_RESOLUTION = 50;
 
-// A fixed key for the transaction-scoped advisory lock that serializes serves.
-// All probe serves contend on this single key so the count-read + insert critical
-// section runs one-at-a-time (genuine ≤cap guarantee, not just READ COMMITTED hope).
+// Fixed key for the transaction-scoped advisory lock that serializes serves. All
+// serves contend on this single key so the count-read + insert critical section runs
+// one-at-a-time (a genuine ≤cap guarantee, not READ COMMITTED hope).
 const PROBE_SERVE_LOCK_KEY = 406_440_3 as const;
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -90,25 +90,20 @@ function extractConjectureId(metadata: unknown): string | null {
 }
 
 export interface ServeProbeOnceParams {
-  // conjecture-wire #13 — acceptConjectureProposal passes its OUTER tx here so the
-  // probe serve is atomic with the rate event + dark promotion hop (drizzle nests
-  // `db.transaction` inside an outer tx as a SAVEPOINT; `pg_advisory_xact_lock` is
-  // transaction-scoped to the OUTERMOST tx, so the cap-serialize lock holds across
-  // the whole accept). Callers may also pass a top-level Db for standalone serves.
+  // acceptConjectureProposal passes its OUTER tx so the serve is atomic with the rate
+  // event + promotion hop. Drizzle nests `db.transaction` inside an outer tx as a
+  // SAVEPOINT, and `pg_advisory_xact_lock` is scoped to the OUTERMOST tx, so the
+  // cap-serialize lock holds across the whole accept. Standalone serves may pass a Db.
   db: DbOrTx;
   /** = the conjecture event id (proposalId). Stamped into the question provenance. */
   conjectureProposalId: string;
   /** The KC the conjecture targets; carried as the probe question's knowledge_ids. */
   knowledgeId: string;
-  /** The discriminating probe text (conjecture.probe_md). */
   probeMd: string;
-  /** Optional expected/reference answer. */
   referenceMd?: string | null;
   /** Immutable authored response contract used by target-aware judging and audit replay. */
   probeSpec?: ConjectureProbeSpecT;
-  /** Question kind; neutral default. */
   kind?: string;
-  /** Neutral default difficulty (3). */
   difficulty?: number;
   /** 1 = initial diagnostic, 2 = recurrence-gating follow-up. */
   probeSequence?: 1 | 2;
@@ -120,10 +115,9 @@ export type ServeProbeOnceResult =
   | { status: 'cap_reached'; active_count: number };
 
 /**
- * Count probes that are SERVED for an active conjecture but not yet ANSWERED =
- * `source='mind_probe'` questions with NO `experimental:probe_result` event
- * referencing them and no effective correction on their proposal.
- * Accepts a tx so serveProbeOnce can read the count inside its transaction.
+ * Count probes served for an active conjecture but not yet answered = `source='mind_probe'`
+ * questions with no `experimental:probe_result` event and no effective correction on
+ * their proposal. Accepts a tx so serveProbeOnce can read inside its transaction.
  */
 export async function countActiveProbes(db: DbOrTx): Promise<number> {
   const rows = await db
@@ -167,11 +161,10 @@ export async function countActiveProbes(db: DbOrTx): Promise<number> {
 }
 
 /**
- * Materialize and publish a probe question for a conjecture (no
- * event — the "served" state IS the draft row existing). The cap check + insert run
- * inside a transaction guarded by an advisory lock so concurrent serves serialize.
- * Returns {status:'cap_reached'} without inserting when MAX_CONCURRENT_ACTIVE_PROBES
- * is already reached.
+ * Materialize and publish a probe question for a conjecture — no event; the "served"
+ * state IS the draft row existing. The cap check + insert run in a transaction guarded
+ * by an advisory lock so concurrent serves serialize. Returns `cap_reached` without
+ * inserting when MAX_CONCURRENT_ACTIVE_PROBES is already reached.
  */
 export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<ServeProbeOnceResult> {
   const { db, conjectureProposalId, knowledgeId, probeMd } = params;
@@ -182,7 +175,6 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
   const referenceMd = params.referenceMd ?? null;
 
   return db.transaction(async (tx) => {
-    // Serialize the count-read + insert critical section across concurrent serves.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${PROBE_SERVE_LOCK_KEY})`);
 
     const activeBefore = await countActiveProbes(tx);
@@ -200,17 +192,14 @@ export async function serveProbeOnce(params: ServeProbeOnceParams): Promise<Serv
         reference_md: referenceMd,
         knowledge_ids: [knowledgeId],
         difficulty,
-        // YUK-567 slice-2 — probes are answered with TEXT and/or IMAGE (handwriting /
-        // photo). Force the multimodal_direct route so a photo (incl. photo-only) answer
-        // is graded by the vision judge — a text route would 422 a photo-only answer
-        // (submit.ts F4). It grades text-only answers too (its ONLY unsupported case is
-        // "no answer text AND no images"), so this is strictly more capable, not narrower.
+        // Probes are answered with TEXT and/or IMAGE. Force multimodal_direct so a
+        // photo-only answer is graded by the vision judge instead of 422'ing on a text
+        // route; it grades text-only answers too, so this is strictly more capable.
         judge_kind_override: 'multimodal_direct',
         source: PROBE_QUESTION_SOURCE,
-        // Provenance: trace the probe question back to its conjecture event.
         source_ref: conjectureProposalId,
-        // INVARIANT #1 (pool-invisibility / recurrence regression-lock): 'draft' so
-        // notDraftPredicate (src/db/predicates.ts) excludes it from EVERY review pool, forever.
+        // 'draft' keeps notDraftPredicate (src/db/predicates.ts) excluding it from EVERY
+        // review pool, forever.
         draft_status: 'draft',
         metadata: {
           conjecture_proposal_id: conjectureProposalId,
@@ -287,16 +276,16 @@ export interface AnswerProbeParams {
   db: Db;
   probeQuestionId: string;
   /**
-   * Graded correctness of the probe answer. null means the answer was gradable
-   * but matched neither the gold nor target-error signature, so it must consume
-   * the probe without changing conjecture evidence.
+   * Graded correctness. null means the answer was gradable but matched neither the gold
+   * nor the target-error signature, so it consumes the probe without changing evidence.
    */
   outcome: 0 | 1 | null;
-  /** Historical FSRS scalar supplied by the caller. New candidate results snapshot the selected retention reader, including unknown and engineering provenance. */
+  /**
+   * Historical FSRS scalar supplied by the caller. Candidate results snapshot the
+   * selected retention reader, including unknown/engineering provenance.
+   */
   retrievabilityAtJudge?: number | null;
-  /** Provenance — the answer text that was graded. */
   answer_md?: string | null;
-  /** Provenance — the answer image refs (asset ids) that were graded (photo answers). */
   answer_image_refs?: string[];
   /** Authoritative judge run correlation id for cost / execution attribution. */
   taskRunId?: string;
@@ -429,12 +418,10 @@ async function loadProbeConjectureState(
 }
 
 /**
- * Production-route preflight before the paid judge call. Malformed proposal
- * provenance fails before provider cost. A well-formed v1 proposal remains answerable
- * through the terminal legacy rule in answerProbe so old probes cannot occupy slots.
- * This intentionally duplicates the later locked authority read: preflight avoids
- * unnecessary provider cost, while answerProbe must re-fold mutable correction state
- * under the proposal decision lock before it appends the result.
+ * Preflight before the paid judge call: malformed proposal provenance fails before
+ * provider cost, and a well-formed v1 proposal stays answerable via the terminal
+ * legacy rule in answerProbe. The later locked re-check in answerProbe remains the
+ * commit authority for mutable correction state.
  */
 export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Promise<void> {
   const [probe] = await db
@@ -487,9 +474,9 @@ export async function assertProbeJudgeReady(db: Db, probeQuestionId: string): Pr
 function parseProbeResultEvent(
   existing: Pick<typeof event.$inferSelect, 'id' | 'payload'>,
 ): AnswerProbeResult | null {
-  // The production route has always written confirmed↔0 and retired↔1; v2 adds
-  // evidence_for↔0. Any other historical pairing could only come from a manual/internal
-  // contract violation, so fail closed rather than replaying contradictory evidence.
+  // The production route writes confirmed↔0 and retired↔1; v2 adds evidence_for↔0.
+  // Any other historical pairing could only come from a manual/internal contract
+  // violation, so fail closed rather than replaying contradictory evidence.
   const recordedResolution = (existing.payload as { resolution?: unknown }).resolution;
   const recordedOutcome = (existing.payload as { outcome?: unknown }).outcome;
   const recordedJudgement = (existing.payload as { response_judgement?: unknown })
@@ -529,11 +516,10 @@ function parseProbeResultEvent(
 /**
  * Atomically claim the paid judge slot for one probe.
  *
- * The route's read-only result peek is deliberately only a fast path. This
- * transaction is the race-closing boundary: it takes the same per-probe advisory
- * lock used by `answerProbe`, re-checks for a completed result, then refuses a
- * fresh claim until its TTL expires. Therefore concurrent HTTP requests can never
- * all pass a read-then-invoke gap and multiply paid judge calls.
+ * The route's read-only result peek is only a fast path. This transaction is the
+ * race-closing boundary: it takes the same per-probe advisory lock used by
+ * `answerProbe`, re-checks for a completed result, then refuses a fresh claim until
+ * its TTL expires, so concurrent requests cannot multiply paid judge calls.
  */
 export async function claimProbeJudging(
   db: Db,
@@ -613,7 +599,7 @@ export async function claimProbeJudging(
         expires_at: new Date(now.getTime() + PROBE_JUDGE_CLAIM_TTL_MS).toISOString(),
       },
       // Internal concurrency ledger: retain the append-only row, but never turn it
-      // into learner memory or trigger a brief regeneration (ADR-0021 / YUK-515).
+      // into learner memory or trigger a brief regeneration.
       ingest_at: now,
       created_at: now,
     });
@@ -645,19 +631,17 @@ export async function releaseProbeJudging(
 }
 
 /**
- * Record the probe answer as exactly ONE canonical `experimental:probe_result`
- * event (subject_kind='question', subject_id=probeQuestionId, caused_by=the
- * conjecture event id). A first target-error observation atomically serves the
- * proposal's pre-authored follow-up question; a gradable unrelated error is
- * terminal non-evidence and only consumes this question. Neither path writes an
- * attempt or FSRS row (ND-5).
+ * Record the probe answer as exactly ONE canonical `experimental:probe_result` event
+ * (subject_kind='question', subject_id=probeQuestionId, caused_by=the conjecture event
+ * id). A first target-error observation atomically serves the proposal's pre-authored
+ * follow-up question; a gradable unrelated error is terminal non-evidence and only
+ * consumes this question. Neither path writes an attempt or FSRS row.
  *
- * One-shot guard / idempotency (mirrors U2 acceptConjectureProposal): if a
- * probe_result already exists for this question, no second event is written — the
- * recorded result is returned with idempotent:true. The check-existing + write run
- * inside a transaction guarded by a per-probe advisory lock (keyed on the question
- * id) so two concurrent answers on the SAME probe can never both insert — the
- * one-shot guarantee holds under concurrency, not just sequentially.
+ * One-shot guard / idempotency: if a probe_result already exists for this question, no
+ * second event is written — the recorded result is returned with idempotent:true. The
+ * check-existing + write run inside a transaction guarded by a per-probe advisory lock
+ * (keyed on the question id), so two concurrent answers on the SAME probe cannot both
+ * insert.
  */
 export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProbeResult> {
   const { db, probeQuestionId, outcome } = params;
@@ -668,13 +652,11 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
   const responseJudgement = params.response_judgement ?? null;
 
   return db.transaction(async (tx) => {
-    // Serialize concurrent answers on the SAME probe so the check-existing + write is
-    // atomic (per-probe key via hashtextextended — different probes don't contend).
-    // Mirrors serveProbeOnce's advisory lock; closes the read-then-write idempotency
-    // gap that would otherwise let two racers each insert a probe_result event.
+    // Serialize concurrent answers on the SAME probe so check-existing + write is atomic
+    // (per-probe key via hashtextextended; different probes don't contend). Closes the
+    // read-then-write idempotency gap that would let two racers insert a result each.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${probeQuestionId}, 0))`);
 
-    // Read the probe question back to recover its conjecture provenance.
     const [probe] = await tx
       .select({
         source: question.source,
@@ -814,10 +796,9 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       );
     }
     const usesRecurrenceGate = followup.status === 'ready';
-    // Historical v1 proposals did not author a second probe. Preserve their terminal
-    // single-probe rule instead of retroactively reinterpreting or stranding them;
-    // omit the v2 rule stamp below so readers label these as legacy-unverified. They
-    // also skip the JSONB history scan, whose output cannot affect their terminal rule.
+    // Historical v1 proposals authored no second probe. Preserve their terminal
+    // single-probe rule; omit the v2 rule stamp so readers label them legacy-unverified.
+    // They also skip the JSONB history scan, which cannot affect their terminal rule.
     let resolution: ProbeAnswerResolution;
     let independentProbeQuestionIds: string[] = [];
     if (outcome === null) {
@@ -902,7 +883,7 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
       subject_kind: 'question',
       subject_id: probeQuestionId,
       // Envelope outcome intentionally left NULL — the canonical 0|1 outcome lives in
-      // the payload; this event is NOT an attempt and must never look like one (ND-5).
+      // the payload; this event is NOT an attempt and must never look like one.
       payload: {
         conjecture_event_id: conjectureEventId,
         outcome,
@@ -926,16 +907,16 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
           : {}),
         answer_md: answerMd,
         ...(responseJudgement ? { response_judgement: structuredClone(responseJudgement) } : {}),
-        // Provenance for a photo answer: the team can later see WHAT was submitted for
-        // a confirmed probe ("教研团据此备练"), not just the text (evidence-first).
+        // Photo-answer provenance: the team can later see WHAT was submitted for a
+        // confirmed probe, not just the text (evidence-first).
         answer_image_refs: answerImageRefs,
         ...(params.assessment ? { assessment: params.assessment } : {}),
       },
       caused_by_event_id: conjectureEventId,
       task_run_id: taskRunId,
-      // The outcome remains available to A13's event readers/reconcile loop, but is
-      // an internal mechanism result rather than a learner-authored memory. A
-      // non-NULL stamp opts it out of the Mem0 outbox without deleting the event.
+      // The outcome stays available to event readers/reconcile loops but is an internal
+      // mechanism result, not learner-authored memory. A non-NULL stamp opts it out of
+      // the Mem0 outbox without deleting the event.
       ingest_at: now,
       created_at: now,
     });
@@ -983,21 +964,14 @@ export async function answerProbe(params: AnswerProbeParams): Promise<AnswerProb
 }
 
 /**
- * Non-claiming peek: read an existing `probe_result` event for a probe WITHOUT
- * judging or writing. Used by the probe-answer route to short-circuit idempotent
- * re-answers BEFORE invoking the judge (saves the LLM cost on re-answer — the
- * recorded outcome/resolution is faithful and immutable, so re-judging is pure
- * waste). Mirrors `existingAcceptRate` in the proposal-accept path.
+ * Non-claiming peek: read an existing `probe_result` event for a probe WITHOUT judging
+ * or writing. The probe-answer route uses this to short-circuit idempotent re-answers
+ * before invoking the judge; the recorded outcome/resolution is immutable, so
+ * re-judging is pure waste.
  *
- * Returns:
- *   - the recorded `AnswerProbeResult` (idempotent: true) when a VALID probe_result
- *     exists (an evidence outcome/resolution pair, or null/inconclusive non-evidence);
- *   - `null` when NO probe_result exists (caller proceeds to judge + answerProbe);
- *   - `null` when an existing event is CORRUPT (caller proceeds to judge + answerProbe,
- *     which surfaces the `probe_result_corrupt` 500 — the judge call is wasted on this
- *     rare manual-DB-edit edge case, acceptable vs duplicating validation here).
- *
- * ND-5: READ-ONLY (single SELECT, zero writes).
+ * Returns the recorded `AnswerProbeResult` (idempotent: true) when a valid result
+ * exists, and `null` when none exists or the row is corrupt (caller proceeds to judge +
+ * answerProbe, which surfaces `probe_result_corrupt`). READ-ONLY: one SELECT, zero writes.
  */
 export async function peekExistingProbeResult(
   db: Db,

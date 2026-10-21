@@ -35,10 +35,8 @@ const PROMPT_TEMPLATE = `你是物理单位与量纲分析助手。给定学生�
 仅返回 JSON，无其它文字。`;
 
 export async function runLlmFallback(params: LlmFallbackParams): Promise<LlmFallbackOutputT> {
-  // YUK-64: runTaskFn must be injected by server-side caller. core/ cannot
-  // import @/server (CLAUDE.md layering). JudgeInvoker + tests all already
-  // inject runTaskFn; this guard catches future regressions at runtime instead
-  // of silently bundling server code into the client.
+  // core/ must not import @/server, so the task runner is injected; fail loudly
+  // instead of silently bundling server code into the client.
   if (!params.runTaskFn) {
     throw new Error(
       'unit_dimension/llm-fallback: runTaskFn must be injected by caller (server-side). See YUK-64.',

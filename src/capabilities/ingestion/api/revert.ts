@@ -1,10 +1,8 @@
-// POST /api/ingestion/[id]/revert — T-OC slice B1b (YUK-164, OC-5).
+// POST /api/ingestion/[id]/revert
 //
-// Reverts one WorkflowJudge auto-enrolled block (status='auto_enrolled') back to
-// 'draft': writes a CorrectEvent(retract), archives the learning_record, and
-// clears the block's imported_* links (the question row is kept). The OC-5
-// "AI auto-enrolled N items" surface calls this. Block-scoped (the path [id] is
-// the session for routing; the revert target is the body's block_id).
+// Reverts one auto-enrolled block to draft: retract event, archived record, and
+// cleared import links, while keeping the question row. The [id] path is the
+// session; the target block is in the body.
 import { revertAutoEnrolledBlock } from '@/capabilities/ingestion/server/revert-auto-enroll';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';

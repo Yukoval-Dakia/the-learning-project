@@ -10,12 +10,8 @@ export interface FailureLearningKnowledgeNode {
 }
 
 /**
- * Capability-owned bounded read for Failure Learning.
- *
- * The old attribution adapter loaded the complete knowledge tree and filtered it
- * in memory. This query reads only the active ids named by the attempt, then
- * resolves at most each requested node's 32-level ancestor chain. Output order
- * follows the caller's first occurrence so profile selection is deterministic.
+ * Bounded read for Failure Learning: only the active ids named by the attempt and
+ * their ancestor chains. Output follows the caller's order so profile choice is stable.
  */
 export async function loadFailureLearningKnowledgeContext(
   db: Db | Tx,
@@ -38,8 +34,7 @@ export async function loadFailureLearningKnowledgeContext(
       try {
         effectiveDomain = await getEffectiveDomain(db, id);
       } catch {
-        // Preserve the former tool adapter's fallback for a broken ancestor:
-        // the node's own domain is still a useful lower-bound subject signal.
+        // A broken ancestor still leaves the node's own domain as a useful signal.
         effectiveDomain = row.domain;
       }
       return { id: row.id, name: row.name, effective_domain: effectiveDomain };
@@ -55,19 +50,13 @@ export interface FailureLearningMisconceptionNode {
   seen: number;
 }
 
-// Defensive row cap on the caused_by join — a single attempt references a small KC
-// set and the promote writer is flag-gated, so this is degenerate-defense, not a
-// business cap (mirrors CONFIRMED_CAP in misconception-read.ts).
+// Defensive cap; a single attempt references only a small KC set.
 const MISCONCEPTION_FEED_CAP = 50;
 
 /**
- * YUK-1015 (454-A) — bounded read of promoted misconception nodes for the
- * attribution retrieve stage. Design §L1: retrieve candidates = vocab ∪ 已晋升
- * 误区节点. Returns active (non-archived) misconceptions with a live `caused_by`
- * edge to ANY of the attempt's KCs, deduplicated across KCs, most-recurrent
- * first. Honest-empty day-one (promote flag off → []), never zero-filled.
- *
- * SOFT-TRACK ONLY: feeds LLM candidate lists — never θ̂/p(L)/FSRS.
+ * Active misconceptions linked by a live caused_by edge to any of these KCs,
+ * deduplicated and most recurrent first. Empty while promotion is off, never
+ * zero-filled. Soft track only: feeds candidate lists, never mastery or FSRS.
  */
 export async function listActiveMisconceptionsForKcs(
   db: Db | Tx,
@@ -101,12 +90,8 @@ export async function listActiveMisconceptionsForKcs(
 }
 
 /**
- * YUK-1015 (454-A) — by-id companion to {@link listActiveMisconceptionsForKcs}.
- * Resolves stored `misc_` cause ids back to their node (title/reasoning) so
- * downstream consumers (variant-gen targetability + cause display) read the
- * node instead of the opaque hash. Active-only on purpose: a draft/archived —
- * i.e. retracted — node resolves to nothing, and callers treat that as "no
- * semantics to act on" (variant-gen skips, displays fall back).
+ * Resolve stored misconception ids to their nodes. Active only, so a retracted node
+ * resolves to nothing and callers skip it.
  */
 export async function getMisconceptionsByIds(
   db: Db | Tx,

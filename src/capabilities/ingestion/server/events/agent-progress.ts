@@ -34,11 +34,9 @@ import {
   type IngestionAgentStagePayloadT,
 } from '../agent/contract';
 
-// YUK-1522 (R8) — durable emitters for the ingestion-agent contract events.
-// Every call lands a job_events row; the existing
-// GET /api/ingestion/[id]/events SSE route replays + live-subscribes them with
-// Last-Event-ID semantics. Payloads are validated here so a malformed event
-// can never reach the stream.
+// Durable emitters for agent contract events. Each call writes a job_events row that
+// the SSE route replays and live-subscribes. Payloads are validated here so a
+// malformed event never reaches the stream.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 
@@ -177,7 +175,7 @@ export async function writeAgentRunSegment(
   return writeRunEvent(tx, sessionId, AGENT_RUN_SEGMENT, parsed);
 }
 
-/** R2-6: model-declared run-stop marker — the orchestrator owns the session error. */
+/** Model-declared run stop; the orchestrator owns the session error. */
 export async function writeAgentTerminalRequest(
   tx: Db | Tx,
   sessionId: string,
@@ -187,7 +185,7 @@ export async function writeAgentTerminalRequest(
   return writeRunEvent(tx, sessionId, AGENT_TERMINAL_REQUEST, parsed);
 }
 
-/** R2-5: paid-attempt identity — 'sent' before the call, 'settled' after. */
+/** Paid-attempt identity: sent before the call, settled after. */
 export async function writeAgentPaidAttempt(
   tx: Db | Tx,
   sessionId: string,

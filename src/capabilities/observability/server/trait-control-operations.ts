@@ -21,8 +21,8 @@ export {
   RollbackAdminTraitBodySchema,
 };
 
-// The HTTP edit shells accept absent/unknown payloads. The writer validates them
-// in its existing order and returns invalid (422), rather than a body error (400).
+// The edit shells accept absent or unknown payloads; the writer validates them and
+// returns 422 rather than a body error.
 export const EditSubjectTraitInputSchema = z.object({
   expectedSubjectRevision: z.number().int().nonnegative(),
   expectedTraitRevision: z.number().int().nonnegative(),
@@ -47,8 +47,7 @@ async function hydrateCommittedResult(
   db: Db,
   result: writers.TraitWriteResult,
 ): Promise<writers.TraitWriteResult> {
-  // Each original writer resolves after its own transaction commits. The original
-  // hydrator catches query failures and preserves last-good; never retry here.
+  // Hydrate after the writer's commit; the hydrator preserves last-good on failure.
   if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
   return result;
 }

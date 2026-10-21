@@ -1,10 +1,7 @@
-// YUK-879 — LearningIntentOutlineTask contract, owned by the agency capability.
-// The output schema, strict parser, domain error, and profile prompt live here;
-// the orchestrator (../server/learning-intent) consumes them and keeps the
-// proposal/accept flow.
+// LearningIntentOutlineTask contract: output schema, strict parser, domain error
+// and profile prompt. ../server/learning-intent owns the proposal/accept flow.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';
@@ -122,7 +119,6 @@ export const learningIntentOutlineTaskSpec = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildLearningIntentOutlinePrompt },
   },
   outputSchema: OutlineSchema,

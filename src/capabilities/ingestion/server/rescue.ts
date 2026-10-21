@@ -26,18 +26,12 @@ export type RunRescueParams = {
 };
 
 /**
- * 手动 Vision Tier 2/3 救援 —— ADR-0002 修订：用户授权的、付费可见的、可选的救援，
- * **不是自动 fallback**。
+ * Manual Vision tier 2/3 rescue: explicit, paid, user-authorized, and never an
+ * automatic fallback. Only strategy='extract' is implemented; the restructure
+ * strategies throw not_implemented.
  *
- * 当前仅实现 strategy='extract'（重新抽一遍）；'restructure_cloze' / 'restructure_compound'
- * 留为未来扩展（throw not_implemented）。
- *
- * 流程：
- *   1. 验证 session 在 partial/extracted 状态、block 存在
- *   2. 按 session 页序定位请求页，确认属于 block 后下载 asset bytes
- *   3. 调 VisionExtractTask（tier=2 → haiku）或 VisionExtractTaskHeavy（tier=3 → sonnet）
- *   4. 仅接受唯一 prompt 块 → 合成 StructuredQuestion（standalone）
- *   5. 调 IngestionSession.applyRescue 写回（事务内 + version bump + writeJobEvent）
+ * It validates the session/block/page, runs the requested tier, accepts only a
+ * single prompt block, and writes back through applyRescue in one transaction.
  */
 export async function runRescue(
   params: RunRescueParams,

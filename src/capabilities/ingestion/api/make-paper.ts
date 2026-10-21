@@ -1,13 +1,8 @@
-// YUK-214 (Strategy D · S1) — POST /api/ingestion/[id]/make-paper.
+// POST /api/ingestion/[id]/make-paper.
 //
-// Explicit make-paper action (OWNER-FORK form (b), §13): package a session's
-// imported questions into a tool_quiz paper so /practice can take them. Thin
-// shell — validate the session is 'imported' (terminal), delegate to
-// createIngestionPaper (reverse-query → build → INSERT), return { artifact_id }.
-//
-// Body is { question_ids? } ONLY (Cross-统合 F-9: outcome_filter cut — outcome
-// lives on attempt events, not question rows; filtering by it is out of this
-// thin shell's scope). Idempotent on sessionId via the module's advisory lock.
+// Packages a terminal imported session's questions into a takeable paper. This
+// shell validates state, delegates to createIngestionPaper, and returns the
+// artifact id. The body accepts only an optional question_ids list.
 
 import { and, eq } from 'drizzle-orm';
 
@@ -20,13 +15,8 @@ import { MakePaperBody } from './operation-schema';
 async function executePOST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
-    // F2 (PR #309 round-2, YUK-214) — distinguish a TRULY-EMPTY body (no override
-    // intended → default {}) from MALFORMED JSON (the caller meant to send
-    // question_ids but the bytes are corrupt). Round-1 collapsed every parse
-    // failure to `{}`, so a broken body silently built a default full-set paper
-    // instead of surfacing the error. Read the raw text first: an empty/whitespace
-    // body is the legitimate no-override case; a non-empty body that fails to
-    // JSON.parse is a client error → 400 invalid_json (no paper built).
+    // Distinguish an empty body (no override) from malformed JSON. A broken body
+    // must not silently build a full-set paper; return 400 instead.
     const rawText = await req.text();
     let raw: unknown;
     if (rawText.trim().length === 0) {
@@ -47,8 +37,7 @@ async function executePOST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // Validate the session exists and is in the terminal 'imported' state —
-    // a paper can only be built from a committed import.
+    // A paper can only be built from a committed import.
     const sessionRows = await db
       .select({ status: learning_session.status })
       .from(learning_session)

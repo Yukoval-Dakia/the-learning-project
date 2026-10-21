@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { SuggestionKindT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
@@ -171,6 +171,79 @@ export async function getProposalAcceptanceRates(
     })
     .filter((row) => row.total > 0)
     .sort((a, b) => b.acceptance_rate - a.acceptance_rate || b.total - a.total);
+}
+
+/**
+ * YUK-1553 — serialize a propose-side check-then-write gate on the same
+ * `(kind, cooldown_key)` lock family the decision writers
+ * (`recordProposalDecisionSignal` / `ensureProposalDecisionSignal`) use, so a
+ * concurrent accept/dismiss or a competing producer cannot interleave between
+ * the caller's pending/cooldown reads and its proposal write. Equivalent
+ * cooldown keys (e.g. symmetric-edge direction/legacy keys) are all locked in
+ * a sorted order so equivalent-key writers cannot deadlock or bypass each
+ * other. `pg_advisory_xact_lock` releases at txn commit; when the caller
+ * passes a plain `Db` handle one explicit txn is opened around lock-acquire +
+ * body, and a `Tx` runs both in-place (same pattern as
+ * {@link withProposalSignalLock}).
+ */
+export async function withProposalGateLock<T>(
+  db: DbLike,
+  kind: string,
+  cooldownKeys: readonly string[],
+  fn: (tx: DbLike) => Promise<T>,
+): Promise<T> {
+  const lockKeys = [...new Set(cooldownKeys)].sort().map((key) => `${kind}:${key}`);
+  const run = async (handle: DbLike): Promise<T> => {
+    for (const lockKey of lockKeys) {
+      await handle.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+    }
+    return await fn(handle);
+  };
+  if (!('$client' in db)) {
+    return await run(db);
+  }
+  return await (db as Db).transaction(async (tx) => await run(tx));
+}
+
+export interface ActiveProposalCooldown {
+  cooldown_key: string;
+  cooldown_until: Date;
+}
+
+/**
+ * YUK-1553 — the active dismiss-cooldown on any of `cooldownKeys`, if one
+ * exists. A dismissed proposal's signal row keeps `cooldown_until` for
+ * PROPOSAL_DISMISS_COOLDOWN_DAYS; producers honor it by skipping instead of
+ * re-proposing the same change. Equivalent keys are checked together so a
+ * legacy directional dismiss still suppresses the canonical-key proposal.
+ */
+export async function findActiveProposalCooldown(
+  db: DbLike,
+  kind: string,
+  cooldownKeys: readonly string[],
+  now: Date = new Date(),
+): Promise<ActiveProposalCooldown | null> {
+  if (cooldownKeys.length === 0) return null;
+  const row = (
+    await db
+      .select({
+        cooldown_key: proposal_signals.cooldown_key,
+        cooldown_until: proposal_signals.cooldown_until,
+      })
+      .from(proposal_signals)
+      .where(
+        and(
+          eq(proposal_signals.kind, kind),
+          inArray(proposal_signals.cooldown_key, [...cooldownKeys]),
+          gt(proposal_signals.cooldown_until, now),
+        ),
+      )
+      .orderBy(desc(proposal_signals.cooldown_until))
+      .limit(1)
+  )[0];
+  return row?.cooldown_until
+    ? { cooldown_key: row.cooldown_key, cooldown_until: row.cooldown_until }
+    : null;
 }
 
 export async function recordProposalDecisionSignal(

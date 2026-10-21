@@ -1,9 +1,7 @@
-// One rule for whether a frozen reference may be shown. Practice hint
-// fallback and note-generation fallback both call this module: issued sol_*
-// material, else the issued scoring basis; the prompt is the frozen issued
-// face; intervention diagnostics and container occurrences are not assistable;
-// a solution exposure is written only while the issuance row is locked and the
-// coordinate still matches.
+// One gate for whether a frozen reference may be shown; practice hints and note
+// generation both call it. Issued sol_* material wins, else the issued scoring
+// basis. Diagnostics and container occurrences are not assistable, and exposure
+// is recorded under the issuance lock.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
@@ -114,8 +112,8 @@ function scoringBasisReferenceMd(
         case 'holistic_level':
           return criterion.levels.map((level) => level.descriptor_md).join('\n\n');
         case 'position_set_key':
-          // ADR-0074 D3a 断句：参考 = 接受断点集合（code point 字缝索引）；
-          // 对应冻结明文已在 response_spec 槽位里，不在此重建文本。
+          // Reference is the accepted breakpoint set; the frozen text already
+          // lives in response_spec, so it is not rebuilt here.
           return criterion.accepted_positions.map((position) => `断点 ${position}`).join('\n');
         case 'select_key': {
           const selectSlot = slots.find((slot) => slot.kind === 'select');
@@ -128,7 +126,6 @@ function scoringBasisReferenceMd(
             ? criterion.key.accepted.join('\n\n')
             : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
         case 'rubric':
-          // YUK-1496 C2：参考 = 逐 criterion 细则 + 可选参考解答。
           return [
             ...criterion.criteria.map(
               (item) => `${item.criterion_id}（满分 ${item.max}）：${item.statement_md}`,
@@ -144,7 +141,7 @@ function scoringBasisReferenceMd(
     .join('\n\n');
 }
 
-/** Public issued prompt only. Does not read scoring basis or sol_* material. */
+/** Public issued prompt only; does not read scoring basis or sol_* material. */
 export function projectFrozenIssuedPrompt(
   revision: PublishedQuestionRevisionT,
   issuance: AssessmentIssuanceT,
@@ -153,8 +150,8 @@ export function projectFrozenIssuedPrompt(
 }
 
 /**
- * Frozen reference for an issuance that has already passed the assistance gate.
- * sol_* scoped to the issued parts wins; the issued scoring basis is the fallback.
+ * Frozen reference after the assistance gate: issued-scope sol_* wins, the issued
+ * scoring basis is the fallback.
  */
 export function projectFrozenStudyReference(
   revision: PublishedQuestionRevisionT,

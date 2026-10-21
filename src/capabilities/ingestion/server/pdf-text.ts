@@ -3,18 +3,14 @@ import { PDFiumLibrary } from '@hyzyla/pdfium';
 import { MAX_PDF_PAGES } from '@/core/limits';
 import { ApiError } from '@/kernel/http';
 
-// YUK-1404 (B2/R1) — PDF per-page embedded text layer.
+// PDF per-page embedded text layer.
 //
-// pandoc cannot read PDF, so the unified source package carries the PDFium
-// text layer instead of a converted markdown per page. Salvaged from the
-// acceptance arm (`scripts/acceptance/ingestion-agent/source-reader.ts` on
-// feat/yuk-1404-ingestion-agent-comparison): `page.getText()` plus the
-// marker/empty classification — a page whose whole layer is a distribution
-// watermark token (学科网 `{#{QQ…}#}` style) or whitespace is reported as
-// marker_only/empty, never transcribed from the page image into fake text.
+// pandoc cannot read PDF, so the source package carries PDFium text instead of
+// converted markdown. Pages whose whole layer is a distribution watermark or
+// whitespace are classified marker_only/empty, never transcribed into fake text.
 //
-// Same lifecycle rules as pdf-render.ts: server-only, init→destroy per call so
-// the WASM heap does not grow across requests, and the same page cap applies.
+// Like the renderer: server-only, init/destroy per call to bound the WASM heap,
+// and the same page cap applies.
 
 /** Whole-layer distribution watermark (学科网-style `{#{QQ…}#}` token). */
 const MARKER_ONLY_RE = /^\{#\{[A-Za-z0-9+/=]{8,}\}#\}$/;

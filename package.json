@@ -99,6 +99,7 @@
     "sanity:vision-rejudge": "tsx scripts/sanity-vision-rejudge.ts",
     "grounding:gate": "tsx scripts/grounding-gate.ts",
     "replay:urnings": "tsx scripts/replay-urnings-lite.ts",
+    "replay:joint-calibration": "tsx scripts/replay-joint-calibration.ts",
     "report:teaching-brief": "tsx scripts/report-teaching-brief.ts",
     "harness:scoreboard": "tsx scripts/harness-scoreboard.ts",
     "compose:up": "tsx scripts/cloudflared-preflight.ts && docker compose up -d",

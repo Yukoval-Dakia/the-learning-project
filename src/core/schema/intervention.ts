@@ -1,4 +1,4 @@
-// YUK-791 — cross-capability vocabulary for the intervention preparation wave.
+// Cross-capability vocabulary for the intervention preparation contracts.
 //
 // Agency owns every lifecycle write. Practice owns package authoring. Keeping the
 // immutable JSON contracts in core lets both capabilities validate the same data

@@ -476,9 +476,9 @@ async function loadEdgesForProjection(
  * Representative-b choice (documented): a KC is carried by MANY questions, each
  * possibly anchored by a HARD-track `item_calibration` row. There is no single
  * "the KC's b"; we summarise across the KC's hard-track items using the **MEDIAN**
- * of each item's effective b = COALESCE(b_calib, b_anchor, b) — the same read
- * order as {@link effectiveB} (de-biased b_calib first, then cold-start anchor
- * b_anchor, then the legacy b column). Median (not mean) is robust to a single
+ * of each item's effective b = COALESCE(b_post, b_anchor, b) — the same read
+ * order as {@link effectiveB} (YUK-439: posterior b_post first, then cold-start
+ * anchor b_anchor, then the legacy b column; b_calib left the chain). Median (not mean) is robust to a single
  * mis-anchored outlier item skewing the KC difficulty. SOFT-track rows are
  * EXCLUDED (ADR-0035: soft track never reaches p(L)/scheduling). Items with no
  * effective b at all are skipped; a KC with no anchored hard-track item gets NO
@@ -508,13 +508,13 @@ export async function getRepresentativeKcBeta(
     SELECT
       kc,
       percentile_cont(0.5) WITHIN GROUP (
-        ORDER BY COALESCE(ic.b_calib, ic.b_anchor, ic.b)
+        ORDER BY COALESCE(ic.b_post, ic.b_anchor, ic.b)
       ) AS beta
     FROM unnest(ARRAY[${idParams}]::text[]) AS kc
     JOIN question q ON q.knowledge_ids @> jsonb_build_array(kc)
     JOIN item_calibration ic ON ic.question_id = q.id
       AND ic.track = 'hard'
-      AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) IS NOT NULL
+      AND COALESCE(ic.b_post, ic.b_anchor, ic.b) IS NOT NULL
     GROUP BY kc
   `);
   const map = new Map<string, number>();

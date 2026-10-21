@@ -49,9 +49,9 @@ export function jsonObjectCandidates(text: string): unknown[] {
 }
 
 /**
- * Prefer Agent SDK structured_output, then balanced JSON text. The model-facing
- * envelope keeps the SDK input_schema object-root compatible; direct parsing remains
- * for historical run replay.
+ * Prefer Agent SDK structured_output, then balanced JSON text. The envelope key keeps
+ * the SDK input_schema object-root compatible; direct parsing remains for historical
+ * run replay.
  */
 export function parseTaskStructuredOutput<T>(
   result: TaskTextResult,

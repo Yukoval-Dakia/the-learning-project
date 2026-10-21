@@ -1,59 +1,20 @@
-// B3 frontier (YUK-349 scope #3, ADR-0037 #4) — empty-frontier prerequisite
-// BOOTSTRAP fill. The cold-start half of the learnable-frontier story:
+// Cold-start prerequisite bootstrap. When the learnable frontier is empty, make one
+// model call proposing temporary, low-confidence prerequisite edges. Proposals stay
+// propose-only: the frontier reads live edges, so nothing changes until the owner
+// accepts them in the inbox.
 //
-//   PR-1 (learnable-frontier.ts) reads the frontier from LIVE prerequisite edges.
-//   On today's sparse graph there are no prerequisite edges → the frontier is
-//   empty → the composer never surfaces a "learn this next" candidate. This
-//   nightly job breaks that cold-start deadlock: WHEN the frontier is empty it
-//   makes ONE LLM call proposing TEMPORARY prerequisite edges from curriculum/KC
-//   semantics, PROPOSE-ONLY / low-confidence. The owner accepts edges in the
-//   inbox; real edges replace the temps; the frontier activates.
-//
-// ════════════════════════════════════════════════════════════════════════════
-// LOAD-BEARING INVARIANTS (the whole point):
-//
-//   ① PROPOSE-ONLY RED LINE. This job NEVER inserts a live `knowledge_edge` row.
-//      It only calls writeAiProposal → a `propose` event. learnableFrontier (PR-1)
-//      reads ONLY live non-archived edges, so a proposed edge has ZERO effect on
-//      the frontier until a human accepts it in the inbox. There is NO
-//      `.insert(knowledge_edge)` / createKnowledgeEdge anywhere below.
-//
-//   ② SPARSITY GATE (deterministic, pre-LLM, OUTSIDE the swallow). We only spend
-//      an LLM call when learnableFrontier(db) is empty/sparse
-//      (frontier.length <= FRONTIER_BOOTSTRAP_FLOOR). A non-empty/dense frontier
-//      → no-op { skipped_dense: 1 }, ZERO LLM cost. The pre-LLM DB reads (the
-//      frontier read + the candidate picker) run OUTSIDE the try/catch so a DB
-//      fault RETHROWS (a legit retryable error → pg-boss retries), never a
-//      swallowed proposed:0.
-//
-//   ③ SWALLOW-SAFE LLM HALF. The LLM call + parse + writes live inside try/catch:
-//      an LLM/key/runner/parse failure → proposed:0, logged, NEVER throws out
-//      (mirrors goal_scope/edge-propose's asymmetry: pre-LLM DB faults rethrow,
-//      the LLM half swallows).
-//
-//   ④ DEDUP / ANTI-STORM. Reuse the EXISTING loadPendingEdgeProposalKeys: skip
-//      (from,to,prerequisite) pairs already pending an unrated proposal, and skip
-//      pairs that already have a LIVE prerequisite edge. Each proposal carries a
-//      cooldown_key `knowledge_edge:${from}|${to}|prerequisite`.
-//
-//   ⑤ COST CAP. At most FRONTIER_FILL_MAX_PROPOSALS writes per run (clamp the LLM
-//      output before writing).
-// ════════════════════════════════════════════════════════════════════════════
+// Pre-model DB faults rethrow so pg-boss retries; model/key/parse faults are
+// swallowed and counted. Pending and live pairs are deduped, and writes are capped.
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-// SAME-PACKAGE read (was a cross-package seam until YUK-1571): the
-// learnable-frontier graph decision moved into this capability's
-// server/frontier-read.ts — knowledge now owns both the read-side graph decision
-// and this job's write-side edge proposals. This job only READS the frontier as
-// a deterministic gate signal; it still PRODUCES PROPOSE-ONLY knowledge_edge
-// proposals (co-located with knowledge_edge_propose_nightly).
+// Same package: knowledge owns both the frontier graph decision and this job. The
+// frontier is only a gate signal; this job writes proposals, never live edges.
 import {
   type FrontierResolution,
   learnableFrontierResolved,
 } from '@/capabilities/knowledge/server/frontier-read';
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
-// loadTreeSnapshot is the knowledge package's own tree reader (same-package import).
 import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import { isDirectTreePair } from '@/core/topology-gate';
@@ -66,51 +27,26 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
-/**
- * Frontier emptiness threshold for the sparsity gate. We bootstrap ONLY when the
- * learnable frontier has at most this many KCs — 0 means "literally no learnable
- * frontier" (true cold-start), the most conservative gate. Raise to a small
- * positive value to keep filling while the frontier is merely SPARSE; the
- * skipped_dense no-op path is unchanged either way.
- */
+/** Bootstrap only at or below this frontier size; 0 means true cold-start. */
 export const FRONTIER_BOOTSTRAP_FLOOR = 0;
 
 /** Hard cap on proposals written per run (cost cap / anti-storm). */
 export const FRONTIER_FILL_MAX_PROPOSALS = FRONTIER_PENDING_CAP;
 
-/**
- * Cap on candidate KCs fed to the LLM. The sparsity gate bounds *frequency* and
- * FRONTIER_FILL_MAX_PROPOSALS bounds *writes*, but neither bounds INPUT tokens: a
- * content-heavy graph with no topology yet (the cold-start upload case) keeps an
- * empty frontier indefinitely → a large candidate list every night. Cap it — we
- * only write ≤5 proposals, so 50 candidates is ample for the model to choose from.
- */
+/** Candidate cap for the model input; write count alone does not bound input tokens. */
 export const FRONTIER_FILL_CANDIDATE_CAP = 50;
 
-/**
- * Cap on the tree-snapshot nodes sent as LLM context (token safety, same rationale
- * as FRONTIER_FILL_CANDIDATE_CAP). The candidate KCs are passed explicitly in
- * `kcs_lacking_prereq`; the tree is supplementary structural context, so a bounded
- * slice is sufficient.
- */
+/** Tree nodes sent as context; candidates are passed separately. */
 export const FRONTIER_FILL_TREE_CAP = 500;
 
-/**
- * Weight stamped on every bootstrap prerequisite proposal. LOW on purpose: these
- * are TEMPORARY, low-confidence placeholder edges meant to be confirmed (or
- * replaced by a real edge) by the owner in the inbox — never authoritative.
- */
+/** Low weight marking these as temporary placeholder edges, not authoritative ones. */
 export const FRONTIER_TEMP_WEIGHT = 0.4;
 
 const RELATION_PREREQUISITE = 'prerequisite' as const;
 
 type DepsOverride = {
   runTaskFn?: TaskTextRunFn;
-  /**
-   * DI seam for the frontier discriminant read (YUK-514 Finding 1). Defaults to the
-   * canonical learnableFrontierResolved; tests inject a fake to exercise the overflow
-   * branch without seeding a 10k-tuple closure.
-   */
+  /** Test seam for the frontier read; lets overflow be exercised without a huge graph. */
   resolveFrontierFn?: (db: Db) => Promise<FrontierResolution>;
 };
 
@@ -121,12 +57,7 @@ export interface FrontierFillResult {
   proposed: number;
   /** 1 when the frontier was non-empty/dense → no-op, no LLM call. */
   skipped_dense: number;
-  /**
-   * 1 when learnableFrontierResolved reported `overflow` (YUK-514 Finding 1): the closure
-   * tripped the depth / node-cap fail-safe → the graph is DENSE, NOT cold-start, so we
-   * no-op WITHOUT bootstrapping. Counted separately from skipped_dense so the densification
-   * boundary is observable.
-   */
+  /** 1 when the closure overflowed, meaning the graph is dense, not cold-start. */
   skipped_overflow: number;
   /** 1 when the frontier was empty but no KC lacks prereq coverage → no-op, no LLM call. */
   skipped_no_candidate: number;
@@ -140,17 +71,9 @@ export interface FrontierFillResult {
   skipped_tree_redundancy: number;
   /** Proposals dropped by the FRONTIER_FILL_MAX_PROPOSALS clamp. */
   skipped_over_cap: number;
-  /**
-   * YUK-779 — 1 once the LLM half was actually entered (all pre-LLM gates passed),
-   * else 0. Distinguishes "we never called the model tonight" (dense / no candidate /
-   * overflow) from "we called it".
-   */
+  /** 1 once the model half was entered, distinguishing idle nights from calls. */
   llm_attempted: number;
-  /**
-   * YUK-779 — 1 when the whole-LLM-half catch below SWALLOWED a fault, else 0.
-   * Without it `proposed: 0` covers both "the model proposed nothing" and "the call
-   * blew up", so a 限流风暴 finishes `succeeded` with no trace anywhere.
-   */
+  /** 1 when the model half swallowed a fault, so a failed call is not reported as empty. */
   llm_failed: number;
 }
 
@@ -175,12 +98,7 @@ function edgeKey(fromId: string, toId: string): string {
   return `${fromId}|${toId}|${RELATION_PREREQUISITE}`;
 }
 
-/**
- * Candidate picker — KC ids with NO incoming LIVE prerequisite edge (anti-join).
- * These are the bootstrap targets: nodes the frontier cannot yet reach because
- * nothing declares what must be learned before them. Pure READ (runs pre-LLM,
- * faults rethrow).
- */
+/** KCs with no incoming live prerequisite edge; runs before the model. */
 async function loadKcsLackingPrereq(db: Db): Promise<string[]> {
   const rows = await db.execute<{ id: string }>(sql`
     SELECT k.id AS id
@@ -197,29 +115,15 @@ async function loadKcsLackingPrereq(db: Db): Promise<string[]> {
   return rows.map((r) => r.id);
 }
 
-/**
- * Empty-frontier prerequisite bootstrap. See the INVARIANT BLOCK at the top.
- *
- * @param db Db
- * @param deps.runTaskFn DI seam for the LLM call (tests inject a fake → no real LLM).
- */
+/** Run the bootstrap; see the file header for the gate and swallow boundaries. */
 export async function runFrontierFillAndWrite(
   db: Db,
   deps: DepsOverride = {},
 ): Promise<FrontierFillResult> {
   const result = emptyResult();
 
-  // ── ② SPARSITY GATE (pre-LLM, OUTSIDE the swallow). A throw here is a legit
-  //    retryable DB fault → propagates to the builder's rethrow → pg-boss retries.
-  //    Do NOT wrap in a catch-all (would mask a DB fault behind proposed:0).
-  //
-  //    YUK-514 Finding 1: read the DISCRIMINATED frontier, not the flattened id list. The
-  //    bare `[]` collapses THREE states; only true `sparse` (cold-start) should bootstrap.
-  //    - `overflow` → the closure tripped the depth / node-cap fail-safe, i.e. the graph is
-  //      DENSE / pathological → no-op (skipped_overflow), NEVER bootstrap a dense graph.
-  //    - `dense` with ids.length > FLOOR → an active frontier exists → no-op (skipped_dense).
-  //    - `sparse`, OR `dense` with no learnable ids (≤ FLOOR) → fall through to bootstrap
-  //      (byte-identical to the historical `frontier.length <= FLOOR` behaviour).
+  // Sparsity gate, outside the swallow so a DB fault retries instead of becoming
+  // proposed:0. Overflow means a dense graph, never a bootstrap target.
   const resolveFrontierFn = deps.resolveFrontierFn ?? learnableFrontierResolved;
   const frontier = await resolveFrontierFn(db);
   if (frontier.kind === 'overflow') {
@@ -229,32 +133,19 @@ export async function runFrontierFillAndWrite(
     return { ...result, skipped_dense: 1 };
   }
 
-  // ── Candidate picker (pre-LLM, faults rethrow). KCs lacking prereq coverage are
-  //    the bootstrap targets. None → no-op, NO LLM call.
   const candidateIds = await loadKcsLackingPrereq(db);
   if (candidateIds.length === 0) {
     return { ...result, skipped_no_candidate: 1 };
   }
   result.considered = candidateIds.length;
 
-  // Tree snapshot (LLM context only) + dedup sets — all pre-LLM reads (faults rethrow).
-  // NOTE (YUK-514 Finding 2): the snapshot is NO LONGER used to validate node existence.
-  // loadTreeSnapshot hard-caps at LOAD_TREE_SNAPSHOT_LIMIT (5000), so on a >5000-KC graph a
-  // proposal's `from` could be a REAL node absent from the truncated snapshot → falsely
-  // dropped as skipped_invalid. `from` existence is checked against the `knowledge` table
-  // directly below (post-parse); the tree here is only the bounded LLM context + the
-  // dominant-domain hint. (loadTreeSnapshot warns internally when it hits the cap.)
+  // The snapshot is bounded, so it is context only; endpoint validity is checked
+  // against the knowledge table after parsing.
   const tree = await loadTreeSnapshot(db);
   const candidateSet = new Set(candidateIds);
 
-  // ④ DEDUP — pending proposals (reuse the EXISTING anti-storm reader) + live edges.
-  // NOTE: the live-edge check below is defense-in-depth. Today it is STRUCTURALLY
-  // subsumed by the candidate anti-join (loadKcsLackingPrereq): a proposal's `to`
-  // must be in `candidateSet`, i.e. a KC with NO incoming live prereq edge, so no
-  // (from,to,prerequisite) key can already be a live edge → `skipped_duplicate_edge`
-  // is currently unreachable. We keep it as a cheap belt-and-suspenders (the query
-  // only runs on a sparse graph, where prereq edges are few) so the no-live-dup
-  // invariant survives any future loosening of the candidate picker.
+  // Dedup pending proposals and live edges. The live check is redundant with the
+  // candidate anti-join today, but keeps the no-duplicate invariant if that changes.
   const pendingEdgeKey = await loadPendingEdgeProposalKeys(db);
   const liveEdges = await db
     .select({
@@ -272,22 +163,17 @@ export async function runFrontierFillAndWrite(
     liveEdges.map((e) => edgeKey(e.from_knowledge_id, e.to_knowledge_id)),
   );
 
-  // The dominant effective_domain among candidates → LLM `domain` context hint.
+  // Dominant candidate domain, passed to the model as context.
   const domain = dominantDomain(tree, candidateSet);
 
-  // ── ③ SWALLOW-SAFE LLM HALF. Everything from here (LLM call + parse + writes)
-  //    is inside try/catch: an LLM/key/runner/parse fault → proposed:0, logged,
-  //    NEVER throws out (mirror goal_scope / edge-propose).
+  // From here on, faults are swallowed and counted; only pre-model DB faults retry.
   try {
-    // YUK-779: mark the fallible unit as entered BEFORE the call, so the counter is
-    // set on both the success and the swallow path.
     result.llm_attempted = 1;
     const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const taskResult = await runTaskFn(
       'FrontierPrerequisiteTask',
       {
-        // Bounded structural context (token safety — see FRONTIER_FILL_TREE_CAP).
-        // The candidates are passed explicitly below, so a tree slice suffices.
+        // Bounded structural context; candidates are passed separately.
         tree_snapshot: tree.slice(0, FRONTIER_FILL_TREE_CAP).map((n) => ({
           id: n.id,
           name: n.name,
@@ -302,9 +188,7 @@ export async function runFrontierFillAndWrite(
 
     const parsed = parseFrontierProposals(taskResult.text);
 
-    // ── YUK-514 Finding 2 + YUK-674: endpoint existence / parent links come from
-    //    the SoT `knowledge` table, NOT the truncated prompt snapshot. One bounded
-    //    query over both endpoints validates `from` and exposes direct tree pairs.
+    // Validate endpoints and tree parents against the source table, not the snapshot.
     const proposedEndpointIds = [
       ...new Set(
         parsed.proposals.flatMap((proposal) => [
@@ -325,7 +209,6 @@ export async function runFrontierFillAndWrite(
     );
 
     for (const p of parsed.proposals) {
-      // ⑤ COST CAP — clamp to at most FRONTIER_FILL_MAX_PROPOSALS writes per run.
       if (result.proposed >= FRONTIER_FILL_MAX_PROPOSALS) {
         result.skipped_over_cap += 1;
         continue;
@@ -334,10 +217,7 @@ export async function runFrontierFillAndWrite(
       const from = p.from_knowledge_id;
       const to = p.to_knowledge_id;
 
-      // Validity: no self-loop; `from` a real (non-archived) KC (DB-checked, NOT snapshot —
-      // YUK-514 Finding 2); `to` must be a candidate (a KC actually lacking prereq coverage,
-      // from loadKcsLackingPrereq, so it is real + non-archived — we never gate an
-      // already-covered KC with another temp edge).
+      // `from` must exist in the DB; `to` must still lack prereq coverage.
       if (from === to || !validEndpointIds.has(from) || !candidateSet.has(to)) {
         result.skipped_invalid += 1;
         continue;
@@ -358,10 +238,7 @@ export async function runFrontierFillAndWrite(
         continue;
       }
 
-      // ① PROPOSE-ONLY — writeAiProposal writes a `propose` event for the
-      //    knowledge_edge, NOT a live knowledge_edge row. relation_type is FORCED
-      //    to 'prerequisite' (this job only bootstraps the prereq topology) and
-      //    weight to the LOW temp weight regardless of the LLM's suggestion.
+      // Propose-only. Type and low weight are forced regardless of model output.
       await writeAiProposal(db, {
         actor_ref: 'dreaming',
         outcome: 'success',
@@ -384,17 +261,12 @@ export async function runFrontierFillAndWrite(
         },
       });
 
-      // Suppress an immediate intra-batch duplicate of the same pair.
       pendingEdgeKey.add(key);
       result.proposed += 1;
     }
   } catch (err) {
-    // ③ Swallow-safe: log the stack (NOT the whole error object — an
-    //    LLM-payload-carrying error must not be serialized whole into logs; `.stack`
-    //    is name+message+frames only, no custom payload props), return proposed:0.
-    //    NEVER rethrow.
-    // YUK-779: keep swallowing, but RECORD it — proposed:0 alone cannot be told apart
-    // from a night where the model legitimately proposed nothing.
+    // Log the stack only: an error may carry the raw model payload. Record the
+    // failure so it is distinguishable from a night that legitimately proposed nothing.
     result.llm_failed = 1;
     console.error(
       '[frontier_fill_nightly] LLM half failed (no proposals written)',
@@ -433,17 +305,9 @@ export function buildFrontierFillNightlyHandler(
     try {
       const result = await runFrontierFillAndWrite(db);
       console.log('[frontier_fill_nightly] result', result);
-      // YUK-779 — the fallible unit is the single LLM half. Gated nights (dense /
-      // overflow / no candidate) never enter it → attempted 0 → level `idle`.
-      //
-      // `|| result.llm_failed` matches the two sibling handlers (PR #1076 review).
-      // It is redundant TODAY — `llm_attempted = 1` is the first statement inside the
-      // swallowing try, so nothing can fail before it — but that is a property of one
-      // statement's position, not an invariant anyone would notice breaking. Insert a
-      // DB read above it and a fault there would set llm_failed WITHOUT llm_attempted,
-      // yielding `attempted: 0` → `idle` for a real swallowed error: precisely the
-      // silent no-op this ticket exists to catch. Keeping the three handlers identical
-      // costs nothing and removes the trap.
+      // Gated nights never enter the model half and report idle. `|| llm_failed`
+      // is redundant today, but keeps a swallowed fault from ever looking idle if a
+      // DB read is later inserted before the attempt flag.
       const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
       return reportJobYield('frontier_fill_nightly', {
         attempted,
@@ -451,8 +315,7 @@ export function buildFrontierFillNightlyHandler(
         failed: result.llm_failed,
       });
     } catch (err) {
-      // Only pre-LLM DB faults reach here (the LLM half is swallowed inside
-      // runFrontierFillAndWrite). Rethrow so pg-boss retries the DB fault.
+      // Only pre-model DB faults reach here; rethrow so pg-boss retries.
       console.error('[frontier_fill_nightly] failed', err);
       throw err;
     }

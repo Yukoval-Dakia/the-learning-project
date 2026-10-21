@@ -1,5 +1,5 @@
-// YUK-1571 — the complete knowledge-graph read engine for the kernel hub-mesh
-// curation algorithm (@/kernel/hub-mesh) and its other existing consumers.
+// YUK-1571 — the complete knowledge-graph read engine for notes hub curation
+// (@/capabilities/notes/server/hub-curation) and its other existing consumers.
 //
 // `loadTreeSnapshot` (+ KnowledgeRow/KnowledgeNode, LOAD_TREE_SNAPSHOT_LIMIT,
 // warnIfTreeSnapshotTruncated) moved VERBATIM from

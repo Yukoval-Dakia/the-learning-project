@@ -18,8 +18,8 @@ import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-sta
 import { copilotRunTerminalSql } from '../server/copilot-run-terminal-sql';
 import { CopilotCheckpointParamsSchema, type CopilotCheckpointRevertRefusalT } from './contracts';
 
-// Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the refusal-body
-// switch makes this fail to compile (YUK-497 wave-3).
+// Exhaustiveness guard: a new CascadeRevertRefusal variant that isn't handled in the
+// refusal-body switch makes this fail to compile.
 function assertNever(x: never): never {
   throw new Error(`unhandled cascade refusal variant: ${JSON.stringify(x)}`);
 }
@@ -72,8 +72,8 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         )
         .limit(1);
       // Durable run shadow probes. job_events is free-form and a STREAMING run emits many
-      // DELTA rows, so never fetch the whole event set just to derive two booleans — two
-      // bounded existence checks (does a shadow exist at all; has it reached DONE/FAILED).
+      // DELTA rows, so derive two booleans with two bounded existence checks instead of
+      // fetching the whole event set (does a shadow exist; has it reached DONE/FAILED).
       const shadowRows = await tx
         .select({ event_type: job_events.event_type })
         .from(job_events)
@@ -97,10 +97,10 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         )
         .limit(1);
       const durableTerminal = terminalRows.length > 0;
-      // YUK-497 review F6 — two distinct not-terminal conditions, previously conflated under
-      // one 409. Keep both 409 but name the cause so the client (and forensics) can tell them
-      // apart: (a) no reply persisted yet = the turn is still in flight; (b) a durable run
-      // shadow exists but has not reached DONE/FAILED = the async job is mid-run.
+      // Two distinct not-terminal conditions, both 409 but named so the client (and
+      // forensics) can tell them apart: (a) no reply persisted yet = the turn is still
+      // in flight; (b) a durable run shadow exists but has not reached DONE/FAILED =
+      // the async job is mid-run.
       if (replies.length === 0) {
         throw new ApiError('turn_not_terminal', 'turn not complete yet — no reply persisted', 409);
       }
@@ -112,22 +112,20 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
         );
       }
 
-      // YUK-497 wave-3 (OCR) — G acquired HERE, just before the first learning-state row access
-      // (orchestrateCascadeRevert), not at handler entry: the five pre-checks above are all
-      // lock-free plain SELECTs (roots / getCorrectionStatus / replies / shadow / terminal — no
-      // FOR UPDATE), so holding the global G across them + the early-return paths only amplifies
-      // contention. The G→rows invariant still holds (orchestrate takes row locks only after this),
-      // and orchestrate re-acquires G reentrantly on the tx path.
+      // G acquired HERE, just before the first learning-state row access
+      // (orchestrateCascadeRevert), not at handler entry: the pre-checks above are all
+      // lock-free plain SELECTs, so holding the global G across them only amplifies
+      // contention. The G→rows invariant still holds (orchestrate takes row locks only
+      // after this) and it re-acquires G reentrantly on the tx path.
       await acquireLearningStateWriteLock(tx);
       const result = await orchestrateCascadeRevert(tx, checkpointEventId, {
         copilotAskOnly: true,
       });
       if (!result.ok) {
-        // YUK-497 review F4 — map the orchestrator's internal camelCase refusal to the
-        // snake_case wire envelope (irreversible_event_ids / ref.kc_id / conflict_ref.*).
-        // wave-3 (OCR) — switch on the discriminant with an exhaustive assertNever so a new
-        // refusal variant with required fields fails to compile instead of silently shipping an
-        // incomplete body. Wire shapes are unchanged (contracts.db pins them).
+        // Map the orchestrator's internal camelCase refusal to the snake_case wire
+        // envelope. Switch with an exhaustive assertNever so a new refusal variant
+        // with required fields fails to compile instead of shipping an incomplete
+        // body; wire shapes are unchanged (contracts.db pins them).
         const body: CopilotCheckpointRevertRefusalT = {
           ok: false,
           refusal: result.refusal,
@@ -165,8 +163,6 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
           ok: true,
           status: 'reverted',
           checkpoint_event_id: checkpointEventId,
-          // YUK-497 review F7 — snake_case wire shape (the orchestrator's internal camelCase
-          // domain type is mapped here at the HTTP boundary, matching house response style).
           reverted: {
             snapshots_restored: result.reverted.snapshotsRestored,
             structural_rows_archived: result.reverted.structuralRowsArchived,
@@ -180,8 +176,8 @@ export async function POST(_req: Request, params: Record<string, string>): Promi
 
     return Response.json(outcome.body, { status: outcome.status });
   } catch (err) {
-    // F3 (TdY3h) — a bad path param is a 400 validation_error, not a generic 500 (mirrors chat.ts /
-    // accept-chip: a bare errorResponse(ZodError) would fall through to 500).
+    // A bad path param is a 400 validation_error, not a generic 500 (a bare
+    // errorResponse(ZodError) would fall through to 500).
     if (err instanceof ZodError) {
       return errorResponse(
         new ApiError('validation_error', err.issues.map((i) => i.message).join('; '), 400),

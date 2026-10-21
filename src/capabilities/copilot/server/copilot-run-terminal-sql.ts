@@ -6,9 +6,9 @@ import { COPILOT_RUN_EVENTS } from './copilot-run-status';
  * SQL twin of `isCopilotRunTerminalEvent`.
  *
  * `IS DISTINCT FROM` is deliberate: missing/malformed reasons fail closed as
- * terminal, while the one historical retry-frame reason (`error`) remains
- * outstanding. Keep all DB readers on this helper so backlog, replay gates and
- * checkpoint safety cannot drift apart again.
+ * terminal, while the one historical retry-frame reason (`error`) stays
+ * outstanding. All DB readers must use this helper so backlog, replay gates and
+ * checkpoint safety cannot drift apart.
  */
 export function copilotRunTerminalSql(eventType: SQLWrapper, payload: SQLWrapper): SQL<boolean> {
   return sql<boolean>`(

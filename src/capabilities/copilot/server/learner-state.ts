@@ -1,37 +1,21 @@
-// YUK-574 — Copilot learner-state header (session-anchored, assemble-once).
+// Copilot learner-state header (session-anchored, assemble-once).
 //
-// The Copilot free-form run input carries a learner-state HEADER: a deterministic
-// (no-LLM) code-read projection of the learner's current state — 今日 due count +
-// 活跃 goal + top-2 误区 + θ̂/mastery band 一行 + 昨夜交班一句话摘要. Depth is left
-// to the model's DomainTools; the header is a short teaser, hard-capped at
-// LEARNER_STATE_HEADER_BUDGET.maxChars (400 chars — a char cap, not a token count;
-// CJK content near that ceiling runs ~400-1000 tokens for Claude-family
-// tokenizers, though the typical 5-line snapshot sits well below the cap).
+// Deterministic (no-LLM) code-read projection — 今日 due count, 活跃 goal, top-2
+// 误区, θ̂/mastery band, 昨夜交班摘要 — hard-capped at
+// LEARNER_STATE_HEADER_BUDGET.maxChars (a char cap, not tokens; CJK near the ceiling
+// can run ~400-1000 tokens).
 //
-// OWNER HARD CONSTRAINT (never regress): NO per-turn 装配注入. The real cost of
-// re-projecting every turn = 注意力污染 + 天级数据被 turn 级重发. So the header is
-// ASSEMBLED ONCE per validity window and cached session-anchored; subsequent turns
-// reuse the cached bytes (they ride pinned in conversation_history, which is
-// re-sent in full anyway). Re-assembly happens ONLY on a cheap invalidation:
-// cross-day, a new attempt event, dreaming ran overnight, or a proposal decision
-// (accept/dismiss). The invalidation check is a cheap timestamp-comparison query.
+// OWNER HARD CONSTRAINT (never regress): NO per-turn 装配注入. Assemble once per
+// validity window, cache session-anchored, re-assemble only on cross-day, new
+// attempt, overnight dreaming, or a proposal decision (accept/dismiss); the
+// proposal_feedback digest folds into the same block.
 //
-// Facet A (YUK-174) migration: the per-turn `proposal_feedback` digest folds into
-// THIS session-anchored block under the SAME invalidation rules (proposal decision
-// events are its dedicated refresh trigger). Its in-context-learning semantics are
-// unchanged (same scoped cell shape) — only the injection CADENCE moves from
-// per-turn to session-anchored, which is byte-identical between proposal decisions.
-//
-// 防循环 red line (ADR-0039 / YUK-267): the header is a deterministic code read,
-// never orchestrator output, and its cache event is written with `ingest_at` set
-// so the mem0 outbox NEVER ingests it — the projection reads mem0-derived signals
-// (the memory brief), so ingesting the header back would be circular injection.
+// 防循环: it is a code read, never orchestrator output, and its cache event opts
+// out of the mem0 outbox (the projection reads mem0-derived signals, so
+// ingesting it back would be circular).
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
-// PR #717 round-2 CodeRabbit fix #2 (YUK-574) — imports from src/core/ (RELOCATED
-// from knowledge/ui/mastery-band.ts; see the provenance note in that file). Pure
-// dependency-free band-derivation helpers, no cross-capability / cross-layer reach.
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -63,13 +47,13 @@ import {
 
 type DbLike = Db | Tx;
 
-// The session-anchored cache is persisted via the SAME ExperimentalEvent escape
-// hatch every other Copilot turn-state row uses (no new schema). turns.ts replay
-// only reads ask/chip/reply actions, so this action never pollutes the drawer.
+// The session-anchored cache uses the same ExperimentalEvent escape hatch as
+// other Copilot turn-state rows (no new schema). turns.ts replay only reads
+// ask/chip/reply actions, so this action never pollutes the drawer.
 export const LEARNER_STATE_HEADER_ACTION = 'experimental:copilot_learner_state_header';
 
-// How many recent failure attempts to scan when ranking the top-2 误区. Bounded —
-// this only runs on (re)assembly, not per turn.
+// Recent failure attempts scanned when ranking the top-2 误区. Bounded — this only
+// runs on (re)assembly, not per turn.
 const FAILURE_SCAN_LIMIT = 40;
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -77,7 +61,6 @@ const FAILURE_SCAN_LIMIT = 40;
 /** The cheap invalidation watermarks (ISO strings, null when the category has no
  *  events yet). Compared cached-vs-current to decide staleness. */
 export interface LearnerStateWatermarks {
-  /** Latest `attempt` event created_at. */
   attempt_at: string | null;
   /** Latest `experimental:dreaming_scan` (outcome='success') created_at. */
   dreaming_at: string | null;
@@ -85,13 +68,12 @@ export interface LearnerStateWatermarks {
   proposal_decision_at: string | null;
 }
 
-/** The already-scoped Facet A digest shape carried in the header block. */
+/** The already-scoped proposal-feedback digest carried in the header block. */
 export type ScopedProposalFeedbackCell = Pick<
   ProposalFeedbackCell,
   'kind' | 'relation' | 'acceptance_rate' | 'top_dismiss_reasons' | 'top_rubric_gates'
 >;
 
-/** The deterministic projection inputs assembled from the read sources. */
 export interface LearnerStateProjection {
   reviewDueCount: number;
   activeGoalTitle: string | null;
@@ -110,10 +92,8 @@ export interface LearnerStateHeaderCache {
   watermarks: LearnerStateWatermarks;
 }
 
-/** Persisted form: the cache + its owning conversation session id. */
 export type PersistedLearnerStateHeaderCache = LearnerStateHeaderCache & { session_id: string };
 
-/** What the resolver hands back to the run-input assembly. */
 export interface LearnerStateHeader {
   header_md: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
@@ -121,9 +101,9 @@ export interface LearnerStateHeader {
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
-// Review-verdict fix #2 (MINOR) — the house cron domain (dreaming/coach) runs
-// Asia/Shanghai; bucketing by UTC calendar day fires the cross-day invalidation
-// at Beijing 08:00 instead of local midnight. `en-CA` formats as YYYY-MM-DD.
+// The house cron domain (dreaming/coach) runs Asia/Shanghai; bucketing by UTC
+// calendar day would fire the cross-day invalidation at Beijing 08:00 instead of
+// local midnight. `en-CA` formats as YYYY-MM-DD.
 const SHANGHAI_DAY_BUCKET_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai',
   year: 'numeric',
@@ -136,9 +116,8 @@ export function dayBucket(d: Date): string {
   return SHANGHAI_DAY_BUCKET_FORMATTER.format(d);
 }
 
-// Is `current` strictly newer than `cached`? Null cached + non-null current =
-// newer (something appeared). A watermark going null→ (or set→null) never stales
-// (events do not vanish; a null current just means "no read" and is ignored).
+// Is `current` strictly newer than `cached`? A null current means "no read" and
+// never stales; a null cached with a real current means something appeared.
 function watermarkAdvanced(cached: string | null, current: string | null): boolean {
   if (current === null) return false;
   if (cached === null) return true;
@@ -187,13 +166,11 @@ export function assembleLearnerStateHeaderMd(
   return md.length > budget.maxChars ? md.slice(0, budget.maxChars) : md;
 }
 
-// P5.4-L2 / YUK-174 (Facet A) — Copilot proposes ONLY knowledge_edge, so the
-// digest is edge-scoped: reason-bearing cells FIRST (they carry the failure mode
-// Copilot learns most from; the digest is sorted acceptance DESC so a naive
-// tail-drop would discard them), then the SERIALIZED field is truncated to the
-// whole-digest cap by dropping the least-actionable tail. Moved here from chat.ts
-// so the header assembly owns the migrated per-turn digest (folded into the same
-// session-anchored block).
+// Copilot proposes ONLY knowledge_edge, so the digest is edge-scoped:
+// reason-bearing cells first (they carry the failure mode Copilot learns most
+// from; the digest is sorted acceptance DESC, so a naive tail-drop would discard
+// them), then the serialized field is truncated to the whole-digest cap by
+// dropping the least-actionable tail.
 export function scopeCopilotProposalFeedback(
   digest: ProposalFeedbackCell[],
 ): ScopedProposalFeedbackCell[] {
@@ -259,7 +236,7 @@ function summarizeMastery(proj: Map<string, MasteryProjection>): {
   return { masterySummary: parts.join(' '), meanTheta };
 }
 
-/** IO dependencies for the projection read (injected in tests). */
+/** IO dependencies for the projection read. */
 export interface ReadProjectionDeps {
   loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
   loadOvernightDigestFn?: LoadTodayOvernightDigest;
@@ -274,8 +251,8 @@ export async function readLearnerStateProjection(
 ): Promise<LearnerStateProjection> {
   const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
   const loadOvernightDigest = deps.loadOvernightDigestFn ?? loadTodayOvernightDigest;
-  // YUK-603 — resolved read. The default is only ever invoked with the outer Db (call site
-  // below); the DbLike dep shape stays for test fakes, hence the narrow cast.
+  // Resolved read: the default is only invoked with the outer Db (call site below);
+  // the DbLike dep shape stays for fakes, hence the narrow cast.
   const loadGoals =
     deps.listActiveGoalsFn ?? ((d: DbLike) => listActiveGoalsWithResolvedScope(d as Db));
   const loadFailures =
@@ -323,10 +300,9 @@ export async function readLearnerStateProjection(
 
 // ── Cache + watermark reads (IO) ─────────────────────────────────────────────
 
-// Review-verdict fix #1 (MAJOR) — pick whichever ISO timestamp is more recent;
-// null is "no signal" and loses to any real timestamp. Both inputs are ISO
-// strings from the SAME `new Date().toISOString()` format (always 'Z'-suffixed
-// UTC), so lexicographic string comparison agrees with chronological order.
+// Pick whichever ISO timestamp is more recent; null is "no signal" and loses to
+// any real timestamp. Both inputs are 'Z'-suffixed UTC ISO strings, so
+// lexicographic comparison agrees with chronological order.
 function maxIso(a: string | null, b: string | null): string | null {
   if (a === null) return b;
   if (b === null) return a;
@@ -349,11 +325,11 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
         eq(event.action, 'experimental:assessment_activation'),
         eq(event.action, 'experimental:assessment_settlement'),
         eq(event.action, 'correct'),
-        // Review-verdict fix #1 (MAJOR) — the FSRS review-queue clearing write
-        // (src/capabilities/practice/api/submit.ts) uses a DISTINCT action='review',
-        // NOT 'attempt'. It directly moves review_due_count (the header's "今日
-        // 待复习" headline), so a pure-review session (no fresh 'attempt' rows)
-        // must still trip the invalidation — folded into attempt_at below.
+        // The FSRS review-queue clearing write (src/capabilities/practice/api/submit.ts)
+        // uses a DISTINCT action='review', not 'attempt'. It directly moves
+        // review_due_count (the header's "今日待复习" headline), so a pure-review
+        // session with no fresh 'attempt' rows must still trip the invalidation —
+        // folded into attempt_at below.
         eq(event.action, 'review'),
         and(eq(event.action, 'experimental:dreaming_scan'), eq(event.outcome, 'success')),
         eq(event.action, 'rate'),
@@ -366,11 +342,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
     return at ? new Date(at).toISOString() : null;
   };
   return {
-    // Fold 'review' into attempt_at: the issue's "new attempt event" invalidation
-    // intent means "new practice activity", and FSRS review IS practice activity
-    // (a distinct action, same intent) — folding (vs. a 5th named watermark) keeps
-    // the invalidation-category shape unchanged (still 3 named fields) since this
-    // is a same-intent union, not a new invalidation category.
+    // Fold 'review' into attempt_at: "new attempt event" invalidation means "new
+    // practice activity", and FSRS review is practice activity (distinct action,
+    // same intent). Folding keeps the three-field watermark shape; this is a
+    // same-intent union, not a new invalidation category.
     attempt_at: [
       'attempt',
       'review',
@@ -384,11 +359,10 @@ export async function readLearnerStateWatermarks(db: DbLike): Promise<LearnerSta
   };
 }
 
-// PR #717 bot review fix #2 (MINOR) — a persisted cache row may predate a
-// schema shift (or otherwise be corrupt); a blind cast let a malformed cell
-// through and would crash a downstream `.top_dismiss_reasons.length` read.
-// Per-cell type guard: FILTER bad cells out rather than rejecting the whole
-// payload (one corrupt cell must not sink the entire cached digest).
+// Persisted cache rows may predate a schema shift or be corrupt; a blind cast
+// would let a malformed cell crash a downstream `.top_dismiss_reasons.length`
+// read. Filter bad cells per cell — one corrupt cell must not sink the whole
+// cached digest.
 function isValidScopedProposalFeedbackCell(v: unknown): v is ScopedProposalFeedbackCell {
   if (!v || typeof v !== 'object') return false;
   const c = v as Record<string, unknown>;
@@ -469,27 +443,18 @@ export async function writeLearnerStateHeaderCache(
       day_bucket: cache.day_bucket,
       watermarks: cache.watermarks,
     },
-    // ADR-0039 / YUK-267 red line: opt out of the mem0 outbox — the header is a
-    // deterministic projection DERIVED FROM mem0 signals; ingesting it is circular.
+    // Opt out of the mem0 outbox — the header is a deterministic projection
+    // DERIVED FROM mem0 signals, so ingesting it would be circular.
     ingest_at: now,
     created_at: now,
   });
 }
 
-// ── Resolver (orchestration; injectable sub-seams for unit tests) ────────────
+// ── Resolver (orchestration; injectable sub-seams) ──────────────────────────
 
 export interface ResolveLearnerStateHeaderDeps {
   readCacheFn?: (db: DbLike, sessionId: string) => Promise<LearnerStateHeaderCache | null>;
-  // PR #717 bot review fix #3 (MINOR) — the real readLearnerStateWatermarks(db)
-  // takes only `db`; a `now` second parameter here was misleading (silently
-  // dropped at every call site). dayBucket(now) is computed separately by the
-  // resolver itself, not through this seam.
   readWatermarksFn?: (db: DbLike) => Promise<LearnerStateWatermarks>;
-  // PR #717 round-2 OCR fix #3 (MINOR) — same phantom-parameter shape as fix #3
-  // above: readLearnerStateProjection(db) takes only `db` (its projection reads —
-  // due count / goal / mistakes / mastery / overnight — are not time-parameterized
-  // themselves; `now` only matters for the resolver's OWN dayBucket/cache-timestamp
-  // bookkeeping, done separately). `now` here was silently dropped at the call site.
   readProjectionFn?: (db: DbLike) => Promise<LearnerStateProjection>;
   loadProposalFeedbackFn?: (db: DbLike) => Promise<ProposalFeedbackCell[]>;
   writeCacheFn?: (db: DbLike, cache: PersistedLearnerStateHeaderCache) => Promise<void>;
@@ -499,20 +464,17 @@ export interface ResolveLearnerStateHeaderDeps {
 const EMPTY_HEADER: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
 
 /**
- * Resolve the session-anchored learner-state header: read the cache + current
- * watermarks (cheap), reuse the cache when fresh (NO reassembly — the owner's
- * hard constraint), else (re)assemble the projection + scoped digest, persist a
- * new cache row, and return it. Additive-input red line: any read failure
- * degrades to a stale cache (if any) or an empty header, never crashing the chat.
+ * Resolve the session-anchored learner-state header: read the cache and current
+ * watermarks (cheap), reuse a fresh cache with NO reassembly (the owner's hard
+ * constraint), else (re)assemble the projection + scoped digest, persist a new
+ * cache row, and return it. Any read failure degrades to a stale cache (if any)
+ * or an empty header, never crashing the chat.
  *
- * PR #717 bot review fix #1 (MAJOR) — the cache read and the watermark read
- * degrade INDEPENDENTLY (they used to be coupled in one Promise.all, so a
- * watermark-read failure discarded an already-resolved cache and returned
- * EMPTY_HEADER even when a perfectly good cache existed):
- *   - cache read fails  → treated as `cached=null` (cold-start shape); the flow
- *     CONTINUES and attempts a full reassembly using whatever watermarks it did get.
- *   - watermark read fails → we cannot judge staleness at all, so we return
- *     `cached ?? EMPTY_HEADER` immediately (stale cache beats no cache).
+ * Cache and watermark reads degrade independently:
+ *   - cache read fails → treated as `cached=null`; the flow continues with a full
+ *     reassembly using whatever watermarks it got.
+ *   - watermark read fails → staleness cannot be judged, so return
+ *     `cached ?? EMPTY_HEADER` immediately (a stale cache beats no cache).
  */
 export async function resolveLearnerStateHeader(
   db: DbLike,
@@ -533,8 +495,8 @@ export async function resolveLearnerStateHeader(
 
   const dayBucketNow = dayBucket(now);
 
-  // Independent settle (NOT a shared try/catch) — one read failing must not
-  // discard the other's already-resolved result (the coupling bug fixed here).
+  // Independent settle, not a shared try/catch: one read failing must not discard
+  // the other's already-resolved result.
   const [cacheResult, watermarksResult] = await Promise.allSettled([
     readCache(db, sessionId),
     readWatermarks(db),

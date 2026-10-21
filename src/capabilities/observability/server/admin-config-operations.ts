@@ -18,7 +18,7 @@ export async function patchAdminConfig(input: unknown): Promise<AdminConfigWrite
     throw new ApiError('config_writer_unavailable', 'Configuration writer is unavailable', 503);
   return writer(
     body.data.changes.map((change) =>
-      change.action === 'set' ? { ...change, expiresAt: change.expires_at ?? null } : change,
+      change.action === 'set' ? { ...change, expiresAt: change.expires_at } : change,
     ),
     body.data.note,
   );

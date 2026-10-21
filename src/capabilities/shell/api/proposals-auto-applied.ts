@@ -1,5 +1,5 @@
-// YUK-521 (A4 强度轴)：GET /api/proposals/auto-applied 薄壳——读模型在
-// @/server/proposals/auto-applied-read（A 档 auto-applied 卡 + 当前熔断快照）。
+// GET /api/proposals/auto-applied route shell; the read model lives in
+// @/server/proposals/auto-applied-read.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
