@@ -88,7 +88,6 @@ export class SubjectRegistry {
       throwOnInvalid,
       meta: { isBuiltin: true, isSelectable: false, retiredAt: null },
     });
-    // Sample subjects declare their own aliases; nothing concrete is hardcoded here.
     const builtinMeta: SubjectRegistryEntryMeta = {
       isBuiltin: true,
       isSelectable: true,
@@ -158,9 +157,8 @@ export class SubjectRegistry {
   }
 
   /**
-   * Register-or-replace for hydration: an existing id is overwritten and its
-   * aliases repointed, a new id goes through full validation. Hydration passes
-   * throwOnInvalid: false so one bad row is skipped instead of crashing boot.
+   * Register-or-replace for hydration. Hydration passes throwOnInvalid: false so
+   * one bad row is skipped instead of crashing boot.
    */
   upsert(
     profile: SubjectProfile,
@@ -219,7 +217,6 @@ export class SubjectRegistry {
     return this.listIds('selectable');
   }
 
-  // Excludes the self-alias.
   listAliasesFor(id: SubjectId): string[] {
     const key = normalizeSubjectKey(id);
     const out: string[] = [];
@@ -245,8 +242,8 @@ export class SubjectRegistry {
 
   /**
    * Canonical id only on a genuine alias/id hit; null for a missing or unknown
-   * domain. Unlike resolve(), this never falls back, so callers can distinguish
-   * a real subject from an untagged node.
+   * domain. Unlike resolve(), this never falls back, so callers can tell a real
+   * subject from an untagged node.
    */
   resolveKnownSubjectId(domain?: string | null): SubjectId | null {
     if (!domain) return null;
