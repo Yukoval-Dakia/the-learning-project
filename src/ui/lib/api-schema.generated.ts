@@ -14678,6 +14678,8 @@ export interface operations {
                                 /** @enum {string} */
                                 scope: "session" | "item";
                             }[];
+                            errors_truncated: boolean;
+                            event_floor: number | null;
                             execution_closed: boolean;
                             items: {
                                 draft_ref: string | null;
@@ -14722,6 +14724,7 @@ export interface operations {
                                 /** @enum {string} */
                                 scope: "session" | "item";
                             }[];
+                            errors_truncated: boolean;
                             execution_closed: boolean | null;
                             finished_at: string | null;
                             paid_outcome_unknown: boolean;

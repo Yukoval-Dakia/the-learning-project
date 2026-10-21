@@ -320,12 +320,14 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
 
     const wirePriorRun = (prior: AgentHistoryPriorRunT) => ({
       run_ref: prior.run_ref,
+      event_floor: prior.event_floor,
       captured_at: prior.captured_at,
       session_status: prior.session_status,
       run_state: prior.run_state,
       stage: prior.stage,
       execution_closed: prior.execution_closed,
       paid_outcome_unknown: prior.paid_outcome_unknown,
+      errors_truncated: prior.errors_truncated,
       items: prior.items.map((item) => ({
         item_id: item.item_id,
         question_no: item.question_no,
@@ -368,6 +370,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
             captured_at: history.captured_at,
             execution_closed: history.execution_closed,
             paid_outcome_unknown: history.paid_outcome_unknown,
+            errors_truncated: history.errors_truncated,
             counts:
               history.items.length === 0
                 ? null
@@ -399,6 +402,9 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     if (path === 'agent') {
       if (run == null) missing.push('run');
       if (history != null && !history.snapshot) missing.push('snapshot');
+      // The durable record itself declares it once dropped rows — name the
+      // known gap instead of implying completeness.
+      if (history?.errors_truncated === true) missing.push('errors');
       if (items.length === 0) missing.push('items');
       if (asks.length === 0 && run == null) missing.push('asks');
     } else if (path === null) {

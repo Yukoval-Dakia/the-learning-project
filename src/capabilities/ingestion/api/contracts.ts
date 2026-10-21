@@ -441,6 +441,9 @@ export const IngestionHistoryRunSchema = z
     execution_closed: z.boolean().nullable(),
     /** worker_lost settlement: a paid attempt's provider outcome was never proven. */
     paid_outcome_unknown: z.boolean(),
+    /** Sticky marker: this run's durable error record was once truncated — the
+     *  missing rows are gone for good, never silently unmarked. */
+    errors_truncated: z.boolean(),
     counts: z
       .object({
         items_total: z.number().int().min(0),
@@ -483,12 +486,16 @@ export const IngestionHistoryRunSchema = z
 export const IngestionHistoryPriorRunSchema = z
   .object({
     run_ref: z.string().nullable(),
+    /** That run's job_events floor; null on v1 identity-less checkpoints. */
+    event_floor: z.number().int().nullable(),
     captured_at: z.string(),
     session_status: z.string(),
     run_state: z.enum(['in_progress', 'waiting', 'done', 'failed', 'lost']),
     stage: z.string().nullable(),
     execution_closed: z.boolean(),
     paid_outcome_unknown: z.boolean(),
+    /** True when that run's durable error record was truncated — permanent. */
+    errors_truncated: z.boolean(),
     items: z.array(
       z
         .object({

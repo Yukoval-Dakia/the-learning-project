@@ -31,8 +31,6 @@ import { readAgentRunLedger } from './ledger';
 // ids, id-keyed items/asks), so TTL-pruned rows are never deleted by a refresh.
 
 const SESSION_TABLE = 'ingestion_session' as const;
-const MAX_HISTORY_ERRORS = 100;
-const MAX_HISTORY_PRIOR_RUNS = 5;
 
 // ---------- durable snapshot shape (agent_budget.history) ----------
 
@@ -117,6 +115,8 @@ const PriorRunSchema = z
   .object({
     /** execution_owner.run_ref of that run; null on v1 checkpoints (unprovable). */
     run_ref: z.string().nullable(),
+    /** That run's job_events floor; null on v1 checkpoints (unprovable). */
+    event_floor: z.number().int().nullable(),
     captured_at: z.string(),
     session_status: z.string(),
     run_state: AgentHistoryRunState,
@@ -128,6 +128,8 @@ const PriorRunSchema = z
     asks: z.array(HistoryAskSchema),
     errors: z.array(HistoryErrorSchema),
     errors_truncated: z.boolean(),
+    /** Corrupt blob that demoted run itself carried — preserved verbatim across runs. */
+    unparsed_previous: z.unknown().optional(),
   })
   .strict();
 export type AgentHistoryPriorRunT = z.infer<typeof PriorRunSchema>;
@@ -227,6 +229,7 @@ function mergeAsks(persisted: AgentHistoryAskT[], live: AgentHistoryAskT[]): Age
 function toPriorRun(snapshot: AgentRunHistorySnapshotT): AgentHistoryPriorRunT {
   return {
     run_ref: snapshot.run_ref ?? null,
+    event_floor: snapshot.event_floor ?? null,
     captured_at: snapshot.captured_at,
     session_status: snapshot.session_status,
     run_state: snapshot.run_state,
@@ -238,6 +241,9 @@ function toPriorRun(snapshot: AgentRunHistorySnapshotT): AgentHistoryPriorRunT {
     asks: snapshot.asks,
     errors: snapshot.errors,
     errors_truncated: snapshot.errors_truncated,
+    ...(snapshot.unparsed_previous !== undefined
+      ? { unparsed_previous: snapshot.unparsed_previous }
+      : {}),
   };
 }
 
@@ -370,10 +376,10 @@ export async function persistAgentRunHistory(
   // Same run → incremental merge (live rows join persisted rows; a row already
   // persisted is never lost when the live window prunes it). Different or
   // unattributable identity → the prior checkpoint demotes whole into
-  // prior_runs; nothing from it may overlay this run's rows.
+  // prior_runs; nothing from it may overlay this run's rows. No retention cap:
+  // persisted history is never silently trimmed.
   const priorRuns: AgentHistoryPriorRunT[] = priorSnapshot?.prior_runs ?? [];
   if (priorSnapshot != null && !sameRun) priorRuns.unshift(toPriorRun(priorSnapshot));
-  const cappedPriorRuns = priorRuns.slice(0, MAX_HISTORY_PRIOR_RUNS);
 
   const mergedItems = sameRun ? mergeItems(priorSnapshot.items, liveItems) : liveItems;
   const mergedAsks = sameRun ? mergeAsks(priorSnapshot.asks, liveAskRows) : liveAskRows;
@@ -381,6 +387,20 @@ export async function persistAgentRunHistory(
     ? unionByKey(priorSnapshot.segments, segments, segmentKey)
     : segments;
   const mergedErrors = sameRun ? unionByKey(priorSnapshot.errors, errors, errorKey) : errors;
+
+  // A once-truncated record stays marked truncated — a later refresh must not
+  // flip the flag and impersonate a complete history.
+  const errorsTruncated = sameRun ? (priorSnapshot?.errors_truncated ?? false) : false;
+
+  // Preserve the last corrupt snapshot verbatim. rawPrior wins when the current
+  // blob itself failed to parse; a parseable prior may still carry an older
+  // corrupt blob — it rides forward untouched. Never interpreted.
+  const unparsedPrevious =
+    parsedPrior == null
+      ? undefined
+      : parsedPrior.success !== true
+        ? rawPrior
+        : priorSnapshot?.unparsed_previous;
 
   const sessionStatus = sessionRows[0]?.status ?? 'unknown';
   // No prior checkpoint: a live session refreshing on ask-resolution is waiting;
@@ -404,10 +424,10 @@ export async function persistAgentRunHistory(
     segments: mergedSegments,
     items: mergedItems,
     asks: mergedAsks,
-    errors: mergedErrors.slice(-MAX_HISTORY_ERRORS),
-    errors_truncated: mergedErrors.length > MAX_HISTORY_ERRORS,
-    ...(cappedPriorRuns.length > 0 ? { prior_runs: cappedPriorRuns } : {}),
-    ...(parsedPrior != null && parsedPrior.success !== true ? { unparsed_previous: rawPrior } : {}),
+    errors: mergedErrors,
+    errors_truncated: errorsTruncated,
+    ...(priorRuns.length > 0 ? { prior_runs: priorRuns } : {}),
+    ...(unparsedPrevious !== undefined ? { unparsed_previous: unparsedPrevious } : {}),
   };
   await writeAgentBudgetPath(tx, sessionId, ['history'], snapshot);
 }
@@ -436,6 +456,8 @@ export interface AgentRunHistory {
   items: AgentHistoryItemT[];
   asks: AgentHistoryAskT[];
   errors: AgentHistoryErrorT[];
+  /** Sticky: the current run's durable record was ever truncated — never resets. */
+  errors_truncated: boolean;
   /** Earlier runs' demoted checkpoints, newest first — never overlaid by live rows. */
   prior_runs: AgentHistoryPriorRunT[];
 }
@@ -468,19 +490,29 @@ const TERMINAL_RUN_STATES: readonly AgentHistoryRunStateT[] = ['done', 'failed',
  * checkpoint without identity can never match and always demotes). When neither
  * source exists the returned slices are empty and the evidence flags say so —
  * callers must render that as unknown, never reconstruct.
+ *
+ * All reads run inside one REPEATABLE READ / READ ONLY transaction: owner,
+ * snapshot, ledger, asks, segments and errors see a single consistent snapshot
+ * — a concurrent agent operation cannot swap the floor/owner between the
+ * separate SELECTs and splice a new run's live rows onto the old snapshot.
+ * Takes `Db` only: a caller's own transaction cannot re-establish isolation.
  */
-export async function readAgentRunHistory(
-  db: Db | Tx,
-  sessionId: string,
-): Promise<AgentRunHistory> {
-  const budget = await readAgentBudget(db, sessionId);
+export async function readAgentRunHistory(db: Db, sessionId: string): Promise<AgentRunHistory> {
+  return db.transaction(async (tx) => readAgentRunHistoryInTx(tx, sessionId), {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
+}
+
+async function readAgentRunHistoryInTx(tx: Tx, sessionId: string): Promise<AgentRunHistory> {
+  const budget = await readAgentBudget(tx, sessionId);
   const floor = budget?.execution_owner?.event_floor ?? 0;
   const runRef = budget?.execution_owner?.run_ref ?? null;
   const [ledger, liveAsks, liveSegments, liveErrors] = await Promise.all([
-    readAgentRunLedger(db, sessionId),
-    readSessionAsks(db, sessionId, floor),
-    readAgentSegments(db, sessionId, floor),
-    readAgentErrors(db, sessionId, floor),
+    readAgentRunLedger(tx, sessionId),
+    readSessionAsks(tx, sessionId, floor),
+    readAgentSegments(tx, sessionId, floor),
+    readAgentErrors(tx, sessionId, floor),
   ]);
 
   const rawSnapshot = (budget as { history?: unknown } | null)?.history;
@@ -560,6 +592,7 @@ export async function readAgentRunHistory(
     items,
     asks,
     errors,
+    errors_truncated: current?.errors_truncated ?? false,
     prior_runs: priorRuns,
   };
 }

@@ -48,8 +48,9 @@ AgentRunHistorySnapshot {
            placeholder, expires_at, created_at,
            resolved: null | {answer, via:'answer'|'timeout', at}}],
   errors: [{scope, item_id?, code, retryable, event_id?, at}], errors_truncated,
-  prior_runs?: [上一个 run 的整块降级 checkpoint，newest first],
-  unparsed_previous?: 未过 schema 的旧快照原样保留（绝不解释、绝不丢）,
+  prior_runs?: [更早 run 的整块降级 checkpoint，newest first，无留存上限],
+  unparsed_previous?: 未过 schema 的旧快照原样保留（绝不解释、绝不丢，
+                      经 refresh/run 更换持续携带）,
 }
 ```
 
@@ -57,18 +58,28 @@ AgentRunHistorySnapshot {
   paidOutcomeUnknown})`：在终态/暂停事务内重读 ledger（尊重
   `execution_owner.event_floor`，只看当前 run）+ ask/error/segment 时间戳。
   **Run 隔离**：`execution_owner.{run_ref,event_floor}` 是 run 身份；快照
-  run_ref 不匹配（或 v1 无身份）→ 整块降级进 `prior_runs`（≤5，newest
-  first），新 run 不继承旧 run 的 run_state/execution_closed/stage。
+  run_ref 不匹配（或 v1 无身份）→ 整块降级进 `prior_runs`（newest
+  first，**无留存上限**——已持久历史不静默剪除），prior entry 保留原
+  run_ref/event_floor（v1 为 null）与其 errors_truncated/unparsed_previous；
+  新 run 不继承旧 run 的 run_state/execution_closed/stage。
   **增量合并**：同 run 时 items/asks 按 id 合并（live 覆盖同 id 行），
   segments/errors 按 `event_id`（旧行无 id 时按内容键）union 去重——已
-  持久化的行不因 live 窗口 TTL 裁剪而消失。经
-  `writeAgentBudgetPath(tx, sid, ['history'], snap)` 写自己子树。
-- `readAgentRunHistory(db, sid)`：同上 run-identity 判定，只有身份匹配的
-  快照进 current-run 合并；不匹配的整块走 `prior_runs`（live 行永不覆盖
-  prior run）。返回 `run_ref` + `prior_runs[]` + `evidence{snapshot,
-  live_events}`。都没有 → 各切片空 + missing 标记。
+  持久化的行不因 live 窗口 TTL 裁剪而消失，也不按条数截断。
+  `errors_truncated` 是 sticky 缺证位：曾为 true 的快照后续 refresh 保持
+  true，不冒称恢复完整。经 `writeAgentBudgetPath(tx, sid, ['history'], snap)`
+  写自己子树。
+- `readAgentRunHistory(db, sid)`：**全部读在单个 REPEATABLE READ /
+  READ ONLY 事务内**（owner→snapshot→ledger→asks→segments→errors 同一
+  快照，并发新 operation 改 owner/floor 不会把新 ledger 拼到旧快照上；
+  签名收敛为 `Db`，调用方事务无法重设隔离）。同上 run-identity 判定，
+  只有身份匹配的快照进 current-run 合并；不匹配的整块走 `prior_runs`
+  （live 行永不覆盖 prior run）。返回 `run_ref` + `prior_runs[]` +
+  `errors_truncated` + `evidence{snapshot, live_events}`。都没有 → 各切片
+  空 + missing 标记。
 - 旧会话（本片快照上线前已终态的 run）：>30 天后只有 question/block 行可证，
-  items/asks 空 + `missing` 标记 —— 不伪造。
+  items/asks 空 + `missing` 标记 —— 不伪造。损坏快照仅以 `unparsed_previous`
+  原样保存，不解释；`errors_truncated` 曾截断的缺口永久标记，不宣称修复
+  可恢复已丢数据。
 
 ### 2. 列表修复（G1）— `api/sessions.ts` GET
 
@@ -90,9 +101,11 @@ AgentRunHistorySnapshot {
 { session:{id,status,path,entrypoint,source_document_id,source_asset_ids,
            started_at,ended_at,created_at,updated_at,error_message,warnings},
   run: null | {run_ref,run_state,stage,segment_count,started_at,finished_at,
-               execution_closed,paid_outcome_unknown,counts,errors[]},
-  prior_runs: [降级 checkpoint 原样：run_ref,captured_at,session_status,
-               run_state,stage,execution_closed,paid_outcome_unknown,
+               execution_closed,paid_outcome_unknown,errors_truncated,
+               counts,errors[]},
+  prior_runs: [降级 checkpoint 原样：run_ref,event_floor,captured_at,
+               session_status,run_state,stage,execution_closed,
+               paid_outcome_unknown,errors_truncated,
                items[],asks[],segments[],errors[]],
   items: [{item_id,ordinal,question_no,page,source_asset_ids[],
            preview_md,preview_truncated,state_at_finish,reason,
