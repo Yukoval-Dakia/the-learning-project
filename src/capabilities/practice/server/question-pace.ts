@@ -1,13 +1,11 @@
-// YUK-1622 — observed question pace for the daily review plan.
-//
+// observed question pace for the daily review plan.
 // The plan and the practice stream must not disagree about how long a question
 // takes. This reader is the only place that derives the measured value; both
 // surfaces pass it into `@/core/daily-review-plan`.
-//
 // Samples are the learner's own `duration_ms` on the last 200 question
 // attempts/reviews within 14 days. Wall-clock timing includes idle time, so
 // single samples above 10 minutes are capped, sub-second samples are ignored,
-// and fewer than 5 samples falls back to the YUK-622 default (2 minutes).
+// and fewer than 5 samples falls back to the default (2 minutes).
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import {

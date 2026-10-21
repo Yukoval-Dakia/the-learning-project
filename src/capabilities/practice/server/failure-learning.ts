@@ -124,9 +124,9 @@ export async function requestFailureLearning(
     return { status: 'ignored', reason: 'unsupported_judge' };
   }
 
-  // YUK-1054 (§9 paid fanout 抑制)— attempt.outcome 是 immutable 执行事实，
-  // attempt 判被申诉改判翻转为 correct 后仍是 outcome='failure'。在 enqueue 归因
-  // 前读 effective 判复核：已翻转的 attempt 不再驱动付费归因（No-Paid-Fanout）。
+  // Paid-fanout suppression: attempt.outcome is an immutable execution fact, so an attempt
+  // whose judge was overturned still reads outcome='failure'. Re-read the effective judge
+  // before enqueueing attribution so an overturned attempt cannot drive paid work.
   const verdict = await resolveVerdictForAttempt(deps.db, input.attemptEventId);
   if (verdict.effective?.verdict.coarse_outcome === 'correct') {
     return { status: 'ignored', reason: 'verdict_overturned' };
@@ -155,9 +155,9 @@ async function attributeFailure(
     return { status: 'skipped', reason: 'unsupported_judge', modelInvoked: false };
   }
 
-  // YUK-1054 (§9 paid fanout 抑制)— 自动归因同 requestFailureLearning：attempt
-  // 判已翻转为 correct 的不该再付归因费。手动调用（automatic:false）不闸，保留
-  // owner/copilot 显式触发的兜底。
+  // Paid-fanout suppression: automatic attribution skips an attempt whose judge was
+  // overturned to correct. Manual calls (automatic:false) stay available as an explicit
+  // owner/copilot fallback.
   if (options.automatic) {
     const verdict = await resolveVerdictForAttempt(deps.db, attemptEventId);
     if (verdict.effective?.verdict.coarse_outcome === 'correct') {
@@ -258,9 +258,8 @@ async function attributeFailure(
     return { status: 'failed_permanent', error: outcome.error, modelInvoked };
   }
 
-  // YUK-1054 (§9 dual-track) — 链解析后的 effective 判，不是 caused_by 直读：
-  // 同 attempt 历史重判（subject=attempt / caused_by=appeal）时 caused_by-only
-  // 读面会拿到死判，resolver 返回当前生效判。
+  // Chain-resolved effective judge, not a direct caused_by read: a rejudge anchors
+  // caused_by=appeal, so a caused_by-only read would return a stale verdict.
   const verdicts = await resolveVerdictForAttempt(deps.db, attemptEventId);
   const judgeEventId = verdicts.effective?.judge_event_id ?? null;
   if (!judgeEventId) {

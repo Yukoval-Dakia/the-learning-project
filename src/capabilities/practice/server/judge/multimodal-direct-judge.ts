@@ -15,11 +15,11 @@ import { defaultImageFetch } from './steps-judge';
 
 const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 
-// YUK-591 — the registry-declared structuredOutputSchema (audited by §7) is the
+// the registry-declared structuredOutputSchema (audited by) is the
 // single source for the app-level Zod parse below; there is no transport-level
 // structured-output envelope post-P4.
 
-/** Widened (YUK-591) to carry the engine-neutral `structured_output` passthrough. */
+/** Widened to carry the engine-neutral `structured_output` passthrough. */
 export type MultimodalDirectRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
@@ -55,18 +55,18 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
 }
 
 /**
- * YUK-591 — three-state dispatch over the task result (mirrors variant_verify's
+ * three-state dispatch over the task result (mirrors variant_verify's
  * parseVariantVerifyResult). Exported so the unit test can feed constructed
  * results directly.
- *   (A) structured_output present (endpoint honoured structured output) → parse
- *       it through the SAME Zod schema. The Zod pass is NOT optional: the wire
- *       only guarantees JSON shape, not the app-level enum/range constraints, so
- *       a shape-valid-but-constraint-violating payload still throws (→ the
- *       caller's `unsupported` fallback, byte-identical bucket to today).
- *   (B) structured_output absent/null (mimo ignores structured output, or the
- *       model fell back to text) → char-scan plus the deterministic JSON repair band.
- *       This preserves malformed-but-unambiguous content quotes/Markdown math
- *       before the same strict output schema validates the complete payload.
+ * (A) structured_output present (endpoint honoured structured output) → parse
+ * it through the SAME Zod schema. The Zod pass is NOT optional: the wire
+ * only guarantees JSON shape, not the app-level enum/range constraints, so
+ * a shape-valid-but-constraint-violating payload still throws (→ the
+ * caller's `unsupported` fallback, byte-identical bucket to today).
+ * (B) structured_output absent/null (mimo ignores structured output, or the
+ * model fell back to text) → char-scan plus the deterministic JSON repair band.
+ * This preserves malformed-but-unambiguous content quotes/Markdown math
+ * before the same strict output schema validates the complete payload.
  * `.parse` (throwing) is kept over safeParse so the thrown message is identical
  * to the pre-migration text path ("did not contain a JSON object" / ZodError),
  * preserving the caller's evidence_json.error contract.
@@ -92,9 +92,9 @@ export function parseMultimodalDirectResult(result: {
 /**
  * Compose a JudgeResultV2 from the LLM output. score_meaning='correctness' and
  * the discriminated-union clamping mirrors the semantic / steps judges:
- *   - correct   → score ∈ [0.85, 1]
- *   - partial   → score ∈ [0.01, 0.84]
- *   - incorrect → score = 0
+ * - correct → score ∈ [0.85, 1]
+ * - partial → score ∈ [0.01, 0.84]
+ * - incorrect → score = 0
  * The clamp is driven by the LLM's coarse_outcome (not its raw score), so a
  * mislabeled score can never produce a JudgeResultV2 that fails the union.
  */
@@ -206,26 +206,23 @@ export async function runMultimodalDirectJudge(
 
   const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
-  // YUK-893 — set when the configured lane hard-failed and the registry-default
+  // set when the configured lane hard-failed and the registry-default
   // retry produced this verdict; merged into the result's evidence_json.
   let laneDegradation: LaneDegradationEvidence | undefined;
   try {
-    // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
+    // Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
     // unset → undefined → registry mimo default (byte-identical to today). The
     // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
-    //
-    // YUK-576 — enableTransientRetry: true, same rationale + boundaries as
+    // enableTransientRetry: true, same rationale + boundaries as
     // steps-judge.ts (sync-route sensor, no durable backstop; single module-level
     // call site covers all callers; operator-pinned routing turns retry off).
-    //
-    // YUK-591 — structured extraction stays app-level: the result text is Zod-
+    // structured extraction stays app-level: the result text is Zod-
     // parsed against the registry-declared MultimodalDirectLlmOutput. Lanes
     // without a transport contract (mimo) fall back to the char-scan text
     // parse (zero-loss).
-    //
-    // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
+    // the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once
     // on the standard resolution chain and records degradation evidence; a hard
     // failure on every lane fails CLOSED below with error_kind=
@@ -273,7 +270,7 @@ export async function runMultimodalDirectJudge(
         taskResult.structured_output != null
           ? JSON.stringify(taskResult.structured_output).slice(0, 4000)
           : taskResult.text,
-      // YUK-893 — if this output arrived via the fallback lane, the degradation
+      // if this output arrived via the fallback lane, the degradation
       // evidence must not be lost to the parse failure.
       ...(laneDegradation ? { lane_degradation: laneDegradation } : {}),
     });
@@ -283,7 +280,7 @@ export async function runMultimodalDirectJudge(
     prompt_image_count: promptImages.length,
     student_image_count: studentImages.length,
   });
-  // YUK-893 — a verdict produced by the fallback lane carries its degradation
+  // a verdict produced by the fallback lane carries its degradation
   // evidence (failed lane, why, fallback used) on the successful result too.
   return laneDegradation
     ? {

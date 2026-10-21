@@ -1,16 +1,14 @@
 import { initialSchedulingState } from '@/server/fsrs/state';
-// M4-T4 (YUK-319) — practice 包的提议 accept-applier 真身，从 dispatch 壳
+// T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
-//
 // practice 声明归属的 proposal kinds（manifest.proposals.kinds）：
-//   - variant_question  → acceptVariantQuestionProposal（本文件）
-//   - question_draft    → acceptQuestionDraftProposal（本文件）
-//                       + dismissQuestionDraftProposal（本文件，YUK-308：
-//                         dismiss tombstone 草稿行 metadata.dismissed_at）
-//   - judge_retraction  → acceptJudgeRetractionProposal（本文件；evaluation 目标走
-//     appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
-//
+// - variant_question → acceptVariantQuestionProposal（本文件）
+// - question_draft → acceptQuestionDraftProposal（本文件）
+// + dismissQuestionDraftProposal（本文件，：
+// dismiss tombstone 草稿行 metadata.dismissed_at）
+// - judge_retraction → acceptJudgeRetractionProposal（本文件；evaluation 目标走
+// appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
 
@@ -51,7 +49,7 @@ import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-// YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
+// W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
@@ -76,7 +74,7 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
-// YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
+// swappable enqueue hook so DB tests can drive
 // variant_question accept without spinning up pg-boss.
 export type EnqueueVariantVerifyFn = (mistakeVariantId: string) => Promise<void>;
 
@@ -94,7 +92,7 @@ export interface VariantQuestionAcceptResult {
   idempotent?: boolean;
 }
 
-// ADR-0031 / YUK-304 (lane B) — copilot-authored draft question accept.
+// copilot-authored draft question accept.
 export interface QuestionDraftAcceptResult {
   kind: 'question_draft';
   rate_event_id: string;
@@ -102,7 +100,7 @@ export interface QuestionDraftAcceptResult {
   idempotent?: boolean;
 }
 
-// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit accept.
+// D6-B — active-question structured node edit accept.
 export interface QuestionEditAcceptResult {
   kind: 'question_edit';
   rate_event_id: string;
@@ -120,9 +118,9 @@ export interface QuestionEditAcceptResult {
 export interface PracticeApplierOpts {
   decision?: string;
   user_note?: string;
-  // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
+  // swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
-  // YUK-1407 — swappable rejudge enqueue (same reason as variant verify).
+  // swappable rejudge enqueue (same reason as variant verify).
   enqueueRejudge?: EnqueueRejudgeFn;
 }
 
@@ -145,7 +143,7 @@ async function loadAcceptedQuestionOrThrow(
 }
 
 /**
- * YUK-17 / ADR-0018 — variant_question accept materializes the question row
+ * variant_question accept materializes the question row
  * (source='mistake_variant', draft_status='active'), flips the mistake_variant
  * row from 'draft' to 'active', writes the rate event, and enqueues
  * VariantVerifyTask. The question + mistake_variant + rate-event writes share
@@ -255,12 +253,12 @@ export async function acceptVariantQuestionProposal(
   const now = new Date();
   const newQuestionId = createId();
   const rateEventId = newId();
-  // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
+  // W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
 
   await db.transaction(async (tx) => {
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
-    // YUK-499 — lock the draft mistake_variant row FOR UPDATE before the new
+    // lock the draft mistake_variant row FOR UPDATE before the new
     // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
     // has no version column), so the lock is the sole serializer: it stops a concurrent
     // dismiss/verify/retract of the same mv from interleaving between this accept's rate event and
@@ -294,9 +292,10 @@ export async function acceptVariantQuestionProposal(
       }),
     );
 
-    // YUK-1043 — 统一发布链（§2 矩阵 mistake_variant 行）：接受即发布 —— 不能绕
-    // 发布直接 active。variant 参考答案为 AI 提案、用户接受 ⇒ D9 手动带 provenance
-    //（manual ≠ official，D1）；接受人即人工核验门（verifier: human）。
+    // Unified publish chain (mistake_variant rows): accept publishes immediately; never
+    // skip publish and go active. The variant reference answer is an AI proposal accepted by
+    // a user, so it carries manual provenance (manual != official); the acceptor is the
+    // human verification gate.
     await publishQuestionGroupFromRow(tx, {
       rootId: newQuestionId,
       admission: {
@@ -314,7 +313,7 @@ export async function acceptVariantQuestionProposal(
           model_slice: null,
         },
       },
-      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      // 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入。
       suspension: { suspended: false },
       verification: {
         // 人工接受即核验（verifier: human —— 与上方 admission evidence 同源）。
@@ -374,7 +373,7 @@ export async function acceptVariantQuestionProposal(
 }
 
 /**
- * ADR-0031 / YUK-304 (lane B) — question_draft accept. The draft question row
+ * question_draft accept. The draft question row
  * was INSERTed at propose time (runQuestionAuthor, same tx as the proposal —
  * 决定4); accept PROMOTES it: draft_status='draft' → 'active' + per-knowledge
  * FSRS enroll-if-absent (copied from the quiz_verify promotion path, the one
@@ -383,7 +382,7 @@ export async function acceptVariantQuestionProposal(
  * (existingAcceptRate), like every sibling accept handler.
  *
  * Dismiss flows through the dedicated questionDraftProposalDismissApplier
- * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
+ * (, declared in manifest.proposals.kinds): the draft row stays inert
  * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
  * metadata.dismissed_at so it stops reading as a live draft — search_bank /
  * listQuestions / the draft-review pool exclude it and write_quiz's narrow
@@ -437,7 +436,7 @@ export async function acceptQuestionDraftProposal(
   const now = new Date();
   const rateEventId = newId();
 
-  // YUK-308 review (codex P1 ×2) — the decision check AND the promotion run
+  // review the decision check AND the promotion run
   // under the SAME lock the dismiss applier + the generic dismiss/retract
   // paths take (acquireProposalDecisionLock). Without it a racing dismiss or
   // retract could commit a second terminal decision alongside this accept, and
@@ -468,7 +467,7 @@ export async function acceptQuestionDraftProposal(
       );
     }
 
-    // YUK-497 — global learning-state write lock before any row access (shared
+    // global learning-state write lock before any row access (shared
     // tx-entry order with every material_fsrs_state / mastery_state writer and
     // the cascade revert). Ordered BEFORE the question row lock: the other
     // draft→active promoters (quiz_verify / verify_and_promote) hold this lock
@@ -496,7 +495,7 @@ export async function acceptQuestionDraftProposal(
     if (!row) {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
-    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate.
     if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
       throw new ApiError(
         'conflict',
@@ -504,7 +503,7 @@ export async function acceptQuestionDraftProposal(
         409,
       );
     }
-    // Tombstone gate (codex P1): a sibling proposal's dismiss already retired
+    // Tombstone gate a sibling proposal's dismiss already retired
     // this draft. Promoting it would produce an active, FSRS-enrolled question
     // that the dismissed_at read filters still hide. Fail closed — there is no
     // un-dismiss path; author a fresh draft instead of resurrecting a
@@ -523,7 +522,7 @@ export async function acceptQuestionDraftProposal(
       .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
       .where(eq(question.id, questionId));
 
-    // YUK-1043 — 统一发布链（§2 矩阵 question_draft 行）：接受进入统一发布。
+    // Unified publish chain (question_draft rows): accept enters the unified publish flow.
     // draft 内容为 author/quiz 链生成，用户接受 ⇒ D9 手动带 provenance（manual ≠
     // official，D1）；接受人即人工核验门。同内容已发布过（如 sourced 草稿首版
     // withheld）时只翻 admission 维度，不铸新 revision。
@@ -544,7 +543,7 @@ export async function acceptQuestionDraftProposal(
           model_slice: null,
         },
       },
-      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      // 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入。
       suspension: { suspended: false },
       verification: {
         policy_id: 'proposal_accept@1',
@@ -556,13 +555,13 @@ export async function acceptQuestionDraftProposal(
       now,
     });
 
-    // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
+    // FSRS enroll — copied from quiz_verify.ts (P3): per-knowledge
     // enroll-if-absent so a node with an existing review schedule is never
     // reset; question-level fallback when the row carries no knowledge ids.
     const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
     if (fsrsSubjectIds.length > 0) {
       for (const knowledgeId of fsrsSubjectIds) {
-        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
+        // a synthetic subject root ('seed:<subj>:root') is a
         // structural anchor, never a content KC: skip enrollment (the subject
         // read axis already excludes it — resolveSubjectKnowledgeIds). A
         // roots-only label set enrolls ZERO cards; the question-level fallback
@@ -632,7 +631,7 @@ export interface QuestionDraftDismissResult {
 }
 
 /**
- * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
+ * question_draft dismiss applier (previously the phase-deferred gap:
  * the generic dismiss path left the draft row indistinguishable from a live
  * pending one, so search_bank's draft_state=all default and
  * write_quiz's draft admission kept re-surfacing a question the user already
@@ -709,8 +708,7 @@ export async function dismissQuestionDraftProposal(
 }
 
 // ===========================================================================
-// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
-//
+// D6-B — active-question structured node edit.
 // This is the FIRST writer that mutates an ACTIVE question's `structured` jsonb
 // tree. The flat-field active-question writer (src/server/questions/write.ts
 // editQuestion) edits prompt_md / choices_md / etc. but never touches the
@@ -720,7 +718,6 @@ export async function dismissQuestionDraftProposal(
 // (practice domain owns the pooled question lifecycle), kept self-contained so
 // the practice applier does not import the ingestion package (import-cycle
 // hygiene + single domain ownership).
-//
 // Coordinate parity: nodes are addressed by `id` — the same id/role the L5
 // addressable projection exposes through get_question_context(include:
 // ['structure']). So the agent reads a node id and writes the same node id
@@ -792,12 +789,12 @@ export interface QuestionEditApplyResult {
  * Mini post-edit verify gate + apply. PURE — no IO. Returns the proposed tree on
  * success, or a typed failure code (the applier rejects without writing). The
  * gate enforces:
- *   1. the target node exists (node_not_found);
- *   2. op-specific node-shape constraints (set_choice → leaf only; edit_reference
- *      → at least one of answers/analysis);
- *   3. the resulting whole tree still satisfies the recursive StructuredQuestion
- *      schema (e.g. only a stem may carry sub_questions) — re-parsed, so a bad
- *      edit can never corrupt the persisted invariant.
+ * 1. the target node exists (node_not_found);
+ * 2. op-specific node-shape constraints (set_choice → leaf only; edit_reference
+ * → at least one of answers/analysis);
+ * 3. the resulting whole tree still satisfies the recursive StructuredQuestion
+ * schema (e.g. only a stem may carry sub_questions) — re-parsed, so a bad
+ * edit can never corrupt the persisted invariant.
  */
 export function applyQuestionEdit(
   tree: StructuredQuestionT,
@@ -850,24 +847,24 @@ export function applyQuestionEdit(
 }
 
 /**
- * ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept. Applies the narrow
+ * D6-B — question_edit accept. Applies the narrow
  * node op to an ACTIVE question's `structured` tree behind the mini verify gate
  * (applyQuestionEdit), bumps the row version, and writes BOTH an
  * `experimental:question_structure_edit` audit event (before/after node snapshot
- * — the reversible record) AND the `rate` accept event, all in one transaction.
+ * the reversible record) AND the `rate` accept event, all in one transaction.
  *
  * Idempotency keys on caused_by_event_id = proposalId (existingAcceptRate), like
  * every sibling accept handler: a re-accept returns the prior result without a
  * second mutation or audit event.
  *
  * Gate / not-found policy:
- *   - missing question row → 404;
- *   - question not active (draft_status='draft' / other) → 409 (this tool edits
- *     POOLED questions only; draft structure is the ingestion block-edit path);
- *   - question has no structured tree → 422 (nothing to address);
- *   - verify-gate failure (node missing / wrong shape / would break invariants)
- *     → 422 with the typed reason; the proposal stays pending so the user can
- *     retract or the agent can re-propose a corrected op.
+ * - missing question row → 404;
+ * - question not active (draft_status='draft' / other) → 409 (this tool edits
+ * POOLED questions only; draft structure is the ingestion block-edit path);
+ * - question has no structured tree → 422 (nothing to address);
+ * - verify-gate failure (node missing / wrong shape / would break invariants)
+ * → 422 with the typed reason; the proposal stays pending so the user can
+ * retract or the agent can re-propose a corrected op.
  */
 export async function acceptQuestionEditProposal(
   db: Db,
@@ -877,7 +874,7 @@ export async function acceptQuestionEditProposal(
 ): Promise<QuestionEditAcceptResult> {
   ensureAcceptOnly('question_edit', opts);
   const change = asPlainRecord(proposal.payload.proposed_change);
-  // YUK-1468 — 统一契约提案：proposed_change.edit_request（ops/document/draft_ref
+  // 统一契约提案：proposed_change.edit_request（ops/document/draft_ref
   // + CAS 令牌）。accept = 重放 ops → draft → 同一 submit gate；legacy 提案
   // （proposed_change.edit 窄节点 op）仍走旧路径直到存量清空。
   if (change.edit_request != null) {
@@ -984,9 +981,10 @@ export async function acceptQuestionEditProposal(
       );
     }
 
-    // YUK-1043 — 统一发布链（§2 矩阵结构化编辑行）：structured 树是判分输入
-    //（part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
-    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份（§3.1）。
+    // Unified publish chain (structured-edit rows): the structured tree is grading input, so
+    // the edit enters the same publish flow.
+    // （part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
+    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份。
     // admission 缺省 preserve —— 内容编辑不改变准入资格。
     await publishQuestionGroupFromRow(tx, {
       rootId: row.parent_question_id ?? questionId,
@@ -1064,7 +1062,7 @@ export async function acceptQuestionEditProposal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// YUK-1016 / 454-B — cause_category accept：往 cause_category_overlay INSERT
+//B — cause_category accept：往 cause_category_overlay INSERT
 // status='active' 行。这是该表的唯一写边界（audit:schema 的 write path）；行
 // 落地后进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
 export interface CauseCategoryAcceptResult {
@@ -1085,7 +1083,7 @@ export async function acceptCauseCategoryProposal(
   const categoryId = requiredString(change.category_id, 'category_id', proposalId);
   const label = requiredString(change.label, 'label', proposalId);
   // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
-  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（YUK-1019 收紧）。
+  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（收紧）。
   if (!categoryId.startsWith(CAUSE_OVERLAY_ID_PREFIX)) {
     throw new ApiError(
       'validation_error',
@@ -1191,7 +1189,7 @@ export async function acceptCauseCategoryProposal(
       );
     }
 
-    // YUK-1019 — 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
+    // 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
     // categoryId 时两个 tx 可同过上方 SELECT。onConflictDoNothing 让并发 INSERT
     // 优雅落空（阻塞至对方提交后再判），空 returning = 撞上 → 同一个 409。
     const inserted = await tx
@@ -1243,15 +1241,14 @@ export async function acceptCauseCategoryProposal(
 }
 
 // =============================================================================
-// YUK-1468 — 统一 edit_question 契约提案 accept（edit_request 形状）
+// 统一 edit_question 契约提案 accept（edit_request 形状）
 // =============================================================================
-//
 // Copilot 的 edit_question(save) 落 proposed_change.edit_request =
 // {question_id, ops?, document?, draft_ref?, expected_revision?,
 // expected_draft_version?}。accept = 经同一 ops → draft → submit gate：
-//   1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
-//   2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
-//   3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
+// 1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
+// 2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
+// 3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
 // CAS 冲突（revision 已动 / draft 版本已动）⇒ 409，proposal 保留 pending。
 
 interface UnifiedEditRequest {
@@ -1464,18 +1461,17 @@ async function acceptUnifiedQuestionEditRequest(
 }
 
 // ====================================================================
-// YUK-1407 — judge_retraction accept applier（判分纠错提案的真身）
+// judge_retraction accept applier（判分纠错提案的真身）
 // ====================================================================
-//
 // 两类目标：
-//   - subject_kind='evaluation'（native 评价行）：按 proposed_change.correction_kind
-//       · rejudge → 写 experimental:appeal_request（expected head = 提案创建时
-//         冻结的快照，允许非 effective 目标）→ rejudge job → 冻结输入重评 →
-//         CAS 激活 → settlement replay 自动回算 FSRS/θ/掌握度；
-//       · assert  → 按 asserted_verdicts 产出 manual_assert candidate 并同步
-//         激活 + 写 appeal resolution 事件。
-//   - subject_kind='event'（legacy judge event）：写 CorrectEvent(retract)，
-//     命中既有 event 纠偏投影（corrections.ts）。
+// - subject_kind='evaluation'（native 评价行）：按 proposed_change.correction_kind
+// · rejudge → 写 experimental:appeal_request（expected head = 提案创建时
+// 冻结的快照，允许非 effective 目标）→ rejudge job → 冻结输入重评 →
+// CAS 激活 → settlement replay 自动回算 FSRS/θ/掌握度；
+// · assert → 按 asserted_verdicts 产出 manual_assert candidate 并同步
+// 激活 + 写 appeal resolution 事件。
+// - subject_kind='event'（legacy judge event）：写 CorrectEvent(retract)，
+// 命中既有 event 纠偏投影（corrections.ts）。
 // 任何路径都不回写原评价/FSRS/掌握度 —— 全部走"新事件 + 新 candidate +
 // 激活 + replay"的既有可逆机制。
 

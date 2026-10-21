@@ -1,30 +1,16 @@
-// YUK-533 (ADR-0036 RT1 consumer) — confusable_with → contrast-question supply discovery.
-//
-// The PARALLEL sibling of target-discovery.ts:discoverSupplyTargets. Where that source
-// scans the single-KC coverage pool (frontier / quality / diagnostic / format gaps), THIS
-// source scans the confusable_with misconception mesh and emits one supply target per
-// confusable KC pair: "the learner repeatedly confuses A and B → there is no contrast/
-// discrimination item probing the A-vs-B boundary → generate one".
-//
-// 选题 vs 供给 mirror (architecture doc §Executive Summary): this is the供给 side — it
-// decides "the pool lacks a contrast item for this confusable pair, go acquire it via
-// quiz_gen". It does NOT pick today's practice order, does NOT call the LLM, does NOT
-// insert questions. Dispatch to the existing quiz_gen face is dispatcher.ts's job.
-//
-// RED LINES:
-//   - DARK behind CONFUSABLE_CONTRAST_ENABLED (default OFF). Flag-OFF ⇒ NO-OP ([]),
-//     so day-one (no live producer of confusable_with edges + flag off) this is doubly
-//     inert. The flip is deferred; the seam is fully built ([defer flip not build]).
-//   - G-COST: emits TARGETS only. The dispatcher (7d fingerprint cooldown + per-run cap)
-//     is the single paid-acquisition throttle. This source NEVER enqueues quiz_gen直接.
-//   - ND-5 / ADR-0035 三轴正交: the confusable edge weight (read as a qualitative band by
-//     the reader) NEVER feeds priority/difficulty — priority is the fixed gap base demand
-//     (computePriority(gapKind, 0)); the generated contrast item takes an INDEPENDENT
-//     b-anchor (ItemPriorTask), never inheriting edge confidence.
-//   - propose-only: the target routes to quiz_gen, whose handler persists drafts with
-//     draft_status='draft' (NEVER auto-active). minSourceTier=3 so the route planner falls
-//     through to routePreference=['quiz_gen'] (the higher-tier/objective branches would
-//     divert to sourcing_web/author_question).
+// Confusable-pair contrast-question supply discovery.
+// Scans the confusable_with misconception mesh and emits one supply target per confusable
+// KC pair: the learner repeatedly confuses A and B, no contrast item probes that boundary,
+// so acquire one through quiz_gen. This source does not pick practice order, call the LLM,
+// or insert questions; dispatcher.ts owns dispatch and the paid-acquisition throttle.
+// Constraints:
+// - dark behind CONFUSABLE_CONTRAST_ENABLED (default off): flag-off is a no-op;
+// - emits targets only and never enqueues quiz_gen directly;
+// - edge confidence never feeds priority or difficulty; a generated contrast item takes
+// an independent b-anchor (ItemPriorTask) and never inherits edge confidence;
+// - propose-only: quiz_gen persists drafts (draft_status='draft'), never auto-active;
+// minSourceTier=3 keeps the route preference on quiz_gen instead of sourcing_web or
+// author_question.
 
 import { getConfigFlag } from '@/core/config/store';
 import type { Db } from '@/db/client';
@@ -42,13 +28,11 @@ import {
 } from './target-discovery';
 
 /**
- * Dark-ship flag. Default OFF — env-getter (read per-call) so tests parameterize OFF/ON and
- * the three processes (API / worker / Vite) each see it via their own env. Mirrors
- * misconception-promote.ts:misconceptionPromoteEnabled (NOT a const boolean — must be
- * runtime-mockable). OFF ⇒ discoverConfusableContrastTargets is a NO-OP.
+ * Dark-ship flag, default off. Read per call so tests can toggle it and each process sees
+ * its own env. Off means discoverConfusableContrastTargets is a no-op.
  */
 export function confusableContrastEnabled(): boolean {
-  // YUK-1007：DB > env > code-default(false)。
+  // DB > env > code default (false).
   return getConfigFlag('CONFUSABLE_CONTRAST_ENABLED');
 }
 
@@ -64,9 +48,8 @@ const MIN_SOURCE_TIER = 3 as const;
 const ROUTE_PREFERENCE: SupplyRoute[] = ['quiz_gen'];
 
 /**
- * End-to-end read-only discovery: read the confusable mesh → emit one QuestionSupplyTarget
- * per confusable KC pair (priority desc). NO-OP ([]) when the flag is OFF. Zero write, zero
- * LLM. Mirrors target-discovery.ts:discoverSupplyTargets's load→scan→emit shape.
+ * Read-only discovery: load the confusable mesh → emit one target per pair (priority desc).
+ * No-op when the flag is off; zero writes and zero LLM calls.
  */
 export async function discoverConfusableContrastTargets(
   db: Db,
@@ -115,8 +98,8 @@ export async function discoverConfusableContrastTargets(
       desiredCount: 1,
       minSourceTier: MIN_SOURCE_TIER,
       routePreference: ROUTE_PREFERENCE,
-      // priority is the FIXED gap base demand — the edge confidence band NEVER feeds it
-      // (ND-5 三轴正交). conf only appears as a qualitative tag in the human-readable reason.
+      // Priority is the fixed gap base demand; edge confidence never feeds it. Confidence
+      // appears only as a qualitative tag in the human-readable reason.
       priority: computePriority(GAP_KIND, 0),
       reason: `confusable pair [${knowledgeIds.join(' ↔ ')}] (conf=${pair.conf}) lacks a contrast/discrimination item`,
       constraints: { objectiveOnly: true },

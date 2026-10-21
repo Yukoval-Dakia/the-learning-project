@@ -1,16 +1,8 @@
-// YUK-1408 (Stage 1 B6 S1) — ingestion usage policy resolution.
+// Ingestion usage policy. Consent lives in source_document.provenance.usage_policy
+// (no new column). Events inherit the document's derivation policy at write time, so
+// the existing derivation filter withholds them when consent is withdrawn.
 //
-// The learner's consented usage for an uploaded document is stored on
-// `source_document.provenance.usage_policy` (open catchall — mirrors the
-// learner_selected_subject_id precedent, no new column). These resolvers let
-// every ingestion-derived event inherit the document's `derivation_policy` at
-// write time so the EXISTING derivation filter
-// (src/kernel/events/derivation-policy.ts + writeEvent's answer_only handling)
-// drops them from memory/brief channels when consent is withdrawn — no second
-// mechanism.
-//
-// Absence preserves legacy behavior: a document without usage_policy resolves
-// to 'allow'.
+// A document without a policy resolves to 'allow' (legacy behavior).
 
 import { eq } from 'drizzle-orm';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
@@ -59,10 +51,8 @@ export async function resolveDocumentDerivationPolicy(
 export interface DocumentUsage {
   policy: DerivationPolicyT;
   /**
-   * The ingestion session bound to the document (learning_session is 1:1 with
-   * source_document — upload creates both together). Events that carry this
-   * session_id inherit the LIVE document policy through the shared derivation
-   * filter, so consent withdrawal reaches them without payload mutation.
+   * Bound ingestion session. Events carrying it inherit the live document policy,
+   * so consent withdrawal reaches them without payload mutation.
    */
   sessionId: string | null;
 }

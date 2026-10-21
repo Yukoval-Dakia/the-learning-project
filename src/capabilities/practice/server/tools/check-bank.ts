@@ -1,10 +1,9 @@
-// ADR-0072 D1/D5 — check_bank DomainTool：对 agent 显式指定的对象做确定性检查。
-//
+// D1/D5 — check_bank DomainTool：对 agent 显式指定的对象做确定性检查。
 // v1 只含确定性检查（D5）：记录关系读取 + 已有纯校验器的确定性复算。语义
 // （模型）检查未过预注册比较，一律不接入 —— 自由文本 claim 不做解释，无法忠
 // 实归一化 → unknown + 支持类清单（硬边界 5：不把难问题改写成容易的问题后仍
 // 报 supported）。verdict ∈ supported / contradicted / unknown；method 与依赖版
-// 本全披露（提案 §8）。检查只回答指定对象，不说明池外没有其他答案，不替
+// 本全披露（提案）。检查只回答指定对象，不说明池外没有其他答案，不替
 // agent 拆任务，不碰 learner state。
 
 import { inArray } from 'drizzle-orm';

@@ -1,4 +1,4 @@
-// YUK-1570 — placement-probe lifecycle port for the HTTP adapters in
+// placement-probe lifecycle port for the HTTP adapters in
 // capabilities/practice/api/. Owns the sequencing the route files used to
 // carry: the dark-ship gate, goal existence + scope resolution, leaning
 // preference, two-phase first-item selection, Transaction A (starter
@@ -6,7 +6,6 @@
 // contract, the locked question-serving transaction, and the repeatable-read
 // side reads (starter outcomes, unresolved items). api/* keeps Request
 // parsing, schema validation, and Response/deprecation shaping.
-//
 // Moved verbatim from api/placement-{start,end,session-detail}.ts — every
 // transaction boundary, catch contract, lock, and read isolation is unchanged.
 
@@ -84,7 +83,7 @@ export async function startPlacementProbe(
     knowledgeIds = await resolveGoalPlacementScope(db, requestedGoal);
   }
   if (knowledgeIds.length === 0) {
-    // Post-YUK-481 this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
+    // Post- this fires only in two genuinely-unresolvable cases: (a) neither a goalId nor
     // an explicit knowledgeIds set was supplied (nothing to resolve from), or (b) a goalId WAS
     // supplied but the entire active tree is empty (tier-3 full-tree fallback found zero active
     // KC) — there is truly nothing to place against. A no-subject / unknown-subject goal no
@@ -96,17 +95,17 @@ export async function startPlacementProbe(
     );
   }
 
-  // YUK-480 — resolve the self-reported leanings into the preferred KC set (subject=view,
+  // resolve the self-reported leanings into the preferred KC set (subject=view,
   // effective-domain axis). Empty/omitted leanings → empty set → first pick is byte-identical
-  // to the pre-YUK-480 selection. This only orders WHICH question is served first; it never
+  // to the pre- selection. This only orders WHICH question is served first; it never
   // touches the information score / θ̂.
   const preferKnowledgeIds = await resolveLeaningPreferenceKcs(db, leanings);
 
   // Select the first question BEFORE creating the session: the two ops are independent, and
   // ordering selection first means a selection failure leaves NO orphan 'started' row (nothing
   // is created yet). The only remaining orphan source — a probe started but never answered /
-  // ended — is covered by the orphan-sweep follow-up (YUK-470).
-  // YUK-1405 L2 — before declaring the target cold, also try the SAME-SUBJECT widened
+  // ended — is covered by the orphan-sweep follow-up.
+  // L2 — before declaring the target cold, also try the SAME-SUBJECT widened
   // scope: an already-admitted, automatically servable item nearby counts as a real
   // first item and spares the learner the supply wait entirely.
   let fallbackKnowledgeIds = await resolveNearbyPlacementScope(
@@ -189,9 +188,9 @@ export async function startPlacementProbe(
       } catch (err) {
         // The claim was materialized (committed) in Transaction A above but its quiz_gen dispatch
         // failed. It stays 'pending_dispatch'. Two recovery paths now exist: (a) a SUBSEQUENT
-        // /placement/start for the same goal — materialize is idempotent on the deterministic
+        // placement/start for the same goal — materialize is idempotent on the deterministic
         // claim id and dispatchPlacementStarterClaimTx re-dispatches a still-'pending_dispatch'
-        // claim; and (b) YUK-761's background sweeper, which consumes
+        // claim; and (b) 's background sweeper, which consumes
         // placement_starter_claim_recovery_idx / next_reconcile_at from the tail of
         // question_supply_nightly and re-drives the claim even if the learner never returns
         // (src/capabilities/practice/server/placement-starter-recovery.ts). A stranded pending
@@ -200,7 +199,7 @@ export async function startPlacementProbe(
         // later revision. If re-dispatch collides with another revision's live paid flight, its
         // savepoint enqueue is rolled back and the claim stays pending until that flight ends —
         // never an irreversible cancellation or a 500. We surface sourcingNeeded to the client
-        // rather than failing the whole probe (YUK-452/YUK-776).
+        // rather than failing the whole probe.
         console.error(
           `[placement-starter] initial dispatch failed for ${claimId}; claim left pending_dispatch, a subsequent placement start re-dispatches it`,
           err,
@@ -221,7 +220,7 @@ export async function startPlacementProbe(
       { startedAt: info?.startedAt ?? null },
     );
     if (next === null) {
-      // YUK-1405 L2 — record the real elapsed time to the first alternative
+      // L2 — record the real elapsed time to the first alternative
       // (once per session; the marker is first-write-wins).
       await recordPlacementNoItem(tx, sessionId, info?.startedAt ?? null, 0);
     }
@@ -245,7 +244,7 @@ export async function endPlacementSession(
   } else {
     await Placement.abandonPlacementSession(db, sessionId);
   }
-  // YUK-1405 L1 — the honest end: items closed without a verdict are marked,
+  // L1 — the honest end: items closed without a verdict are marked,
   // not silently dropped (held/pending → awaiting_evaluation; released →
   // held_released; an issued-but-never-answered card → unanswered).
   return db.transaction((tx) => readPlacementUnresolvedItems(tx, sessionId), {
@@ -280,7 +279,7 @@ export async function readPlacementSession(sessionId: string) {
       return {
         session,
         starterSupply: await readPlacementStarterOutcomes(tx, sessionId),
-        // YUK-1405 L1 — issued items with no verdict at read time.
+        // L1 — issued items with no verdict at read time.
         unresolvedItems: await readPlacementUnresolvedItems(tx, sessionId),
       };
     },
@@ -298,7 +297,7 @@ export async function transitionPlacementSession(
   unresolvedItems: Awaited<ReturnType<typeof readPlacementUnresolvedItems>>;
 }> {
   const transition = await Placement.transitionPlacementSession(db, sessionId, target);
-  // YUK-1405 L1 — the honest end result marks every item that closed without a
+  // L1 — the honest end result marks every item that closed without a
   // verdict (held-release 'end' half lands here: no new route needed).
   const unresolvedItems = await db.transaction(
     (tx) => readPlacementUnresolvedItems(tx, sessionId),

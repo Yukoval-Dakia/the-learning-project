@@ -6,36 +6,17 @@ import {
 } from '@/capabilities/practice/server/judge/question-contract';
 import { type RepairLevel, parseJsonObjectLoose } from '@/core/json-extract';
 import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
-// YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
-//
-// docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.4
-//
-// This is the PLUGGABLE-CHECK config layer, NOT a new handler framework. The
-// physical verify handlers (quiz_verify.ts, and slice 2/3's source_verify /
-// material verify) keep their existing claim → idempotency → run → parse →
-// single-txn-persist → writeEvent skeleton (双先例). This module only answers two
-// questions for them:
-//   1. "for a question of source-tier N, which checks apply?" (CHECK_SETS_BY_TIER)
-//   2. "does this question survive solve-check?" (runSolveCheck)
-//
-// Reuse over invention (plan 实证旁证): solve-check does NOT add a new
-// AI task. It reuses the shipped SolutionGenerateTask as an INDEPENDENT solver
-// (different task/prompt dimension than the generator, YUK-193) and the shipped
-// SemanticJudge for the open-question comparison. OWNER-FORK OF-4 (plan §12):
-//   - exact questions (choice / true_false / fill_blank / exact-style)  → normalize
-//     first; a mismatch falls through to SemanticJudge instead of becoming a string-only veto.
-//   - open questions (essay / reading / translation / derivation)       → SemanticJudge
-//     with a CONSERVATIVE threshold — 宁可漏过不误杀真题 (R2): only an outright,
-//     confident 'incorrect' fails the check; 'unsupported' / 'partial' / low
-//     confidence PASS.
-//   - solver model: same as the generator for now (task/prompt already differ);
-//     model 异源 is left as a per-tier `override` knob (zero structural change).
-//
-// TIER3/4 WIRING (YUK-538 / YUK-554, docs/design/2026-07-03-verify-check-spec.md): runSolveCheck
-// + CHECK_SETS_BY_TIER are DECLARED here; the tier3/4 CONSUMER is quiz_verify.ts (tier2 is
-// source_verify.ts). These declarations predate that wiring — do NOT read "tier3/4 never consumes
-// solve_check" as a bug in THIS file; the consumer lives in the handler.
+// Pluggable verification-check config for question admission.
+// This module only answers two questions for the physical verify handlers:
+// which checks apply to a source tier (CHECK_SETS_BY_TIER), and whether a question
+// survives solve-check. Handlers keep their own claim → idempotency → run → parse →
+// persist → writeEvent flow.
+// Solve-check reuses the shipped SolutionGenerateTask as an independent solver and
+// SemanticJudge for open answers. Exact answer kinds normalize first and fall through to
+// the judge on mismatch; open answers fail only on a confident 'incorrect' — unsupported,
+// partial, or low-confidence results pass. The solver defaults to the generator's model;
+// a per-tier override can select another.
+// CHECK_SETS_BY_TIER is consumed by quiz_verify.ts (tiers 3/4) and source_verify.ts (tier 2).
 import type { SourceTier } from '@/core/schema/provenance';
 import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/schema/quiz_gen';
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
@@ -49,11 +30,11 @@ import {
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 
-// YUK-1547 — practice is the only capability caller of this run-logging seam
+// practice is the only capability caller of this run-logging seam
 // (structured-submit failure evidence); re-exported through the existing
 // server/ai edge holder so consumers add no new boundary edge.
 export { writeToolCallLog } from '@/server/ai/log';
-// YUK-1445 — admission lane 经本模块（既有 server/ai 边持有者）复导出
+// admission lane 经本模块（既有 server/ai 边持有者）复导出
 // Provider/TaskTextResult，不新增 capability→ai 依赖边。
 export type { TaskTextResult } from '@/server/ai/provenance';
 export type { Provider } from '@/server/ai/providers';
@@ -67,8 +48,7 @@ import {
 import { answerCandidates, normalizeAnswer, referenceAnswerCandidates } from './choice-surface';
 
 // ---------- check identifiers ----------
-//
-// The full pluggable-checker vocabulary (spec §4). Slice 1 lands the framework +
+// The full pluggable-checker vocabulary. The framework + solve-check land here;
 // solve-check; the other check IMPLEMENTATIONS are owned by the verify handlers in
 // slice 2/3/4 (e.g. structure_completeness lives where the row is in hand). This
 // enum is the shared contract so every handler names the same checks.
@@ -84,24 +64,22 @@ export type VerifyCheck =
   | 'copy_safety' // tier-4 legacy: originality vs source snippets
   | 'knowledge_hit' // the question actually tests its knowledge_ids
   | 'source_grounding'; // YUK-230: image-sourced 题面 actually appears in its source image
-//   (multimodal re-check on single_source_grounding rows; NOT in any CHECK_SETS_BY_TIER —
-//   it is a conditional gate source_verify pushes only for image_candidate rows, so it has
-//   a live consumer without being a tier check).
+// (multimodal re-check on single_source_grounding rows; NOT in any CHECK_SETS_BY_TIER —
+// it is a conditional gate source_verify pushes only for image_candidate rows, so it has
+// a live consumer without being a tier check).
 
 // ---------- tier → check-set config ----------
-//
 // Which checks a question of each source tier must pass. This is the ONLY place
 // the "which checks apply" decision lives — verify handlers read it instead of
 // hard-coding per-tier check lists. Higher tiers carry tier-specific checks ON TOP
 // of the shared structural + solve checks:
-//   tier 1 authentic — ingested real exams; trusted, minimal re-verification.
-//   tier 2 sourced   — web-fetched; needs source consistency + dedup + solve-check.
-//   tier 3 material  — generated-from-material; needs material grounding + solve-check.
-//   tier 4 generated — purely generated; the existing grounding/copy_safety/
-//                      knowledge_hit checks (quiz_verify.ts §5) + solve-check.
-//
-// NOTE: this slice DECLARED the config + shipped solve-check. kind_conformance (YUK-225),
-// solve_check (YUK-538 / YUK-554) and teaching_quality (YUK-578 入池前审题闸) are all consumed by
+// tier 1 authentic — ingested real exams; trusted, minimal re-verification.
+// tier 2 sourced — web-fetched; needs source consistency + dedup + solve-check.
+// tier 3 material — generated-from-material; needs material grounding + solve-check.
+// tier 4 generated — purely generated; the existing grounding/copy_safety/
+// knowledge_hit checks (quiz_verify.ts) + solve-check.
+// NOTE: this slice DECLARED the config + shipped solve-check. kind_conformance,
+// solve_check and teaching_quality (入池前审题闸) are all consumed by
 // the live tier3/4 handler (quiz_verify.ts); tier2's set is consumed by source_verify.ts. Every
 // check named in a tier's set has a live consumer — CHECK_SETS_BY_TIER is the single source of
 // truth the handlers read.
@@ -249,7 +227,7 @@ export async function runQuestionContentValidation(
 // ---------- solve-check ----------
 
 // Loose run seam (mirrors quiz_verify / variant_verify): the check consumes { text } from
-// the runner, plus — EFF-1 (YUK-554 review) — OPTIONAL task_run_id / cost_usd when the
+// the runner, plus — EFF-1 (review) — OPTIONAL task_run_id / cost_usd when the
 // runner reports them (production TaskTextResult does; { text }-only test mocks still
 // satisfy the type), so solve-check cost is answerable from the verify event.
 export type SolveCheckRunTaskFn = TaskTextRunFn;
@@ -300,7 +278,7 @@ export interface SolveCheckResult {
   reason: string;
   // Which comparison established the terminal verdict. Exact mismatches fall through to semantic.
   compared_by: 'normalize' | 'semantic' | 'none';
-  /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
+  /** Exact candidates disagreed before the SemanticJudge fallback (audit signal). */
   normalized_exact_mismatch?: boolean;
   task_run_ids?: string[];
   cost_usd?: number | null;
@@ -372,7 +350,7 @@ export interface IndependentSolutionOptions {
   /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx.override.model. */
   solverModelOverride?: string;
   /**
-   * YUK-608 (异源 solve/verify) — override the solver PROVIDER (not just the model) for
+   * (异源 solve/verify) — override the solver PROVIDER (not just the model) for
    * the solve_check leg, so it runs on a DIFFERENT lane than the generator/verifier (e.g.
    * `anthropic-sub` / Opus 4.8 while generation stays mimo). Threaded into ctx.override.provider
    * for BOTH the SolutionGenerate solver call AND the semantic SemanticJudge leg. Typed as the
@@ -409,26 +387,26 @@ export interface SolveCheckOptions extends IndependentSolutionOptions {
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
 // 'incorrect' verdict AT OR ABOVE this confidence fails solve-check. High by design
-// — the cost of a false 'fail' (killing a legitimate hard question) outweighs the
+// the cost of a false 'fail' (killing a legitimate hard question) outweighs the
 // cost of a false 'pass' (a bad question slipping through to the next gate / human
 // review). Tunable per-tier via SolveCheckOptions in a later wave.
 export const SOLVE_CHECK_SEMANTIC_THRESHOLD = 0.8;
 
-// YUK-538 / YUK-554 (spec docs/design/2026-07-03-verify-check-spec.md §Q1) — tier3/4
+//tier3/4
 // solve-check veto switches, split BY COMPARISON AXIS (compared_by). solve_check is the
 // ONLY tier3/4 signal independent of the closed-book self-review (QuizVerifyTask), but its
 // two comparison paths are wildly unequal in reliability:
-//   - semantic (open kinds): runSemanticJudge + the conservative confidence>=0.8 gate
-//     (SOLVE_CHECK_SEMANTIC_THRESHOLD, :393-394) → a confident independent disagreement
-//     is worth blocking promotion → CONFIGURED TO VETO.
-//   - normalize (exact kinds): cheap deterministic PASS when candidates match. YUK-612 routes a
-//     mismatch through the conservative semantic path instead of emitting a normalize FAIL, because
-//     boolean/numeric/format equivalence cannot be proven by string normalization. The normalize
-//     switch remains for backward-compatible handling of historical/externally supplied results.
+// - semantic (open kinds): runSemanticJudge + the conservative confidence>=0.8 gate
+// (SOLVE_CHECK_SEMANTIC_THRESHOLD, :393-394) → a confident independent disagreement
+// is worth blocking promotion → CONFIGURED TO VETO.
+// - normalize (exact kinds): cheap deterministic PASS when candidates match. routes a
+// mismatch through the conservative semantic path instead of emitting a normalize FAIL, because
+// boolean/numeric/format equivalence cannot be proven by string normalization. The normalize
+// switch remains for backward-compatible handling of historical/externally supplied results.
 // OWNER (2026-07-03): normalize default = true, hold-for-review (needs_review → /drafts,
-// DraftReviewPage YUK-403); NOT `failed`. Both flags are compile-time consts — flipping one
+// DraftReviewPage); NOT `failed`. Both flags are compile-time consts — flipping one
 // needs a source edit + esbuild rebundle + worker redeploy (NOT a runtime toggle, unlike
-// AI_PROVIDER_OVERRIDE's env switch); the pure-function seam solveCheckBlocks() below lets
+// AI_PROVIDER_OVERRIDE's env switch); the pure-function seam solveCheckBlocks below lets
 // tests exercise flag-off without vi.doMock and adds no runtime config surface.
 export const SOLVE_CHECK_TIER34_VETO = {
   semantic: true,
@@ -438,15 +416,14 @@ export const SOLVE_CHECK_TIER34_VETO = {
 // Pure-function veto decision (test seam): given a SolveCheckResult + the per-axis flags,
 // answer "does this block promotion?". Only a 'fail' verdict can block; the axis
 // (compared_by) picks which flag applies. 'unsupported'/'pass' NEVER block (R2 conservative
-// — a solver that couldn't independently solve, or that agreed, must not kill a question).
+// a solver that couldn't independently solve, or that agreed, must not kill a question).
 // Every live tier3/4 caller supplies `db`, so an exact mismatch can reach SemanticJudge. If a
 // future caller omits it, `normalized_exact_mismatch + unsupported` intentionally remains
 // non-blocking here; that caller must add its own provenance hold (as tier2 does) rather than
 // silently changing this shared conservative policy.
-//
-// R4 (YUK-554 review) — DELIBERATE tier asymmetry remains at the CONSUMER: tier2
+// R4 (review) — DELIBERATE tier asymmetry remains at the CONSUMER: tier2
 // (source_verify.ts) vetoes every emitted solve fail, while tier3/4 selects the axis flag here.
-// YUK-612 supersedes the old producer assumption that a raw normalize mismatch is itself a strong
+// supersedes the old producer assumption that a raw normalize mismatch is itself a strong
 // fail signal: all callers now route that mismatch through SemanticJudge first. The normalize flag
 // remains for historical or externally supplied results; changing how either handler consumes an
 // actual normalize fail still requires revisiting the source-provenance difference.
@@ -460,7 +437,7 @@ export function solveCheckBlocks(
   return false; // compared_by === 'none' never accompanies verdict='fail'; defensive.
 }
 
-// YUK-391 (kind Step 4): "answer is an EXACT token (compare by normalization)"
+// (kind Step 4): "answer is an EXACT token (compare by normalization)"
 // is now derived from the answer-class axis instead of the hand-maintained
 // EXACT_KINDS set: the objective kind family (isObjectiveAnswerKind — kinds
 // whose answer-class is exact/keyword under EVERY keyword shape → choice /
@@ -475,16 +452,15 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
   // formal judge dispatch (route-resolve.ts: `choices.length > 0 → 'exact'`). A row
   // with persisted choices is a single/multiple-choice item regardless of the
   // free-form kind label a subject profile uses (history/学科 题型 expose
-  // 'single_choice' etc.; YUK-386 made kind a free-form display label). Without
+  // 'single_choice' etc.; made kind a free-form display label). Without
   // this, those rows fell through to the conservative semantic path and a wrong
   // reference answer went undetected by solve-check.
   if ((q.choices_md ?? []).length > 0) return true;
   return isObjectiveAnswerKind(q.kind);
 }
 
-// ---------- deterministic choice-surface pre-checks (YUK-1624 #24) ----------
-//
-// MOVED to ./choice-surface.ts (YUK-1572): the pure answer-candidate kernel
+// ---------- deterministic choice-surface pre-checks (#24) ----------
+// MOVED to ./choice-surface.ts: the pure answer-candidate kernel
 // (referenceAnswerCandidates / normalizeAnswer / choiceLabel* / answerCandidates)
 // plus the whole choice-surface rule block. runSolveCheck's exact path imports
 // the kernel back above; consumers (quiz_verify.ts) import the rules module
@@ -498,7 +474,7 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // triage. Each call site passes its own label; the solve_check call site's label reproduces the
 // PRE-EXISTING string byte-identically (no behavior change there).
 function extractJsonObject(text: string, label: string): unknown {
-  // YUK-607 — 宽松提取（jsonrepair 修复带）。无 JSON 时的错误串与旧实现逐字节一致；解析失败
+  // 宽松提取（jsonrepair 修复带）。无 JSON 时的错误串与旧实现逐字节一致；解析失败
   // 重抛原始 SyntaxError，故 solve-check 的错误串 byte-identical 契约（OCR PR #716）不变。
   const extracted = parseJsonObjectLoose(text, label);
   if (extracted === null) {
@@ -871,17 +847,17 @@ export async function runIndependentSolution(
  *
  * CONSERVATIVE by design (R2): the goal is to catch broken questions WITHOUT killing
  * legitimate hard ones the solver merely failed. So:
- *   - solver throws / unparseable / empty answer  → 'unsupported' (NOT fail — no signal)
- *   - exact kinds: normalize match → 'pass'; mismatch → conservative SemanticJudge fallback
- *   - open kinds: SemanticJudge confidently says the answers disagree → 'fail';
- *                 anything softer (unsupported / partial / low confidence) → 'pass'
+ * - solver throws / unparseable / empty answer → 'unsupported' (NOT fail — no signal)
+ * - exact kinds: normalize match → 'pass'; mismatch → conservative SemanticJudge fallback
+ * - open kinds: SemanticJudge confidently says the answers disagree → 'fail';
+ * anything softer (unsupported / partial / low confidence) → 'pass'
  */
 export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
   const releaseStrict = opts.validationMode === 'release_strict';
-  // F2: prefer the structured final answer (rubric_json.reference_solution) over the
+  // prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
   // list feeds the exact normalize-compare.
@@ -890,7 +866,7 @@ export async function runSolveCheck(
 
   if (referenceAnswer.length === 0) {
     // No declared answer to compare against → nothing solve-check can assert.
-    // EFF-3 (YUK-554 review) — hoisted BEFORE the solver call: with no reference the verdict
+    // EFF-3 (review) — hoisted BEFORE the solver call: with no reference the verdict
     // is 'unsupported' regardless of what the solver says, so don't spend the LLM call.
     // (Verdict/reason unchanged; this return no longer carries solver_final_answer since no
     // solve ran.)
@@ -944,7 +920,7 @@ export async function runSolveCheck(
   const solverEquivalents = independentlySolved.answer_equivalents;
   const solverOverride = solutionLaneOverride(opts);
 
-  // EFF-1 (YUK-554 review) — seed provenance with the reusable solver leg,
+  // EFF-1 (review) — seed provenance with the reusable solver leg,
   // then append the optional SemanticJudge comparator leg below.
   const taskRunIds: string[] = [...(independentlySolved.task_run_ids ?? [])];
   const costsUsd: Array<number | null | undefined> = [independentlySolved.cost_usd];
@@ -1005,7 +981,7 @@ export async function runSolveCheck(
   // EFF-1 — the SemanticJudge leg's spend is only visible at the runTaskFn seam
   // (runSemanticJudge returns a JudgeResultV2T with no cost/run-id), so record it there.
   const semanticInvocationId = randomUUID();
-  // YUK-452 review F1 — runSemanticJudge's own catch-all converts ANY throw into an
+  // review F1 — runSemanticJudge's own catch-all converts ANY throw into an
   // 'unsupported' judge result, which would let an admission/stale failure on this paid
   // leg fall through to the conservative pass below (over-cap promoting through
   // 'unsupported'). Capture the blocking error out-of-band and re-throw it AFTER
@@ -1022,7 +998,7 @@ export async function runSolveCheck(
         opts.placementAuthority && input !== null && typeof input === 'object'
           ? { ...(input as Record<string, unknown>), placement_authority: opts.placementAuthority }
           : input;
-      // YUK-608 (异源 solve/verify) — runSemanticJudge builds its OWN ctx ({ subjectProfile })
+      // (异源 solve/verify) — runSemanticJudge builds its OWN ctx ({ subjectProfile })
       // with no override, so the semantic leg would silently stay on the default lane while the
       // solver leg went 异源. Inject the SAME override here so both legs of solve_check route
       // together. `ctx` is a RunTaskCallCtx (override.provider typed Provider), so this stays
@@ -1084,7 +1060,7 @@ export async function runSolveCheck(
   // Release the semantic reservation if the judge's paid call never settled — runSemanticJudge's
   // catch-all swallows a provider throw into an 'unsupported' result (no settle, no rethrow), which
   // would otherwise leak the reservation into known_cost. Before the blocking rethrow so both the
-  // swallowed-error and placement-error paths clear it. RETENTION-safe no-op once settled (YUK-452 review).
+  // swallowed-error and placement-error paths clear it. RETENTION-safe no-op once settled (review).
   if (opts.beforePaidCall && !semanticPaidSettled) {
     try {
       await opts.releasePaidCall?.('semantic_judge', semanticInvocationId);
@@ -1092,7 +1068,7 @@ export async function runSolveCheck(
       console.error('[solve-check] semantic reservation release failed', releaseErr);
     }
   }
-  // YUK-452 review F1 — an admission/stale failure captured inside the recording
+  // review F1 — an admission/stale failure captured inside the recording
   // runTaskFn was swallowed into `judged`'s 'unsupported' shape by runSemanticJudge's
   // catch-all; re-throw it here so it blocks instead of decaying to conservative pass.
   if (semanticBlocking.err) throw semanticBlocking.err;
@@ -1132,28 +1108,24 @@ export async function runSolveCheck(
   };
 }
 
-// ---------- teaching-quality check (YUK-578 入池前审题闸) ----------
-//
+// ---------- teaching-quality check (入池前审题闸) ----------
 // 现有 verify 轴（grounding / copy_safety / knowledge_hit / kind_conformance + solve_check）
 // 只保「题对不对、有没有抄、能不能解」，不保「问得清不清」。歧义题比事实错更隐蔽地污染 θ̂ 信号，
-// 冷启期尤其值——第一批题就干净，θ̂ 从 day-one 就不被坏题带偏。这是照 solve_check（YUK-538/554）的
+// 冷启期尤其值——第一批题就干净，θ̂ 从 day-one 就不被坏题带偏。这是照 solve_check（/554）的
 // 落地路径后加的又一个 tier3/4 独立检查：一次独立 LLM 调用（TeachingQualityTask，与自复核
 // QuizVerifyTask 不同 task/prompt 维度），judge 纯只读题面数据（prompt_md / reference_md /
 // rubric_json / choices），零运行数据前置。
-//
 // 三个检查轴（issue scope）：
-//   1. 题干清晰度（clarity）：题干是否无歧义、可被唯一理解。
-//   2. 唯一正解性（unique_answer）：是否只有一个正确答案；rubric 有容错声明（等价答案 / 容差）
-//      的算满足——判据交给 judge，rubric_json 随 input 喂进去让它 CAN honor it。
-//   3. 干扰项诊断力（distractor_power）：仅选择题；干扰项是否指向真实误区、有区分度。非选择题
-//      SKIP 该轴（code-side determinism：由 choices 是否非空决定，不信 LLM 的自报）。
-//
+// 1. 题干清晰度（clarity）：题干是否无歧义、可被唯一理解。
+// 2. 唯一正解性（unique_answer）：是否只有一个正确答案；rubric 有容错声明（等价答案 / 容差）
+// 的算满足——判据交给 judge，rubric_json 随 input 喂进去让它 CAN honor it。
+// 3. 干扰项诊断力（distractor_power）：仅选择题；干扰项是否指向真实误区、有区分度。非选择题
+// SKIP 该轴（code-side determinism：由 choices 是否非空决定，不信 LLM 的自报）。
 // 边界（issue 攻击轮加固）：本单只对干扰项做「泛化评估」——「误区人格判别力轴」（misconception
 // typed_state 做 grounded persona）是独立 follow-up，NOT 本单。confident-fail 处置：只翻
 // draft_status 留 draft + 记 needs_review 理由，绝不 promote（quiz_verify.ts 既有 verify-then-
 // promote 骨架的 else 分支，不碰 draft_status）。
-//
-// PROMPT-CHANGE DISCIPLINE（校准纪律，对齐 YUK-573）：TeachingQualityTask 的 prompt（registry.ts）
+// PROMPT-CHANGE DISCIPLINE（校准纪律，对齐）：TeachingQualityTask 的 prompt（registry.ts）
 // 与本 parser + 决策映射由 verify-framework.test.ts 的 mini golden set 钉死（清晰好题 pass / 歧义题干
 // fail / 第二说得通答案 fail / 干扰项无诊断力 flag / 非选择题跳过干扰项轴 / rubric 容错声明满足唯一解 /
 // parse 失败 → unsupported 不阻促进）。**改 prompt 或本输出契约（tests/helpers/teaching-quality-
@@ -1176,7 +1148,7 @@ export interface TeachingQualityQuestion {
 
 export interface TeachingQualityOptions {
   runTaskFn: TeachingQualityRunTaskFn;
-  // YUK-606 — runner 的观测写（ai_task_runs / cost_ledger）读 ctx.db；此前 ctx 漏传 db，
+  // runner 的观测写（ai_task_runs / cost_ledger）读 ctx.db；此前 ctx 漏传 db，
   // 该轴每次 run 的三笔观测写全炸并被 best-effort 吞掉（run 不落库、成本漏记）。
   // 必填 + 强类型（review MINOR：any 只防漏传不防误传）。
   db: Db;
@@ -1222,13 +1194,13 @@ export interface TeachingQualityResult {
   cost_usd?: number | null;
 }
 
-// YUK-578 — per-axis veto switches (mirrors SOLVE_CHECK_TIER34_VETO). All three axes veto a
+// per-axis veto switches (mirrors SOLVE_CHECK_TIER34_VETO). All three axes veto a
 // fail by default. Split BY AXIS so the owner can later downgrade the generalized
 // distractor_power axis to report-only (distractor_power:false) WITHOUT losing the
 // clarity/unique-answer gate — the same switchability hedge solve_check carries for its
 // semantic/normalize split. Compile-time consts (flipping one needs a source edit + esbuild
 // rebundle + worker redeploy, NOT a runtime toggle); the pure-function seam
-// teachingQualityBlocks() below lets tests exercise flag-off without vi.doMock.
+// teachingQualityBlocks below lets tests exercise flag-off without vi.doMock.
 export const TEACHING_QUALITY_TIER34_VETO = {
   clarity: true,
   unique_answer: true,
@@ -1271,11 +1243,11 @@ function readTeachingAxis(raw: unknown): TeachingQualityAxis | null {
  * data and scores three pedagogical axes — 题干清晰度 / 唯一正解性 / 干扰项诊断力(仅选择题).
  *
  * CONSERVATIVE by design (R2, mirrors solve-check): the goal is to catch ambiguous / multi-answer
- * / no-diagnostic questions BEFORE they enter the θ̂ signal source, WITHOUT killing good ones the
+ * no-diagnostic questions BEFORE they enter the θ̂ signal source, WITHOUT killing good ones the
  * judge merely failed to parse. So:
- *   - task throws / unparseable / missing a mandatory axis  → 'unsupported' (NOT fail — no signal)
- *   - any in-scope axis 'fail'                              → overall 'fail' (blocks via veto)
- *   - all in-scope axes 'pass'                              → overall 'pass'
+ * - task throws / unparseable / missing a mandatory axis → 'unsupported' (NOT fail — no signal)
+ * - any in-scope axis 'fail' → overall 'fail' (blocks via veto)
+ * - all in-scope axes 'pass' → overall 'pass'
  * distractor_power is code-side gated to choice questions (choices非空); non-choice → 'skipped'.
  */
 export async function runTeachingQualityCheck(
@@ -1306,7 +1278,7 @@ export async function runTeachingQualityCheck(
   });
 
   let parsed: unknown;
-  // Reservation bookkeeping (YUK-452 review): release a reserved-but-unsettled paid call if the
+  // Reservation bookkeeping (review): release a reserved-but-unsettled paid call if the
   // provider throws before settlePaidCall, so it does not leak into known_cost.
   let teachingPaidInvocationId: string | undefined;
   let teachingPaidSettled = false;
@@ -1326,7 +1298,7 @@ export async function runTeachingQualityCheck(
       // code-side ground truth for the distractor axis (do NOT trust the LLM to self-classify).
       is_choice: isChoice,
     };
-    // YUK-606 — db 进 ctx：与 solve_check 支路（:436）同款，runner 观测写依赖它。
+    // db 进 ctx：与 solve_check 支路（:436）同款，runner 观测写依赖它。
     const ctx = { db: opts.db, subjectProfile: opts.profile.full };
     if (opts.placementAuthority) {
       await opts.db.transaction(async (tx: Tx) =>

@@ -1,6 +1,5 @@
-// YUK-1572 — worksheet PDF 页面内容层：流对象解压缩（FlateDecode）+ 有界
+// worksheet PDF 页面内容层：流对象解压缩（FlateDecode）+ 有界
 // 内容流解释器（q/Q 图形状态栈 + cm 全仿射复合）枚举上色形状。
-//
 // 由 jobs/worksheet_render.ts 迁出；只解释 Skia 输出子集，认不出的形态一律
 // 抛错，不放行。
 
@@ -39,7 +38,6 @@ export function streamObjectContent(
 }
 
 // ---- 有界内容流解释器（仅 Skia 输出子集；认不出的形态一律抛错，不放行） ----
-//
 // 全仿射矩阵 {a,b,c,d,e,f}（点变换 [ax+cy+e, bx+dy+f]）+ q/Q 图形状态栈 +
 // 路径累积 + 上色算子。只解释确定语义：cm/q/Q/re/m/l/c/v/y/h/W/W*/n/rg/RG/
 // g/G/k/K/w/BT 之外的着色与路径算子；其它一律「认识 op 但跳过其操作数」或

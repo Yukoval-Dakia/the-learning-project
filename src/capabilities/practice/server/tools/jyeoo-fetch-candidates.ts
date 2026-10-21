@@ -1,19 +1,16 @@
-// YUK-986 (Supply-Agent/1) — `jyeoo_fetch_candidates` DomainTool（effect:'read'）。
-//
-// 供给 agent 化（YUK-985 epic）的 jyeoo fetch 面：bounded subprocess 跑 jyeoo-rs grade
+// (Supply-Agent/1) — `jyeoo_fetch_candidates` DomainTool（effect:'read'）。
+// 供给 agent 化（epic）的 jyeoo fetch 面：bounded subprocess 跑 jyeoo-rs grade
 // 路线，返回【自包含候选】——图片已 staged（R2 + source_asset，origin='jyeoo_staged'）、
 // markdown URL 已改写为内部资产 URL、extraction_hash = loom canonical hash（THE dedup
 // key）。本工具不写 question；提交走 `store_sourced_question`（dedup/verify 链权威判定
 // 在那侧，agent 只传候选与 knowledge_ids）。
-//
 // effect 判 'read' 的理由：唯一的持久写是 staged 图片资产——那是对后续 commit 的
 // 可恢复 fetch 缓存（未提交由 reaper 回收），不是 learner/domain 数据；question 写入
 // 只发生在 store_sourced_question（effect:'write'）。costClass 'local'（无 LLM），但
 // producer 内容是付费账号资源——治理经 jyeoo-budget 日租约（fetch 核 pre-flight 读取并把
 // session_max 裁进余额），不走 LLM 预算。
-//
 // Canary：由 fetch 核（runJyeooFetchCandidates）单写——每次运行（含失败）恰好一条
-// action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）。YUK-988 E3 P1-3
+// action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）。 E3 P1-3
 // 起从本工具层移入核：executor/脚本直调核时观测/预算归账无法被绕过；工具层不再写。
 
 import { z } from 'zod';

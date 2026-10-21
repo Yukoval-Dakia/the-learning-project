@@ -1,21 +1,8 @@
-// U5 (YUK-203, §4.10 Q8-addendum) — GET /api/papers/[id] server logic.
-//
-// Discovered plan gap (UI lane integration): the four practice endpoints
-// returned zero question-face content, making the answering page impossible to
-// render. Orchestrator ruling: L-paper-core addendum (additive only, zero
-// contract change to the four existing endpoints).
-//
-// One round-trip per concern — no N+1 per-slot question fetch (Q8 principle):
-//   1. Paper artifact (parse via Artifact.safeParse for tool_state shape)
-//   2. Linked review session (newest per paper, via artifact_id)
-//   3. Question rows for all slot question_ids (one IN query)
-//   4. Live draft + frozen answer rows for the session (one query)
-//   5. Judge event outcomes for the frozen rows (one query via answer.event_id)
-//
-// Visibility gate (§4.9): judge feedback is SERVER-gated. When a judge event
-// was written with visible_to_user:false AND the session is not yet 'completed',
-// the slot response carries { submitted: true, feedback_buffered: true } — the
-// score/outcome/feedback_md are NOT sent to the client.
+// GET /api/papers/[id] server logic.
+// One round-trip per concern: artifact, linked review session, question rows, live drafts
+// and frozen answers, then judge outcomes. Judge feedback is server-gated: when the judge
+// event is not visible to the user and the session is not completed, return
+// { submitted: true, feedback_buffered: true } without score, outcome, or feedback text.
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
@@ -71,12 +58,12 @@ export interface PaperSlotState {
   } | null;
   /**
    * null = not yet submitted. When submitted:
-   *   - visible feedback: { submitted, visible_to_user: true, outcome, score, answer_md,
-   *       answer_image_refs, reference_md } — outcome/score/reference_md all gated by
-   *       visibility (visible_to_user !== false || session completed).
-   *   - buffered feedback: { submitted, visible_to_user: false, feedback_buffered: true,
-   *       answer_md, answer_image_refs } — user's own answer is always safe to echo back;
-   *       reference_md/outcome/score are NOT included (server visibility gate §4.9).
+   * - visible feedback: { submitted, visible_to_user: true, outcome, score, answer_md,
+   * answer_image_refs, reference_md } — outcome/score/reference_md all gated by
+   * visibility (visible_to_user !== false || session completed).
+   * - buffered feedback: { submitted, visible_to_user: false, feedback_buffered: true,
+   * answer_md, answer_image_refs } — user's own answer is always safe to echo back;
+   * reference_md/outcome/score are NOT included (server visibility gate).
    */
   submission:
     | null
@@ -86,7 +73,7 @@ export interface PaperSlotState {
         outcome: string;
         score: number | null;
         /**
-         * M2 (YUK-316) — 判分反馈（复盘核心）。同 outcome/score 的可见性门控；
+         * 判分反馈（复盘核心）。同 outcome/score 的可见性门控；
          * 历史 judge event（feedback 未入 payload 时代）为 null。
          */
         feedback_md: string | null;
@@ -109,7 +96,7 @@ export interface PaperSlotState {
         answer_md: string;
         /** Image refs attached to the frozen answer row. */
         answer_image_refs: string[];
-        // reference_md / outcome / score are structurally absent (§4.9 discipline).
+        // reference_md / outcome / score are structurally absent (visibility discipline).
       };
 }
 
@@ -158,7 +145,7 @@ export interface PaperDetailResult {
   /** Ordered sections with their slots + question faces + slot state */
   sections: PaperDetailSection[];
   /**
-   * YUK-1445 —— frozen-paper slots 被 serving gate 收回时的 typed 读面：
+   * frozen-paper slots 被 serving gate 收回时的 typed 读面：
    * {issuance_id, question_id, part_ref, reason}（公共安全枚举；诊断 detail
    * 不透出）。open 时被拒、从未发行的 slot issuance_id 为 null；pinned 历史
    * issuance 保留原 id。仅 frozen 路径填充；legacy/flat fallback 缺省。
@@ -184,8 +171,8 @@ export interface PaperDetailResult {
  * Aggregate the full answering-page payload for one paper artifact.
  * Returns null when the artifact is not found.
  *
- * Visibility contract (§4.9):
- *   visible = payload.visible_to_user !== false || session.status === 'completed'
+ * Visibility contract :
+ * visible = payload.visible_to_user !== false || session.status === 'completed'
  * When visible=false the response carries { feedback_buffered: true } and OMITS
  * score/outcome — the server holds the visibility boundary even for single-user
  * installs (principle over convenience).
@@ -206,7 +193,7 @@ export async function getPaperDetail(
   const parsed = Artifact.safeParse(artifactRow);
   const toolState = parsed.success ? parsed.data.tool_state : null;
 
-  // 2) Resolve sections (U5 top-level or U4 session_meta fallback, §4.8 shim).
+  // 2) Resolve sections (U5 top-level or U4 session_meta fallback, shim).
   const sections = readPaperSections(toolState);
   const isFlatFallback = sections.length === 0;
 
@@ -274,9 +261,9 @@ export async function getPaperDetail(
   }
 
   // 4) Question faces — one IN query for all distinct question_ids.
-  //    reference_md is fetched here but kept out of PaperQuestionFace (face is
-  //    pre-answer-visible; reference_md must only appear in the visible submission
-  //    variant). Stored in a parallel referenceMap for the assembly step.
+  // reference_md is fetched here but kept out of PaperQuestionFace (face is
+  // pre-answer-visible; reference_md must only appear in the visible submission
+  // variant). Stored in a parallel referenceMap for the assembly step.
   const questionIds = [...new Set(rawSlots.map((s) => s.question_id))];
   const questionMap = new Map<string, PaperQuestionFace>();
   const referenceMap = new Map<string, string | null>(); // question_id → reference_md
@@ -319,17 +306,15 @@ export async function getPaperDetail(
   }
 
   // 5) Knowledge name resolution for section headers — one IN query across all
-  //    knowledge_focus ids referenced by any section. archived_at not filtered
-  //    (historical papers must still display names). Falls back to id on miss.
+  // knowledge_focus ids referenced by any section. archived_at not filtered
+  // (historical papers must still display names). Falls back to id on miss.
   const allFocusIds = [...new Set(rawSlots.flatMap((s) => s.knowledge_focus))];
   const knowledgeNameMap = await resolveKnowledgeNames(db, allFocusIds);
 
   // 6 & 7) Answer rows + judge outcomes — only meaningful if a session exists.
-  //
   // Live draft: the single row WHERE submitted_at IS NULL for a slot.
   // Newest frozen: MAX(submitted_at) per slot — the submission to show feedback for.
   // Judge outcome: JOIN event via answer.event_id for the newest frozen row.
-  //
   // Both queries are scoped to the session — no cross-session leakage.
 
   type DraftRow = {
@@ -346,7 +331,7 @@ export async function getPaperDetail(
     submitted_at: string;
     content_md: string;
     image_refs: string[];
-    // F1 (PR #309 round-4, YUK-215) — 'true' when the frozen attempt was the
+    // 'true' when the frozen attempt was the
     // un-judged photo-only-on-text-route case (no judge event written). Drives the
     // visible outcome='unsupported' surface in slot assembly. NULL for every normal
     // graded attempt.
@@ -358,7 +343,7 @@ export async function getPaperDetail(
 
   const draftMap = new Map<string, DraftRow>(); // slotKey → draft
   const submittedMap = new Map<string, SubmittedRow>(); // slotKey → newest frozen
-  // YUK-1054 — event_id → effective（链解析后仍 live 的最新）judge 投影。
+  // event_id → effective（链解析后仍 live 的最新）judge 投影。
   const verdictMap = new Map<string, JudgeVerdictProjection>();
 
   if (sessionInfo) {
@@ -388,7 +373,7 @@ export async function getPaperDetail(
 
     // Newest frozen row per slot: subquery on MAX(submitted_at).
     // content_md + image_refs: user's own answer, echoed back unconditionally.
-    // att.outcome + unsupported_judge 同行带出 —— YUK-1054 起 right/wrong 复用
+    // att.outcome + unsupported_judge 同行带出 —— 起 right/wrong 复用
     // 本行集（与旧 rwRows 子查询同一 slot 集合语义），不再发第二条 SQL。
     const frozenRows = await db.execute<SubmittedRow>(sql`
       SELECT
@@ -422,7 +407,7 @@ export async function getPaperDetail(
       if (f.event_id) eventIds.push(f.event_id);
     }
 
-    // YUK-1054 — 一次性批量解析全部 frozen attempt 的 effective 裁决
+    // 一次性批量解析全部 frozen attempt 的 effective 裁决
     // （链解析后仍 live 的最新 judge；被 supersede/retract 的旧判不再回魂），
     // 固定 3 个 round-trip 取代原 per-row 相关子查询。
     if (eventIds.length > 0) {
@@ -442,13 +427,13 @@ export async function getPaperDetail(
     const pos = posRows[0]?.pos ?? 0;
 
     // Round-4 fix #2 + Round-6 fix #2 (CR 3359820526)：verdict 走 effective 轨
-    // （YUK-1054）；visible_to_user 读 effective 判的载荷，buffered 槽位在
+    // ；visible_to_user 读 effective 判的载荷，buffered 槽位在
     // 未完成 session 的 summary 里不外漏。
     const sessionStatus = sessionInfo.status;
     let right = 0;
     let wrong = 0;
     for (const r of frozenRows) {
-      // F1 (PR #309 round-4, YUK-215): un-judged attempts (photo-only on a
+      // un-judged attempts (photo-only on a
       // text-only route) are "未判分" — neither right nor wrong. Skip so the
       // summary here stays in lock-step with getPracticeList (practice-read.ts).
       if (r.unsupported_judge === 'true') continue;
@@ -522,11 +507,11 @@ export async function getPaperDetail(
           }
         : null;
 
-      // Submission state with visibility gate (§4.9).
+      // Submission state with visibility gate.
       const frozenRow = submittedMap.get(slotKey) ?? null;
       let submission: PaperSlotState['submission'] = null;
       if (frozenRow) {
-        // YUK-1054 — effective 轨判词：改判后展示新判，被全量 supersede/retract
+        // effective 轨判词：改判后展示新判，被全量 supersede/retract
         // 的老判不再回填为 'unknown' 之外的死判（回落 'unknown' 同旧语义）。
         const effectiveJudge = frozenRow.event_id ? verdictMap.get(frozenRow.event_id) : null;
         const judgePayload = effectiveJudge?.verdict;
@@ -539,7 +524,7 @@ export async function getPaperDetail(
           // reference_md lives on the question row — fetched in referenceMap (step 4).
           // Null when question is missing/orphaned or has no reference answer.
           const refMd = referenceMap.get(slot.question_id) ?? null;
-          // F1 (PR #309 round-4, YUK-215): an un-judged attempt (photo-only on a
+          // an un-judged attempt (photo-only on a
           // text-only route) has NO judge event, so coarse_outcome is absent. It
           // is "未判分" — surface outcome='unsupported' (always visible: this is
           // actionable user feedback, "this question type can't grade a photo",
@@ -554,7 +539,7 @@ export async function getPaperDetail(
             visible_to_user: true,
             outcome: unjudged ? 'unsupported' : (judgePayload?.coarse_outcome ?? 'unknown'),
             score: (judgePayload?.score as number | null | undefined) ?? null,
-            // M2 (YUK-316) — 复盘读路径透出判分反馈（同 outcome/score 的可见性门控；
+            // 复盘读路径透出判分反馈（同 outcome/score 的可见性门控；
             // 旧 judge event 没写 feedback_md 时为 null，前端按缺省处理）。
             feedback_md: (judgePayload?.feedback_md as string | null | undefined) ?? null,
             answer_md: answerMd,

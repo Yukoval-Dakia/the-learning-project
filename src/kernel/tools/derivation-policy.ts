@@ -11,8 +11,7 @@ export const ANSWER_ONLY_TOOL_NAMES = [
   'read_bank',
   'query_memory_brief',
   'search_memory_facts',
-  // A name that is not a registered read tool must fail typecheck: every entry is mounted into the
-  // answer-only run, and an unregistered name breaks that run.
+  // Must stay mounted in the answer-only run; an unregistered name fails typecheck.
 ] as const satisfies readonly ReadDomainToolName[];
 const answerOnlyTools: ReadonlySet<string> = new Set(ANSWER_ONLY_TOOL_NAMES);
 export const ANSWER_ONLY_TOOL_DENIAL =
@@ -22,8 +21,8 @@ export function derivationToolDenial(
   policy: DerivationPolicyT,
   tool: ToolExecutionGateInput,
 ): string | undefined {
-  // YUK-1398：crisis 回合只出支持模板，任何工具都不该执行；这里兜底拒绝，
-  // 防未来新增执行路径绕过 worker 的确定性分支。
+  // Crisis turns run only support templates; this guards new execution paths that
+  // bypass the worker's deterministic branch.
   if (policy === 'crisis') {
     return '此消息已转入支持回应模式：本轮不执行任何学习工具。';
   }

@@ -1,5 +1,4 @@
-// YUK-1622 — read the inputs of the daily review plan.
-//
+// read the inputs of the daily review plan.
 // The plan itself is pure (`@/core/daily-review-plan`); this module only joins
 // the three facts it needs: the actionable due queue, the learner's minute
 // budget, and the measured (or default) question pace. Coach's nightly job is

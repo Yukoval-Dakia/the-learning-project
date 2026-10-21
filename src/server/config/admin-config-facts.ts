@@ -1,15 +1,7 @@
-// YUK-1007 — GET /api/admin/config 运行时事实的组合根装配（server 层）。
-//
-// 本模块自由 import 一切**真相源**（provider 注册表、boss/memory cron 静态表、
-// 运行形态常量、各 capability 经 public 入口透出的 consumer-effective 事实），
-// 组装成 AdminConfigRuntimeFacts 由 server/index.ts 在 boot 时经
-// observability/public 的 setter 注入（server→public 允许；observability 自身
-// 零新边界）。工厂形态：route 每次请求重新调用本函数，providers presence 与
-// effective 值跟随 env/热加载 store 保持新鲜（不在 boot 冻结）。
-//
-// 诚实性：effective 值全部来自真实 reader 调用（不复制规则）；reader 输出非单
-// 一标量的键（admission 按 lane、jyeoo backfill 按会话）只给 note；providers[]
-// 只带 key presence 布尔与 env 名字，值绝不进 payload。
+// Runtime facts for GET /api/admin/config. This module may import truth sources
+// directly and is re-invoked per request so env/hot-reload changes stay fresh.
+// Effective values come from the real readers (never copied rules); non-scalar
+// keys return a note, and provider rows carry only presence booleans and env names.
 
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
@@ -58,7 +50,7 @@ import {
   TICK_INTERVAL_SECONDS,
 } from '@/server/orchestration/constants';
 
-/** 按 lane 解析的 admission 键的统一 note（不伪造单一标量 effective）。 */
+/** Admission keys resolve per lane, so they expose a note instead of a scalar. */
 function laneResolvedNote(reader: string): ConfigEffectiveFact {
   return {
     note: `按 lane 在读取时解析（${reader}）；无单一标量 effective，读该 reader 的解析结果`,
@@ -96,8 +88,7 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
       )
       .join('；');
     if (bindings.some((binding) => binding.provider === null)) {
-      // A failed consumer prevents a single lane-wide effective value, but does
-      // not invalidate other consumers that independently resolved successfully.
+      // One failed consumer blocks a lane-wide value without invalidating the rest.
       const incomplete = { value: null, note: diagnostic };
       return { provider: incomplete, model: incomplete };
     }
@@ -135,10 +126,8 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       note: 'reader throws（fail-visible）：非法值在消费点报错，不静默回退',
     };
   }
-  // YUK-1007 P1（验证审反例）：lane.global.* 的 effective 必须来自运行时真相源
-  // readGlobalProviderSwitch（含 env/DB 合层与 provider 门）——model-only 配置
-  // runtime 不消费 ⇒ effective=null；未知 provider 名 ⇒ throw（fail-visible），
-  // 如实标注不虚构。
+  // lane.global.* must come from readGlobalProviderSwitch (env/DB merge + provider
+  // gate): model-only config is not consumed, and unknown providers throw.
   let globalSwitch: ReturnType<typeof readGlobalProviderSwitch> | undefined;
   let globalSwitchError: string | undefined;
   try {
@@ -246,8 +235,8 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
     })),
   ];
 
-  // resolveApiPort 对非法值 throw（boot 同款 fail-visible）；boot 已过的进程
-  // 不会到这里，防御性兜 null 不拖死整个读面。
+  // resolveApiPort throws on invalid values (boot-visible); degrade to null so a
+  // bad env does not take down the whole read surface.
   let port: number | null;
   try {
     port = resolveApiPort(process.env.API_PORT);
@@ -301,8 +290,7 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
         tick_interval_seconds: TICK_INTERVAL_SECONDS,
         node_timeout_seconds: NODE_TIMEOUT_SECONDS,
         layer_stagger_seconds: LAYER_STAGGER_SECONDS,
-        // 编排 DAG 成员（kernel projectDagMembers 同源投影）：无 cron、由
-        // orchestrator 从 anchor 触发——schedules[] 只列 cron 行，这里列齐成员名。
+        // Orchestrator DAG members have no cron; schedules[] lists only cron rows.
         dag_members: projectDagMembers(capabilities).map((member) => member.name),
       },
     },

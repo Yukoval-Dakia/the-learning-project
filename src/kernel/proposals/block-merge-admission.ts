@@ -1,57 +1,27 @@
-// YUK-1404 — block_merge learner-admission proof. A merge proposal is only
-// learner-visible / acceptable when the STORED question_block rows prove the
-// merge joins one question, deterministically:
+// block_merge admission proof: a merge is learner-visible/acceptable only when the
+// stored question_block rows prove it joins one question:
 //
-//   1. every block in the chain shares ONE ingestion_session_id (matching the
-//      proposal's declared session),
-//   2. every block shares ONE canonical source_document_id that resolves to a
-//      real source_document row,
-//   3. every referenced block is still stored status='draft' — a block that
-//      already left draft (manually merged / imported) can never be re-merged,
-//      so such a proposal is STALE (world state changed), not merely unproven;
-//      the accept applier answers this arm with the soft-stale result instead
-//      of the typed 409 (see acceptBlockMergeProposal),
-//   4. page facts are unambiguous: every block carries page_spans forming a
-//      strictly +1 integer sequence in stored order (non-integer, duplicated,
-//      out-of-order or internally gapped spans cannot prove which pages the
-//      block covers), and the chain is not all-placeholder (the docx/Tencent
-//      fallback paths stamp page_index 0 on every block — an all-zero chain
-//      is provenance-less),
-//   4. ordered adjacent pages IN THE ORDER mergeQuestions WILL MUTATE: the
-//      primitive absorbs in caller mergeIds sequence (primary first, then
-//      each listed id), so the chain proven here is the effective payload
-//      order — never a re-sorted order — and each next block's first page
-//      must be exactly prev.max+1 (same page, overlap, backward order and
-//      gaps all fail closed as pages_not_adjacent),
-//   5. deterministic continuity evidence per adjacent pair: the next block
-//      carries no own question number, OR a same-style sub-numbering
-//      continues ((2) after (1)) — and NEVER an own question number that
-//      could belong to a different question (the decisive veto: any
-//      top-level number, or a sub number that does not continue the
-//      sequence, on the next block). An own number the parser cannot read
-//      (e.g. 百/两百, '5-6') is NOT "no number": it can neither conflict nor
-//      continue provably, so the pair fails closed as missing_continuity.
+//   1. all blocks share one ingestion_session_id matching the proposal;
+//   2. all share one canonical source_document_id that resolves to a real row;
+//   3. every block is still draft — one that left draft makes the proposal stale,
+//      which the accept applier answers softly rather than with the typed 409;
+//   4. page facts are unambiguous: page_spans form a strict +1 sequence in stored
+//      order, and the chain is not entirely the page-0 placeholder stamped by the
+//      docx/Tencent fallbacks;
+//   5. adjacent pages follow the order mergeQuestions will mutate (caller mergeIds
+//      order, never re-sorted), each next block starting at prev.max + 1;
+//   6. each adjacent pair has deterministic continuity: the next block has no own
+//      question number, or a same-style sub-number continues by one. A conflicting
+//      own number fails closed, and an unreadable own number is not treated as
+//      absent.
 //
-// The draft arm (3) is checked BEFORE the proof arms, mirroring
-// mergeQuestions' own guard order (draft → structured → session), so whenever
-// a chain is both non-draft and proof-deficient the stale answer dominates.
+// Check the draft arm before the proof arms so a chain that is both non-draft and
+// proof-deficient reports stale. Fail closed on every unknown; model confidence,
+// reasons, and continuity_signal are AI evidence, not proof.
 //
-// Fail-closed on every unknown: missing rows, missing/mismatched source
-// documents, placeholder or missing page facts, ambiguous ordering, and any
-// block without continuity evidence. Model confidence / reason / signal are
-// NEVER consulted (no confidence cutoff — YUK-1404 policy); the producer's
-// continuity_signal is AI evidence, not proof.
-//
-// The same rule is consumed at three seams so reads and writes cannot drift:
-//   - inbox projection (`inbox.ts`) filters PENDING block_merge rows, so
-//     ineligible proposals stay stored but invisible (the known TEST event
-//     ez1jqruwav20xs92h41ri9wa drops out via this read rule — no row edit),
-//   - the accept applier (`proposal-appliers.ts`) evaluates it before the
-//     mergeQuestions call,
-//   - `mergeQuestions` re-evaluates it INSIDE its own transaction on the
-//     FOR-UPDATE-locked rows (admission hook) so the proof binds the exact
-//     rows being mutated — no check-then-act window between the read rule
-//     and the destructive write.
+// The same rule runs at three seams so reads and writes cannot drift: inbox
+// projection, the accept applier preflight, and mergeQuestions' locked
+// in-transaction re-check.
 
 import { inArray } from 'drizzle-orm';
 
@@ -98,8 +68,7 @@ export interface BlockMergeAdmissionInput {
 export type BlockMergeIneligibilityReason =
   /** effective merge set empty, or a referenced block row does not exist */
   | 'blocks_missing'
-  /** a referenced block already left status='draft' (merged/imported) — the
-   *  proposal is stale; the accept lane answers it softly, never as 409 */
+  /** a referenced block left draft; the proposal is stale, answered softly rather than with 409 */
   | 'not_draft'
   /** chain blocks share no single session, or differ from the declared one */
   | 'session_mismatch'
@@ -282,10 +251,7 @@ function isSubContinuation(
   );
 }
 
-/** A page_spans list proves a contiguous page range only when its stored
- * order is a strict +1 integer sequence (single span included). Anything
- * else — non-integer, duplicated, out-of-order, or internally gapped pages —
- * cannot prove which pages the block covers. */
+/** A page_spans list proves contiguous pages only as a strict +1 integer sequence. */
 function contiguousPages(facts: BlockMergeAdmissionFacts): number[] | null {
   const pages = facts.page_spans.map((s) => s.page_index);
   if (pages.length === 0) return null;
@@ -322,18 +288,11 @@ export function evaluateBlockMergeAdmission(
   if (chain.some((facts) => facts === undefined)) return fail('blocks_missing');
   const blocks = chain as BlockMergeAdmissionFacts[];
 
-  // Stale arm — every referenced block must still be draft. A block that
-  // already left draft (manually merged / imported after the proposal was
-  // written) can never be re-merged: the proposal is stale, and the accept
-  // applier answers this arm with the soft-stale result instead of the typed
-  // 409. Checked before every proof arm (and before null-structured) so the
-  // stale answer dominates mixed failure states — mirroring mergeQuestions,
-  // which guards draft before structured/session.
+  // Stale check runs before every proof arm so it dominates mixed failures,
+  // mirroring mergeQuestions' draft-first guard.
   if (blocks.some((b) => b.status !== 'draft')) return fail('not_draft');
 
-  // Null structured content means there is NOTHING deterministic to evaluate
-  // (no question numbers, no continuity evidence) — fail closed. The same
-  // blocks would also soft-skip inside mergeQuestions (null_structured).
+  // Nothing deterministic to evaluate; mergeQuestions would soft-skip these rows.
   if (blocks.some((b) => b.structured === null)) return fail('missing_continuity');
 
   // One ingestion session for the whole chain, equal to the declared one.
@@ -351,10 +310,8 @@ export function evaluateBlockMergeAdmission(
   const docId = [...docIds][0];
   if (!docId || !ctx.knownDocumentIds.has(docId)) return fail('unknown_source');
 
-  // Unambiguous page provenance: every block's stored page_spans must be a
-  // strictly +1 integer sequence (non-integer / duplicated / out-of-order /
-  // internally gapped spans cannot prove coverage), and the chain must not be
-  // entirely the page-0 placeholder stamped by the docx/Tencent fallbacks.
+  // Unambiguous page provenance: strict +1 spans per block, and not an all-zero
+  // placeholder chain.
   const provenRanges: Array<{ block: BlockMergeAdmissionFacts; min: number; max: number }> = [];
   for (const b of blocks) {
     const pages = contiguousPages(b);
@@ -363,21 +320,14 @@ export function evaluateBlockMergeAdmission(
   }
   if (provenRanges.every((r) => r.min === 0)) return fail('ambiguous_page_index');
 
-  // Ordered adjacent pages in the order mergeQuestions WILL MUTATE: the
-  // primitive absorbs in caller mergeIds order (primary first, then each
-  // listed id), so the proven chain is [primary, ...effectiveMergeIds] as
-  // given — never re-sorted. Each next block must start exactly one page
-  // after the previous block ends: same-page (gap 0), overlap, backward
-  // order and real gaps all fail closed.
+  // Pages follow the mutation order, each block starting exactly one page after
+  // the previous ends. Gaps, overlap, same page, and backward order fail closed.
   for (let i = 1; i < provenRanges.length; i += 1) {
     if (provenRanges[i].min !== provenRanges[i - 1].max + 1) return fail('pages_not_adjacent');
   }
 
-  // Continuity per adjacent pair in the same mutation order, with the
-  // own-number veto first. An own number that does not continue the running
-  // sub-sequence is a different question (conflicting). An own number the
-  // parser cannot read proves neither conflict nor continuity — the merge
-  // fails closed instead of treating unreadable as absent.
+  // Continuity per adjacent pair, own-number veto first. A conflicting number is a
+  // different question; an unreadable one proves neither conflict nor continuity.
   for (let i = 1; i < provenRanges.length; i += 1) {
     const prev = provenRanges[i - 1].block;
     const next = provenRanges[i].block;
@@ -392,8 +342,8 @@ export function evaluateBlockMergeAdmission(
 }
 
 // ---------------------------------------------------------------------------
-// Batched fact loading — ONE question_block query + ONE source_document query
-// per call (no per-row N+1); usable on Db or inside the mergeQuestions Tx.
+// One question_block query and one source_document query per call; works on Db or
+// inside the merge Tx.
 // ---------------------------------------------------------------------------
 
 export async function loadBlockMergeAdmissionContext(
@@ -437,8 +387,7 @@ export async function loadBlockMergeAdmissionContext(
   };
 }
 
-/** The typed 409 for an ineligible verdict — shared by assert-block-merge-
- *  admission callers so the learner-facing failure shape cannot drift. */
+/** The shared 409 for an ineligible verdict, so the learner-facing shape cannot drift. */
 export function blockMergeAdmissionError(verdict: BlockMergeAdmissionVerdict): ApiError {
   return new ApiError(
     'merge_inadmissible',
@@ -450,13 +399,9 @@ export function blockMergeAdmissionError(verdict: BlockMergeAdmissionVerdict): A
 }
 
 /**
- * The shared admission gate: load stored facts and evaluate. Throws the typed
- * 409 `merge_inadmissible` when the merge is not provably safe, so every caller
- * (accept applier's preflight AND the locked in-transaction re-check) shares
- * one learner-facing failure shape. The not_draft arm throws here too — it is
- * the CALLER's contract to decide whether its lane answers that arm softly
- * (the accept applier does; the locked re-check cannot be reached non-draft
- * because mergeQuestions' own draft guard soft-rejects first).
+ * Load stored facts and evaluate; throws the shared 409 when the merge is not
+ * provably safe. The not_draft arm also throws here: each caller decides whether
+ * its lane answers that arm softly.
  */
 export async function assertBlockMergeAdmission(
   db: DbLike,

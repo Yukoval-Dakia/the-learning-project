@@ -1,21 +1,8 @@
-// YUK-1571 — the complete knowledge-graph read engine for notes hub curation
-// (@/capabilities/notes/server/hub-curation) and its other existing consumers.
-//
-// `loadTreeSnapshot` (+ KnowledgeRow/KnowledgeNode, LOAD_TREE_SNAPSHOT_LIMIT,
-// warnIfTreeSnapshotTruncated) moved VERBATIM from
-// src/capabilities/knowledge/server/tree.ts — including the knowledge_mastery
-// join, the getMasteryProjection overlay, the effective_domain parent-chain
-// walk, the optional subject filter, the 5000-row cap and the structured
-// truncation warn. Nothing is slimmed: a read that could fail before still can
-// (same SELECTs in the same order), and a healthy DB yields the same rows.
-// The old module path remains an explicit compat re-export.
-//
-// `listKnowledgeMeshEdges` mirrors the default `listKnowledgeEdges(db)` path in
-// src/capabilities/knowledge/server/edges.ts for the hub-mesh consumer: full-row
-// select (identical column-decode surface), `archived_at IS NULL`,
-// `ORDER BY created_at DESC, id DESC`, fetch LIMIT+1 then keep the first 500 —
-// the same row set and the same read work; the discarded page cursor is still encoded to preserve its error surface. The >500 truncation is pre-existing behavior,
-// preserved deliberately.
+// Complete knowledge-graph reads for notes hub curation and existing consumers.
+// loadTreeSnapshot preserves the original tree read: knowledge_mastery join, mastery
+// overlay, effective-domain walk, optional subject filter, 5000-row cap with a
+// truncation warn. listKnowledgeMeshEdges preserves the default listKnowledgeEdges
+// row set, ordering, 500-edge truncation, and cursor encoding.
 
 import { desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -31,9 +18,8 @@ interface KnowledgeRow {
   parent_id: string | null;
   archived_at: Date | null;
   mastery: number | null;
-  // A5 S1 (YUK-354) — ADR-0035 p(L) confidence-interval band + low-confidence flag,
-  // surfaced for the tree/drawer BandChip (discrete band + interval + source). Absent
-  // (never-attempted) → null/null/false; the client renders the cold-start unknown band.
+  // ADR-0035 confidence band. Absent when never attempted, so the client shows the
+  // unknown band.
   mastery_lo: number | null;
   mastery_hi: number | null;
   low_confidence: boolean;
@@ -47,27 +33,14 @@ export interface KnowledgeNode extends KnowledgeRow {
 }
 
 /**
- * Short-term OOM guard for {@link loadTreeSnapshot} (YUK-236 [STB-2]).
- *
- * `loadTreeSnapshot` loads the ENTIRE non-archived knowledge graph into memory
- * (then builds an in-memory `byId` map + walks parent chains). With no bound a
- * runaway graph could exhaust the worker / request heap. 5000 covers the
- * single-user graph by a wide margin (current real graphs are ~10²–10³ nodes).
- *
- * PHASE-DEFERRED (mid-term, tracked in YUK-236): replace the load-all snapshot
- * with a recursive-CTE / incremental walk so callers that only need a subtree
- * (goals scope, propose, hub-sync) don't materialise the whole graph. Until
- * then this cap + the truncation warn below are the safety net; if the warn
- * fires in prod it signals we've outgrown the load-all approach and should
- * prioritise the CTE rewrite.
+ * OOM guard: loadTreeSnapshot materializes the whole active graph. 5000 is far above
+ * single-user size. The truncation warn fires when this is outgrown.
  */
 export const LOAD_TREE_SNAPSHOT_LIMIT = 5000;
 
 /**
- * Emit a structured warn when a tree snapshot hit the {@link LOAD_TREE_SNAPSHOT_LIMIT}
- * cap (i.e. the result was almost certainly truncated and effective-domain /
- * parent-chain inheritance may be silently incomplete). Pure + injectable `warn`
- * so it is unit-testable without a DB (see tree.unit.test.ts).
+ * Structured warn when a snapshot hit the cap, since effective-domain and
+ * parent-chain inheritance may be silently incomplete.
  */
 export function warnIfTreeSnapshotTruncated(
   rowCount: number,
@@ -83,12 +56,9 @@ export function warnIfTreeSnapshotTruncated(
 }
 
 export async function loadTreeSnapshot(db: Db, subject?: string): Promise<KnowledgeNode[]> {
-  // B1 double-truth fix — `mastery` / `evidence_count` / `last_evidence_at` are
-  // overlaid below from the SoT mastery_state.theta_hat projection
-  // (getMasteryProjection → σ(θ̂)), NOT the deprecated knowledge_mastery view's
-  // weighted-success-rate + `<3 → 0.5` placeholder. `last_active_at` is an
-  // orthogonal "last touched by ANY event" timeline value (COALESCE with
-  // knowledge.created_at) — NOT the double-truth bug — so it still reads the view.
+  // Mastery comes from the mastery_state projection, not the deprecated
+  // knowledge_mastery success-rate view. last_active_at is an orthogonal any-event
+  // timeline, so it still reads the view.
   const baseRows = await db
     .select({
       id: knowledge.id,
@@ -101,26 +71,15 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
     .from(knowledge)
     .leftJoin(knowledge_mastery, eq(knowledge_mastery.knowledge_id, knowledge.id))
     .where(isNull(knowledge.archived_at))
-    // NOTE (YUK-897): synthetic:* rows are intentionally INCLUDED here. Internal
-    // consumers (goal-scope, edge-proposal, hub-sync) need the seed scaffolding;
-    // learner-facing exclusion happens at the API projection boundary
-    // (src/capabilities/knowledge/api/tree.ts), not in the shared snapshot.
-    // Deterministic order BEFORE the cap (CODEX-3): a bare LIMIT with no ORDER BY
-    // lets Postgres return an arbitrary 5000-row subset, so two callers on the
-    // same data could see different rows — and a truncated subset could drop a
-    // parent node, silently mis-computing a child's effective_domain. Ordering by
-    // a stable key makes the truncated subset reproducible. (Root cause — the
-    // load-all approach itself — is the YUK-236 CTE rewrite; this just makes the
-    // interim cap deterministic.)
+    // Include synthetic:* rows: internal consumers need the seed scaffolding;
+    // learner-facing exclusion happens at the API projection boundary.
+    // Stable order before the cap so a truncated subset is reproducible and cannot
+    // drop a parent and mis-compute a child's effective domain.
     .orderBy(knowledge.id)
-    // Bound the load-all snapshot so a runaway graph can't OOM the heap. See the
-    // LOAD_TREE_SNAPSHOT_LIMIT docblock for the phase-deferred CTE follow-up.
     .limit(LOAD_TREE_SNAPSHOT_LIMIT);
   warnIfTreeSnapshotTruncated(baseRows.length);
 
-  // Overlay the SoT mastery projection (single batch read on mastery_state).
-  // Absent (never-attempted) nodes → mastery null / evidence 0 / no
-  // last_evidence_at, matching the deprecated view's NULL/0 (no-evidence) output.
+  // Absent nodes -> mastery null / evidence 0 / no last_evidence_at.
   const projection = await getMasteryProjection(
     db,
     baseRows.map((r) => r.id),
@@ -134,8 +93,8 @@ export async function loadTreeSnapshot(db: Db, subject?: string): Promise<Knowle
       parent_id: r.parent_id,
       archived_at: r.archived_at,
       mastery: proj ? proj.mastery : null,
-      // A5 S1 (YUK-354) — band fields from the same SoT projection. Absent → null/false
-      // (cold start); the client's masteryBandView maps mastery=null to the unknown band.
+      // Band fields from the same projection; absent -> null/false, rendered as
+      // the unknown band.
       mastery_lo: proj?.mastery_lo ?? null,
       mastery_hi: proj?.mastery_hi ?? null,
       low_confidence: proj?.low_confidence ?? false,
@@ -179,17 +138,9 @@ export interface KnowledgeMeshEdge {
 const LIST_MESH_EDGES_LIMIT = 500;
 
 /**
- * The live (non-archived) knowledge_edge mesh for hub-mesh curation, mirroring
- * the default `listKnowledgeEdges(db)` path in
- * src/capabilities/knowledge/server/edges.ts: no subject/from/to/relation
- * filter, `archived_at IS NULL`, `ORDER BY created_at DESC, id DESC`, fetch
- * LIMIT+1 (501) then keep the first 500 — the source path fetched the extra row
- * to compute `next_cursor`; the read work and row set are identical. The discarded cursor is still
- * encoded because its timestamp conversion can fail on malformed data. Full-row select keeps the column-decode
- * surface identical (no `select({...})` narrowing that could turn a would-be
- * decode failure into a success). KNOWN PRE-EXISTING TRUNCATION, preserved
- * deliberately: beyond 500 live edges the curation sees only the newest 500 —
- * lifting the cap is a separate product decision, not this move's scope.
+ * Live knowledge_edge mesh with the default listKnowledgeEdges ordering and row set.
+ * Fetch LIMIT+1, keep 500, and encode the discarded cursor to preserve its timestamp
+ * failure behavior. Truncation beyond 500 is pre-existing and intentional.
  */
 export async function listKnowledgeMeshEdges(db: Db | Tx): Promise<KnowledgeMeshEdge[]> {
   const fetched = await db
@@ -207,8 +158,7 @@ export async function listKnowledgeMeshEdges(db: Db | Tx): Promise<KnowledgeMesh
   }));
   const last = rows.at(-1);
   if (hasMore && last) {
-    // listKnowledgeEdgesPage encoded this cursor even though the caller only
-    // consumed rows. Keep its timestamp failure behavior during this move.
+    // Encode even though unused, preserving the timestamp failure behavior.
     Buffer.from(
       JSON.stringify({ created_at: last.created_at.toISOString(), id: last.id }),
     ).toString('base64url');

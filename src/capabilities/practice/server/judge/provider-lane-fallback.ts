@@ -57,7 +57,7 @@ type LaneFallbackRunResult<T> =
   | { ok: false; hardFailure: ProviderHardFailure };
 
 function effectiveUnconfiguredLane(kind: LaneFallbackTaskKind): string {
-  // YUK-1007：与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
+  // 与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
   // DB lane.global.provider > registry default。
   return (
     process.env.AI_PROVIDER_OVERRIDE ||

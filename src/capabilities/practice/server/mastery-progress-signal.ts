@@ -1,21 +1,17 @@
-// ADR-0040 决定2 — Living-Note ← mastery_state p(L) progress telemetry.
-//
+// 决定2 — Living-Note ← mastery_state p(L) progress telemetry.
 // 背景：mastery_change refine 触发器（note-refine-triggers.ts）历史上叫
 // `review_success`，触发条件是纯 `outcome==='success'`（成败代理），**从不读任何真实
-// mastery 数值**。ADR-0040 决定2 要把它诚实化为「读 mastery_state 真实 p(L) delta」，
+// mastery 数值**。 决定2 要把它诚实化为「读 mastery_state 真实 p(L) delta」，
 // 最终目标是触发条件改为「p(L) 跨阈变化」。但跨阈阈值是 n=1 magic number——必须先埋点
 // N 周拿到真实 Δ 分布后再定，绝不现在硬编码。
-//
 // 本模块就是那一步「埋点」：在 mastery_change 触发点（submit.ts，outcome===success
 // 处）READ 学习者刚落库的真实 p(L)/θ̂ delta（mastery_state.last_theta_delta = 本次
 // attempt 的 Δθ̂，由 updateThetaForAttempt 写入），并把它作为一条 `experimental:
 // mastery_progress` 事件 EMIT，复用既有 event/ai-log 基础设施（不建新表）。N 周后
 // owner 从这些事件的 Δ 分布里挑阈值，再把触发条件从「成败代理」升级为「跨阈 gating」。
-//
-// B1 基础设计此前对 living note 链零提及——本模块即 ADR-0040 决定2 要求补的「living
+// B1 基础设计此前对 living note 链零提及——本模块即 决定2 要求补的「living
 // note → mastery_state 读接口」最小实现。
-//
-// 红线（ADR-0035，三轴正交）：本模块 **只 READ** mastery_state 派生 p(L)/θ̂，并 EMIT 一条
+// 红线（，三轴正交）：本模块 **只 READ** mastery_state 派生 p(L)/θ̂，并 EMIT 一条
 // 观测事件。**绝不写** mastery_state / item_calibration / FSRS——θ̂/p(L)/FSRS scheduling
 // 不经此路径回流。它是只读旁路埋点，不是反馈环。
 
@@ -85,7 +81,7 @@ export async function readMasteryProgress(
 /**
  * READ p(L) delta + EMIT 一条 `experimental:mastery_progress` 观测事件 per KC。
  *
- * 埋点用：让 owner N 周后从真实 Δθ̂/p(L) 分布里挑「跨阈」阈值（ADR-0040 决定2）。事件复用
+ * 埋点用：让 owner N 周后从真实 Δθ̂/p(L) 分布里挑「跨阈」阈值（决定2）。事件复用
  * 既有 event 表（subject_kind='knowledge'，subject_id=<kc>），不建新表。caused_by 串到
  * 触发它的 attempt event，证据可追溯（evidence-first）。
  *
@@ -94,15 +90,15 @@ export async function readMasteryProgress(
  * 让旁路埋点 fail 主作答路径（caller 已在 tx 外，但仍保守 try/catch）。
  *
  * OCR fixes:
- *  - MAJOR (~:102)：per-KC writeEvent INSERT 并行（Promise.allSettled，各 event 独立，own
- *    newId()），不再串行 await。
- *  - MEDIUM (~:101)：**per-event** 错误隔离。一条 writeEvent throw **绝不** cascade 中断其余
- *    KC 的 emit——否则单点失败会静默丢掉整批 Δ 读数，毁掉本模块唯一用途（采集 ADR-0040 决定2
- *    阈值分析所需的 Δ 分布）。失败计数经 onEmitFailure 回调 + console.warn 暴露，不静默丢。
+ * - MAJOR (~:102)：per-KC writeEvent INSERT 并行（Promise.allSettled，各 event 独立，own
+ * newId），不再串行 await。
+ * - MEDIUM (~:101)：**per-event** 错误隔离。一条 writeEvent throw **绝不** cascade 中断其余
+ * KC 的 emit——否则单点失败会静默丢掉整批 Δ 读数，毁掉本模块唯一用途（采集 决定2
+ * 阈值分析所需的 Δ 分布）。失败计数经 onEmitFailure 回调 + console.warn 暴露，不静默丢。
  *
  * @returns 实际成功 emit 的事件 id 列表（cold-start 无 Δ 的 KC 仍 emit，theta_delta=null 是
- *   合法的「首作答」读数，对埋点同样有意义）。失败的 KC 不进此列表，但会经 onEmitFailure +
- *   warn 计数暴露。
+ * 合法的「首作答」读数，对埋点同样有意义）。失败的 KC 不进此列表，但会经 onEmitFailure +
+ * warn 计数暴露。
  */
 export async function emitMasteryProgressSignal(input: {
   db: Db | Tx;
