@@ -41,3 +41,21 @@ provider/paid、effective-domain图读、事务/CAS/恢复/embedding写入失效
 tests/DB/TEST/Docker/provider/runtime均NOT_RUN。首次独立R1与exact-head CI尚待；父将以最终完整diff交首次R1，不拆出绕审。
 
 最终源码及七caller保护：`YUK-1570/370c7bdc19a635af1e93c69e38070e0fa788a4e9/embedding-final-proof/proof.json`；五门raw/argv/UTC/rc在同head `embedding-final-gates/`。原获批出口收口patch SHA `be9304bcdf4e3733e7133befd12a9c98646b057c6323ffc8863cf18ec7acb64d`，9cbc相对证据保留。
+
+
+## 已审片整合最新main
+
+#1935/1937/1938注释片先合至main `102e77e42983155600fa31849d121d8c844b19b0`。
+正常merge得 `7d505f163e0f537d9cbd3c85a699f21b9ff8a809`，无冲突；4477个其他main
+条目全部保留，本片除write.ts外完整blob同唯一R1已审53cf。write.ts排除本片import后
+全文同新main，保上游注释；完整Babel AST与TypeScript去注释JS emit同已审write。
+裸TypeScript scanner初比rc1：未由parser重扫模板尾，误把SQL模板后注释吞为模板token；
+首差为old161/new122 Editable surface注释。失败原留，已撤回提前发出的nontrivia相同
+断言；采用定位上下文+完整解析及emit证明，不声称运行行为或错误栈行号不变。
+
+新组合五门按base102经heavy串行全rc0，依赖三hash同原安装回执，未重复安装。
+上游main账目原样，本片39→41历史前缀保持；诊断384/0/36，新边0、SCC不变。
+唯一R1仍为214→53cf，未重开审查；本次是已审片与上游注释的组合证明，需新exact CI。
+证据：`YUK-1570/7d505f163e0f537d9cbd3c85a699f21b9ff8a809/embedding-main102-integration/`
+含五门raw/argv/UTC/rc、整树/账本/依赖proof、裸scanner失败定位、AST与两份emit。
+这对真实变更成功在同文件不同hunk组合且无产品修复；不能外推任意需求并行零返工。
