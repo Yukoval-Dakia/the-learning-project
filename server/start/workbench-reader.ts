@@ -72,6 +72,16 @@ export const readStartKnowledgeTree = async (input?: { subject?: string }) => {
     };
   });
 };
+export const readStartKnowledgeFrontier = () =>
+  withStartDb(async (db) => {
+    const { loadFrontierRail } = await import('@/capabilities/knowledge/public');
+    return { rows: await loadFrontierRail(db) };
+  });
+export const readStartKnowledgeReviewDue = () =>
+  withStartDb(async (db) => {
+    const { loadReviewDueSummary } = await import('@/capabilities/knowledge/public');
+    return loadReviewDueSummary(db);
+  });
 export const readStartConjectures = () =>
   withStartDb(async (db) => {
     const { loadPrepDeskConjectures } = await import('@/capabilities/shell/public');
