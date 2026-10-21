@@ -30,6 +30,7 @@ import { Route as AdminRunsRouteImport } from './routes/admin.runs'
 import { Route as AdminSubjectsRouteImport } from './routes/admin.subjects'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 import { Route as EventsIdRouteImport } from './routes/events.$id'
+import { Route as OnboardingUploadRouteImport } from './routes/onboarding.upload'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -137,6 +138,11 @@ const EventsIdRoute = EventsIdRouteImport.update({
   path: '/events/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OnboardingUploadRoute = OnboardingUploadRouteImport.update({
+  id: '/onboarding/upload',
+  path: '/onboarding/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -165,6 +171,7 @@ export interface FileRoutesByFullPath {
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
+  '/onboarding/upload': typeof OnboardingUploadRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesByTo {
@@ -189,6 +196,7 @@ export interface FileRoutesByTo {
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
+  '/onboarding/upload': typeof OnboardingUploadRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesById {
@@ -214,6 +222,7 @@ export interface FileRoutesById {
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
+  '/onboarding/upload': typeof OnboardingUploadRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRouteTypes {
@@ -240,6 +249,7 @@ export interface FileRouteTypes {
     | '/admin/subjects'
     | '/api/$'
     | '/events/$id'
+    | '/onboarding/upload'
     | '/admin/subjects/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -264,6 +274,7 @@ export interface FileRouteTypes {
     | '/admin/subjects'
     | '/api/$'
     | '/events/$id'
+    | '/onboarding/upload'
     | '/admin/subjects/$id'
   id:
     | '__root__'
@@ -288,6 +299,7 @@ export interface FileRouteTypes {
     | '/admin/subjects'
     | '/api/$'
     | '/events/$id'
+    | '/onboarding/upload'
     | '/admin/subjects/$id'
   fileRoutesById: FileRoutesById
 }
@@ -313,6 +325,7 @@ export interface RootRouteChildren {
   AdminSubjectsRoute: typeof AdminSubjectsRouteWithChildren
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
+  OnboardingUploadRoute: typeof OnboardingUploadRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -464,6 +477,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EventsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/onboarding/upload': {
+      id: '/onboarding/upload'
+      path: '/onboarding/upload'
+      fullPath: '/onboarding/upload'
+      preLoaderRoute: typeof OnboardingUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/subjects/$id': {
       id: '/admin/subjects/$id'
       path: '/$id'
@@ -508,6 +528,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminSubjectsRoute: AdminSubjectsRouteWithChildren,
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
+  OnboardingUploadRoute: OnboardingUploadRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

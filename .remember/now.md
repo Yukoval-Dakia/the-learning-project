@@ -1,3 +1,7 @@
+# Migration focus — 2026-10-21
+
+Owner停止手工SHA/重复seal/例行运维，ea21单次隔离build失败已清理且不重试。主线任务是YUK1358首次上传Start入口：new onboarding.upload route、生成routeTree、SPA onboardingUpload handoff，原组件/HTTP保持。Stage1已明确解除原暂缓且无writer；协调已将三个非重叠入口范围分配给迁移，不等待 UI 额度；保留 UI RecordRoute 注释与其它页面差量。当前分支feat/yuk-1358-onboarding-upload-start基于def2aeb51，pnpm frozen install及typecheck/lint/build完成（lint181warnings），三处产品接线已完成，独立R1/PR CI待执行；不新写测试，不启服务/模型。后续以本片真实源码/CI/浏览器分层交付，不把旧运营包当迁移成果。
+
 # 录入助手永久身份与未结费用修复，2026-10-20
 
 PR1891原树从clean6c82接手，单代码写手，无委派/第三审。52548d889源码修复五P1，70d8ff68b普通整合main518c8b21a；main baseline/限流原样，父503类型保留，任务相对main无测试差量。永久reservation先于额度检查且同key锁先查agent durable；OCR wire前pending/精确attempt，主模型确定性task负债；全历史unknown/非USD/归属未证阻启动，周过滤只算known used。job消失/HTTP恢复不证明执行者结束，原grant不重新enqueue。生成/typecheck/lint/build与schema/api-contracts/capability-boundaries/architecture-deepening/provider-attempt-truth/profile/draft-status/partition全exit0，lint179warnings；本线重活全外部heavy.sh串行、内置复用祖先槽，未install。仓外tlp-audit-artifacts/yuk1522/pr1891-codex-repair-20261020/checks.json SHA256 3a7123f9240eec4208351810027916eadfbc5cdade777c68f949df2a2d961196；typecheck01失败也保留。后续普通push原draft交父定向及新head CI，无watch。历史归属数量未查，需运营实际核对，不能声称缺口为空。所有test/断言脚本/DB/迁移/TEST/Docker/provider/daemon/PR merge/部署NOT_RUN，默认助手禁开。完整证据和源码入口见docs/planning/2026-10-20-ingestion-budget-history.md。
