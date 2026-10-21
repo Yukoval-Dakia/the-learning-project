@@ -527,12 +527,12 @@
       "direction": "decrease"
     },
     {
+      "direction": "decrease",
       "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-21",
       "from": 13,
-      "to": 12,
-      "direction": "decrease"
+      "to": 12
     },
     {
       "debt": "capabilityToServer",
