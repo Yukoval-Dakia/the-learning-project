@@ -3097,9 +3097,9 @@ export const intervention = pgTable(
 //
 // drift_v vs boundary_a/ter provenance gate (the A11 hard boundary): in an ADAPTIVE flow item
 // selection pins Pc, confounding the drift interpretation, so `drift_v` is persisted ONLY for
-// provenance='probe' (a non-adaptive fixed-difficulty probe-set). In the adaptive main flow we
-// write boundary_a + ter and leave drift_v NULL. (No non-adaptive probe-set source exists; the
-// nightly writer is retired, and the probe-set flip stays deferred.)
+// provenance='probe' (a non-adaptive fixed-difficulty probe-set). The retired nightly writer
+// wrote boundary_a + ter and left drift_v NULL. (No non-adaptive probe-set source exists; the
+// probe-set flip stays deferred.)
 //
 // n_obs = total scored responses backing the recovery (usage-gate provenance, NOT a θ count).
 // NOTE: A10 (confidence/calibration_curve, YUK-444) is HOLD; when it lands it adds its own
@@ -3122,7 +3122,7 @@ export const learner_axis_state = pgTable(
     // total scored responses the recovery folded (usage-gate evidence). DEFAULT 0.
     n_obs: integer('n_obs').notNull().default(0),
     // 'adaptive' | 'probe' — which response source produced this row. Gates drift_v
-    // persistence. DEFAULT 'adaptive' (the only live source today).
+    // persistence. DEFAULT 'adaptive' (historical rows; no current writer).
     provenance: text('provenance').notNull().default('adaptive'),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
