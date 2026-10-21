@@ -8,7 +8,9 @@
 
 共享边界只释放 `schema.ts` 的 `tool_operation` 前独立新表，以及 export/constants 的同表排除与恢复清理登记；不修改既有表、learner_axis_state 注释、EOF custom_provider 或他人分支。
 
-协调给本片保留 `drizzle/0133_yuk1448_bank_search_snapshot.sql`，真实 additive SQL 与产品声明同交。**最终 `0133_snapshot.json` 和 `_journal.json` 由父在 writer 释放、0132 正常合入实际 main 后单 writer 普通 merge，再从真实 0132 生成。** 当前基线实际末项仍为 0131/1792580511426；#1926 的 0132/1792593153036 尚未合入，旧 CI 不覆盖当前组合。不得伪造 132/prevId、取 NOT_APPLIED 候选、重编号或手补 journal 放过审计。顺序裁定见 [协调原 PR 评论](https://github.com/Yukoval-Dakia/the-learning-project/pull/1926#issuecomment-6324180292)。本候选因此尚不具备完整迁移 metadata，不能部署。
+协调保留的 `drizzle/0133_yuk1448_bank_search_snapshot.sql` 已在真实 0132 落 main 后完成生成器接线。父普通 merge `fefbdf07fcaf0c9cf4aeff3a495dd1e94ce95ed0`（#1926，含完整 custom_provider / 0132 SQL、snapshot、journal）为 `7fbf2e2b1`；唯一冲突是 baseline，保留上游全部记录并追加本片路径迁移和实际 schema 5002→5030 的登记，未改 audit。
+
+随后从组合后的真实 `src/db/schema.ts` 执行既有 `pnpm db:generate --name yuk1448_bank_search_snapshot`，exit 0；生成的 0133 snapshot.prevId 为实际 0132 的 `bc17bd38-072a-4119-9691-d7b20b25e7e4`，journal idx=133 / when=1792614919705，晚于实际 132 的 1792593153036。snapshot 差量只有新 bank_search_snapshot 表及新版本身份；SQL 由同一 schema 生成，既有 0132 文件和 journal 前缀完整保留。生成不连接或迁移数据库，真实 DB/恢复仍 NOT_RUN。迁移源码依赖已解除；原两处测试收窄仍须 owner 明确批准，未修改测试，不能把本次接线当成 CI 或运行验收。
 
 ## 真实调用与结果
 
@@ -22,7 +24,7 @@ SQL 硬范围仍先于每通道候选上限。实际发题门仍由 `readBankSer
 
 召回和有权限同版读取在短只读 repeatable-read 事务冻结，事务结束后执行无工具解释/核验任务，再短事务重验状态并保存结果。每候选只取真实 revision 内容，不用 mutable reference_md 当核验原文。每项证据校验 locator、原文 quote 和 offset；同题共同成立另检查 joint，选中 parts 必须合法且满足用途。共享材料按本题绑定定位；未实际读到的媒体、权限缺失、文本截断或摘要不符保持 unknown。caption/alt/OCR 不能冒充看图。
 
-核验策略版本 `bank-semantic-v2-20261022` 与完整公开槽位投影绑定（替代初版 `bank-semantic-v1-20261022`，wire contract_version 仍为 2）；旧策略快照沿现有 policy 比较返回 stale。最多 20 候选逐题核验，总墙钟 180 秒并受父调用更短 deadline/取消约束；每字段读取上限 200000、每候选原文与完整槽位 JSON 共用 90000 字符预算，超限明确缺证。达到明确 need 可停止；失败不重发同次 unknown。全部 required 与 joint 支持且用途可用才计 matched；preferred 与原 RRF 顺序只在同组内排序，保留前后 rank。未核题、反证、用途不可用分别返回。global enforced 仅确定性硬范围，条件通过只放 checks；不从空池、翻完本池或页大小证明全库 absence。
+核验策略版本 `bank-semantic-v3-20261022` 与完整公开槽位投影及原始 options 缺证校验绑定（替代 v1/v2 策略，wire contract_version 仍为 2）；旧策略快照沿现有 policy 比较返回 stale。最多 20 候选逐题核验，总墙钟 180 秒并受父调用更短 deadline/取消约束；每字段读取上限 200000、每候选原文与完整槽位 JSON 共用 90000 字符预算，超限明确缺证。达到明确 need 可停止；失败不重发同次 unknown。全部 required 与 joint 支持且用途可用才计 matched；preferred 与原 RRF 顺序只在同组内排序，保留前后 rank。未核题、反证、用途不可用分别返回。global enforced 仅确定性硬范围，条件通过只放 checks；不从空池、翻完本池或页大小证明全库 absence。
 
 任务回执使用真实 task-run、provider/model、输入/输出 digest、compiled prompt、usage、cost 与 transport 证据引用；执行真相与产品校验结果分别保留。费用无证时 null/unknown，不补 0。不修改 paid/fallback/retry 协议，不持事务等待模型。
 
@@ -135,4 +137,16 @@ passage 定位使用 `/parts/<part>/slots/<slot>/<field path>`，part/slot/axis 
 
 策略变为 `bank-semantic-v3-20261022`，此前 v1/v2 核验快照沿现有 policy 比较 stale。此修复不改变题目评分/准入/paid、测试或迁移登记。父的静态检查另记真实结果；DB/provider/模型输出与畸形槽位验收仍 NOT_RUN，不以源码推演替代运行验证。
 
-父实际检查：typecheck exit2，仍29条且只在旧 bank-tools.db.test.ts；lint 初次 exit1 为新增三元表达式折行，修正后 exit0/181 warnings；build exit0，后续仅上述折行与文档改变。命令均经既有 heavy 限流串行，原始日志在仓库外 `tlp-status/review/stage1-yuk1448-search-semantic-20261022/parent-r2-*.log`。父定向读通 raw revision → strict options → part/global blocker → checks/joint unknown 与旧策略 stale，确认残留的源码修法；这不是第三轮独立审查，原 R2 CHANGES_REQUESTED 不改写。最后实际 main/0133 metadata 的组合仍待原132顺序及owner测试许可，不能合入或部署。
+父实际检查：typecheck exit2，仍29条且只在旧 bank-tools.db.test.ts；lint 初次 exit1 为新增三元表达式折行，修正后 exit0/181 warnings；build exit0，后续仅上述折行与文档改变。命令均经既有 heavy 限流串行，原始日志在仓库外 `tlp-status/review/stage1-yuk1448-search-semantic-20261022/parent-r2-*.log`。父定向读通 raw revision → strict options → part/global blocker → checks/joint unknown 与旧策略 stale，确认残留的源码修法；这不是第三轮独立审查，原 R2 CHANGES_REQUESTED 不改写。该轮检查时 main/0133 metadata 仍待原132顺序；现已按上方“工作树与依赖”完成真实组合。owner 两处测试收窄许可仍未到，最终新 head 的静态门与 CI 单独记录，不以历史结果代替。
+
+
+### 真实 0132 整合后的最终静态门
+
+父在 `7fbf2e2b1` 合并实际 main `fefbdf07f` 后，由既有生成器生成完整 0133 三件套；受检工作集仅再含本节文档收口。全部命令经 heavy.sh 串行，未安装新依赖。
+
+- `pnpm typecheck` exit 2：29 条诊断仍全部在原 `bank-tools.db.test.ts` 两处输出未收窄所影响的使用点；相对实际 main 没有测试 diff。owner 原 TEXT 待批，不以假类型或字段绕过。
+- `pnpm lint` exit 0（182 warnings）、`pnpm build` exit 0、独立 Start `tsrs --noEmit -p server/start/tsconfig.json` exit 0。
+- `audit:capability-boundaries`、`audit:architecture-deepening`、`audit:schema`、`audit:task-census`、`audit:model-source`、`audit:provider-lanes`、`audit:tool-params` 全部 exit 0；债务数 384/0/36、11 个超长文件均与实际 main 相同。生成后的 snapshot 差量只含新表及 id/prevId，未改 0132。
+- 原始日志：仓库外 `tlp-status/review/stage1-yuk1448-search-semantic-20261022/parent-0133-*.log`。本轮没有重跑历史 CI、第三审或本机测试；新 push 触发的新 exact CI 自行给出组合结果，不能提前称绿。
+
+迁移源码前置现已完成；仅两处测试 TEXT 的 owner 批准仍是当前明确外部决定。正常 CI 和未交产品义务保留，DB/迁移执行/恢复/provider/39/K7/盲题/浏览器/部署全部 NOT_RUN。
