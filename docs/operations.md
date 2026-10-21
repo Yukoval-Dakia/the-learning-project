@@ -78,7 +78,7 @@ docker compose run --rm migrate
 `scripts/mac-daily-dump.sh` 由 `scripts/launchd/studio.yukoval.loom-daily-dump.plist` 每日 07:15 触发，向 runtime 目录写 `loom-daily-YYYYMMDD.dump`（custom format，供 `pg_restore`），保留最近 14 份，更老的只留每月 1 号。
 
 - 脚本与 launchd 日志必须装在内置盘 `~/Library/Application Support/loom-daily-dump/`：launchd 子进程对 `/Volumes/*` 的任何 I/O 都会被 TCC 拒绝（表现为 `spawn failed` / `EX_CONFIG 78`）。对 runtime 目录的读写全部经 `docker run -v` 在容器内完成。
-- 成功写 `.loom-daily-dump-last-success`（epoch 戳）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，容器/daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或存在失败标记时 `exit 1`。
+- 成功写 `.loom-daily-dump-last-success`（epoch 戳）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 并 `exit 1`，容器/daemon 不可达时改写到安装目录。`--check` 在戳龄超过 48 小时或当天失败标记存在时 `exit 1`；标记按日命名，更早日期的标记要手动 `ls` runtime 目录和安装目录。
 - 日志：runtime 目录的 `loom-daily-dump.log`，安装目录的 `launchd.log`。
 - 可覆盖 `LOOM_RUNTIME_DIR`、`LOOM_PG_CONTAINER`、`LOOM_DB_USER`、`LOOM_DB_NAME`、`LOOM_KEEP_DAILY`、`LOOM_MIN_BYTES`；`LOOM_MIN_BYTES` 默认拒收小于 100KB 的 dump。
 
@@ -100,35 +100,43 @@ pnpm db:restore < /tmp/loom-20260101-000000.sql
 
 ### 完整 Postgres 恢复
 
-外部 maintenance owner 必须先建立并持续持有 writer / 客户端 / 序列写入的隔离边界；`scripts/cutover-final-backup.sh` 只做 capture，不停也不重启 writer：
+外部 maintenance owner 必须先建立并持续持有 writer / 客户端 / 序列写入的隔离边界；`scripts/cutover-final-backup.sh` 只做 capture，不停也不重启 writer。`--out` 是父目录：脚本在它下面新建 `capture-*` 目录，并往 stdout 打印 `{"directory", "source_manifest", "manifest"}`，后续命令统一用 `CAPTURE_DIR`：
 
 ```bash
-bash scripts/cutover-final-backup.sh --target=<pg-url> \
-  --quiescence-evidence=<maintenance.json> --out=<capture-root> --strict
-bash scripts/restore-drill.sh --dump=<capture>/database.dump \
-  --source-manifest=<capture>/source-manifest.json --out=<capture>/restore-evidence.json
-pnpm exec tsx scripts/cutover-backup.ts --capture-dir=<capture>/migration \
-  --dump=<capture>/database.dump --dlq=<capture>/dlq-tombstones.json \
-  --source-manifest=<capture>/source-manifest.json \
-  --restore-evidence=<capture>/restore-evidence.json \
-  --out=<capture> --strict --require-restore-parity
+CAPTURE_DIR=$(bash scripts/cutover-final-backup.sh --target=<pg-url> \
+  --quiescence-evidence=<maintenance.json> --out=<capture-root> --strict |
+  jq -er .directory)
+bash scripts/restore-drill.sh --dump="$CAPTURE_DIR/database.dump" \
+  --source-manifest="$CAPTURE_DIR/source-manifest.json" \
+  --out="$CAPTURE_DIR/restore-evidence.json"
+pnpm exec tsx scripts/cutover-backup.ts --capture-dir="$CAPTURE_DIR/migration" \
+  --dump="$CAPTURE_DIR/database.dump" --dlq="$CAPTURE_DIR/dlq-tombstones.json" \
+  --source-manifest="$CAPTURE_DIR/source-manifest.json" \
+  --restore-evidence="$CAPTURE_DIR/restore-evidence.json" \
+  --out="$CAPTURE_DIR" --strict --require-restore-parity
 ```
 
 `--strict` 只检查 capture 工件是否存在；`--require-restore-parity` 才是恢复门，要求当前成功的 version-2 receipt 并重算 artifact 哈希与对比。`scripts/restore-drill.sh` 默认在 `--network=none` 的 scratch 容器里比较，不接触生产库。
 
-用 custom dump 覆盖现有库的顺序（完整说明见 [sub5-restore-cli.md](sub5-restore-cli.md#full-postgres-disaster-recovery)）：
+用 custom dump 覆盖现有库（完整说明见 [sub5-restore-cli.md](sub5-restore-cli.md#full-postgres-disaster-recovery)）。先挡住 ingress / dispatch，并记录最后一次 provider 流量的时间；任何边界不明就保持关闭，`app` 与 `worker` 用同一个 `AI_PROVIDER_SESSION_ADMISSION_MODE` 一起启动：
 
 ```bash
+DUMP="$CAPTURE_DIR/database.dump"
 docker compose stop app worker
-docker compose exec -T postgres pg_restore -U "${POSTGRES_USER:-loom}" -d "${POSTGRES_DB:-loom}" \
-  --clean --if-exists --no-owner --single-transaction --exit-on-error < "$DUMP"
+docker compose exec -T postgres sh -c '
+  pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --single-transaction --exit-on-error
+' < "$DUMP"
 docker compose run --rm migrate
-docker compose exec -T postgres psql -U "${POSTGRES_USER:-loom}" -d "${POSTGRES_DB:-loom}" \
-  -c 'TRUNCATE TABLE provider_session_admission'
+docker compose exec -T postgres sh -c '
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "TRUNCATE TABLE provider_session_admission"
+'
+# 等待检查点：距最后 provider 流量 60 秒、捕获到的 restore_quarantine_until 已过，以及（除非有
+# 应用级正常排空证据）停止时刻 + 45 秒 SDK 启动预算 + 最大执行超时 + 30 秒 abort grace。
+# 任一上界不明就保持 fail-closed，不要执行下面这条启动命令。
 docker compose up -d app worker
 ```
 
-恢复前要挡住 ingress / dispatch，并记录最后一次 provider 流量的时间。重开前至少满足：距最后流量 60 秒、捕获到的 `restore_quarantine_until` 已过，以及（除非有应用级正常排空证据）停止时刻 + 45 秒 SDK 启动预算 + 最大执行超时 + 30 秒 abort grace。任何边界不明就保持关闭；`app` 与 `worker` 用同一个 `AI_PROVIDER_SESSION_ADMISSION_MODE` 一起启动。
+`POSTGRES_USER` / `POSTGRES_DB` 由 `docker-compose.yml` 注入 postgres 容器，命令交给容器内 `sh` 展开，宿主 `.env` 里的值没 export 也不会连错库。
 
 ### 逻辑归档 import 的硬门
 
@@ -154,7 +162,8 @@ docker compose -f docker-compose.yml -f docker-compose.mac.yml \
 Mac 宿主的 fake-IP 解析会把域名答成 `198.18.0.0/15`，容器继承后会被图片候选的 SSRF 守卫按设计拒绝。`docker-compose.mac.yml` 因此给 `app` 和 `worker` 固定公共递归 DNS `223.5.5.5`、`119.29.29.29`；私有 compose 重建后要核对：
 
 ```bash
-getent hosts www.jyeoo.com
+docker compose -f docker-compose.yml -f docker-compose.mac.yml exec app getent hosts www.jyeoo.com
+docker compose -f docker-compose.yml -f docker-compose.mac.yml exec worker getent hosts www.jyeoo.com
 ```
 
 不要放行 `198.18.0.0/15`，也不要改宿主代理来“修”它。这个探针不覆盖 jyeoo Rust 子进程和 Exa 抓取路径。
