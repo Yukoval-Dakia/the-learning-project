@@ -1,23 +1,20 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/scheduling';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
-//
 // queryReviewDue is the typed actionable queue. get_review_due separately
 // reports schedule projections and bounded diagnostic coverage; its result
 // must not be replaced with this question-face queue.
-//
-// Pre-Step-9 the route SELECTed mistake rows where fsrs_state.due <= now() OR
+// Pre-Step-9 the route SELECTed mistake rows where fsrs_state.due <= now OR
 // fsrs_state IS NULL. Post-Step-9 the legacy mistake table is gone; the FSRS
 // projection lives in `material_fsrs_state` (one row per (kind, id) — Step 9.A).
 // A never-reviewed question has NO `material_fsrs_state` row — those surface via
 // the failure-attempt event stream.
-//
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
 import { and, eq, inArray, lte } from 'drizzle-orm';
-// YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
-// inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
+// by-kind variant-rotation probe selection. Replaces the
+// inline single-question-avoidance ORDER BY (seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the
 // root_question_id variant family. Extracted to its own module so the
 // deterministic selection core is独立可测; due-list stays thin orchestration.
@@ -33,7 +30,7 @@ import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
-// YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
+// North-Star W10 review soft-bias. Active goals supply a
 // SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
 import {
@@ -41,11 +38,11 @@ import {
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
-// T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
+// T-CS / — cross-subject scheduling v1 (, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
 // knowledge_ids → parent chain → domain → SubjectProfile (default fallback for
-// orphan ids, YUK-56), memoised across the pool to avoid an N+1 on the
+// orphan ids,), memoised across the pool to avoid an N+1 on the
 // parent-chain walk. Extracted to `@/capabilities/knowledge/server/subject-resolution` (P5.2)
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
@@ -53,7 +50,7 @@ import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessmen
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
-// YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
+// swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
 type DbLike = Db | Tx;
 type ListActiveGoalsFn = (db: DbLike) => Promise<ActiveGoal[]>;
@@ -113,7 +110,7 @@ async function getFailureAttemptsPerQuestion(
   perQuestionLimit: number,
 ): Promise<FailureAttempt[]> {
   if (questionIds.length === 0 || perQuestionLimit <= 0) return [];
-  // YUK-76 codex round-3 P1 — push per-question cap into SQL via the new
+  // codex round-3 P1 — push per-question cap into SQL via the new
   // `perQuestionLimit` opt so each question gets its own bounded slice. The
   // previous `limit: qids*cap*3` was a global active-rows cap and let one
   // hot question saturate the window, dropping quiet questions from the
@@ -121,15 +118,13 @@ async function getFailureAttemptsPerQuestion(
   return await getFailureAttempts(activeDb, { questionIds, perQuestionLimit });
 }
 
-// T-CS / YUK-168 — deterministic round-robin SELECTION across subjects.
-//
+// T-CS / — deterministic round-robin SELECTION across subjects.
 // `rows` is already ordered most-due-first (due_at asc for the overdue segment,
 // or attempt order for the never-reviewed segment). We partition it by subject
 // id (preserving that within-subject order — STABLE), then cycle through the
 // subjects in a deterministic, stable order — the order in which each subject is
 // FIRST encountered in `rows` — taking the next most-due item from each in turn
 // until `limit` items are chosen or the pool is exhausted.
-//
 // SET PRESERVATION + DEGENERATION: with a SINGLE subject there is exactly one
 // bucket, so the round-robin emits that bucket in its original order — byte-
 // identical to `rows.slice(0, limit)`. This is the safety property that keeps
@@ -184,7 +179,7 @@ type ScheduledDueRow = {
   due_at: Date;
   fsrs_subject_kind: 'question' | 'knowledge';
   fsrs_subject_id: string;
-  // YUK-226 S2-5a.0 (B1) — source/metadata projected purely so downstream read
+  //5a.0 (B1) — source/metadata projected purely so downstream read
   // models can derive a source tier (deriveSourceTier needs both). Optional: the
   // never-reviewed slice / older call sites may not carry them. Projection ONLY —
   // these columns never touch the WHERE / ORDER / Gate-B filter, so the scheduling
@@ -201,7 +196,7 @@ export interface ReviewDueQuery {
 /**
  * Upper bound of the due page — `queryReviewDue` clamps `limit` to
  * 1..REVIEW_DUE_LIMIT_MAX. Exported so in-process consumers that want the full
- * page (the practice-stream composer due input, ADR-0037 H8) name the real
+ * page (the practice-stream composer due input, H8) name the real
  * contract instead of copying the literal.
  */
 export const REVIEW_DUE_LIMIT_MAX = 200;
@@ -235,15 +230,13 @@ export async function queryReviewDue(
   );
   const now = input.now ?? new Date();
   // Two slices, unioned:
-  //   1. Questions with material_fsrs_state where due_at <= now() — overdue
-  //      from prior reviews.
-  //   2. Questions with NO material_fsrs_state row but at least one failure
-  //      attempt — never-reviewed cards still owed a first pass.
-  //
+  // 1. Questions with material_fsrs_state where due_at <= now — overdue
+  // from prior reviews.
+  // 2. Questions with NO material_fsrs_state row but at least one failure
+  // attempt — never-reviewed cards still owed a first pass.
   // We keep them ordered: null-state cards first (legacy contract), then
   // due-earliest first.
-  //
-  // T-CS / YUK-168: fetch a WIDER overdue candidate window than `limit` (same
+  // T-CS / : fetch a WIDER overdue candidate window than `limit` (same
   // bounded window the never-reviewed slice uses) so the round-robin selection
   // below can balance across subjects. With a plain `.limit(limit)` the SQL
   // would pre-pick the `limit` most-due rows GLOBALLY — which can all be one
@@ -263,10 +256,10 @@ export async function queryReviewDue(
   // and 'active' (variant / dreaming / promoted quiz) both stay in the pool. NULL
   // handling is explicit (`draft_status != 'draft'` alone would drop NULL rows under
   // SQL three-valued logic).
-  // YUK-350 (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
+  // (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
   // they now land draft_status='draft' (container-only by design), so this predicate
   // already excludes them. NULL-stays-in-pool remains the truth ONLY for auto-enroll
-  // / legacy rows. Single definition: notDraftPredicate (@/db/predicates).
+  // legacy rows. Single definition: notDraftPredicate (@/db/predicates).
 
   const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
   const usedDueQuestionIds = new Set<string>();
@@ -287,7 +280,7 @@ export async function queryReviewDue(
       )
       .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
   ).filter(
-    // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
+    // defense in depth: a 'seed:<subj>:root' FSRS subject is a
     // structural anchor, never probeable content. Enroll sites no longer mint
     // it, but a pre-fix row may still exist until ops remediation retires it —
     // skipping it here keeps a stale anchor card from serving as a due probe
@@ -295,7 +288,7 @@ export async function queryReviewDue(
     (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
   );
 
-  // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
+  // bulk-prefetch every probe-selection DB input for the whole due page in THREE
   // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
   // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
   // set is threaded through the SAME sequential order → byte-identical probe picks.
@@ -321,7 +314,7 @@ export async function queryReviewDue(
   );
   const dueRows: ScheduledDueRow[] = [];
   for (const stateRow of knowledgeStateRows) {
-    // YUK-282 / ADR-0030 — by-kind variant-rotation probe (recall repeat vs
+    // by-kind variant-rotation probe (recall repeat vs
     // application family rotation). Returns the same projection the old inline
     // pickQuestionForKnowledge did (question_id + source/metadata for tier
     // derivation); mutates usedDueQuestionIds for cross-knowledge dedup.
@@ -350,7 +343,7 @@ export async function queryReviewDue(
       reference_md: question.reference_md,
       knowledge_ids: question.knowledge_ids,
       created_at: question.created_at,
-      // YUK-226 S2-5a.0 (B1) — project source/metadata for tier derivation.
+      //5a.0 (B1) — project source/metadata for tier derivation.
       source: question.source,
       metadata: question.metadata,
     })
@@ -361,7 +354,7 @@ export async function queryReviewDue(
         eq(material_fsrs_state.subject_kind, 'question'),
         selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
         notDraftPredicate(question.draft_status),
-        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
+        // 契约准入门：suspended/withdrawn 组不出 due 页
         // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
         questionSuspendedPredicate(question),
       ),
@@ -434,9 +427,8 @@ export async function queryReviewDue(
     created_at: Date;
   }> = [];
   if (newQuestionIds.length > 0) {
-    // Codex (PR #295) — knowledge-level "already reviewed" exclusion.
-    //
-    // ADR-0028 keys FSRS by knowledge point for labeled questions and DELETES
+    // knowledge-level "already reviewed" exclusion.
+    // keys FSRS by knowledge point for labeled questions and DELETES
     // the question-level row. So a knowledge point that was just reviewed (its
     // knowledge-level projection has due_at in the future) but whose source
     // question still carries a failure attempt would otherwise reappear here
@@ -526,7 +518,7 @@ export async function queryReviewDue(
           and(
             inArray(question.id, trulyNew),
             notDraftPredicate(question.draft_status),
-            // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不回炉选入。
+            // 契约准入门：suspended/withdrawn 组不回炉选入。
             questionSuspendedPredicate(question),
           ),
         );
@@ -602,26 +594,22 @@ export async function queryReviewDue(
     }),
   ];
 
-  // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5).
-  //
+  // Cross-subject scheduling v1.
   // Choose the returned page FIRST, before any goal soft-bias. Instead of a
   // plain global-due `combined.slice(0, limit)` (which lets one busy subject
   // dominate the page), we ROUND-ROBIN the selection across the learning-
   // subjects that have due items: cycle the subjects taking the next most-due
   // item from each in turn until `limit` is reached or the pool is exhausted.
-  //
   // We round-robin WITHIN each segment and keep the never-reviewed segment
   // ahead of the overdue segment, preserving the legacy null-state-first
   // contract that rerankOverdueByGoals relies on (overdue items remain a
   // contiguous tail). The never-reviewed block still wins the budget first,
   // exactly as `combined.slice` did today.
-  //
   // ND-5 命门: round-robin only changes the ORDER + which subjects share the
   // budget — every returned row is still a member of the same due pool, never
   // a non-due item, and the soft goal re-rank below runs on this ALREADY-
   // SELECTED page (never the pre-limit pool) so it can only reorder, never
   // expand or shrink the set.
-  //
   // SINGLE-SUBJECT DEGENERATION: when only one subject has due items, each
   // segment has a single round-robin bucket → emitted in its original order →
   // byte-identical to the old `combined.slice(0, limit)`. This keeps the
@@ -664,7 +652,7 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
 }
 
 /**
- * YUK-167 / ADR-0025 — North-Star W10 review soft-bias.
+ * North-Star W10 review soft-bias.
  *
  * Stable-partition the OVERDUE items of the already-selected page so that
  * goal-relevant ones (whose knowledge_ids intersect the union of active goals'

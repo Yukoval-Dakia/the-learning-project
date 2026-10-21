@@ -1,5 +1,4 @@
-// YUK-230 (PR #1063 review, thread 2) — source-grounding verification runner.
-//
+// (PR #1063 review, thread 2) — source-grounding verification runner.
 // Reuses the multimodal judge INFRA (R2 image fetch + SDK structured-output dispatch,
 // same shape as multimodal-direct-judge.ts / steps-judge.ts) but runs a GROUNDING-
 // specific prompt (SourceGroundingVerifyTask): re-read the source image and decide
@@ -7,14 +6,13 @@
 // model gap where feeding reference_md as a "student answer" to the answer-correctness
 // judge could not catch a VLM that hallucinated a self-consistent 题面 + 答案 unrelated
 // to the image.
-//
 // Returns a discriminated result so the caller (source_verify.ts) can distinguish:
-//   - grounded / not_grounded : a real content verdict (not_grounded → demote to draft)
-//   - transient_error         : image fetch / LLM call / output parse failed — NOT a
-//                               content verdict. The caller fails closed (demote) AND
-//                               retries (既有 verify 错误惯例). Kept OUT of the grounded
-//                               vs not_grounded axis so a flaky VLM never reads as a
-//                               confident「题面不在图里」.
+// - grounded / not_grounded : a real content verdict (not_grounded → demote to draft)
+// - transient_error : image fetch / LLM call / output parse failed — NOT a
+// content verdict. The caller fails closed (demote) AND
+// retries (既有 verify 错误惯例). Kept OUT of the grounded
+// vs not_grounded axis so a flaky VLM never reads as a
+// confident「题面不在图里」.
 
 import {
   SourceGroundingVerifyOutput,
@@ -120,7 +118,7 @@ export async function runSourceGroundingVerify(
         subjectProfile: params.subjectProfile,
         // Same vision provider routing as the multimodal judges.
         override: visionJudgeProviderOverride(),
-        // NO enableTransientRetry (single-transient-layer principle, YUK-576 §3.2): unlike
+        // NO enableTransientRetry (single-transient-layer principle,): unlike
         // multimodal_direct / steps (called synchronously from the judge router, whose catch
         // swallows failures into 'unsupported' → pg-boss never sees a throw), this runner is
         // called from the DURABLE source_verify pg-boss job. On a transient error it returns

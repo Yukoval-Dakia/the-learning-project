@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 export interface PlacementStarterIdentity {
   digest: string;
   /**
-   * YUK-1405 — the deterministic per-subject starter anchor node id
+   * the deterministic per-subject starter anchor node id
    * (`placement-starter:<subject>`). It no longer encodes the revision digest:
    * the anchor is shared across goals/revisions and named after the SUBJECT,
    * never the goal text. The claim's `knowledge_id` holds the RESOLVED anchor

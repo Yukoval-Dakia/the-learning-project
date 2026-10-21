@@ -536,7 +536,7 @@ export function bindInterventionPackageReviewDecision(
     failure_codes: _providerFailureCodes,
     ...providerObservations
   } = modelValue;
-  // YUK-1624 — claim/target-error identity is a plain string equality between
+  // claim/target-error identity is a plain string equality between
   // the frozen snapshot and the (already server-normalized) diagnostic fields.
   // The comparator no longer votes on these two bits.
   const testedClaimsMatch = INTERVENTION_DIAGNOSTIC_KINDS.every(

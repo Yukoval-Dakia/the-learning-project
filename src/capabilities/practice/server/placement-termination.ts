@@ -1,31 +1,23 @@
-// Placement probe termination — PURE (no IO, no DB). cold-start inc-B (YUK-468).
-// docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3 行 154 / §6 Q1.
+// Placement probe termination. Pure: no IO or DB.
 //
-// Decides when a bounded placement probe stops. Two conditions:
-//   1. count cap (§6 Q1: ~8 题/科 fixed — the hard 防疲劳 ceiling)
-//   2. optional θ SE convergence (early stop — "SE 收够即停"): when every probed KC's
-//      θ̂ standard error has fallen to/below a threshold, the estimate is precise enough
-//      and we stop EARLY (below the cap) to save the learner questions.
-//
-// SE is derived from the SAME thetaSe(precision) the live θ̂ engine uses (theta.ts:397,
-// SE = 1/√precision) — no new schema, no SE persistence. The caller reads each probed KC's
-// mastery_state.theta_precision and passes them in.
+// Stops at the count cap (the anti-fatigue ceiling) or early when every probed KC's θ̂
+// standard error is at or below the threshold. SE comes from the live thetaSe(precision)
+// function; nothing new is persisted. The caller passes each KC's theta_precision.
 
 import { thetaSe } from '@/core/theta';
 
 /**
- * Default hard count cap for a placement probe (§6 Q1, owner-locked: fixed 8 questions per
+ * Default hard count cap for a placement probe (owner-locked: fixed 8 questions per
  * subject — NOT dynamic). Owner-tunable module const, same class as the other selection
  * weights; the API handler uses it when the caller doesn't override `cap`.
  */
 export const PLACEMENT_DEFAULT_CAP = 8;
 
-// YUK-480 — onboarding self-report `pace` → probe count cap ("每日量"). The learner's daily-
+// onboarding self-report `pace` → probe count cap ("每日量"). The learner's daily-
 // budget knob (light/medium/dense) shortens or holds the probe length. Owner-supplied budget
 // constants (same class as PLACEMENT_DEFAULT_CAP, NOT a fitted/cross-examinee parameter →
-// n=1 admissible §0.2 cat 1). The cap only bounds HOW MANY questions are asked; it never feeds
+// n=1 admissible cat 1). The cap only bounds HOW MANY questions are asked; it never feeds
 // θ̂/p(L)/FSRS.
-//
 // CEILING = PLACEMENT_DEFAULT_CAP (8). The placement UI (ScreenPlacement) renders a FIXED
 // 8-segment progress track + a "last question" gate at CAP=8, so a cap ABOVE 8 would desync the
 // UI. This lane therefore caps `dense` at the existing UI ceiling (8 = same as medium/default);
@@ -54,7 +46,7 @@ export function capForPace(pace: string | null | undefined): number {
 export interface PlacementTerminationInput {
   /** number of questions answered so far in this probe. */
   answeredCount: number;
-  /** hard count ceiling (§6 Q1: e.g. 8 per subject). Must be a positive integer. */
+  /** hard count ceiling (owner-locked: e.g. 8 per subject). Must be a positive integer. */
   cap: number;
   /**
    * Per-probed-KC θ precision (mastery_state.theta_precision). Optional — when omitted or
@@ -107,7 +99,7 @@ export function evaluatePlacementTermination(
   }
 
   // 2. Optional SE convergence early stop (below cap). The full guard is inlined so TS
-  //    narrows `seThreshold` to `number` here (no `as number` assertion — OCR minor).
+  // narrows `seThreshold` to `number` here (no `as number` assertion — OCR minor).
   if (
     typeof seThreshold === 'number' &&
     Number.isFinite(seThreshold) &&
@@ -116,7 +108,7 @@ export function evaluatePlacementTermination(
     perKcPrecision.length > 0
   ) {
     // Validate ALL entries in a pre-pass BEFORE the convergence check. Doing it inside
-    // `.every()` would let short-circuit skip entries after the first non-converged one,
+    // `.every` would let short-circuit skip entries after the first non-converged one,
     // silently ignoring a later invalid value (OCR major) — a termination oracle must
     // throw on ANY invalid input, never silently mis-decide.
     for (const p of perKcPrecision) {

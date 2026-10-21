@@ -1,10 +1,5 @@
-// YUK-80 / Foundation D M1 Lane B
-//
-// `query_mistakes` — the first DomainTool implementation. Returns a
-// summarised view of recent failure attempts with optional cause /
-// review-state / variant joins. Designed for Copilot drawer + Dreaming
-// to ask "what's the user struggling with right now?" without scanning
-// raw event rows.
+// query_mistakes: summarized recent failure attempts with optional cause, review-state, and
+// variant joins, so copilot and dreaming can read struggles without scanning raw events.
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -13,7 +8,7 @@ import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
-// P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.
+// P5.1 / — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
 import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
@@ -37,10 +32,10 @@ const InputSchema = z.object({
 const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   primary_category: z.string(),
-  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // misc_ id 的显示回填（active misconception title）；非 misc /
   // unresolvable → null。
   primary_label: z.string().nullable(),
-  // YUK-1020 — 副归因 id（CauseSchema 语义身份）+ misc_ id 显示回填
+  // 副归因 id（CauseSchema 语义身份）+ misc_ id 显示回填
   // （id→title map；vocab / unresolvable 缺席 → 消费侧回退裸 id）。
   secondary_categories: z.array(z.string()),
   secondary_labels: z.record(z.string(), z.string()),
@@ -195,7 +190,7 @@ async function loadVariants(
 async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const input = InputSchema.parse(raw);
   const filter = input.filter ?? {};
-  // P5.1 / YUK-143 — courtesy default (20) centralized in budgets.ts;
+  // P5.1 / — courtesy default (20) centralized in budgets.ts;
   // byte-unchanged from the prior inline literal.
   const limit = filter.limit ?? TOOL_COURTESY_DEFAULTS.query_mistakes;
   const since = filter.sinceDays ? new Date(Date.now() - filter.sinceDays * 86_400_000) : undefined;
@@ -245,7 +240,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   // Apply final limit.
   const final = byDue.slice(0, limit);
   const finalQids = Array.from(new Set(final.map((x) => x.fa.question_id)));
-  // 三个独立读并行（YUK-1018/1020 misc_ primary + secondary id 的 title 回填含在内，
+  // 三个独立读并行（/1020 misc_ primary + secondary id 的 title 回填含在内，
   // 同一批查询）。
   const [promptMap, variantsMap, miscLabels] = await Promise.all([
     loadQuestionPrompts(ctx.db, finalQids),

@@ -1,21 +1,13 @@
-// YUK-1405 — shared placement advance for POST question-selections and POST held-release.
-//
-// The whole read-select cycle runs in ONE transaction that row-locks the placement
-// session (loadPlacementSessionForUpdate → SELECT … FOR UPDATE), serializing concurrent
-// selections and releases on the same probe (YUK-470 part 1 idiom). This module is the
-// single seam for the advance path's server-side deps (session lock, mastery state) so
-// the API handlers stay dependency-free at the capability boundary.
-//
-// L1 (held exit): `releaseIssuanceId` records a durable release marker for the session's
-// currently-held issuance, then the SAME advance runs — the held item stays unresolved
-// (never counted as wrong) and the probe moves on. The marker is first-write-wins on a
-// deterministic id, so refresh/re-entry re-derives the identical next action.
-//
-// L2 (cold target): when the probe's own scope yields no automatically servable item,
-// selection retries over the nearby same-subject scope (resolveNearbyPlacementScope);
-// when nothing is servable at all, a once-per-session marker event records the real
-// elapsed session→first-alternative time. The starter-supply lease/deadline machinery
-// in placement-starter-attempts.ts is untouched — the learner just never waits on it.
+// Shared placement advance for question-selection and held-release requests.
+// The read-select cycle runs in one transaction that row-locks the placement session,
+// serializing concurrent selections and releases on the same probe. This module is the
+// single seam for the advance path's server-side deps so API handlers stay thin.
+// A release records a durable marker for the currently-held issuance; the held item then
+// stays unresolved (never counted wrong) and the probe moves on. The marker is
+// first-write-wins on a deterministic id, so refresh/re-entry derives the same next action.
+// When the probe's own scope yields no automatically servable item, selection retries over
+// the nearby same-subject scope; a once-per-session marker records the real elapsed
+// session→first-alternative time. The starter-supply lease is untouched.
 
 import { eq } from 'drizzle-orm';
 import type { z } from 'zod';
@@ -42,22 +34,21 @@ import {
 } from './placement-termination';
 import type { PlacementStarterOutcome } from './question-supply/placement-starter-outcome';
 
-/** YUK-1405 L2 — once-per-session marker for the first "no servable item" outcome. */
+/** Once-per-session marker for the first "no servable item" outcome. */
 export const PLACEMENT_NO_ITEM_ACTION = 'experimental:assessment_placement_no_item';
 
 export interface PlacementAdvanceOptions {
-  /** Client scope override (YUK-470 part 2): persisted scope wins when omitted. */
+  /** Client scope override; persisted scope wins when omitted. */
   scopeOverride?: readonly string[];
   cap?: number;
   seThreshold?: number | null;
-  /** L1 — release this (currently-held) issuance before advancing. */
+  /** Release this currently-held issuance before advancing. */
   releaseIssuanceId?: string;
 }
 
 /**
- * YUK-1405 — new placement fields are present only when they carry something, so
- * responses with nothing unresolved keep their pre-existing exact shape. Clients
- * treat an absent field as empty / null.
+ * New placement fields are present only when they carry something, so responses with
+ * nothing unresolved keep their pre-existing exact shape.
  */
 export function unresolvedField(items: PlacementUnresolvedItem[]): {
   unresolved_items?: PlacementUnresolvedItem[];
@@ -109,9 +100,8 @@ export async function runPlacementAdvanceTx(
     }
     const info = await readPlacementSessionInfo(tx, sessionId);
 
-    // Scope is server-side authoritative (YUK-470 part 2): persisted at /start
-    // (scope_knowledge_ids). The client param is only an optional override; when omitted,
-    // the persisted scope wins — the route no longer trusts the client body for scope.
+    // Scope is server-side authoritative: persisted at /start, and the client param is
+    // only an optional override. The route does not trust the client body for scope.
     const knowledgeIds = options.scopeOverride ?? session.scopeKnowledgeIds ?? [];
     if (knowledgeIds.length === 0) {
       throw new ApiError(
@@ -166,8 +156,8 @@ export async function runPlacementAdvanceTx(
 
     const termination = evaluatePlacementTermination({
       answeredCount,
-      // YUK-480 — an explicit client `cap` overrides the pace-derived cap (capForPace; NULL
-      // pace → PLACEMENT_DEFAULT_CAP), but PLACEMENT_DEFAULT_CAP is a hard server ceiling.
+      // An explicit client cap overrides the pace-derived cap, but
+      // PLACEMENT_DEFAULT_CAP remains a hard server ceiling.
       cap: Math.min(options.cap ?? capForPace(session.pace), PLACEMENT_DEFAULT_CAP),
       perKcPrecision,
       seThreshold: options.seThreshold ?? null,
@@ -233,10 +223,9 @@ async function readGoalSubjectId(tx: Tx, goalId: string): Promise<string | null>
 }
 
 /**
- * YUK-1405 L2 — record the real elapsed session→first-alternative time, once per
- * session (deterministic event id + first-write-wins: later empty selections do not
- * rewrite the first observation). Written inside the same locked tx that produced
- * the empty selection, so it never fires without the outcome it describes.
+ * Records the real elapsed session→first-alternative time once per session. The
+ * deterministic id makes this first-write-wins, and it is written inside the same locked
+ * tx that produced the empty selection.
  */
 export async function recordPlacementNoItem(
   tx: Tx,
@@ -260,7 +249,7 @@ export async function recordPlacementNoItem(
   });
 }
 
-/** L2 — the typed alternative attached post-tx when a selection yields no item. */
+/** The typed alternative attached post-tx when a selection yields no item. */
 export function placementNoItem(
   starterSupply: readonly PlacementStarterOutcome[],
 ): z.infer<typeof PlacementNoItemSchema> {

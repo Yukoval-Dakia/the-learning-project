@@ -1,24 +1,10 @@
-// T-RA — RatingAdvisor (YUK-98)
+// RatingAdvisor: JudgeResultV2 plus an effective cause category -> an FsrsRating suggestion
+// with a human-readable reason. Pure: no IO, DB, or FSRS-kernel changes.
 //
-// Source spec: docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §6
-// Driver: docs/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md §1.1
-//
-// Pure function: JudgeResultV2 (+ optional effective cause category from
-// CC-1's effectiveCauseCategoryForFailureAttempt helper) → an FsrsRating
-// advisory + human-readable reason. No IO; no DB; no FSRS-kernel diff.
-//
-// CC-1 invariant: this module never re-derives or re-classifies a cause —
-// callers MUST pass the result of effectiveCauseCategoryForFailureAttempt()
-// so the cause source-of-truth stays single-owner. The advisor's only job
-// is to nudge the rating bucket when the effective cause is carelessness-
-// leaning (prefer 'good') or conceptual-leaning (prefer 'again').
-//
-// ABI guarantee: scheduleReview(prevState, rating, now) is untouched. The
-// advisor surfaces a suggestion to the UI; the UI keeps user-override-wins.
-//
-// FsrsRating is the project's 3-state enum (again | hard | good). Spec §6.2
-// 'easy' branches collapse to 'good' (route.ts:80-82 documents the same
-// 3-state surface for the review UI today).
+// Callers must pass effectiveCauseCategoryForFailureAttempt's result; this module never
+// re-derives a cause. Carelessness nudges toward 'good', conceptual confusion toward
+// 'again'. scheduleReview's ABI is untouched and the user can override the suggestion.
+// The project's rating enum has three states; 'easy' collapses to 'good'.
 
 import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
@@ -42,7 +28,7 @@ export interface RatingAdvisorContext {
    * effectiveCauseCategoryForFailureAttempt(failure) at the call site. Pass
    * the helper output directly; do not pre-process.
    *
-   * YUK-739 — the id is interpreted ONLY through `subjectProfile`'s own
+   * the id is interpreted ONLY through `subjectProfile`'s own
    * `rating_lean` declarations (each subject declares the lean on its OWN
    * vocabulary: math/yuwen 'carelessness' and physics 'careless' both declare
    * carelessness-lean; 'concept' declares conceptual-lean). The hard-coded
@@ -70,7 +56,7 @@ function causeLean(
   )?.rating_lean;
   if (declared === 'carelessness') return 1;
   if (declared === 'conceptual') return -1;
-  // YUK-739 historical compatibility (NOT a subject mirror): `conceptual_error`
+  // historical compatibility (NOT a subject mirror): `conceptual_error`
   // and `conceptual*` ids come from the pre-profile CC-1 spec vocabulary and can
   // sit in persisted user_cause rows. Current-subject vocabularies never emit
   // them, so they only reach here as historical values — interpret them with
@@ -82,8 +68,8 @@ function causeLean(
 
 /**
  * Default rating per source spec P3 (score in [0,0.85) for partial):
- *   [0.0, 0.5)  → again  (partial low — large gap)
- *   [0.5, 0.85) → hard   (partial mid/high — review soon)
+ * [0.0, 0.5) → again (partial low — large gap)
+ * [0.5, 0.85) → hard (partial mid/high — review soon)
  */
 function defaultPartialRating(score: number): FsrsRatingT {
   if (score < 0.5) return 'again';
@@ -112,7 +98,7 @@ export function judgeResultToRatingAdvice(
     };
   }
 
-  // YUK-739 — the correct/incorrect anchor ratings resolve through the
+  // the correct/incorrect anchor ratings resolve through the
   // profile's ratingPolicy (universal map for every built-in → unchanged
   // behavior, but a subject override now actually takes effect here too).
   const anchored = ratingFromOutcomeFor(ctx.subjectProfile);
@@ -126,7 +112,7 @@ export function judgeResultToRatingAdvice(
   }
 
   if (result.coarse_outcome === 'correct') {
-    // Spec §6.2 distinguishes easy (score ≥ 0.9) from good (≥ 0.7), but the
+    // distinguishes easy (score ≥ 0.9) from good (≥ 0.7), but the
     // project's FsrsRating is 3-state (again|hard|good) — easy collapses
     // to good. Documented intent: route.ts:80-82.
     return {

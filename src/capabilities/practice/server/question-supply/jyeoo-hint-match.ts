@@ -1,15 +1,12 @@
-// YUK-986 (Supply-Agent/1) — jyeoo knowledge_hints → 知识树确定性名匹配。
-//
+// (Supply-Agent/1) — jyeoo knowledge_hints → 知识树确定性名匹配。
 // producer meta.knowledge_hints 形态（0.2.0 grade 路线实测）：第一项是知识点名
 // （如「几何概型」），后续项是思想方法/素养标签（如「转化思想、综合法、数学运算」），
 // 有些条目本身是「、」分隔的组合串。匹配策略刻意保守：
-//
-//   1. 归一化（trim + 大小写折叠 + 全角/半角空白统一）后做 EXACT name 匹配，作用域
-//      限定在目标 subject domain 的 live（未归档）节点内；
-//   2. 组合串按「、」拆开逐段尝试；
-//   3. 命中的段 → knowledge_id；全部未命中 → unmatched 原样返回（调用方决定 coarse
-//      挂载或交给 agent 提议——本模块不做模糊/语义匹配，那属于 LLM 判断路径）。
-//
+// 1. 归一化（trim + 大小写折叠 + 全角/半角空白统一）后做 EXACT name 匹配，作用域
+// 限定在目标 subject domain 的 live（未归档）节点内；
+// 2. 组合串按「、」拆开逐段尝试；
+// 3. 命中的段 → knowledge_id；全部未命中 → unmatched 原样返回（调用方决定 coarse
+// 挂载或交给 agent 提议——本模块不做模糊/语义匹配，那属于 LLM 判断路径）。
 // 纯函数 + 一次树查询；同名节点（不应存在但防御）取第一个并记入 ambiguous。
 
 import { and, eq, isNull } from 'drizzle-orm';
@@ -48,7 +45,7 @@ export function hintSegments(hint: string): string[] {
  * 树不变量：只有根节点直接携带 domain，子节点 domain=null 沿 parent 链继承
  * （getEffectiveDomain / batchResolveEffectiveDomains 同款解析）。故本函数全量装载
  * 活节点后按 parent 链求 effective domain，再按目标 domain 过滤——直接按
- * `knowledge.domain = ?` 查询只会命中根节点（YUK-986 实现期修掉的真 bug）。
+ * `knowledge.domain = ?` 查询只会命中根节点（实现期修掉的真 bug）。
  */
 export async function matchJyeooKnowledgeHints(
   db: Db,

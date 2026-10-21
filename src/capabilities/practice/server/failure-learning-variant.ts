@@ -1,25 +1,22 @@
 // Practice-owned Failure Learning — variant proposal stage.
-//
 // Triggered after a failure attempt has an effective cause. If the active
 // SubjectProfile marks the cause's primary_category as targetable, generate
 // one variant_question proposal AND insert a `mistake_variant` row at
 // status='draft' to claim a slot in the per-parent in-flight ledger.
 // Accepting the proposal materializes the question + flips the row to 'active'
 // (see acceptAiProposal in src/server/proposals/actions.ts).
-//
-// YUK-17 (ADR-0018) added: variants_max=3 cap counting all in-flight rows
+// added: variants_max=3 cap counting all in-flight rows
 // (draft + active) and the VariantVerifyTask second pass — the verify handler
 // runs after accept and may flip 'active' → 'broken' if the variant drifted
 // off the original cause.
-//
 // Defense against "错题繁殖":
-//   1. variant_depth >= 2 → skip (spec §3.4.4 cap)
-//   2. parent question.source === 'mistake_variant' → skip (variants do not
-//      themselves spawn variants — spec §3.4.4 chain termination)
-//   3. SubjectProfile cause category can set variant_targetable=false.
-//   4. variants_max=3 counts in-flight (draft + active) mistake_variant rows.
-//   5. Per-(parent, attempt) cooldown via proposal cooldown_key — same attempt
-//      retrying variant_gen never produces a second proposal.
+// 1. variant_depth >= 2 → skip (cap)
+// 2. parent question.source === 'mistake_variant' → skip (variants do not
+// themselves spawn variants — chain termination)
+// 3. SubjectProfile cause category can set variant_targetable=false.
+// 4. variants_max=3 counts in-flight (draft + active) mistake_variant rows.
+// 5. Per-(parent, attempt) cooldown via proposal cooldown_key — same attempt
+// retrying variant_gen never produces a second proposal.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
@@ -48,7 +45,7 @@ import { loadNativeFailureContext } from './failure-learning-native';
 import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
-// YUK-17 / ADR-0018 — per-parent in-flight variant cap. Counts
+// per-parent in-flight variant cap. Counts
 // mistake_variant rows where status IN ('draft', 'active') so AI cannot flood
 // the inbox even when the user defers review.
 export const VARIANTS_MAX_IN_FLIGHT = 3;
@@ -143,12 +140,12 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   }
   if (parent.variant_depth >= 1) {
     // depth=0 (原题) → can spawn depth=1; depth=1 cannot spawn depth=2 per
-    // spec §3.4.4 ("不超过 2 代" — i.e. only depth 0 and 1 exist, and
+    // ("不超过 2 代" — i.e. only depth 0 and 1 exist, and
     // depth 1 doesn't spawn depth 2).
     return { status: 'skipped:max_depth' };
   }
 
-  // YUK-17 / ADR-0018 — per-parent in-flight cap. Counts both pending
+  // per-parent in-flight cap. Counts both pending
   // proposals (status='draft') AND accepted-but-not-broken variants
   // (status='active'). This supersedes the MVP "1-per-parent" cap that
   // checked question.parent_variant_id alone, since mistake_variant is now
@@ -194,7 +191,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
   const causeCategory = subjectProfile.causeCategories.find(
     (category) => category.id === cause.primary_category,
   );
-  // YUK-1015 — a `misc_` primary is a promoted misconception node, not a vocab
+  // a `misc_` primary is a promoted misconception node, not a vocab
   // id. It is targetable BY DEFINITION (promotion marks a recurring, nameable
   // cause — exactly what targeted variants exist for). Resolve the node so the
   // variant prompt's strategy selector carries the misc TITLE (meaningful)
@@ -206,7 +203,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     const [misc] = await getMisconceptionsByIds(db, [cause.primary_category]);
     miscCauseTitle = misc?.title ?? null;
   }
-  // YUK-1016 — `ov_` primary 是 owner 收编的 overlay 类目：按定义 targetable
+  // `ov_` primary 是 owner 收编的 overlay 类目：按定义 targetable
   // （收编的就是要针对的复发错因，同 misc 论证）。解析 active 行拿 label 进
   // prompt；missing/draft/archived → 与未知 id 同路径 fail-closed。
   let overlayCauseLabel: string | null = null;
@@ -249,11 +246,11 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
     },
     attempt: { wrong_answer_md: native?.answer_md ?? payload.answer_md ?? '' },
     cause: {
-      // YUK-1015 — for a misc_ primary the prompt's strategy selector carries
+      // for a misc_ primary the prompt's strategy selector carries
       // the misc TITLE (a meaningful cause description) instead of the opaque
       // `misc_<hash>` id. Prompt-input only: the stored mistake_variant
       // .cause_category below still takes the real judge id.
-      // YUK-1016 — `ov_` primary 同法：prompt 侧拿 overlay label。
+      // `ov_` primary 同法：prompt 侧拿 overlay label。
       primary_category: miscCauseTitle ?? overlayCauseLabel ?? cause.primary_category,
       analysis_md: cause.analysis_md ?? cause.user_notes ?? '',
     },
@@ -318,7 +315,7 @@ export async function runVariantGen(params: RunVariantGenParams): Promise<RunVar
       created_at: now,
     });
 
-    // YUK-471 W2 (critic A4) — the initial mistake_variant snapshot. cause_category is the
+    // W2 (critic A4) — the initial mistake_variant snapshot. cause_category is the
     // FOLD-BLIND field (computed here at INSERT, carried by NO downstream event), so the runtime
     // BASE event MUST snapshot the whole row so the fold can reproduce it. This is the ONE W2
     // entity that writes a base event at creation — but it is a CREATE event, NOT genesis (A4).

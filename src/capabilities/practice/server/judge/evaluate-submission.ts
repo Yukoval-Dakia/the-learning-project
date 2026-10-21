@@ -1,26 +1,23 @@
 import { observeJudgeProcess } from '../judge-process-observer';
 // ====================================================================
-// YUK-1047 — evaluateSubmission 的持久化入口（grounding §4.2–§4.4）
+// evaluateSubmission 的持久化入口（grounding–）
 // ====================================================================
-//
-// 本模块是 §4.3 `evaluateSubmission(submissionId, evaluationGroupId,
+// 本模块是 `evaluateSubmission(submissionId, evaluationGroupId,
 // executionPolicy)` 的【落库实现】：冻结输入（assessment_submission +
 // question_revision + assessment_issuance）→ evaluateSubmissionCore（纯内核，
 // `@/core/schema/assessment/evaluation.ts`）→ candidate evaluation 行。
-//
 // 纪律（不可弱化）：
-//   - 只产 candidate：绝不触碰 evaluation_effective_head（activation =
-//     YUK-1045），绝不写学习状态（settlement = YUK-1053）；
-//   - 坐标一致性 fail-closed：submission.evaluation_group_id 必须等于请求
-//     的 group（复合 FK (submission, group) 兜底前先在应用层明确拦截）；
-//   - group session lock serializes frozen input loading, execution and sealing;
-//     no transaction remains open while a model runs. The unique attempt key is the final fence.
-//   - 幂等：同 attempt 冲突时读回全载荷比对 —— 逐字相同 = replay（返回已存在
-//     行），不同 = 真并发发散（attempt_conflict 抛出，绝不覆盖）。
-//   - evaluation_id 内容寻址（eva_<sha256-48>）：重试同输入 ⇒ 同身份。
-//
+// - 只产 candidate：绝不触碰 evaluation_effective_head（activation =
+//），绝不写学习状态（settlement =）；
+// - 坐标一致性 fail-closed：submission.evaluation_group_id 必须等于请求
+// 的 group（复合 FK (submission, group) 兜底前先在应用层明确拦截）；
+// - group session lock serializes frozen input loading, execution and sealing;
+// no transaction remains open while a model runs. The unique attempt key is the final fence.
+// - 幂等：同 attempt 冲突时读回全载荷比对 —— 逐字相同 = replay（返回已存在
+// 行），不同 = 真并发发散（attempt_conflict 抛出，绝不覆盖）。
+// - evaluation_id 内容寻址（eva_<sha256-48>）：重试同输入 ⇒ 同身份。
 // 模型执行器是注入端口（ModelUnitExecutorPort）：本文件【不】含 provider/LLM
-// 调用 —— typed transport 归 src/server/ai/ 后续 lane（YUK-1049）。
+// 调用 —— typed transport 归 src/server/ai/ 后续 lane。
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -85,7 +82,7 @@ import {
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Native assessment runtime ports are assembled at this existing capability boundary.
-// YUK-1496 C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
+// C2 — 留出题准入 job 经同一边界读取登记处（不新增跨层边）。
 export {
   ModelSliceRegistrationError,
   assertModelAdmissionSliceRegistrable,
@@ -98,7 +95,7 @@ export {
 };
 
 /**
- * YUK-1092 — 装配描述符：在本模块组合点按 descriptor 铸
+ * 装配描述符：在本模块组合点按 descriptor 铸
  * ModelUnitExecutorPort（当前唯一 lane：Jev typed executor）。
  *
  * `deadline_at` 是【必填】caller 输入 —— Jev 重试 + advanced fallback 共享
@@ -125,7 +122,7 @@ export interface PiModelExecutorSpec {
   readonly signal?: AbortSignal;
 }
 
-/** evaluateSubmission 请求（§4.3 Interface）。 */
+/** evaluateSubmission request (public interface). */
 export interface EvaluateSubmissionRequest {
   judge_execution?: JudgeExecution;
   submission_id: string;
@@ -215,7 +212,7 @@ export function createFormalModelExecutor(
           judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
         })(request, callerSignal);
       }
-      // YUK-1496 C2 — AI rubric lane（free 单元逐 criterion 评分细则）。
+      // C2 — AI rubric lane（free 单元逐 criterion 评分细则）。
       if (request.executor.task_kind === 'AssessmentRubricJudgeTask') {
         return createRubricModelExecutor({
           db,
@@ -270,7 +267,7 @@ export function createFormalModelExecutor(
 }
 
 /**
- * YUK-1496 C2 — 留出题准入 run 的执行端口（model_slice_admission_run job）。
+ * C2 — 留出题准入 run 的执行端口（model_slice_admission_run job）。
  * 与正式入口同一装配边界，但【不】走 claim/result 存证 —— 准入 run 的证据是
  * 自身的 run 事件行（逐题 agreement / severe error）+ 各 task_run 台账行，
  * 不占用评估组的 claim 身份。未注册的判分 task kind ⇒ undefined（调用方拒跑）。
@@ -296,7 +293,7 @@ export function createAdmissionRunExecutor(
 }
 
 /**
- * YUK-1092 — 组合点接线：descriptor ⇒ 实名 ModelUnitExecutorPort。
+ * 组合点接线：descriptor ⇒ 实名 ModelUnitExecutorPort。
  *
  * 在事务之外解析：模型 run/cost 台账行的 db 必须是池化 Db（tx 句柄会让
  * 付费调用证据随评估事务回滚消失，且 ai_task_runs 的并发重试依赖独立
@@ -383,7 +380,7 @@ function evaluationPayloadEquals(a: EvaluationRowPayload, b: EvaluationRowPayloa
 }
 
 /**
- * §4.3 evaluateSubmission：读冻结契约 → 纯内核评估 → candidate 行落库。
+ * evaluateSubmission：读冻结契约 → 纯内核评估 → candidate 行落库。
  * Short load/seal transactions share a session group lock; model work runs between them.
  */
 export async function evaluateSubmission(

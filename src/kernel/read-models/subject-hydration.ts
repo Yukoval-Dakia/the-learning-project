@@ -1,36 +1,19 @@
-// YUK-599 (YUK-597 v3 trait 合同 §2.2 + v2 §4 承接) — 装配水合：DB 六表 → 内存
-// SubjectRegistry。
+// Assemble the six subject tables into an in-memory SubjectRegistry.
 //
-// YUK-1567：引擎本体从 src/server/subjects/hydrate.ts 迁入 kernel
-// read-models——付费输入 strict 消费者（capability 侧）与普通 boot/refresh
-// 消费方共用同一装配实现；server/subjects/hydrate.ts 保留为兼容入口（defaultDb
-// 默认 + startSubjectRefresh 接线）。本模块不 import '@/db/client' 的运行时值
-// （type-only）：kernel 不带 runtime env 依赖，db 句柄由调用方注入。
-//
-// 合同要点：
-// - hydrate-before-serve / worker 首 job 前（boot 接线在 server/index.ts /
-//   start-worker.ts）；worker 另挂 startSubjectRefresh 60s 周期全量 reconcile
-//   （level-triggered，是承重路径不是兜底——判词 B，LISTEN/NOTIFY 否决）。
-// - **never-throws 失败矩阵**（v2 §4.4）：表缺席（42P01）/ DB down / 坏行，全部
-//   WARN + 保持现状（四代码种子是地板，registry 构造器已注册）——绝不炸进程。
-// - 加载**全部 subject 行含 retired**（resolvable-all：retired 科目不掉线，旧数据/
-//   event/domain 串永不悬垂；selectable 过滤是 YUK-598 的读面事）。
-// - **alias 水合**：JOIN subject_name_claim kind='alias' 传入 upsert——丢这步 =
-//   wenyan→yuwen 等 legacy 别名全体 miss（KILL-1 回归，直测钉死）。
-// - **坏行降级链（每 trait 独立，v3 §2.2）**：① 运行期 = registry 保内存 last-good
-//   （本轮该科 skip，不 remove）；② 冷启动 = journal 按 revision 降序回溯第一条
-//   safeParse 通过的历史 payload（journal 兼任快照仓）；③ journal 空/全坏：种子
-//   血统 trait（seed_version 非空）→ BUILTIN_TRAIT_SEEDS 代码种子；custom/fork
-//   trait 坏死按**绑定者 origin** 收口——builtin 科目整科回 import-time 代码
-//   profile（四 builtin 地板不可破），custom 科目本轮装配缺席。
-// - **降级态 version = effective 身份**（v3 §2.1④）：journal 回溯 → id@<该 rev>；
-//   代码种子 → id@seed:<seedVersion>——D6 章永远指向真实生效的配置。
-// - reconcileCustomIds 防御网：内存 custom id 不在本轮 DB 行集 → 摘除（唯一真实
-//   触发 = restore 使行集收缩）；builtin 四种子永不摘。
-// - **strict 消费者读 `report.resolutions`**（YUK-1567）：`hydrated` 只证明装配
-//   成功——含 journal_fallback / code_seed 降级项；付费输入必须逐 trait 检查
-//   `degraded === null`（= live payload 过 schema），不能只看 version 串
-//   （render/scheduling 不进版本号）。
+// The db handle is injected (type-only) so kernel carries no runtime env.
+// - Hydrate before serving; the worker also reconciles every 60s.
+// - Never throws: missing tables (42P01), DB down, or bad rows warn and keep the
+//   current registry; the four code seeds are the floor.
+// - Load every subject including retired ones so old rows/events/domains never
+//   dangle; selectable filtering belongs to the read surface.
+// - Hydrate aliases in the same pass or legacy names miss.
+// - Each trait degrades independently: keep last-good in memory, replay the
+//   journal newest-first, then use the code seed for seed-lineage traits. A dead
+//   custom trait drops that subject for this round.
+// - Degraded versions name what is effective: id@revision or id@seed:version.
+// - Custom ids absent from the DB row set are removed; builtin seeds never are.
+// - Strict consumers must check each resolution's degraded flag, not just
+//   `hydrated` or the version string.
 
 import { desc, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -60,22 +43,19 @@ import {
 } from '@/subjects/trait-schemas';
 import { type TraitResolution, replaceSubjectTraitResolutions } from './subject-trait-resolutions';
 
-// hydrate 只走 select 读面；Tx 与 Db 查询 API 同形（见 db/client.ts）。YUK-1567：
-// 付费输入冻结要求在调用方的事务上下文内水合——同一连接/锁上下文与私有
-// registry 的内存隔离（READ COMMITTED 下各 SELECT 仍是逐语句快照，隔离性由
-// 私有 registry 实例保证，不依赖事务级快照）。
+// Hydration only reads; Tx shares the caller's connection and lock context.
+// Isolation comes from the private registry instance, not a transaction snapshot.
 export type DbOrTx = Db | Tx;
 
 const BUILTIN_ID_SET: ReadonlySet<string> = new Set<string>(BUILTIN_SUBJECT_IDS);
 
 export interface HydrationReport {
   hydrated: string[];
-  builtinFloor: string[]; // custom trait 坏死收口回代码 profile 的 builtin 科目
+  builtinFloor: string[]; // builtin subjects whose custom trait died and fell back to code
   skipped: Array<{ subjectId: string; reason: string }>;
-  removed: string[]; // reconcileCustomIds 摘除的 custom id
-  // 本轮成功装配科目的逐 trait 溯源（subject id → 六条 TraitResolution）。
-  // `degraded !== null` = 该 trait 用了 journal_fallback / code_seed 而非 live
-  // payload——strict 消费者的判据；默认语义与降级行为不变（never-throws 矩阵）。
+  removed: string[]; // custom ids removed by reconciliation
+  // Per-trait provenance for assembled subjects. degraded !== null means the trait
+  // is not live; that is the strict-consumer check.
   resolutions: Map<string, TraitResolution[]>;
 }
 
@@ -98,8 +78,8 @@ interface TraitRow {
   revision: number;
 }
 
-// 单 trait 的降级链解析。返回 null = custom trait 坏死（收口交给调用方按绑定者
-// origin 分流）。journal 回溯逐行读（revision desc），第一条 safeParse 通过即取。
+// Single-trait degradation chain. null means a dead custom trait; the caller routes
+// by binding origin. Journal rows are read newest-first.
 async function resolveTraitPayload(
   db: DbOrTx,
   kind: SubjectTraitKind,
@@ -128,7 +108,7 @@ async function resolveTraitPayload(
     issues: live.error.issues.slice(0, 3),
   });
 
-  // ② journal 回溯：revision 降序第一条合法快照（journal 行是完整状态快照，v3.1）。
+  // Replay newest-first; the first payload that parses is the snapshot.
   const journalRows = await db
     .select({
       revision: subject_trait_journal.revision,
@@ -147,7 +127,7 @@ async function resolveTraitPayload(
     }
   }
 
-  // ③ 代码种子（仅种子血统 trait）：合成身份 seed:<seedVersion>。
+  // Code seed, only for seed-lineage traits, with synthetic identity seed:<version>.
   if (row.seed_version !== null) {
     const seedSubject = parseSeedSubjectFromTraitId(row.id);
     if (seedSubject) {
@@ -163,7 +143,7 @@ async function resolveTraitPayload(
       };
     }
   }
-  return null; // custom/fork trait 坏死 → 调用方按绑定者 origin 收口
+  return null; // Dead custom/fork trait; the caller routes by binding origin.
 }
 
 export async function hydrateSubjectRegistryFromDb(
@@ -228,14 +208,13 @@ export async function hydrateSubjectRegistryFromDb(
 
       if (dead) {
         if (BUILTIN_ID_SET.has(row.id)) {
-          // 四 builtin 地板：即便绑了 custom trait 且坏死，整科**显式**回
-          // import-time 代码 profile——不是 last-good（暖轮里内存可能还持着上一轮
-          // DB 装配），地板语义是确定性回代码（v3 §2.2 / §8-27）。
+          // Builtin floor: even with a dead custom trait, return the import-time code
+          // profile explicitly rather than last-good. The floor is deterministic.
           const floor = subjectProfiles[row.id];
           if (floor) {
             registry.upsert(floor, [], {
               throwOnInvalid: false,
-              // 地板态元数据同样确定性回 builtin 默认（general 结构性排除保持）。
+              // Floor metadata also returns deterministically to builtin defaults.
               meta: {
                 isBuiltin: true,
                 isSelectable: row.id !== 'general' && row.is_selectable,
@@ -249,7 +228,7 @@ export async function hydrateSubjectRegistryFromDb(
           });
           report.builtinFloor.push(row.id);
         } else {
-          // custom 科目本轮缺席；不 remove（运行期 last-good：已在内存的旧装配保留）。
+          // Custom subject is absent this round, not removed: last-good stays in memory.
           console.warn('[subjects] custom subject skipped this hydration round', {
             subjectId: row.id,
             reason: dead,
@@ -261,7 +240,7 @@ export async function hydrateSubjectRegistryFromDb(
 
       const byKind = new Map(resolutions.map((r) => [r.kind, r]));
       const comp = (k: SubjectTraitKind): TraitVersionComponent => {
-        // biome-ignore lint/style/noNonNullAssertion: 六 kind 全部 resolve 才走到这
+        // All six kinds resolved, so the lookup exists.
         const r = byKind.get(k)!;
         return { traitId: r.traitId, effective: r.effective };
       };
@@ -278,9 +257,8 @@ export async function hydrateSubjectRegistryFromDb(
       });
 
       const result = registry.upsert(profile, aliasesBySubject.get(row.id) ?? [], {
-        throwOnInvalid: false, // 坏装配 skip+WARN 不炸进程（never-throws 矩阵）
-        // YUK-598 三集合元数据：DB 行是权威（general 的结构性排除也随行——
-        // reconcile 落 is_selectable=false）。
+        throwOnInvalid: false, // Bad assembly skips with a warn instead of killing the process.
+        // DB row is authoritative for the three metadata flags.
         meta: {
           isBuiltin: row.origin === 'builtin',
           isSelectable: row.is_selectable,
@@ -299,7 +277,7 @@ export async function hydrateSubjectRegistryFromDb(
       }
     }
 
-    // reconcileCustomIds 防御网：内存 custom 不在 DB 行集 → 摘除；builtin 永不摘。
+    // Remove in-memory custom ids absent from this DB row set; builtins never.
     for (const id of registry.listIds()) {
       if (BUILTIN_ID_SET.has(id)) continue;
       if (!seenIds.has(id)) {
@@ -314,15 +292,15 @@ export async function hydrateSubjectRegistryFromDb(
       }
     }
 
-    // resolution-cache 描述的是**全局默认 registry** 的装配溯源；为私有 registry
-    // 水合（YUK-1567：付费输入按事务上下文冻结）不得把私有快照写进全局读面。
+    // Only the global default registry feeds the shared resolution cache; a private
+    // hydration snapshot must not leak into it.
     if (registry === getDefaultSubjectRegistry()) {
-      replaceSubjectTraitResolutions(nextResolutions); // 换引用不改旧对象（v3 §5.1）
+      replaceSubjectTraitResolutions(nextResolutions); // Replace the reference, not the old object.
     }
     report.resolutions = nextResolutions;
     return report;
   } catch (err) {
-    // 42P01（表未建）/ DB down / 任意异常：WARN + 现状即地板（四代码种子恒在）。
+    // Missing tables, DB down, or anything else: warn and keep the code-seed floor.
     console.warn('[subjects] hydration failed — registry keeps code-seed floor / last-good', err);
     return report;
   }

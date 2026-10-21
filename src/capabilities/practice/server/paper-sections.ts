@@ -1,13 +1,9 @@
-// U5 (YUK-203) — U4 forward-compat read shim (§4.8).
-//
-// U4's `write_review_plan` parked the structured plan inside
-// `tool_state.session_meta.sections`. U5 promotes `sections[]` to the top level
-// of `tool_state` (ToolStateT v2, §4.3) at write time AND keeps the session_meta
-// copy during the transition window. This shim reads BOTH shapes uniformly so a
-// paper consumer doesn't branch on era.
-//
-// Removal trigger: when no U4-era (session_meta-only) paper remains, i.e. after
-// the artifact scan window rolls past the U4 merge date.
+// Compatibility reader for review-plan sections.
+// write_review_plan historically parked the structured plan in
+// tool_state.session_meta.sections. Current writes promote sections[] to the top level of
+// tool_state while keeping the session_meta copy during the transition, so consumers must
+// accept both shapes without branching on era.
+// The legacy path can go once no session_meta-only paper remains.
 
 import type { ToolStateSectionT } from '@/core/schema/business';
 
@@ -20,9 +16,9 @@ export type ToolStateLike =
   | null
   | undefined;
 
-// U4 ReviewPlanSection shape as written by write_review_plan (review-plan-tools.ts).
-// knowledge_ids (not knowledge_focus), feedback_policy/adaptation_policy are
-// unknown/optional. Must be normalized before returning as ToolStateSectionT.
+// Legacy ReviewPlanSection shape as written by write_review_plan. knowledge_ids (not
+// knowledge_focus), feedback_policy/adaptation_policy are unknown/optional. Must be
+// normalized before returning as ToolStateSectionT.
 type U4Section = {
   knowledge_ids?: string[];
   feedback_policy?: unknown;
@@ -38,9 +34,8 @@ type U4Section = {
 };
 
 /**
- * Normalize a U4 session_meta section (ReviewPlanSection shape) into the
- * promoted U5 ToolStateSectionT shape. Field mapping mirrors toToolStateSections
- * in review-plan-tools.ts: knowledge_ids → knowledge_focus, with safe defaults.
+ * Normalize a legacy session_meta section into the current ToolStateSectionT shape.
+ * The field mapping mirrors toToolStateSections: knowledge_ids → knowledge_focus.
  */
 function normalizeU4Section(raw: U4Section): ToolStateSectionT {
   return {
@@ -66,13 +61,9 @@ function normalizeU4Section(raw: U4Section): ToolStateSectionT {
 }
 
 /**
- * Resolve the section list for a paper, preferring the U5 top-level `sections`
- * and falling back to the U4 `session_meta.sections`. Returns [] when neither
- * is present (a flat quiz with no structured plan).
- *
- * The session_meta legacy path NORMALIZES the U4 ReviewPlanSection shape
- * (knowledge_ids → knowledge_focus, etc.) before returning. Top-level sections
- * are already in the promoted U5 shape and returned as-is.
+ * Resolve the section list for a paper, preferring top-level `sections` and falling back
+ * to legacy `session_meta.sections`; [] when neither is present (a flat quiz). Legacy
+ * sections are normalized before use; top-level sections are already current.
  */
 export function readPaperSections(toolState: ToolStateLike): ToolStateSectionT[] {
   if (!toolState) return [];
@@ -113,21 +104,16 @@ export interface ResolvedSlotAssignment {
 
 /**
  * Find the assignment for a slot (question_id + optional part_ref) in a paper's
- * tool_state. Returns the resolved knowledge + the owning section's
- * feedback_policy so the paper submit handler can FSRS-key on the primary
- * knowledge and apply the visibility gate server-side (the client never supplies
- * these — they come from the auditable plan).
+ * tool_state. Returns the resolved knowledge and the owning section's feedback_policy so
+ * the submit handler can FSRS-key on the primary knowledge and apply the visibility gate
+ * server-side; the client never supplies these.
  *
- * Flat-quiz fallback: when the paper has no structured sections (legacy
- * quiz_gen / embedded_check artifacts that only have `question_ids`), any
- * question_id present in `tool_state.question_ids` is accepted. The assignment
- * uses primaryKnowledgeId=null so submitPaperSlot falls through to the
- * question-keyed FSRS path (same fallback as the single-question /review/submit
- * flow). feedbackPolicy defaults to 'immediate'.
+ * Flat-quiz fallback: when there are no structured sections, accept any question_id from
+ * tool_state.question_ids. primaryKnowledgeId is null so submitPaperSlot uses the
+ * question-keyed FSRS path, and feedbackPolicy defaults to 'immediate'.
  *
- * Returns null only when the slot is not in the plan (neither sections nor the
- * flat question_ids list), so a structurally invalid request still receives a
- * 400 rather than silently skipping.
+ * Returns null only when the slot is not in the plan, so a structurally invalid request
+ * receives a 400 rather than being silently skipped.
  */
 export function resolveSlotAssignment(
   toolState: ToolStateLike,

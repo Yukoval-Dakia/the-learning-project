@@ -1,25 +1,10 @@
-// YUK-402 inc-4a — owner manual gate: draft-review pool projection.
+// Draft-review pool projection for the owner manual gate.
 //
-// docs/superpowers/specs/2026-06-18-inc4-owner-manual-gate-design.md §2.
-//
-// The owner manual gate审核面 lists the draft slices of the `question` table
-// (draft_status='draft') so the owner can enable / force-enable each one. This
-// module owns the read projection (the route is a thin shell over it, mirroring
-// the observability capability's server/ai-observability.ts split):
-//   - SELECT draft_status='draft' rows, EXCLUDING soft-archived drafts. A
-//     soft-archived (deleted) question is re-drafted with metadata.archived_at set
-//     (src/server/questions/write.ts archiveQuestion); those are NOT pending-review
-//     drafts and must not appear in the review pool.
-//   - For each draft, derive a verify status from the LATEST TERMINAL verify event
-//     (action ∈ {experimental:quiz_verify, experimental:source_verify}, subject_kind
-//     ='question', outcome != 'error' — the catch-bottom writes outcome='error' for
-//     a transient/system failure that has no verdict, so it must be ignored). The
-//     verdict lives in the event payload:
-//       quiz_verify  → payload.verification_status ('needs_review' | 'failed')
-//       source_verify→ tier-2 has no verification_status; a non-promoted terminal
-//                      event (outcome='failure') ⇒ 'failed'.
-//     No terminal event ⇒ 'unverified' (未验过 raw draft).
-//   - reason: payload.summary_md when present (the model's驳回理由), else null.
+// Lists draft_status='draft' rows except soft-archived drafts (metadata.archived_at).
+// Verify status comes from the latest terminal quiz_verify/source_verify event; outcome
+// 'error' marks a transient failure with no verdict and is ignored. A non-promoted
+// source_verify failure means 'failed'; no terminal event means 'unverified'. reason comes
+// from payload.summary_md when present.
 
 import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
@@ -156,8 +141,7 @@ function truncatePrompt(prompt: string): string {
 // A draft sitting in the pool was, by definition, NOT promoted, so the terminal
 // verdict is only ever needs_review | failed (a 'pass'/promote would have moved the
 // row to active and out of this list).
-//
-// YUK-350 (B5 increment C) — all three promote-gated handlers (quiz/source/variant)
+// (B5 increment C) — all three promote-gated handlers (quiz/source/variant)
 // now emit the unified verify contract shape ({ axes, overall, failure_class?,
 // summary_md, confidence }) as a SUPERSET of their prior payloads. This reader prefers
 // the unified `overall` (now present on source_verify too — it previously had none,
@@ -187,7 +171,7 @@ function deriveVerifyVerdict(
   const summary = payload?.summary_md;
   let reason: string | null = typeof summary === 'string' && summary.length > 0 ? summary : null;
 
-  // YUK-554 (review ALT-1) — solve_check veto diagnosis. When the independent solve-check
+  // (review ALT-1) — solve_check veto diagnosis. When the independent solve-check
   // vetoed promotion (tier3/4 hold-for-review), `summary_md` is the verifier model's OWN
   // self-review — which by construction said "pass" on these rows (solve_check only runs
   // after every free check passed), so showing it alone as the驳回理由 tells the owner
@@ -271,7 +255,7 @@ export async function listDraftReview(
 
   const conditions = [
     eq(question.draft_status, 'draft'),
-    // YUK-1011 — composite children (question_part rows) are group-internal:
+    // composite children (question_part rows) are group-internal:
     // they carry no independent verify intent and must never appear as separate
     // unverified drafts — their lifecycle is the parent's verify cascade.
     // (Legacy paper/import parts are NULL≡active and already filtered by the
@@ -283,14 +267,14 @@ export async function listDraftReview(
     sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
     // exclude soft-archived (deleted) drafts: metadata.archived_at IS NULL/absent.
     sql`(${question.metadata} -> 'archived_at') IS NULL`,
-    // YUK-308 — exclude proposal-dismissed drafts (metadata.dismissed_at): the
+    // exclude proposal-dismissed drafts (metadata.dismissed_at): the
     // owner already said no; they are not pending-review items.
     sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
   ];
   if (opts.source) conditions.push(eq(question.source, opts.source));
-  // YUK-386 — kind is a free-form label; expand the requested label through the
+  // kind is a free-form label; expand the requested label through the
   // vocab fold (canonicalKindToPersistedForms) so a canonical filter still hits
-  // legacy profile-vocab rows (single_choice…), YUK-288-style. Unknown labels
+  // legacy profile-vocab rows (single_choice…), -style. Unknown labels
   // pass through as an exact match on themselves.
   if (opts.kind) {
     conditions.push(inArray(question.kind, canonicalKindToPersistedForms(opts.kind)));
@@ -423,13 +407,13 @@ export async function getDraftReviewDetail(
       and(
         eq(question.id, id),
         eq(question.draft_status, 'draft'),
-        // YUK-1011 — mirror the list filter: a composite child is not an
+        // mirror the list filter: a composite child is not an
         // independently reviewable draft (its lifecycle rides the parent's).
         isNull(question.parent_question_id),
         sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
         // exclude soft-archived (deleted) drafts (mirror the list filter).
         sql`(${question.metadata} -> 'archived_at') IS NULL`,
-        // YUK-308 — dismissed drafts are not reviewable items.
+        // dismissed drafts are not reviewable items.
         sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
       ),
     )

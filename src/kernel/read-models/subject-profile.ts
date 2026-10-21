@@ -36,21 +36,11 @@ export async function resolveSubjectProfileForKnowledgeIdsStrict(
 }
 
 /**
- * YUK-1567 — strictly-live subject resolution for paid inputs. Hydrates a
- * PRIVATE registry inside the caller's transaction context (shared session,
- * isolated memory — a concurrent global refresh cannot substitute another
- * profile; note the four hydration SELECTs are still per-statement READ
- * COMMITTED reads, not one transaction-wide snapshot) and returns the target
- * profile only when it is provably DB-live this round: the subject must be in
- * `report.hydrated` AND every bound trait resolution must be `degraded ===
- * null` (live payload passed schema — rejects journal_fallback / code_seed /
- * builtin-floor / absent rows; provenance check, not version-string inference
- * — render/scheduling traits never appear in the version). A null/empty
- * domain keeps the existing `general` default semantics — still required to
- * be strictly live; a non-empty domain resolving to no known canonical
- * subject throws instead of silently freezing `general`. Every failure is a
- * throw: callers must surface it before any plan-eligibility/void/auth/
- * enqueue/provider step.
+ * Strictly-live subject resolution for paid inputs. Hydrates a private registry in
+ * the caller's context and returns the profile only when it is DB-live this round:
+ * the subject is hydrated and every bound trait resolution passed schema. A non-empty
+ * domain that resolves to no known subject throws instead of silently using `general`.
+ * Every failure throws before any plan/void/enqueue/provider step.
  */
 export async function resolveSubjectProfileStrictLive(
   db: Db | Tx,
@@ -110,17 +100,8 @@ export async function resolveSubjectProfileForKnowledgeIds(
   try {
     return await resolveSubjectProfileForKnowledgeIdsStrict(db, knowledgeIds);
   } catch (err) {
-    // YUK-56 (2026-05-24): tolerate missing / orphaned knowledge ids — fall
-    // back to default profile rather than 500ing the caller. Reasons:
-    //   - knowledge ids on a question may be stale (parent deleted, etc.)
-    //     and judging shouldn't hard-block on the read-side housekeeping
-    //   - this helper has no business surfacing knowledge-graph integrity
-    //     issues — that's an audit-drift / DB-foreign-key concern
-    //   - exact / keyword judges don't need profile-specific routing; they
-    //     work with the default profile. Semantic / steps would also work,
-    //     using the default subject hint
-    // Audit-drift owns flagging real "orphan k id" data — this returns a
-    // safe fallback at runtime.
+    // Tolerate missing or orphaned knowledge ids: fall back to the default profile
+    // rather than 500. Audit drift owns flagging real orphan data.
     console.warn(
       `resolveSubjectProfileForKnowledgeIds: falling back to default profile for unresolvable knowledge id '${firstKnowledgeId}': ${
         err instanceof Error ? err.message : String(err)

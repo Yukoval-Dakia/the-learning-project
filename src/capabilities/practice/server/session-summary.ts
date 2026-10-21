@@ -1,12 +1,10 @@
 // SessionSummaryTask runner — practice-owned session domain operation.
-//
 // The session_summary job handler (practice/jobs/session_summary.ts) calls this
 // after a review session completes. It builds a compact stats snapshot from
 // chained events, runs the task, and stores the result in
 // learning_session.summary_md. The handler logs and rethrows failures so
 // pg-boss can retry; a missing summary degrades to the UI stub.
-//
-// YUK-1570 — moved VERBATIM from src/server/session/summary.ts (only consumer
+// moved VERBATIM from src/server/session/summary.ts (only consumer
 // was this capability's job; session summary is a review-domain operation).
 // `getFailureAttempts` now comes from the kernel read-model directly (the
 // knowledge public seam only re-exported it); the run function is the
@@ -31,7 +29,7 @@ const MODEL_STATISTIC_CLAIMS = [
 ];
 
 /**
- * YUK-1621 — deterministic session numbers. Only the effective verdict track is
+ * deterministic session numbers. Only the effective verdict track is
  * counted; unjudged reviews stay in the total but not in the accuracy denominator.
  */
 export function renderSessionNumericSummary(input: {
@@ -150,7 +148,7 @@ export async function runSessionSummary(
     : null;
   const subjectProfile = resolveSubjectProfile(firstDomain);
 
-  // YUK-1621 — session stats and causes both come from THIS session's effective
+  // session stats and causes both come from THIS session's effective
   // verdicts. Historical failure attribution is deliberately not mixed in.
   const verdictMap = await resolveVerdictsForAttempts(
     db,
@@ -189,7 +187,7 @@ export async function runSessionSummary(
     if (category) causeCounts.set(category, (causeCounts.get(category) ?? 0) + 1);
   }
 
-  // YUK-1018 — misc_ labels; built-in cause labels come from the subject profile
+  // misc_ labels; built-in cause labels come from the subject profile
   // so the fixed sentence never prints a raw category id.
   const topCauseLabels = await resolveMiscCauseLabels(db, [...causeCounts.keys()]);
   const profileCauseLabels = new Map(

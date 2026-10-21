@@ -9,11 +9,11 @@ import {
   placementSchemaFailure,
 } from '../question-supply/placement-starter-outcome';
 
-// §2 / §5 — output JSON parse + judge-contract assertion. The gate itself is
+// output JSON parse + judge-contract assertion. The gate itself is
 // the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —
-// extracted for YUK-308 so the question_draft author flow enforces the same
+// extracted for so the question_draft author flow enforces the same
 // contract; output validation failures retain sanitized schema paths and codes.
-// YUK-996 — `subjectProfile` is the run's resolved profile (same value threaded
+// `subjectProfile` is the run's resolved profile (same value threaded
 // to the QuizGenTask call ctx): the judge contract resolves the route the
 // runtime invoker will dispatch for the PERSISTED row.
 export class QuizGenOutputFailure extends Error {
@@ -26,7 +26,7 @@ export function parseOutput(
   text: string,
   subjectProfile: SubjectProfile,
 ): { parsed: QuizGenOutputT; parseRepaired: boolean } {
-  // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
+  // 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
   // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。
   let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
@@ -48,7 +48,7 @@ export function parseOutput(
     // value — so the contract asserts on the persisted shape, not the raw model
     // output (a missing model-declared override must NOT fall through to the
     // profile ladder here; at judge time it won't).
-    // YUK-1011 — a composite item (structured stem+subs) persists with a FORCED
+    // a composite item (structured stem+subs) persists with a FORCED
     // 'semantic' override and choices_md=null (the whole-composite answer is
     // semantically graded against the merged reference; per-sub options live in
     // the tree, not the column). Assert on THAT persisted shape so a composite

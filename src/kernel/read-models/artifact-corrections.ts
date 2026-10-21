@@ -3,15 +3,10 @@ import { CorrectArtifactEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 
-// Artifact-scoped correction projection. Parallel to `corrections.ts` which
-// composes event-scoped state. Per ADR-0020:
-//   - block_id is taken from body_blocks node attrs.id (stable string, NOT array index)
-//   - `replacement_artifact_id` (supersede target) is an artifact_id, not an
-//     event_id — the shape mirrors `CorrectionStatus` from corrections.ts but
-//     with the supersede field renamed for clarity at the type boundary.
-//   - whole-artifact and per-block state are composed independently so that
-//     a whole-artifact `retract` does not silently mask per-block `mark_wrong`
-//     history (and vice versa) — UI / downstream consumers can read either.
+// Artifact-scoped correction projection, parallel to event-scoped corrections.
+// block_id comes from body_blocks attrs.id, not an array index. Whole-artifact and
+// per-block state compose independently so a whole retract does not mask block
+// history.
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;

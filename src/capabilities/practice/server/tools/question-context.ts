@@ -1,8 +1,7 @@
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/scheduling';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
-// YUK-102 / Foundation D M2 — moved to Practice by YUK-892 (F4.0).
-//
+// Foundation D M2 — moved to Practice by (F4.0).
 // Composite read tools for one question contract (attempts, reviews, FSRS
 // state, linked records, variants, knowledge paths, assets, addressable
 // structure) and the due-review queue. Practice owns the learner-facing
@@ -17,7 +16,7 @@ import {
   InterventionSettlement,
 } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
-// ADR-0032 D6-R6 / D6-draftread — addressable-structure projection (read≡write
+// D6-R6 / D6-draftread — addressable-structure projection (read≡write
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
 import { projectAddressableStructure } from '@/core/schema/structured_question';
@@ -65,7 +64,7 @@ const GetQuestionContextInputSchema = z.object({
         'variants',
         'knowledge_context',
         'assets',
-        // ADR-0032 D6-R6 — addressable StructuredQuestion tree (read≡write
+        // D6-R6 — addressable StructuredQuestion tree (read≡write
         // coordinate fix). Pure-read projection of question.structured; lets the
         // agent read the question by node-id the same way the edit tools write it.
         'structure',
@@ -141,7 +140,7 @@ const GetQuestionContextOutputSchema = z.object({
   source_assets: z
     .array(z.object({ asset_id: z.string(), role: z.string(), crop_ref: z.string().optional() }))
     .optional(),
-  // ADR-0032 D6-R6 — addressable StructuredQuestion tree (only when
+  // D6-R6 — addressable StructuredQuestion tree (only when
   // include:['structure'] and the question carries a `structured` jsonb).
   structure: AddressableStructureSchema.optional(),
 });
@@ -293,7 +292,7 @@ async function executeGetQuestionContext(
       })),
     ];
   }
-  // ADR-0032 D6-R6 — pure-read addressable structure projection. Only emitted
+  // D6-R6 — pure-read addressable structure projection. Only emitted
   // when explicitly requested AND the question carries a `structured` tree
   // (non-structured questions — variant_gen / embedded_check — have none).
   if (include.has('structure') && q?.structured) {
@@ -320,12 +319,12 @@ const GetReviewDueOutputSchema = z.object({
       fsrs_state: z.unknown().nullable().optional(),
       due_at: z.string().nullable(),
       reason: z.enum(['never_reviewed_failure', 'overdue', 'filtered_match']),
-      // YUK-226 S2-5a.2 — source/tier read model. `source` is the question.source
+      //5a.2 — source/tier read model. `source` is the question.source
       // column; `tier` is derived via deriveSourceTier(source, metadata) (1 authentic
       // → 4 generated). Consumers (组卷/召回) prefer lower-numbered (higher) tiers.
       source: z.string(),
       tier: z.number().int().min(1).max(4),
-      // OF-2 (plan §12) — within tier 2 (web_sourced), off-whitelist questions
+      // OF-2 — within tier 2 (web_sourced), off-whitelist questions
       // (whitelist_match=false) sort BEHIND whitelist_match=true at selection
       // time. Present only for tier-2 rows (metadata.web_sourced.whitelist_match);
       // null otherwise. Demotion affects selection priority only, never quality.
@@ -334,9 +333,9 @@ const GetReviewDueOutputSchema = z.object({
         .object({
           attempt_event_id: z.string(),
           cause: z.string().nullable(),
-          // YUK-1018 — misc_ cause id 的显示回填；非 misc / unresolvable → null。
+          // misc_ cause id 的显示回填；非 misc / unresolvable → null。
           cause_label: z.string().nullable(),
-          // YUK-1020 — 副归因 id + misc_ 显示回填（id→title map；缺席→裸 id）。
+          // 副归因 id + misc_ 显示回填（id→title map；缺席→裸 id）。
           secondary_categories: z.array(z.string()),
           secondary_labels: z.record(z.string(), z.string()),
           created_at: z.string(),
@@ -407,7 +406,7 @@ const GetReviewDueOutputSchema = z.object({
 type GetReviewDueInput = z.infer<typeof GetReviewDueInputSchema>;
 type GetReviewDueOutput = z.infer<typeof GetReviewDueOutputSchema>;
 
-// OF-2 (plan §12) — read metadata.web_sourced.whitelist_match for tier-2 demotion.
+// OF-2 — read metadata.web_sourced.whitelist_match for tier-2 demotion.
 // Returns null for non-web_sourced rows (no whitelist semantics). Defensive about
 // the jsonb shape: a malformed/absent block yields null (treated as "unknown",
 // never demoted ahead of a real false).
@@ -526,7 +525,7 @@ export async function executeGetReviewDue(
     due_at: Date;
     prompt_md: string;
     knowledge_ids: string[];
-    // YUK-226 S2-5a.2 — projected for tier derivation (deriveSourceTier needs both).
+    //5a.2 — projected for tier derivation (deriveSourceTier needs both).
     source: string;
     metadata: Record<string, unknown> | null;
   };
@@ -579,7 +578,7 @@ export async function executeGetReviewDue(
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
           notDraftPredicate(question.draft_status),
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选池。
+          // 契约准入门：suspended/withdrawn 组不进候选池。
           questionSuspendedPredicate(question),
         ),
       )
@@ -607,7 +606,7 @@ export async function executeGetReviewDue(
   const legacyQuestionConditions = [
     eq(material_fsrs_state.subject_kind, 'question'),
     ...(selectedForgettingEngine() === 'fsrs' ? [lte(material_fsrs_state.due_at, now)] : []),
-    // Guard-B (codex PR #298 #3357817910): a legacy/mis-written
+    // Guard-B a legacy/mis-written
     // material_fsrs_state row keyed on a question whose question is still
     // draft_status='draft' must NEVER enter the candidate pool. The knowledge
     // branch above already inlines this exclusion; the public due-list path
@@ -618,7 +617,7 @@ export async function executeGetReviewDue(
     // is excluded (`draft_status <> 'draft'` alone would drop NULL rows under
     // SQL three-valued logic).
     notDraftPredicate(question.draft_status),
-    // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进入复习候选。
+    // 契约准入门：suspended/withdrawn 组不进入复习候选。
     questionSuspendedPredicate(question),
   ];
   if (input.knowledgeIds?.length) {
@@ -714,21 +713,21 @@ export async function executeGetReviewDue(
           .where(
             and(
               inArray(question.id, newQuestionIds),
-              // Guard-B (codex PR #298 #3357932403): a draft question with a
+              // Guard-B a draft question with a
               // failure attempt has NO material_fsrs_state row, so the FSRS-keyed
               // branches' draft filter above never sees it — it would otherwise
               // surface here as a never-reviewed-failure candidate. Apply the same
               // exclusion the due-list.ts public path applies to its never-
               // reviewed slice. NULL handling explicit: only 'draft' excluded.
               notDraftPredicate(question.draft_status),
-              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选。
+              // 契约准入门：suspended/withdrawn 组不进候选。
               questionSuspendedPredicate(question),
             ),
           )
       : [];
   const qById = new Map(newQuestions.map((row) => [row.id, row]));
 
-  // YUK-1018/1020 — misc_ primary + secondary cause id 的 title 回填（同一批
+  //misc_ primary + secondary cause id 的 title 回填（同一批
   // 查询，批量一次，不进循环）。只对 emit 集 newQuestionIds 预算 effectiveCause
   // + 解析 label，200 帽的其余条目不查。
   const causeByQid = new Map(

@@ -1,13 +1,7 @@
-// YUK-1355: extracted item_prior_backfill operation, consumed by the retained
-// pg-boss handler. The unregistered DBOS candidate only consumes the read functions.
-// Retained catch/skip behavior stays here. The explicit versioned execution path
-// consumes the real shared paid-effect adapter; it is not a default cutover.
-//
-// YUK-1355 (2026-10-11 continuation): per-rep preparation/execute/parse/aggregate/
-// application seams. Rep work identity = question revision + input digest + rep
-// index, deliberately distinct from nightly DAG delivery identity. Staged reps
-// resume without provider calls; an unknown paid outcome stays held across new
-// deliveries and is never caught as an ordinary retryable failure.
+// item_prior_backfill operation consumed by the retained pg-boss handler. The unregistered
+// DBOS candidate only reads it; the explicit versioned path uses the real paid-effect
+// adapter. Rep identity is question revision + input digest + rep index. Staged reps resume
+// without provider calls; an unknown paid outcome stays held across deliveries.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -28,7 +22,7 @@ import {
   makePracticeTaskRunFn,
 } from './task-runtime';
 
-// YUK-376 — 冷启锚方法开关：'feature'（默认，ItemPriorTask feature→b，source=
+// 冷启锚方法开关：'feature'（默认，ItemPriorTask feature→b，source=
 // 'llm_prior'）| 'llasa'（ItemPriorLlasaTask 学生模拟反推 b，source=
 // 'llm_prior_llasa'）。opt-in——默认路径（含输入形状）零变更。
 export type ItemPriorMethod = 'feature' | 'llasa';
@@ -55,7 +49,7 @@ export interface ItemPriorBackfillResult {
 
 export const DEFAULT_MAX_PER_RUN = 25;
 
-// YUK-1034 — reps 生产默认 3（owner 2026-09-24 拍板启用；median SD 0.361→
+// reps 生产默认 3（owner 2026-09-24 拍板启用；median SD 0.361→
 // 0.173，≈+$0.0004/题）。上限防 job data 把付费乘数打爆（reps 把每题 LLM
 // 成本 ×N，9 已远超实用值 3）。
 export const DEFAULT_REPS = 3;
@@ -117,7 +111,7 @@ export async function resolveItemPriorKnowledgeNames(
   return nameById;
 }
 
-// ─── YUK-1355 — per-rep preparation seam ────────────────────────────────────
+// ─── — per-rep preparation seam ────────────────────────────────────
 
 export type ItemPriorTaskName = 'ItemPriorTask' | 'ItemPriorLlasaTask';
 
@@ -173,7 +167,7 @@ export async function prepareItemPriorWork(
     db,
     candidate.knowledge_ids ?? [],
   );
-  // YUK-376 — llasa 输入带 reference_md/choices_md（模拟学生作答需要选项、
+  // llasa 输入带 reference_md/choices_md（模拟学生作答需要选项、
   // 判对错需要参考答案）；feature 输入保持原有三个字段，输入 hash 不变。
   const input =
     params.method === 'llasa'
@@ -237,7 +231,7 @@ export function itemPriorRepIdentity(
 }
 
 /**
- * YUK-1034 retained feature sampler over the prepared work: reps=1 退化为单次
+ * retained feature sampler over the prepared work: reps=1 退化为单次
  * 调用（与原路径逐字节等价，输入形状/hash 不变）；reps>1 连跑 N 次，逐 rep
  * catch 丢弃失败（LLM/parse 错只记 warn 不炸题），成功 drafts 走 median 聚合。
  * 全部失败 → aggregateItemPriorRepDrafts throw → 调用方按单题失败处理。
@@ -265,8 +259,8 @@ async function runRetainedFeatureReps(
 
 /**
  * 单题付费执行（retained 路径）。语义与原循环体逐条对应：knowledge context
- * 组装、subject profile 解析、YUK-376 双方法输入形状（llasa 带
- * reference_md/choices_md；feature 三字段不变）、YUK-1034 reps 采样。返回待写
+ * 组装、subject profile 解析、 双方法输入形状（llasa 带
+ * reference_md/choices_md；feature 三字段不变）、 reps 采样。返回待写
  * draft 与 source。throw 不区分 provider 未调用、已付费或结果未知；retained
  * caller 继续 catch+skip，staged 执行不经过本函数。
  */
@@ -278,7 +272,7 @@ export async function calibrateItemPriorQuestion(
   params: ItemPriorExecutionParams,
 ): Promise<{ draft: ItemPriorDraftT; source: string }> {
   const work = await prepareItemPriorWork(db, candidate, nameById, params);
-  // YUK-1034 — feature 路径：reps=1 单次调用（原语义），reps>1 N 次采样
+  // feature 路径：reps=1 单次调用（原语义），reps>1 N 次采样
   // median 聚合；llasa 保持单次调用不动，parse 错误照常向上传播。
   const draft =
     work.method === 'llasa'
@@ -318,7 +312,7 @@ export type ItemPriorRepReceipt =
   | z.infer<typeof itemPriorOutputReceiptSchema>
   | { readonly kind: 'unknown'; readonly reason: string };
 
-// ─── YUK-1355 — staged per-rep execution / parse / aggregate / application ───
+// ─── — staged per-rep execution / parse / aggregate / application ───
 
 // Parent-review 2026-10-11: durable unknowns are NOT ordinary failures. A
 // store/receipt/application error at or after a paid send must propagate (or
@@ -610,12 +604,12 @@ async function readItemPriorHardRow(
  * exactly:
  *
  * - existing row already matching → `matched` (idempotent replay of the same
- *   staged result);
+ * staged result);
  * - existing row differing → `superseded`: another writer's anchor holds and
- *   is never overwritten — this attempt's draft was not persisted;
+ * is never overwritten — this attempt's draft was not persisted;
  * - no row → write once via the retained writer, then re-read; a missing or
- *   differing row after a successful write escalates to `superseded` /
- *   `ItemPriorApplicationError`.
+ * differing row after a successful write escalates to `superseded` /
+ * `ItemPriorApplicationError`.
  *
  * `matched` proves the domain state equals this staged draft. It never proves
  * causal authorship. The adapter separately binds this disposition to the exact

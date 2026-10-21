@@ -106,7 +106,7 @@ export const questionDraftProposalAcceptApplier: ProposalAcceptApplier = async (
     ),
   );
 
-// YUK-308 — question_draft dismiss: tombstone the still-draft question row via
+// question_draft dismiss: tombstone the still-draft question row via
 // metadata.dismissed_at (see dismissQuestionDraftProposal) so a user-rejected
 // draft stops re-surfacing through search_bank / write_quiz / the
 // draft-review pool. Replaces the generic write-only rate path for this kind.
@@ -137,7 +137,7 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
     ),
   );
 
-// YUK-1407 — judge_retraction accept：判分纠错提案（evaluation 目标走
+// judge_retraction accept：判分纠错提案（evaluation 目标走
 // appeal/rejudge/CAS 激活 + settlement replay；legacy judge-event 目标写
 // CorrectEvent）。真身在 proposal-appliers.ts。
 export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async (
@@ -154,7 +154,7 @@ export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async
     ),
   );
 
-// YUK-1016 / 454-B — cause_category accept：往 cause_category_overlay INSERT
+//B — cause_category accept：往 cause_category_overlay INSERT
 // status='active' 行（applier 真身在 proposal-appliers.ts）。
 export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
   db,
@@ -170,7 +170,7 @@ export const causeCategoryProposalAcceptApplier: ProposalAcceptApplier = async (
     ),
   );
 
-// YUK-1016 — retract 语义：accept 已落 overlay 行 → 置 archived_at（唯一回退
+// retract 语义：accept 已落 overlay 行 → 置 archived_at（唯一回退
 // 维度）。行按 proposal_event_id 归属限定——同 slug 两张 pending proposal 并存
 // 时，retract 未落地那张不许归档别人 accept 的活行（mistake_variant 同款归属
 // 语义）。proposal 从未被 accept（pending 即 retract，行不存在）、行非本

@@ -13,7 +13,7 @@ import type { JudgeQuestionRow } from './question-contract';
 
 const CAPABILITY_REF = { id: 'steps', version: '1.0.0' };
 
-// YUK-591 — the registry-declared structuredOutputSchema (the §7-audited single
+// the registry-declared structuredOutputSchema (the-audited single
 // source) drives the app-level Zod parse below. See multimodal-direct-judge.ts
 // for the symmetric wiring + zero-loss-on-mimo rationale.
 const STEP_WEIGHT_DEFAULT = 0.6;
@@ -24,7 +24,7 @@ const VERDICT_WEIGHT: Record<StepsLlmOutputT['signal_verdicts'][number]['verdict
   skipped: 0,
 };
 
-/** Widened (YUK-591) to carry the SDK `structured_output` passthrough. */
+/** Widened to carry the SDK `structured_output` passthrough. */
 export type StepsRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
@@ -64,7 +64,7 @@ function normalize(value: string): string {
 }
 
 /**
- * YUK-591 — three-state dispatch over the task result (symmetric with
+ * three-state dispatch over the task result (symmetric with
  * multimodal-direct-judge.ts parseMultimodalDirectResult). Exported for the unit
  * test. structured_output present → Zod-parse it (constraint enforcement kept,
  * not just JSON shape); absent/null → the char-scan text path (byte-identical to
@@ -148,7 +148,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
   const promptImageRefs = params.question.image_refs ?? [];
   const studentImageRefs = params.student_image_refs ?? [];
 
-  // Accelerator path — Spec §7.5 #2:
+  // Accelerator path — #2:
   // 学生主动打字 final_answer + 命中 answer_equivalents (或 final_answer 本身) → skip LLM.
   // Conservative: 没有 LLM 走过步骤，无法给 step credit。只按 final 部分计 (1−step_weight)*1.
   // 默认 step_weight=0.6 → score 0.4，落 partial。要 'correct' 必须走 LLM。
@@ -215,17 +215,16 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
 
   const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
-  // YUK-893 — set when the configured lane hard-failed and the registry-default
+  // set when the configured lane hard-failed and the registry-default
   // retry produced this verdict; merged into the result's evidence_json.
   let laneDegradation: LaneDegradationEvidence | undefined;
   try {
-    // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
+    // Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
     // unset → undefined → registry mimo default (byte-identical to today). The
     // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
-    //
-    // YUK-576 — enableTransientRetry: true. This judge is a synchronous-route
+    // enableTransientRetry: true. This judge is a synchronous-route
     // sensor with NO durable backstop (failures land in 'unsupported', so
     // pg-boss never sees a throw): the sanctioned in-process transient-retry
     // opt-in (registry StepsJudgeTask budget.transientRetries=1, runner gates
@@ -233,12 +232,11 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     // runTaskFn call site, so ALL sync callers of runStepsJudge are covered by
     // one flag. When the operator pins routing (VISION_JUDGE_PROVIDER →
     // ctx.override set), the runner's override gate turns retry off.
-    // YUK-591 — structured extraction stays app-level: the result text is Zod-
+    // structured extraction stays app-level: the result text is Zod-
     // parsed against the registry-declared StepsLlmOutput; lanes without a
     // transport contract (mimo) fall back to the char-scan text parse
     // (zero-loss on the default lane).
-    //
-    // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
+    // the lane call goes through runTaskWithLaneFallback: a provider
     // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once
     // on the standard resolution chain and records degradation evidence; a hard
     // failure on every lane fails CLOSED below with error_kind=
@@ -288,7 +286,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
         taskResult.structured_output != null
           ? JSON.stringify(taskResult.structured_output).slice(0, 4000)
           : taskResult.text,
-      // YUK-893 — if this output arrived via the fallback lane, the degradation
+      // if this output arrived via the fallback lane, the degradation
       // evidence must not be lost to the parse failure.
       ...(laneDegradation ? { lane_degradation: laneDegradation } : {}),
     });
@@ -310,7 +308,7 @@ export async function runStepsJudge(params: RunStepsJudgeParams): Promise<JudgeR
     prompt_image_refs: promptImageRefs,
     student_image_refs: studentImageRefs,
   });
-  // YUK-893 — a verdict produced by the fallback lane carries its degradation
+  // a verdict produced by the fallback lane carries its degradation
   // evidence (failed lane, why, fallback used) on the successful result too.
   return laneDegradation
     ? {

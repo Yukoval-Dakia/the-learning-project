@@ -105,7 +105,7 @@ export async function enqueuePublishedQuestionAdmission(
       .where(eq(question_revision.revision_id, payload.data.revision_id));
     if (!revision || revision.group_id !== root.id)
       throw new Error('Admission revision binding missing');
-    // YUK-1568（第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
+    // （第 2 片）：声明 answer_shape 的题由共享比较核心判定支持后
     // 才可进入付费双解 —— 未实现 notation、未知/坏声明仍在入队前被拦（宽
     // 松存在性扫描 + declaredShapesAllSupported：未知版本也算已声明并判
     // 未支持）。命中即 skip 不入队，不给后续 claim/maySend 留第一入口。

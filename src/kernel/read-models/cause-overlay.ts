@@ -1,12 +1,6 @@
-// YUK-1016 / 454-B — cause_category_overlay 读面（跨 capability 共享投影）。
-//
-// 表归 Practice 所有（唯一写路径：`cause_category` proposal 的 accept applier），
-// 但「生效错因词表 = 声明 ∪ overlay.active」是所有 cause 入口都要用的投影——
-// ingestion（mistakes / import-completion / mistake_enroll）与 practice
-// （attribution / variant）都经这里合并，所以放 kernel read-models。
-//
-// 生效语义：status='active' 且 archived_at IS NULL。draft / archived 行不进任何
-// 读取点。
+// Effective cause-category vocabulary: declared categories plus overlay rows with
+// status='active' and archived_at IS NULL. Practice owns the table; all cause entry
+// points share this read.
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { CauseCategoryDeclarationT } from '@/core/schema/profile-decl';
@@ -18,13 +12,12 @@ type DbLike = Db | Tx;
 
 export type CauseCategoryOverlayRow = typeof cause_category_overlay.$inferSelect;
 
-/** `ov_` 命名空间——防撞 profile 声明的类目 id（`misc_` 前缀的同款手法）。 */
+/** 'ov_' namespace keeps overlay ids from colliding with profile-declared ids. */
 export const CAUSE_OVERLAY_ID_PREFIX = 'ov_';
 
 /**
- * Overlay 行 → 词表候选形状。overlay 不携带 meta_cause_prior / variant_targetable
- * / rating_lean 等声明字段——它们在 CauseCategoryDeclarationT 上都是 optional，
- * undefined 走各自默认（prior→null、targetable→true、lean→neutral）。
+ * Overlay row -> vocabulary candidate. Overlays carry no declaration-only fields;
+ * undefined takes each optional's default.
  */
 export function overlayToCandidate(row: CauseCategoryOverlayRow): CauseCategoryDeclarationT {
   return {
@@ -34,10 +27,7 @@ export function overlayToCandidate(row: CauseCategoryOverlayRow): CauseCategoryD
   };
 }
 
-/**
- * 该 subject 的全部 active overlay 类目（合并词表的来源）。
- * 只读 status='active' 且未归档的行；按 created_at 稳定排序，保证候选序确定。
- */
+/** Active, non-archived overlays for a subject, in stable creation order. */
 export async function listActiveCauseCategoryOverlays(
   db: DbLike,
   subjectId: string,
@@ -56,8 +46,8 @@ export async function listActiveCauseCategoryOverlays(
 }
 
 /**
- * 按 id 取 overlay 行（任意 status/归档态）——variant targetability 与 retract
- * applier 的解析面。返回行由调用方自行判定 status==='active' && archived_at===null。
+ * Fetch overlays by id regardless of status; callers decide whether a row is
+ * effective.
  */
 export async function getCauseCategoryOverlaysByIds(
   db: DbLike,
@@ -71,8 +61,8 @@ export async function getCauseCategoryOverlaysByIds(
 }
 
 /**
- * 生效 profile = 声明词表 ∪ overlay.active（追加在声明之后，序确定）。
- * 无 active 行时**同引用返回**——等价语义不制造多余对象。
+ * Effective profile: declared categories followed by active overlays. Returns the
+ * same object when there are no active rows.
  */
 export async function withActiveCauseCategoryOverlays(
   db: DbLike,
