@@ -1,3 +1,4 @@
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
@@ -37,7 +38,6 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import {
   type TaskTextResult,
   type TaskTextRunFn,

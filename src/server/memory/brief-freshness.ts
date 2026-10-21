@@ -1,10 +1,5 @@
-// P5.3 long-term brief freshness score — pure, IO-free decay arithmetic.
-//
-// Spec: docs/superpowers/specs/2026-05-31-p5.3-long-term-brief-stale-design.md §4.2.
-// This module deliberately imports NO DB code so brief.test.ts can exercise it
-// in the unit partition without spinning up Postgres. The lazy timestamp
-// resolver (`resolveEvidenceTimestamps`) lives in brief.ts, which already owns
-// the `event` table + `Db` type; this file is the model-free numerator math only.
+// Long-term brief freshness: pure decay arithmetic, no IO. The timestamp resolver
+// lives in brief.ts, which owns the event table and Db type.
 
 import type { LongTermFreshnessBudget } from '@/kernel/tools/budgets';
 
@@ -12,23 +7,17 @@ const MS_PER_DAY = 86_400_000;
 const LN2 = Math.log(2);
 
 /**
- * freshness = (1 / knownCount) * Σ exp(-ln(2) * ageDays_i / halfLifeDays)
- * over evidence rows whose created_at is known. ageDays = (now - created_at)/86_400_000, floored at 0.
- * score is NULL when knownCount === 0 (no judgeable evidence) — distinct from a scored 0.
- *
- * No `stale` boolean here — staleness is an advisory render-time judgement
- * (`score != null && score < budget.freshnessThreshold`) made by consumers,
- * NOT a mutation gate computed in the regen path.
+ * Mean exponential decay over evidence with a known created_at. Unknown timestamps
+ * are excluded from both numerator and count; no judgeable evidence scores null,
+ * distinct from a real 0. Consumers render staleness; this is not a mutation gate.
  */
 export function scoreLongTermFreshness(
   evidenceTimestamps: { id: string; created_at: Date | null }[],
   now: Date,
   budget: LongTermFreshnessBudget,
 ): { score: number | null; knownCount: number; unknownCount: number } {
-  // PR #229 review: fast-fail on a non-positive (or NaN) half-life. halfLifeDays
-  // is a compile-time const today (60), but as an exported pure util a bad config
-  // would otherwise yield NaN/Infinity/>1 scores that get written to the DB. The
-  // `!(x > 0)` form also rejects NaN.
+  // Reject a bad half-life here: it is a compile-time const today, but a config
+  // error would otherwise persist NaN/Infinity/>1 scores. `!(x > 0)` also rejects NaN.
   if (!(budget.halfLifeDays > 0)) {
     throw new Error(`scoreLongTermFreshness: halfLifeDays must be > 0, got ${budget.halfLifeDays}`);
   }
@@ -39,7 +28,7 @@ export function scoreLongTermFreshness(
 
   for (const { created_at } of evidenceTimestamps) {
     if (created_at == null) {
-      // Unknown timestamp — excluded from BOTH the numerator and knownCount (§4.2).
+      // Unknown timestamp: excluded from both numerator and knownCount.
       unknownCount += 1;
       continue;
     }
@@ -48,8 +37,7 @@ export function scoreLongTermFreshness(
     knownCount += 1;
   }
 
-  // knownCount === 0 ⇒ null guard removes any divide-by-zero. null is the
-  // "unjudgeable" state (empty ids OR all-unknown), distinct from a scored 0.
+  // null removes any divide-by-zero and is the "unjudgeable" state, distinct from 0.
   const score = knownCount === 0 ? null : sum / knownCount;
   return { score, knownCount, unknownCount };
 }

@@ -1,39 +1,6 @@
-// YUK-471 W3-B2 — projectQuestionBlock: the IO shell around the PURE question_block fold.
-//
-// Read→fold→write-through for all structured/merge/figure editors, replay and rebuild.
-// Creation/lifecycle owners also emit complete events in their write transactions.
-// Writer flags are retired; rollback requires the previous release. It:
-//   1. GATHERS the superset of `event` rows that can affect `blockId` (the pure reducer filters
-//      internally, but the shell over-collects — a missed event silently drops a mutation),
-//   2. maps each DB row → the flat FoldEvent envelope,
-//   3. calls foldQuestionBlock(blockId, foldEvents) (PURE),
-//   4. WRITE-THROUGH: null → DELETE the row; else upsert the projected columns.
-//
-// EXCLUDED from the upsert: `extracted_prompt_md` (legacy deprecated column, schema.ts:180 — DROP
-// deferred to Step 11.5). It is NOT fold truth (markdown views derive from `structured`, ADR-0002),
-// so the snapshot omits it and the projection never writes it (a pre-existing legacy value is left
-// untouched on conflict-update). Every OTHER column is fold truth (design §5.2).
-//
-// ── INERT (W3-B2, behaviour-preserving) ─────────────────────────────────────────────────────────
-// This shell is ADDED but NOT yet called by any live write path (no double-write, no SoT flip —
-// those are W3-C1/C3). The guarded variant in particular must NOT delete a pre-W3 row that folds to
-// null: until backfill (C2) writes a genesis anchor for every block, a fold-null on an un-anchored
-// row is fold-BLINDNESS, not a revert, so the guard keeps the imperative row.
-//
-// ── Gather + anchor HOISTED to the shared modules (W3-C2) ───────────────────────────────────────
-// The W1/W2 IO shells import gatherAndFoldX from the SHARED gather.ts (so the projection auditor
-// reconstructs a row identically) and hasXGenesisAnchor from parity.ts. W3-B2 kept a private Q1+Q2
-// merge gather + event-table anchor here while inert; C2 HOISTS them into gather.ts
-// (gatherAndFoldQuestionBlock — Q2 uses the TOP-LEVEL `payload @> {affected_blocks:[{block_id}]}`
-// form that hits the W3-C0 `event_payload_idx` GIN) and parity.ts (hasQuestionBlockGenesisAnchor —
-// event leg only; question_block does NOT enter the index, design §5.3) so the auditor + backfill
-// share ONE gather and ONE anchor definition with this shell. This shell now just imports them.
-//
-// question_block does NOT enter materialized_id_index (design §5.3 — it has no minting indirection;
-// the row id is ALWAYS the subject_id, so the anchor is always a subject-keyed event — the ONE
-// intentional asymmetry vs artifact, §9.4).
-//
-// Db|Tx polymorphic.
+// Write-through shell for the pure `question_block` fold: gather the event superset,
+// fold it, then delete or upsert. `extracted_prompt_md` is legacy and not fold truth,
+// so it is neither in the snapshot nor written. The shared gather lives in gather.ts.
 
 import { eq } from 'drizzle-orm';
 
@@ -46,16 +13,8 @@ import { hasQuestionBlockGenesisAnchor } from './parity';
 type DbLike = Db | Tx;
 
 /**
- * Project the current structural state of a single `question_block` from the event log and write it
- * through to the live `question_block` table. READ→FOLD→WRITE-THROUGH:
- *   - null  → DELETE FROM question_block WHERE id=blockId (block never existed / fully reverted),
- *   - row   → upsert (insert … onConflictDoUpdate target question_block.id) the projected columns.
- *
- * INERT in B2 (not wired into any live path). Db|Tx polymorphic (wired sites in C1/C3 call it inside
- * the write tx).
- *
- * @param db       Db or Tx (polymorphic).
- * @param blockId  the question_block row id to project.
+ * Re-project one `question_block`. A fold of null deletes the row; otherwise upsert the
+ * projected columns.
  */
 export async function projectQuestionBlock(db: DbLike, blockId: string): Promise<void> {
   const projected = await gatherAndFoldQuestionBlock(db, blockId);
@@ -67,13 +26,8 @@ export async function projectQuestionBlock(db: DbLike, blockId: string): Promise
 }
 
 /**
- * The GUARDED question_block write-through (the SoT-flip row writer). Identical to
- * projectQuestionBlock EXCEPT the null branch: a fold of null DELETEs the live row ONLY when the
- * block HAS a genesis/create anchor (a genuine revert of an event-sourced block). A fold-null on an
- * UN-anchored block — a pre-W3 row the fold is blind to (no genesis backfill yet) — must NOT delete
- * the live row; that would destroy data on a normal edit whose target predates event-sourcing. This
- * is the keystone that lets the flip activate before every block is backfilled. Mirrors
- * projectArtifactGuarded / projectKnowledgeNodeGuarded.
+ * Guarded write-through: a fold of null deletes only when the block has a genesis anchor.
+ * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
 export async function projectQuestionBlockGuarded(db: DbLike, blockId: string): Promise<void> {
   const projected = await gatherAndFoldQuestionBlock(db, blockId);
@@ -88,10 +42,8 @@ export async function projectQuestionBlockGuarded(db: DbLike, blockId: string): 
   await upsertProjectedQuestionBlock(db, projected);
 }
 
-// Shared upsert of the projected question_block columns. Covers every fold-truth column; EXCLUDES
-// `extracted_prompt_md` (legacy deprecated — not in the snapshot, left untouched on conflict). The
-// snapshot always carries an explicit value for every column below (jsonb columns may be null only
-// where the table allows — `structured` / nullable text columns).
+// Upsert every fold-truth column except the legacy `extracted_prompt_md`, which stays
+// untouched on conflict.
 async function upsertProjectedQuestionBlock(
   db: DbLike,
   projected: QuestionBlockRowSnapshotT,
@@ -101,8 +53,7 @@ async function upsertProjectedQuestionBlock(
     source_document_id: projected.source_document_id,
     source_asset_ids: projected.source_asset_ids,
     page_spans: projected.page_spans,
-    // YUK-1468 — 快照结构化内容是 legacy|v2 联合；列运行时存 JSONB（v2 文档
-    // 由编辑面写入），TS 窄类型经 cast 如实透传。
+    // 快照可能仍是 legacy|v2 联合；列运行时存 JSONB，TS 窄类型经 cast 透传。
     structured: projected.structured as typeof question_block.$inferInsert.structured,
     figures: projected.figures,
     layout_quality: projected.layout_quality,

@@ -1,27 +1,7 @@
-// YUK-471 W1 PR-A2a — projectKnowledgeEdge: the IO shell around the PURE edge fold.
-//
-// The read→fold→write-through shell for a `knowledge_edge` row. Unlike the node shell,
-// edges are SIMPLE: EVERY edge event (genesis seed, generate-create, generate-archive)
-// keys on the edge's own subject_id (= edgeId). So the gather is a single subject-keyed
-// query — no reverse index, no jsonb-containment scan, no rate resolution (the edge
-// reducer reads no rate events; edge create/archive take effect directly).
-//
-// The reducer DOES need the live topology mesh: a generate-create that adds a LIVE
-// prerequisite edge is re-checked against ADR-0034 (cycle / direction contradiction), and every
-// live projected mesh edge is checked against the ADR-0011 tree-backbone invariant. The
-// shell supplies liveMesh = the current archived_at IS NULL edge set. NOTE: foldKnowledgeEdge
-// THROWS on a topology reject — we let it PROPAGATE so the caller's transaction aborts (in
-// PR-B this shell runs inside the accept tx; a reject must roll the whole accept back, not
-// leave a half-applied edge). The shell does not catch it.
-//
-// BEHAVIOR-PRESERVING (PR-A2a): ADDED + DB-tested, NOT wired into edges.ts / propose_edge.ts
-// / any live write path. Db|Tx polymorphic; upsert/DELETE mirrors upsertFsrsState +
-// restore-snapshot.ts.
-//
-// The read→fold half (the subject-keyed gather + liveMesh + foldKnowledgeEdge call) lives in
-// the SHARED gather.ts so this shell and scripts/audit-projection.ts reconstruct an edge
-// IDENTICALLY (single gather implementation — see gather.ts header). This shell adds only
-// the WRITE-THROUGH.
+// Write-through shell for the pure `knowledge_edge` fold. Every edge event keys on the
+// edge id, so the gather is a single subject-keyed query. The fold also receives the
+// live edge mesh for its topology checks; a topology reject propagates and aborts the
+// caller's transaction. The shared gather lives in gather.ts.
 
 import { eq, inArray } from 'drizzle-orm';
 
@@ -33,35 +13,16 @@ import { gatherAndFoldKnowledgeEdge } from './gather';
 
 type DbLike = Db | Tx;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
-// created_by column type, sourced from the table's own inferred shape (jsonb $type<AgentRefT>)
-// — avoids a cross-import of the non-exported AgentRefT alias.
+// created_by type comes from the table's inferred shape, avoiding a cross-import of the alias.
 type EdgeCreatedBy = EdgeRow['created_by'];
 
 /**
- * Project a single `knowledge_edge` row from its event log and write it through to the live
- * `knowledge_edge` table.
- *
- * READ→FOLD→WRITE-THROUGH:
- *   - gather events WHERE subject_kind='knowledge_edge' AND subject_id=edgeId (all edge
- *     events key on edgeId — genesis / generate-create / generate-archive),
- *   - build liveMesh = the current live edge set (archived_at IS NULL) as the topology fixture,
- *   - foldKnowledgeEdge(edgeId, foldEvents, liveMesh) (PURE; THROWS on ADR-0034 reject),
- *   - null → DELETE FROM knowledge_edge WHERE id=edgeId,
- *   - row  → upsert (insert … onConflictDoUpdate target knowledge_edge.id).
- *
- * @param db      Db or Tx (polymorphic).
- * @param edgeId  the knowledge_edge row id to project.
- * @throws when a generate-create adds a LIVE prerequisite edge that closes a cycle or
- *         reverses an existing prerequisite (foldKnowledgeEdge's ADR-0034 reject). The error
- *         is NOT caught — it propagates so the caller's transaction aborts (PR-B accept tx).
+ * Re-project one `knowledge_edge`. A fold of null deletes the row; otherwise upsert.
+ * A topology reject propagates so the caller's transaction aborts.
  */
 export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<void> {
-  // ── Read→fold (shared, READ-ONLY; may THROW on topology reject — let it propagate) ───
-  // The subject-keyed gather + liveMesh build + PURE foldKnowledgeEdge call live in
-  // gather.ts so the auditor reconstructs the edge the SAME way (see gather.ts header).
   const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
 
-  // ── Write-through ────────────────────────────────────────────────────────────────────
   if (projected === null) {
     await db.delete(knowledge_edge).where(eq(knowledge_edge.id, edgeId));
     return;
@@ -70,32 +31,18 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
 }
 
 /**
- * YUK-471 W1 PR-B — the GUARDED edge write-through (the SoT-flip edge writer). Same as
- * projectKnowledgeEdge EXCEPT the null branch NEVER deletes. An edge folds to null IFF it has no
- * CREATE event (an archive only sets archived_at on an already-non-null row; an event-sourced
- * edge never folds to null), so a fold-null always means a pre-event-sourced / legacy edge the
- * fold is blind to (e.g. one written by the public POST /edges path that emits no event) — the
- * guarded write-through keeps the imperative row intact rather than destroying it. Only the
- * unguarded projectKnowledgeEdge (rebuild / auditor) deletes on fold-null. Like
- * projectKnowledgeEdge it lets a topology reject from the fold, or a tree-redundancy reject from
- * the IO write-through, propagate.
+ * Guarded write-through: an edge folds to null only without a create event, which means
+ * a legacy row the fold cannot see, so this variant never deletes.
  */
 export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
   const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
   if (projected === null) {
-    // An edge folds to null IFF it has no CREATE event (the reducer needs a create to produce a
-    // row; an archive only sets archived_at on an already-non-null row), so fold-null always
-    // means a pre-event-sourced / legacy edge the fold is blind to. The GUARDED write-through
-    // NEVER deletes on fold-null — only the unguarded projectKnowledgeEdge (rebuild / auditor)
-    // deletes. On the accept path the edge always has its generate event this tx, so this branch
-    // is unreachable there anyway.
     return;
   }
   await upsertProjectedKnowledgeEdge(db, projected);
 }
 
-// Shared upsert of the projected columns. knowledge_edge has NO version column and NO embed_*;
-// the full snapshot shape is the row.
+// Upsert the full row; the table has no version or embed_* columns.
 async function upsertProjectedKnowledgeEdge(
   db: DbLike,
   projected: KnowledgeEdgeRowSnapshotT,

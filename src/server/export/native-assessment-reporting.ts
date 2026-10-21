@@ -63,8 +63,8 @@ const SubmissionRow = createSelectSchema(assessment_submission).extend({
   group_evidence: json(SubmissionRecord.shape.group_evidence),
   submitted_at: date,
 });
-// Validate both the selected columns and the status/aggregate contract. Preserve
-// additional provenance keys, which are immutable execution receipts.
+// Validate both the selected columns and the status/aggregate contract. Extra provenance
+// keys are immutable execution receipts and are preserved.
 const EvaluationRow = createSelectSchema(evaluation)
   .extend({
     status: EvaluationRecord.shape.status,
@@ -157,9 +157,9 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
         : []),
     ];
   });
-  // Reference rendering selects issued units without projecting aggregation.
-  // A joint capped/level evaluation can contain partial member issuances even
-  // though their aggregation is only valid over the complete group.
+  // Reference rendering selects issued units without projecting aggregation: a joint
+  // capped/level evaluation can contain partial member issuances whose aggregation is only
+  // valid over the complete group.
   const slotIds = new Set(face.response_spec.slots.map((slot) => slot.slot_id));
   const reference = revision.scoring_basis.units
     .filter((unit) => unit.slot_refs.every((id) => slotIds.has(id)))
@@ -213,7 +213,7 @@ function frozenContext(row: z.infer<typeof RevisionRow>, issued: z.infer<typeof 
             ? criterion.key.accepted.join('\n\n')
             : `${criterion.key.expected}${criterion.key.expected_unit ? ` ${criterion.key.expected_unit}` : ''}`;
         case 'rubric':
-          // YUK-1496 C2：参考 = 逐 criterion 细则 + 可选参考解答。
+          // 参考 = 逐 criterion 细则 + 可选参考解答。
           return [
             ...criterion.criteria.map(
               (criterion) =>
@@ -329,8 +329,8 @@ export interface NativeCsvAttempt {
   effectiveOutcome: ReturnType<typeof nativeAttemptOutcome>;
 }
 
-/** All group members are validated before projection; invalid members must not
- * shrink the scoring denominator. No database writes or live question fallback. */
+/** All group members are validated before projection; an invalid member must not shrink
+ * the scoring denominator. No database writes or live question fallback. */
 export function projectNativeCsv(
   tables: Record<string, Row[]>,
   activeEventIds: ReadonlySet<string>,

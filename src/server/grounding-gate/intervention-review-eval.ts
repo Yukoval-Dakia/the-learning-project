@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
 import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-registry';
 import {
@@ -13,7 +14,6 @@ import {
 import type { Db } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { resolveTaskBinding } from '@/server/ai/providers';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -86,15 +86,12 @@ export async function collectTaskRunProvenance(
   const costs: Array<Record<string, unknown>> = [];
   const issues: string[] = [];
   if (expectedRuns.length === 0) issues.push('task_runs_empty');
-  // YUK-1559 — the expected provider/model route is the resolved task config
-  // (env pin > DB global/task override > registry default), not a pinned
-  // literal. Resolved once per task kind; a kind outside the registry or a
-  // config that cannot resolve marks the check unresolvable rather than
-  // silently passing. Scope note: every run reaching this collector was
-  // dispatched inside this same eval invocation via observedRunTaskFn /
-  // reviewInterventionPackageCandidate, so the route resolved here IS the
-  // route the runner used — this never retro-judges historical receipts
-  // against a newer default.
+  // The expected provider/model route is the resolved task config (env pin > DB
+  // global/task override > registry default), not a pinned literal. A kind outside
+  // the registry or an unresolvable config marks the check unresolvable rather than
+  // silently passing. Every run reaching this collector was dispatched inside this
+  // same eval invocation, so the route resolved here IS the route the runner used;
+  // this never retro-judges historical receipts against a newer default.
   const routeByKind = new Map<string, { provider: string; model: string } | 'unresolvable'>();
   const expectedRoute = (kind: string | null | undefined) => {
     if (!kind || !Object.hasOwn(tasks, kind)) return undefined;
@@ -151,8 +148,8 @@ export async function collectTaskRunProvenance(
           outcome: cost_ledger.outcome,
         })
         .from(cost_ledger)
-        // YUK-841: provenance is about the authoritative model attempt, not
-        // loose-coupled legacy correlation rows that may legally share this ID.
+        // Provenance is about the authoritative model attempt, not loose legacy
+        // correlation rows that may legally share this task_run_id.
         .where(and(eq(cost_ledger.task_run_id, taskRunId), eq(cost_ledger.entry_kind, 'attempt')));
       if (run.status !== 'success') issues.push(`task_run_not_success:${taskRunId}`);
       const route = expectedRoute(run.task_kind);

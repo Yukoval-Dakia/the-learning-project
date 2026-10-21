@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { formalRubricDeadlineAt } from '@/capabilities/practice/server/judge/evaluate-submission';
 import { assessmentRubricTaskSpec } from '@/capabilities/practice/tasks/assessment-rubric';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
@@ -9,7 +10,6 @@ import {
 } from '@/core/assessment-rubric-timeout';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import type { ModelExecutorRequest, ScoringUnitT } from '@/core/schema/assessment';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 import { ASSESSMENT_RUBRIC_TASK_KIND, createRubricModelExecutor } from './rubric-model-executor';
 

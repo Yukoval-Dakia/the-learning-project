@@ -1,22 +1,15 @@
 // ====================================================================
-// YUK-1059 — 集成发布 manifest（grounding §15 末项 + §16 rollback 边界）
+// 集成发布 manifest
 // ====================================================================
 //
-// 一次 release 的证据工件生成器（**不改 production**：只读 git + PG）。
-// 三块：
-//   lanes       — 本评估契约系列的 merged lanes（contract 1044-1057 /
-//                 corrective 1091-1100 / context 1040-1043 / meta 1058-1059），
-//                 从 git log 解析（subject + PR #），不是手维护清单。
-//   migrations  — 本系列新增的 drizzle/*.sql 文件 + 目标库 applied 对账
-//                 （drizzle.__drizzle_migrations 计数；0103 等 pre-series
-//                 文件不在此列表）。
-//   assertions  — post-release 断言表（§15 三个验证点展开）：每条带
-//                 sql/command + 评估状态（ok/fail/info/skip）。目标库可达时
-//                 真实评估；源码证据独立于目标库（manifest 仍可产出
-//                 —— 边界语义与门禁表本身是交付物）。
-//
-// 单测只测纯函数（lane 分类 / assertions 定义表）；DB 评估由
-// cutover runbook + scratch run（pnpm release:manifest --target=...）证明。
+// 一次 release 的证据工件生成器（只读 git + PG，不改 production）。三块：
+//   lanes       — 本评估契约系列的 merged lanes，从 git log 解析
+//                 （subject + PR #），不是手维护清单。
+//   migrations  — 本系列新增的 drizzle/*.sql + 目标库 applied 对账
+//                 （pre-series 文件不在此列表）。
+//   assertions  — post-release 断言表：每条带 sql/command + 评估状态
+//                 （ok/fail/info/skip）。目标库可达时真实评估；源码证据独立
+//                 于目标库，因此 manifest 离线也能产出。
 // ====================================================================
 
 import { sql } from 'drizzle-orm';
@@ -44,9 +37,8 @@ export interface LaneRow {
 }
 
 /**
- * 本 ticket 系列的界定带（context 1040-1043 / contract 1044-1057 /
- * meta 1058-1059 / corrective 1091-1100）。lane commit 与 migration
- * 文件分类共用同一份区间表 —— 两边不各写一份会漂移的魔法数。
+ * 本 ticket 系列的界定带。lane commit 与 migration 文件分类共用同一份区间表，
+ * 避免两处魔法数漂移。
  */
 export const SERIES_TICKET_BANDS: ReadonlyArray<readonly [number, number]> = [
   [1040, 1059],
@@ -131,13 +123,13 @@ export function isSeriesMigration(
   return { series: false, ticket: byName !== null ? `YUK-${byName}` : null };
 }
 
-// ── assertions（post-release 断言；§15 三验证点 + 边界完整性）───────────────
+// ── assertions（post-release 断言 + 边界完整性）─────────────────────────────
 
 export type AssertionStatus = 'ok' | 'fail' | 'info' | 'skip';
 
 export interface ManifestAssertion {
   id: string;
-  /** §15 验证点归属：'unified-write' | 'no-fallback' | 'translations' | 'integrity' */
+  /** 断言分组：统一写口 / 无运行时回退 / 翻译处置 / 完整性。 */
   group: 'unified-write' | 'no-fallback' | 'translations' | 'integrity';
   statement: string;
   /** 复核路径（runbook 引用同一命令）。 */

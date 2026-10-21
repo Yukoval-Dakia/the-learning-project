@@ -12,9 +12,8 @@ import type {
   ReconcileDecision,
 } from './reconcile-decisions';
 
-// Memory reconciliation uses the same LLM configuration as Mem0 extraction.
-// Direct request lifecycle, error taxonomy and guarded decisions remain intact.
-// The product pin replaces the historical GLM endpoint without a second runner.
+// Reconciliation shares Mem0's extraction LLM config and direct request lifecycle;
+// decisions stay advisory until the deterministic gates in reconcile-decisions run.
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const VALID_ACTIONS = new Set(['KEEP_BOTH', 'SUPERSEDE', 'MERGE', 'RETRACT_NEW']);
@@ -48,22 +47,18 @@ type GlmChatBody = {
 type GlmChatResponse = {
   id?: string;
   choices?: Array<{ message?: { content?: string } }>;
-  // YUK-359: OpenAI-compat usage — present on success, previously discarded.
+  // Optional OpenAI-compatible usage for cost accounting.
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   error?: { code?: string | number; message?: string };
 };
 
 /**
- * Build the Memory reconcile prompt. Per-kind rules follow owner directive:
- *   - preference / habit → single latest truth: SUPERSEDE on contradiction,
- *     MERGE on overlap (recency assumption).
- *   - weakness / event → KEEP_BOTH: episodic facts coexist; only RETRACT_NEW
- *     on exact duplicate. Weakness/error trajectories have value as history.
+ * Build the reconcile prompt. Per-kind rules: preference/habit converge to the
+ * latest truth; weakness/event stay episodic and only retract exact duplicates.
  *
- * Prompt wording RED LINE: never simultaneously contain "smart memory manager"
- * AND "Compare newly retrieved facts" (mem0 3.0.7 LangchainLLM residual sniff
- * would hijack into old MemoryUpdateSchema). Existing memories are referenced
- * by sequential index 0..n only — never expose real UUIDs to the LLM.
+ * Never include both "smart memory manager" and "Compare newly retrieved facts":
+ * mem0 sniffs that pair and swaps in its legacy update schema. Candidates are
+ * indexed 0..n; real UUIDs never reach the LLM.
  */
 export function buildReconcilePrompt(
   newMems: NewMemoryEntry[],
@@ -77,7 +72,6 @@ export function buildReconcilePrompt(
 
   const lines: string[] = [];
 
-  // ACTION SPACE
   lines.push('ACTION SPACE:');
   lines.push(
     '- KEEP_BOTH: both remain; they describe different facts or different points in time.',
@@ -89,7 +83,6 @@ export function buildReconcilePrompt(
   lines.push('- RETRACT_NEW: the new memory is noise or an exact duplicate; drop it.');
   lines.push('');
 
-  // PER-KIND RULES
   lines.push('PER-KIND RULES (the kind is given for each new memory):');
   lines.push(
     '- kind=preference or habit: lean toward a single latest truth. Prefer SUPERSEDE on contradiction, MERGE on overlap.',
@@ -99,20 +92,14 @@ export function buildReconcilePrompt(
   );
   lines.push('');
 
-  // CONFIDENCE
-  // YUK-557 (Q6): this line is the ONLY threshold disclosed to the LLM. The
-  // execution side ALSO runs two deterministic post-processing gates the LLM is
-  // NOT told about — passesStructuralCorroboration (mem0-score floor) +
-  // kindForbidsMerge (per-kind), applied in triggers.ts action synthesis. Chosen
-  // to hide the floor: it consumes mem0's fused score, a value the LLM cannot see
-  // or reason over numerically, so disclosing "there is another gate" without the
-  // number would not improve calibration (spec Q6 / Lens A A5-3).
+  // This is the only threshold disclosed to the LLM. Two deterministic gates are
+  // deliberately hidden: the score floor uses mem0's fused score, which the model
+  // cannot see numerically, and the per-kind guard would only add noise.
   lines.push(
     'Each decision carries a confidence score from 0 to 1. Below 0.6 the system downgrades to KEEP_BOTH.',
   );
   lines.push('');
 
-  // OUTPUT FORMAT
   lines.push('OUTPUT JSON shape:');
   lines.push('{');
   lines.push('  "decisions": [');
@@ -134,7 +121,6 @@ export function buildReconcilePrompt(
   );
   lines.push('');
 
-  // NEW MEMORIES
   lines.push('NEW MEMORIES:');
   for (const m of newMems) {
     lines.push(`[new_index=${m.index}] kind=${m.kind}: ${m.text}`);
@@ -160,8 +146,8 @@ export function buildReconcilePrompt(
 }
 
 /**
- * Parse GLM's JSON response into typed decisions. Throws ReconcileParseError
- * on: non-JSON body, missing decisions array, action outside enum.
+ * Parse the model's JSON into typed decisions. Throws ReconcileParseError on
+ * non-JSON, a missing decisions array, or an out-of-enum action.
  */
 export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   let parsed: unknown;
@@ -238,15 +224,8 @@ export {
 } from './reconcile-decisions';
 
 /**
- * Apply confidence threshold: any decision below the threshold is downgraded
- * to KEEP_BOTH (no destructive action on low-confidence judgments).
- *
- * NOTE (YUK-557 Q6): this is only the LLM-facing threshold the prompt discloses.
- * The execution side has TWO more deterministic post-processing gates layered on
- * top — passesStructuralCorroboration (Q1 mem0-score floor) and kindForbidsMerge
- * (Q1b per-kind), applied in the reconcile handler's action synthesis
- * (triggers.ts). Both downgrade to KEEP_BOTH and rewrite `reason` symmetrically,
- * same as this function, so action↔reason stays consistent in the WAL.
+ * Downgrade low-confidence destructive decisions to KEEP_BOTH. This is only the
+ * threshold disclosed in the prompt; two deterministic gates run after parsing.
  */
 export function applyConfidenceThreshold(
   decisions: ReconcileDecision[],
@@ -269,9 +248,8 @@ function isAbortError(error: unknown): error is Error {
 }
 
 /**
- * Call GLM chat/completions to judge reconciliation. Returns typed decisions.
- * Throws ReconcileParseError on bad JSON, RetryableError/PermanentError on
- * HTTP failures (mirrors glm_ocr.ts pattern).
+ * Ask the configured model to judge reconciliation. Throws ReconcileParseError on
+ * bad JSON and RetryableError/PermanentError on HTTP failures.
  */
 export async function judgeReconciliation(
   newMems: NewMemoryEntry[],
