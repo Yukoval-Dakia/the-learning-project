@@ -1,9 +1,6 @@
 /**
- * buildBackupArchive — extract all table rows from Postgres + optional R2 assets,
- * then stream a ZIP via client-zip.
- *
- * restoreFromArchive — parse a ZIP produced by buildBackupArchive, wipe the DB,
- * then re-insert all rows + re-PUT R2 assets.
+ * Build a ZIP of all registered table rows plus optional R2 assets.
+ * Restore parses that ZIP, wipes the database, re-inserts the rows, and re-PUTs assets.
  */
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
@@ -30,26 +27,15 @@ import {
 import { buildMistakesCsv, buildReviewEventsCsv } from './csv';
 import { type Manifest, buildReadme } from './readme';
 
-// ─── mem0 collection backup (YUK-355, D17「数据可丢」推翻续) ────────────────────
+// ─── mem0 collection backup ───────────────────────────────────────────────────
 //
-// The mem0 personalization half stores slow-warming soft-profile memories in a
-// pgvector collection table (default `learning_project_memories`) that mem0's
-// PGVector provider creates at runtime — NOT a drizzle-managed table, so it is
-// absent from FK_ORDER and the schema-derived COLUMN_ALLOWLIST. Backing up only
-// memory_reconciliation_log (the WAL/provenance) while dropping the collection
-// itself is "备 WAL 不备 collection 是半截" (rethink gate §1.6 / acceptance seam e):
-// the memory bodies would vanish on restore. So we dump + restore the collection
-// through this dedicated branch, keyed in data.json by the RESOLVED collection
-// table name (so a custom MEM0_PGVECTOR_COLLECTION round-trips to the same table).
-//
-// The `vector` column is pgvector — postgres-js round-trips it as a `[..]` string
-// already, but we cast `vector::text` explicitly on dump for stability and bind it
-// back with `::vector` on insert. If the table does not exist yet (fresh DB, mem0
-// never initialised), dump is skipped (graceful) and restore is a no-op for it.
+// mem0's PGVector provider creates its collection table at runtime, so it is absent from
+// FK_ORDER and the schema-derived column allowlist. Backing up only the reconciliation log
+// would lose the memory bodies, so the collection has a dedicated dump/restore branch keyed
+// by the resolved table name. The vector column is dumped as text and bound back as
+// ::vector; a missing table means mem0 never initialized and is a graceful no-op.
 
-/** True when the mem0 collection table physically exists (mem0 self-init may not
- * have run yet on a fresh DB). to_regclass returns NULL for a missing relation.
- * `table` is bound as a VALUE (not raw-interpolated), so it is injection-safe. */
+/** True when the collection table exists; to_regclass returns NULL for a missing relation. */
 async function mem0CollectionExists(db: Db | Tx, table: string): Promise<boolean> {
   const rows = (await db.execute(sql`select to_regclass(${`public.${table}`}) as reg`)) as Array<{
     reg: string | null;
@@ -57,15 +43,9 @@ async function mem0CollectionExists(db: Db | Tx, table: string): Promise<boolean
   return rows[0]?.reg !== null && rows[0]?.reg !== undefined;
 }
 
-// A Postgres table/collection name is an IDENTIFIER, not a value — it cannot be a
-// parameter bind, so it must reach SQL via sql.raw(). To keep that interpolation
-// safe we validate it against the SAME identifier shape mem0's PGVector provider
-// enforces on the collectionName (node_modules/mem0ai/dist/oss/index.js
-// SAFE_IDENTIFIER_RE / validateIdentifier): letters/digits/underscores, starting
-// with a letter or underscore, at most 128 chars. mem0CollectionTable() resolves
-// the name from MEM0_PGVECTOR_COLLECTION, so a hostile env value cannot smuggle SQL
-// through the raw-interpolated dump query (Cursor OCR minor, PR #491). The validated
-// name is double-quote-wrapped at the call sites for the identifier form mem0 uses.
+// A table name is an identifier, not a bind value, so it reaches SQL through sql.raw().
+// Validate it with mem0's own identifier shape before interpolation so a hostile env value
+// cannot inject SQL.
 const MEM0_COLLECTION_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/;
 
 function assertSafeMem0CollectionName(table: string): void {
@@ -76,20 +56,9 @@ function assertSafeMem0CollectionName(table: string): void {
   }
 }
 
-/** Infer the pgvector dimensionality from an archived row's `vector` column. On
- * dump we cast `vector::text`, so an archived vector is the pgvector text form
- * `[a,b,c]` (a string) — its element count IS the declared dim. Returns undefined
- * when the dim cannot be determined (NULL/empty/malformed vector). Used only when a
- * table-absent restore must re-create the collection (mem0 createCol needs a dim);
- * an undeterminable dim there is a hard failure, never a silent skip or wrong dim.
- *
- * WHY first-row inference is sound (Cursor OCR finding, PR #491 — documented-as-
- * intended, NOT a bug): a mem0 pgvector collection is `vector vector(<dims>)` with a
- * SINGLE fixed embedding dimension by construction (mem0 createCol() declares one dim
- * for the whole table, set by the configured embedder). Every row therefore carries an
- * identically-dimensioned vector — Postgres rejects an INSERT of a wrong-length vector
- * into a `vector(<dims>)` column — so the first row's element count equals every row's.
- * There is no per-row dim to scan for; reading row 0 is exact, not a sample/heuristic. */
+/** Infer pgvector dimensions from an archived row's `vector` text (`[a,b,c]`). A mem0
+ * collection has one fixed dimension by construction, so the first row is exact, not a
+ * sample; an undeterminable dim is a hard failure when the table must be re-created. */
 function inferMem0VectorDims(value: unknown): number | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -100,18 +69,9 @@ function inferMem0VectorDims(value: unknown): number | undefined {
   return dims > 0 ? dims : undefined;
 }
 
-// ─── Restore column allowlist (single source of truth: Drizzle schema) ───────
-//
-// Security (YUK-136): restoreFromArchive builds its INSERT column list from
-// Object.keys(rows[0]) — the column names come from the attacker-controlled
-// data.json inside the uploaded ZIP — and interpolates them via raw SQL. Without
-// validation that is a raw-SQL injection surface through column names. Table
-// names are already safe (only FK_ORDER). We derive the allowed column names per
-// table from getTableColumns() so the allowlist can never drift from the schema.
-//
-// Keyed by SQL table name (getTableName), not the JS export identifier, so the
-// map is correct even if a future pgTable export is renamed without changing its
-// SQL name. Every FK_ORDER table is asserted present at module load.
+// Restore builds its INSERT column list from data.json keys, which are attacker-controlled.
+// Derive the allowlist from the Drizzle schema so column validation cannot drift from the
+// schema. Keyed by SQL table name, and every FK_ORDER table is asserted present at load.
 const COLUMN_ALLOWLIST: Record<TableName, ReadonlySet<string>> = buildColumnAllowlist();
 
 function buildColumnAllowlist(): Record<TableName, ReadonlySet<string>> {
@@ -145,15 +105,8 @@ function buildColumnAllowlist(): Record<TableName, ReadonlySet<string>> {
   return allowlist;
 }
 
-// ─── Reverse lockstep: every pgTable must be covered by the backup ───────────
-//
-// buildColumnAllowlist() above enforces FK_ORDER → schema (every backed-up table
-// has a pgTable export). This is the OTHER direction: schema → coverage. Adding a
-// pgTable to src/db/schema.ts but forgetting to wire it into FK_ORDER would make it
-// SILENTLY drop out of the wipe-then-restore backup — a data-loss hole no test or
-// lint previously caught (②d). Here we assert at module load that EVERY isTable in
-// the schema is either backed up (FK_ORDER) or explicitly excluded
-// (BACKUP_EXCLUDED_TABLES). pgViews are excluded by isTable (e.g. knowledge_mastery).
+// Schema-to-coverage assertion: a pgTable missing from both FK_ORDER and
+// BACKUP_EXCLUDED_TABLES would silently drop out of the wipe-and-restore payload.
 assertEveryTableIsBackedUpOrExcluded();
 
 function assertEveryTableIsBackedUpOrExcluded(): void {
@@ -300,11 +253,8 @@ const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
 };
 
 /**
- * YUK-1007 (oracle P1-6 修入时带出): jsonb 列里的标量/原始值——dump 里是
- * `5`、`"x"`、`true` 这类原生值，restoreValue 会绑成 integer/text，PG 认
- * "expression is of type integer" 拒绝进 jsonb 列。primitive jsonb 列必须
- * 显式 JSON.stringify + ::jsonb cast（对象走原 JSON.stringify 路径同样安全，
- * 一并 cast 掉）。
+ * Primitive jsonb values arrive from the dump as native scalars; binding them directly
+ * makes Postgres reject an integer/text into jsonb. Stringify and cast explicitly.
  */
 const JSONB_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
   system_config: new Set(['value']),
@@ -333,12 +283,12 @@ export type RestoreResult =
       got?: string;
       issues?: string[];
       partial_stats?: unknown;
-      // Set by the YUK-136 pre-flight allowlist rejections (before any wipe).
+      // Set by the allowlist pre-flight (before any wipe).
       table?: string;
       column?: string;
-      // Set by the YUK-159 per-row shape barrier.
+      // Set by the per-row shape barrier.
       index?: number;
-      // Set by the YUK-1614 downstream-completion pre-flight (before any wipe).
+      // Set by the downstream-completion pre-flight (before any wipe).
       effects?: UnresolvedEffect[];
       effect_count?: number;
     };
@@ -348,8 +298,8 @@ export interface RestoreFromArchiveOpts {
   r2: R2Client;
   bytes: Uint8Array;
   /**
-   * Provider-owned operational fence for archived preparation jobs. Required
-   * on a live restore when the archive contains a non-null preparation_job_id.
+   * Operational fence for archived intervention preparation jobs. Required on a live
+   * restore when the archive contains a preparation_job_id.
    */
   retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
   /**
@@ -369,7 +319,7 @@ function restoreValue(table: TableName, column: string, value: unknown) {
     )}]::text[]`;
   }
   if (JSONB_COLUMNS[table]?.has(column)) {
-    // primitive 也要 JSON.stringify（'5' 才能进 jsonb；裸 5 会撞 integer 类型错）。
+    // Stringify even primitives: a bare 5 binds as integer and cannot enter jsonb.
     return sql`${value === undefined ? null : JSON.stringify(value)}::jsonb`;
   }
   const bound =
@@ -379,13 +329,9 @@ function restoreValue(table: TableName, column: string, value: unknown) {
   return sql`${bound}`;
 }
 
-/** Per-column value binder for the mem0 collection INSERT. Driven by column NAME (one
- * of MEM0_COLLECTION_COLUMNS) so the column list and the value fragments stay in
- * lockstep from a single source of truth (no hardcoded ("id","vector","payload")):
- *   - `vector`  → re-parse the dumped `[..]` text back to pgvector via ::vector
- *   - `payload` → bind JSON-stringified object as ::jsonb (NULL/primitive binds plain)
- *   - `id`      → bind plainly (uuid text)
- * A NULL value binds cleanly through any cast (cast of NULL = NULL). */
+/** Per-column binder for the mem0 INSERT, driven by column name so the column list and
+ * value fragments stay in sync: vector re-parses text, payload casts to jsonb, id binds
+ * plainly. A NULL value casts cleanly. */
 function mem0RestoreValue(column: string, value: unknown) {
   if (column === 'vector') {
     return sql`${value ?? null}::vector`;
@@ -398,11 +344,9 @@ function mem0RestoreValue(column: string, value: unknown) {
   return sql`${value ?? null}`;
 }
 
-// ─── Downstream completion pre-flight (YUK-1614) ───────────────────────────
-//
-// event_subscription_effect records that downstream work was reserved or sent
-// to pg-boss; it is not a completion receipt. pg-boss rows are outside the
-// logical ZIP, so an unresolved effect cannot be replayed on the target.
+// event_subscription_effect records that downstream work was reserved or sent to
+// pg-boss, not that it completed. The logical ZIP has no pg-boss rows, so an
+// unresolved effect cannot be replayed on the target.
 const EFFECT_STATUS_WITHOUT_DOWNSTREAM_WORK: ReadonlySet<string> = new Set([
   'debounced',
   'disabled',
@@ -560,14 +504,11 @@ export async function restoreFromArchive({
   }
   const rawData = parsedData as Record<string, unknown>;
 
-  // YUK-355: the mem0 collection key is restorable but NOT in FK_ORDER (it is the
-  // resolved collection table name, restored through the dedicated branch below).
+  // The mem0 collection key is restored through its dedicated branch, not FK_ORDER.
   const mem0Table = mem0CollectionTable();
 
-  // Pre-flight (security, YUK-136): reject unknown top-level keys BEFORE we wipe
-  // the DB. Previously any key in data.json that was not in FK_ORDER was silently
-  // ignored; that masks a malformed/hostile archive. Anything outside FK_ORDER
-  // (or the mem0 collection key) is a hard 400.
+  // Pre-flight: reject unknown top-level keys before wiping. Previously they were
+  // silently ignored, which could mask a malformed or hostile archive.
   const allowedTables = new Set<string>([...FK_ORDER, mem0Table]);
   for (const key of Object.keys(rawData)) {
     if (!allowedTables.has(key)) {
@@ -582,10 +523,8 @@ export async function restoreFromArchive({
     }
   }
 
-  // Pre-flight (YUK-159): JSON.parse does not guarantee either the table arrays or
-  // their elements have the object shape assumed by Object.keys / INSERT below.
-  // Reject every malformed row before column inspection and, critically, before
-  // entering the destructive transaction.
+  // Pre-flight: JSON.parse does not guarantee table arrays or object-shaped rows.
+  // Reject malformed rows before column inspection and before the destructive transaction.
   const tableValidationErrors: string[] = [];
   for (const [table, rows] of Object.entries(rawData)) {
     if (!Array.isArray(rows)) {
@@ -603,9 +542,8 @@ export async function restoreFromArchive({
     };
   }
 
-  // Table-level errors take deterministic precedence and are reported together.
-  // Once every value is known to be an array, return the first invalid row with
-  // the structured table/index contract required by import clients.
+  // Table errors take precedence and are reported together; then return the first invalid
+  // row with the structured table/index contract import clients expect.
   for (const [table, rows] of Object.entries(rawData)) {
     if (!Array.isArray(rows)) continue;
     for (let index = 0; index < rows.length; index++) {
@@ -641,13 +579,10 @@ export async function restoreFromArchive({
         .filter((value): value is string => typeof value === 'string' && value.length > 0),
     ),
   ];
-  // YUK-791: pg-boss rows are operational and deliberately absent from the
-  // archive. A same-database restore may still retain an old live or terminal
-  // row with the archived UUID, so never restore that correlation id as current
-  // truth. Live ids are retired transactionally below before these null ids are
-  // inserted; the handler also checks its own id at every paid stage.
-  // Preparing aggregates are picked up by intervention_prepare_recovery with a
-  // fresh job UUID; terminal aggregates do not need an operational job id.
+  // pg-boss rows are operational and absent from the archive. A same-database restore may
+  // still hold a live or terminal row with the archived UUID, so never restore that
+  // correlation id as current truth. The handler checks its own id at every paid stage;
+  // preparing aggregates are picked up with a fresh job UUID, terminal ones need none.
   for (const row of data.intervention ?? []) {
     if (Object.hasOwn(row, 'preparation_job_id')) {
       row.preparation_job_id = null;
@@ -656,9 +591,8 @@ export async function restoreFromArchive({
 
   const mem0Rows = data[mem0Table];
 
-  // Pre-flight (security): validate mem0 collection column names against the fixed
-  // mem0 createCol() allowlist (id/vector/payload) BEFORE we wipe — same raw-SQL
-  // column-interpolation surface as the FK_ORDER tables below.
+  // Pre-flight: validate mem0 column names against the fixed createCol() allowlist
+  // before the wipe; these names also reach raw SQL.
   if (mem0Rows) {
     for (const row of mem0Rows) {
       for (const col of Object.keys(row)) {
@@ -677,10 +611,8 @@ export async function restoreFromArchive({
     }
   }
 
-  // Pre-flight (security, YUK-136): validate EVERY column name (for every row of
-  // every table present in data.json) against the schema-derived allowlist BEFORE
-  // we wipe the DB. The restore INSERT interpolates column names via raw SQL, so an
-  // unknown column name is a raw-SQL injection surface — reject it as a hard 400.
+  // Pre-flight: validate every column name for every table before the wipe. The INSERT
+  // interpolates column names via raw SQL, so an unknown name is an injection surface.
   for (const t of FK_ORDER) {
     const rows = data[t];
     if (!Array.isArray(rows)) continue;
@@ -770,9 +702,8 @@ export async function restoreFromArchive({
     };
   }
 
-  // YUK-1614: a receipt-bearing effect can record a queue send without the
-  // downstream completion receipt; the logical ZIP has no pg-boss rows to
-  // recover it. Refuse before the destructive transaction.
+  // A receipt-bearing effect can record a queue send without a completion receipt; the
+  // logical ZIP has no pg-boss rows to recover it. Refuse before the wipe.
   const unresolvedEffects = findUnresolvedEffects(data.event_subscription_effect);
   if (unresolvedEffects.length > 0) {
     return {
@@ -788,39 +719,26 @@ export async function restoreFromArchive({
 
   const stats: Record<string, { deleted: number; inserted: number }> = {};
 
-  // YUK-1007 review P1-6：本进程已发布的 config epoch——restore 结尾要写的
-  // 「严格新 epoch」必须大于它，否则本进程 hydrate 的守卫会拒绝收敛。
+  // A strict new epoch must exceed this process's published epoch, or its hydrate guard
+  // will reject convergence.
   const localConfigEpoch = getConfigSnapshot().epoch;
 
   try {
-    // YUK-355 (atomic restore): the ENTIRE restore mutation sequence — FK_ORDER
-    // wipe+insert AND the mem0 collection wipe/create/insert — runs inside a SINGLE
-    // drizzle transaction. Pre-flight validation (shape/column/unknown-table) already
-    // ran ABOVE, outside the tx (validate first, then atomic apply). A failure anywhere
-    // in the block throws, drizzle rolls the whole transaction back, and the DB is left
-    // exactly as it was — never half-wiped/half-restored. Postgres supports
-    // transactional DDL, so the create-extension/create-table for an absent mem0
-    // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
+    // The whole restore — table wipe/insert and mem0 wipe/create/insert — runs in one
+    // transaction. Pre-flight validation ran above, outside it. Any failure rolls the
+    // whole transaction back, so the database is never left half-restored. Postgres
+    // transactional DDL also rolls back a created mem0 collection.
     await db.transaction(async (tx) => {
-      // YUK-1044（PR #1466 Failure B）—— 可信 restore 通道（窄）：
-      // `SET LOCAL app.assessment_restore_mode = 'on'` 只在本事务内生效（结束自动
-      // 失效），让上面的不可变 guard（question_revision / question_admission_
-      // verification / assessment_submission / assessment_issuance 的 BEFORE
-      // UPDATE/DELETE trigger，drizzle/0105/0107）放行 wipe+重插；普通 writer 不发
-      // SET LOCAL，生产行为不变。
-      // `SET CONSTRAINTS ALL DEFERRED` 只影响 DEFERRABLE 约束（当前仅
-      // assessment_identity_mapping 的 supersedes 自 FK，0107）：backup dump 的同表
-      // 行序不保证父行在前，推迟到 commit 检查；其余 FK 仍即时按 FK_ORDER 拓扑校验。
+      // Trusted restore channel: SET LOCAL only affects this transaction, letting the
+      // immutable assessment guards accept the wipe-and-reinsert. Defer only DEFERRABLE
+      // constraints because dump row order does not guarantee parent-first for them;
+      // other FKs remain immediate.
       await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
       await tx.execute(sql`set constraints all deferred`);
 
-      // YUK-1007 review P1-6 — capture the pre-restore epoch axis BEFORE the wipe:
-      // restore re-inserts the archived system_config_epoch verbatim, but the epoch
-      // only means anything relative to this DB lineage's own sequence history. A
-      // restore that lands epoch N onto a process already publishing epoch N looks
-      // "unchanged" to every hydrate probe (every process keeps its pre-restore
-      // values; the probe never fires). We need pre-wipe epoch/sequence position to
-      // write a strictly-newer epoch at the end of this tx.
+      // Capture the pre-wipe epoch axis: the archive restores its own epoch verbatim,
+      // but an epoch only means something relative to this DB lineage. Writing a strictly
+      // greater epoch below is what makes every hydrate probe notice the restore.
       const preMaxRows = await tx.execute<{ pre_max: number | string }>(sql`
         select greatest(
           coalesce((select max(epoch) from "system_config_epoch"), 0),
@@ -859,11 +777,9 @@ export async function restoreFromArchive({
         for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
           const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
 
-          // Build INSERT using drizzle sql template to get proper parameterisation.
-          // Arrays and objects must be serialised to JSON strings before binding —
-          // drizzle's sql tag treats a bare JS array as a sql.join list which produces
-          // "()" for empty arrays, causing a Postgres syntax error. Known Postgres
-          // array columns are rebound explicitly in restoreValue().
+          // Build the INSERT with drizzle templates for parameterization. Arrays and objects
+          // must be serialized first: a bare JS array becomes a sql.join list and an empty one
+          // becomes "()", a syntax error. Known text arrays are rebound in restoreValue().
           const colList = cols.map((c) => `"${c}"`).join(',');
           const rowFragments = chunk.map((row) => {
             const valFragments = cols.map((col) => restoreValue(t, col, row[col] ?? null));
@@ -875,9 +791,9 @@ export async function restoreFromArchive({
         }
       }
 
-      // YUK-766: archived leases belong to the source process. Preserve pause/hash,
-      // local ordering, retry budget/backoff, terminal outcomes and causal effect receipts.
-      // The temporary archived claims never become visible outside this restore tx.
+      // Archived leases belong to the source process. Preserve pause/hash, ordering,
+      // retry budgets, terminal outcomes, and causal receipts; the temporary claims never
+      // become visible outside this transaction.
       await tx.execute(sql`
         update event_subscription_checkpoint
         set claim_owner = null, claim_token = null, claim_lease_until = null
@@ -888,34 +804,29 @@ export async function restoreFromArchive({
             claim_owner = null, claim_token = null, claim_lease_until = null, claimed_at = null
       `);
 
-      // YUK-599 (v3 §6): subject_change_seq 序列不随行备份（pg dump 语义之外的手工
-      // 序列），restore 只回插了两本 journal 的 change_seq 列值——不补 setval 的话，
-      // 下一次控制面写会从旧序列位取号，撞已有 as-of 坐标（公共全序轴被污染）。
-      // GREATEST(max(两表), 0)+1 = 下一个可用号；setval 第三参 false = nextval 恰好
-      // 返回该值。在同一 restore tx 内执行，随整体成败原子回滚。
+      // subject_change_seq is not part of the row backup. Without setval, the next control
+      // write would draw a stale number and collide with restored as-of coordinates.
+      // GREATEST(max, 0)+1 with is_called=false makes nextval return exactly that value;
+      // same transaction, so it rolls back atomically.
       await tx.execute(
         sql.raw(
           `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0)) + 1), false)`,
         ),
       );
 
-      // YUK-1007 (§1.2): config_change_seq 序列同样不随行备份，restore 只回插了
-      // system_config_journal.change_seq——不补 setval，下一次 config 写会从旧序列位
-      // 取号撞已有 journal 坐标；system_config_epoch.epoch 也吃同一序列，必须与
-      // journal 共用推进位。同 tx 原子回滚。
+      // config_change_seq is also outside the row backup. Without setval, the next config
+      // write collides with restored journal coordinates; epoch shares the same sequence,
+      // so both advance from the greatest restored value. Same transaction.
       await tx.execute(
         sql.raw(
           `select setval('config_change_seq', (select greatest(coalesce((select max(change_seq) from "system_config_journal"), 0), coalesce((select max(epoch) from "system_config_epoch"), 0)) + 1), false)`,
         ),
       );
 
-      // YUK-1007 review P1-6 — restore MUST NOT leave the archived epoch verbatim:
-      // restore 回插的 epoch 来自另一条时间线/另一份备份，可能与本进程已发布 epoch
-      // 相等甚至更小。那样的话 hydrate 的 epoch 探测永远看到 "unchanged"，所有
-      // 进程永远停在 restore 前的配置（实测：restore 到 epoch=1/val=111，运行中
-      // 的 epoch=1/val=222 进程永不收敛）。修复：在 tx 末尾把 epoch 改写成严格
-      // 大于本 DB 血统曾发过的任何 epoch（pre-wipe 行、序列位、刚回插的备份值）
-      // 且大于本进程快照 epoch 的新值——探测看到严格更大的号 → 必然重新水合。
+      // Never leave the archived epoch verbatim: it came from another timeline and may be
+      // equal to or below this process's published epoch, in which case hydrate probes see
+      // "unchanged" forever and no process converges. Rewrite it above every epoch this DB
+      // lineage has published so the probe must re-hydrate.
       await tx.execute(sql`
         insert into system_config_epoch (id, epoch, updated_at)
         values (
@@ -931,52 +842,34 @@ export async function restoreFromArchive({
               updated_at = now()
       `);
 
-      // 第二轮 review P1（两轴去重）：上面的 setval 只把序列停在「归档高水位+1」，
-      // 而 epoch 行刚被抬到恢复前高水位之上——两条轴不同步时，后续 bumpEpoch 的
-      // 裸 nextval 会拿到低于 epoch 行的号（Oracle 复现：归档 7 → 抬到 39 →
-      // setConfig 拿到 epoch 10 → stale 守卫拒绝发布，writer 却成功）。这里把
-      // 序列同步到抬高后的 epoch（is_called=true → 下一次 nextval = epoch+1）。
-      // greatest(…) 蓄住 pg_sequences.last_value，防止倒退（序列操作不随 tx 回滚，
-      // 失败路径下只可能问前跳号——安全）。write.ts 的 bumpEpoch 另有 greatest 自愈，
-      // 两层互为冗余：并发 writer 在 restore tx 中途 nextval 拿到低位号也能被修正。
+      // The setval above stops at the archived high-water mark, but the epoch row was just
+      // raised above it. Sync the sequence to the raised epoch so a later bumpEpoch's naked
+      // nextval cannot land below it. GREATEST prevents moving backward; sequence operations
+      // are not transactional, so a failed restore can only burn numbers, never reuse them.
       await tx.execute(
         sql.raw(
           `select setval('config_change_seq', (select greatest((select epoch from "system_config_epoch" where id = 'global'), (select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'))))`,
         ),
       );
 
-      // YUK-751 (codex P1): event.dispatch_seq is re-inserted verbatim from the archive (a FORWARD
-      // FK_ORDER table), but event_dispatch_seq is a manual sequence outside pg-dump row semantics.
-      // Without this setval the next event INSERT draws a stale nextval and collides with
-      // event_dispatch_seq_unique. GREATEST(max,0)+1 with is_called=false → the next nextval returns
-      // exactly the next free seq (1 on an empty event table). Same in-tx pattern as subject_change_seq.
+      // event.dispatch_seq is restored verbatim, but event_dispatch_seq is a manual
+      // sequence outside row semantics. Without setval the next event collides with the
+      // unique constraint. Same in-transaction pattern as subject_change_seq.
       await tx.execute(
         sql.raw(
           `select setval('event_dispatch_seq', (select greatest(coalesce((select max(dispatch_seq) from "event"), 0), 0) + 1), false)`,
         ),
       );
 
-      // YUK-355: wipe + restore the mem0 collection (non-FK_ORDER). Restore must make
-      // the target collection IDENTICAL to the archived one. We separate two questions:
-      //   (i)  Should we PROCESS this collection at all? — yes iff the archive HAS the
-      //        mem0 key (mem0Rows is a defined array, even []). An archived [] means
-      //        "this collection is empty", so a target that still HAS stale rows must be
-      //        WIPED to match. (#491 follow-up: the previous gate `mem0Rows.length > 0`
-      //        skipped the WHOLE branch on an empty archive, leaving stale target rows.)
-      //   (ii) Are there rows to INSERT / a table to CREATE-if-absent? — only when the
-      //        archived array is NON-EMPTY.
+      // mem0 collection wipe + restore (not in FK_ORDER). Two separate questions:
+      //   (i) process the collection when the archive HAS the key, even as [] — an empty
+      //       archive must wipe stale target rows;
+      //   (ii) insert / create the table only when the archived array is non-empty.
       //
-      // Cursor Bugbot HIGH (PR #491): when the archive HAS rows but the TARGET lacks the
-      // collection table (fresh disaster-recovery DB / mem0 never lazy-init), we RE-CREATE
-      // it first, replicating mem0's createCol schema exactly
-      // (node_modules/mem0ai/dist/oss/index.js: id UUID PRIMARY KEY, vector vector(<dims>),
-      // payload JSONB), inferring <dims> from the first archived row vector (dumped as
-      // ::text). If <dims> cannot be determined we FAIL LOUDLY (rolls the tx back) rather
-      // than silent-skip or conjure a wrong-dim table.
-      //
-      // The table-ABSENT + EMPTY-archive case stays a graceful no-op: there is nothing
-      // to wipe (no table) and nothing to insert, and mem0's own self-init will create
-      // the collection lazily with the live embedder's true dims on first use.
+      // If the target lacks the table (fresh recovery DB), recreate mem0's createCol()
+      // schema exactly and infer dims from the first archived vector. Unknown dims fail
+      // loudly and roll back rather than skipping rows or creating a wrong-dim table.
+      // Table-absent + empty archive is a graceful no-op; mem0 will lazily create it.
       if (mem0Rows) {
         assertSafeMem0CollectionName(mem0Table);
         const hasRows = mem0Rows.length > 0;
@@ -986,15 +879,13 @@ export async function restoreFromArchive({
         if (hasRows && !tableExists) {
           const dims = inferMem0VectorDims(mem0Rows[0]?.vector);
           if (dims === undefined) {
-            // Loud failure — surfaced as restore_failed_mid_flight by the outer catch
-            // (and rolls the transaction back). We refuse to create a wrong-dim table or
-            // silently drop the rows.
+            // Fail loudly (the outer catch rolls back) rather than create a wrong-dim
+            // table or silently drop the rows.
             throw new Error(
               `mem0 collection "${mem0Table}" is absent on the target DB and the archived vector dimensionality could not be determined (first row vector is NULL/empty/malformed). Refusing to silently skip backed-up mem0 rows or create a wrong-dim table.`,
             );
           }
-          // Replicate mem0 createCol() exactly. CREATE EXTENSION is idempotent; mem0's
-          // own initialize() runs it too, but a fresh restore target may not have it yet.
+          // Replicate mem0 createCol(); the extension create is idempotent.
           await tx.execute(sql.raw('create extension if not exists vector'));
           await tx.execute(
             sql.raw(
@@ -1003,31 +894,19 @@ export async function restoreFromArchive({
           );
         }
 
-        // The mem0 key IS present in the archive (mem0Rows is defined), so the collection
-        // ALWAYS gets a stats entry — hoisted here so it is set on every path, including
-        // the empty + table-absent no-op path, where neither the wipe nor the
-        // create+insert branch runs (Cursor OCR minor, PR #495: stats[mem0Table] was left
-        // undefined there, an inconsistent report for a processed key). The hoist keeps
-        // the entry present without conjuring a table or inserting anything (no-op
-        // behavior preserved).
+        // Always report a stats entry for a processed key, including the empty + absent
+        // table no-op path.
         stats[mem0Table] = { deleted: 0, inserted: 0 };
 
-        // WIPE whenever the collection table exists — including the empty-archive case,
-        // where wiping is the entire job (target rows → 0 to match the archive). After a
-        // create above, `tableExists` was false, so a freshly-created table is already
-        // empty (no wipe needed); an existing one (rows OR empty archive) is wiped here.
-        // Table-absent + empty-archive is a pure no-op (nothing to wipe, deleted stays 0).
+        // Wipe whenever the table exists, including an empty archive where wiping is the
+        // whole job. A table created above is already empty; absent + empty is a no-op.
         if (tableExists) {
           await tx.execute(sql.raw(`delete from "${mem0Table}"`));
         }
 
         if (hasRows) {
-          // INSERT column list derived from MEM0_COLLECTION_COLUMNS (single source of
-          // truth — same allowlist the pre-flight validates against). Per-column binders
-          // apply the right cast: vector::vector re-parses the dumped `[..]` text back to
-          // pgvector, payload::jsonb, id binds plainly. NULL binds cleanly (cast of NULL =
-          // NULL). Iterating MEM0_COLLECTION_COLUMNS keeps the column list and the value
-          // fragments in lockstep — no hardcoded ("id","vector","payload") to drift.
+          // Column list and binders come from MEM0_COLLECTION_COLUMNS so they cannot drift.
+          // The same allowlist is used by the pre-flight above.
           const orderedCols = [...MEM0_COLLECTION_COLUMNS];
           const colList = orderedCols.map((c) => `"${c}"`).join(',');
           for (let i = 0; i < mem0Rows.length; i += INSERT_BATCH_SIZE) {
@@ -1038,9 +917,8 @@ export async function restoreFromArchive({
               );
               return sql`(${sql.join(valFragments, sql`,`)})`;
             });
-            // Count ACTUAL inserted rows via RETURNING (Cursor OCR minor, PR #491): with
-            // `on conflict do nothing` a duplicate id is skipped, so chunk.length would
-            // over-count. The returned row set is exactly the rows that landed.
+            // Count actual rows via RETURNING: on conflict do nothing skips duplicate ids,
+            // so chunk.length would over-count.
             const query = sql`insert into ${sql.raw(`"${mem0Table}"`)} (${sql.raw(colList)}) values ${sql.join(
               rowFragments,
               sql`,`,
@@ -1053,15 +931,9 @@ export async function restoreFromArchive({
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // YUK-355 (atomic restore): the whole restore mutation runs inside ONE
-    // db.transaction (see above), so a failure here has ALREADY rolled the transaction
-    // back — the database is left UNCHANGED, never half-wiped/partially-restored. The
-    // message must say so plainly: the previous "DB may be in a half-wiped state" wording
-    // predated the transaction wrap and is now FALSE, misleading the operator into
-    // thinking their DB is corrupted (Bugbot MEDIUM, PR #495). The error CODE stays
-    // `restore_failed_mid_flight` — callers/tests key off it — only the human-facing
-    // detail is corrected. `partial_stats` is the stats accumulated before the throw;
-    // since the tx rolled back NONE of it was actually applied (left for diagnostics).
+    // The whole mutation ran in one transaction, so a failure here has already rolled
+    // back and the database is unchanged. Keep the error code (callers key off it);
+    // partial_stats is diagnostic only. The old "may be half-wiped" wording was false.
     return {
       status: 500,
       body: {
@@ -1072,8 +944,8 @@ export async function restoreFromArchive({
     };
   }
 
-  // YUK-1007 review P1-6 — 恢复成功后让本进程立刻收敛到新快照（never-throws）：
-  // tx 末尾已写入严格新 epoch，这次 hydrate 必然重读；其它进程 ≤15s 经 refresh。
+  // The transaction wrote a strictly newer epoch, so this hydrate must re-read; other
+  // processes converge via their refresh.
   await hydrateConfigFromDb(db);
 
   // Re-PUT assets to R2.

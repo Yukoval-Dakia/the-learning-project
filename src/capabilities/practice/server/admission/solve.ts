@@ -35,6 +35,7 @@ import type {
   ScoringUnitCriterionT,
   ScoringUnitT,
 } from '@/core/schema/assessment/scoring';
+import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
 import type { SubjectProfile } from '@/subjects/profile';
@@ -50,9 +51,7 @@ import {
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
 // YUK-1445 — Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
-// server/ai 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有
-// 复导出取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
-import { taskInputHash } from '../judge/judge-execution-provenance';
+// server/ai 边持有者）取；输入 hash 直接使用 core 的完整规范化算法。
 import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';

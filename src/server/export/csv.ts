@@ -28,20 +28,15 @@ const MISTAKES_HEADERS = [
   'fsrs_state_due',
   'fsrs_state_reps',
   'fsrs_state_lapses',
-  // Codex (PR #295) — ADR-0028 moves FSRS for labeled questions onto the
-  // knowledge node and deletes the question-level row. This column marks where
-  // the fsrs_state_* values came from ('question' = own question-level row,
-  // 'knowledge' = the most-overdue knowledge node this question probes, '' =
-  // no projection). It makes explicit that for labeled questions the FSRS
-  // numbers are the knowledge node's schedule, NOT a per-question card.
+  // ADR-0028 moves FSRS for labeled questions to the knowledge node. This column records
+  // where the fsrs_state_* values came from; for labeled questions they are the most-overdue
+  // knowledge node's schedule, not a per-question card.
   'fsrs_state_source_kind',
   'status',
   'last_reviewed_at',
   'review_count',
-  // YUK-1054 (§9 dual-track) — 判分双轨导出。judge_effective_outcome = 链解析
-  // 后仍 live 的最新 judge 的 coarse_outcome；judge_original_outcome = 该 attempt
-  // 第一条 judge 行（原始执行收据）的 coarse_outcome。两者可并存且可不同（改判
-  // 时）。无 judge → 空串。
+  // Dual-track judge export: effective is the latest live judge after correction resolution;
+  // original is the attempt's first judge receipt. Both can differ after a re-judge.
   'judge_effective_outcome',
   'judge_original_outcome',
 ];
@@ -66,8 +61,8 @@ const REVIEW_HEADERS = [
 ];
 
 /**
- * Parse a JSON cell value. Accepts the raw row (e.g. drizzle returning the
- * object already) and the JSON-string-encoded form used in export dumps.
+ * Parse a JSON cell. Accepts an already-parsed object from drizzle or the JSON-string form
+ * used in export dumps.
  */
 function parseJsonCell<T>(v: unknown): T | null {
   if (v === null || v === undefined) return null;
@@ -180,11 +175,8 @@ function activeEffectiveRow(
 }
 
 /**
- * Build the mistakes CSV from the event stream:
- *   - One row per `event(action='attempt', outcome='failure', subject_kind='question')`
- *   - cause comes from the effective chained user_cause first, then judge
- *   - review_count counts `event(action='review', subject_id=question_id)` for the same question
- *   - fsrs_state comes from the matching `material_fsrs_state` row (when present).
+ * Build the mistakes CSV from the event stream: one row per failed question attempt, with
+ * the effective cause, review count, and FSRS state when a matching projection exists.
  */
 export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   const knowledgeById = new Map(
@@ -219,8 +211,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   // Index active/effective cause events by caused_by_event_id for chained lookup.
   const judgesByAttempt = new Map<string, Row>();
   const userCausesByAttempt = new Map<string, Row>();
-  // YUK-1054 — original 判（每 attempt 最早 raw judge 行）。在 judge 索引循环里
-  // 同步收集；先于使用它的循环声明。
+  // Original judge track: the attempt's earliest raw judge row; corrections do not rewrite it.
   const originalJudgeByAttempt = new Map<string, Row>();
   const nativeAttemptIds = new Set(native.attempts.map((attempt) => attempt.id));
   for (const e of events) {
@@ -252,8 +243,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       if (!existing || newerRow(effective, existing)) {
         bucket.set(attemptId, effective);
       }
-      // YUK-1054 — original 轨：该 attempt 第一条（最早）judge 行的原始行，
-      // 不走链解析（原始收据不因改判改写）。与 effective 判并存于导出。
+      // Original track: keep the earliest judge receipt, untouched by re-judging.
       if (e.action === 'judge') {
         const prev = originalJudgeByAttempt.get(attemptId);
         if (!prev || newerRow(prev, e)) {
@@ -262,7 +252,6 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       }
     }
   }
-  // Index reviews per question
   const reviewsByQuestion = new Map<string, Row[]>();
   for (const e of events) {
     if (e.action === 'review' && e.subject_kind === 'question') {
@@ -272,10 +261,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       reviewsByQuestion.set(qid, list);
     }
   }
-  // Index FSRS state per (subject_kind, subject_id). Post-ADR-0028 a labeled
-  // question's projection lives under subject_kind='knowledge' keyed by the
-  // knowledge id; the question-level row is deleted. We index BOTH so a labeled
-  // question can fall back to its knowledge node's schedule (Codex, PR #295).
+  // Index FSRS state by subject. Post-ADR-0028 a labeled question's projection lives under
+  // subject_kind='knowledge'; index both so it can fall back to the knowledge schedule.
   const fsrsByQuestion = new Map<string, Row>();
   const fsrsByKnowledge = new Map<string, Row>();
   for (const r of (tables.material_fsrs_state ?? []) as Row[]) {
@@ -286,14 +273,9 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
     }
   }
 
-  // Codex (PR #295) — resolve the FSRS row to report for a question.
-  //   1. question-level row wins when present (legacy unlabeled questions);
-  //   2. otherwise, among the question's knowledge_ids, pick the MOST-OVERDUE
-  //      knowledge-level row (smallest due) — that is the soonest-acting
-  //      schedule the question participates in;
-  //   3. otherwise none.
-  // Returns the source kind so the row can label provenance without faking a
-  // per-question card.
+  // Resolve which FSRS row to report: a question-level row wins; otherwise pick the
+  // most-overdue knowledge-level row among the question's ids. The source kind is returned
+  // so the row can label provenance without faking a per-question card.
   function resolveFsrsForQuestion(
     qid: string,
     knowledgeIds: string[],
@@ -368,8 +350,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
           coarse_outcome?: string | null;
         }>(judge.payload)
       : null;
-    // YUK-1054 — 原始判（该 attempt 最早 raw judge 行）。与 effective 判并存，
-    // 供导出双轨；原始行不改写，改判后仍反映第一判。
+    // Original judge receipt for the dual-track export; corrections keep the first result.
     const originalJudge = originalJudgeByAttempt.get(rowId(a));
     const originalJudgePayload = originalJudge
       ? parseJsonCell<{ coarse_outcome?: string | null }>(originalJudge.payload)
@@ -380,10 +361,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
 
     const reviews = reviewStats(qid);
 
-    // Codex (PR #295) — index knowledge-level FSRS rows too. The attempt's own
-    // referenced_knowledge_ids drive the knowledge fallback; union with the
-    // question's stored knowledge_ids so a labeled question still resolves when
-    // the attempt payload carried no referenced ids.
+    // Include knowledge-level FSRS rows. The attempt's referenced ids are unioned with the
+    // question's stored ids so a labeled question resolves even with no referenced ids.
     const fsrsKnowledgeIds = Array.from(new Set([...knowledgeIds, ...questionKnowledgeIds(q)]));
     const fsrsResolved = resolveFsrsForQuestion(qid, fsrsKnowledgeIds);
     const fsrsState = fsrsResolved
@@ -406,8 +385,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         csvEscape(fsrsState?.reps ?? ''),
         csvEscape(fsrsState?.lapses ?? ''),
         csvEscape(fsrsSourceKind),
-        // No mistake.status equivalent in event stream — emit 'active' since
-        // a failure attempt without an archive event is considered active.
+        // No mistake.status equivalent in the event stream; a failure without an archive
+        // event is active.
         csvEscape('active'),
         csvEscape(reviews.last ?? ''),
         csvEscape(reviews.count),
@@ -473,10 +452,8 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
 }
 
 /**
- * Build the review-events CSV from the event stream:
- *   - One row per `event(action='review', subject_kind='question')`
- *   - mistake_id is null (event review targets question directly); blank in CSV
- *   - before_* columns blank — Lane B's ReviewOnQuestion dropped fsrs_state_before
+ * Build the review-events CSV from the event stream: one row per question review event.
+ * Before-state columns are blank because the review event no longer carries them.
  */
 export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
   const knowledgeById = new Map(
@@ -487,9 +464,7 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
       (tables.question ?? []) as Array<{
         id: string;
         prompt_md: string;
-        // YUK-324 — knowledge_ids is a jsonb column. The `postgres` driver
-        // returns it ALREADY parsed (string[]); the legacy D1 export dumps
-        // carry the JSON-string form. Accept both shapes.
+        // knowledge_ids is jsonb: the driver returns string[], legacy dumps a JSON string.
         knowledge_ids?: string | string[];
       }>
     ).map((q) => [q.id, q]),
@@ -513,9 +488,7 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
   for (const r of reviews) {
     const qid = r.subject_id as string;
     const question = questionById.get(qid);
-    // YUK-324 — defensive parse: the postgres jsonb driver hands back an array
-    // directly, while legacy export dumps store a JSON string. A bare
-    // JSON.parse on the array form threw (SyntaxError) → backup CSV export 500.
+    // Accept both jsonb shapes: a parsed array and the legacy JSON string.
     const kIds: string[] = Array.isArray(question?.knowledge_ids)
       ? question.knowledge_ids
       : (parseJsonCell<string[]>(question?.knowledge_ids) ?? []);
@@ -536,12 +509,12 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
       [
         csvEscape(r.id),
         csvEscape(r.created_at),
-        // No mistake_id in event-stream model — blank
+        // No mistake_id in the event-stream model — blank.
         csvEscape(''),
         csvEscape(promptExcerpt),
         csvEscape(kNames),
         csvEscape(payload?.fsrs_rating ?? ''),
-        // before_* blank — Lane B drops fsrs_state_before
+        // before_* blank — the event no longer carries fsrs_state_before.
         csvEscape(''),
         csvEscape(''),
         csvEscape(''),
@@ -550,7 +523,7 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
         csvEscape(after?.difficulty ?? ''),
         csvEscape(after?.due ?? ''),
         csvEscape(after?.state ?? ''),
-        // due_at_before / due_at_next blank — separate timestamp columns also dropped
+        // due_at_before / due_at_next blank — those columns were dropped too.
         csvEscape(''),
         csvEscape(''),
       ].join(','),

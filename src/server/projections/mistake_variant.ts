@@ -1,22 +1,6 @@
-// YUK-471 W2 — projectMistakeVariant: the IO shell around the PURE mistake_variant fold.
-//
-// Canonical structural writer after YUK-973; there is no per-entity mode switch.
-// It:
-//   1. GATHERS the superset of `event` rows that can affect `mvId` (the pure reducer filters
-//      internally, but the shell over-collects — a missed event silently drops a mutation),
-//   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),
-//   3. calls foldMistakeVariant(mvId, foldEvents) (PURE),
-//   4. WRITE-THROUGH: null → DELETE the row; else upsert the projected columns.
-//
-// mistake_variant has NO derived/excluded columns (unlike knowledge's embed_*) and NO version
-// column (like knowledge_edge), so the upsert covers the full row — every column is fold truth.
-//
-// The read→fold half lives in the SHARED gather.ts (gatherAndFoldMistakeVariant) so this shell and
-// scripts/audit-projection.ts reconstruct a mistake_variant IDENTICALLY — a single gather
-// implementation means the drift auditor can never be blind to a gather bug in the SoT path. This
-// shell adds only the WRITE-THROUGH on top of that shared read→fold (mirrors projectGoal).
-//
-// Db|Tx polymorphic.
+// Write-through shell for the pure `mistake_variant` fold: gather the event superset,
+// fold it, then delete or upsert the live row. The table has no derived or version
+// columns, so the upsert covers the full row. The shared gather lives in gather.ts.
 
 import { eq } from 'drizzle-orm';
 
@@ -29,13 +13,8 @@ import { hasMistakeVariantGenesisAnchor } from './parity';
 type DbLike = Db | Tx;
 
 /**
- * Project the current structural state of a single `mistake_variant` from the event log and write
- * it through to the live table. READ→FOLD→WRITE-THROUGH:
- *   - null  → DELETE FROM mistake_variant WHERE id=mvId (row never existed / fully reverted),
- *   - row   → upsert (insert … onConflictDoUpdate target mistake_variant.id) the projected columns.
- *
- * @param db   Db or Tx (polymorphic — wired sites call it inside the creation/accept/verify tx).
- * @param mvId the mistake_variant row id to project.
+ * Re-project one `mistake_variant`. A fold of null deletes the row; otherwise upsert the
+ * full row.
  */
 export async function projectMistakeVariant(db: DbLike, mvId: string): Promise<void> {
   const projected = await gatherAndFoldMistakeVariant(db, mvId);
@@ -47,11 +26,8 @@ export async function projectMistakeVariant(db: DbLike, mvId: string): Promise<v
 }
 
 /**
- * The GUARDED mistake_variant write-through (the SoT-flip row writer). Identical to
- * projectMistakeVariant EXCEPT the null branch: a fold of null DELETEs the live row ONLY when the
- * row HAS a genesis anchor (a genuine revert of an event-sourced variant). A fold-null on an
- * UN-anchored row — a pre-event-sourced row the fold is blind to — must NOT delete the live row.
- * Mirrors projectGoalGuarded: lets the flip be activated before every variant is backfilled.
+ * Guarded write-through: a fold of null deletes only when the row has a genesis anchor.
+ * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
 export async function projectMistakeVariantGuarded(db: DbLike, mvId: string): Promise<void> {
   const projected = await gatherAndFoldMistakeVariant(db, mvId);
@@ -65,8 +41,7 @@ export async function projectMistakeVariantGuarded(db: DbLike, mvId: string): Pr
   await upsertProjectedMistakeVariant(db, projected);
 }
 
-// Shared upsert of the projected mistake_variant columns (the FULL row — no derived/excluded/version
-// columns). cause_category is the FOLD-BLIND field reproduced from the base event (critic A4).
+// Upsert the full row. cause_category is fold-blind, so it comes from the base event.
 async function upsertProjectedMistakeVariant(
   db: DbLike,
   projected: MistakeVariantRowSnapshotT,
