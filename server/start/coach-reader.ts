@@ -10,3 +10,23 @@ export async function readStartCoachWeekly(input: WeeklyReportQuery) {
     throw errorResponse(error);
   }
 }
+
+export async function readStartCoachCalibration() {
+  try {
+    const { db } = await import('@/db/client');
+    const { loadCalibrationMaturity } = await import('@/capabilities/observability/public');
+    return await loadCalibrationMaturity(db);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
+
+export async function readStartCoachEffectiveness() {
+  try {
+    const { db } = await import('@/db/client');
+    const { loadEffectivenessTrend } = await import('@/capabilities/observability/public');
+    return await loadEffectivenessTrend(db);
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}

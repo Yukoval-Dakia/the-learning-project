@@ -900,6 +900,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3875616e-2273-48b7-93e7-41a5fd5e3710",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "loadCalibrationMaturity",
+      "targetModule": "src/capabilities/observability/server/calibration-maturity.ts",
+      "targetSymbol": "loadCalibrationMaturity",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "server/start/coach-reader.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated Start coach reader dynamically imports this unchanged complete loader. The retained HTTP adapter directly calls the same implementation.",
+      "rationale": "Keep calibration rows, nullable confidence, cold-start status, ordering and aggregates in the existing Observability owner; expose only the same read used by HTTP.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b086d261-5d56-494a-8d85-85857d1031b9",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "loadEffectivenessTrend",
+      "targetModule": "src/capabilities/observability/server/effectiveness-trend.ts",
+      "targetSymbol": "loadEffectivenessTrend",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "server/start/coach-reader.ts",
+          "line": 27
+        }
+      ],
+      "evidence": "The authenticated Start coach reader dynamically imports this unchanged complete loader. The retained HTTP adapter directly calls the same implementation.",
+      "rationale": "Keep calendar windows, trend computation, nullable evidence, subject rollups and ordering in the existing Observability owner and summary module; no algorithm or write-path change.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b086d261-5d56-494a-8d85-85857d1031b9",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
