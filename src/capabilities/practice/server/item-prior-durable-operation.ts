@@ -12,13 +12,12 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ItemPriorPaidEffectAdapter } from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
-import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
+import { aggregateItemPriorDrafts, parseItemPriorDraft } from '@/core/item-prior-estimation';
 import { canonicalHash } from '@/core/migration/canonical';
 import { computePaidEffectInputDigest } from '@/core/migration/paid-effect-protocol';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
-import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
 import { MAX_REPS } from './item-prior-limits';
@@ -250,18 +249,18 @@ async function runRetainedFeatureReps(
   const ctx: PracticeTaskCallCtx = { subjectProfile: work.subjectProfile };
   if (work.repCount <= 1) {
     const runResult = await runTaskFn('ItemPriorTask', work.input, ctx);
-    return parseItemPriorOutput(runResult.text);
+    return parseItemPriorDraft('feature', runResult.text);
   }
   const drafts: ItemPriorDraftT[] = [];
   for (let r = 0; r < work.repCount; r++) {
     try {
       const runResult = await runTaskFn('ItemPriorTask', work.input, ctx);
-      drafts.push(parseItemPriorOutput(runResult.text));
+      drafts.push(parseItemPriorDraft('feature', runResult.text));
     } catch (repErr) {
       console.warn('[item_prior_backfill] rep dropped from median', { rep: r, err: repErr });
     }
   }
-  return aggregateItemPriorRepDrafts(drafts, work.repCount).draft;
+  return aggregateItemPriorDrafts('feature', drafts, work.repCount);
 }
 
 /**
@@ -283,13 +282,14 @@ export async function calibrateItemPriorQuestion(
   // median 聚合；llasa 保持单次调用不动，parse 错误照常向上传播。
   const draft =
     work.method === 'llasa'
-      ? parseItemPriorLlasaOutput(
+      ? parseItemPriorDraft(
+          'llasa',
           (
             await runTaskFn('ItemPriorLlasaTask', work.input, {
               subjectProfile: work.subjectProfile,
             })
           ).text,
-        ).prior
+        )
       : await runRetainedFeatureReps(runTaskFn, work);
   return { draft, source: work.method === 'llasa' ? 'llm_prior_llasa' : 'llm_prior' };
 }
@@ -413,10 +413,7 @@ export function parseStagedItemPriorOutput(
   outputText: string,
 ): ItemPriorRepOutcome {
   try {
-    const draft =
-      method === 'llasa'
-        ? parseItemPriorLlasaOutput(outputText).prior
-        : parseItemPriorOutput(outputText);
+    const draft = parseItemPriorDraft(method, outputText);
     return { state: 'draft', draft };
   } catch {
     // Completed output failing the parse barrier is a known outcome with no
@@ -516,10 +513,7 @@ export function settleItemPriorStagedItem(
   // Feature: same median aggregation as the retained path (attempted = the
   // intended rep count); a single surviving rep or LLaSA stays byte-identical
   // to the retained draft (no provenance suffix).
-  const draft =
-    work.method === 'llasa' || work.repCount <= 1
-      ? drafts[0]
-      : aggregateItemPriorRepDrafts(drafts, work.repCount).draft;
+  const draft = aggregateItemPriorDrafts(work.method, drafts, work.repCount);
   return { ...base, status: 'ready', draft };
 }
 
