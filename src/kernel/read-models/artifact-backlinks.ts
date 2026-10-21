@@ -1,14 +1,9 @@
-// YUK-1571 — shared read model over the `artifact_block_ref` backlink index,
-// moved verbatim from the read half of src/capabilities/notes/server/block-refs.ts.
-// The write-through index owner (syncBlockRefsForArtifact / desiredCrossLinkRefs)
-// stays in notes/server/block-refs.ts.
+// Shared read model over artifact_block_ref. The write-through index stays in
+// notes/server/block-refs.ts.
 //
-// Source of truth for cross-links is L3: the flat `crossLinkBlock` node attrs
-// inside an artifact's `body_blocks` (ADR-0022 — `attrs = { id, artifact_id,
-// block_id?, title? }`, NOT nested under `attrs.cross_link`).
-//
-// XC-3: cross_link refs live in artifact_block_ref (L2) + block.attrs (L3, flat).
-// NEVER store note refs in knowledge_edge (that's concept relations only).
+// Cross-links are authoritative in the flat crossLinkBlock attrs inside body_blocks
+// (ADR-0022) and mirrored into artifact_block_ref for lookup. Never store note refs
+// in knowledge_edge, which is concept relations only.
 
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
@@ -43,13 +38,8 @@ export function groupBacklinksByArtifactType<T extends { from_type: string }>(
 }
 
 /**
- * Inbound refs pointing at `toArtifactId` (optionally narrowed to a specific
- * `toBlockId`), joined to the source `artifact` row for title + type. Reads via
- * the `artifact_block_ref_to_idx` (to_artifact_id [, to_block_id]).
- *
- * Returns every inbound ref regardless of `ref_kind` — callers (the Lane-B
- * backlink panel, the P6 node page) can filter on `ref_kind` if they only want
- * cross_link backlinks vs embedded_check quiz refs.
+ * Inbound refs for an artifact (optionally one block), joined to the source row for
+ * title and type. Returns every ref_kind; callers filter when they need one kind.
  */
 export async function listBacklinks(
   db: DbLike,
@@ -86,28 +76,10 @@ export async function listBacklinks(
 }
 
 /**
- * Resolve a representative owning `learning_item.id` for a set of source artifact
- * ids via the `learning_item.primary_artifact_id` reference, returning
- * `artifact_id → learning_item.id` (see the ADR-0027 note below — this is now a
- * representative, not a 1:1 owner).
- *
- * Both backlink panels (the Lane-B artifact panel route + the P6 node page)
- * render a source artifact's row as a link to `/learning-items/<learning_item_id>`
- * — that route queries by `learning_item.id`, NOT `artifact.id`, so linking by the
- * raw `from_artifact_id` 404s (Codex #193 / YUK-160). Callers map each
- * `from_artifact_id` through this resolver; a source with no entry renders as a
- * non-link. Archived learning_items are excluded so retired items don't surface
- * as live links; both panels share this single resolver to stay behaviourally
- * identical.
- *
- * Representative-owner resolver (ADR-0027 / YUK-203 P1): a learning_item now only
- * *references* an artifact via `primary_artifact_id`, and MORE THAN ONE non-archived
- * item may reference the same artifact (the YUK-171 1:1 unique index was dropped).
- * For the backlink panel + node page we link a source artifact to a single
- * representative owner: rows are ordered by `created_at, id` so the EARLIEST
- * referencing item deterministically wins. Multiplicity is now VALID and NOT warned.
- * Rendering all referencing items is a follow-up (see notesForItem, P1-PR2). It must
- * NOT throw — it serves read panels and must never 500.
+ * Representative owning learning_item per source artifact. More than one live item
+ * may reference an artifact, so the earliest (created_at, id) wins; a source with
+ * no owner renders non-linked. Archived items are excluded. Never throws on
+ * multiplicity: this serves read panels and must not 500.
  */
 export async function resolveOwningLearningItemIds(
   db: DbLike,
@@ -123,15 +95,13 @@ export async function resolveOwningLearningItemIds(
         isNull(learning_item.archived_at),
       ),
     )
-    // Deterministic ordering: earliest-created (tie-broken by id) wins, so a
-    // duplicate non-archived owner resolves stably instead of by arbitrary DB
-    // row order.
+    // Earliest created (tie-broken by id) wins so duplicate owners resolve stably.
     .orderBy(asc(learning_item.created_at), asc(learning_item.id));
   const map = new Map<string, string>();
   for (const row of rows) {
     const artifactId = row.primary_artifact_id;
     if (!artifactId || map.has(artifactId)) continue;
-    // Earliest-created referencing item wins (deterministic representative).
+    // Keep the first row per artifact (deterministic representative).
     map.set(artifactId, row.id);
   }
   return map;

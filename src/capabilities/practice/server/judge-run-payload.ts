@@ -1,13 +1,7 @@
-// YUK-594 (durable judge main path) — durable judge_run job-payload contract：
-// **提交当下冻结**的判分输入（题面快照），以及消费侧的还原 helper。
-//
-// 为什么单独一个模块：submit 面（api/submit.ts，生产者）与 worker 面
-// （jobs/judge_run.ts，消费者）必须共用同一份「冻结哪些字段」的定义，否则两边各写
-// 一份必然漂移。放 server/ 层与既有的 judge-durable-config / judge-run-status 同向
-// （api → server、jobs → server），不让 api 反向依赖 jobs。
-//
-// 依赖轻：db schema 行类型 + zod + drizzle 算子；`Db` 只作参数类型传入，不 import db client
-// 单例（保持本模块可被 api/ 与 jobs/ 双向复用而不牵入运行时连接）。
+// Durable judge_run payload contract: the frozen grading input and the consumer-side
+// restore helpers. Submit and worker share this definition so the frozen field set cannot
+// drift. Only schema types, zod, and drizzle operators are imported; the DB handle is a
+// parameter, keeping the module usable from both api and jobs.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -35,9 +29,9 @@ export const NativeJudgeResolutionPayload = JudgeRunTerminalResultSchema.extend(
 type QuestionRow = typeof question.$inferSelect;
 
 /**
- * judge_run job 体。W2 由 submit 面投递；YUK-777 起 reconcile sweeper 也按同一形状重投。
+ * judge_run job 体。W2 由 submit 面投递； 起 reconcile sweeper 也按同一形状重投。
  *
- * YUK-777 — 从 `jobs/judge_run.ts` 挪到这里（原地 re-export 保持既有 import 不变）：
+ * 从 `jobs/judge_run.ts` 挪到这里（原地 re-export 保持既有 import 不变）：
  * 现在有三个生产者读它（submit 面、sweeper、pending-attempt 证据行的冻结 payload），而
  * `api/` 与 `server/` 都不该反向依赖 `jobs/`。此文件本就是「job payload 契约 + 冻结/还原
  * helper」的家，类型跟着契约走。
@@ -59,7 +53,7 @@ export interface LegacyJudgeRunJobData {
     /** D5 — enqueue 时冻结的 SubjectProfile（JSON）。worker 侧 SubjectProfileSchema 复校。 */
     subject_profile: unknown;
     /**
-     * #2 (codex) — enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
+     * #2 enqueue 时冻结的题面快照（判分 + 调度读的全部字段）。worker 侧
      * FrozenQuestionSnapshotSchema 复校后覆盖到现读行上，故提交后编辑题目不再让判分/
      * FSRS 打在与学习者所见不同的题面上。见下方 freezeQuestionForJudge。
      *
@@ -68,7 +62,7 @@ export interface LegacyJudgeRunJobData {
      */
     question_snapshot?: unknown;
     /**
-     * YUK-777 — KC → hierarchical-Elo domain mapping frozen at answer time. The worker uses
+     * KC → hierarchical-Elo domain mapping frozen at answer time. The worker uses
      * this exact map for both late-arrival detection and the ability_global writes, so a
      * knowledge-tree reparent between enqueue and pickup cannot move the write target.
      *
@@ -94,7 +88,7 @@ export type FrozenAbilityGlobalByKnowledgeId = z.infer<
 >;
 
 /**
- * #2 (codex) — **题目数据冻结**。flag-on 时 submit 只把答案/画像冻进 payload，worker
+ * #2 **题目数据冻结**。flag-on 时 submit 只把答案/画像冻进 payload，worker
  * 拾取时重读可变的 question 行；提交后有人编辑 prompt/reference/choices/knowledge/
  * difficulty，判分与调度就打在与学习者当时所见**不同**的题面上（判词错、FSRS 脏）。
  *
@@ -107,13 +101,13 @@ export type FrozenAbilityGlobalByKnowledgeId = z.infer<
  * 也因此**不需要 stale 失败路径**：冻结值自足，题面漂移不再让一次合法作答报废
  * （version-mismatch-then-fail 会把学习者已提交的答案直接丢掉，更差）。version /
  * updated_at 仍冻一份，纯作可观测锚（worker 侧检出漂移记一条 warn）。
- */
+  * 
 /**
- * W4 #TtZ8l — the four jsonb columns are typed to their actual SHAPE, not `z.unknown()`.
+ * W4 #TtZ8l — the four jsonb columns are typed to their actual SHAPE, not `z.unknown`.
  *
- * This schema is not decoration: the worker runs `FrozenQuestionSnapshotSchema.parse()` on
+ * This schema is not decoration: the worker runs `FrozenQuestionSnapshotSchema.parse` on
  * the deserialized payload, and the parsed result is overlaid onto a live row through a cast.
- * `z.unknown()` accepts literally anything, so a corrupted payload sailed through validation
+ * `z.unknown` accepts literally anything, so a corrupted payload sailed through validation
  * and only blew up later inside the judge — where it was classified `judge_failed`
  * (RETRYABLE) and burned the whole redelivery budget re-failing on a permanent defect.
  * Typing the shape moves that failure to the validation boundary, where it is correctly
@@ -123,7 +117,7 @@ export type FrozenAbilityGlobalByKnowledgeId = z.infer<
  * the full RubricT / StructuredQuestionT / FigureRefT trees): the goal is to catch structural
  * corruption, not to re-litigate the domain schemas here — a second copy of those trees would
  * be exactly the double-write this file exists to avoid.
- */
+  */
 const JsonObjectSchema = z.record(z.string(), z.unknown());
 
 export const FrozenQuestionSnapshotSchema = z.object({
@@ -199,13 +193,13 @@ export function applyFrozenQuestion(
  * and the `judge` event chained to it — which live in the permanent event log. So both
  * recovery paths resolve the verdict from there:
  *
- *   - the worker's idempotency guard, when the backfill committed but DONE never landed;
- *   - the `/status` route, when the run has no job_events at all (pruned, or never written).
+ * - the worker's idempotency guard, when the backfill committed but DONE never landed;
+ * - the `/status` route, when the run has no job_events at all (pruned, or never written).
  *
  * Returns null when no attempt event exists for `runId` — i.e. this run genuinely never
  * persisted anything, which is a real "unknown run", not a recoverable one.
  *
- * YUK-1054 — 裁决轨切分（§9/§10）：顶层字段由【effective】轨驱动（链解析后的生效判），
+ * 裁决轨切分（/）：顶层字段由【effective】轨驱动（链解析后的生效判），
  * `original_judge` / `effective_judge` 两个块把双轨原样透给消费侧（DONE payload 契约是
  * passthrough，加性字段安全）。改判后本函数不再把被 supersede 的旧判当生效判回填 ——
  * 旧实现是 raw newest-wins，对「新判 + supersede」恰好同向，但对 retract/mark_wrong 或
@@ -295,7 +289,7 @@ export async function reconstructDoneFromDomainEvents(
           correction_state: verdicts.effective.correction_state.state,
         };
   const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
-  // YUK-1054 — original 轨 = 执行收据。优先最早 judge event；无 judge event
+  // original 轨 = 执行收据。优先最早 judge event；无 judge event
   // （solve-session 等 embedded-grade 分歧面）回退到 resolver embedded 轨
   // （attempt.payload.judge，judge_event_id=null，correction_state='embedded'）。
   // 下方 `embedded` 块独立再解析一次同一份 payload 做字段回填（既有 merge 语义）。
@@ -317,7 +311,7 @@ export async function reconstructDoneFromDomainEvents(
   // W5 #TuxJL — read from where deferred settlement ACTUALLY writes each field, not from a
   // shape that looked plausible. The judge event's payload carries `coarse_outcome` /
   // `score` / `feedback_md` / `capability_ref` / `judge_route`, but NOT `evidence_json`
-  // — that lives on the REVIEW event's embedded `payload.judge` block. Reading it off the
+  // that lives on the REVIEW event's embedded `payload.judge` block. Reading it off the
   // judge event silently produced nothing, and because every field in the terminal schema
   // is optional the loss passed validation unnoticed. `payload.judge` is the richer of the
   // two, so it is preferred and the judge event backfills what it lacks.
@@ -341,7 +335,7 @@ export async function reconstructDoneFromDomainEvents(
     judgePayload.capability_ref,
   );
   const route = pick<string>(isStr, embedded.route, judgePayload.judge_route);
-  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: settlement writes it
+  // D3 (#TuxJL) — `score_meaning` IS reconstructable now: settlement writes it
   // into the review event's embedded `payload.judge` block, next to the `score` it qualifies.
   // Still `pick`ed rather than assumed: an attempt persisted before that write landed has no
   // such key, and omitting the field for those rows is the honest answer (the terminal schema
@@ -352,7 +346,7 @@ export async function reconstructDoneFromDomainEvents(
     attempt_event_id: runId,
     judge_event_id: judgeEvent?.id ?? null,
     already_persisted: true,
-    // YUK-1054 — 双轨裁决透传块（passthrough 契约，加性安全）。
+    // 双轨裁决透传块（passthrough 契约，加性安全）。
     original_judge: originalReceipt,
     effective_judge: effectiveBlock,
     verdict_overturned: verdictOverturned,
@@ -409,4 +403,4 @@ export async function reconstructDoneFromNativeCompletion(
 // persistence-relevant fields (referenced_knowledge_ids / stream_item_id / latency_ms) that
 // make two same-text submits semantically different. Trading correctness of normal use for
 // cost savings on an abnormal path is the wrong trade. Idempotency returns as a client-
-// supplied Idempotency-Key in W3 (YUK-777).
+// supplied Idempotency-Key in W3.

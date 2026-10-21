@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 
 import type { Provider } from '@/ai/registry';
-// F0 (PR #309 round-3) — the route resolver now lives in the dependency-light
+// the route resolver now lives in the dependency-light
 // leaf `@/capabilities/practice/server/judge/route-resolve` (see that file's header for the build
 // regression it fixes). Re-exported below so this module's public surface is
 // unchanged; existing importers keep working.
@@ -30,11 +30,11 @@ export const RUNNABLE_ROUTES = new Set<JudgeKind>([
   'semantic',
   'steps',
   'unit_dimension',
-  // YUK-201 — holistic vision-aware judging (runMultimodalDirectJudge via invoker).
+  // holistic vision-aware judging (runMultimodalDirectJudge via invoker).
   'multimodal_direct',
 ]);
 
-// YUK-374 — JudgeKind-space members with NO runner. 'rubric' / 'ai_flexible'
+// JudgeKind-space members with NO runner. 'rubric' / 'ai_flexible'
 // stay in the JudgeKind / JudgeRouteKindSchema enums ONLY so an explicit
 // `judge_kind_override` parses and dispatches to a loud `unsupported` verdict
 // (invoker.ts) instead of silently re-routing to a different judge — question
@@ -45,7 +45,7 @@ export const RUNNABLE_ROUTES = new Set<JudgeKind>([
 // allowlist for non-runnable `judgePolicy.preferredRoutes` entries a subject
 // profile may declare as intent. Implementing a route means registering its
 // runner in the capability registry (core/capability/judges) and adding it to
-// RUNNABLE_ROUTES — YUK-374 only honestifies the declaration; it does NOT
+// RUNNABLE_ROUTES — only honestifies the declaration; it does NOT
 // implement or schedule either route. Values state what a runner would require.
 export const UNIMPLEMENTED_JUDGE_ROUTES = {
   rubric: 'not implemented: rubric judge needs weighted criteria runner and score semantics',
@@ -53,13 +53,13 @@ export const UNIMPLEMENTED_JUDGE_ROUTES = {
 } as const satisfies Partial<Record<JudgeKind, string>>;
 
 /**
- * YUK-308 — shared judge-executability contract for generated/authored
+ * shared judge-executability contract for generated/authored
  * questions (extracted from quiz_gen.ts's module-local copy so the
  * question_draft author flow enforces the SAME gate quiz_gen has had since
  * §2/§5 — a draft that cannot be graded by its declared route is rejected
  * BEFORE persist, so downstream judges never see an ungradeable question).
  *
- * YUK-996 — the route is resolved through the SAME profile-aware resolver the
+ * the route is resolved through the SAME profile-aware resolver the
  * runtime invoker dispatches on (invoker.ts → resolveQuestionJudgeRoute), not
  * the profile-free `defaultJudgeKindForQuestion` twin: under a subject profile
  * whose preferredRoutes diverge from the default ladder the static twin
@@ -91,9 +91,9 @@ export function assertGeneratedQuestionHasJudgeContract(
       choices_md: q.choices_md ?? null,
       judge_kind_override: q.judge_kind_override ?? null,
       image_refs: q.image_refs,
-      // YUK-1036 — the unit_dimension trigger reads metadata
+      // the unit_dimension trigger reads metadata
       // (reference_value/reference_unit). Forward it so the gate resolves the
-      // SAME route the runtime invoker dispatches (the YUK-996 invariant);
+      // SAME route the runtime invoker dispatches (the invariant);
       // otherwise a contract-carrying draft with a non-legacy kind label
       // resolves 'semantic' here but 'unit_dimension' at judge time.
       metadata: q.metadata ?? null,
@@ -111,10 +111,10 @@ export function assertGeneratedQuestionHasJudgeContract(
   // The profile-resolved route can now land on the first-class routes the
   // static twin never produced; gate on the same inputs their runners require
   // or the persisted draft returns 'unsupported' on every attempt:
-  //   - steps@1 (runStepsJudge) short-circuits to 'unsupported' without
-  //     rubric_json.reference_solution;
-  //   - unit_dimension (runUnitDimensionJudge) returns 'unsupported' unless
-  //     metadata carries a numeric reference_value + string reference_unit.
+  // - steps@1 (runStepsJudge) short-circuits to 'unsupported' without
+  // rubric_json.reference_solution;
+  // - unit_dimension (runUnitDimensionJudge) returns 'unsupported' unless
+  // metadata carries a numeric reference_value + string reference_unit.
   if (route === 'steps' && q.rubric_json?.reference_solution == null) {
     throw new Error(
       `${origin} question '${promptLabel}' uses steps judge without reference_solution`,
@@ -125,7 +125,7 @@ export function assertGeneratedQuestionHasJudgeContract(
       `${origin} question '${promptLabel}' uses unit_dimension judge without metadata.reference_value/reference_unit`,
     );
   }
-  // YUK-391: the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
+  // the retired hand-rolled check (PROSE_KINDS.has(kind) || kind ===
   // 'derivation') is the LLM-graded kind family read off the answer-class axis
   // (prose ∪ {derivation} — kinds whose class is semantic/steps under EVERY
   // keyword shape). computation stays out (its keyword shape grades deterministic).
@@ -156,7 +156,7 @@ export interface JudgeQuestionRow {
   // M-1 (2026-05-21): first-class multimodal carriers.
   // Runnable routes (exact / keyword / semantic) IGNORE these fields — they're
   // wired in for future vision-aware capabilities (steps@1 in M2, etc.).
-  // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
+  // See.
   figures?: FigureRefT[];
   image_refs?: string[];
   structured?: StructuredQuestionT | null;
@@ -169,7 +169,7 @@ export interface JudgeAnswerParams {
   /**
    * M2.2 fix: student-submitted answer images (NOT question.image_refs which
    * are prompt figures). For steps@1 derivation judging, these are photos
-   * of the learner's handwritten work. Spec §7.1 — at least one of
+   * of the learner's handwritten work. — at least one of
    * { answer_md, student_image_refs } non-empty; runtime asserted by judge.
    *
    * Default `undefined` ⇒ treated as `[]`. M2.3 UI populates this from the
@@ -180,7 +180,7 @@ export interface JudgeAnswerParams {
   subjectProfile: SubjectProfile;
   runTaskFn?: TaskTextRunFn;
   /**
-   * YUK-573 (MF6) — optional image fetcher for the two vision routes
+   * (MF6) — optional image fetcher for the two vision routes
    * (steps / multimodal_direct). Structurally identical to the runners' own
    * injectables (StepsImageFetchFn / MultimodalDirectImageFetchFn); declared
    * inline to avoid a value edge back into the runner modules. Omitted →
@@ -191,12 +191,12 @@ export interface JudgeAnswerParams {
     db: Db,
   ) => Promise<Array<{ data: string; mediaType: string }>>;
   /**
-   * M2 申诉重判（YUK-316, D15）：用户对先前判定的异议上下文。仅 semantic 路由
+   * M2 申诉重判（, D15）：用户对先前判定的异议上下文。仅 semantic 路由
    * 消费（rejudge 走 judge_kind_override='semantic' 强制语义复核）；其它路由忽略。
    */
   appeal_context?: { prior_outcome: string; user_reason_md: string };
   /**
-   * YUK-212 + YUK-484(B) — StructuredQuestion.id of the target sub-node to grade.
+   * + (B) — StructuredQuestion.id of the target sub-node to grade.
    * When present and resolvable, the invoker narrows the question to that single
    * sub (passage-preserving) BEFORE routing/dispatch so the judge sees only the
    * addressed sub, not its siblings. Absent / unresolvable → whole-row (today's
@@ -204,17 +204,17 @@ export interface JudgeAnswerParams {
    */
   part_ref?: string | null;
   /**
-   * YUK-594 (D7/D9) — durable-run scoped call overrides. Set ONLY by the
+   * (D7/D9) — durable-run scoped call overrides. Set ONLY by the
    * `judge_run` pg-boss handler (never the sync HTTP paths). Two effects, both
    * applied in the invoker's runner wrapper (invoker.ts observedRunTaskFn):
-   *   - `enableTransientRetry:false` is FORCED on the runner ctx (D7 single-
-   *     transient-layer: queue redelivery is the durable handler's ONLY transient
-   *     layer, so the vision judges' in-process transient retry stays off →
-   *     worst-case paid calls per logical judge = 1 + JOB_RETRY_LIMIT).
-   *   - `providerOverride` (when present) is merged into `RunTaskCtx.override.
-   *     provider` so the final redelivery can cross to the fallback lane
-   *     (anthropic-sub). Reuses the existing per-call `resolveTaskProvider`
-   *     override seam — no new plumbing (YUK-594 D9). Omitted → default lane.
+   * - `enableTransientRetry:false` is FORCED on the runner ctx (D7 single-
+   * transient-layer: queue redelivery is the durable handler's ONLY transient
+   * layer, so the vision judges' in-process transient retry stays off →
+   * worst-case paid calls per logical judge = 1 + JOB_RETRY_LIMIT).
+   * - `providerOverride` (when present) is merged into `RunTaskCtx.override.
+   * provider` so the final redelivery can cross to the fallback lane
+   * (anthropic-sub). Reuses the existing per-call `resolveTaskProvider`
+   * override seam — no new plumbing (D9). Omitted → default lane.
    */
   durable?: { providerOverride?: Provider };
 }
@@ -222,7 +222,7 @@ export interface JudgeAnswerParams {
 export interface JudgeAnswerResult {
   route: JudgeKind;
   result: JudgeResultV2T;
-  // YUK-589 (K1) — whether a model invocation was attempted for this verdict
+  // (K1) — whether a model invocation was attempted for this verdict
   // (threaded straight from the invoker). Consumers stamp `deterministic` when
   // false, never `historical_unknown` off route membership alone.
   modelAttempted: boolean;
@@ -277,7 +277,7 @@ export function buildLocalJudgeQuestion(
   if (route === 'unit_dimension') {
     return { metadata: q.metadata ?? null, prompt_md: q.prompt_md };
   }
-  // YUK-260: the exact judge needs choices_md to resolve letter-form answers
+  // the exact judge needs choices_md to resolve letter-form answers
   // ("A" / "BC") against option text. It was dropped here, so choice questions
   // whose reference stored the option text (or letter) never matched the
   // letter (or text) the UI submitted.
@@ -299,7 +299,7 @@ export function semanticInput(
     required_points: nonEmpty(rubric?.required_points),
     acceptable_answers: nonEmpty(rubric?.acceptable_answers),
     keywords: nonEmpty(rubric?.keywords),
-    // M1 (2026-05-22): profile metadata for downstream LLM tasks.
+    // profile metadata for downstream LLM tasks.
     // M2 vision judge (steps@1) consumes subject_id / language_style to route
     // image-bearing prompts correctly. SemanticJudgeTask current builder
     // ignores these fields; field is forward-compat.
@@ -357,7 +357,7 @@ export function defaultRunTaskFn(db: Db): TaskTextRunFn {
 }
 
 /**
- * YUK-759 three-state dispatch:
+ * three-state dispatch:
  * - structured_output present: validate that value and never trust conflicting text;
  * - structured_output null/undefined: preserve the existing char-scan text path;
  * - either path still receives the same Zod second pass and verdict normalization.
@@ -381,7 +381,7 @@ export async function runSemanticJudge(params: JudgeAnswerParams): Promise<Judge
       {
         question: semanticInput(params.question, params.subjectProfile),
         answer: { content: params.answer_md },
-        // M2 申诉重判（YUK-316）：system prompt 指示模型复核用户异议。
+        // M2 申诉重判：system prompt 指示模型复核用户异议。
         ...(params.appeal_context ? { appeal: params.appeal_context } : {}),
       },
       {

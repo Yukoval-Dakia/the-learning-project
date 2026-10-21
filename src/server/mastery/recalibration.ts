@@ -1,11 +1,21 @@
 // YUK-361 Phase 6 (Task 11, ADR-0043 §4 半数据驱动 b + §6 难度标签 + §7 active-PPI/AIPW)
 // — active-PPI 难度重标定机器。
 //
-// ─── 这台机器做什么（ADR-0043 §4 路线表「去偏引擎」）────────────────────────────
+// ─── YUK-439 起的定位（ADR-0043 2026-10-19 Amendment）──────────────────────────
+// 本模块的**读链**（effectiveB，下方）仍是全库 b 读取的单一真相源，但读链头改为联合
+// 标定的后验 b_post；本模块的**写侧机器**（recalibrateQuestion 的 AIPW firm-up + 12 标签
+// 硬门控 + label hook）自 YUK-439 起转为离线审计/对照工具：生产夜跑（recalibration_
+// nightly）改喂 src/server/mastery/joint-calibration.ts 的连续后验批（RECALIBRATION_
+// MIN_LABELS 硬门控与 b_calib 首写语义随之退出生产路径，A3）；label hook 仍被 settle
+// 调用（既有契约 pin 的审计面），但 label 账本不再喂标定。AIPW 估计器（aipwMean /
+// ppiPlusMean / estimateLambdaStar）保留：重放对照脚本（scripts/replay-joint-calibration）
+// 以它复刻现行方案作比较基线。
+//
+// ─── 这台机器（历史文档，语义仍适用于离线审计用途）────────────────────────────
 // 在线 θ̂ 半边锁死 b（item-半边 G4 红线，永不回写）。本模块是**离线/批量**的 b 去偏引擎：
 // 攒够「锚定 θ̂ 反推的难度标签」后，用 active-PPI（AIPW / control-variate 无偏半参数估计）
 // 把**冷启锚 b_anchor 的尺度偏差**校正成去偏后的 b_calib。两时间尺度（§识别性）：θ̂ 快
-// （每作答 Elo），b 慢（批量重标定，对 θ 准静态）；硬条件 b 校准频率 ≪ θ 更新频率。
+// （每作答 Elo），b 慢（批量重标定，对 θ 准静态）。
 //
 // ─── 不变量①（红线，与 Phase 5 家族层一致）──────────────────────────────────────
 // 在线 attempt 路径**只 READS** effectiveB（见下），**从不 WRITES** b_calib。b_calib 只由
@@ -68,28 +78,32 @@ export function attemptLocalDate(now: Date): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// effectiveB — b 读取终态优先链（read-compat helper，Task 11 step 1）。
+// effectiveB — b 读取终态优先链（YUK-439 起后验优先）。
 //
-// b_calib ?? b_anchor ?? b。**纯函数**（无 IO），供 selection 的 resolveBAnchor + θ̂ 锚
-// （state.ts updateThetaForAttempt）统一读 b。b_calib 攒够标签前 NULL → 退回 b_anchor ??
-// b，故接进 live b-resolution 是 NO-OP today（安全可接线，见 step 5 wiring）。
+// b_post ?? b_anchor ?? b。**纯函数**（无 IO），供 selection 的 resolveBAnchor + θ̂ 锚
+// （state.ts updateThetaForAttempt）统一读 b。〔YUK-439 / ADR-0043 2026-10-19 Amendment
+// A2：读链由 `b_calib ?? b_anchor ?? b` 改为后验 `b_post`——无证据时 b_post 数值 = b_anchor
+// （migration 回填 + 锚写者初始化），读侧零跳变；b_calib 退出读链（值由 migration 一次性
+// 承接进 b_post，列冻结为历史存档）。〕
 //
-// 家族组合（Phase 5 effectiveFamilyB 的接缝）：live b-resolution 的终态是
+// 家族组合（effectiveFamilyB 的接缝）：live b-resolution 的终态是
 //   b_effective = effectiveFamilyB(effectiveB(row), familyRow)
-//             = (b_calib ?? b_anchor ?? b)  +  shrunk_family_delta
-// 即家族 delta 叠在去偏 b 之上（两条慢线组合，见 personalized-difficulty.ts effectiveFamilyB
-// 文档）。本 helper 只负责列层 b_calib/b_anchor/b 的解析，家族 delta 由 effectiveFamilyB 叠加。
+//             = (b_post ?? b_anchor ?? b)  +  shrunk_family_delta
+// 即家族 delta 叠在后验 b 之上。本 helper 只负责列层解析，家族 delta 由 effectiveFamilyB
+// 叠加。
 // ─────────────────────────────────────────────────────────────────────────────
 export interface ItemCalibrationBRow {
   b: number | null;
   b_anchor: number | null;
   b_calib: number | null;
+  /** YUK-439 后验均值（优先于锚；无证据时 = b_anchor）。可选：未迁移读面缺省 undefined。 */
+  b_post?: number | null;
 }
 
-/** b_calib ?? b_anchor ?? b。三者皆 null（冷启无锚）→ null。 */
+/** b_post ?? b_anchor ?? b。三者皆 null（冷启无锚）→ null。b_calif 不再入链（YUK-439）。 */
 export function effectiveB(row: ItemCalibrationBRow | null | undefined): number | null {
   if (row == null) return null;
-  return row.b_calib ?? row.b_anchor ?? row.b ?? null;
+  return row.b_post ?? row.b_anchor ?? row.b ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,35 +1,32 @@
-// YUK-1448 (Stage 1 batch D / 统一问题定级设计 §7+§9) — `file_bank_gap` DomainTool
+// (Stage 1 batch D / 统一问题定级设计+) — `file_bank_gap` DomainTool
 // (effect:'write')。search_bank 检索不足（verdict sparse/none）时落缺口供题需求：
-//
-//   1. 检索证据防伪：search_evidence 必须携带 search_bank 服务端签发的
-//      evidence_mac（BANK_GAP_EVIDENCE_SECRET keyed HMAC-SHA256，覆盖除
-//      evidence_mac 外全部 gap 字段的 canonical JSON）。缺失或不符 → rejected /
-//      evidence_not_from_search_bank——调用方伪造 complete=true 也触发不了付费
-//      dispatch。secret 未配置时 filing 整体 fail closed。
-//   2. 幂等登记 + claim-first 派发：request_id 派生确定性事件 id。派发付费 job
-//      前先写 'claimed' 占位行（与 dispatcher 同一 experimental:question_supply
-//      action，状态恒为 'claimed'/'filed'/'held'——绝不写 'dispatched'，不污染
-//      dispatcher 的 7d cooldown 凭证）。writeEvent first-write-wins，
-//      filing_nonce 回读相等者独占派发权；输掉并发的调用走重放/拒绝，绝不
-//      dispatch。派发结果追加到 `fbgap|<request_id>|receipt` 回执事件（台账只增
-//      不改）。同 request_id + 同内容 → 重放已存回执（deduplicated=true）；同 id
-//      + 不同内容 → 显式 rejected。
-//   3. retrieval_constraints（within_refs / source / kind / difficulty / KC，含
-//      subject / exclude_refs / similar_to）随需求一并存档——缺口上下文完整可追溯。
-//   4. 检索不完整（池截断 / 通道不可用）→ held/retrieval_incomplete：只证明没搜全，
-//      不能立成「全库不存在」。
-//   5. 需求控制先于派发 enforcing：max_budget_micro_usd <= 0 → held/
-//      budget_exhausted；needed_by 已过期 → held/deadline_passed。零预算/过期
-//      需求绝不触发付费 job。
-//   6. 调用既有 dispatcher（dispatchSupplyTarget）。dispatcher 无法落实的限制 →
-//      held/unsupported_constraint，绝不静默丢字段后假装已供题。
-//
+// 1. 检索证据防伪：search_evidence 必须携带 search_bank 服务端签发的
+// evidence_mac（BANK_GAP_EVIDENCE_SECRET keyed HMAC-SHA256，覆盖除
+// evidence_mac 外全部 gap 字段的 canonical JSON）。缺失或不符 → rejected /
+// evidence_not_from_search_bank——调用方伪造 complete=true 也触发不了付费
+// dispatch。secret 未配置时 filing 整体 fail closed。
+// 2. 幂等登记 + claim-first 派发：request_id 派生确定性事件 id。派发付费 job
+// 前先写 'claimed' 占位行（与 dispatcher 同一 experimental:question_supply
+// action，状态恒为 'claimed'/'filed'/'held'——绝不写 'dispatched'，不污染
+// dispatcher 的 7d cooldown 凭证）。writeEvent first-write-wins，
+// filing_nonce 回读相等者独占派发权；输掉并发的调用走重放/拒绝，绝不
+// dispatch。派发结果追加到 `fbgap|<request_id>|receipt` 回执事件（台账只增
+// 不改）。同 request_id + 同内容 → 重放已存回执（deduplicated=true）；同 id
+// + 不同内容 → 显式 rejected。
+// 3. retrieval_constraints（within_refs / source / kind / difficulty / KC，含
+// subject / exclude_refs / similar_to）随需求一并存档——缺口上下文完整可追溯。
+// 4. 检索不完整（池截断 / 通道不可用）→ held/retrieval_incomplete：只证明没搜全，
+// 不能立成「全库不存在」。
+// 5. 需求控制先于派发 enforcing：max_budget_micro_usd <= 0 → held/
+// budget_exhausted；needed_by 已过期 → held/deadline_passed。零预算/过期
+// 需求绝不触发付费 job。
+// 6. 调用既有 dispatcher（dispatchSupplyTarget）。dispatcher 无法落实的限制 →
+// held/unsupported_constraint，绝不静默丢字段后假装已供题。
 // 已知限制（claim-first 的诚实形态）：winner 在 claim 落账后、receipt 落账前崩溃
 // 时，该 request_id 永久停在 claimed_not_dispatched——同内容重试只重放 held 回执、
 // 绝不再派发（付费 job 可能已入队也可能没有，两者无法区分，fail closed）。须由
 // operator 人工对账（查 dispatcher cooldown 台账里该 target fingerprint 是否真派过
-// / job 队列），确认未派后用新 request_id 重新落需求。
-//
+// job 队列），确认未派后用新 request_id 重新落需求。
 // 硬边界：不碰 learner state；不做教学决策；本工具自身零 LLM 调用（付费发生在
 // 派出的 sourcing_web / quiz_gen job 内，受 dispatcher 指纹 cooldown 节流）。
 
@@ -73,7 +70,7 @@ const FileBankGapInputSchema = z
   })
   .strict();
 
-/** 从检索 scope 派生的供给约束存档（task 指定五轴 + 邻接轴，完整可追溯）。 */
+/** 从检索 scope 派生的供给约束存档。 */
 export interface BankRetrievalConstraints {
   subject?: string;
   within_refs?: string[];

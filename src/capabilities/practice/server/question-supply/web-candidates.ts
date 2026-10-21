@@ -1,13 +1,12 @@
-// YUK-988 (Supply-Agent/3) — web 候选生产线：从退役 jobs/sourcing.ts 提取的"找 + 判"
+// (Supply-Agent/3) — web 候选生产线：从退役 jobs/sourcing.ts 提取的"找 + 判"
 // 部分，candidate-only 形态（镜像 jyeoo-candidates.ts）。LLM 判断（SourcingTask：
 // 搜索 → 抽取 → 结构化）留在本模块内部；正确性路径（持久化/dedup/verify）全部在上游
 // store_sourced_question commit seam。本模块不写 question / verify intent / proposal；
-// db 写面只有 canary 事件（YUK-988 E3 P1-3 起核内单写，见 runWebFetchCandidates）。
-//
+// db 写面只有 canary 事件（E3 P1-3 起核内单写，见 runWebFetchCandidates）。
 // 纯模块纪律（ownership/boundary）：不 import '@/server/'。MCP 挂载 + runAgentTask
 // 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在
-// ../web-sourcing-operation.ts（YUK-1570 自 tool 层下沉），tool 层与 executor
-// job 层经 defaultWebSourcingDeps() 共享同一实现。SourcingTask
+// ../web-sourcing-operation.ts（自 tool 层下沉），tool 层与 executor
+// job 层经 defaultWebSourcingDeps 共享同一实现。SourcingTask
 // prompt 契约（trigger/ref/knowledge_context/kinds/objective_only/kind_required）
 // 与旧 sourcing.ts 完全一致——SourcingTask TaskSpec 不变。
 
@@ -30,7 +29,7 @@ import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
 // 旧 sourcing.ts:109 同款常量；source_route / difficulty_evidence 的路由身份。
 export const SOURCING_WEB_ROUTE = 'sourcing_web' as const;
 
-// Canary action = 漏斗观测面（单写/次，含失败；YUK-988 E3 起由本核 owns）。
+// Canary action = 漏斗观测面（单写/次，含失败； E3 起由本核 owns）。
 const WEB_FETCH_CANARY_ACTION = 'experimental:web_fetch_candidates' as const;
 
 // ── 候选形状（与 JyeooCandidate 对齐，web 无 producer 内部 id / 无 hint 通道 / 不暂存资产）──
@@ -42,7 +41,7 @@ export interface WebCandidate {
   /** web 无 producer 内部 id（source_url 即身份）→ 恒 null。 */
   sourceId: null;
   knowledgeHints: string[];
-  /** web 候选不暂存资产：图片题走 image_candidate proposal 通道（ADR-0002），不入 draft。 */
+  /** web 候选不暂存资产：图片题走 image_candidate proposal 通道，不入 draft。 */
   stagedAssetIds: string[];
 }
 
@@ -115,7 +114,7 @@ export interface RunWebFetchCandidatesParams {
     /** 参与判题上下文的附加 KC（默认仅锚点）。 */
     knowledgeIds?: string[];
     count: number;
-    /** 自由文本 kind 标签（YUK-386）；'any' 由调用方展开为 undefined（自由找题）。 */
+    /** 自由文本 kind 标签；'any' 由调用方展开为 undefined（自由找题）。 */
     kind?: string;
     objectiveOnly?: boolean;
     kindRequired?: boolean;
@@ -171,7 +170,7 @@ function profileSourceWhitelist(profile: SubjectProfile): string[] {
 /**
  * 跑一次 web 候选生产线（找 + 判），返回候选（不写 question）。
  *
- * Canary 单写（YUK-988 E3 P1-3）：本核 owns fetch canary——每次实际运行（含 failed，
+ * Canary 单写（E3 P1-3）：本核 owns fetch canary——每次实际运行（含 failed，
  * 含 anchor_not_found 确定性短路）写恰好一条
  * action='experimental:web_fetch_candidates' 事件（漏斗观测面；与 jyeoo 面的"预算
  * 账本按 canary 求和、绝不双写"契约一致）。旧位在 web_fetch_candidates 工具层——
@@ -286,8 +285,8 @@ async function runWebFetchCandidatesCore(
     };
   }
 
-  // ── 4. parse + kind 门（旧 sourcing.ts:394-405 同款语义；YUK-386 起按
-  //      answer-class 相容判，kind 标签本身是自由文本不进闭集比较） ──────────
+  // ── 4. parse + kind 门（旧 sourcing.ts:394-405 同款语义； 起按
+  // answer-class 相容判，kind 标签本身是自由文本不进闭集比较） ──────────
   let parsed: SourcingTaskOutputT;
   try {
     parsed = parseSourcingOutput(taskResult.text, deps.parseLoose);

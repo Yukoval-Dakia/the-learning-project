@@ -1,16 +1,15 @@
 // Keeps generated material visible to the learner and available to copy-safety verification.
 import type { QuizGenQuestionT } from '@/core/schema/quiz_gen';
 
-// YUK-224 F1 (PR #314 round-1) — read-model passthrough, v1 self-contained.
+//read-model passthrough, v1 self-contained.
 // For a material_grounded question the题干 references a passage the learner can
 // only see if it is rendered alongside the prompt. The review / practice
 // render only reads prompt_md, so we EMBED the passage into prompt_md at persist
 // time as a leading blockquote ("阅读材料") followed by the original prompt. Pure
 // function so it is unit-testable.
-//
 // phase-deferred: the structural fix — a read-model that renders 题面 and 素材
 // separately and de-duplicates one passage across many questions (instead of
-// inlining a copy per question) — is a follow-up. See YUK-216 spec §6.1 row 3.
+// inlining a copy per question) — is a follow-up. See row 3.
 // Until that read-model lands, the embedded copy keeps the learner-visible
 // material self-contained.
 export function embedMaterialInPrompt(promptMd: string, materialBodyMd: string): string {
@@ -23,7 +22,7 @@ export function embedMaterialInPrompt(promptMd: string, materialBodyMd: string):
   return `> **阅读材料**\n${quoted}\n\n${promptMd}`;
 }
 
-// YUK-224 F3 (PR #314 round-1) — synthesize per-question source_refs from the
+//synthesize per-question source_refs from the
 // top-level material so the deterministic copy-safety overlap (quiz_verify reads
 // meta.source_refs[].snippet) has the actual passage to compare against. A
 // material_grounded question that left source_refs empty would lose the overlap

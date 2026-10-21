@@ -12,16 +12,14 @@ import {
 } from './submit-question';
 
 // ====================================================================
-// YUK-1468 — edit_question DomainTool（统一题目编辑面）
+// edit_question DomainTool（统一题目编辑面）
 // ====================================================================
-//
 // actions：
-//   save    — document（创建新草稿）XOR ops（对 draft_ref / question_id 局改）。
-//             CAS：expected_draft_version + expected_revision；request_id 幂等。
-//   validate — 纯本地校验（四层契约 validators + 引用完整性），不写。
-//   probe   — 显式合成作答走 evaluateSubmissionCore 同一入口；不落
-//             attempt/candidate/settlement；模型方法未准入如实未决。
-//
+// save — document（创建新草稿）XOR ops（对 draft_ref / question_id 局改）。
+// CAS：expected_draft_version + expected_revision；request_id 幂等。
+// validate — 纯本地校验（四层契约 validators + 引用完整性），不写。
+// probe — 显式合成作答走 evaluateSubmissionCore 同一入口；不落
+// attempt/candidate/settlement；模型方法未准入如实未决。
 // 面权限（服务端判定，非入参）：Copilot 面（agent:copilot*）的 save 一律落
 // question_edit proposal（用户 accept 后 accept applier 走同一 ops → submit
 // 管线）；其它 surface 直写授权草稿。validate/probe 对 Copilot 直出（无写）。

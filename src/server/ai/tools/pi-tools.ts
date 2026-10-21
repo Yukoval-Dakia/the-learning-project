@@ -62,10 +62,10 @@ export type PiToolMount =
   | {
       type: 'custom';
       /**
-       * Escape hatch for tools that are NOT registered DomainTools — e.g.
-       * KnowledgeReviewTask's bespoke `write_proposal`, the agency evidence /
-       * director servers. The caller owns the AgentTool's execute body and
-       * must keep its logging semantics identical to the domain bridge.
+       * Escape hatch for tools that are NOT registered DomainTools — e.g. the
+       * agency evidence / director servers. The caller owns the AgentTool's
+       * execute body and must keep its logging semantics identical to the
+       * domain bridge.
        */
       tools: AgentTool[];
     };
@@ -77,7 +77,7 @@ export function piDomainMount(options: BuildMcpServerOptions): PiToolMount {
 
 /**
  * Build one bespoke `AgentTool` for a `custom` mount — used by hand-rolled
- * tool sets (evidence/director/review). Wire name is `mcp__<server>__<name>`;
+ * tool sets (evidence/director). Wire name is `mcp__<server>__<name>`;
  * the zod raw shape compiles through the same zodToJsonSchemaCompat path as
  * the domain bridge; the handler returns the MCP-shaped `{content}` payload.
  */

@@ -1,22 +1,9 @@
-// YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask 解析 barrier +
-// 分桶输入格式化器。
+// Selection orchestrator boundary: format bucketed candidates for the LLM and parse weights.
 //
-// 权威 spec：
-//   - docs/superpowers/plans/2026-06-16-phase3-randomized-mfi-impl.md（Step B）
-//   - ADR-0042 编排档2 amendment（docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）
-//
-// 两个出口：
-//   - buildSelectionOrchestratorInput(candidates)：把 Step A 的 CollectedSignal[] 投影成
-//     **分桶**的紧凑文字（high/mid/low 而非原始浮点）。ADR-0042:68 诚实天花板——LLM 对
-//     prompt 原始浮点不敏感（「被携带未被使用」），故 prompt 只喂分桶；真实数值由 sampler
-//     （Step C）兜 π_i。
-//   - parseSelectionOrchestratorOutput(text, inputRefIds)：brace-slice + Zod parse（照
-//     item-prior.ts:9-28 / question-author 同款），再做选题专属后置校验：
-//       · emitted refId ⊆ inputRefIds（丢未知/幻觉 id，不 throw——LLM 偶发幻觉 id 是
-//         可恢复的，丢掉即可；只有结构性失败才 throw）；
-//       · dedup（同 refId 多次出现取**首次**，后续丢弃）；
-//       · weight ≥ 0（Zod 已 min(0) 硬拒负权——越界 throw 当本轮失败，走 fallback）；
-//       · 去重/过滤后若 candidates 空 → throw（无可用编排 = 本轮失败）。
+// buildSelectionOrchestratorInput sends high/mid/low buckets, not raw floats: the model does
+// not use raw values, and the sampler keeps exact numbers for π_i. parseSelectionOrchestratorOutput
+// drops unknown ids and duplicates, rejects negative weights through Zod, and throws only on
+// structural failure so the caller can fall back.
 
 import {
   type SelectionOrchestratorCandidateT,
@@ -31,7 +18,7 @@ import {
 } from './selection-constants';
 
 // ───────────────────────────────────────────────────────────────────────────
-// 分桶（bucketing）——signal-fidelity mitigation（ADR-0042:68）。
+// 分桶（bucketing）——signal-fidelity mitigation（:68）。
 // ───────────────────────────────────────────────────────────────────────────
 
 export type SignalBand = 'high' | 'mid' | 'low' | 'n/a';
@@ -80,13 +67,13 @@ function bSourceLabel(bSource: CollectedSignal['bSource']): string {
 }
 
 /**
- * 把一条 CollectedSignal 投影成一行**分桶**文字。原始浮点（mfiScore/θ̂/b/§9.2）全部
+ * 把一条 CollectedSignal 投影成一行**分桶**文字。原始浮点（mfiScore/θ̂/b/）全部
  * 转成 band 标签——LLM 看不到任何原始数值。
  */
 function projectCandidate(sig: CollectedSignal): string {
   const parts: string[] = [`refId=${sig.refId}`, `refKind=${sig.refKind}`, `role=${sig.role}`];
   if (sig.recallLocked) {
-    // DEAD UNDER CURRENT WIRING（review CLUSTER E）：recall-locked 候选在
+    // DEAD UNDER CURRENT WIRING（review）：recall-locked 候选在
     // softmax-selection.ts 里被切出 `samplable` 池**之前** buildSelectionOrchestratorInput
     // 被调用——LLM 永远看不到 recall 项（它们走确定性 same-question 透传，从不加权/重排）。
     // 此分支因此不可达。保留它当深防御（若未来有人改 wiring 把 recall 喂进来，至少
@@ -97,7 +84,7 @@ function projectCandidate(sig: CollectedSignal): string {
     parts.push(`diagnostic=${bucketMfi(sig.diagnosticScore)}`);
     parts.push(`difficulty_anchor=${bSourceLabel(sig.bSource)}`);
   }
-  // §9.2 first-class 信号（Step A 当前全 undefined → 全 'n/a'；future cheap reader 落地
+  // first-class 信号（Step A 当前全 undefined → 全 'n/a'；future cheap reader 落地
   // 后自动有 band）。仍投影出来，保证 prompt 形态在数据到位时无需改格式。
   parts.push(`exam_relevance=${bucketUnit(sig.examRelevance)}`);
   parts.push(`misconception_recurrence=${bucketUnit(sig.misconceptionRecurrence)}`);
@@ -108,8 +95,8 @@ function projectCandidate(sig: CollectedSignal): string {
  * buildSelectionOrchestratorInput — 把全部非到期候选投影成分桶文字块，喂 L2 LLM。
  *
  * 输出形态（每候选一行）：
- *   refId=… | refKind=question | role=diagnostic | mfi=high | diagnostic=mid |
- *   difficulty_anchor=calibrated | exam_relevance=n/a | …
+ * refId=… | refKind=question | role=diagnostic | mfi=high | diagnostic=mid |
+ * difficulty_anchor=calibrated | exam_relevance=n/a | …
  *
  * 调用方（Step C shell）把这块文字塞进 runTask input（连同 learner narrative 等上下文）。
  * 空输入 → 返回空字符串（上游不该在无候选时调 LLM；防御性返回空而非 throw）。
@@ -197,13 +184,13 @@ export function buildSelectionOrchestratorTaskInput(
 /**
  * parseSelectionOrchestratorOutput — brace-slice + Zod + 选题专属后置校验。
  *
- * @param text         LLM 原始文本（可能含 JSON 外的噪声/markdown 围栏）。
- * @param inputRefIds  本轮喂给 LLM 的合法候选 refId 全集（⊆ 校验锚）。
- * @returns            过滤/去重后的合法候选编排数组（每个 refId 至多一条）。
+ * @param text LLM 原始文本（可能含 JSON 外的噪声/markdown 围栏）。
+ * @param inputRefIds 本轮喂给 LLM 的合法候选 refId 全集（⊆ 校验锚）。
+ * @returns 过滤/去重后的合法候选编排数组（每个 refId 至多一条）。
  *
  * throws（→ 调用方当本轮失败，走 Step C 的统计 sampler fallback）：
- *   - 文本里没有 JSON 对象 / JSON.parse 失败 / Zod schema 不匹配（含负权 weight<0）；
- *   - ⊆ 过滤 + dedup 后 candidates 为空（无任何合法编排可用）。
+ * - 文本里没有 JSON 对象 / JSON.parse 失败 / Zod schema 不匹配（含负权 weight<0）；
+ * - ⊆ 过滤 + dedup 后 candidates 为空（无任何合法编排可用）。
  * 不 throw（可恢复，静默丢弃）：未知 refId（幻觉 id）、重复 refId（取首次）。
  */
 export function parseSelectionOrchestratorOutput(

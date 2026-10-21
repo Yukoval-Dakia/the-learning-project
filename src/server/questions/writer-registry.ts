@@ -147,6 +147,12 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     pendingClass: 'rehearsal-only',
     note: 'YUK-1057 演练的 post-cutover writer-seam 证明：对 ephemeral 库的受控写入，验证切换后写入路径；非生产路径，YUK-1059 收敛后演练改走 publisher。',
   },
+  'scripts/replay-joint-calibration.ts': {
+    status: 'working-copy-pending',
+    tickets: ['YUK-439', 'YUK-1059'],
+    pendingClass: 'rehearsal-only',
+    note: 'YUK-439 联合标定重放对照的 --seed-legacy-db 合成史 seeder：只对 owner 显式指向的隔离库写 syn_ 前缀 fixture 题（legacy 工作副本形态，重放 loader 只读判分事件、不判分这些题面），不触生产；同 rehearsal corpus 的 rehearsal-only 处置。',
+  },
   'src/capabilities/agency/server/conjecture/probe-lifecycle.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1047'],

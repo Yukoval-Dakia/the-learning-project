@@ -1,79 +1,20 @@
-// ADR-0031 / YUK-304 (quiz C→A, lane B) — write_quiz: the copilot 组卷 write.
-//
-// The copilot (the orchestrator, 决定1) assembles questions it just authored
-// (author_question knowledge|material → draft rows) and/or existing pool
-// questions into ONE runnable tool_quiz paper + a /practice/<id> link it embeds
-// in its reply. Pure local write — no LLM call.
-//
-// PRECONDITION CONTRAST (RP-2, docs/adr/0032-domaintool-surface-redesign.md:73):
-// write_review_plan REJECTS draft questions (a nightly review paper must be
-// runnable from the verified pool); write_quiz deliberately ALLOWS drafts — a
-// question authored THIS TURN is still draft_status='draft' until the user
-// accepts its question_draft proposal, yet the user asked for the paper NOW.
-// The /practice runtime does not filter drafts, so the paper is fully runnable
-// pre-accept; FSRS/pool entry still waits for the accept (决定5).
-//
-// YUK-308 — the draft allowance is NARROW, code-enforced: a draft row is
-// admitted only when it is a still-live copilot draft, i.e. EITHER
-// source='copilot_authored' (author_question's marker — the same-turn write
-// path that pairs the row with a question_draft proposal in one tx) OR a
-// pending question_draft proposal exists for the row (the explicit spec
-// branch; today only author_question writes that kind, so this is the same
-// set — kept as a real check so a future question_draft producer stays
-// admissible), AND it is not tombstoned (metadata.dismissed_at set by the
-// question_draft dismiss applier, or metadata.archived_at set by
-// archiveQuestion's soft-delete re-draft). Draft rows from every other
-// pipeline (quiz_gen verify-failed, web_sourced source_verify-failed, …) are
-// REJECTED: their promotion is gated behind their own verify/owner flow, and
-// silently running them in a paper would bypass it.
-//
-// YUK-995 — residual check-then-act window closed: the draft admission reads
-// above run OUTSIDE the artifact transaction, so a question_draft dismiss
-// applier could commit its metadata.dismissed_at tombstone UPDATE in the gap
-// between the unlocked read and the paper INSERT — the paper would then carry
-// a user-rejected draft. The artifact tx re-reads every pre-check draft id
-// under SELECT ... FOR UPDATE (one row at a time in sorted id order — the
-// consistent-lock-ordering doctrine acquireSortedAdvisoryLocks /
-// lockPlacementSupplyScopes already follow — so two write_quiz calls with
-// overlapping draft sets serialize instead of deadlocking) and re-runs the
-// tombstone gate on the locked version. Under READ COMMITTED the locked read
-// waits on an in-flight tombstone UPDATE and returns the winner's committed
-// row: a dismiss that committed first (or was mid-flight) aborts the write;
-// a dismiss that arrives after our lock queues behind this tx — sequential-
-// equivalent to a dismiss landing after the paper was already written, which
-// is the designed pre-accept draft semantics.
-//
-// YUK-1002 — two same-shape residuals closed on top of 995:
-//  (a) archive ↔ write_quiz: 995 locked only pre-check DRAFT ids (the dismiss
-//      UPDATE only touches drafts), but an ACTIVE row can be re-drafted +
-//      archived_at-tombstoned by archiveQuestion inside the same gap → the
-//      lock set is now ALL referenced question ids, and the locked re-check
-//      re-runs the full admission invariant (tombstone + coverage), not just
-//      the tombstone gate.
-//  (b) retract ↔ write_quiz: the pending-proposal admission branch folded the
-//      inbox UNLOCKED; a retract writes a fresh `correct` event — no row-level
-//      marker on the question — hollowing out the admission mid-flight. The
-//      relied-on proposal ids take the shared `proposal_decision:` advisory
-//      lock (the same lock accept/dismiss/retract serialize on) BEFORE the
-//      question row locks — lifecycle lock order is decision → row, so taking
-//      rows first would deadlock — then the pending set is re-folded inside
-//      the tx (READ COMMITTED sees the winner's state post-lock).
-//
-// Artifact provenance: intent_source='quiz_gen' + tool_kind='quiz_gen' — the
-// quiz-skill precedent (§3 decision there): a first-class paper provenance
-// already on BOTH practice whitelists (practice-read.ts intent_source gate +
-// /api/practice route), so the paper is runnable with ZERO whitelist edits.
-// attrs.origin='copilot_write_quiz' disambiguates copilot-origin papers.
-//
-// YUK-308 — per-run idempotency guard (the deferred item, now landed with the
-// same shape as retired write_review_plan's exactly-one-paper-per-run
-// contract): one tx holds `pg_advisory_xact_lock(write_quiz:<taskRunId>)` while
-// it checks for an existing copilot_write_quiz artifact stamped with this
-// tool_context_task_run_id; a second call in the same run throws instead of
-// persisting a duplicate paper (the signal the deferral note asked for:
-// review_plan's twin guard exists precisely because the model DID double-write
-// — codex PR #298). No UNIQUE index → no migration; the advisory lock closes
-// the check-then-insert TOCTOU the same way.
+// write_quiz: copilot paper assembly.
+// The copilot combines questions it just authored and/or pool questions into one runnable
+// tool_quiz paper plus a /practice/<id> link. Pure local write, no LLM call.
+// Unlike write_review_plan, drafts are allowed: a question authored this turn is still
+// draft until the user accepts its question_draft proposal, but the user asked for the
+// paper now. The allowance is narrow: the row must be a live copilot draft
+// (source='copilot_authored' or a pending question_draft proposal) and not tombstoned
+// (metadata.dismissed_at / archived_at). Drafts from other pipelines are rejected because
+// their promotion is gated by their own verify/owner flow.
+// Admission reads run outside the artifact transaction, so the transaction re-reads every
+// referenced question under FOR UPDATE in id order and re-checks the full invariant.
+// Pending proposal ids take the shared proposal_decision advisory lock before row locks
+// (decision -> row order) and are re-folded inside the tx. This closes dismiss, archive, and
+// retract races without deadlocks.
+// Provenance: intent_source='quiz_gen', tool_kind='quiz_gen', attrs.origin=
+// 'copilot_write_quiz'. A per-run advisory lock on the task run id prevents a duplicate
+// paper within one run.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -103,9 +44,9 @@ const WriteQuizOutputSchema = z.object({
 type WriteQuizOutput = z.infer<typeof WriteQuizOutputSchema>;
 
 /** Fold the pending inbox into [covered question_id, proposal_id] pairs for
- *  question_draft proposals. Called pre-check AND inside the artifact tx
- *  (post-decision-lock) — the two folds must share one extraction so the
- *  in-tx re-check observes the same coverage semantics. */
+ * question_draft proposals. Called pre-check AND inside the artifact tx
+ * (post-decision-lock) — the two folds must share one extraction so the
+ * in-tx re-check observes the same coverage semantics. */
 async function pendingQuestionDraftTargets(db: Db | Tx): Promise<Array<[string, string]>> {
   const pending = await listProposalInboxRows(db, { status: 'pending' });
   const pairs: Array<[string, string]> = [];
@@ -157,7 +98,7 @@ async function executeWriteQuiz(
     throw new Error(`write_quiz: question_id(s) do not exist: [${missing.join(',')}]`);
   }
 
-  // YUK-308 — the RP-2 draft allowance is NARROW (header comment): a
+  // the RP-2 draft allowance is NARROW (header comment): a
   // draft_status='draft' row is admitted only when it is a same-turn
   // author_question product — source='copilot_authored' — that is still a live
   // draft (no dismissed_at tombstone written by the question_draft dismiss
@@ -170,7 +111,7 @@ async function executeWriteQuiz(
   // cooldown_key, not the target question — the inbox list + proposed_change
   // question_id set is the equivalent-pending check. The proposal ids covering
   // OUR drafts are captured alongside: the artifact tx re-locks them on the
-  // shared proposal_decision advisory lock before re-folding (YUK-1002 (b)).
+  // shared proposal_decision advisory lock before re-folding ((b)).
   const pendingDraftTargets = new Set<string>();
   const reliedProposalIds = new Set<string>();
   if (draftIds.some((id) => byId.get(id)?.source !== 'copilot_authored')) {
@@ -229,7 +170,7 @@ async function executeWriteQuiz(
   const knowledgeIds = [...knowledgeFocus];
 
   await ctx.db.transaction(async (tx) => {
-    // YUK-308 — exactly-one-paper-per-run (retired write_review_plan's contract,
+    // exactly-one-paper-per-run (retired write_review_plan's contract,
     // codex PR #298): serialize same-run callers on an advisory xact lock, then
     // refuse the second write. A duplicate paper is non-destructive but leaks
     // two /practice links into one reply — the model DID double-write this
@@ -257,7 +198,7 @@ async function executeWriteQuiz(
       }
     }
 
-    // YUK-995/1002 — in-tx admission re-check under locks (see header comment).
+    //in-tx admission re-check under locks (see header comment).
     // Lock order: write_quiz advisory → proposal_decision (sorted) → question
     // rows (sorted). Lifecycle paths (accept/dismiss/retract) take the decision
     // lock FIRST then update question rows — matching that prefix order keeps
@@ -278,7 +219,7 @@ async function executeWriteQuiz(
       }
     }
 
-    // Lock ALL referenced ids — not just pre-check drafts (YUK-1002 (a)): an
+    // Lock ALL referenced ids — not just pre-check drafts ((a)): an
     // active row can be re-drafted + archived_at-tombstoned by archiveQuestion
     // in the same check-then-act gap.
     const racedTombstoned: string[] = [];
@@ -350,7 +291,7 @@ async function executeWriteQuiz(
       },
       attrs: { origin: 'copilot_write_quiz' },
       sourceRef: null,
-      // YUK-471 W3-C1β — chain the same-tx artifact_create to the copilot turn's causing event.
+      // W3-C1β — chain the same-tx artifact_create to the copilot turn's causing event.
       causedByEventId: ctx.causedByEventId ?? null,
       now,
     });

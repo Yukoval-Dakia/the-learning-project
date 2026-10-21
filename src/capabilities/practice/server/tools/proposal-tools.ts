@@ -28,7 +28,7 @@ import { question } from '@/db/schema';
 import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getActiveLearningRecord } from '@/kernel/records/queries';
-import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import { type DomainTool, OpaqueJsonInput, type ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { runQuestionAuthor } from './question-author';
@@ -121,7 +121,9 @@ const AuthorQuestionInputSchema = z.object({
   // record seed
   record_id: z.string().min(1).optional(),
   reasoning: z.string().min(1).max(2000).optional(),
-  draft: z.unknown().optional(),
+  // Opaque record-promotion draft, consumed by the record_promotion accept
+  // applier; z.json instead of an unconstrained value (YUK-1553 C1-1).
+  draft: OpaqueJsonInput.optional(),
   suggestion_kind: SuggestionKind.optional(),
   // knowledge | material seed (ADR-0031 lane B). material_body_md is bounded to
   // keep the single-shot QuestionAuthorTask prompt budget sane (20k chars ≈ a

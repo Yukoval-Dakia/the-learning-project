@@ -1,10 +1,5 @@
-// Domain event read models. The knowledge-owned failure-attempt family moved to
-// src/capabilities/knowledge/server/events/failure-attempts.ts (YUK-876); the
-// question/FSRS-facing projections remain here until their owning lanes migrate
-// them. The shared correction-status active-row helpers are exported for that
-// capability-owned read port.
-//
-// Generic envelope storage lives in @/kernel/events.
+// Domain event read models for review history and question timelines. Generic
+// envelope storage lives in @/kernel/events.
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
@@ -99,15 +94,10 @@ export async function getRecentReviewEvents(
 }
 
 // ============================================================================
-// getQuestionTimeline — YUK-58: per-question attempt + review history.
+// getQuestionTimeline — per-question attempt + review history, newest first.
 //
-// Aggregates `event(action IN ('attempt','review'), subject_kind='question',
-// subject_id=$1)` ordered desc by created_at, with chained judge cause
-// (action='judge', subject_kind='event') hydrated onto attempt entries.
-//
-// Filters out retracted / superseded events via takeActiveRows. Limit defaults
-// to 10, hard cap at MAX_QUESTION_TIMELINE_LIMIT (50). Powered by existing
-// `event_subject_idx` and `event_caused_by_idx` — no new indexes.
+// Chained judge cause is hydrated onto attempt entries. Inactive (retracted or
+// superseded) rows are filtered out. Limit defaults to 10, capped at 50.
 // ============================================================================
 
 export type QuestionTimelineEntry =
@@ -126,26 +116,16 @@ export type QuestionTimelineEntry =
       cause: {
         primary: string;
         confidence: number | null;
-        /**
-         * YUK-1018 — `misc_` cause id 的显示回填（active misconception title）。
-         * 仅 misc id 有值；非 misc 词表 id 的 label 归 profile 声明管（展示层
-         * 现状即渲染裸 id）。unresolvable misc → null，展示层回退 primary。
-         */
+        /** Display label for misc_ cause ids; vocabulary ids keep their raw id. */
         primary_label: string | null;
-        /** Phase 1c.2 副归因 id 列表（judge payload 原样透传，id 是语义身份）。 */
+        /** Secondary cause ids as stored; the id is the identity. */
         secondary: string[];
-        /**
-         * YUK-1020 — secondary 里 misc_ id 的显示回填（id → misconception
-         * title Record map）。只含可解析的 misc id；vocab / unresolvable 缺席，
-         * 展示层回退裸 id。
-         */
+        /** Display labels for resolvable misc_ secondary ids; callers fall back to the raw id. */
         secondary_labels: Record<string, string>;
       } | null;
       /**
-       * YUK-1054 — 双轨裁决引用（§9）。`cause` 归因块读的是 effective 判
-       * （链解析后仍 live 的最新 judge —— 与改判前读面一致的语义，修复
-       * 原 caused_by-only 锚漏掉申诉重判的 gap）；本字段把双轨 id 原样透出，
-       * 供上游区分「原始判 id」与「当前生效判 id」。无 judge 时 null。
+       * Original vs effective judge ids. cause reads the effective verdict; null
+       * when there is no judge.
        */
       judge: {
         original_event_id: string;
@@ -203,9 +183,8 @@ export async function getQuestionTimeline(
 
   if (activeRows.length === 0) return [];
 
-  // YUK-1054 — judge 双轨解析（subject_id ∪ caused_by 双通道锚 + 链解析）。
-  // 旧实现只查 caused_by_event_id IN attemptIds：申诉重判的 caused_by=appeal.id
-  // 会被漏掉，改判后的新判进不了 timeline。cause 归因子读 effective 判。
+  // Resolve judges through both subject_id and caused_by: appeal re-judgments only
+  // appear via the latter. cause reads the effective verdict.
   const attemptIds = activeRows
     .filter((r) => r.action === 'attempt' || r.action === 'experimental:assessment_attempt')
     .map((r) => r.id);
@@ -214,8 +193,7 @@ export async function getQuestionTimeline(
 
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeRows);
 
-  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
-  // 一次批量解析，不进循环）。
+  // Resolve misc labels in one batch.
   const miscLabels = await resolveMiscCauseLabels(
     db,
     [...verdicts.values()].flatMap((v) => {
@@ -317,14 +295,11 @@ export async function getQuestionTimeline(
 }
 
 // ============================================================================
-// getQuestionAttemptOutcomeCounts — P5.6 / YUK-178 (§4.3): CUMULATIVE per-outcome
-// attempt totals over a question's WHOLE lifetime (the corrective-chip trigger).
+// getQuestionAttemptOutcomeCounts — cumulative per-outcome totals over the
+// question's whole lifetime.
 //
-// NOT `getQuestionTimeline`: that reader is windowed (≤50), so once a question
-// has >limit attempts the earliest failures drop out and the failure total can
-// DECREASE — flapping the corrective chip back to proactive. This scans every
-// `attempt` event and drops retracted/superseded rows via `filterActiveRows`,
-// mirroring the `unbounded` branch of getFailureAttempts.
+// A windowed timeline could drop the earliest failures and make the corrective
+// chip flap back to proactive. Scans every attempt and drops inactive rows.
 // ============================================================================
 
 export async function getQuestionAttemptOutcomeCounts(

@@ -1,7 +1,5 @@
-// YUK-1570 — canonical mastery_state read model (row reads + hierarchical-Elo
-// ability_global resolution). Moved verbatim from src/server/mastery/state.ts;
-// the server module remains the SOLE writer of `mastery_state` (ADR-0035) and
-// keeps an explicit compat re-export for current tests/external users.
+// Canonical mastery_state reads and hierarchical-Elo global-ability resolution.
+// The server mastery module remains the sole writer (ADR-0035).
 
 import { and, eq, inArray } from 'drizzle-orm';
 
@@ -16,14 +14,9 @@ import {
 
 type DbLike = Db | Tx;
 
-// A2 (YUK-434) — per-domain global ability θ_global storage. We REUSE mastery_state
-// (zero new tables/columns): a θ_global row has subject_kind = ABILITY_GLOBAL_KIND
-// and subject_id = the KC's effective_domain id. One row per domain the learner has
-// touched. subject_id is a DOMAIN id here (not a KC id) — the (subject_kind,
-// subject_id) unique index keeps the per-(kind,id) keying clean and orthogonal to
-// the 'knowledge' per-KC rows (no collision: a KC id and a domain id live in
-// different subject_kind partitions). When HIERARCHICAL_ELO_ENABLED=false NO global
-// row is ever read or written, so this kind never appears in the table (dark-ship).
+// Global ability reuses mastery_state: subject_kind = ability_global, subject_id =
+// the KC's effective domain. One row per touched domain. When
+// HIERARCHICAL_ELO_ENABLED is false, no such row is read or written.
 const ABILITY_GLOBAL_KIND = 'ability_global';
 
 export interface MasteryStateRow {
@@ -34,19 +27,14 @@ export interface MasteryStateRow {
   success_count: number;
   fail_count: number;
   last_outcome_at: Date | null;
-  // YUK-361 Phase 2 — 累积 Fisher information（SE 从此派生，见 thetaSe）+ 上次 Δθ̂。
+  // Cumulative Fisher information; SE derives from it.
   theta_precision: number;
   last_theta_delta: number | null;
-  // A4 inc-2 (YUK-436) — the shadow grid-Bayes θ_KC offset posterior (null until the
-  // dark-ship write path THETA_GRID_ENABLED is on). Surfaced here so the selection read
-  // path (candidate-signals) can feed it to klpScoreFromGrid when wired. ADDITIVE: the
-  // many existing MasteryStateRow consumers ignore it; it stays NULL on the live path.
+  // Shadow grid-Bayes offset posterior; null until the dark-ship write path is on.
   theta_grid_json: ThetaGridPosterior | null;
 }
 
-/** Project a raw `mastery_state` row to the public {@link MasteryStateRow} shape. Single source
- *  shared by {@link getMasteryState} (single) and {@link getMasteryStates} (batch) so the two
- *  can never drift. */
+/** Shared by single and batch reads so their shape cannot drift. */
 function toMasteryStateRow(row: typeof mastery_state.$inferSelect): MasteryStateRow {
   return {
     subject_kind: row.subject_kind,
@@ -83,12 +71,8 @@ export async function getMasteryState(
 }
 
 /**
- * YUK-716 — batch twin of {@link getMasteryState}: read the p(L) state rows for MANY knowledge
- * nodes in ONE `inArray` query, keyed by `subject_id`. Nodes with no row (cold start) are simply
- * ABSENT from the map — callers apply the same cold-start defaults they use for a null single
- * read. RAW rows only (no A5/A6 KG soft-layer): this is the selection-read primitive that
- * replaces the per-KC `getMasteryState` N+1 in `collectCandidateSignals` while preserving the
- * `theta_grid_json` column the projection read model drops.
+ * Batch twin of getMasteryState: one inArray query. Absent ids stay absent, so
+ * callers apply the same cold-start defaults. Includes theta_grid_json.
  */
 export async function getMasteryStates(
   db: DbLike,
@@ -109,16 +93,9 @@ export async function getMasteryStates(
 }
 
 /**
- * A2 (YUK-434) — read the per-domain θ_global for an ALREADY-RESOLVED domain id.
- *
- * FLAG OFF (DEFAULT): returns 0 WITHOUT touching the DB (dark-ship — no global row
- *   exists, callers add 0 → effective == θ_KC, bit-identical to today).
- * FLAG ON: reads the domain's 'ability_global' mastery_state row (null → 0).
- *
- * Use this when the caller has ALREADY resolved the raw domain string (e.g.
- * target-discovery resolves getEffectiveDomain for subjectId anyway) — it avoids a
- * second domain walk. KC-keyed callers that have NOT resolved a domain should use
- * {@link effectiveThetaForKc}, which resolves the domain for them.
+ * Per-domain global theta for an already-resolved domain. Flag off returns 0 without
+ * touching the DB; flag on reads the ability_global row (missing -> 0). KC callers
+ * that have not resolved a domain should use effectiveThetaForKc.
  */
 export async function globalThetaForDomain(db: DbLike, domain: string | null): Promise<number> {
   if (!HIERARCHICAL_ELO_ENABLED || domain === null) return 0;
@@ -132,11 +109,9 @@ export const ABILITY_GLOBAL_SUBJECT_KIND = ABILITY_GLOBAL_KIND;
 export type AbilityGlobalByKnowledgeId = Readonly<Record<string, string>>;
 
 /**
- * Resolve the exact hierarchical-Elo write target for every KC at one point in time.
- *
- * Durable judging freezes this map alongside the question snapshot. Re-resolving a KC after
- * enqueue would let a later reparent silently move the worker's write from the domain recorded
- * in immutable pending evidence to a different domain, breaking the late-arrival watermark.
+ * Freeze the hierarchical-Elo write target per KC. Durable judging stores this map
+ * so a later reparent cannot move the worker's write away from the domain recorded
+ * in pending evidence.
  */
 export async function resolveAbilityGlobalByKnowledgeId(
   db: DbLike,
@@ -155,18 +130,9 @@ export async function resolveAbilityGlobalByKnowledgeId(
 }
 
 /**
- * YUK-777 B1 — the `ability_global` subject ids `updateThetaForAttempt` WOULD write for
- * these KCs, exposed so an out-of-order check can cover them.
- *
- * Why this needs to exist: `mastery_state(subject_kind='ability_global', subject_id=<domain>)`
- * is a SHARED row — every KC under a domain writes it (see the per-domain block below). So
- * two attempts on SIBLING KCs of one domain collide there while sharing no knowledge id at
- * all, which is exactly the case a KC-keyed ordering check cannot see (codex #TuxJJ): the
- * older attempt passes, then walks the domain's θ̂ backwards and rewrites `last_outcome_at`
- * to an earlier instant.
- *
- * It resolves all KC domains through the shared archived-inclusive batch tree walk. Null results
- * preserve the write path's orphan→degrade behavior while avoiding serial parent-chain queries.
+ * The ability_global ids updateThetaForAttempt would write for these KCs. Every KC
+ * under a domain shares that row, so an out-of-order check keyed only by KC id
+ * cannot see sibling collisions.
  */
 export async function resolveAbilityGlobalSubjectIds(
   db: DbLike,
@@ -178,21 +144,8 @@ export async function resolveAbilityGlobalSubjectIds(
 }
 
 /**
- * A2 (YUK-434) — read-side effective ability for a KC = θ_global(domain-of-KC) +
- * θ_KC, mirroring the write-path's effective-theta input.
- *
- * FLAG OFF (DEFAULT): θ_global ≡ 0 → returns `thetaKc` UNCHANGED. No domain is
- *   resolved, no global row is read — so the selection read paths are
- *   BYTE-IDENTICAL to single-layer Elo (they pass today's theta_hat straight
- *   through). This is the guarantee the regression tests pin.
- * FLAG ON: resolve the KC's effective_domain (getEffectiveDomain — the same
- *   resolver the write path uses; orphan/null-root → degrade to θ_global=0), read
- *   that domain's θ_global row (null → 0), return θ_global + thetaKc.
- *
- * `thetaKc` is the per-KC `theta_hat` (the offset) the caller already read from a
- * 'knowledge' mastery_state row (or the cold-start default). Keeping the caller's
- * already-fetched value avoids a redundant per-KC SELECT — this helper only adds the
- * (memoizable-by-caller) domain + global-row reads, and ONLY when the flag is on.
+ * Effective ability for a KC = global(domain) + thetaKc, mirroring the write path.
+ * Flag off returns thetaKc unchanged without a domain walk or row read.
  */
 export async function effectiveThetaForKc(
   db: DbLike,
@@ -210,20 +163,9 @@ export async function effectiveThetaForKc(
 }
 
 /**
- * YUK-716 — batch twin of {@link effectiveThetaForKc}: resolve `θ_global(domain) + θ_KC` for
- * MANY KCs while collapsing the per-KC domain walk + per-KC θ_global read into two bulk reads
- * (one archived-inclusive tree walk for the domains, one `inArray` for the `ability_global`
- * rows). Reads are O(1) in KC count, not O(N×domain-depth).
- *
- * FLAG OFF (DEFAULT, dark-ship): θ_global ≡ 0 → returns `thetaKc` for every entry WITHOUT
- *   touching the DB — byte-identical to the per-KC {@link effectiveThetaForKc} flag-off path.
- * FLAG ON: {@link batchResolveEffectiveDomains} resolves each KC's effective domain
- *   (caught-to-null exactly where the per-KC `getEffectiveDomain` throws → θ_global=0), then a
- *   single {@link getMasteryStates} reads every distinct domain's `ability_global` row (null →
- *   0). effective_k = θ_global(domain_k) + θ_KC_k — the same arithmetic as the single path.
- *
- * `entries` should carry each KC's already-read `thetaKc` (the caller's `mastery_state.theta_hat`
- * or cold-start default) so no per-KC `mastery_state` SELECT is re-issued here.
+ * Batch twin of effectiveThetaForKc: one tree walk for domains and one inArray read
+ * for global rows. Entries carry already-read thetaKc, so no per-KC mastery SELECT
+ * is re-issued. Flag off returns every thetaKc unchanged.
  */
 export async function effectiveThetaForKcBatch(
   db: DbLike,

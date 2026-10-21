@@ -1,16 +1,13 @@
-// YUK-1445 (Stage 1 / G1+G2) — runQuestionAdmission.
-//
+// (Stage 1 / G1+G2) — runQuestionAdmission.
 // The single admission call site B1's `submit_question` wires; today the live
 // consumer is the `question_admission_run` worker job. Given a frozen draft
 // definition (four contract layers + per-unit scoring intent):
-//
-//   1. dual blind solve mints typed keys (no reference text parsing);
-//   2. printed source answers are cross-checked, never parsed into keys;
-//   3. every resolvable unit gets a frozen probe set executed through the same
-//      evaluateSubmissionCore real submissions use;
-//   4. any disagreeing solve / crosscheck conflict-or-unknown / failing probe
-//      / non-deterministic unit blocks admission — fail closed, never mint.
-//
+// 1. dual blind solve mints typed keys (no reference text parsing);
+// 2. printed source answers are cross-checked, never parsed into keys;
+// 3. every resolvable unit gets a frozen probe set executed through the same
+// evaluateSubmissionCore real submissions use;
+// 4. any disagreeing solve / crosscheck conflict-or-unknown / failing probe
+// non-deterministic unit blocks admission — fail closed, never mint.
 // Evidence returns with the result; persistence (question_admission_verification
 // append + lifecycle admission flip) is the caller's publish seam.
 
@@ -115,7 +112,7 @@ export interface QuestionAdmissionResult {
   reason?: string;
   per_unit: UnitAdmissionResult[];
   /** resolved 契约（resolved 单元已升级判据+规则+确定性执行器；
-   *  未 resolve 单元保留原槽/判据/执行器）。 */
+   * 未 resolve 单元保留原槽/判据/执行器）。 */
   resolved?: ResolvedAdmissionContract;
   /** 追加 question_admission_verification 的写包（由 publish seam 落库）。 */
   verification: {
@@ -238,7 +235,7 @@ export async function runQuestionAdmission(
   };
 
   // ---- 双盲 solve ----
-  // YUK-1568（第 2 片）：声明 answer_shape 但未被共享比较器支持的 blank
+  // （第 2 片）：声明 answer_shape 但未被共享比较器支持的 blank
   // 单元在付费 solve 之前扣留（enqueue/maySend 闸之外的第二层 —— 覆盖
   // submit_question 直接调用与手工 re-dispatch）；已支持声明的单元照常
   // 进入双解，比较走同一比较核心。
@@ -392,7 +389,7 @@ export async function runQuestionAdmission(
   }
 
   // ---- resolved 契约组装（两阶段：候选集先过契约校验 + 探针校准，失败的
-  //      单元回退原判据/原槽位，重组最终发布契约）。 ----
+  // 单元回退原判据/原槽位，重组最终发布契约）。 ----
   const verdictFor = (unit: AdmissionUnitSpec) => solve.verdicts.get(unit.scoring_unit_id);
   const candidateIds = new Set(
     solvableUnits

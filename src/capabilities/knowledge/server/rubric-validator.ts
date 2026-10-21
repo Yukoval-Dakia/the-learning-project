@@ -5,11 +5,9 @@
 //   §4.1 universal structural gates (G1–G7), §4.2 evidence levels,
 //   §4.3 relation-specific gates.
 //
-// This is the single shared validator (RB-1) called by BOTH agent proposal
-// write paths before writeAiProposal:
-//   - DomainTool  proposeKnowledgeEdgeExecute  (proposal-tools.ts)
-//   - legacy MCP  writeProposalAfterGate       (review.ts)
-// so neither bypasses the floor.
+// This is the single shared validator (RB-1) called by the agent edge-proposal
+// write path (DomainTool proposeKnowledgeEdgeCreate) before writeAiProposal, so
+// no caller bypasses the floor.
 //
 // Layer 1 is DETERMINISTIC — no LLM call. It computes the §4.2 evidence level
 // from the proposal's evidence_refs (recency + judge-backed) and applies the
@@ -467,8 +465,7 @@ export async function validateProposalQuality(
   }
 
   // G3 — same subject. getEffectiveDomain is typed for Db but is read-only and
-  // runtime-compatible with a Tx; cast keeps the validator usable from the
-  // legacy MCP transaction path (review.ts writeProposalAfterGate).
+  // runtime-compatible with the gate transaction's Tx.
   const [fromDomain, toDomain] = await Promise.all([
     getEffectiveDomain(db, fromId),
     getEffectiveDomain(db, toId),

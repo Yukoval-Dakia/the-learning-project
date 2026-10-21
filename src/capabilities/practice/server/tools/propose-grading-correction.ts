@@ -1,19 +1,16 @@
-// YUK-1407 — `propose_grading_correction` DomainTool（effect:'propose'）。
-//
+// `propose_grading_correction` DomainTool（effect:'propose'）。
 // Agent（research_meeting / coach / dreaming / Copilot）发现疑似误判时调用本
 // 工具落一条可逆的 judge_retraction proposal —— 不是 note，不是直写：
-//
-//   1. grounding：目标必须是真实存在的 completed evaluation 行；proposal 携带
-//      判词快照（coarse/score/judged_by）与 frozen attempt 事件证据引用。
-//      pending attempt 是可重试 infra 态不是判词 → rejected。
-//   2. 可逆：proposal 天然 pending（人审）；accept 后走既有纠错链 ——
-//      rejudge → experimental:appeal_request → rejudge job → 冻结输入重评 →
-//      activation CAS → settlement replay；assert → manual_assert candidate
-//      直接激活。两条路径都不回写原评价/FSRS/掌握度。
-//   3. 幂等：producer 在同一事务内复查 pending 的 judge_retraction proposal，
-//      并发重复调用也只落一单。
-//
-// 不自动执行任何判分变更；accept 策略是 owner 决策（见 YUK-1407）。
+// 1. grounding：目标必须是真实存在的 completed evaluation 行；proposal 携带
+// 判词快照（coarse/score/judged_by）与 frozen attempt 事件证据引用。
+// pending attempt 是可重试 infra 态不是判词 → rejected。
+// 2. 可逆：proposal 天然 pending（人审）；accept 后走既有纠错链 ——
+// rejudge → experimental:appeal_request → rejudge job → 冻结输入重评 →
+// activation CAS → settlement replay；assert → manual_assert candidate
+// 直接激活。两条路径都不回写原评价/FSRS/掌握度。
+// 3. 幂等：producer 在同一事务内复查 pending 的 judge_retraction proposal，
+// 并发重复调用也只落一单。
+// 不自动执行任何判分变更；accept 策略是 owner 决策（见）。
 
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';

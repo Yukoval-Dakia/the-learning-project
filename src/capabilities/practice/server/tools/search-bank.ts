@@ -1,9 +1,7 @@
-// ADR-0072 D1 — search_bank DomainTool（引擎在 bank-search.ts）。
-//
+// D1 — search_bank DomainTool（引擎在 bank-search.ts）。
 // 找候选：自然语言 query + 结构化硬过滤；FTS + 向量并行召回 RRF 融合；返回
 // 版本化 ref 候选卡片 + 诚实覆盖信息。返回的是候选，不保证每个语义条件已满
 // 足（requirements.not_verified 回显）；「没搜到」不构成「库中没有」。
-//
 // 取代 query_questions 的查重职责：draft 默认包含（include_drafts=true 语义
 // 延续），出题前先搜库防重复。工具只读，不碰 learner state，不做教学决策。
 
@@ -137,7 +135,7 @@ export const SearchBankOutputSchema = z.object({
           strength: z.enum(['strong', 'weak']).optional(),
           /** vector 专有：命中时该题向量与查询向量的 cosine 距离（越小越近）。 */
           distance: z.number().optional(),
-          /** vector 专有：是否通过 YUK-1516 检索计入规则（天花板 + top-1 margin）；
+          /** vector 专有：是否通过 检索计入规则（天花板 + top-1 margin）；
            * false = 只在候选列表展示，不抬 verdict（同 fts weak 语义）。 */
           counted: z.boolean().optional(),
         }),

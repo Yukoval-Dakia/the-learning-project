@@ -374,10 +374,17 @@ export const ItemCalibrationRowSnapshot = z
     track: z.string(), // 'hard' | 'soft' — free-text column (notNull default 'hard'), NOT a pgEnum
     source: z.string(), // provenance ('llm_prior' | 'fixed_anchor' | …), notNull set-once
     b_anchor: z.number().nullable(), // cold-start anchor b (YUK-361 Phase 6), nullable column
-    b_calib: z.number().nullable(), // de-biased b (recalibration firm-up ONLY), nullable column
-    calibration_n: z.number().int().min(0), // labels folded into b_calib (notNull default 0)
-    calibration_weight: z.number().nullable(), // AIPW effective-sample proxy, nullable column
+    b_calib: z.number().nullable(), // retired archival column (YUK-439: left the effectiveB chain)
+    calibration_n: z.number().int().min(0), // evidence folded into b_post (YUK-439 semantics)
+    calibration_weight: z.number().nullable(), // posterior precision = 1/posterior_variance (YUK-439)
     last_calibrated_at: z.coerce.date().nullable(), // nullable timestamp
+    // YUK-439 (joint calibration posterior) — OPTIONAL so every HISTORICAL genesis anchor
+    // (written before the columns existed) still parses at the reducer barrier. New anchors
+    // carry them; post-anchor batch writes are the documented 方案 A drift boundary (same
+    // as the pre-YUK-439 b_calib firm-up).
+    b_post: z.number().nullable().optional(), // posterior mean (0 evidence ⇒ = b_anchor)
+    posterior_variance: z.number().nullable().optional(), // posterior variance (≤ τ²)
+    calibration_source: z.string().nullable().optional(), // 'prior' | 'joint' | 'legacy_calib'
     irt_a: z.number().nullable(), // soft placeholder (structurally unidentifiable, B1 §6.3)
     irt_c: z.number().nullable(), // soft placeholder
     cdm_json: z.record(z.string(), z.unknown()).nullable(), // soft placeholder jsonb — opaque

@@ -131,14 +131,14 @@ async function resolvePlacementStarterGoalAuthorityFromRow(
 }
 
 /**
- * YUK-1405 (Stage 1 B6 S5) — the starter-supply anchor is a REAL knowledge
+ * (Stage 1 B6 S5) — the starter-supply anchor is a REAL knowledge
  * node, never the goal's text. Resolution order:
- *   1. an explicit-scope goal resolves to its own declared in-subject KCs
- *      (deterministic: lowest id) — they are already inside the goal's scope;
- *   2. otherwise the shared per-subject starter node under the subject root
- *      (`identity.knowledgeId` = `placement-starter:<subject>`) — created once
- *      and reused across goals/revisions, named after the SUBJECT (e.g.
- *      「数学·起点测评」), authorised by the learner's placement start.
+ * 1. an explicit-scope goal resolves to its own declared in-subject KCs
+ * (deterministic: lowest id) — they are already inside the goal's scope;
+ * 2. otherwise the shared per-subject starter node under the subject root
+ * (`identity.knowledgeId` = `placement-starter:<subject>`) — created once
+ * and reused across goals/revisions, named after the SUBJECT (e.g.
+ * 「数学·起点测评」), authorised by the learner's placement start.
  * The per-subject starter node exists because a question's knowledge_ids must
  * intersect the placement scope to be served, and an empty subject tree has no
  * content KC to anchor to; anchoring to the bare seed root would produce
@@ -256,7 +256,7 @@ export async function ensurePlacementStarterAnchorAndClaim(
     // Target-less ON CONFLICT DO NOTHING makes same-revision re-runs idempotent. pending_dispatch
     // is intentionally outside the cross-revision nonterminal index, so a current revision claim
     // is persisted even while an older paid flight exists; its dispatch remains pending and
-    // retryable until that old flight terminalizes (YUK-776).
+    // retryable until that old flight terminalizes.
     .onConflictDoNothing();
   return { identity, anchorId };
 }
@@ -282,7 +282,7 @@ export async function materializePlacementStartersForGoal(
     identities.push(identity);
     anchorIds.push(anchorId);
   }
-  // YUK-1405 — for an explicit-scope goal the resolved anchors not already in
+  // for an explicit-scope goal the resolved anchors not already in
   // scope are unioned into goal.scope_knowledge_ids (the "scope record" half of
   // the contract; placement_starter_augmentation marks it in the scope event).
   // Anchors that ARE declared scope KCs are a union no-op. subject_live goals
@@ -318,7 +318,7 @@ export async function addPlacementStarterCostComponent(
   input: typeof placement_starter_cost_component.$inferInsert,
 ): Promise<void> {
   // Lock the claim row before the insert + known_cost recompute so concurrent cost writers
-  // serialize on it (parity with addAuthorizedCostComponent, which locks FOR UPDATE; YUK-452
+  // serialize on it (parity with addAuthorizedCostComponent, which locks FOR UPDATE;
   // review). The correlated SUM is self-healing under READ COMMITTED, but the explicit lock
   // removes any doubt and keeps the recompute deterministic.
   await tx

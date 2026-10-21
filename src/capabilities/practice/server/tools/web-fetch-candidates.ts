@@ -1,16 +1,13 @@
-// YUK-988 (Supply-Agent/3) — `web_fetch_candidates` DomainTool（effect:'read'）。
-//
+// (Supply-Agent/3) — `web_fetch_candidates` DomainTool（effect:'read'）。
 // 供给 agent 化的 web 搜寻面：runWebFetchCandidates 核（question-supply/
 // web-candidates.ts，从退役 jobs/sourcing.ts 提取的"找 + 判"部分）跑一次
 // SourcingTask（Exa 检索 → 抽取 → 结构化），返回【候选】——不写 question、不写
 // verify intent、不写 proposal（图片型候选原样返回，由调用方决定 propose）；提交入库
 // 走 `store_sourced_question`（dedup/verify 链权威判定在那侧）。
-//
 // effect 判 'read' 的理由（jyeoo_fetch_candidates 同款论证）：唯一的持久写是 canary
 // 事件（观测面，非 learner/domain 数据）；question 写入只发生在 store_sourced_question
 // （effect:'write'）。costClass 'expensive_llm'：本工具承载完整 SourcingTask agent 循环
 // （多轮 tool-call + Exa 检索/抽取），真实 LLM + 检索开销。
-//
 // Canary：每次运行（含失败）写 action='experimental:web_fetch_candidates' 事件一次——
 // 漏斗观测面（anchor → 候选 → 下游 commit/verify）；绝不双写（预算账本按 canary 事件
 // 求和的契约与 jyeoo 面一致）。subject 由锚点 KC 的 domain 服务端解析（resolveSubjectProfile），
@@ -31,7 +28,7 @@ import {
 import { defaultWebSourcingDeps, runWebSourcingOperation } from '../web-sourcing-operation';
 
 /**
- * 兼容导出（YUK-1570）：RunWebSourcingAgentFn 的真身已下沉到
+ * 兼容导出：RunWebSourcingAgentFn 的真身已下沉到
  * ../web-sourcing-operation.ts（Exa 闸 + domain/Exa 双 mount + SourcingTask
  * 运行 + 结果收窄的完整操作）；本别名保持旧 import 路径可用。
  */
@@ -44,7 +41,7 @@ const inputSchema = z.object({
   knowledge_ids: z.array(z.string().trim().min(1)).optional(),
   /** 本次候选数量（SourcingTask count 同界 1..10）。 */
   count: z.number().int().min(1).max(10),
-  /** 可选 kind pin（自由文本题面标签，YUK-386；作为 kinds 单元素列表下传，同旧 sourcing job）。 */
+  /** 可选 kind pin（自由文本题面标签，；作为 kinds 单元素列表下传，同旧 sourcing job）。 */
   kind: z.string().trim().min(1).optional(),
   objective_only: z.boolean().optional(),
   kind_required: z.boolean().optional(),
@@ -122,7 +119,7 @@ export async function executeWebFetchCandidates(
   input: Input,
   deps: WebFetchCandidatesDeps = {},
 ): Promise<Output> {
-  // 生产默认依赖来自 defaultWebSourcingDeps() 唯一组装点；逐字段注入 seam 不变。
+  // 生产默认依赖来自 defaultWebSourcingDeps 唯一组装点；逐字段注入 seam 不变。
   const productionDeps = defaultWebSourcingDeps();
   const runSourcingAgent = deps.runSourcingAgent ?? productionDeps.runSourcingAgent;
   const parseLoose: ParseLooseFn = deps.parseLoose ?? productionDeps.parseLoose;

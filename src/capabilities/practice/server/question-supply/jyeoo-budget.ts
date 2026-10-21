@@ -1,12 +1,10 @@
-// YUK-986 (Supply-Agent/1) — jyeoo loom 侧日预算租约（事件溯源）。
-//
+// (Supply-Agent/1) — jyeoo loom 侧日预算租约（事件溯源）。
 // jyeoo-rs 内容拉题是付费账号资源：producer 自带 --daily-max 40（Asia/Shanghai 自然日，
 // 硬闸，记录于账号 .usage.json）。本模块是 loom 侧的 PRE-FLIGHT 预算读：让 tool/agent 在
 // 烧一次完整抓取前知道还剩多少，并把 session_max 裁到余额内。硬闸仍在 producer（双闸语义
-// 与 DESIGN §10 谨慎档一致）——loom 侧读数允许与 producer 微小漂移（例如 loom 过滤掉的行
+// 与 DESIGN 谨慎档一致）——loom 侧读数允许与 producer 微小漂移（例如 loom 过滤掉的行
 // producer 也计数），不影响正确性。
-//
-// 事件溯源：fetch 核（runJyeooFetchCandidates，YUK-988 E3 起核内单写）每次成功运行写
+// 事件溯源：fetch 核（runJyeooFetchCandidates， E3 起核内单写）每次成功运行写
 // action='experimental:jyeoo_fetch' outcome='success' 事件（payload.counts.fetched =
 // producer 实际产出题数）。预算余额 = 当日（Asia/Shanghai）已 fetched 总和 vs 日预算。
 // 无独立表（避免为计数器做迁移）；并发超取窗口由 producer 硬闸兜底，文档化接受。
@@ -20,7 +18,7 @@ export const JYEOO_FETCH_CANARY_ACTION = 'experimental:jyeoo_fetch';
 
 /** 日预算（Asia/Shanghai 自然日）。默认 40 = producer 谨慎档；0 = 当日禁抓，
  * operator kill-switch（不得被 coalesce 成默认——registry nonNegIntEnv 保留 0）。
- * YUK-1007：DB > env > code-default(40)。 */
+ * DB > env > code-default(40)。 */
 export function jyeooDailyFetchBudget(): number {
   const v = getConfig('JYEOO_DAILY_FETCH_BUDGET');
   return typeof v === 'number' ? v : 40;

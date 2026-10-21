@@ -22,13 +22,15 @@
 //
 // ─── upsert 而非 write-once（与 applyItemPrior 的对照）─────────────────────────────────
 // applyItemPrior（llm_prior 冷启锚）是 write-once（onConflictDoNothing）——LLM 先验写一次，
-// firm-up 走 b_calib 慢路径。fixed_anchor **是 owner 钦定的权威外部真值**，owner 可修订
+// 后验演化走标定批慢路径。fixed_anchor **是 owner 钦定的权威外部真值**，owner 可修订
 // （改档），故用 onConflictDoUpdate（按 question_id 幂等 upsert）：同题重设 = 覆盖 b /
-// b_anchor / source / updated_at，不留重复行。b_calib 不动（去偏列由批量重标定独占写）。
+// b_anchor / source / updated_at + 重置后验为新先验（YUK-439：改档 = 修订先验；证据
+// 账本不清，下一批以新先验重算），不留重复行。
 //
 // ─── 软轨列 NULL（同 applyItemPrior）──────────────────────────────────────────────────
 // irt_a/irt_c/cdm_json/kt_json 不产出，留 NULL（n=1 结构性不可估，ADR-0035）。
 
+import { priorTau } from '@/core/difficulty-posterior';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration } from '@/db/schema';
@@ -85,33 +87,41 @@ export interface FixedAnchorRow {
  * Writes item_calibration { b: bucketToLogit(bucket), b_anchor: same, track:'hard',
  * source:'fixed_anchor' }. Idempotent per (question_id) — the unique index
  * `item_calibration_question_unique` makes re-setting the same question an UPDATE
- * (owner may revise the bucket), never a duplicate row. b_calib is left untouched
- * (the de-biased column is written ONLY by the batch recalibrateQuestion — 不变量①).
+ * (owner may revise the bucket), never a duplicate row.
  *
- * Read path is unchanged: effectiveB = b_calib ?? b_anchor ?? b already prefers the
- * non-NULL anchor (recalibration.ts:90), so the θ̂ update path auto-reads this anchor
- * with no read-path edit.
+ * YUK-439 (ADR-0043 Amendment A1)：owner 修订锚 = **修订先验**——后验随之重置为新先验
+ * （b_post = 新 μ、posterior_variance = τ²、calibration_source = 'prior'）。证据账本
+ * 不清（分数不因改档失效）；下一批标定会以新先验 + 原证据重算，b_post 连续收敛到
+ * 修订后的位置。重置只影响批前的读值（读新锚，语义正确）。
+ *
+ * Read path: effectiveB = b_post ?? b_anchor ?? b (recalibration.ts) reads the
+ * initialized posterior automatically — no read-path edit.
  */
 export async function setFixedAnchor(db: DbLike, input: FixedAnchorInput): Promise<FixedAnchorRow> {
   const now = new Date();
   const b = bucketToLogit(input.bucket);
+  const tau = priorTau('fixed_anchor');
   await db
     .insert(item_calibration)
     .values({
       id: newId(),
       question_id: input.questionId,
-      // b 与 b_anchor 同源写入（同 applyItemPrior 的纪律）——effectiveB 读 b_anchor。
+      // b 与 b_anchor 同源写入（同 applyItemPrior 的纪律）——effectiveB 读链经 b_post。
       b,
       b_anchor: b,
       // owner 钦定锚是高置信先验（不是 LLM 低置信猜测）。
       confidence: 1,
       track: 'hard',
       source: 'fixed_anchor',
+      // YUK-439 — 后验初始化 = 先验（fixed_anchor 是登记映射里最小的 τ：强 leash）。
+      b_post: b,
+      posterior_variance: tau * tau,
+      calibration_source: 'prior',
       created_at: now,
       updated_at: now,
     })
-    // 幂等 upsert：同题重设 → 覆盖 b/b_anchor/source/confidence/updated_at（owner 可改档）。
-    // **不动 b_calib**（去偏列由批量 recalibrateQuestion 独占写，不变量①）；created_at 保留首写值。
+    // 幂等 upsert：同题重设 → 覆盖 b/b_anchor/source/confidence/updated_at（owner 可
+    // 改档）+ 重置后验为新先验（YUK-439：改档 = 修订先验）。created_at 保留首写值。
     .onConflictDoUpdate({
       target: item_calibration.question_id,
       set: {
@@ -120,6 +130,9 @@ export async function setFixedAnchor(db: DbLike, input: FixedAnchorInput): Promi
         confidence: 1,
         track: 'hard',
         source: 'fixed_anchor',
+        b_post: b,
+        posterior_variance: tau * tau,
+        calibration_source: 'prior',
         updated_at: now,
       },
     });

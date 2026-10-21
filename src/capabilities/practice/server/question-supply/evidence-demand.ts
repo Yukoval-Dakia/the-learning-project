@@ -102,7 +102,7 @@ const SupplyProducerRoute = z.enum([
   'ingest_existing',
   'image_candidate',
   'quiz_gen',
-  // YUK-697 — deterministic scraper route (jyeoo-rs). Kept in lock-step with the
+  // deterministic scraper route (jyeoo-rs). Kept in lock-step with the
   // SupplyRoute union in target-discovery.ts (this enum is its runtime-validated twin).
   'jyeoo_fetch',
 ]);

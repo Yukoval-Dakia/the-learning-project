@@ -34,6 +34,7 @@ import type { Db, Tx } from '@/db/client';
 import { question_block, question_revision, source_asset } from '@/db/schema';
 import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import { OpaqueJsonInput } from '@/kernel/tools/types';
 import type { DomainTool, ToolContext } from './types';
 
 const ComposePresentationInputSchema = z
@@ -43,7 +44,7 @@ const ComposePresentationInputSchema = z
     /** 已发布 revision id（只校验 —— revision 不可变，不接受 save）。 */
     revision_id: z.string().min(1).optional(),
     /** presentation 文档（blocks-v1）；先过形状门，再过绑定校验。 */
-    presentation: z.unknown(),
+    presentation: OpaqueJsonInput,
     /** 缺省 false = 只校验；true 需要 block_id（revision 引用拒绝 save）。 */
     save: z.boolean().optional(),
   })

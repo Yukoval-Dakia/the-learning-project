@@ -1,29 +1,15 @@
-// YUK-361 Phase 8 (Task 13) — 供给目标路由规划（确定性约束规划器，MVP）。
+// Deterministic supply-route planner: turn one QuestionSupplyTarget into an ordered list of
+// acquisition routes. Pure: no IO, no LLM, no writes; dispatcher performs IO.
 //
-// 权威 spec：
-//   - docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 13 Step 3
-//   - docs/design/2026-06-15-question-supply-target-discovery-architecture.md §Route Planner
-//
-// 选题 vs 供给的镜像分工（架构 doc §Executive Summary）：选题从「现有 active 池」里挑；
-// 供给目标发现决定「池缺什么、为什么重要、该走哪条获取线去补」。本模块只做后者的第三步——
-// 把一个 QuestionSupplyTarget 翻成一个**有序的获取路由优先级列表**（SupplyRoute[]）。
-//
-// 纯函数：同输入同输出，无 IO、无 LLM、无写。dispatcher（同目录）才做 IO 派发。
-// 约束优先级（Task 13 Step 3 字面给定的判据为权威；YUK-1011 插入的 composite
-// 判据排在 needsImage 之前——它是池侧硬谓词 EXISTS(children)，needsImage 只是
-// 路由偏好、无对应池谓词：两者同时置位时只有 quiz_gen 能产出可入池的行，先判
-// composite 才不会把组合需求静默派给永远满足不了它的生产者）：
-//   1. compositeParentOnly（篇，YUK-1011）→ 只走 quiz_gen：唯一会落
-//      parent+question_part 子题行的生产者；其它路由结构上无法满足。
-//   2. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
-//   3. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
-//   3.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
-//        objectiveOnly，但必须生成 A↔B 辨析题，不能被通用客观题路由改写。
-//   4. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
-//   5. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
-//
-// 注意 minSourceTier 分支在 objectiveOnly 之前：一个既要高可信又只要客观题的目标，
-// 高可信源约束更硬（校准级证据要 grounded），故先满足 minSourceTier ≤ 2 的 web-first 顺序。
+// Constraint order:
+// 1. compositeParentOnly -> quiz_gen only (the only producer of parent+part rows);
+// 2. needsImage -> image candidate, then ingest, then web;
+// 3. minSourceTier <= 2 -> web first, then ingest, then authoring;
+// 4. confusable_contrast with an explicit preference keeps quiz_gen;
+// 5. objectiveOnly -> web or authoring;
+// 6. otherwise target.routePreference, then [author_question, sourcing_web].
+// The tier constraint precedes objectiveOnly because grounded high-trust evidence is the
+// harder requirement.
 
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
@@ -36,14 +22,14 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  * `confusable_contrast`，其显式 routePreference 在通用 objectiveOnly 分支前生效，
  * 以保留 quiz_gen 辨析题生成路线。
  *
- * YUK-986 (Supply-Agent/1) — jyeoo_fetch 路由的机器面（queue/handler/dispatcher
+ * (Supply-Agent/1) — jyeoo_fetch 路由的机器面（queue/handler/dispatcher
  * 分支）已退役：producer 经济学（无法按 KC 定向 + 40题/日预算）与逐目标派发根本
  * 不兼容，供给改由 agent tool 链（jyeoo_fetch_candidates / store_sourced_question）
  * 承载。'jyeoo_fetch' 仅保留在 SupplyRoute/SupplyProducerRoute **词表**里（trace 与
  * provenance 的合法值），本 planner 不再产出它。
  */
 export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
-  // YUK-1011 — 篇 (composite parent) is a STRUCTURAL hard constraint: the pool
+  // 篇 (composite parent) is a STRUCTURAL hard constraint: the pool
   // filter requires a parent row with ≥1 question_part child, and quiz_gen is
   // the only producer that materializes parent+part groups (sourcing_web /
   // ingest_existing store flat rows; author_question writes a structured tree
