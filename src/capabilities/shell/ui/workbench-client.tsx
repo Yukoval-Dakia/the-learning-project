@@ -9,6 +9,7 @@ import {
   retractProposal,
 } from './inbox-api';
 import { getPrepDeskConjectures } from './prep-desk-api';
+import { getActiveProbes } from './probe-answer-api';
 import {
   getOvernightDigest,
   getRecentAiChanges,
@@ -27,6 +28,7 @@ export type WorkbenchClient = {
   retractProposal: typeof retractProposal;
   getTree: typeof getTree;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
+  getActiveProbes: typeof getActiveProbes;
   getRecentAiChanges: typeof getRecentAiChanges;
   undoAiChange: typeof undoAiChange;
 };
@@ -41,6 +43,7 @@ export const httpWorkbenchClient: WorkbenchClient = {
   retractProposal: (...args) => retractProposal(...args),
   getTree: (subject) => getTree(subject),
   getPrepDeskConjectures: () => getPrepDeskConjectures(),
+  getActiveProbes: () => getActiveProbes(),
   getRecentAiChanges: () => getRecentAiChanges(),
   undoAiChange: (...args) => undoAiChange(...args),
 };

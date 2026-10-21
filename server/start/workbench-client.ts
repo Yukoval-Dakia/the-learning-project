@@ -8,6 +8,7 @@ import { ApiError } from '@/ui/lib/api';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import {
   decideStartProposal,
+  getStartActiveProbes,
   getStartAutoApplied,
   getStartConjectures,
   getStartKnowledgeFrontier,
@@ -65,6 +66,7 @@ export const startWorkbenchClient: WorkbenchClient = {
   getTree: (subject) =>
     getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
+  getActiveProbes: () => getStartActiveProbes(transport),
   getRecentAiChanges: () => getStartRecentAiChanges(transport),
   undoAiChange: async (artifactId, eventId) => {
     const result = await undoStartArtifactAiChange({ ...transport, data: { artifactId, eventId } });

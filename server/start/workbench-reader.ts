@@ -140,3 +140,9 @@ export const undoStartAiChange = (input: unknown) =>
     }
     return undoNoteRefineApplyEvent(db, { applyEventId: eventId });
   });
+
+export const readStartActiveProbes = () =>
+  withStartDb(async (db) => {
+    const { loadActiveProbes } = await import('@/capabilities/shell/public');
+    return loadActiveProbes(db);
+  });

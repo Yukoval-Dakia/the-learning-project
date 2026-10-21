@@ -6,6 +6,7 @@ import {
   type StartAiChangeUndoRequest,
   type StartProposalDecisionRequest,
   createStartProposalDecision,
+  readStartActiveProbes,
   readStartAutoApplied,
   readStartConjectures,
   readStartKnowledgeFrontier,
@@ -44,6 +45,9 @@ export const getStartKnowledgeReviewDue = createServerFn({ method: 'GET' }).hand
 );
 export const getStartConjectures = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartConjectures),
+);
+export const getStartActiveProbes = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartActiveProbes),
 );
 export const getStartRecentAiChanges = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartRecentAiChanges),
