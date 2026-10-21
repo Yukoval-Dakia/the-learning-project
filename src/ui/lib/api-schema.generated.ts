@@ -14616,6 +14616,7 @@ export interface operations {
                                 servable: boolean;
                             } | null;
                             draft_block_id: string | null;
+                            draft_ref: string | null;
                             item_id: string;
                             ordinal: number;
                             page: number | null;
@@ -14628,6 +14629,82 @@ export interface operations {
                             /** @enum {string} */
                             state_at_finish: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
                             status_at: string | null;
+                        }[];
+                        prior_runs: {
+                            asks: {
+                                /** @enum {string} */
+                                answer_kind: "choice" | "short";
+                                ask_id: string;
+                                created_at: string;
+                                expired_unresolved: boolean;
+                                expires_at: string | null;
+                                item_id: string | null;
+                                options?: {
+                                    id: string;
+                                    label_md: string;
+                                }[];
+                                placeholder: string;
+                                prompt_md: string;
+                                question_no: string | null;
+                                resolved: {
+                                    answer: {
+                                        /** @enum {string} */
+                                        kind: "choice";
+                                        option_id: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "text";
+                                        text: string;
+                                        /** @enum {string} */
+                                        via_option?: "none_of_these";
+                                    } | {
+                                        /** @enum {string} */
+                                        by: "learner" | "timeout";
+                                        /** @enum {string} */
+                                        kind: "skipped";
+                                    };
+                                    at: string;
+                                    /** @enum {string} */
+                                    via: "answer" | "timeout";
+                                } | null;
+                                unresolved: boolean;
+                            }[];
+                            captured_at: string;
+                            errors: {
+                                at: string;
+                                code: string;
+                                item_id: string | null;
+                                retryable: boolean;
+                                /** @enum {string} */
+                                scope: "session" | "item";
+                            }[];
+                            execution_closed: boolean;
+                            items: {
+                                draft_ref: string | null;
+                                item_id: string;
+                                page: number | null;
+                                preview_md: string | null;
+                                question_id: string | null;
+                                question_no: string;
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
+                                status_at: string | null;
+                            }[];
+                            paid_outcome_unknown: boolean;
+                            run_ref: string | null;
+                            /** @enum {string} */
+                            run_state: "in_progress" | "waiting" | "done" | "failed" | "lost";
+                            segments: {
+                                at: string;
+                                outcome: string | null;
+                                segment: number;
+                                task_run_id: string | null;
+                                /** @enum {string} */
+                                trigger: "start" | "resume" | "continue";
+                            }[];
+                            session_status: string;
+                            stage: string | null;
                         }[];
                         run: {
                             captured_at: string | null;
@@ -14648,6 +14725,7 @@ export interface operations {
                             execution_closed: boolean | null;
                             finished_at: string | null;
                             paid_outcome_unknown: boolean;
+                            run_ref: string | null;
                             /** @enum {string|null} */
                             run_state: "in_progress" | "waiting" | "done" | "failed" | "lost" | null;
                             segment_count: number;

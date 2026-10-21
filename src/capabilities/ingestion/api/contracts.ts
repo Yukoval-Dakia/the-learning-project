@@ -341,9 +341,12 @@ export const IngestionAskParamsSchema = IngestionAskParams;
 // ---------- session history (GET /api/ingestion-sessions/:id/history) ----------
 //
 // Read-back contract for reopening a finished ingestion session. `state_at_finish`
-// mixes two durable vocabularies on purpose: extract lane reports question_block
-// status; agent lane reports the last reported item status. Both are "as of the
-// run", while `current` is today's admission/serving state — never merge them.
+// reports only frozen evidence (durable snapshot/live item-ledger status, or a
+// durable link with 'unknown' when no at-finish state was captured); mutable
+// question/question_block fields never substitute for it. `current` is today's
+// admission/serving state — the two are never merged. `prior_runs` carries
+// demoted checkpoints of earlier runs (v1 identity-less checkpoints land there
+// unprovable); live rows never overlay them.
 
 export const IngestionHistoryItemStateSchema = z.enum([
   // Agent item ledger statuses (agent contract vocabulary).
@@ -389,7 +392,10 @@ export const IngestionHistoryItemSchema = z
     state_at_finish: IngestionHistoryItemStateSchema,
     /** Model-written free-text reason (agent withheld/failed); null otherwise. */
     reason: z.string().nullable(),
+    /** question_block.id — the versioned `qdraft1:` ref normalized for joins. */
     draft_block_id: z.string().nullable(),
+    /** Raw durable draft ref as emitted (may be `qdraft1:<block>:<version>`). */
+    draft_ref: z.string().nullable(),
     question_id: z.string().nullable(),
     status_at: z.string().nullable(),
     current: IngestionHistoryCurrentSchema.nullable(),
@@ -424,6 +430,8 @@ export const IngestionHistoryAskSchema = z
 
 export const IngestionHistoryRunSchema = z
   .object({
+    /** execution_owner.run_ref of the live run; null when no owner exists. */
+    run_ref: z.string().nullable(),
     run_state: z.enum(['in_progress', 'waiting', 'done', 'failed', 'lost']).nullable(),
     stage: z.string().nullable(),
     segment_count: z.number().int().min(0),
@@ -442,6 +450,61 @@ export const IngestionHistoryRunSchema = z
       })
       .strict()
       .nullable(),
+    segments: z.array(
+      z
+        .object({
+          segment: z.number().int().min(0),
+          trigger: z.enum(['start', 'resume', 'continue']),
+          outcome: z.string().nullable(),
+          task_run_id: z.string().nullable(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+    errors: z.array(
+      z
+        .object({
+          scope: z.enum(['session', 'item']),
+          item_id: z.string().nullable(),
+          code: z.string(),
+          retryable: z.boolean(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+/**
+ * A demoted checkpoint of an earlier run — durable facts verbatim, no `current`
+ * projection and no live overlay. `run_ref` is null for v1 (identity-less)
+ * checkpoints whose run can never be proven.
+ */
+export const IngestionHistoryPriorRunSchema = z
+  .object({
+    run_ref: z.string().nullable(),
+    captured_at: z.string(),
+    session_status: z.string(),
+    run_state: z.enum(['in_progress', 'waiting', 'done', 'failed', 'lost']),
+    stage: z.string().nullable(),
+    execution_closed: z.boolean(),
+    paid_outcome_unknown: z.boolean(),
+    items: z.array(
+      z
+        .object({
+          item_id: z.string(),
+          question_no: z.string(),
+          status: IngestionHistoryItemStateSchema,
+          reason: z.string().nullable(),
+          page: z.number().int().min(1).nullable(),
+          preview_md: z.string().nullable(),
+          draft_ref: z.string().nullable(),
+          question_id: z.string().nullable(),
+          status_at: z.string().nullable(),
+        })
+        .strict(),
+    ),
+    asks: z.array(IngestionHistoryAskSchema),
     segments: z.array(
       z
         .object({
@@ -489,6 +552,8 @@ export const IngestionSessionHistoryResponseSchema = z
       })
       .strict(),
     run: IngestionHistoryRunSchema.nullable(),
+    /** Earlier runs' demoted checkpoints, newest first. */
+    prior_runs: z.array(IngestionHistoryPriorRunSchema),
     items: z.array(IngestionHistoryItemSchema),
     asks: z.array(IngestionHistoryAskSchema),
     evidence: z

@@ -21,6 +21,7 @@ import {
 } from '@/kernel/http';
 import { Ingestion } from '@/server/session';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
+import { agentEvidenceSql } from '../server/agent/history';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -56,15 +57,7 @@ export async function GET(req: Request): Promise<Response> {
         ended_at: learning_session.ended_at,
         created_at: learning_session.created_at,
         doc_title: source_document.title,
-        agent_lane: sql<boolean>`(
-          coalesce(${learning_session.agent_budget} -> 'operations', '{}'::jsonb) <> '{}'::jsonb
-          or coalesce(${learning_session.agent_budget} -> 'grants', '{}'::jsonb) <> '{}'::jsonb
-          or coalesce(${learning_session.agent_budget} ? 'history', false)
-          or exists (
-            select 1 from job_events je
-            where je.business_table = 'ingestion_agent_run' and je.business_id = ${learning_session.id}
-          )
-        )`,
+        agent_lane: sql<boolean>`${agentEvidenceSql(learning_session.id)}`,
       })
       .from(learning_session)
       .leftJoin(source_document, eq(learning_session.source_document_id, source_document.id))
@@ -75,15 +68,8 @@ export async function GET(req: Request): Promise<Response> {
             exists (
               select 1 from ${question_block} qb
               where qb.ingestion_session_id = ${learning_session.id}
-                 or qb.ingestion_session_id = 'draft:ingestion_agent:' || ${learning_session.id}
             )
-            or coalesce(${learning_session.agent_budget} -> 'operations', '{}'::jsonb) <> '{}'::jsonb
-            or coalesce(${learning_session.agent_budget} -> 'grants', '{}'::jsonb) <> '{}'::jsonb
-            or coalesce(${learning_session.agent_budget} ? 'history', false)
-            or exists (
-              select 1 from job_events je
-              where je.business_table = 'ingestion_agent_run' and je.business_id = ${learning_session.id}
-            )
+            or ${agentEvidenceSql(learning_session.id)}
           )`,
           cursor
             ? or(

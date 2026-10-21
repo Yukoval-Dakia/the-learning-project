@@ -1369,7 +1369,7 @@
                 }
               ]
             },
-            "description": "读取录入会话的持久历史还原（YUK-1522）：run 进度/终态、逐题 at-finish+当前准入状态、asks+answers\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 200 {session, run, items, asks, evidence}。agent 路径合并 agent_budget.history 持久快照与仍在 30 天窗内的 job_events；extract 路径读 question_block。state_at_finish 是运行终态（agent 状态词或 block 状态词），current 是当下 servable/hold_reason/held_since/next_action/pending_action —— 两者不合并。ask.resolved=null 即未答，expired_unresolved 标记过期未答（G13）。无法证明的切片留空并列入 evidence.missing（run/items/asks/snapshot），绝不臆造。session 不存在 → 404。需 x-internal-token"
+            "description": "读取录入会话的持久历史还原（YUK-1522）：run 进度/终态、逐题 at-finish+当前准入状态、asks+answers\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 200 {session, run, prior_runs, items, asks, evidence}。agent 路径合并 agent_budget.history 中身份匹配当前 run 的快照与同 run 30 天窗内 job_events（run_ref/event_floor 区分当前与 prior runs）；extract 路径读 question_block。state_at_finish 只取冻结证据（item_state 捕获或 'unknown'），preview_md 只取冻结 preview/extracted_prompt_md；current 是当下 servable/hold_reason/held_since/next_action/pending_action —— 两者不合并。items[].draft_ref 是原始 qdraft1 版本 ref，draft_block_id 是归一化 block id。ask.resolved=null 即未答，expired_unresolved 标记过期未答（G13）。无法证明的切片留空并列入 evidence.missing（run/items/asks/snapshot），绝不臆造。session 不存在 → 404。需 x-internal-token"
           },
           "response": []
         },

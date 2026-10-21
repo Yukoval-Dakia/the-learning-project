@@ -30,6 +30,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
+import { parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
   DifficultyEvidence,
@@ -48,7 +49,6 @@ import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
 } from '@/server/boss/verify-dispatch-outbox';
-
 // capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
 // 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
 // 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
@@ -59,7 +59,6 @@ import {
   canonicalJson,
   claimSubmitRequestId,
   insertSourcedDraft,
-  parseDraftRef,
   persistDeclaredQuestionGroup,
   publishQuestionGroupFromRow,
   sanitizeSourcedMarkup,

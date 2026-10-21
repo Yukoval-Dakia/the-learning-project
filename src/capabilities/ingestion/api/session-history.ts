@@ -1,15 +1,17 @@
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
+import { parseDraftRef } from '@/core/question-draft-ref';
 import { db } from '@/db/client';
 import { learning_session, question, question_block, source_document } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { UNKNOWN_SERVING, readQuestionServing } from '@/kernel/read-models/question-serving';
-import { hasAgentEvidence, readAgentRunHistory } from '../server/agent/history';
-import type {
-  IngestionHistoryItem,
-  IngestionHistoryItemState,
-  IngestionSessionHistoryResponse,
-} from './contracts';
+import {
+  type AgentHistoryAskT,
+  type AgentHistoryPriorRunT,
+  hasAgentEvidence,
+  readAgentRunHistory,
+} from '../server/agent/history';
+import type { IngestionHistoryItem, IngestionSessionHistoryResponse } from './contracts';
 
 /** Server-side cap for the wire preview; full bodies stay on their own routes. */
 const PREVIEW_MAX = 500;
@@ -41,13 +43,20 @@ function firstPage(block: BlockRow): number | null {
 
 /**
  * GET /api/ingestion-sessions/:id/history — one-shot durable read-back for the
- * after-upload view. Extract lane items come from question_block rows; the agent
- * lane merges the durable run snapshot (agent_budget.history) with any live
- * job_events still inside the 30-day window, then links items to questions via
- * item_state question_id → metadata.draft_block_id → source_ref. Unknown or
- * pruned slices stay empty and are named in `evidence.missing` — nothing is
- * reconstructed.
+ * after-upload view. The agent lane merges the durable run snapshot
+ * (agent_budget.history, identity-matched to the live execution_owner) with
+ * same-run job_events still inside the 30-day window, then links items to
+ * questions via item_state question_id → normalized draft ref → source_ref.
+ * `state_at_finish` and `preview_md` report ONLY frozen evidence (item_state
+ * captures, immutable extracted_prompt_md); mutable question/question_block
+ * fields never stand in — unprovable slices return 'unknown'/null and are named
+ * in `evidence.missing`. `current` is today's admission/serving projection.
  */
+/** `qdraft1:<block>:<version>` (or a bare legacy ref) → question_block.id. */
+function draftBlockIdOf(ref: string | null | undefined): string | null {
+  if (ref == null) return null;
+  return parseDraftRef(ref)?.blockId ?? ref;
+}
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const sessionId = params.id;
@@ -171,18 +180,15 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
 
       let ordinal = 0;
       for (const item of history?.items ?? []) {
-        const block = item.draft_ref != null ? draftById.get(item.draft_ref) : undefined;
+        // Normalize the versioned draft ref before every map/set lookup and
+        // output field; the raw ref stays on the wire as its own field.
+        const blockId = draftBlockIdOf(item.draft_ref);
+        const block = blockId != null ? draftById.get(blockId) : undefined;
         const q =
           (item.question_id != null ? qById.get(item.question_id) : undefined) ??
-          (item.draft_ref != null ? qByDraftBlock.get(item.draft_ref) : undefined);
+          (blockId != null ? qByDraftBlock.get(blockId) : undefined);
         if (block != null) claimedBlocks.add(block.id);
         if (q != null) claimedQuestions.add(q.id);
-        const preview =
-          q != null
-            ? truncatePreview(q.prompt_md)
-            : block != null
-              ? truncatePreview(block.extracted_prompt_md)
-              : { preview_md: item.preview_md ?? null, preview_truncated: false };
         const questionId = q?.id ?? item.question_id ?? null;
         items.push({
           item_id: item.item_id,
@@ -193,17 +199,22 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
             item.page != null
               ? assetForPage(sourceAssetIds, item.page)
               : (block?.source_asset_ids ?? []),
-          ...preview,
+          // Preview is the frozen item_state capture only — never the mutable
+          // current question/block body.
+          preview_md: item.preview_md ?? null,
+          preview_truncated: false,
           state_at_finish: item.status,
           reason: item.reason ?? null,
-          draft_block_id: item.draft_ref ?? block?.id ?? null,
+          draft_block_id: block?.id ?? blockId,
+          draft_ref: item.draft_ref ?? null,
           question_id: questionId,
           status_at: item.status_at ?? null,
           current: currentOf(questionId),
         });
       }
       // Drafts the agent created but never reported/submitted still belong to
-      // the session view — the durable block row is the provable state.
+      // the session view — the durable block row proves existence; its mutable
+      // status is NOT the at-finish state, so it reports 'unknown'.
       for (const block of draftBlocks) {
         if (claimedBlocks.has(block.id)) continue;
         const q = qByDraftBlock.get(block.id);
@@ -214,17 +225,19 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
           question_no: null,
           page: firstPage(block),
           source_asset_ids: block.source_asset_ids,
+          // extracted_prompt_md is written once and never re-projected — frozen.
           ...truncatePreview(block.extracted_prompt_md),
-          state_at_finish: block.status as IngestionHistoryItemState,
+          state_at_finish: 'unknown',
           reason: null,
           draft_block_id: block.id,
+          draft_ref: null,
           question_id: q?.id ?? null,
-          status_at: block.updated_at?.toISOString() ?? null,
+          status_at: null,
           current: currentOf(q?.id ?? null),
         });
       }
       // Session-bound blocks (extract/rescue leftovers on a hybrid session) are
-      // durable rows too — emit any the item ledger didn't claim.
+      // durable rows too — same 'unknown' at-finish rule.
       for (const block of blocks) {
         if (claimedBlocks.has(block.id)) continue;
         items.push({
@@ -234,11 +247,12 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
           page: firstPage(block),
           source_asset_ids: block.source_asset_ids,
           ...truncatePreview(block.extracted_prompt_md),
-          state_at_finish: block.status as IngestionHistoryItemState,
+          state_at_finish: 'unknown',
           reason: null,
           draft_block_id: null,
+          draft_ref: null,
           question_id: block.imported_question_id,
-          status_at: block.updated_at?.toISOString() ?? null,
+          status_at: null,
           current: currentOf(block.imported_question_id),
         });
       }
@@ -252,12 +266,14 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
           question_no: null,
           page: null,
           source_asset_ids: [],
-          ...truncatePreview(q.prompt_md),
+          preview_md: null,
+          preview_truncated: false,
           state_at_finish: 'unknown',
           reason: null,
           draft_block_id: null,
+          draft_ref: null,
           question_id: q.id,
-          status_at: q.created_at.toISOString(),
+          status_at: null,
           current: currentOf(q.id),
         });
       }
@@ -270,19 +286,22 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
           question_no: null,
           page,
           source_asset_ids: block.source_asset_ids,
+          // extracted_prompt_md is the frozen upload-time extraction; the block
+          // status is projected/mutable and never serves as at-finish state.
           ...truncatePreview(block.extracted_prompt_md),
-          state_at_finish: block.status as IngestionHistoryItemState,
+          state_at_finish: 'unknown',
           reason: null,
           draft_block_id: null,
+          draft_ref: null,
           question_id: block.imported_question_id,
-          status_at: block.updated_at?.toISOString() ?? null,
+          status_at: null,
           current: currentOf(block.imported_question_id),
         });
       }
     }
 
     const now = Date.now();
-    const asks = (history?.asks ?? []).map((ask) => ({
+    const wireAsk = (ask: AgentHistoryAskT) => ({
       ask_id: ask.ask_id,
       item_id: ask.item_id,
       question_no: ask.question_no,
@@ -296,12 +315,51 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       unresolved: ask.resolved == null,
       expired_unresolved:
         ask.resolved == null && ask.expires_at != null && new Date(ask.expires_at).getTime() < now,
-    }));
+    });
+    const asks = (history?.asks ?? []).map(wireAsk);
+
+    const wirePriorRun = (prior: AgentHistoryPriorRunT) => ({
+      run_ref: prior.run_ref,
+      captured_at: prior.captured_at,
+      session_status: prior.session_status,
+      run_state: prior.run_state,
+      stage: prior.stage,
+      execution_closed: prior.execution_closed,
+      paid_outcome_unknown: prior.paid_outcome_unknown,
+      items: prior.items.map((item) => ({
+        item_id: item.item_id,
+        question_no: item.question_no,
+        status: item.status,
+        reason: item.reason ?? null,
+        page: item.page ?? null,
+        preview_md: item.preview_md ?? null,
+        draft_ref: item.draft_ref ?? null,
+        question_id: item.question_id ?? null,
+        status_at: item.status_at ?? null,
+      })),
+      asks: prior.asks.map(wireAsk),
+      segments: prior.segments.map((seg) => ({
+        segment: seg.segment,
+        trigger: seg.trigger,
+        outcome: seg.outcome ?? null,
+        task_run_id: seg.task_run_id ?? null,
+        at: seg.at,
+      })),
+      errors: prior.errors.map((err) => ({
+        scope: err.scope,
+        item_id: err.item_id ?? null,
+        code: err.code,
+        retryable: err.retryable,
+        at: err.at,
+      })),
+    });
+    const prior_runs = (history?.prior_runs ?? []).map(wirePriorRun);
 
     const run =
       history == null || (!history.snapshot && !history.live_events)
         ? null
         : {
+            run_ref: history.run_ref,
             run_state: history.run_state,
             stage: history.stage,
             segment_count: history.segments.filter((seg) => seg.segment >= 1).length,
@@ -365,6 +423,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         warnings: session.warnings ?? [],
       },
       run,
+      prior_runs,
       items,
       asks,
       evidence: {

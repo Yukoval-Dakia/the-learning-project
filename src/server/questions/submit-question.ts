@@ -21,7 +21,6 @@ export { draftCanonicalIdentity, revisionToDraftDocument } from './draft-contrac
 export type { EditQuestionInputT, EditQuestionResult } from './edit-question';
 export {
   EditQuestionInput,
-  parseDraftRef,
   probeDraftEdit,
   saveDraftEdit,
   validateDraftEdit,
