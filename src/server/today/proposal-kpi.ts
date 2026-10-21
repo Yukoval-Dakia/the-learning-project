@@ -52,8 +52,8 @@ export function summarizeTodayProposalKpi(
     total,
     decision_total: decisionTotal,
     by_kind: byKind,
-    // Normally exact. At the candidate accident ceiling the counts are explicit lower bounds;
-    // keep serving Today and surface the existing truncation signal instead of throwing a 500.
+    // Normally exact. At the scan cap the counts are explicit lower bounds; keep serving
+    // Today and surface the truncation signal instead of throwing a 500.
     has_more: hasMore,
     limit: TODAY_PROPOSAL_KPI_LIMIT,
     status: 'pending',
