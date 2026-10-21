@@ -1,13 +1,9 @@
-// YUK-402 inc-4a — POST /api/review/drafts/[id]/enable: owner manual gate, normal
-// verify → promote path.
+// POST /api/review/drafts/[id]/enable: owner manual gate, normal verify → promote.
 //
-// docs/superpowers/specs/2026-06-18-inc4-owner-manual-gate-design.md §2.
-//
-// Runs the B5 verify (reuses the per-source quiz_verify/source_verify handler via
-// the caller-agnostic verifyAndPromote gate) and promotes on pass; on not-pass
-// returns the tri-state verdict (needs_review / failed + reason). actor='user' tags
-// the gate's verify event as owner-driven. Auth is enforced upstream by the /api/*
-// internal-token middleware.
+// verifyAndPromote reuses the per-source quiz_verify/source_verify handler and
+// promotes on pass; otherwise it returns the tri-state verdict
+// (needs_review / failed + reason). actor='user' marks the verify event as
+// owner-driven. Auth is enforced upstream by the /api/* internal-token middleware.
 
 import { verifyAndPromote } from '@/capabilities/practice/server/quiz/verify-and-promote';
 import { db } from '@/db/client';

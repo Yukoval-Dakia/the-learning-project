@@ -1,5 +1,5 @@
-// YUK-988 (Supply-Agent/3) — 供给执行 job：确定性 plan executor 的 pg-boss 入口。
-// 三个 caller 共用（spec Scope 3）：
+// 供给执行 job：确定性 plan executor 的 pg-boss 入口。
+// 三个 caller 共用：
 //   (a) supply_planner 门后第二阶段——accepted plan 立即入队本 job（planner 当晚
 //       计划当晚执行；规划与执行分离，各自独立 DLQ 重试语义，planner 不等执行）；
 //   (b) dispatcher 安全网派发——sourcing_web 分支重指向本队列（scanner 构造单路由

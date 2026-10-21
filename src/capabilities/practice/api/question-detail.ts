@@ -1,9 +1,5 @@
-// YUK-280 P4 (YUK-203) — GET /api/questions/[id]: the question-bank detail read.
-// YUK-281 (YUK-203) — PATCH (edit) + DELETE (archive w/ association-count guard).
-// M5-T5a (YUK-321)：平移自 app/api/questions/[id]/route.ts（Hono manifest 挂载，
-// [id] 由 toHonoPath 转 :id 捕获后以 Record 透传；旧壳 Task 9 拆）。
-//
-// docs/superpowers/plans/2026-06-07-yuk280-question-bank-api.md §2 (A1d/A1e)
+// GET /api/questions/[id]: the question-bank detail read.
+// PATCH (edit) + DELETE (archive with an association-count guard).
 //
 // GET: single-fetch detail aggregator (row + source_tier + labels + variant
 // family + per-knowledge FSRS/decay + backlinks + timeline).
@@ -86,7 +82,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     ) {
       throw new ApiError('not_found', `question ${parsed.data.id} not found`, 404);
     }
-    // YUK-1514 — same serving projection as the list items (a part row reports
+    // same serving projection as the list items (a part row reports
     // its own per-part verdict with the group's shared hold facts).
     const serving =
       (await readQuestionServing(db, [detail.id])).byId.get(detail.id) ??
@@ -162,7 +158,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
   }
 }
 
-// ── PATCH — edit the question-bank editable surface (YUK-281) ─────────────────
+// ── PATCH — edit the question-bank editable surface ─────────────────────────
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const parsedParams = QuestionParamsSchema.safeParse(params);
@@ -247,7 +243,7 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
   }
 }
 
-// ── DELETE — association-count guard + soft-archive (YUK-281) ─────────────────
+// ── DELETE — association-count guard + soft-archive ─────────────────────────
 // Two-step:
 //   1. no `?confirm=true`  → return association counts + 409 ('confirm_required')
 //      so the UI can show the "N 条作答 / N 张复习卡 / N 份卷引用 / N 条错题 / N 道小题" warning.

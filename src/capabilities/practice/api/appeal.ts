@@ -9,12 +9,11 @@ import { getPracticeBoss } from '../server/queue-runtime';
 import { CreateAppealBodySchema } from './contracts';
 
 /**
- * M2 (YUK-316, D15) — 申诉自动重判链入口。
+ * 申诉自动重判链入口。
  *
- * 旧 M2.3 stub 写 appeal_request event 后产出 judge-retraction proposal（人审）。
- * D15 裁决：判分属软判断层 → 申诉直接触发异步重判（pg-boss `rejudge` job），
- * 重判结果直接生效（correction event 留痕，无 proposal）。appeal_request event
- * 照旧写入（它是 rejudge 的幂等键与 caused_by 锚点）。
+ * 判分属软判断层，所以申诉直接触发异步重判（pg-boss `rejudge` job），重判结果
+ * 直接生效，correction event 留痕而非 proposal。appeal_request event 照旧写入，
+ * 它是 rejudge 的幂等键与 caused_by 锚点。
  *
  * Auth: middleware enforces `x-internal-token` on all `/api/*` except /health.
  */

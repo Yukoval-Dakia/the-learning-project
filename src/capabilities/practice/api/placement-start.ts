@@ -1,6 +1,3 @@
-// POST /api/placement/start — cold-start inc-B (YUK-468, PR-2b).
-// docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3 / §5 inc-B.
-//
 // Starts a bounded placement probe and returns the first question. The probe scope is the
 // goal subgraph KC set (goal.scope_knowledge_ids, or an explicit knowledgeIds override).
 // Answers are submitted through the EXISTING /api/review/submit with session_id=<this probe>
@@ -49,7 +46,7 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       answeredCount: 0,
       sourcingNeeded: result.question === null,
       starterSupply: result.starterSupply,
-      // YUK-1405 — a fresh session has nothing unresolved (field omitted);
+      // a fresh session has nothing unresolved (field omitted);
       // the typed alternative is present only when no question was served.
       ...noItemField(result.question === null ? placementNoItem(result.starterSupply) : null),
     });
