@@ -174,7 +174,21 @@ task、global 和 pin 设置均先校验必需事实，再校验任务能力，�
 OpenCode Go 已知协议路径不匹配时不执行。Anthropic 的目录 `/v1` 仅在传输适配时
 去重，避免 SDK 再追加 `/v1/messages`。目录能力不等同于应用已接线或实测准入。
 刷新不改任务选模；已选模型消失或能力/端点变化保留旧事实，并记录由 YUK-1563
-负责处理的 finding。自定义 provider 配置仍属该票第 ④ 部分，本片未实现。
+负责处理的 finding。
+
+自定义 provider（YUK-1563 ④）：`PUT /api/admin/custom-providers/:id` 填 baseURL、
+key 环境变量名与协议（openai-completions / anthropic-messages）即可接入新 provider，
+不改代码、不跑脚本。定义存 `custom_provider` 表（只有 env 变量名，key 值放
+`.env.local` / 容器 env，不进库、不进日志）；变量名必须以 `_API_KEY` / `_TOKEN`
+结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
+（值会被当作 Bearer 发到该 provider）。模型列表来自该端点自己的 `GET /models`
+（自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
+同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`
+（可列出但过不了可运行性检查，不能保存为任务模型）。每个自定义 provider 在运行时
+目录里有一个 `custom:<slug>` 合成 bucket：消失的已选模型与能力变化走同一条有主
+finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（只显示
+已配置/未配置/认证失败 与 env 变量名），per-task 选模沿用 `PATCH /api/admin/config`
+（provider 填 `custom:<slug>`），保存时与内置 provider 过同一道 `getModel` 可运行性检查。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或

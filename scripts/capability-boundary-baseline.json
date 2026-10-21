@@ -46,7 +46,8 @@
     "YUK-1571-asset-store": "Complete content-addressed source_asset write protocol (byte-view sha256, same-key advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner delete with fresh under-lock re-read, sharp lazy image-dimension read, caller-supplied kind/provenance) moved intact from ingestion/server/persist-image-asset.ts to src/kernel/records/asset-store.ts; ingestion and the practice jyeoo supply lane shared the same object-key lock and row lifecycle, so the protocol is common infrastructure, not an ingestion domain decision. persist-image-asset.ts keeps the getR2/R2Client seam and six coordinator-approved compat re-exports (window ends 2026-11-03 UTC, per-symbol site records in compatShims); jyeoo-candidates.ts consumes the kernel module directly and forwards lockImageStorageKey for the reap job. practice -> ingestion 1 -> 0 retires the last inbound edge: cross 40 -> 39 and the SCC shrinks to {agency, knowledge, practice}; capability -> server 406 unchanged (the r2 seam edge persists). Approval: https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
     "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth.",
     "YUK-1553": "knowledge -> ai 13 -> 12 (-1, total 389 -> 388): review.ts drops the private write_proposal executor (writeToolCallLog edge) — the shared DomainTool bridge now owns tool_call_log. Same-owner ai seams retained: streamTask + piDomainMount.",
-    "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md."
+    "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
+    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges)."
   },
   "changes": [
     {
@@ -1195,6 +1196,26 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/custom-providers.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "errorResponse"],
+      "issue": "YUK-1563",
+      "owns": "Kernel HTTP error envelope: ApiError (typed throw for 4xx config-input failures) + errorResponse (uniform JSON error serialization at the route boundary). Same envelope every other observability admin route handler uses.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/custom-provider-store.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1563",
+      "owns": "Kernel HTTP error envelope: ApiError typed throw for 4xx custom-provider input failures (invalid slug/URL/env name/protocol, limit reached), serialized uniformly by the route boundary.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/notes/server/artifact-reference-search.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
@@ -1348,6 +1369,33 @@
       "to": 1393,
       "issue": "YUK-1568",
       "responsibilityReason": "R1-F2 组生命周期 owner 模块新增 promoteVerifiedGroupPartRows：按已核验 revision 冻结 structure.parts[].part_id 晋升真实声明子行（root→child 锁序、non-tombstone、继承证据入 metadata、同事务）——与本模块既有 archive/restore/publish 的组行级生命周期操作同一职责。"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-21",
+      "baseBlob": "38cd149a7bc039f8d5e7d8b35680b30981c08b9e",
+      "from": 4974,
+      "to": 5002,
+      "issue": "YUK-1563",
+      "responsibilityReason": "Add the custom_provider table (7 columns, 3 check constraints) next to model_catalog_cache: the durable home for runtime-configured custom provider definitions. Growth is one cohesive new table definition in the schema source of truth, not a new responsibility for the file."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-21",
+      "baseBlob": "4a39baefb69f51d0e55f82d99ced688f37d393ca",
+      "from": 1001,
+      "to": 1267,
+      "issue": "YUK-1563",
+      "responsibilityReason": "Owns the runtime catalog document, so custom provider buckets live here: partition custom:* buckets out of the models.dev merge, synthesize them from each provider /models listing with the same absence/capability retention semantics, catalogModelIds export, and the deletion prune. Growth stays inside the existing single responsibility (the catalog document), not a new subsystem."
+    },
+    {
+      "path": "src/server/ai/provider-models-check.ts",
+      "date": "2026-10-21",
+      "baseBlob": "4b1dbe39643bcaf97589641a15cfb46eba102b67",
+      "from": 1134,
+      "to": 1146,
+      "issue": "YUK-1563",
+      "responsibilityReason": "Route the existing /models reader and check reconciliation through catalogProviderFor so custom providers resolve their own bucket id, plus protocol-shaped auth headers for the custom-provider branch. The listing still goes through the same listOne call site; no new fetch site."
     }
   ],
   "compatShims": [
