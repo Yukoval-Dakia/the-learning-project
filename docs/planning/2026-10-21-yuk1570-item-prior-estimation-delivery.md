@@ -80,3 +80,17 @@ typecheck/lint/build rc0（lint 181 warnings）；首轮两 audit 仅报实际�
 旧路径在受保护 tasks/schema 的注释及TaskSpec说明文字仍有3处，均非代码引用，本片未扩大到这些内容。
 所有本机 tests/DB/TEST/Docker/daemon/provider/runtime/demo/paid 均 NOT_RUN；测试批准不扩大运行范围。
 唯一独立 R1、PR/exact CI由父继续推进，未把本地门通过当成运行或main收益。
+
+## 已审源码与最新 main 组合
+
+唯一 R1 fixed ea21→9e63 已 APPROVE，新增可达 P0/P1 为0；报告SHA256
+`bc72de2924cae44536b37f249c04f57dde2e02290f00878cfba75eb01c308904`。
+发布前正常合入 main `1c8485c2f42b30bf4d0b8c47027bbc0e88259270`（#1893），
+新源码 `70fbaf1d419a8d9e0bab48c0faa4a79e0be223d3` 五门重跑全rc0。
+本片产品/test逐blob同已审9e63；上游标定写者/schema及所有其他main条目完整保留，
+不是声称旧R1审过上游新功能。38条main历史changes原始entry前缀、30条edgeRecords、
+6条sourceSizeRecords及其余历史记录均保留，本片只追加原已测1条下降。
+package仅新增上游非安装脚本、其他依赖字段及lock/workspace相同，未重复安装。
+候选仍387/0/36、SCC1×3、超长12；无新审查，未运行测试或DB/provider/runtime。
+组合proof在9e63目录 `parent-main1c-integration/`，新五门raw在70fb目录
+`parent-main1c-five-gates/`；当前提交除本文外与受检70fb完全相同。
