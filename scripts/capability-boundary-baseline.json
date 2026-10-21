@@ -778,16 +778,6 @@
       "date": "2026-10-20"
     },
     {
-      "debt": "capabilityToServer",
-      "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
-      "module": "src/server/mastery/joint-calibration.ts",
-      "kind": "value",
-      "symbols": ["runJointCalibrationBatch"],
-      "issue": "YUK-439",
-      "owns": "Joint calibration batch: recompute each question b posterior from the difficulty_calibration_evidence ledger under the agent prior, write item_calibration posterior columns, and run the A5 KB drift audit/renormalization. The practice job owns only nightly scheduling/yield; this edge replaces the prior same-responsibility trigger import of the retired AIPW firm-up (recalibration.ts), not a second business dependency.",
-      "date": "2026-10-21"
-    },
-    {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/tools/compose-presentation.ts",
       "module": "src/kernel/tools/types.ts",
@@ -846,6 +836,16 @@
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
+      "module": "src/server/mastery/joint-calibration.ts",
+      "kind": "value",
+      "symbols": ["runJointCalibrationBatch"],
+      "issue": "YUK-439",
+      "owns": "Joint calibration batch: recompute each question b posterior from the difficulty_calibration_evidence ledger under the agent prior, write item_calibration posterior columns, and run the A5 KB drift audit/renormalization. The practice job owns only nightly scheduling/yield; this edge replaces the prior same-responsibility trigger import of the retired AIPW firm-up (recalibration.ts), not a second business dependency.",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -857,6 +857,24 @@
       "to": 1790,
       "issue": "YUK-1572",
       "responsibilityReason": "Move the two choice-surface precheck values and two types to their owning pure module. Splitting the existing import adds two lines; all other imports and job execution, paid-call, placement authority, publication, fence, and recovery bodies are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-21",
+      "baseBlob": "2f69ce242e4a068d9a48c196801ec0a663baf95f",
+      "from": 1153,
+      "to": 1230,
+      "issue": "YUK-1553",
+      "responsibilityReason": "共享 propose 工具需要五分支 mutation cooldown 的单一 key/kind helper 与 change-scoped 去重身份；新增行用于 C1-1/cooldown 契约，不新增第二 writer。"
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "38b42726947ac1f6dc24a8c34d883b8e43a01e71",
+      "from": 1295,
+      "to": 1298,
+      "issue": "YUK-1553",
+      "responsibilityReason": "EditQuestionInput 的 opaque document 字段改用共享 OpaqueJsonInput/JSON 类型，以满足 effectful tool 注册期 schema 契约；未改业务逻辑。"
     },
     {
       "path": "src/capabilities/practice/manifest.ts",
@@ -884,24 +902,6 @@
       "to": 1610,
       "issue": "YUK-439",
       "responsibilityReason": "Settlement writes the sealed calibration evidence row from the verdict already used for grading (theta abstain does not exclude evidence), captures the PRE-attempt theta snapshot, and deletes evidence on revert with a same-transaction posterior-to-prior repair when the last row is removed. Grading and FSRS bodies are unchanged."
-    },
-    {
-      "path": "src/capabilities/knowledge/server/proposals.ts",
-      "date": "2026-10-21",
-      "baseBlob": "2f69ce242e4a068d9a48c196801ec0a663baf95f",
-      "from": 1153,
-      "to": 1230,
-      "issue": "YUK-1553",
-      "responsibilityReason": "共享 propose 工具需要五分支 mutation cooldown 的单一 key/kind helper 与 change-scoped 去重身份；新增行用于 C1-1/cooldown 契约，不新增第二 writer。"
-    },
-    {
-      "path": "src/server/questions/edit-question.ts",
-      "date": "2026-10-21",
-      "baseBlob": "38b42726947ac1f6dc24a8c34d883b8e43a01e71",
-      "from": 1295,
-      "to": 1298,
-      "issue": "YUK-1553",
-      "responsibilityReason": "EditQuestionInput 的 opaque document 字段改用共享 OpaqueJsonInput/JSON 类型，以满足 effectful tool 注册期 schema 契约；未改业务逻辑。"
     }
   ],
   "compatShims": [
