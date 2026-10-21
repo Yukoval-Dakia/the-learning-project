@@ -820,6 +820,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-af189bc5-df07-446b-a276-65ea7d4e1197",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadFrontierRail",
+      "targetModule": "src/capabilities/knowledge/server/frontier-read.ts",
+      "targetSymbol": "loadFrontierRail",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 77
+        }
+      ],
+      "evidence": "Start imports the existing complete frontier rail owner; the retained HTTP frontier route directly invokes the same implementation.",
+      "rationale": "Keep prerequisite closure, mastery gates, proposal selection, visibility, ordering and item cap in Knowledge rather than duplicating them in Start.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f83914c-ad03-479d-824c-28f16dc1fd40",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadReviewDueSummary",
+      "targetModule": "src/capabilities/knowledge/server/review-due-summary.ts",
+      "targetSymbol": "loadReviewDueSummary",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 82
+        }
+      ],
+      "evidence": "Start imports the complete due-summary owner extracted from the retained HTTP operation. api/review-due-summary.ts:1 directly imports that owner, not this public export.",
+      "rationale": "One Knowledge owner retains the single Date, cutoff, aggregate SQL, numeric projection and response for both HTTP and Start.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f83914c-ad03-479d-824c-28f16dc1fd40",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
