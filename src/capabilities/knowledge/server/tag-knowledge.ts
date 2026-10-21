@@ -91,21 +91,16 @@ export type TagKnowledgeResult =
   | { kind: 'match'; knowledge_ids: string[] }
   | { kind: 'propose'; knowledge_ids: string[]; kc_name: string };
 
-/** Extracts `<subjectId>` from a `seed:<subjectId>:root` id, else null. */
 function subjectIdFromRoot(subjectRootId: string): string | null {
   const m = /^seed:([^:]+):root$/.exec(subjectRootId);
   return m ? m[1] : null;
 }
 
-/** Stable cache key — subject root + case/space-normalized name. */
 function batchCacheKey(subjectRootId: string, kcName: string): string {
   return `${subjectRootId}::${kcName.trim().toLowerCase()}`;
 }
 
-/**
- * Match-or-propose tagging: embed, retrieve, then match within threshold or propose.
- * A proposal reuses the batch cache before naming, and projects in the same transaction.
- */
+/** Match-or-propose tagging; a proposal reuses the batch cache before naming. */
 export async function tagKnowledge(
   deps: TagKnowledgeDeps,
   input: TagKnowledgeInput,
@@ -144,7 +139,6 @@ export async function tagKnowledge(
     (_c, i) => candidateDomains[i] === targetDomain,
   );
 
-  // Nearest in-subject candidate decides the branch.
   const nearest = subjectScoped[0];
   if (nearest && nearest.cosine_distance <= threshold) {
     const matchingCandidates = subjectScoped.filter(
@@ -214,7 +208,6 @@ export async function tagKnowledge(
     }
   }
 
-  // Creation event, projection and timestamp are atomic.
   const newKcId = await db.transaction(async (tx) => {
     const now = new Date();
     const createdId = await prepareProposedKnowledgeId(tx, {

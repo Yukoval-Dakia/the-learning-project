@@ -8,13 +8,10 @@ export const JOB_EVENT_HEARTBEAT_MS = 15_000;
 /** Durable cursor catch-up: NOTIFY is a wake-up hint, never the only delivery path. */
 export const JOB_EVENT_CATCHUP_MS = 10_000;
 
-// Generic SSE tracker for job_events, keyed by business kind and id. Any domain
-// writing job events can use it; Last-Event-ID drives replay, then live events come
-// from the router. Abort unsubscribes and closes the stream.
-//
-// `kind` comes from the caller, so an allowlist is required: otherwise any
-// authenticated caller could subscribe to any business table. Add new writers here
-// or their stream gets a 400.
+// Generic SSE tracker for job_events, keyed by business kind and id. Last-Event-ID
+// drives replay; live events come from the router. `kind` comes from the caller, so an
+// allowlist is required: otherwise any authenticated caller could subscribe to any
+// business table. Add new writers here or their stream gets a 400.
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   const businessTable = params.kind;
   const businessId = params.id;

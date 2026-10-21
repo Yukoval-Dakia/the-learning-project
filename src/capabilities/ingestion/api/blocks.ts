@@ -102,15 +102,15 @@ function toAutoEnrollObservation(row: {
 }
 
 // Tolerant projection of payload.mistake_draft (the judge's raw MistakeEnrollOutput,
-// written at auto-enroll.ts:303). We deliberately do NOT safeParse the full
-// MistakeEnrollOutput schema and null-on-any-mismatch — a strict parse would reject
-// a historical/legacy event that predates a field and silently drop a draft that is
-// "valid enough" for prefill. Instead we project only the fields slice-3 prefill
-// needs and guard each defensively, so a partial event keeps its present fields
-// (absent ones fall to null / today's defaults downstream).
+// written by the observe path in auto-enroll). We deliberately do NOT safeParse the
+// full MistakeEnrollOutput schema and null-on-any-mismatch — a strict parse would
+// reject a historical event that predates a field and silently drop a draft that is
+// "valid enough" for prefill. Instead we project only the fields prefill needs and
+// guard each defensively, so a partial event keeps its present fields (absent ones
+// fall to null / today's defaults downstream).
 // Derive the accepted set from the canonical MistakeEnrollOutcome enum so a future
 // added outcome can never be silently projected to null by a stale hand-kept list
-// (ocr-1: compile-time sync with mistake_enroll.ts). z.enum exposes `.options`.
+// (compile-time sync with mistake_enroll.ts). z.enum exposes `.options`.
 const WRONG_ANSWER_VALUES = MistakeEnrollOutcome.options;
 type WrongAnswer = (typeof WRONG_ANSWER_VALUES)[number];
 
@@ -133,8 +133,8 @@ function toMistakeDraftCause(
 ): { primary_category: string | null; analysis_md: string | null } | null {
   if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
   const cause = value as Record<string, unknown>;
-  // analysis_md is the human-readable cause text the judge produced; slice-3
-  // prefill maps it to cause_notes (NOT a nonexistent cause.user_notes).
+  // analysis_md is the human-readable cause text the judge produced; prefill
+  // maps it to cause_notes (NOT a nonexistent cause.user_notes).
   return {
     primary_category: stringOrNull(cause.primary_category),
     analysis_md: stringOrNull(cause.analysis_md),

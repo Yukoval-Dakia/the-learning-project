@@ -69,13 +69,12 @@ async function persistFigureCrop(
 
   // A prior pass may already have registered this deterministic id, and
   // concurrent extractions may be writing different bytes under the same
-  // `<page>-fig-N` identity. The unlocked existence check is racy (Codex
-  // 4292929371): the loser can put its bytes over the winner's object before
-  // its duplicate-id insert fails, leaving the winning row pointing at bytes
-  // with a different SHA. So ALL decisions — re-read, adopt, update, insert —
-  // happen AFTER acquiring the storage-key advisory lock, and the
-  // compensating oldBytes snapshot is taken under the same lock (round-2
-  // P2-1) so a restore can never write stale bytes.
+  // `<page>-fig-N` identity. An unlocked existence check is racy: the loser
+  // can put its bytes over the winner's object before its duplicate-id insert
+  // fails, leaving the winning row pointing at bytes with a different SHA. So
+  // ALL decisions — re-read, adopt, update, insert — happen AFTER acquiring
+  // the storage-key advisory lock, and the compensating oldBytes snapshot is
+  // taken under the same lock so a restore can never write stale bytes.
   const dims = await probeImage(input.png);
   let oldBytes: Uint8Array | null = null;
   let overwroteObject = false;

@@ -1,4 +1,4 @@
-// YUK-1497 (K5) — compose_presentation：录入 agent 的展示层工具（spec §5）。
+// compose_presentation：录入 agent 的展示层工具。
 //
 // 给定 draft question_block 或已发布 revision 的引用 + 一份 presentation 文档：
 //   1. 解析该题的契约（structure / response_spec / scoring_basis）——
@@ -12,10 +12,10 @@
 //
 // revision 不可变：revision 引用只做校验，不接受 save。
 //
-// 写纪律（review R1）：save 走 block-structured-edit 的 canonical 事件通道
+// 写纪律：save 走 block-structured-edit 的 canonical 事件通道
 // （setPresentation → persistStructured：experimental:edit_question_block_structured
 // op=set_presentation + job event + genesis-anchor 检查 + 投影 write-through）——
-// raw tx.update 对 fold 不可见，rebuild 会抹掉展示层；旧的自查 raw 写已删。
+// raw tx.update 对 fold 不可见，rebuild 会抹掉展示层。
 
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -231,7 +231,7 @@ export const composePresentationTool: DomainTool<
       if (input.save !== true) {
         return { status: 'valid' as const, block_id: blockId, issues: [] };
       }
-      // review R1 —— save 走 canonical 事件通道（setPresentation →
+      // save 走 canonical 事件通道（setPresentation →
       // persistStructured：op=set_presentation 的
       // experimental:edit_question_block_structured + job event + genesis-anchor
       // 检查 + 投影 write-through）；raw tx.update 对 fold 不可见，rebuild 会

@@ -27,8 +27,6 @@ async function nextEdgeEventTime(tx: Tx, id: string, requested: Date): Promise<D
   return new Date(Math.max(requested.getTime(), (latest?.created_at.getTime() ?? -1) + 1));
 }
 
-// ---------- Types ----------
-
 export interface KnowledgeEdgeRow {
   id: string;
   from_knowledge_id: string;
@@ -40,8 +38,6 @@ export interface KnowledgeEdgeRow {
   created_at: Date;
   archived_at: Date | null;
 }
-
-// ---------- List ----------
 
 export interface ListKnowledgeEdgesFilter {
   subject?: string;
@@ -293,8 +289,6 @@ export async function getKnowledgeEdgeById(
   };
 }
 
-// ---------- Create ----------
-
 export interface CreateKnowledgeEdgeInput {
   /** Preserve a caller-owned provenance identity for correction references. */
   generate_event_id?: string;
@@ -408,8 +402,6 @@ export async function createKnowledgeEdge(
 
   return id;
 }
-
-// ---------- Archive (soft-delete) ----------
 
 export interface ArchiveKnowledgeEdgeResult {
   /** The edge id that was targeted. */

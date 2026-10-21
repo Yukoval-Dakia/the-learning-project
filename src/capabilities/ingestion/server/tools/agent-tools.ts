@@ -131,7 +131,7 @@ async function executeReportProgress(
 ): Promise<ReportProgressOutput> {
   const input = ReportProgressInputSchema.parse(raw);
   const sessionId = requireIngestionScope(ctx);
-  // R2-6: once a terminal request exists, no further progress may coexist
+  // Once a terminal request exists, no further progress may coexist
   // with the session error the orchestrator is about to emit.
   if (input.event !== 'error' || input.scope !== 'session') {
     const requested = await readTerminalRequest(ctx.db, sessionId);
@@ -180,7 +180,7 @@ async function executeReportProgress(
       return { emitted: `ingestion_agent.item#${eventId}` };
     }
     case 'error': {
-      // R2-6: the model may only emit item-scope errors. A session-scope
+      // The model may only emit item-scope errors. A session-scope
       // report (e.g. page_unreadable for the whole package) is recorded as a
       // terminal request; the ORCHESTRATOR emits the session error and fails
       // the run — a model can never mint the session error itself.
@@ -305,7 +305,7 @@ async function executeAskLearner(
     if (state.resolved == null) {
       return { status: 'pending', ask_id: input.ask_id, expires_at: state.created.expires_at };
     }
-    // R2-2: learner answer text is external input to the model — redact it
+    // Learner answer text is external input to the model — redact it
     // like every other text channel (counts fold into the run's sink).
     return {
       status: 'resolved',

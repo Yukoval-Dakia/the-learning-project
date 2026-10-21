@@ -77,7 +77,8 @@ export async function completeIngestionImport(
     const sessionAssetIds = session.source_asset_ids as string[];
     const sessionAssetSet = new Set(sessionAssetIds);
 
-    // 2. Validate every source_block_id belongs to this session, and block_id (if present) is in source_block_ids
+    // Every source_block_id must belong to this session, and block_id (if present)
+    // must be in source_block_ids.
     const sourceBlockRows = new Map<string, typeof question_block.$inferSelect>();
     const allSourceIds = new Set<string>();
     for (const block of body.blocks) {
@@ -124,7 +125,7 @@ export async function completeIngestionImport(
       sourceBlockRows.set(sid, row);
     }
 
-    // 3. Validate image_refs belong to session.source_asset_ids
+    // image_refs must belong to session.source_asset_ids.
     for (const block of body.blocks) {
       for (const ref of block.image_refs) {
         if (!sessionAssetSet.has(ref)) {
@@ -137,7 +138,7 @@ export async function completeIngestionImport(
       }
     }
 
-    // 3b. Validate page_spans page_index against session asset count
+    // page_spans' page_index must be within the session's asset count.
     for (const block of body.blocks) {
       for (const span of block.page_spans) {
         if (span.page_index >= sessionAssetIds.length) {
@@ -150,8 +151,8 @@ export async function completeIngestionImport(
       }
     }
 
-    // 4. Client knowledge_ids are authoritative and required. Import carries no
-    //    subject signal, so tagKnowledge cannot resolve a PROPOSE root for empty ids.
+    // Client knowledge_ids are authoritative and required. Import carries no
+    // subject signal, so tagKnowledge cannot resolve a PROPOSE root for empty ids.
     const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
 
     // Validate the batch's subject attribution before any materialization.
@@ -284,7 +285,6 @@ export async function completeIngestionImport(
         }
       }
 
-      // Compute wrong_answer_image_refs
       const wrongAnswerImageRefs = [
         ...new Set(
           block.page_spans
@@ -318,7 +318,6 @@ export async function completeIngestionImport(
           .filter((r): r is typeof question_block.$inferSelect => r !== undefined);
         importedFigures = sourceRows.flatMap((r) => r.figures);
       }
-      // else: manual block (no source) — figures=[], structured=null (defaults)
 
       const pendingCaptures =
         block.source_block_ids.length === 0
@@ -427,7 +426,6 @@ export async function completeIngestionImport(
       mistakeIds.push(mistakeId);
       recordIds.push(enroll.recordId);
 
-      // Link the block to the question/attempt and mark it imported.
       const [{ version: importedBlockVersion }] = await tx
         .update(question_block)
         .set({
@@ -467,7 +465,6 @@ export async function completeIngestionImport(
       }
     }
 
-    // Mark source blocks ignored.
     for (const sid of toIgnore) {
       const [{ version: ignoredBlockVersion }] = await tx
         .update(question_block)

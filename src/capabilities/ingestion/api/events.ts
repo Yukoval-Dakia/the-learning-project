@@ -5,8 +5,8 @@ import { subscribe } from '@/server/events/sse_router';
 /**
  * GET /api/ingestion/[id]/events —— SSE 流。
  *
- * 与 /api/echo/[id]/events 模式一致：Last-Event-ID 头驱动 replay + subscribe
- * sse_router live 事件。客户端断线时通过 req.signal abort 自动 unsub。
+ * Follows the same Last-Event-ID replay + sse_router live pattern as the other
+ * SSE routes: client disconnect aborts through req.signal and unsubscribes.
  *
  * Resilience: a non-numeric Last-Event-ID degrades to full replay; abort is wired
  * before any await and checked before subscribing, so a disconnect during replay
@@ -21,7 +21,7 @@ import { subscribe } from '@/server/events/sse_router';
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
   const businessId = params.id;
   const lastEventIdHeader = req.headers.get('Last-Event-ID');
-  // F1：非数字头（如 'abc'）经 parseInt 得 NaN，会一路流进 gt(id, NaN) 导致
+  // 非数字头（如 'abc'）经 parseInt 得 NaN，会一路流进 gt(id, NaN) 导致
   // Postgres 22P02 报错 / 静默零行。NaN 守卫降级为 0（= 全量 replay）。
   const parsed = lastEventIdHeader ? Number.parseInt(lastEventIdHeader, 10) : 0;
   const lastEventId = Number.isNaN(parsed) ? 0 : parsed;
@@ -39,7 +39,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
       const close = () => {
         if (closed) return;
         closed = true;
-        // F2/F4：清理订阅 + 关闭 controller 在同一处收口，无论正常 abort 还是异常路径。
+        // 清理订阅 + 关闭 controller 在同一处收口，无论正常 abort 还是异常路径。
         unsub?.();
         try {
           controller.close();
@@ -74,7 +74,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
         emitSseFrame('event: error\ndata: {"error":"stream_failed"}\n\n');
       };
 
-      // F4：abort 监听器在任何 await 之前注册 —— 客户端在初始 replay 期间断线也能
+      // abort 监听器在任何 await 之前注册 —— 客户端在初始 replay 期间断线也能
       // 触发 unsub + close，避免 stream + DB 订阅泄漏。
       req.signal.addEventListener('abort', close);
 
@@ -98,7 +98,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           });
         }
 
-        // F4 race：初始 replay await 期间客户端可能已断线 —— 那时 close() 已跑过，
+        // 初始 replay await 期间客户端可能已断线 —— 那时 close() 已跑过，
         // 但 unsub 尚未赋值，close() 的幂等短路使它永不再清。若此处不早退，await 返回后
         // subscribe() 仍会在已关流上挂一个永不清理的 sse_router 订阅（永久泄漏）。
         // 已关闭则不再起订阅。（replay for-loop 的 emit 已由 emitSseFrame 的 closed 前检守卫。）
@@ -129,7 +129,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
           }
         });
       } catch (err) {
-        // F2：初始 replay / subscribe 抛错（DB/连接错误）时，记日志 + 发一个 SSE error
+        // 初始 replay / subscribe 抛错（DB/连接错误）时，记日志 + 发一个 SSE error
         // 事件通知客户端并关闭流 —— 而非让 promise 静默 reject、流永不产数据永不关闭。
         // 只记 businessId（cuid，非敏感）+ err，不落 event payload。
         console.error('[ingestion:sse] initial replay failed', businessId, err);

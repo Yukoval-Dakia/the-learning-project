@@ -1,17 +1,6 @@
-// Phase 1c.1 Step 9.D — event-based knowledge proposal handlers.
-//
-// Pre-Step-9: writeDreamingProposal INSERTed dreaming_proposal rows; accept/
-// dismiss UPDATEd dreaming_proposal.status. Post-Step-9 the legacy table is
-// gone; proposals are events:
-//   - propose_new   → Lane B ProposeKnowledge event (action='propose',
-//                     subject_kind='knowledge', payload={name, parent_id, reasoning})
-//   - reparent / merge / split / archive → experimental:knowledge_<mutation>
-//     events (ExperimentalEvent escape hatch; payload carries mutation body)
-//
-// accept/dismiss flow writes a RateEvent (action='rate', subject_kind='event')
-// chained via caused_by_event_id = propose event id. Acceptance validates locked
-// history, prepares side effects, writes the complete decision, then projects nodes
-// in one transaction. There is no second structural writer.
+// Knowledge proposals are events: propose → rate(accept|dismiss), chained by
+// caused_by_event_id. Accept validates the locked base, writes the complete
+// decision, and projects nodes in one transaction; no second structural writer.
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -98,11 +87,8 @@ async function lockMutationRows(tx: Tx, payload: KnowledgeMutationPayload): Prom
     .for('update');
 }
 
-// =============================================================================
-// Mutation payload types (unchanged from pre-Step-9 — UI / KnowledgeReviewTask
-// still emit these shapes; we map propose_new → ProposeKnowledge and the rest
-// to the experimental namespace).
-// =============================================================================
+// Mutation payloads emitted by UI / KnowledgeReviewTask. propose_new maps to
+// ProposeKnowledge; the other mutations use the experimental namespace.
 
 export type ProposeNewPayload = {
   mutation: 'propose_new';
@@ -156,35 +142,23 @@ export interface WriteProposalEntry {
   caused_by_event_id?: string | null;
   task_run_id?: string;
   cost_usd?: number;
-  // P5.6 / YUK-178 — OPTIONAL proactive/corrective discriminator threaded onto the
-  // ai_proposal payload this writer builds (knowledge_node / knowledge_mutation /
-  // archive). Absence === proactive (ND-SK-1). Set explicitly by the
-  // propose_knowledge_mutation tool from the model-labeled arg (§4.1/§4.2).
+  // P5.6 / YUK-178 — optional proactive/corrective discriminator. Absence means
+  // proactive (ND-SK-1); the propose tool sets it from the model-labeled arg.
   suggestion_kind?: SuggestionKindT;
 }
 
-// =============================================================================
-// writeKnowledgeProposeEvent — single-point propose-event writer (replaces the
-// legacy writeDreamingProposal). Returns the new event id (which doubles as
-// the proposal id post-Step-9).
-// =============================================================================
-
 /**
- * Pending-dedup cooldown key for a propose_new node — the single source shared
- * by the propose tool (skip check) and this writer (stored marker). Root
- * proposals key on their domain (no parent id exists yet); child proposals key
- * on the parent id as before.
+ * Shared pending-dedup cooldown key for propose_new: root proposals key on
+ * domain, child proposals on parent id.
  */
 export function knowledgeNodeCooldownKey(payload: {
   name: string;
   parent_id: string | null;
   domain?: string;
 }): string {
-  // Each component is URI-encoded so ':' inside a domain or name can't collide
-  // across key positions. The domain is canonicalized through the same
-  // sanitizeProposedNodeDomain seam the writer persists ('Mathematics' →
-  // 'math'), so alias spellings dedupe to one pending proposal; 'general'/
-  // blank fall back to the normalized raw form for a stable skip-check key.
+  // URI-encode each component so ':' inside a domain or name cannot collide
+  // across key positions. Canonicalizing the domain through the same sanitizer
+  // the writer persists makes alias spellings dedupe to one pending proposal.
   const rootDomain =
     sanitizeProposedNodeDomain(payload.domain) ?? normalizeSubjectKey(payload.domain ?? '');
   return payload.parent_id === null
@@ -196,18 +170,16 @@ export interface KnowledgeMutationCooldown {
   /** Proposal kind the writer stores / the gate queries. */
   kind: 'knowledge_node' | 'archive' | 'knowledge_mutation';
   /**
-   * Canonical key first (the one this writer persists). Archive also carries
-   * its legacy equivalent; change-scoped mutations have no node-level alias,
-   * so a different change to the same node is neither deduped nor cooled down.
+   * Canonical key first (the one this writer persists). Archive also carries its
+   * legacy equivalent; change-scoped mutations have no node-level alias.
    */
   cooldownKeys: readonly string[];
 }
 
 /**
- * The change a reparent/merge/split proposal actually asks for, independent of
- * the CAS token. Two proposals with the same identity are duplicates; a
- * different target/parent/from-set/layout is a different proposal even when it
- * touches the same node.
+ * The change a reparent/merge/split proposal asks for, independent of the CAS
+ * token. Same identity means duplicate; a different target/parent/from-set is a
+ * different proposal even on the same node.
  */
 function mutationChangeIdentity(
   payload: ReparentPayload | MergePayload | SplitPayload,
@@ -228,10 +200,8 @@ function mutationChangeIdentity(
 }
 
 /**
- * Single source for a mutation's `(kind, cooldown_key)` dedup identity, shared
- * by {@link writeKnowledgeProposeEvent} (stored marker) and the propose tool's
- * pending/dismiss gate. reparent/merge/split key on the change itself so
- * different proposals on one node do not suppress each other.
+ * Single source for a mutation's `(kind, cooldown_key)` dedup identity, shared by
+ * the writer (stored marker) and the propose tool's pending/dismiss gate.
  */
 export function knowledgeMutationCooldown(
   payload: KnowledgeMutationPayload,
@@ -251,9 +221,8 @@ export function knowledgeMutationCooldown(
     case 'reparent':
     case 'merge':
     case 'split': {
-      // Keep the key bounded (proposal payload contract: <=300 chars) while
-      // still distinguishing changes: the subject id stays readable, the
-      // identity digest carries the target/parent/from-set/layout.
+      // Keep the key within the 300-char payload contract while still
+      // distinguishing changes: subject id readable, identity digest carries the rest.
       const identityDigest = createHash('sha256')
         .update(JSON.stringify(mutationChangeIdentity(payload)))
         .digest('hex')
@@ -268,6 +237,7 @@ export function knowledgeMutationCooldown(
   }
 }
 
+/** Writes one propose event and returns its id, which is also the proposal id. */
 export async function writeKnowledgeProposeEvent(
   db: DbLike,
   entry: WriteProposalEntry,
@@ -278,14 +248,9 @@ export async function writeKnowledgeProposeEvent(
   const actorRef = entry.actor_ref ?? 'dreaming';
   const causedByEventId = entry.caused_by_event_id ?? null;
   if (entry.payload.mutation === 'propose_new') {
-    // Lane B ProposeKnowledge — payload { name, parent_id, domain?, reasoning }.
-    // parent_id=null proposes a new domain ROOT; the row's domain is anchored by
-    // payload.domain at accept time (projected, not written imperatively).
-    // Fail fast here too: a domain-less root proposal could never be accepted,
-    // so it must not sit pending in the inbox. The domain is sanitized through
-    // the same seam as node creation (selectable → canonical id; 'general'/
-    // blank → null; unrecognised → verbatim custom domain), so the event stores
-    // the canonical form.
+    // Lane B ProposeKnowledge. parent_id=null proposes a domain ROOT anchored by
+    // payload.domain at accept time. Fail fast: a domain-less root proposal could
+    // never be accepted. Sanitizing here stores the canonical form the writer persists.
     let rootDomain: string | undefined;
     if (entry.payload.parent_id === null) {
       const sanitized = sanitizeProposedNodeDomain(entry.payload.domain);
@@ -312,9 +277,7 @@ export async function writeKnowledgeProposeEvent(
           ...(rootDomain !== undefined ? { domain: rootDomain } : {}),
         },
         cooldown_key: knowledgeNodeCooldownKey(entry.payload),
-        // P5.6 / YUK-178 — model-labeled discriminator (default proactive at the
-        // tool call site); only set when present so absence === proactive for
-        // direct callers of this writer.
+        // P5.6 / YUK-178 — only set when present; absence means proactive.
         ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
       },
       task_run_id: entry.task_run_id ?? null,
@@ -339,7 +302,6 @@ export async function writeKnowledgeProposeEvent(
       },
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs,
-      // P5.6 / YUK-178 — pass through the model-labeled discriminator.
       suggestion_kind: entry.suggestion_kind,
       legacy_event_override: {
         action: 'experimental:knowledge_archive',
@@ -358,9 +320,8 @@ export async function writeKnowledgeProposeEvent(
     return id;
   }
 
-  // Other mutations (reparent / merge / split) stay in the legacy
-  // experimental:knowledge_<mutation> event namespace for the knowledge owner,
-  // while carrying a typed ai_proposal payload for unified inbox semantics.
+  // reparent / merge / split stay in the experimental:knowledge_<mutation>
+  // namespace while carrying a typed ai_proposal payload for the inbox.
   const action = `experimental:knowledge_${entry.payload.mutation}` as const;
   const { mutation: _omit, ...rest } = entry.payload;
   const subjectId = mutationSubjectId(entry.payload);
@@ -376,7 +337,6 @@ export async function writeKnowledgeProposeEvent(
       evidence_refs: entry.evidence_refs ?? [],
       proposed_change: entry.payload,
       cooldown_key: knowledgeMutationCooldown(entry.payload).cooldownKeys[0],
-      // P5.6 / YUK-178 — model-labeled discriminator; absent → proactive.
       ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
     },
     event_override: {
@@ -397,11 +357,8 @@ export async function writeKnowledgeProposeEvent(
   return id;
 }
 
-// =============================================================================
-// Tree-mutation appliers — unchanged from pre-Step-9 (operate on `knowledge`
-// rows). Called by accept handler below + by external callers (tests, audit
-// flows).
-// =============================================================================
+// Tree-mutation appliers operate on `knowledge` rows; called by the accept
+// handler below and by tests/audit flows.
 
 async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   const row = (
@@ -416,17 +373,14 @@ async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   }
 }
 
-// Shared preparation for explicit proposal acceptance and automatic tagging.
-// This does not write a node: each owner records its existing creation contract
-// before projection. No caller-selectable imperative mode remains for new nodes.
+// Shared preparation for explicit acceptance and automatic tagging. It does not
+// write a node: each owner records its creation contract before projection.
 export async function prepareProposedKnowledgeId(
   db: DbLike,
   payload: ProposeNewPayload,
 ): Promise<string> {
-  // Root creation: no parent to assert — the new node's domain comes from
-  // payload.domain (the fold stamps it onto the projected row). Defensive
-  // re-check mirrors the node-creation seam: 'general'/blank can never persist
-  // as a node domain even if a malformed proposal reached accept.
+  // Root creation has no parent to assert; the projected row stamps payload.domain.
+  // Re-check defensively: 'general'/blank can never persist as a node domain.
   if (payload.parent_id === null) {
     if (!sanitizeProposedNodeDomain(payload.domain)) {
       throw new Error(
@@ -452,12 +406,9 @@ async function prepareReparent(
   }
   await assertParentExists(db, payload.new_parent_id);
 
-  // YUK-393 — snapshot name + stored embed hash BEFORE the move so we can detect a
-  // cross-domain shift afterwards. A reparent can change the KC's EFFECTIVE domain
-  // (effective-domain is resolved root-ward; moving under a different-subject root
-  // changes it), and knowledgeEmbedText now folds effective-domain — so a
-  // cross-domain move makes the stored vector stale. (Read here, recomputed after
-  // the parent_id commit so the walk sees the new position.)
+  // YUK-393 — snapshot name + hash before the move to detect a cross-domain shift.
+  // A reparent can change the effective domain (resolved root-ward), which makes
+  // the stored embedding stale; recompute after the parent_id commit.
   const beforeRows = await db
     .select()
     .from(knowledge)
@@ -476,22 +427,17 @@ async function refreshReparentEmbedding(
   db: DbLike,
   moved: ReparentEmbeddingSnapshot,
 ): Promise<void> {
-  // YUK-393 — re-embed-on-reparent (KC-ONLY). Resolve the NEW effective domain
-  // (the walk now reflects the committed parent_id), recompute the embed hash, and
-  // if it differs from the stored one, NULL this KC's embedding so the nightly
-  // embed_backfill re-embeds with the new effective-domain context. RED LINE: this
-  // touches ONLY the moved node — it does NOT cascade to descendant KCs or to the
-  // question subtree (a same-domain move is a no-op; a child's effective domain is
-  // unchanged when the moved node keeps the same root subject). NULLing embedding
-  // degrades gracefully (excluded from cosine → scalar path), zero read regression.
+  // YUK-393 — re-embed-on-reparent (KC only). Recompute the hash from the new
+  // effective domain and NULL the vector when it differs so embed_backfill
+  // re-embeds. Do not cascade to descendants or the question subtree; a
+  // same-domain move is a no-op, and a NULL vector just falls back to scalar reads.
   if (moved) {
     let newEffectiveDomain: string | null = null;
     try {
       newEffectiveDomain = await getEffectiveDomain(db, moved.id);
     } catch {
-      // Broken tree (root with null domain etc.) — don't fail the reparent over an
-      // embed-maintenance recompute; leave the (now possibly stale) vector for the
-      // backfill version net to catch. NULL effective domain ≡ legacy bare text.
+      // Broken tree (e.g. root with null domain): don't fail the reparent over an
+      // embed-maintenance recompute; the backfill version net catches it.
       newEffectiveDomain = null;
     }
     const newHash = embedHash(
@@ -558,31 +504,22 @@ async function prepareKnowledgeSplit(tx: Tx, payload: SplitPayload, now: Date): 
   return payload.into.map(() => newId());
 }
 
-// =============================================================================
-// YUK-543 — merge attribution repair. When a KC merge is accepted, preparation
-// repairs 9 downstream attribution surfaces per absorbed from_id (in addition to the
-// original knowledge-row archive + merged_from append), returning a forensic
-// MergeRepairEntry[] the accept path pins on its rate event. See the diff-level plan
-// in docs/design/2026-07-02-kc-dedup-attribution-rewrite-spec.md §2.
+// YUK-543 — merge attribution repair. Accepting a KC merge repairs 9 downstream
+// attribution surfaces per absorbed from_id and pins a forensic MergeRepairEntry
+// on the rate event. Details: docs/design/2026-07-02-kc-dedup-attribution-rewrite-spec.md §2.
 //
-// DELIBERATELY LEFT STALE (documented, not silent): learning_session.scope_knowledge_ids
-// (schema.ts:757-762) — an in-flight placement probe holding an absorbed KC just skips it
-// for that session's remaining duration (session-ephemeral, spec §2 table).
-//
-// DELIBERATELY NEVER REWRITTEN: learning_record.knowledge_ids — the append-only ATOMIC evidence
-// layer. It is the feasibility precondition for a future unmergeKnowledge() (re-fit new per-KC
-// parameters from un-aggregated observations, Sentry-fingerprint style) and MUST stay outside
-// every rewrite pass, including this one (YUK-543 review L2; see the schema.ts contract comment).
-// =============================================================================
+// DELIBERATELY LEFT STALE: learning_session.scope_knowledge_ids — an in-flight
+// placement probe just skips the absorbed KC for that session.
+// NEVER REWRITTEN: learning_record.knowledge_ids, the append-only evidence layer,
+// because a future unmerge must re-fit from un-aggregated observations.
 
-// ── knowledge_edge — canonical event-native rewire ─────────────────────
-// Mirrors applyEdgeSupersede (propose_edge.ts): archive-old + create-new via the imperative
-// edges.ts functions PAIRED with fold-visible `generate` events, so the LIVE edge fold reproduces
-// every merge-driven endpoint change (a raw UPDATE would be invisible to the fold → resurrected on
-// rebuild). Actor user/self matches the merge accept.
+// Canonical event-native rewire: archive-old + create-new through the edges.ts
+// throat, paired with fold-visible events so replay reproduces it. Actor user/self
+// matches the merge accept.
 
 type EdgeRewired = MergeRepairEntryT['edges_rewired'][number];
 
+/** Rewire a merge's incident edges with fold-visible archive/create events. */
 export async function rewireKnowledgeEdges(
   tx: Tx,
   fromId: string,
@@ -590,25 +527,18 @@ export async function rewireKnowledgeEdges(
   now: Date,
   mergeFromIds: ReadonlySet<string>,
 ): Promise<EdgeRewired[]> {
-  // YUK-543 review L1 — sorted advisory locks on both merge endpoints ('knowledge_edge:<id>'
-  // namespace, mirroring the four retire fns' pattern). No async edge writer exists today (edge
-  // writes are propose/accept human-gated; the grading worker never writes edges), so this is
-  // doctrine consistency + future-proofing, not a live race fix. The symmetric propose-side lock is
-  // a Linear follow-up; if any background edge writer is ever introduced, that follow-up upgrades
-  // to REQUIRED (two READ COMMITTED txs each passing the topology gate then merging = silent cycle).
+  // Sorted advisory locks on both merge endpoints, mirroring the retire functions'
+  // pattern. No async edge writer exists today, so this is future-proofing; a
+  // background edge writer would make it REQUIRED against concurrent cycles.
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, intoId]);
 
   const result: EdgeRewired[] = [];
   const touching = await listLiveEdgesTouchingNode(tx, fromId);
   if (touching.length === 0) return result;
 
-  // Running live-prerequisite mesh for the ADR-0034 topology gate. UNBOUNDED read (review R1):
-  // cycle detection is only sound against the COMPLETE live prerequisite set — the general-purpose
-  // listKnowledgeEdges truncates at LIST_LIMIT=500 (created_at DESC), which beyond 500 edges drops
-  // the OLDEST backbone edges and turns a must-reject rewire into a false 'ok'. Same unbounded-scan
-  // shape propose_edge.ts uses for its own topology mesh. Freshly read (reflects prior from_ids'
-  // rewrites in this tx) and mutated in-memory as we archive/create within THIS call, so two edges
-  // that TOGETHER form a cycle are caught.
+  // Unbounded live-prerequisite mesh for the ADR-0034 topology gate: cycle detection
+  // is only sound against the complete set, and the list reader truncates. Freshly
+  // read and mutated in memory so edges that together form a cycle are caught.
   const livePrereq: TopologyEdge[] = await listAllLivePrerequisiteEdges(tx);
   const endpointIds = [
     ...new Set([
@@ -632,8 +562,7 @@ export async function rewireKnowledgeEdges(
     );
     if (i >= 0) livePrereq.splice(i, 1);
   };
-  // Map an endpoint through the FULL merge (every absorbed from_id → intoId), so a loser→loser edge
-  // collapses to a self-loop rather than pointing at a just-archived sibling.
+  // Map through the FULL merge so a loser→loser edge collapses to a self-loop.
   const mapEndpoint = (id: string) => (mergeFromIds.has(id) ? intoId : id);
 
   for (const edge of touching) {
@@ -642,8 +571,7 @@ export async function rewireKnowledgeEdges(
     const newFrom = mapEndpoint(oldFrom);
     const newTo = mapEndpoint(oldTo);
 
-    // Self-loop after rewrite (edge already touched intoId, or a loser→loser edge): the edge
-    // collapses — archive-only, no create (a self-edge is never meaningful).
+    // Self-loop after rewrite: archive-only; a self-edge is never meaningful.
     if (newFrom === newTo) {
       const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
         created_at: now,
@@ -657,9 +585,8 @@ export async function rewireKnowledgeEdges(
       continue;
     }
 
-    // ADR-0034 topology gate on the REWRITTEN prerequisite edge (pure). reject (cycle / direction
-    // contradiction) → THROW → abort the whole merge tx (surfaces the conflict to the human at
-    // accept time; spec §4 decision 5b). warn (transitive redundancy) → proceed.
+    // ADR-0034 gate on the rewritten prerequisite edge. reject → abort the merge
+    // tx (surfaced to the human); warn (transitive redundancy) → proceed.
     if (edge.relation_type === 'prerequisite') {
       const meshExcludingSelf = livePrereq.filter(
         (e) => !(e.from_knowledge_id === oldFrom && e.to_knowledge_id === oldTo),
@@ -677,7 +604,6 @@ export async function rewireKnowledgeEdges(
       }
     }
 
-    // Archive the old edge (+ fold event), then create the rewritten edge (+ fold event).
     const archived = await archiveKnowledgeEdgeFromEvents(tx, edge.id, {
       created_at: now,
       reasoning: 'merge: KC attribution rewrite (YUK-543)',
@@ -690,10 +616,9 @@ export async function rewireKnowledgeEdges(
     let newEdgeId: string | null = null;
     let outcome: EdgeRewired['outcome'];
     try {
-      // SAVEPOINT: a 23505 from createKnowledgeEdge (the rewritten key already holds the UNIQUE slot)
-      // aborts the WHOLE merge tx in Postgres. Wrapping the create + its fold event in a nested tx
-      // (savepoint) rolls back ONLY the failed create, keeping the outer merge tx usable — the old
-      // edge's archive (written above, outside this savepoint) survives.
+      // SAVEPOINT: a 23505 from createKnowledgeEdge would abort the whole merge tx.
+      // A nested tx rolls back only the failed create; the old edge's archive above
+      // survives.
       newEdgeId = await tx.transaction(async (sp) => {
         const id = await createKnowledgeEdge(sp, {
           from_knowledge_id: newFrom,
@@ -717,12 +642,9 @@ export async function rewireKnowledgeEdges(
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'conflict') {
-        // YUK-543 review R2 — `knowledge_edge_unique` is GLOBAL (no partial WHERE), so a 23505 has
-        // TWO distinct causes that must not be conflated: a LIVE duplicate (the relationship is
-        // already represented → archive-as-duplicate is correct) vs an ARCHIVED TOMBSTONE merely
-        // holding the UNIQUE slot (no live duplicate exists — and the source edge is already
-        // archived above, so treating it as a duplicate would silently evaporate a live
-        // relationship). Disambiguate with a keyed SELECT and REVIVE the tombstone in that case.
+        // knowledge_edge_unique is GLOBAL, so a 23505 has two causes: a LIVE
+        // duplicate (archive-as-duplicate is correct) or an archived TOMBSTONE
+        // holding the slot (revive it, else a live relationship silently evaporates).
         const holder = (
           await tx
             .select({ id: knowledge_edge.id, archived_at: knowledge_edge.archived_at })
@@ -737,10 +659,8 @@ export async function rewireKnowledgeEdges(
             .limit(1)
         )[0];
         if (holder && holder.archived_at !== null) {
-          // Tombstone → reactivate through the edges.ts throat + anchor a fold-legible
-          // generate(create) event to the revived edge id. The fold's create branch re-projects the
-          // row as live from that event (created_at/created_by/weight/reasoning refreshed in the
-          // row to byte-match the fold output — row == fold holds; see reactivateKnowledgeEdge).
+          // Revive through the edges.ts throat and anchor a fold-legible
+          // generate(create) event; the fold re-projects the row from that event.
           await reactivateKnowledgeEdge(tx, holder.id, {
             weight: edge.weight,
             reasoning: edge.reasoning,
@@ -758,8 +678,8 @@ export async function rewireKnowledgeEdges(
             });
           }
         } else {
-          // LIVE duplicate — the relationship survives on the existing edge; the old edge's archive
-          // alone is the correct, fold-legible outcome (no create event for the discarded create).
+          // LIVE duplicate: the existing edge represents the relationship; the
+          // old edge's archive is the correct fold-legible outcome.
           newEdgeId = null;
           outcome = 'archived_duplicate';
         }
@@ -782,12 +702,9 @@ export async function rewireKnowledgeEdges(
 }
 
 /**
- * YUK-543 — repair ALL 9 downstream attribution surfaces for ONE absorbed `fromId` → `intoId`,
- * returning the MergeRepairEntry. The SINGLE source of merge-repair mechanics, shared by merge accept
- * (per from_id in the accept tx) AND scripts/backfill-merge-attribution.ts (per pre-fix orphan) — so
- * the retroactive backfill and the live accept path can never diverge in HOW they repair. `mergeFromIds`
- * is the FULL set of absorbed ids mapping to `intoId` (so loser→loser knowledge_edges collapse rather
- * than dangling). Must run inside a tx.
+ * YUK-543 — repairs all 9 downstream attribution surfaces for one absorbed
+ * `fromId` → `intoId` and returns the MergeRepairEntry. Shared by merge accept and
+ * the retroactive backfill so both repair the same way. Must run in a tx.
  */
 export async function repairMergeAttributionForFromId(
   tx: Tx,
@@ -796,11 +713,9 @@ export async function repairMergeAttributionForFromId(
   now: Date,
   mergeFromIds: ReadonlySet<string>,
 ): Promise<MergeRepairEntryT> {
-  // YUK-497 review F1 — global learning-state write lock at ENTRY for every caller of the
-  // shared repair path. merge accept already holds it (reentrant no-op); the background
-  // merge_attribution_sweep / merge-attribution-backfill txs previously reached it mid-tx
-  // AFTER rewireKnowledgeEdges' knowledge_edge locks → G↔knowledge_edge cycle against a
-  // live merge accept (PG 40P01 aborting the user-facing side).
+  // YUK-497 — acquire the global learning-state write lock at ENTRY. Merge accept
+  // already holds it (reentrant no-op); background sweeps used to take it after
+  // rewireKnowledgeEdges' edge locks, creating a G↔knowledge_edge deadlock.
   await acquireLearningStateWriteLock(tx);
   return {
     from_id: fromId,
@@ -857,11 +772,6 @@ async function prepareKnowledgeMerge(
   }
   return repairLog;
 }
-
-// =============================================================================
-// acceptProposal / dismissProposal — read propose event by id, apply mutation
-// (accept) or write rate=dismiss (dismiss). Returns AcceptResult for accept.
-// =============================================================================
 
 export type AcceptResult =
   | { kind: 'propose_new_applied'; new_node_id: string }
@@ -936,13 +846,8 @@ async function assertNotAlreadyRated(db: DbLike, proposalId: string): Promise<vo
   }
 }
 
-// YUK-471 W1 PR-A2b — the set of knowledge ids an accept TOUCHED, derived from the
-// AcceptResult. The accept-time parity assert re-projects EACH and compares against the
-// live row the imperative path just wrote (in the same tx):
-//   - propose_new → the new node
-//   - reparent / archive → the mutated node
-//   - merge → into_id (merged_from appended) + each from_id (now archived)
-//   - split → from_id (now archived) + each new node
+// YUK-471 — knowledge ids touched by an accept, re-projected and compared against
+// the row the imperative path wrote in the same tx.
 function affectedNodeIds(result: AcceptResult): string[] {
   switch (result.kind) {
     case 'propose_new_applied':
@@ -956,33 +861,27 @@ function affectedNodeIds(result: AcceptResult): string[] {
     case 'split_applied':
       return [result.archived_id, ...result.new_node_ids];
     default: {
-      // Exhaustiveness guard — tsconfig has noImplicitReturns OFF, so a new AcceptResult kind
-      // would otherwise slip through returning undefined. `never` forces a compile error here
-      // until the new kind is handled above. (OCR #580.)
+      // Exhaustiveness guard: noImplicitReturns is off, so `never` forces a compile
+      // error when a new AcceptResult kind is added.
       const _exhaustive: never = result;
       return _exhaustive;
     }
   }
 }
 
+/** Apply a pending knowledge proposal in one locked transaction. */
 export async function acceptProposal(db: Db, proposalId: string): Promise<AcceptResult> {
-  // Codex P1-F — concurrent double-accept must not produce duplicate apply
-  // side effects. The status check (assertNotAlreadyRated) and the mutation
-  // apply must share a transaction with SELECT … FOR UPDATE on the propose
-  // event row; otherwise two concurrent callers both pass the pre-check and
-  // both apply. The row lock serialises callers; the second sees the rate
-  // event written by the first and throws not-pending.
+  // Concurrent double-accept must not duplicate apply side effects. The status
+  // check and mutation apply share a tx with SELECT … FOR UPDATE on the propose
+  // event row; the second caller sees the first rate event and throws not-pending.
   let staleError: Error | null = null;
   try {
     return await db.transaction(async (tx) => {
-      // SELECT … FOR UPDATE on the propose event row — concurrent callers
-      // serialise here.
       await tx.execute(sql`SELECT id FROM event WHERE id = ${proposalId} FOR UPDATE`);
 
       const propose = await readProposeEvent(tx, proposalId);
       await assertNotAlreadyRated(tx, proposalId);
 
-      // Reconstruct mutation payload from event shape
       const mutationKind: string =
         propose.action === 'propose'
           ? 'propose_new'
@@ -995,20 +894,17 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         ...(payloadBody as Record<string, unknown>),
       } as KnowledgeMutationPayload;
 
-      // YUK-471 W1 PR-A2b / YUK-728 — the SINGLE materialization timestamp. Existing rows are
-      // locked first so timestamp order matches their actual serialized write order, including
-      // subject-root rename/reset transactions that share the same knowledge row. The instant is
-      // then threaded through (1) applyX and (2) rate=accept for byte-exact fold == row parity.
-      // Learning-state repair and revert writers acquire G before knowledge rows.
-      // Taking it inside merge preparation would be too late: these row locks are already held.
+      // YUK-471 / YUK-728 — one materialization timestamp. Lock existing rows first
+      // so timestamp order matches serialized write order; thread the instant through
+      // apply and rate=accept for byte-exact fold == row parity.
       if (apply.mutation === 'merge') await acquireLearningStateWriteLock(tx);
       await lockMutationRows(tx, apply);
       const now = new Date();
 
       let result: AcceptResult;
       let reparentEmbedding: ReparentEmbeddingSnapshot | null = null;
-      // YUK-543 — the merge-repair breadcrumb captured during preparation, threaded onto the accept
-      // rate event's payload below and used to drive the post-rate learning_item parity assert.
+      // YUK-543 — merge-repair breadcrumb pinned on the rate event and used by
+      // the post-rate learning_item parity assert.
       let mergeRepair: MergeRepairEntryT[] | null = null;
       try {
         switch (apply.mutation) {
@@ -1075,24 +971,16 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       } catch (e) {
         const msg = (e as Error).message;
         if (/^stale/i.test(msg)) {
-          // Capture so we can write the rollback rate event OUTSIDE the
-          // transaction (the tx is about to roll back; we want the rollback
-          // marker to survive). The outer catch handles the write.
+          // Capture so the rollback marker can be written outside the tx that is
+          // about to roll back.
           staleError = e as Error;
         }
         throw e;
       }
 
-      // YUK-471 W1 PR-A2b — thread the minted node ids onto the rate=accept event
-      // AND into the reverse index, both in THIS tx. The minted ids are the only
-      // record of which knowledge.id a propose_new / split materialized (the propose
-      // event itself never carried them). materialized_ids on the rate payload lets
-      // the node reducer reproduce those ids on replay; the materialized_id_index
-      // row gives the reducer's reverse lookup (nodeId → anchor propose event) so a
-      // node folded BY its id finds where replay starts.
-      //   - propose_new_applied → { knowledge: [new_node_id] }
-      //   - split_applied       → { knowledge: new_node_ids } (N minted)
-      //   - reparent/merge/archive → no minted ids (omit materialized_ids entirely)
+      // YUK-471 — thread minted node ids onto the rate=accept event and the reverse
+      // index (nodeId → anchor propose event) for replay. Only propose_new/split mint
+      // ids; reparent/merge/archive omit materialized_ids.
       let mintedKnowledgeIds: string[];
       switch (result.kind) {
         case 'propose_new_applied':
@@ -1107,10 +995,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
       const materializedIds =
         mintedKnowledgeIds.length > 0 ? { knowledge: mintedKnowledgeIds } : undefined;
 
-      // Same-tx reverse-index write — anchor = the propose event id (proposalId).
-      // The node reducer's Q2 resolves a minted nodeId → this anchor, then gathers
-      // `id = anchor OR caused_by = anchor` (= the propose event + its accepting
-      // rate, which carries materialized_ids). First-write-wins / idempotent.
+      // First-write-wins reverse-index write; anchor = the propose event id.
       for (const mintedId of mintedKnowledgeIds) {
         await upsertMaterializedIdIndex(tx, {
           materialized_id: mintedId,
@@ -1119,9 +1004,8 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
         });
       }
 
-      // Apply succeeded — write rate=accept event chained to the propose event.
-      // created_at = the shared `now` (same instant the row was stamped) so
-      // fold(events) == row reproduces created_at/updated_at exactly.
+      // Accept event uses the shared `now` so fold(events) reproduces the row's
+      // created_at/updated_at exactly.
       await writeEvent(tx, {
         id: newId(),
         session_id: null,
@@ -1153,8 +1037,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
     });
   } catch (e) {
     if (staleError) {
-      // Write the rollback marker post-rollback so subsequent reads see
-      // status='stale' rather than perpetual pending. Best-effort.
+      // Best-effort rollback marker so later reads see status='stale', not pending.
       try {
         await writeEvent(db, {
           id: newId(),
@@ -1179,6 +1062,7 @@ export async function acceptProposal(db: Db, proposalId: string): Promise<Accept
   }
 }
 
+/** Write rate=dismiss; idempotent when the proposal is already rated. */
 export async function dismissProposal(db: Db, proposalId: string): Promise<void> {
   // Idempotent on already-rated: skip if a rate event exists.
   const existing = await db
@@ -1194,9 +1078,7 @@ export async function dismissProposal(db: Db, proposalId: string): Promise<void>
     .limit(1);
   if (existing.length > 0) return;
 
-  // Codex P2-I — verify the event is actually a proposal, not just any
-  // event id. Without this guard, calling dismiss on, e.g., an attempt
-  // event id would still write a rate event chained to it — state pollution.
+  // Guard against dismissing an arbitrary event id; only proposals may be rated.
   const proposeRows = await db
     .select({ id: event.id, action: event.action, subject_kind: event.subject_kind })
     .from(event)

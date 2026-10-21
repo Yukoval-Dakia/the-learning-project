@@ -98,7 +98,7 @@ function windowText(
 }
 
 /**
- * R2-1: redact the FULL source text once (page section or whole document),
+ * Redact the FULL source text once (page section or whole document),
  * then window the REDACTED text — never slice raw text. A window that starts
  * mid-identifier (「电话：」on the previous window boundary) would leak the
  * bare number if redaction ran on the slice; redacting the whole text keeps
@@ -115,7 +115,7 @@ async function executeReadSource(
 ): Promise<ReadSourceOutput> {
   const input = ReadSourceInputSchema.parse(raw);
 
-  // Scope enforcement (P2-5, fails closed): the bound session's own
+  // Scope enforcement (fails closed): the bound session's own
   // source_document is the only document this tool may read.
   const scopeId = requireIngestionScope(ctx);
   const [session] = await ctx.db

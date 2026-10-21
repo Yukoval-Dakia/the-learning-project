@@ -48,12 +48,11 @@ import type { WriteEventInput } from '@/kernel/events';
 /**
  * WorkflowJudge auto-enroll path.
  *
- * Off by default: with the flag unset the function returns before any tagging,
- * judging, or enrollment, so every block stays 'draft' for human review. When
- * enabled it tags and judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks;
- * 'auto' blocks are enrolled through the same enrollCapturedBlock owner as the
- * human path (only provenance differs), and 'review' blocks stay untouched. It
- * runs between extraction and review and never closes the session.
+ * Off by default: blocks stay draft for human review. When enabled, it tags and
+ * judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks; 'auto' blocks are
+ * enrolled through the same enrollCapturedBlock owner as the human path (only
+ * provenance differs), and 'review' blocks stay untouched. It runs between
+ * extraction and review and never closes the session.
  */
 import { writeEvent } from '@/kernel/events';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
@@ -146,7 +145,7 @@ export async function runAutoEnrollForSession(
   // enroll mode.
   const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
 
-  // Load the session; it must be an ingestion session in an extractable state.
+  // This session must be an ingestion session in an extractable state.
   const sessionRows = await params.db
     .select()
     .from(learning_session)
@@ -222,7 +221,6 @@ export async function runAutoEnrollForSession(
       ? structuredToPromptMarkdown(block.structured)
       : (block.extracted_prompt_md ?? '');
     if (questionMd.trim().length === 0) {
-      // Nothing to tag → leave for human review.
       routedToReview += 1;
       continue;
     }
@@ -556,7 +554,7 @@ export async function runAutoEnrollForSession(
         .set({
           imported_question_id: questionId,
           imported_attempt_event_id: enroll.attemptEventId,
-          // Distinct from human 'imported' so auto-enrollment stays revertible..
+          // Distinct from human 'imported' so auto-enrollment stays revertible.
           status: 'auto_enrolled',
           updated_at: now,
           version: sql`${question_block.version} + 1`,

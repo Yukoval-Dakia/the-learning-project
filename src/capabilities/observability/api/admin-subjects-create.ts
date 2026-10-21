@@ -1,6 +1,5 @@
 // Thin-create subject endpoint. The server module owns the transaction and
-// idempotency; this layer only parses the body and maps status:
-// created 201, replayed 200, invalid 400, name conflict 422.
+// idempotency; this layer only parses the body and maps the write result to HTTP.
 
 import { z } from 'zod';
 import { db } from '@/db/client';
