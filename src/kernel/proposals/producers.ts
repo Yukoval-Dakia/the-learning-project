@@ -277,6 +277,14 @@ export interface WriteArchiveProposalInput extends CommonProducerInput {
   };
 }
 
+/**
+ * One archive proposal per (subject kind, subject id) — the cooldown key both
+ * the writer below and propose-side dedup gates must use.
+ */
+export function archiveProposalCooldownKey(subjectKind: string, subjectId: string): string {
+  return `archive:${subjectKind}:${subjectId}`;
+}
+
 export async function writeArchiveProposal(
   db: DbLike,
   input: WriteArchiveProposalInput,
@@ -295,7 +303,7 @@ export async function writeArchiveProposal(
         ...input.proposed_change,
       },
       rollback_plan: { action: 'restore archived entity through correction/revive flow' },
-      cooldown_key: `archive:${input.target_subject_kind}:${input.target_subject_id}`,
+      cooldown_key: archiveProposalCooldownKey(input.target_subject_kind, input.target_subject_id),
       // P5.6 / YUK-178 — pass through the model-labeled discriminator; absent →
       // proactive (so non-tool archive callers keep absence === proactive).
       ...(input.suggestion_kind ? { suggestion_kind: input.suggestion_kind } : {}),

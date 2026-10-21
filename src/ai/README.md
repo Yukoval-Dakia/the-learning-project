@@ -33,13 +33,13 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 
 ## Tool 设计
 
-产品内 tool 的长期领域设计见 [Agent Context Tools Design](../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现保留 `KnowledgeReviewTask` 的 legacy `write_proposal` MCP tool，同时已经落地统一 Domain Tool Registry、MCP bridge、M1/M2 read tools，以及 Wave 3 / T-D4 proposal/write tools。
+产品内 tool 的长期领域设计见 [Agent Context Tools Design](../../docs/superpowers/specs/2026-05-17-agent-context-tools-design.md)。当前实现走统一 Domain Tool Registry + MCP bridge：KnowledgeReviewTask 的私有 `write_proposal` custom mount 已删除（YUK-1553），所有 propose 工具经 registry 注册。
 
 当前已落地的 MCP/tool-call 状态：
 
 - `src/server/ai/runner.ts` 支持 `piToolMounts`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 pi in-process `agentLoop`（`pi-agent-adapter.ts`）。
-- Knowledge-owned TaskSpec 仍只给 legacy `KnowledgeReviewTask` 开了 `allowedTools: ['mcp__loom__write_proposal']`；新 DomainTool callers 应使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist。
-- `src/server/knowledge/review.ts` 在每次 `/api/knowledge/review` 请求内经 `piCustomTool` 暴露 `write_proposal` 一个 proposal tool。
+- DomainTool callers 使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist；`KnowledgeReviewTask` 的 `knowledge_review` 面只挂 readers + `propose_knowledge_mutation` / `propose_knowledge_edge`。
+- `src/capabilities/knowledge/server/review.ts` 在每次 review 请求内经 `piDomainMount` 暴露 `knowledge_review` 面（共享 registry 工具）。
 - capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`piDomainMount` 把 registry 工具编译成 pi `AgentTool`，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - Concrete DomainTools live with their owning capabilities（knowledge / agency / ingestion / practice / copilot 包内 `tools`）；`src/server/ai/tools/` 只保留共享基础设施（registry、mcp-bridge、types、allowlists、budgets、context-throttle）。YUK-885 过渡期仍居中央的 7 个工具文件（proposal-tools / context-readers / get-attempt-context / query-mistakes / query-questions / write-quiz / tool-quiz-core）由 `audit-architecture-ownership` 的 transitional allowlist 显式登记，新增中央工具会被审计拒绝。
 - generic `/api/ai/[task]` 已整体退场；不要为新 task 建通用 dispatch 入口。

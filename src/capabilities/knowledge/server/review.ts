@@ -1,54 +1,43 @@
-// KnowledgeReviewTask — Maintenance Agent runtime.
+// KnowledgeReviewTask — Maintenance Agent runtime (pi agentLoop lane).
 //
-// 2026-05-17 migrated from Vercel AI SDK (`streamText` + inline ToolSet) to
-// Claude Agent SDK with an in-process MCP server. The tool dispatch logic
-// (tree-shape vs mesh-shape) is preserved verbatim; only the agent runtime
-// changes.
+// YUK-1553 — the private `mcp__loom__write_proposal` custom mount is RETIRED.
+// The task now mounts the registered `knowledge_review` DomainTool surface
+// through `piDomainMount` → `executeDomainToolCall`, so its model calls the
+// same `propose_knowledge_mutation` / `propose_knowledge_edge` shared tools
+// every other surface uses (registry input/output schemas, bridge logging,
+// unified cooldown gate). The `runWriteProposal` compatibility adapter below
+// keeps the existing programmatic caller contract — it forwards to the same
+// registered tool implementations rather than owning a parallel path.
 //
 // Flow:
-//   1. Build the input payload (tree + recent failure attempts).
-//   2. Construct an in-process MCP server with one tool: `write_proposal`.
-//      The handler dispatches by `payload.mutation` (or top-level
-//      `mutation` arg) into:
-//        - propose_knowledge_edge → ProposeKnowledgeEdge event.
-//        - anything else → writeKnowledgeProposeEvent (tree mutation).
-//   3. Call `streamTask` which routes through the pi agentLoop, exposing the
-//      mounted tool as `mcp__loom__write_proposal`.
-//   4. Return the streamed Response.
+//   1. Build the input payload (tree + recent failure attempts + agent notes).
+//   2. `streamTask` runs the pi agentLoop with the domain mount exposing the
+//      `knowledge_review` surface as `mcp__loom__*` tools; the bridge writes
+//      the authoritative tool_call_log row per call.
+//   3. Return the streamed Response.
 //
-// The registry's `allowedTools: ['mcp__loom__write_proposal']` matches the
-// wire name so the adapter doesn't strip the tool from the catalog before
-// the model sees it.
+// Proposals are proposal-only (event(action='propose') rows); the user accepts
+// in the inbox — no direct mutation, per the knowledge capability boundary.
 
-import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
-import { validateProposalQuality } from '@/capabilities/knowledge/server/rubric-validator';
 import { newId } from '@/core/ids';
-import { isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
-import type { KnowledgeEdgeProposalChangeT } from '@/core/schema/proposal';
-import { parseAiProposalPayload } from '@/core/schema/proposal';
-import type { Db, Tx } from '@/db/client';
-import { event, knowledge, knowledge_edge, proposal_signals } from '@/db/schema';
-import { getCorrectionStatuses } from '@/kernel/events';
-// P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
-// the legacy MCP edge path (always actor 'dreaming' → isAgent: true). Bounded
-// digest read; cold-start / below-threshold → no-op bump.
-import type { AdaptiveGateInput } from '@/kernel/proposals/adaptive-bias';
-import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
-import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
-import { writeAiProposal } from '@/kernel/proposals/writer';
+import type { Db } from '@/db/client';
+import { knowledge } from '@/db/schema';
 import { readAgentNotes } from '@/kernel/read-models/agent-note-hints';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
-import { writeToolCallLog } from '@/server/ai/log';
+import { DOMAIN_TOOL_MCP_SERVER_NAME, resolveDomainToolNames } from '@/kernel/tools/allowlists';
+import type { ToolContext } from '@/kernel/tools/types';
 import { streamTask } from '@/server/ai/runner';
-import { type PiToolMount, piCustomTool } from '@/server/ai/tools/pi-tools';
+import { piDomainMount } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
+import {
+  type KnowledgeMutationOutput,
+  type ProposeKnowledgeEdgeOutput,
+  proposeKnowledgeEdgeTool,
+  proposeKnowledgeMutationTool,
+} from './tools/proposal-tools';
 
 const RECENT_MISTAKES_LIMIT = 100;
-type DbLike = Db | Tx;
 
 async function buildReviewInput(db: Db) {
   const tree = await db
@@ -124,10 +113,17 @@ function resolveSingleTreeDomain(tree: Array<{ domain: string | null }>): string
   return domains.size === 1 ? ([...domains][0] ?? null) : null;
 }
 
-// ---------- Pure dispatcher (testable without the SDK) ----------
+// ── runWriteProposal compatibility adapter ──────────────────────────────────
 //
-// Exposed so tests can drive the dispatch logic on different payload shapes
-// without spawning the Claude CLI subprocess.
+// Existing programmatic callers (e.g. the maintenance nightly db tests) still
+// invoke `runWriteProposal` with the retired tool's arg shape
+// `{ mutation?, payload, reasoning, evidence_event_ids? }`, where the payload
+// object IS the mutation change (it carries `payload.mutation` as its
+// discriminator; `payload.mutation === 'propose_knowledge_edge'` selects the
+// mesh-edge path). This adapter forwards to the REGISTERED DomainTools — there
+// is exactly one proposal implementation now. Strict input schemas mean a
+// malformed payload throws a zod error instead of silently writing a
+// cast-shaped proposal event like the retired executor did.
 
 export interface WriteProposalArgs {
   mutation?: string;
@@ -169,574 +165,158 @@ export type WriteProposalResult =
       kind: 'rubric_rejected';
       gate: string;
       reason: string;
-    };
-
-interface ProposalGateCandidate {
-  kind: ProposalInboxRow['kind'];
-  cooldown_key: string;
-  equivalent_cooldown_keys?: string[];
-}
-
-function edgeCooldownKeys(
-  fromId: string,
-  toId: string,
-  relationType: string,
-): [string, ...string[]] {
-  const directional = `knowledge_edge:${fromId}|${toId}|${relationType}`;
-  if (!isSymmetricKnowledgeRelation(relationType)) return [directional];
-  const normalized = [fromId, toId].sort().join('|');
-  return [
-    `knowledge_edge:${normalized}|${relationType}`,
-    directional,
-    `knowledge_edge:${toId}|${fromId}|${relationType}`,
-  ];
-}
-
-function proposalGateCandidate(args: WriteProposalArgs): ProposalGateCandidate | null {
-  const edgePayload =
-    args.mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(args.payload)
-      ? extractEdgePayload(args.payload)
-      : null;
-  if (edgePayload) {
-    const cooldownKeys = edgeCooldownKeys(
-      edgePayload.from_knowledge_id,
-      edgePayload.to_knowledge_id,
-      edgePayload.relation_type,
-    );
-    return {
-      kind: 'knowledge_edge',
-      cooldown_key: cooldownKeys[0],
-      equivalent_cooldown_keys: cooldownKeys,
-    };
-  }
-
-  if (typeof args.payload !== 'object' || args.payload === null) return null;
-  const p = args.payload as Record<string, unknown>;
-  if (
-    p.mutation === 'propose_new' &&
-    typeof p.parent_id === 'string' &&
-    typeof p.name === 'string'
-  ) {
-    return {
-      kind: 'knowledge_node',
-      cooldown_key: `knowledge_node:${p.parent_id}:${p.name}`,
-    };
-  }
-  if (p.mutation === 'archive' && typeof p.node_id === 'string') {
-    return {
-      kind: 'archive',
-      cooldown_key: `archive:knowledge:${p.node_id}`,
-    };
-  }
-  return null;
-}
-
-async function checkProposalGate(
-  db: DbLike,
-  candidate: ProposalGateCandidate,
-): Promise<Extract<
-  WriteProposalResult,
-  { kind: 'skipped_duplicate' | 'skipped_cooldown' }
-> | null> {
-  const now = new Date();
-  const signals = await lockProposalSignals(db, candidate);
-  const duplicate = await findPendingProposalForGate(db, candidate);
-  if (duplicate) {
-    return {
-      proposal_id: duplicate.id,
-      kind: 'skipped_duplicate',
-      cooldown_key: candidate.cooldown_key,
-    };
-  }
-  const activeSignal = signals
-    .filter((signal) => signal.cooldown_until && signal.cooldown_until > now)
-    .sort(
-      (left, right) =>
-        (right.cooldown_until?.getTime() ?? 0) - (left.cooldown_until?.getTime() ?? 0),
-    )[0];
-  if (activeSignal?.cooldown_until) {
-    const sourceProposal = await findLatestProposalForGate(db, candidate);
-    return {
-      proposal_id: sourceProposal?.id ?? activeSignal.id,
-      kind: 'skipped_cooldown',
-      cooldown_key: candidate.cooldown_key,
-      cooldown_until: activeSignal.cooldown_until.toISOString(),
-    };
-  }
-  return null;
-}
-
-async function lockProposalSignals(
-  db: DbLike,
-  candidate: ProposalGateCandidate,
-): Promise<Array<{ id: string; cooldown_until: Date | null }>> {
-  const cooldownKeys = candidate.equivalent_cooldown_keys ?? [candidate.cooldown_key];
-  await db.execute(sql`
-    INSERT INTO proposal_signals (
-      id,
-      kind,
-      cooldown_key,
-      accept_count,
-      dismiss_count,
-      acceptance_rate,
-      created_at,
-      updated_at
-    )
-    VALUES (
-      ${newId()},
-      ${candidate.kind},
-      ${candidate.cooldown_key},
-      0,
-      0,
-      0.5,
-      NOW(),
-      NOW()
-    )
-    ON CONFLICT (kind, cooldown_key) DO NOTHING
-  `);
-  // Symmetric edges previously wrote directional keys. Lock every equivalent
-  // signal in a stable order so an active legacy dismissal cannot be bypassed
-  // by the new canonical key (and concurrent forward/reverse calls cannot
-  // deadlock while acquiring the same row set).
-  const rows = await db
-    .select({
-      id: proposal_signals.id,
-      cooldown_until: proposal_signals.cooldown_until,
-    })
-    .from(proposal_signals)
-    .where(
-      and(
-        eq(proposal_signals.kind, candidate.kind),
-        inArray(proposal_signals.cooldown_key, cooldownKeys),
-      ),
-    )
-    .orderBy(proposal_signals.cooldown_key)
-    .for('update');
-  if (rows.length === 0) {
-    throw new Error(`proposal signal lock row missing: ${candidate.cooldown_key}`);
-  }
-  return rows;
-}
-
-async function findLatestProposalForGate(
-  db: DbLike,
-  candidate: ProposalGateCandidate,
-): Promise<{ id: string } | null> {
-  const rows = await findProposalRowsForGate(db, candidate);
-  return rows[0] ?? null;
-}
-
-async function findPendingProposalForGate(
-  db: DbLike,
-  candidate: ProposalGateCandidate,
-): Promise<{ id: string } | null> {
-  const proposalRows = await findProposalRowsForGate(db, candidate);
-  if (proposalRows.length === 0) return null;
-
-  const proposalIds = proposalRows.map((row) => row.id);
-  const latestRateByProposal = new Map<string, typeof event.$inferSelect>();
-  const rateRows = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'rate'),
-        inArray(event.caused_by_event_id, proposalIds),
-        isNotNull(event.caused_by_event_id),
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id));
-  for (const row of rateRows) {
-    const proposalId = row.caused_by_event_id;
-    if (proposalId && !latestRateByProposal.has(proposalId)) {
-      latestRateByProposal.set(proposalId, row);
     }
-  }
-
-  const correctionStatuses = await getCorrectionStatuses(db, proposalIds);
-  for (const row of proposalRows) {
-    const correctionStatus = correctionStatuses.get(row.id);
-    if (correctionStatus && correctionStatus.state !== 'active') continue;
-    if (!latestRateByProposal.has(row.id)) return row;
-  }
-  return null;
-}
-
-async function findProposalRowsForGate(
-  db: DbLike,
-  candidate: ProposalGateCandidate,
-): Promise<Array<{ id: string }>> {
-  const cooldownKeys = candidate.equivalent_cooldown_keys ?? [candidate.cooldown_key];
-  return await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        sql`${event.payload}->'ai_proposal'->>'kind' = ${candidate.kind}`,
-        inArray(sql<string>`${event.payload}->'ai_proposal'->>'cooldown_key'`, cooldownKeys),
-        // P5.4 / YUK-143 (RB-7) — exclude rubric-rejected (folded) propose
-        // events. They are terminal, NOT live-pending; counting them would lock
-        // out the very edge the rubric rejected and block a later valid
-        // proposal on the same (kind, cooldown_key). The marker is a
-        // `rubric_verdict: { ok:false }` sibling of ai_proposal on the payload.
-        sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
-        // ADR-0034 §2 / YUK-344 — exclude TOPOLOGY-rejected (folded) propose
-        // events too. A topology reject fold carries a `topology_verdict` marker
-        // with status 'reject' and NO rubric_verdict key, so the rubric filter
-        // above misses it. Counting one here would lock out the same
-        // (kind, cooldown_key) and block a later valid proposal — the same
-        // terminal-but-treated-as-pending bug RB-7 forbids. Mirrors the
-        // rubric_verdict predicate; the marker is a
-        // `topology_verdict: { status:'reject' }` sibling of ai_proposal.
-        sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
-      ),
-    )
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(20);
-}
+  // YUK-1553 — the shared tools' own world-state skips that the retired
+  // dispatcher never saw (node checks, cross-subject, parent-semantic
+  // duplicate, edge_not_found, invalid_payload). `status` carries the shared
+  // tool's exact status string so callers see the typed outcome.
+  | {
+      kind: 'skipped';
+      status: string;
+      proposal_id?: string;
+      cooldown_key?: string;
+      reason?: string;
+    };
 
 export async function runWriteProposal(
   db: Db,
   args: WriteProposalArgs,
   ctx: WriteProposalCtx = {},
 ): Promise<WriteProposalResult> {
-  const candidate = proposalGateCandidate(args);
-  const edgePayload =
-    args.mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(args.payload)
-      ? extractEdgePayload(args.payload)
-      : null;
-  if (candidate) {
-    return await db.transaction(async (tx) => {
-      if (edgePayload) {
-        const duplicateLiveEdge = await findLiveDuplicateEdge(tx, edgePayload);
-        if (duplicateLiveEdge) {
-          return { kind: 'skipped:duplicate_live_edge', edge_id: duplicateLiveEdge.id };
-        }
-      }
-      const gate = await checkProposalGate(tx, candidate);
-      if (gate) return gate;
-      return await writeProposalAfterGate(tx, args, ctx);
-    });
+  // The retired private executor always ran as agent actor 'dreaming'
+  // (isAgent: true) — preserve that actor so rubric/adaptive gates keep the
+  // same agent-strict behavior for existing callers.
+  const toolCtx: ToolContext = {
+    db,
+    taskRunId: ctx.taskRunId ?? '',
+    callerActor: { kind: 'agent', ref: 'dreaming' },
+  };
+  const payload =
+    typeof args.payload === 'object' && args.payload !== null
+      ? (args.payload as Record<string, unknown>)
+      : {};
+  const mutation =
+    typeof args.mutation === 'string' && args.mutation.length > 0
+      ? args.mutation
+      : typeof payload.mutation === 'string'
+        ? payload.mutation
+        : undefined;
+  // The shared tool schemas re-parse inside execute, so raw objects are safe to
+  // hand over (`as never` mirrors the bridge's execInput cast); invalid shapes
+  // throw the typed zod error at the tool boundary.
+  if (mutation === 'propose_knowledge_edge') {
+    const out = await proposeKnowledgeEdgeTool.execute(toolCtx, {
+      ...payload,
+      reasoning: args.reasoning,
+      evidence_event_ids: args.evidence_event_ids,
+    } as never);
+    return mapEdgeResult(out);
   }
-
-  return await writeProposalAfterGate(db, args, ctx);
+  const out = await proposeKnowledgeMutationTool.execute(toolCtx, {
+    change: { ...payload, mutation },
+    reasoning: args.reasoning,
+    evidence_event_ids: args.evidence_event_ids,
+  } as never);
+  return mapMutationResult(out);
 }
 
-async function findLiveDuplicateEdge(
-  db: DbLike,
-  edgePayload: {
-    from_knowledge_id: string;
-    to_knowledge_id: string;
-    relation_type: string;
-  },
-): Promise<{ id: string } | null> {
-  const {
-    from_knowledge_id: fromId,
-    to_knowledge_id: toId,
-    relation_type: relationType,
-  } = edgePayload;
-  const endpoints = isSymmetricKnowledgeRelation(relationType)
-    ? or(
-        and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId)),
-        and(eq(knowledge_edge.from_knowledge_id, toId), eq(knowledge_edge.to_knowledge_id, fromId)),
-      )
-    : and(eq(knowledge_edge.from_knowledge_id, fromId), eq(knowledge_edge.to_knowledge_id, toId));
-  return (
-    (
-      await db
-        .select({ id: knowledge_edge.id })
-        .from(knowledge_edge)
-        .where(
-          and(
-            endpoints,
-            eq(knowledge_edge.relation_type, relationType),
-            isNull(knowledge_edge.archived_at),
-          ),
-        )
-        .limit(1)
-    )[0] ?? null
-  );
-}
-
-async function writeProposalAfterGate(
-  db: DbLike,
-  args: WriteProposalArgs,
-  ctx: WriteProposalCtx,
-): Promise<WriteProposalResult> {
-  const { mutation, payload, reasoning } = args;
-  const isEdgeProposal = mutation === 'propose_knowledge_edge' || isKnowledgeEdgeMutation(payload);
-  if (isEdgeProposal) {
-    const edgePayload = extractEdgePayload(payload);
-    if (!edgePayload) {
-      // Malformed edge proposal — fall through to dreaming path so we
-      // don't silently swallow it.
-      const id = await writeKnowledgeProposeEvent(db, {
-        payload: payload as KnowledgeMutationPayload,
-        reasoning,
-        task_run_id: ctx.taskRunId,
-      });
-      return { proposal_id: id, kind: 'tree_mutation' };
-    }
-    const cooldownKey = edgeCooldownKeys(
-      edgePayload.from_knowledge_id,
-      edgePayload.to_knowledge_id,
-      edgePayload.relation_type,
-    )[0];
-    const edgeProposalPayload = {
-      kind: 'knowledge_edge' as const,
-      target: { subject_kind: 'knowledge_edge' as const, subject_id: null },
-      reason_md: reasoning,
-      evidence_refs: [...new Set(args.evidence_event_ids ?? [])].map((id) => ({
-        kind: 'event' as const,
-        id,
-      })),
-      proposed_change: {
-        from_knowledge_id: edgePayload.from_knowledge_id,
-        to_knowledge_id: edgePayload.to_knowledge_id,
-        relation_type: edgePayload.relation_type as KnowledgeEdgeProposalChangeT['relation_type'],
-        weight: 1,
-      },
-      cooldown_key: cooldownKey,
-    };
-
-    // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this
-    // edge's relation before the floor. Bounded digest read on the same tx
-    // handle; cold-start / below-threshold → no-op.
-    //
-    // ND-5 (additive only): the L2 read must NEVER block L1. A throw from the
-    // digest read degrades to `adaptive = undefined` so `validateProposalQuality`
-    // runs the pure-L1 floor unchanged (the optional `adaptive` param omitted →
-    // pure L1, rubric-validator.ts:426). The downgrade remains a console signal;
-    // the MCP owner writes one authoritative tool_call_log for the completed
-    // proposal result below, avoiding a second row for this optional read.
-    let adaptive: AdaptiveGateInput | undefined;
-    try {
-      adaptive = await resolveEdgeGateBump(
-        db,
-        edgePayload.relation_type,
-        PROPOSAL_FEEDBACK_BUDGET,
-        PROPOSAL_GATE_BIAS_CONFIG,
-      );
-    } catch (err) {
-      adaptive = undefined;
-      console.error('[writeProposalAfterGate] resolveEdgeGateBump failed; degrading to pure-L1', {
-        relation_type: edgePayload.relation_type,
-        err,
-      });
-    }
-
-    // P5.4 / YUK-143 (RB-1) — shared rubric floor. Legacy MCP path always runs
-    // as actor_ref 'dreaming' → isAgent: true (§3.5). On reject the event is
-    // still written, marked rubric-rejected (RB-6), and excluded from
-    // live-pending dedup (RB-7).
-    const verdict = await validateProposalQuality(
-      parseAiProposalPayload(edgeProposalPayload),
-      db as Db,
-      { isAgent: true, actorRef: 'dreaming' },
-      adaptive,
-    );
-    if (!verdict.ok) {
-      // RB-6 evidence-first logging is owned by buildKnowledgeReviewMcpServer:
-      // it has the real runner task_run_id and records this structured return
-      // value once. Keeping logging outside this pure dispatcher avoids double
-      // counting direct callers and mirrors the DomainTool bridge boundary.
-      const eventId = await writeAiProposal(db, {
-        actor_ref: 'dreaming',
-        outcome: 'success',
-        payload: edgeProposalPayload,
-        task_run_id: ctx.taskRunId ?? null,
-        event_override: {
-          action: 'propose',
-          subject_kind: 'knowledge_edge',
-          payload: {
-            from_knowledge_id: edgePayload.from_knowledge_id,
-            to_knowledge_id: edgePayload.to_knowledge_id,
-            relation_type: edgePayload.relation_type,
-            weight: 1,
-            reasoning,
-            rubric_verdict: { ok: false, gate: verdict.gate, reason: verdict.reason },
-          },
-        },
-      });
+function mapEdgeResult(out: ProposeKnowledgeEdgeOutput): WriteProposalResult {
+  switch (out.status) {
+    case 'proposed':
+      return { kind: 'knowledge_edge_propose', event_id: out.proposal_id ?? '' };
+    case 'skipped:duplicate_live_edge':
+      return { kind: 'skipped:duplicate_live_edge', edge_id: out.edge_id ?? out.reason ?? '' };
+    case 'skipped:duplicate_pending':
       return {
-        event_id: eventId,
+        kind: 'skipped_duplicate',
+        proposal_id: out.proposal_id ?? '',
+        cooldown_key: out.cooldown_key ?? '',
+      };
+    case 'skipped:cooldown':
+      return {
+        kind: 'skipped_cooldown',
+        proposal_id: out.proposal_id ?? '',
+        cooldown_key: out.cooldown_key ?? '',
+        cooldown_until: out.cooldown_until ?? '',
+      };
+    case 'skipped:rubric_rejected':
+      return {
         kind: 'rubric_rejected',
-        gate: verdict.gate,
-        reason: verdict.reason,
+        event_id: out.proposal_id ?? '',
+        gate: out.gate ?? '',
+        reason: out.reason ?? '',
       };
-    }
-
-    const eventId = await writeAiProposal(db, {
-      actor_ref: 'dreaming',
-      outcome: 'success',
-      payload: edgeProposalPayload,
-      task_run_id: ctx.taskRunId ?? null,
-    });
-    return { event_id: eventId, kind: 'knowledge_edge_propose' };
-  }
-  const id = await writeKnowledgeProposeEvent(db, {
-    payload: payload as KnowledgeMutationPayload,
-    reasoning,
-    task_run_id: ctx.taskRunId,
-  });
-  return { proposal_id: id, kind: 'tree_mutation' };
-}
-
-// ---------- MCP server factory (built per-call, captures db) ----------
-
-const WriteProposalSchema = {
-  mutation: z.string().optional(),
-  payload: z.unknown().optional(),
-  reasoning: z.string(),
-  // resolveEvidence currently resolves refs one-by-one; cap agent input so a
-  // malformed tool call cannot amplify into an unbounded query sequence.
-  evidence_event_ids: z.array(z.string().min(1)).max(20).optional(),
-} as const;
-
-const WRITE_PROPOSAL_DESCRIPTION =
-  'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.';
-
-/**
- * Engine-neutral write_proposal executor — the pi `AgentTool` delegates here
- * so the tool_call_log write, iteration counter and error shape stay
- * byte-identical regardless of the tool-mount wrapper (YUK-1021).
- */
-function buildWriteProposalExecutor(db: Db, taskRunId: string) {
-  let toolIteration = 0;
-  return async (rawArgs: unknown): Promise<{ content: Array<{ type: 'text'; text: string }> }> => {
-    const input = rawArgs as WriteProposalArgs;
-    const startedAt = Date.now();
-    const iteration = ++toolIteration;
-    try {
-      const result = await runWriteProposal(db, input, { taskRunId });
-      try {
-        await writeToolCallLog(db, {
-          task_run_id: taskRunId,
-          task_kind: 'KnowledgeReviewTask',
-          tool_name: 'mcp__loom__write_proposal',
-          effect: 'propose',
-          input_json: input,
-          output_json: result,
-          iteration,
-          latency_ms: Date.now() - startedAt,
-          cost: 0,
-        });
-      } catch (logErr) {
-        console.error('[KnowledgeReviewTask] write_proposal result log failed', {
-          task_run_id: taskRunId,
-          err: logErr,
-        });
-      }
+    default:
       return {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
+        kind: 'skipped',
+        status: out.status,
+        ...(out.proposal_id ? { proposal_id: out.proposal_id } : {}),
+        ...(out.cooldown_key ? { cooldown_key: out.cooldown_key } : {}),
+        ...(out.reason ? { reason: out.reason } : {}),
       };
-    } catch (err) {
-      try {
-        await writeToolCallLog(db, {
-          task_run_id: taskRunId,
-          task_kind: 'KnowledgeReviewTask',
-          tool_name: 'mcp__loom__write_proposal',
-          effect: 'propose',
-          input_json: input,
-          output_json: {},
-          error_reason: err instanceof Error ? err.message : String(err),
-          iteration,
-          latency_ms: Date.now() - startedAt,
-          cost: 0,
-        });
-      } catch (logErr) {
-        console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
-          task_run_id: taskRunId,
-          err: logErr,
-        });
-      }
-      throw err;
-    }
-  };
+  }
 }
 
-/**
- * The write_proposal mount: a `custom` PiToolMount carrying the executor.
- * Wire name is `mcp__loom__write_proposal` so allowedTools/tool_call_log
- * stay verbatim. Exported so audit:tool-params can verify the produced
- * AgentTool's real converted parameters.
- */
-export function buildKnowledgeReviewPiMount(db: Db, taskRunId: string): PiToolMount {
-  const executor = buildWriteProposalExecutor(db, taskRunId);
-  return {
-    type: 'custom',
-    tools: [
-      piCustomTool(
-        'loom',
-        'write_proposal',
-        WRITE_PROPOSAL_DESCRIPTION,
-        WriteProposalSchema,
-        (args) => executor(args),
-      ),
-    ],
-  };
+function mapMutationResult(out: KnowledgeMutationOutput): WriteProposalResult {
+  switch (out.status) {
+    case 'proposed':
+      return { kind: 'tree_mutation', proposal_id: out.proposal_id ?? '' };
+    case 'skipped:duplicate_pending':
+      return {
+        kind: 'skipped_duplicate',
+        proposal_id: out.proposal_id ?? '',
+        cooldown_key: out.cooldown_key ?? '',
+      };
+    case 'skipped:cooldown':
+      return {
+        kind: 'skipped_cooldown',
+        proposal_id: out.proposal_id ?? '',
+        cooldown_key: out.cooldown_key ?? '',
+        cooldown_until: out.cooldown_until ?? '',
+      };
+    default:
+      return {
+        kind: 'skipped',
+        status: out.status,
+        ...(out.proposal_id ? { proposal_id: out.proposal_id } : {}),
+        ...(out.cooldown_key ? { cooldown_key: out.cooldown_key } : {}),
+        ...(out.reason ? { reason: out.reason } : {}),
+      };
+  }
 }
-
-// ---------- Public entrypoint ----------
 
 export interface StreamReviewTaskCtx {
   db: Db;
 }
 
-/**
- * Stream KnowledgeReviewTask. The pi agentLoop runs the tool-call loop
- * against the mounted write_proposal AgentTool; each call lands as a
- * knowledge / knowledge_edge propose event in the DB. Returns a Response
- * with streamed assistant text deltas.
- */
 export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Response> {
   const { input, subjectProfile } = await buildReviewInput(ctx.db);
   const taskRunId = newId();
-
   return streamTask('KnowledgeReviewTask', input, {
     db: ctx.db,
     subjectProfile,
-    piToolMounts: [buildKnowledgeReviewPiMount(ctx.db, taskRunId)],
+    piToolMounts: [
+      // YUK-1553 — the registered `knowledge_review` surface (readers +
+      // propose_knowledge_mutation + propose_knowledge_edge) through the shared
+      // DomainTool bridge. callerActor 'maintenance' matches this task's
+      // agent-notes channel and the producers' default actor_ref.
+      piDomainMount({
+        ctx: {
+          db: ctx.db,
+          taskRunId,
+          providerAttemptCaller: 'worker',
+          callerActor: { kind: 'agent', ref: 'maintenance' },
+        },
+        serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
+        toolNames: resolveDomainToolNames('knowledge_review'),
+        taskKind: 'KnowledgeReviewTask',
+      }),
+    ],
     taskRunId,
+    // The domain bridge already writes the authoritative tool_call_log row per
+    // call (input, output, error_reason); the runner's input-only stream log
+    // stays off so each call logs exactly once — same posture the retired
+    // private mount used.
     autoLogToolCalls: false,
   });
-}
-
-// ---------- mutation discriminator ----------
-
-interface KnowledgeEdgeMutationShape {
-  mutation: 'propose_knowledge_edge';
-  from_knowledge_id: string;
-  to_knowledge_id: string;
-  relation_type: string;
-}
-
-function isKnowledgeEdgeMutation(payload: unknown): payload is KnowledgeEdgeMutationShape {
-  if (typeof payload !== 'object' || payload === null) return false;
-  const p = payload as Record<string, unknown>;
-  return (
-    p.mutation === 'propose_knowledge_edge' &&
-    typeof p.from_knowledge_id === 'string' &&
-    typeof p.to_knowledge_id === 'string' &&
-    typeof p.relation_type === 'string'
-  );
-}
-
-function extractEdgePayload(
-  payload: unknown,
-): { from_knowledge_id: string; to_knowledge_id: string; relation_type: string } | null {
-  if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as Record<string, unknown>;
-  if (
-    typeof p.from_knowledge_id === 'string' &&
-    typeof p.to_knowledge_id === 'string' &&
-    typeof p.relation_type === 'string'
-  ) {
-    return {
-      from_knowledge_id: p.from_knowledge_id,
-      to_knowledge_id: p.to_knowledge_id,
-      relation_type: p.relation_type,
-    };
-  }
-  return null;
 }
