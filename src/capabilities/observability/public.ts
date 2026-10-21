@@ -8,6 +8,7 @@
  *   The config read face receives runtime facts through that factory.
  */
 
+export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
 export {
   type AdminSubjectListRow,
   type AdminSubjectTraits,
@@ -28,7 +29,6 @@ export {
   AdminConfigWriteBodySchema,
   AdminConfigWriteResponseSchema,
 } from './api/admin-config-write-contracts';
-
 export {
   AdminCostQuerySchema,
   AdminCostResponseSchema,
@@ -121,7 +121,6 @@ export {
   readEventDetail,
 } from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
-export { readProviderCostWindow } from './server/provider-cost-projection';
 export {
   AdminSubjectCasBodySchema,
   type AdminSubjectCasInput,

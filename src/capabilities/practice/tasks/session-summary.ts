@@ -3,7 +3,7 @@
 // Moved verbatim from the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
 // definition). The output is a plain-text ≤120-char summary — NOT JSON — so
 // the owned output contract mirrors the summary runner's consumer
-// (src/server/session/summary.ts): trim, clamp to 240 chars, require non-empty.
+// (src/capabilities/practice/server/session-summary.ts): trim, clamp to 240 chars, require non-empty.
 // This was the LAST transitional quarry entry; with it owned, the central
 // semantic quarry holds zero entries (quarry deletion is YUK-885).
 
@@ -31,7 +31,7 @@ ${causeTaxonomyList(profile)}
 禁止：任何阿拉伯数字、百分比、题数/次数/计数、套话（「继续加油」「再接再厉」）、夸夸（「做得很好」）、笼统（「多练习」）。要具体、可执行。`;
 }
 
-/** Session input contract (runSessionSummary, src/server/session/summary.ts). */
+/** Session input contract (runSessionSummary, src/capabilities/practice/server/session-summary.ts). */
 export interface SessionSummaryInput {
   session_id: string;
   duration_min: number | null;

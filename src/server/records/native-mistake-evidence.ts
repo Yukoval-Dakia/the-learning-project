@@ -108,7 +108,7 @@ function slotFace(slot: ResponseSlotT): string {
     case 'numeric':
       return slot.unit_hint ?? '';
     case 'sentence_breaks':
-      // 断句槽的题面即冻结明文（ADR-0074 D3a；位置语义见 position-gap.ts）。
+      // 断句槽的题面即冻结明文（位置语义见 position-gap.ts）。
       return slot.text;
     case 'select':
       return (
@@ -178,7 +178,7 @@ function responseText(slot: ResponseSlotT, entry: SlotResponseT): string {
             .join(' → ')
         : '';
     case 'sentence_breaks':
-      // 断句作答按原位置序呈现（code point 字缝索引，不解读为文字）。
+      // 断句作答按原位置序呈现（code point 字缝索引）。
       return entry.positions.map((position) => `#${position}`).join(' ');
     case 'select':
       if (entry.state === 'unknown') return '（无法辨认）';
@@ -194,7 +194,7 @@ function responseText(slot: ResponseSlotT, entry: SlotResponseT): string {
   }
 }
 
-/** Only the current page's immutable submissions are read. Missing or damaged evidence never uses live questions. */
+/** Read only the current page's immutable submissions; never fall back to live questions. */
 export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly FailureAttempt[]) {
   const native = failures.filter((failure) => failure.assessment !== undefined);
   const result = new Map<string, NativeMistakeEvidence>();
@@ -339,8 +339,8 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
           })
           .join('\n')
           .slice(0, 200);
-    // FailureAttempt's resolver has verified this effective evaluation against freezeEvaluationInput.
-    // Its snapshot supplies joint scope only; responses and attachments remain this submission's.
+    // The resolver has verified this effective evaluation against the frozen input.
+    // Its snapshot supplies joint scope only; responses and attachments stay local.
     const effective = ref.effective_evaluation_id
       ? evaluationById.get(ref.effective_evaluation_id)
       : undefined;
@@ -353,7 +353,7 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
       issuance.binding.part_ids.every((id) => parsedInput.data.issued_part_ids.includes(id))
         ? parsedInput.data.issued_part_ids
         : issuance.binding.part_ids;
-    // Group-only units belong to the frozen group scope, without an invented part or slot.
+    // Group-only units belong to the frozen group scope, without an invented part.
     const anchorSlotIds = new Set(answerable.map((slot) => slot.slot_id));
     let issuedUnits: ScoringUnitT[] = [];
     try {

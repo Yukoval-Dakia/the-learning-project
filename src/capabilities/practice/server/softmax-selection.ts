@@ -33,11 +33,6 @@ import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import {
-  buildMemoryPriorAdvisoryBlock,
-  buildSelectionOrchestratorTaskInputWithCandidates,
-  parseSelectionOrchestratorOutput,
-} from '@/server/ai/selection-orchestrator';
-import {
   type CandidateInput,
   type CollectedSignal,
   collectCandidateSignals,
@@ -48,6 +43,11 @@ import {
   MEM0_PRIOR_CAP,
   type SelectionPolicyConfig,
 } from './selection-constants';
+import {
+  buildMemoryPriorAdvisoryBlock,
+  buildSelectionOrchestratorTaskInputWithCandidates,
+  parseSelectionOrchestratorOutput,
+} from './selection-orchestrator';
 import { type WeightedCandidate, sampleByWeight } from './selection-sampler';
 import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
 import {

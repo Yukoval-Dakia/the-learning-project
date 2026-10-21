@@ -87,11 +87,7 @@ export {
   suppliedUnverifiedExecutionProvenance,
 } from './execution-provenance-resolve';
 export { type JudgeInvokerOutput, createDefaultJudgeInvoker } from './invoker';
-export {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  sha256Canonical,
-  taskInputHash,
-} from './judge-execution-provenance';
+export { JUDGE_PROMPT_TEMPLATE_REVISION } from './judge-execution-provenance';
 export { judgeKeyword } from './keyword';
 export {
   type MultimodalDirectImageFetchFn,

@@ -1,5 +1,5 @@
 {
-  "id": "33c48cce-f641-42df-ade4-520dd10732c2",
+  "id": "f4672b13-c58c-4eef-9a19-7ffc540f4274",
   "prevId": "91f9e422-bc0c-4f45-9933-44ff2d4cea69",
   "version": "7",
   "dialect": "postgresql",
@@ -2221,126 +2221,6 @@
           "value": "\"dag_orchestration_run\".\"status\" IN ('running','completed','abandoned')"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.difficulty_calibration_evidence": {
-      "name": "difficulty_calibration_evidence",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "question_id": {
-          "name": "question_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "attempt_event_id": {
-          "name": "attempt_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "theta_snapshot": {
-          "name": "theta_snapshot",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "score": {
-          "name": "score",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "evidence_source": {
-          "name": "evidence_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "judge_route": {
-          "name": "judge_route",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "judge_confidence": {
-          "name": "judge_confidence",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "inclusion_probability": {
-          "name": "inclusion_probability",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "difficulty_calibration_evidence_question_idx": {
-          "name": "difficulty_calibration_evidence_question_idx",
-          "columns": [
-            {
-              "expression": "question_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "difficulty_calibration_evidence_attempt_unique": {
-          "name": "difficulty_calibration_evidence_attempt_unique",
-          "columns": [
-            {
-              "expression": "attempt_event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "difficulty_calibration_evidence_source_idx": {
-          "name": "difficulty_calibration_evidence_source_idx",
-          "columns": [
-            {
-              "expression": "evidence_source",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.difficulty_calibration_label": {
@@ -4870,24 +4750,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "b_post": {
-          "name": "b_post",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "posterior_variance": {
-          "name": "posterior_variance",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "calibration_source": {
-          "name": "calibration_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "irt_a": {
           "name": "irt_a",
           "type": "real",
@@ -6148,6 +6010,12 @@
         "error_message": {
           "name": "error_message",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "agent_budget": {
+          "name": "agent_budget",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

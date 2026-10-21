@@ -106,15 +106,17 @@ import {
 } from '../server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
-import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
   type ChoiceSurfacePrecheckRecord,
   type ChoiceSurfaceRuleCheck,
+  choiceSurfacePrecheckRecord,
+  evaluateChoiceSurface,
+} from '../server/quiz/choice-surface';
+import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
+import {
   type SolveCheckQuestion,
   type TeachingQualityQuestion,
   checksForTier,
-  choiceSurfacePrecheckRecord,
-  evaluateChoiceSurface,
   runQuestionContentValidation,
   runSolveCheck,
   runTeachingQualityCheck,

@@ -16,10 +16,6 @@ import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
 import { and, eq, inArray, lte } from 'drizzle-orm';
-// YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
-// SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
-// only — never touches the FSRS due path, the returned set, counts, or due_at.
-import { type ActiveGoal, listActiveGoalsWithResolvedScope } from '@/capabilities/agency/public';
 // YUK-282 / ADR-0030 — by-kind variant-rotation probe selection. Replaces the
 // inline single-question-avoidance ORDER BY (ADR-0028 seam) with a routed pick:
 // recall kinds repeat the original question, application kinds rotate the
@@ -37,6 +33,13 @@ import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
+// YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
+// SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
+// only — never touches the FSRS due path, the returned set, counts, or due_at.
+import {
+  type ActiveGoal,
+  listActiveGoalsWithResolvedScope,
+} from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items

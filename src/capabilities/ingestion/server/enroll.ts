@@ -31,9 +31,9 @@
  */
 import { createId } from '@paralleldrive/cuid2';
 
-import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import type { Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
+import { loadAttemptQuestionSnapshot } from '@/kernel/read-models/question-evidence-snapshot';
 import { type DocumentUsage, resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
 import { createLearningRecord } from '@/kernel/records/queries';
 

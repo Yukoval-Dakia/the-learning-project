@@ -79,6 +79,8 @@ export type GlmOcrParams = {
   timeoutMs?: number;
   /** Stable extraction-page operation context; omitted by parser/no-wire fakes. */
   providerAttempt?: OcrPageProviderContext;
+  /** Agent financial identity, persisted before this callback can send wire. */
+  beforeRequest?: (attemptId: string) => Promise<void>;
   /**
    * YUK-1404 (B2/R5 P1-4) — when true the wire attempt runs under the
    * operation-kind start fence (tool surface): a second call on the same
@@ -182,6 +184,10 @@ export async function runGlmLayoutParsingWithAttempt(
   const executeRequest = async (
     attempt?: OcrPageProviderAttemptControl,
   ): Promise<GlmLayoutResponse> => {
+    if (params.beforeRequest) {
+      if (!attempt) throw new TypeError('financially tracked OCR requires an attempt identity');
+      await params.beforeRequest(attempt.attemptId);
+    }
     const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
