@@ -1,20 +1,10 @@
-// Phase 2C — Active Teaching Session orchestrator.
+// Active Teaching Session orchestrator: loads the LearningItem, its artifact and
+// recent teach messages, runs TeachingTurnTask for a single turn, and returns the
+// parsed agent turn. The caller persists the agent message event.
 //
-// Given a conversation session_id, load the LearningItem + its artifact +
-// recent teach_message events, call TeachingTurnTask, and return the parsed
-// agent turn. Caller (route layer) writes the agent message event.
-//
-// MVP scope per docs/superpowers/brainstorms/2026-05-17-phase2c-active-teaching.md
-//   - single turn, no streaming
-//   - turn kinds: 'explain' | 'ask_check' | 'end'
-//   - no tool calls; ask_check may carry one structured question for the route to persist
-//   - reuses experimental:teach_message event shape
-//
-// YUK-878 — moved from src/server/orchestrator/teaching.ts into the copilot
-// capability. The turn schemas, TeachingError, and parseTurnOutput now live in
-// tasks/teaching-turn.ts (the TeachingTurnTask owner); this module keeps the
-// DB context loaders + the single-turn orchestration and re-exports the parse
-// surface so existing importers keep one entrypoint.
+// Turn schemas and parsers live in tasks/teaching-turn.ts (the task owner); this
+// module keeps the DB context loaders, the single-turn orchestration, and the
+// re-exported parse surface so importers keep one entrypoint.
 
 import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -38,15 +28,11 @@ export {
   parseTurnOutput,
 } from '../tasks/teaching-turn';
 
-// ---------- Schemas ----------
-
 const MessageInput = z.object({
   role: z.enum(['agent', 'user']),
   text_md: z.string(),
   turn_kind: z.enum(['explain', 'ask_check', 'end']).nullish(),
 });
-
-// ---------- Public types ----------
 
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
@@ -57,12 +43,7 @@ export interface PlanTeachingTurnParams {
   runTaskFn: RunTaskFn;
 }
 
-// ---------- Helpers ----------
-
-// AF S4 / YUK-203 U6 — exported (was private) so the Copilot teaching-skill
-// (src/capabilities/copilot/server/skills/teaching-skill.ts) reuses the SINGLE impl rather
-// than forking the context-load. Pure visibility change; still the only loader,
-// used by both planTeachingTurn (below) and the skill.
+// Single context loader shared by planTeachingTurn and the teaching skill.
 export async function loadTeachingContext(db: Db, learningItemId: string) {
   const liRows = await db
     .select({
@@ -139,7 +120,6 @@ async function loadMessages(db: Db, sessionId: string) {
     .from(event)
     .where(eq(event.session_id, sessionId))
     .orderBy(asc(event.created_at));
-  // filter to experimental:teach_message in payload
   const messages: Array<z.infer<typeof MessageInput>> = [];
   for (const r of rows) {
     const p = r.payload as { role?: string; text_md?: string; turn_kind?: string } | null;
@@ -149,8 +129,6 @@ async function loadMessages(db: Db, sessionId: string) {
   }
   return messages;
 }
-
-// ---------- planTeachingTurn ----------
 
 export async function planTeachingTurn(
   params: PlanTeachingTurnParams,

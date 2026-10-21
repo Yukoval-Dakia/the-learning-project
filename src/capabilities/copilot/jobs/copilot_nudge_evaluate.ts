@@ -1,11 +1,11 @@
-// YUK-577 — copilot 主动开口触发线：pg-boss handler（FAST 队列，按需 job）。
-// design: docs/design/2026-07-07-yuk577-proactive-triggers.md §3.1 / §3.3 / §3.7.
+// copilot 主动开口触发线：pg-boss handler（FAST 队列，按需 job）。
 //
-// producer（ingestion 完成写点）post-commit `boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {kind, session_id})`
-// → 本 handler 在 worker 进程跑确定性判定 + 写触发留痕 event。**无 kill-switch 首行 early-return**
-// ——SHADOW 模型（§3.7）下 flag OFF 仍照跑照写（打 shadow=true），surfacing 由 event.shadow +
-// 读模型 gate，不 gate 判定/写入。FAST 档无 DLQ 无 retryLimit，但 expire/crash 仍 redeliver +
-// 无 singleton 并发 → partial unique index（caused_by_event_id）+ 23505 捕获是 per-source 幂等保证。
+// producer post-commit `boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {kind, session_id})`
+// → 本 handler 在 worker 进程跑确定性判定 + 写触发留痕 event。**无 kill-switch 首行
+// early-return**——SHADOW 模型下 flag OFF 仍照跑照写（shadow=true），surfacing 由
+// event.shadow + 读模型 gate，不 gate 判定/写入。FAST 档无 DLQ 无 retryLimit，但
+// expire/crash 仍 redeliver + 无 singleton 并发 → partial unique index
+// （caused_by_event_id）+ 23505 捕获是 per-source 幂等保证。
 
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
@@ -42,10 +42,9 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * 处理一个 nudge 评估 job：确定性判定 → fire 则写触发留痕 event。
- * 幂等：partial unique index ON event(caused_by_event_id) WHERE action=nudge —— 并发/重投的
- * 第二次写撞 23505，捕获后当已发跳过（writeEvent 的 onConflictDoNothing 只 target PK，其它
- * 唯一约束照常 throw，故 23505 会到这里）。
+ * 确定性判定 → fire 则写触发留痕 event。幂等：partial unique index ON
+ * event(caused_by_event_id) WHERE action=nudge —— 并发/重投的第二次写撞 23505，
+ * 捕获后当已发跳过（writeEvent 的 onConflictDoNothing 只 target PK）。
  */
 export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput): Promise<void> {
   const inputRef =
@@ -71,7 +70,7 @@ export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput)
       outcome: null,
       payload: decision.event.payload,
       caused_by_event_id: decision.event.caused_by_event_id,
-      // observe-only：opt out memory outbox（同 auto_enroll_observed / judge_calibration 先例）。
+      // observe-only：opt out memory outbox。
       ingest_at: new Date(),
     });
     console.log(
@@ -79,7 +78,6 @@ export async function runCopilotNudgeEvaluate(db: Db, input: NudgeEvaluateInput)
     );
   } catch (err) {
     if (isUniqueViolation(err)) {
-      // 并发/重投竞态：同一触发源已写过 nudge —— 幂等跳过。
       console.log(`[copilot_nudge_evaluate] ${inputRef} duplicate (unique index) — skipped`);
       return;
     }

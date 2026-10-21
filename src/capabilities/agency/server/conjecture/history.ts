@@ -35,11 +35,11 @@ export type LoadConjectureHistoryFn = (
 ) => Promise<Map<string, ConjectureHistory>>;
 
 const CONJECTURE_HISTORY_QUERY_CHUNK_SIZE = 500;
-// A gradable answer that matches neither signature closes this particular probe
-// without becoming conjecture evidence. It is nevertheless terminal for lifecycle
-// history: otherwise the accepted conjecture would appear active forever and block
-// a later evidence-backed reopen. Keep this history-only vocabulary separate from
-// TERMINAL_PROBE_RESOLUTIONS so evidence readers never treat inconclusive as proof.
+// A gradable answer that matches neither signature closes this probe without
+// becoming conjecture evidence, but it is terminal for lifecycle history: otherwise
+// the conjecture would appear active forever and block a later evidence-backed reopen.
+// Kept separate from TERMINAL_PROBE_RESOLUTIONS so evidence readers never treat
+// inconclusive as proof.
 const CONJECTURE_HISTORY_TERMINAL_RESOLUTIONS = [
   ...TERMINAL_PROBE_RESOLUTIONS,
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -82,8 +82,8 @@ async function loadCorrectionStatusesChunked(
 
 /**
  * Load only history relevant to tonight's evidence candidates. Proposal/rate/result
- * joins remain bounded by those KC ids, while correction-aware terminal validation
- * reuses the Agency-owned probe evidence reader.
+ * joins stay bounded by those KC ids; terminal validation reuses the Agency probe
+ * evidence reader.
  */
 export async function loadConjectureHistory(
   db: Db,
@@ -229,7 +229,7 @@ export async function loadConjectureHistory(
       history.latest_decision = rating;
       history.latest_decision_at = row.created_at;
       if (rating === 'accept') {
-        // conjecture-accept.ts persists corrected_claim_md as an intentional raw
+        // conjecture-accept persists corrected_claim_md as an intentional raw
         // RateEvent payload extension. The shared schema strips that extra key, so
         // owner wording must be read from the unparsed row after rating validation.
         const correctedClaim = toPlainRecord(row.payload).corrected_claim_md;
@@ -259,8 +259,8 @@ export async function loadConjectureHistory(
       effectiveTerminalStatuses.set(id, status);
     }
   }
-  // Sort only after status validation has consumed bounded insertion-order chunks;
-  // this pass needs newest-first so the first matching terminal wins.
+  // Validate in bounded insertion-order chunks before sorting; the sort then makes
+  // the first matching terminal win.
   terminalRows.sort(compareNewest);
   for (const row of terminalRows) {
     if (effectiveTerminalStatuses.get(row.id) !== 'active') continue;
@@ -313,8 +313,8 @@ export function applyConjectureHistoryGate<
     ) {
       return false;
     }
-    // A rollback reverses the prior proposal decision. With no active accepted
-    // proposal (and therefore no matching terminal below), the identity is eligible again.
+    // A rollback reverses the prior proposal decision; with no active accepted
+    // proposal (and therefore no matching terminal), the identity is eligible again.
     if (history.latest_terminal_at === null) return true;
     const terminalAt = history.latest_terminal_at;
 

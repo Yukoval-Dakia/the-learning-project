@@ -1,7 +1,6 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
-// YUK-885 — conjecture evidence ports repointed from central deep imports.
 export type { CompletedProbeProposal } from './server/conjecture/completed-probe-provenance';
 export {
   loadCompletedProbeAssessmentAnchors,
@@ -74,7 +73,7 @@ export type {
   LearningItemAcceptResult,
   RelearnAcceptResult,
 } from './server/proposal-appliers';
-// YUK-1062 — task composition uses the narrow task-public entry directly.
+// Task composition uses the narrow task-public entry directly.
 export { agencyTaskSpecs } from './task-public';
 export type { BriefDraftOutput } from './tasks/memory-brief';
 export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';

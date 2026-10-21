@@ -1,11 +1,9 @@
-// YUK-879 — the three intervention-preparation task contracts, owned by the
-// agency capability (YUK-791 / YUK-829 lineage). structuredOutputSchema stays on
-// the definitions (same core/schema/intervention objects the central quarry
-// referenced); ../server/intervention/recommend and the practice-side shared
-// validator keep consuming them through the catalog projection.
+// The three intervention-preparation task contracts. structuredOutputSchema
+// stays on the definitions; the recommend orchestrator
+// (../server/intervention/recommend) and the practice-side shared validator
+// consume them through the catalog projection.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import type { z } from 'zod';
@@ -121,9 +119,8 @@ export const interventionPackageAuthorTaskSpec = {
       'Authors one atomic intervention package: one teaching material plus immediate, delayed, and transfer diagnostics, all bound to the frozen claim, target error, and selected method.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // YUK-814 Gate C measured one valid 7,178-token package at 117.1s, then
-    // observed two consecutive SDK aborts at the former 120s ceiling. Preserve
-    // the bounded two-turn contract while allowing the structured output to land.
+    // Measured: one valid 7,178-token package at 117.1s, then two consecutive SDK
+    // aborts at the old 120s cap. Keep the bounded two-turn contract and let output land.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -144,8 +141,8 @@ export const interventionPackageReviewTaskSpec = {
       'Compares a complete intervention package with three sealed outputs from the shared independent question validator. Returns bounded diagnostic/package checks and never repairs or partially activates the package.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // The comparator receives three worked blind solutions plus the package, so
-    // keep the measured 180s envelope even though it no longer solves them itself.
+    // Receives three worked blind solutions plus the package; keep the measured
+    // 180s envelope.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,

@@ -1,27 +1,16 @@
-// POST /api/goals — cold-start openable sprint P0 (YUK-472).
+// POST /api/goals — at-entry direct goal creation: a brand-new user declares a goal
+// (with a KC scope) so the cold-start placement probe has knowledge nodes to walk.
 //
-// At-entry DIRECT goal creation: a brand-new user declares a goal (with a KC
-// scope) so the cold-start placement probe (YUK-475) has knowledge nodes to walk.
+// Goals are normally materialized from an accepted `goal_scope` proposal, which needs
+// pre-existing evidence; this additive manual path (source='manual') does not replace
+// that path — both go through the goal command owner.
 //
-// Relationship to ADR-0025 / the proposal path: goals are normally MATERIALIZED
-// from an accepted `goal_scope` proposal (evidence-first — see
-// server/goals/queries.ts docblock + goal_scope_propose_nightly). That reactive
-// path needs pre-existing evidence, so day-one (zero data) it yields no goal.
-// This handler is the ADDITIVE at-entry write path (source='manual'); it does NOT
-// replace the proposal path — both use the goal command owner.
-//
-// COLD-START (YUK-473 live find): a day-one user declares a goal on an EMPTY tree
-// (only subject-root seeds — often a cross-subject goal or no subject picked). The goal
-// is a north-star; its KC scope GROWS as uploads populate the tree. We therefore do NOT
-// reject an empty scope (the original "require a resolvable scope" guard blocked the
-// cold-start entry — the very flow this endpoint exists for). Only a title is required.
-//
-// YUK-603 (v2 contract §5): a subject goal's scope is NEVER frozen at write time.
-// The old write-time resolveSubjectKnowledgeIds freeze looked "legitimately empty/thin"
-// but was actually NON-empty day-one — the synthetic seed root self-matches its own
-// domain — so placement tier-1 pinned to ['seed:<subj>:root'] permanently. The row now
-// carries scope_mode: 'explicit' (hand-picked frozen set is authoritative) vs
-// 'subject_live' (readers derive from subject_id at read time; frozen stays []).
+// Constraints:
+// - Only a title is required, and an empty scope is allowed (cold-start north-star).
+// - A subject goal's scope is NEVER frozen at write time. The row carries scope_mode:
+//   'explicit' (hand-picked frozen set is authoritative) vs 'subject_live' (readers
+//   derive from subject_id at read time; frozen stays []). Freezing the derivation
+//   resolves day-one to the synthetic seed root, pinning placement to it forever.
 
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
@@ -60,27 +49,21 @@ export async function POST(req: Request): Promise<Response> {
     }
     const { title, subjectId: rawSubjectId, knowledgeIds: explicit, declaredStage } = parsed.data;
 
-    // YUK-600（阻断④防线步 1）—— alias→canonical 归一（tx 外、scope 派生前）：
-    // goal 只能引用已存在科目（thin-create 是创建唯一入口），unknown → 422；
-    // canonical 全程替换 raw 四消费点（scope_mode 分支 / genesis snapshot /
-    // insertGoal / 201 响应）。顺带修 alias-miss 潜伏 bug：传 'wenyan' 曾原样
-    // 落库 + 派生 scope 恒空——归一后 = 'yuwen' + scope 正确。
+    // Normalize alias→canonical outside the tx, before scope derivation: goals may only
+    // reference existing subjects (thin-create is the only creation entry); unknown → 422.
+    // Every downstream consumer must use the canonical id — a raw alias would land in the
+    // DB and derive an empty scope forever.
     const subjectId = rawSubjectId ? resolveKnownSubjectId(rawSubjectId) : null;
     if (rawSubjectId && !subjectId) {
       throw new ApiError('validation_error', `unknown subject '${rawSubjectId}'`, 422);
     }
 
-    // Scope semantics (YUK-603, v2 contract §5.3 — three write branches, NO write-time freeze
-    // of a subject derivation):
+    // Scope semantics — three write branches, no write-time freeze of a subject derivation:
     //   1. explicit knowledgeIds → scope_mode='explicit', the set IS the frozen authority.
-    //   2. subjectId only        → scope_mode='subject_live', frozen stays [] — scope derives
-    //      from the subject at READ time (subject=view). Freezing the derivation here was the
-    //      armed live bug: day-one it resolved to ['seed:<subj>:root'] (the synthetic root
-    //      self-matches its own domain), pinning placement tier-1 to [root] forever and
-    //      blinding the goal-strand readers.
-    //   3. neither → scope_mode='explicit' + [] (a cross-subject north-star; nothing to derive).
-    // An empty frozen scope is ALLOWED (cold-start north-star, YUK-481); only the title is
-    // required (enforced by the Body schema above).
+    //   2. subjectId only        → scope_mode='subject_live', frozen stays []; scope derives
+    //      from the subject at READ time (subject=view).
+    //   3. neither → scope_mode='explicit' + [] (a cross-subject north-star).
+    // An empty frozen scope is allowed (cold-start north-star); only the title is required.
     const explicitScope = explicit ?? [];
     const scopeMode: 'explicit' | 'subject_live' =
       explicitScope.length === 0 && subjectId ? 'subject_live' : 'explicit';
@@ -92,8 +75,7 @@ export async function POST(req: Request): Promise<Response> {
       scope_knowledge_ids: scopeKnowledgeIds,
       scope_mode: scopeMode,
       sequence_hint: 0,
-      // YUK-1009 — persist the learner-declared stage on the goal (NULL when the
-      // onboarding question was skipped / not sent). Curriculum constraint only.
+      // NULL when the onboarding question was skipped / not sent. Curriculum constraint only.
       declared_stage: declaredStage ?? null,
     });
 

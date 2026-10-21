@@ -1,8 +1,7 @@
-// Copilot's persistent execution owner assembles bounded causal history and
-// current learner state here. Native resume encoding happens later, so validators
-// and correction contracts always retain the same bounded context.
-// Optional state/history read failures degrade to empty/header-only context;
-// legacy missing anchors retain their explicitly locked compatibility fallback.
+// Assemble bounded causal history and current learner state for a run. Native
+// resume encoding happens later, so validators and correction contracts always
+// see the same bounded context. Read failures degrade to empty/header-only
+// context; legacy missing anchors keep their locked compatibility fallback.
 
 import { type DerivationPolicyT, allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
@@ -35,21 +34,20 @@ export function selectActorRef(triggeredBy: CopilotTriggeredBy): string {
   return triggeredBy === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
 }
 
-// YUK-267 (C2) — the minimal history shape carried in the run input. Every entry
-// keeps role + text; AI replies additionally retain their stable event_id so a
-// correction can bind one exact prior answer. All other turn-row fields are
-// explicitly dropped (防循环 ①/⑤). YUK-574 adds the 'context' role for the pinned
-// learner-state header (a deterministic projection, NOT a persisted turn — it is
-// prepended fresh from the session-anchored cache and never read back from turns).
+// Minimal history shape carried in the run input. Every entry keeps role + text;
+// AI replies also keep their stable event_id so a correction can bind one exact
+// prior answer, and all other turn-row fields are dropped (防循环). The 'context'
+// role carries the pinned learner-state header, prepended fresh from the
+// session-anchored cache and never read back from turns.
 export interface CopilotHistoryTurn {
   role: 'user' | 'ai' | 'context';
   text: string;
   event_id?: string;
 }
 
-// YUK-267 (C2) — ambient context for THIS message only (防循环 ②). Present only
-// when the request carried it; NEVER written to any turn payload, so it is not
-// replayed. Structurally mirrors the CopilotChatRequest.ambient_context zod shape.
+// Ambient context for THIS message only (防循环): present only when the request
+// carried it, never written to a turn payload, so it is never replayed. Mirrors
+// the CopilotChatRequest.ambient_context zod shape.
 export interface CopilotAmbientContext {
   route: string;
   focused_entity?: { kind: string; id: string };
@@ -71,40 +69,27 @@ export interface CopilotRunInput {
   ambient_context?: CopilotAmbientContext;
 }
 
-// YUK-267 (C2) — assemble the bounded, history-only conversation_history from the
-// session-scoped turn reader. 防循环 invariants enforced here:
-//   ① each entry keeps role + text; AI replies alone also keep event_id. NO
-//      skill_turn / skill_context / session_id / reply_event_id / at, and certainly
-//      NO prior-run assembly artifact (conversation_history / proposal_feedback /
-//      ambient_context). This explicit projection is the structural guarantee.
-//   ④ DOUBLE truncation — per-turn char cap, then whole-array char cap dropping the
-//      OLDEST turns first until the serialized array fits (recency matters most).
-// `turns` arrive oldest→newest (the reader reverses to chronological). We keep the
-// newest maxTurns, per-turn truncate, then oldest-first whole-array truncate.
-//
-// YUK-574 — `pinnedHeaderMd` (the session-anchored learner-state header) is
-// prepended as a `{role:'context'}` entry that is PINNED: the oldest-first drop
-// loop only ever removes real conversation turns, never the header. The header's
-// char cost is reserved FIRST so it is counted against COPILOT_HISTORY_BUDGET yet
-// survives truncation (the header is pre-bounded at assembly to
-// LEARNER_STATE_HEADER_BUDGET, always well under totalChars). Absent / empty header
-// → byte-for-byte the pre-YUK-574 output (no context entry prepended).
+// Assemble bounded, history-only conversation_history from the session-scoped
+// turn reader. 防循环 invariants: each entry keeps role + text (AI replies also
+// keep event_id), while skill_turn / skill_context / session_id / prior-run inputs
+// (conversation_history, proposal_feedback, ambient_context) are structurally excluded. DOUBLE truncation: per-turn char
+// cap, then whole-array cap dropping the OLDEST real turns first. The pinned
+// header is counted and reserved first, and is never dropped while real turns
+// remain; an absent/empty header prepends nothing.
 export function assembleConversationHistory(
   turns: CopilotTurn[],
   budget: CopilotHistoryBudget,
   pinnedHeaderMd?: string,
 ): CopilotHistoryTurn[] {
-  // Keep the newest `maxTurns` (turns are oldest→newest, so tail-slice). Explicit ALLOWLIST of the
-  // two conversational roles (not a `!== 'tombstone'` denylist) as a type-guard predicate, so the
-  // compiler narrows `role` here and enforces the invariant at the `role: t.role` assignment below —
-  // widening the filter to admit another role becomes a compile error, not a silent cast (YUK-497 wave-2).
+  // Tail-slice the newest `maxTurns`. The explicit role allowlist is a type guard,
+  // so widening it to admit another role is a compile error, not a silent cast.
   const recent = turns
     .filter(
       (turn): turn is CopilotTurn & { role: 'user' | 'ai' } =>
         (turn.role === 'user' || turn.role === 'ai') && allowsDerivation(turn),
     )
     .slice(-budget.maxTurns);
-  // 防循环 ① — project role + text and AI event_id only, then per-turn truncate (防循环 ④).
+  // Project role + text and AI event_id only, then per-turn truncate.
   const mapped: CopilotHistoryTurn[] = recent.map((t) => ({
     role: t.role,
     text: t.text.length > budget.perTurnChars ? t.text.slice(0, budget.perTurnChars) : t.text,
@@ -112,19 +97,14 @@ export function assembleConversationHistory(
   }));
   const pinned: CopilotHistoryTurn | null =
     pinnedHeaderMd && pinnedHeaderMd.length > 0 ? { role: 'context', text: pinnedHeaderMd } : null;
-  // 防循环 ④ — whole-array cap: drop OLDEST real turn (front) until the serialized
-  // array (header included in the accounting) fits. The pinned header is NEVER
-  // dropped WHILE there are still real turns to shift, only real turns.
+  // Whole-array cap: drop the OLDEST real turn (front) until the serialized array,
+  // header included in the accounting, fits. Only real turns are dropped here.
   const serialized = () => JSON.stringify(pinned ? [pinned, ...mapped] : mapped);
   while (mapped.length > 0 && serialized().length > budget.totalChars) {
     mapped.shift();
   }
-  // PROGRAMMATIC invariant guard: the loop above only shifts real turns, so if the
-  // header ALONE (mapped already drained) still exceeds totalChars, there is nothing
-  // left to drop except the header itself. Without this, a future misconfiguration
-  // where LEARNER_STATE_HEADER_BUDGET.maxChars grows past COPILOT_HISTORY_BUDGET.
-  // totalChars would silently ship an orphaned over-budget header with zero real
-  // turns — worse than an empty history. Give up the header too in that case.
+  // If the header alone still exceeds totalChars after every real turn is drained,
+  // return empty history rather than an orphaned over-budget header.
   if (pinned && mapped.length === 0 && serialized().length > budget.totalChars) {
     return [];
   }
@@ -173,10 +153,9 @@ export async function assembleCopilotRunInput(
   const loadHistory = deps.loadHistoryFn ?? getRecentCopilotTurns;
   const loadAnchoredHistory = deps.loadAnchoredHistoryFn ?? getCopilotTurnsBeforeAnchor;
 
-  // YUK-574 — resolve the session-anchored learner-state header FIRST (assemble-once
-  // per validity window; cached bytes when fresh). It carries BOTH the pinned header
-  // and the migrated Facet A proposal_feedback digest. Additive-input red line: any
-  // failure degrades to an empty header + [] digest and never crashes the run.
+  // Resolve the session-anchored header first (assembled once per validity window;
+  // cached bytes when fresh). It carries both the pinned header and the scoped
+  // proposal_feedback digest. Any failure degrades to empty header + [] digest.
   let learnerState: LearnerStateHeader = { header_md: '', proposal_feedback: [] };
   try {
     learnerState = await resolveLearnerState(db, sessionId, { now: () => now });
@@ -188,8 +167,7 @@ export async function assembleCopilotRunInput(
     });
   }
 
-  // YUK-267 (C2) — bounded, history-only conversation context. A read failure
-  // degrades to the pinned header alone (pin-in-budget), never crashes the run.
+  // A history read failure degrades to the pinned header alone, never crashes.
   let rawTurns: CopilotTurn[] = [];
   let historyReadFailed = false;
   let historyAnchorMissing = false;
@@ -202,11 +180,10 @@ export async function assembleCopilotRunInput(
         forModel: true,
       });
     } catch (err) {
-      // YUK-596 locked legacy contract: a genuinely missing anchor predates
-      // or lost the new coordinate, so emit a structured alert and preserve
-      // the former reusable-session history predicate. An anchor that exists
-      // but has the wrong action/session remains an integrity failure and is
-      // handled by the outer header-only fail-closed path.
+      // Locked legacy contract: a genuinely missing anchor predates the
+      // coordinate, so alert and fall back to reusable-session history. An anchor
+      // that exists with the wrong action/session is an integrity failure and
+      // stays on the outer header-only fail-closed path.
       if (!(err instanceof CopilotHistoryAnchorError) || err.reason !== 'missing_anchor') {
         throw err;
       }

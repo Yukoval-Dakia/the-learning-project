@@ -2,18 +2,15 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 
-// INVARIANT (YUK-497 wave-4): a copilot turn may expose a revert checkpoint anchor ⇔ EVERY effect of
-// the turn is event-chain-compensable (a `correct` retract of the ask/reply/propose/rate/tool_use
-// events fully undoes it). A "materializing" tool breaks that: it writes a DOMAIN ROW outside the
-// ask's event chain — a draft `question` row (author_question knowledge/material seed), an `artifact`
-// row + experimental:artifact_create/artifact_lifecycle events (author_artifact / update_artifact /
-// write_quiz) — that cascade-revert cannot compensate (classifyRow marks generate(artifact) /
-// question rows irreversible, and the copilotAskOnly allowlist admits neither). So a turn that called
-// any of these must NOT surface the anchor: reverting would either 409 (artifact events irreversible)
-// or "succeed" + tombstone while orphaning the materialized row (author_question). Pure-event write
-// tools (propose_*/rate) stay revertable — their materialization is the DEFERRED accept, a separate
-// event the cascade handles. The teaching ask_check materializer is handled separately via
-// skill_turn.structured_question (chat.ts / turns.ts).
+// INVARIANT: a copilot turn may expose a revert checkpoint anchor only when every
+// effect of the turn is event-chain-compensable. These tools materialize state outside
+// the ask's event chain (draft `question` rows, `artifact` rows, accepted answer
+// originals) that cascade-revert cannot compensate: `classifyRow` marks
+// `generate(artifact)` rows irreversible, and `copilotAskRevertAllows` refuses
+// `question_draft` proposals; reverting would 409 or tombstone the turn while orphaning
+// the materialized row. Pure-event tools (propose_*/rate) stay revertable; their
+// materialization is the deferred accept. ask_check is handled via
+// skill_turn.structured_question.
 export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'submit_review_answer',
   'author_question',
@@ -22,11 +19,7 @@ export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'write_quiz',
 ]);
 
-// The persisted, replay-visible evidence: mcp-bridge mirrors every tool call as an
-// action='tool_use' event with payload.tool_name, chained to the turn's ask via caused_by_event_id.
-// Keying BOTH the live response (chat.ts) and the replay (turns.ts) on the SAME rows guarantees the
-// anchor can't be shown live-then-hidden-on-refresh (or vice versa). Returns the subset of the given
-// ask ids that emitted at least one materializing tool_use.
+// Keyed on the persisted tool_use mirror rows so the live response and replay agree.
 export async function selectAsksWithMaterializingToolCall(
   db: Db | Tx,
   askEventIds: readonly string[],

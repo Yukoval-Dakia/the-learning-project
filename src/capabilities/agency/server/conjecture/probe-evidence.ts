@@ -162,13 +162,11 @@ function historicalSupportingQuestionSequence(
 }
 
 /**
- * Fold the effective status of probe results, including the dependency edge of a
- * v2 recurrence confirmation. Evidence is active only while its proposal-specific
- * question chain remains canonical. Correcting either the terminal result or any
- * supporting result referenced by `independent_probe_question_ids`, or drifting
- * a true source identity or immutable assessment binding, invalidates the
- * terminal evidence. Editable question fields cannot rewrite issued history.
- * Unissued historical questions retain row-based validation.
+ * Fold the effective status of probe results, including the v2 recurrence dependency
+ * edge. Evidence is active only while its proposal-specific question chain remains
+ * canonical: correcting the terminal or any supporting result, or drifting a true
+ * source identity or immutable assessment binding, invalidates it. Unissued
+ * historical questions retain row-based validation.
  */
 export async function getEffectiveProbeResultStatuses(
   db: DbLike,
@@ -233,9 +231,8 @@ export async function getEffectiveProbeResultStatuses(
     dependencyRows.map((row) => row.id),
   );
 
-  // Recurrence always validates every supporting question. Consumers that use
-  // already-anchored direct results as live inputs can opt into the same
-  // completed provenance validation, using the same immutable facts as Shell.
+  // Recurrence always validates every supporting question. `validateDirectChain`
+  // opts already-anchored direct results into the same completed provenance check.
   const evidenceRows = options.validateDirectChain
     ? [...new Map([...dependencyRows, ...activeRows].map((row) => [row.id, row] as const)).values()]
     : dependencyRows;

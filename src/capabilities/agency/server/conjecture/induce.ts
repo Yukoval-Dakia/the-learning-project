@@ -1,32 +1,24 @@
-// YUK-406 (Phase 0 关系脑) / YUK-440 (A13) — conjecture induction orchestrator
-// with D2 mitigation.
+// Conjecture induction orchestrator (PURE: no DB / no R2). The evidence sibling
+// assembles deterministic cells; the nightly job persists the result. This module
+// only runs the LLM induction, taking an injected runTaskFn so it is testable with a fake.
 //
-// PURE (no DB / no R2): the 取证 sibling (@/capabilities/agency/server/conjecture/evidence) assembles
-// the EvidenceCell list deterministically (cause_category × KC recurrence via
-// effectiveCauseForFailureAttempt + θ̂ / θ precision + baseline p(L) from
-// mastery_state — no LLM), and the nightly 例会 job persists the result. This module
-// ONLY runs the LLM induction and applies the D2 mitigations, taking an injected
-// runTaskFn so it is unit-testable with a fake.
+// Mitigations:
+//   1. Self-consistency — run the SAME MindModelInductionTask N times on the
+//      anthropic-sub lane; cluster samples by the full hypothesis (claim + frozen
+//      DiagnosticSpec); the dominant hypothesis wins and its agreement fraction IS
+//      the confidence.
+//   2. Judge-only-evidence cap — if EVERY supporting cell is agent-judged with no
+//      owner cause, confidence is capped at JUDGE_ONLY_CONFIDENCE_CAP.
+//   3. Probe quality gate — after consensus, a separate author task writes a
+//      two-probe package and an independent same-model call reviews it. One whole-pair
+//      regeneration is allowed; a second quality failure abstains.
 //
-// D2 (CORRECTED per YUK-416 — NO heterogeneous mimo+Opus Jury; that is DEFERRED):
-//   1. Opus SELF-CONSISTENCY — run the SAME MindModelInductionTask N times on the
-//      Opus (anthropic-sub OAuth) lane; cluster samples by the full hypothesis
-//      (claim + frozen DiagnosticSpec); the dominant hypothesis wins and its agreement
-//      fraction (agreement / samples) IS the confidence.
-//   2. JUDGE-ONLY-EVIDENCE CAP — if EVERY supporting evidence cell is agent-judge
-//      with no owner cause, cap confidence at JUDGE_ONLY_CONFIDENCE_CAP (the owner
-//      never corroborated it, so the team must not be loud about it).
-//   3. PROBE QUALITY GATE (YUK-821) — only after consensus, a separate author task
-//      writes a two-probe package and an independent same-model call reviews it.
-//      One whole-pair regeneration is allowed; a second quality failure abstains.
+// A heterogeneous mimo+Opus jury is deliberately deferred; do not add it without
+// revisiting the confidence semantics above.
 //
-// confidence is INTERNAL calibration only — returned as a number here for
-// sorting/calibration but NEVER rendered to the owner as a number (Phase 0 rule).
-//
-// A13 (YUK-440): predicted_p is authored only after the hypothesis is frozen. The
-// accepted package's bet is P(owner answers the primary probe correctly | claim holds);
-// `discriminating=true` now means the package passed structural and independent semantic
-// review rather than being a self-asserted induction field.
+// confidence is internal calibration only, never rendered to the owner as a number.
+// predicted_p is authored only after the hypothesis is frozen; `discriminating=true`
+// means the package passed structural and independent semantic review.
 
 import {
   CONJECTURE_ABSTAIN_EXPLANATION_MAX_LENGTH,
@@ -57,28 +49,26 @@ import { jsonObjectCandidates, parseTaskStructuredOutput } from './structured-ou
 
 export interface InduceConjectureInput {
   /**
-   * 取证 cells for ONE candidate (the job passes one salient cell), each carrying
-   * its YUK-786 grounding packet. The ENRICHED type is required, not optional:
-   * a bare cell is 7 opaque scalars, and inducing a domain-specific claim from
-   * that is the exact failure mode this contract exists to make unrepresentable.
+   * Evidence cells for ONE candidate, each carrying its grounding packet. The
+   * ENRICHED type is required: a bare cell cannot ground a domain-specific claim.
    */
   cells: EnrichedEvidenceCell[];
   /**
    * Real image bytes resolved once per unique asset in first-occurrence order.
-   * The task input manifest binds each image block back to every attempt/source
-   * occurrence without duplicating the base64 payload.
+   * The task input manifest binds each block back to every attempt/source occurrence
+   * without duplicating the base64 payload.
    */
   evidenceImages?: LoadedConjectureEvidenceImage[];
-  /** N self-consistency samples (>= 1). The nightly job passes 3. */
+  /** N self-consistency samples (>= 1); the nightly job passes 3. */
   samples: number;
-  /** injected runner — the job wraps the real runTask (with db); faked in tests. */
+  /** Injected runner; the job wraps the real runTask, tests fake it. */
   runTaskFn: TaskTextRunFn;
-  /** prior conjecture claim being updated, if any (owner-correction anchor feed). */
+  /** Prior conjecture claim being updated, if any (owner-correction anchor feed). */
   priorClaimMd?: string;
   /**
-   * YUK-786 — subject context for the prompt render, resolved by the job from
-   * the cell's KC domain. Omitted ⇒ the neutral `general` profile (an untagged
-   * KC must not inherit a concrete subject's voice).
+   * Subject context for the prompt render, resolved by the job from the cell's KC
+   * domain. Omitted ⇒ neutral `general` profile: an untagged KC must not inherit a
+   * concrete subject's voice.
    */
   subjectProfile?: SubjectProfile;
 }
@@ -89,9 +79,8 @@ export type ConjectureInductionTaskKind =
   | ConjectureProbeQualityTaskKind;
 
 /**
- * Preserves the failing orchestration stage across the nightly cell-local
- * failure boundary so operational health is attributed to the component that
- * actually needs retry/repair.
+ * Preserves the failing orchestration stage across the cell-local failure boundary,
+ * so operational health is attributed to the component needing retry/repair.
  */
 export class ConjectureInductionOperationalError extends Error {
   readonly taskKind: ConjectureInductionTaskKind;
@@ -152,7 +141,6 @@ function parseSampleDraft(result: TaskTextResult): ConjectureHypothesisDraftT | 
     : parsed;
 }
 
-/** Normalize a claim for clustering (case + whitespace insensitive). */
 function claimKey(claim: string): string {
   return claim.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -232,9 +220,9 @@ function normalizeGroundedProposal(
     return null;
   }
 
-  // These facts belong to deterministic 取证, not the model. Normalizing them here
-  // prevents a harmless echo mismatch while keeping fabricated KC/cause/evidence refs
-  // as an invalid (negative) vote.
+  // These facts belong to deterministic evidence, not the model. Normalizing them
+  // prevents a harmless echo mismatch while fabricated KC/cause/evidence refs stay
+  // an invalid (negative) vote.
   return {
     ...draft,
     recurrence_count: cell.recurrence_count,
@@ -256,7 +244,7 @@ function chooseAbstainDraft(params: {
   abstains: ConjectureModelAbstainDraftT[];
   cells: EnrichedEvidenceCell[];
   /**
-   * One reason vote per requested sample. Explicit abstentions contribute their
+   * One reason vote per requested sample: explicit abstentions contribute their
    * model reason; invalid/provider/proposal-without-consensus outcomes contribute
    * orchestrator reasons. A tied tally is itself no semantic consensus.
    */
@@ -328,7 +316,6 @@ interface DeduplicateHypothesesResult {
 /**
  * Groups claim+DiagnosticSpec indices by semantic equivalence.
  *
- * Returns index groups, accumulated cost, task_run_id, and explicit health.
  * On failure the caller preserves any exact claimKey quorum already established;
  * when no exact quorum exists, grouping is load-bearing and the cell fails operationally.
  */
@@ -369,26 +356,22 @@ async function deduplicateHypotheses(
     return failure();
   }
 
-  // Parse structured output; then scan balanced JSON objects in the text fallback.
   const parsed = [result.structured_output, ...jsonObjectCandidates(result.text)]
     .filter((candidate) => candidate !== undefined && candidate !== null)
     .map((candidate) => ConjectureGroupingOutputSchema.safeParse(candidate))
     .find((candidate) => candidate.success) ?? { success: false as const };
   if (!parsed.success) return failure(result);
 
-  // Coverage guard: verify groups form a complete partition of 0..N-1
-  // (each index appears exactly once — catches duplicates, gaps, and out-of-range indices).
-  // A flat-length-only check passes e.g. [[0,0],[1]] (length=3=N but index 0 duplicated).
+  // Coverage guard: groups must be a complete partition of 0..N-1 (each index exactly
+  // once) — a flat-length-only check would accept e.g. [[0,0],[1]].
   const flatSorted = [...parsed.data.groups.flat()].sort((a, b) => a - b);
   const isPartition =
     flatSorted.length === hypotheses.length && flatSorted.every((v, i) => v === i);
   if (!isPartition) return failure(result);
 
-  // The model may not erase a frozen semantic type. Refine every returned
-  // semantic group by the server-owned V2 causal-direction bit before it can
-  // contribute to agreement. This is deliberately a deterministic
-  // postcondition rather than prompt-only enforcement: a mixed group such as
-  // [true, false, true] becomes [[true, true], [false]], never a false quorum.
+  // Refine every returned semantic group by the server-owned V2 causal-direction bit;
+  // a mixed group such as [true, false, true] becomes [[true, true], [false]], never
+  // a false quorum. Deterministic postcondition, not prompt-only enforcement.
   const causallyHomogeneousGroups = parsed.data.groups.flatMap((group) => {
     const byCausalRequirement = new Map<string, number[]>();
     for (const index of group) {
@@ -423,9 +406,8 @@ export async function induceConjecture(
   const taskPayload = {
     evidence_cells: cells.map((c) => ({
       knowledge_id: c.knowledge_id,
-      // YUK-786 grounding: the KC as a NAME + its subject, so the claim is
-      // induced about a real knowledge point in a real subject rather than
-      // about a UUID whose domain the model has to guess.
+      // Grounding: the KC as a NAME + its subject, so the claim is induced about a
+      // real knowledge point rather than a UUID whose domain the model must guess.
       knowledge_name: c.knowledge_name,
       subject_id: c.subject_id,
       subject_display_name: c.subject_display_name,
@@ -435,10 +417,9 @@ export async function induceConjecture(
       theta_precision: c.theta_precision,
       baseline_p: c.baseline_p,
       evidence_event_ids: groundedEvidenceEventIds(c),
-      // First-hand evidence: what was asked, what the owner answered, how they
-      // say they thought, and what the attribution was. Free text arrives
-      // already truncated + `<untrusted_learner_text>`-delimited by the enrich
-      // step — it is DATA for analysis, never instruction.
+      // First-hand evidence: what was asked, what the owner answered, how they say
+      // they thought, and the attribution. Free text arrives already truncated and
+      // `<untrusted_learner_text>`-delimited — DATA for analysis, never instruction.
       evidence_samples: c.samples,
     })),
     image_manifest: evidenceImages.map((image, index) => ({
@@ -466,8 +447,8 @@ export async function induceConjecture(
     Array.from({ length: samples }, () =>
       runTaskFn('MindModelInductionTask', taskInput, {
         override: { provider: 'anthropic-sub' as const },
-        // YUK-786 — the prompt renders from the SubjectProfile; without this the
-        // renderer falls back to `general` even when the cell's KC is tagged.
+        // The prompt renders from the SubjectProfile; without this the renderer falls
+        // back to `general` even when the cell's KC is tagged.
         ...(subjectProfile ? { subjectProfile } : {}),
       }),
     ),
@@ -551,15 +532,11 @@ export async function induceConjecture(
     ([aKey, aDrafts], [bKey, bDrafts]) => bDrafts.length - aDrafts.length || compareLex(aKey, bKey),
   )[0][1];
 
-  // Semantic grouping covers the complete hypothesis, including trigger/scope/wrong
-  // answer signature. Claim-only agreement is insufficient.
-  // This is the primary post-fast-path step, not a rare fallback — at temperature > 0
-  // with N=3 on Opus, all three samples will almost always produce distinct surface
-  // strings, so this call fires on essentially every nightly invocation.
-  // Cost: +1 ConjectureGroupingTask (mimo default, not Opus) per conjecture per run.
-  // The grouping call is non-deterministic: confidence reflects the expected value
-  // of agreement, not a stable per-run signal. Downstream thresholds must treat
-  // confidence as a distribution, not a point estimate.
+  // Semantic grouping covers the complete hypothesis (trigger/scope/wrong-answer
+  // signature), not just the claim. At temperature > 0 with N=3, samples almost always
+  // produce distinct strings, so this fires on essentially every run (+1
+  // ConjectureGroupingTask, mimo default). Confidence is non-deterministic: downstream
+  // thresholds must treat it as a distribution, not a point estimate.
   const requiredAgreement = samples === 1 ? 1 : Math.floor(samples / 2) + 1;
   if (dominant.length < proposals.length && proposals.length > 1) {
     const dedup = await deduplicateHypotheses(
@@ -569,14 +546,12 @@ export async function induceConjecture(
       })),
       runTaskFn,
     );
-    // Accumulate cost + provenance from the dedup call.
     costsUsd.push(dedup.cost_usd);
     if (dedup.task_run_id) taskRunIds.push(dedup.task_run_id);
 
     if (!dedup.ok) {
-      // Keep an already-established exact 2-of-N cluster. If exact matching
-      // did not reach quorum, semantic grouping is load-bearing; its outage is
-      // operational, not evidence that the model claims genuinely disagree.
+      // Keep an already-established exact quorum. Without one, semantic grouping is
+      // load-bearing and its outage is operational, not evidence of disagreement.
       if (dominant.length < requiredAgreement) {
         throw new ConjectureInductionOperationalError(
           'ConjectureGroupingTask',
@@ -584,7 +559,6 @@ export async function induceConjecture(
         );
       }
     } else {
-      // Re-map groups to draft arrays; pick the largest group as dominant.
       // Tie-break on the group's normalized lexical claim key, never sample order.
       const groupDrafts = dedup.groups
         .map((g) => {
@@ -625,12 +599,10 @@ export async function induceConjecture(
     };
   }
 
-  // confidence denominator is `samples` (requested), not `proposals.length`
-  // (grounded) — a failed parse, ungrounded proposal, or abstention is a
-  // non-agreement, not ignored.
+  // Denominator is `samples` (requested), not `proposals.length` (grounded): a failed
+  // parse, ungrounded proposal or abstention is non-agreement, not ignored.
   let confidence = agreement / samples;
 
-  // Judge-only-evidence cap: every supporting cell is agent-judge, no owner cause.
   const allJudgeOnly = cells.every((c) => !c.has_owner_cause);
   const confidence_capped = allJudgeOnly && confidence > JUDGE_ONLY_CONFIDENCE_CAP;
   if (confidence_capped) confidence = JUDGE_ONLY_CONFIDENCE_CAP;

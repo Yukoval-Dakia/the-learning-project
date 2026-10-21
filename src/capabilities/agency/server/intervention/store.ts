@@ -297,11 +297,11 @@ export type InterventionPreparationStageGuard =
     };
 
 /**
- * Read-only paid-stage fence used by Practice through Agency's public port.
+ * Read-only paid-stage fence for Practice's calls through Agency's public port.
  *
- * The expected pg-boss id is execution metadata, not authoring context. Keeping
- * it out of `InterventionAuthoringContext` prevents it from leaking into model
- * prompts while still making every paid stage reject a restored/superseded job.
+ * The expected pg-boss id stays out of `InterventionAuthoringContext` so it cannot
+ * leak into model prompts, while every paid stage still rejects a
+ * restored/superseded job.
  */
 export async function guardInterventionPreparationStage(
   db: DbLike,
@@ -545,12 +545,11 @@ export type RecordInterventionDiagnosticReviewResult =
     };
 
 /**
- * Apply the newest trusted judge verdict for one immutable diagnostic review.
- * A later rejudge can replace that verdict; the intervention is recomputed from
- * all three current window outcomes under the same aggregate lock.
+ * Apply the newest trusted judge verdict for one immutable diagnostic review and
+ * recompute the intervention from all current window outcomes under the aggregate
+ * lock. A later rejudge replaces the verdict; a delayed delivery cannot overwrite
+ * a newer one.
  */
-/** Read the current head and advance the aggregate under the same learning lock
- * as native activation. A delayed delivery cannot overwrite a newer verdict. */
 export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId: string) {
   return withLearningStateLock(db, async (tx) => {
     await tx.execute(

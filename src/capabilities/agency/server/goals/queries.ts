@@ -1,6 +1,6 @@
 // Goal semantic command entrypoints. Creation and mutation rules live in
-// commands.ts; the shared active-goal read model moved to
-// @/kernel/read-models/active-goal-scope (YUK-1571).
+// commands.ts; the shared active-goal read model is
+// @/kernel/read-models/active-goal-scope.
 
 import type { DeclaredStageT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
@@ -11,8 +11,8 @@ type DbLike = Db | Tx;
 export type { GoalScopeMode, GoalStatus, InsertGoalInput } from './commands';
 
 /**
- * Transition a goal's status. ND-4: status is qualitative (active / dormant /
- * done) — never a progress percentage. Optimistic-concurrency bump on version.
+ * Transition a goal's status. Status is qualitative (active / dormant / done) — never a
+ * progress percentage.
  */
 export async function updateGoalStatus(
   db: DbLike,
@@ -25,11 +25,10 @@ export async function updateGoalStatus(
 
 /**
  * Re-scope a goal (title / scope_knowledge_ids / sequence_hint / declared_stage). Used
- * when the AI re-proposes scope after the user progresses (ND-2 — still routed through
- * a confirmed proposal, never a silent change). `source` / `subject_id` are set-once
- * provenance and intentionally not mutated here. `declared_stage` (YUK-1009) is the
- * learner-declared curriculum stage — the command-level correction path; explicit
- * null clears the declaration. It is a curriculum constraint, never a θ̂ input.
+ * when the AI re-proposes scope after the user progresses — still routed through a
+ * confirmed proposal, never a silent change. `source` / `subject_id` are set-once
+ * provenance and not mutated here. `declared_stage` is a curriculum constraint, never a
+ * θ̂ input; explicit null clears the declaration.
  */
 export async function updateGoalScope(
   db: DbLike,
