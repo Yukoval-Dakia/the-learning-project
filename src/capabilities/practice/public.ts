@@ -2,7 +2,7 @@
 
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
-export { type EffectiveTruth } from '@/kernel/events';
+export type { EffectiveTruth } from '@/kernel/events';
 export {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
@@ -307,3 +307,5 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
+
+export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';

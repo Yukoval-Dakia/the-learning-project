@@ -880,6 +880,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b41ee1db-5dd1-4392-bf99-dcfa0c58454b",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "loadWeeklyReview",
+      "targetModule": "src/capabilities/practice/server/review-weekly.ts",
+      "targetSymbol": "loadWeeklyReview",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/coach-reader.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "The authenticated Start coach reader imports the complete weekly report operation; the retained HTTP weekly handler directly calls the same owner.",
+      "rationale": "Practice owns query normalization, calendar window selection and report aggregation. HTTP and Start share that operation without duplicating SQL or calendar rules.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3875616e-2273-48b7-93e7-41a5fd5e3710",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -1312,6 +1332,46 @@
       "symbols": ["isGeneralFallbackFor"],
       "issue": "YUK-1358",
       "owns": "Resolution cache owns hydrated general-fallback facts. Shell owns the complete learner subject list projection. This existing dependency moves from the HTTP module with that operation.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the canonical API error envelope. Practice owns report query validation. ApiError moves into the operation while HTTP retains errorResponse, adding one physical reference rather than a net-zero move.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/read-models/assessment-review-occurrences.ts",
+      "kind": "value",
+      "symbols": ["loadNativeReviewOccurrences"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns native assessment review occurrences. Practice consumes those facts for the weekly report; this reference moves out of the HTTP adapter.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getCurrentFailureAttempts"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns current effective failure facts. Practice owns their weekly report aggregation; this reference moves out of the HTTP adapter.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/read-models/misc-cause-labels.ts",
+      "kind": "value",
+      "symbols": ["resolveMiscCauseLabels"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns active misc cause label resolution. Practice owns the weekly cause ranking and display projection; this reference moves out of the HTTP adapter.",
       "date": "2026-10-21"
     }
   ],
