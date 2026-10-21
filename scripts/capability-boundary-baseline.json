@@ -679,6 +679,66 @@
       "justification": {
         "kind": "offset"
       }
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "loadNotePage",
+      "targetModule": "src/capabilities/notes/server/note-page.ts",
+      "targetSymbol": "loadNotePage",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-page-reader.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Notes note-page read owner. Notes owns the complete note-page aggregate; the authenticated Start reader imports and calls loadNotePage directly.",
+      "rationale": "Stable complete read operation shared with the retained HTTP GET; no duplicated SQL, DTO assembly or page rules.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff05cf94-d838-47b6-8b70-759ffe6c069d",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "NoteIdParamsSchema",
+      "targetModule": "src/capabilities/notes/api/contracts.ts",
+      "targetSymbol": "NoteIdParamsSchema",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-page-reader.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Notes note-id input contract owner. The Start reader imports the existing Notes id schema and validates after token/epoch authorization.",
+      "rationale": "HTTP and RPC reuse the same input contract; adapters preserve400/404 semantics, not a temporary compatibility forwarding layer.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff05cf94-d838-47b6-8b70-759ffe6c069d",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "NotePageJsonResponseSchema",
+      "targetModule": "src/capabilities/notes/api/contracts.ts",
+      "targetSymbol": "NotePageJsonResponseSchema",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-page-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "Notes note-page JSON contract owner. The live Start client validates the JSON response with a schema derived from NotePageResponseSchema, changing only history.at to its ISO JSON string representation.",
+      "rationale": "Preserves the retained HTTP consumer shape without duplicating SQL or aggregate DTO facts.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff05cf94-d838-47b6-8b70-759ffe6c069d",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [

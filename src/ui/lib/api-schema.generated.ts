@@ -8112,7 +8112,7 @@ export interface operations {
                         content: ({
                             attrs?: {
                                 artifact_id?: string;
-                                block_id?: string;
+                                block_id?: string | null;
                                 id?: string;
                                 prompt_preview?: string;
                                 question_id?: string;
@@ -8153,7 +8153,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;
@@ -20839,7 +20839,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;
