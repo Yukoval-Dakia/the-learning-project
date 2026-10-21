@@ -31,10 +31,10 @@ type ProposalAcceptDecision =
       decision?: 'accept';
       new_relation_type?: never;
       corrected_payload?: ProposalCorrectedPayload;
-  /**
-   * Explicit learner confirmation for lossy accepts (currently block_merge). The
-   * capability applier enforces it; runtime seams cannot supply or override it.
-   */
+      /**
+       * Explicit learner confirmation for lossy accepts (currently block_merge). The
+       * capability applier enforces it; runtime seams cannot supply or override it.
+       */
       confirm_lossy?: boolean;
     }
   | {
