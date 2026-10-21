@@ -32,10 +32,6 @@ import {
   UndoArtifactAiChangeResponseSchema,
 } from './api/contracts';
 
-// M3-T1 (YUK-317)：notes 包骨架。routes 在 T4（API 上 Hono）逐条填充——
-// 9 条：notes/[id] GET + artifacts/[id]/{body-blocks,sections/[sectionId],
-// backlinks,correct,ai-changes,ai-changes/[eventId]/undo} + artifacts/search
-// + hubs/[id]/dismiss-link。M4-T5 (YUK-319) 增 1 条：artifacts/ai-changes/recent。
 export const notesCapability = defineCapability({
   name: 'notes',
   description:
@@ -56,9 +52,6 @@ export const notesCapability = defineCapability({
     ],
   },
   api: {
-    // M3-T4 (YUK-317)：9 条路由全带 load 懒加载 thunk（M1/M2 配方）。
-    // M5-T5a (YUK-321)：/api/editing-session/* 收编。
-    // YUK-358 决定3：/api/embedded-check/* 孤儿链真删（曾随 M5 等价平移留 D6 墓碑）。
     routes: [
       {
         method: 'GET',
@@ -90,8 +83,6 @@ export const notesCapability = defineCapability({
         load: () => import('./api/artifacts-search').then((m) => m.GET),
       },
       {
-        // M4-T5 (YUK-319)：近 24h 全局 AI 改动条（旧 app/api/today/ai-changes
-        // GET 等价平移；批量 undo POST 不平移，撤销走下方 per-event undo 链）。
         method: 'GET',
         path: '/api/artifacts/ai-changes/recent',
         operationId: 'listRecentArtifactAiChanges',
@@ -180,10 +171,6 @@ export const notesCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/hub-dismiss-link').then((m) => m.POST),
       },
-      // M5-T5a (YUK-321) — editing-session 收编。YUK-358 决定6：heartbeat 的 dwell
-      // note_refine 触发已裁撤，本路由现为纯 presence 写（editing_presence DEFER 仲裁）。
-      // YUK-358 决定3：/api/embedded-check/attempt 路由随内嵌判分自测孤儿链真删
-      //（graded inline self-test 被 D6 + B1 裁撤，SPA 零消费）。
       {
         method: 'POST',
         path: '/api/editing-session/heartbeat',
@@ -207,8 +194,8 @@ export const notesCapability = defineCapability({
   jobs: {
     handlers: [
       {
-        // YUK-384：nightly hub-sync COVERAGE REPAIR sweep（BJT 02:45）——不再直接 apply，
-        // 只 dirty/cancel 游标，靠 reconciler 收敛（never direct apply）。
+        // Coverage repair only: dirties or cancels cursors; the reconciler owns
+        // every apply.
         name: 'hub_auto_sync_nightly',
         schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
         queue: 'llm',
@@ -223,18 +210,14 @@ export const notesCapability = defineCapability({
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncRecoveryJobHandler),
       },
       {
-        // YUK-384：immediate mutation-wake queue（链式/按需，无 cron）。生产者 = 三个
-        // 已接线的拓扑 handler（POST /api/knowledge/edges、/api/proposals/[id]/decisions、
-        // /api/teaching-sessions/[id]/accept-chip）经 wakeHubSyncAfterCommit 提交后best-effort
-        // 发一个合并 wake；消费者 = 本 handler 跑 runHubSyncCycle({reason:'mutation_wake'})，
-        // 即时收敛（不再只靠每分钟 recovery 兜底）。
+        // Best-effort wake after a topology commit; the reconciler dedupes and
+        // applies, so a lost wake only waits for the recovery floor.
         name: 'hub_sync_mutation_wake',
         queue: 'llm',
         load: () =>
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubSyncMutationWakeJobHandler),
       },
       {
-        // Wave 6 / T-88 P4-A (YUK-127)：Living Note refine。链式/按需（触发器投递），无 cron。
         name: 'note_refine',
         queue: 'llm',
         load: () => import('./jobs/note-refine').then((m) => m.buildNoteRefineHandler),
@@ -251,9 +234,8 @@ export const notesCapability = defineCapability({
       },
     ],
   },
-  // M4-T4 (YUK-319)：proposal kind 归属声明。note_update 的 accept 持久化委托
-  // ./server/note-refine-apply（persistNoteRefineApply，M3 起）；壳层
-  // acceptNoteUpdateProposal 只做校验 + rate event 编排（plan 裁决 T4 只补声明不迁体）。
+  // The accept shell validates and orchestrates; the persist body stays in
+  // note-refine-apply.
   proposals: {
     kinds: [
       {
@@ -273,11 +255,9 @@ export const notesCapability = defineCapability({
       },
     ],
   },
-  // YUK-880 (F3.9b) — Notes owns the interactive-artifact authoring DomainTools
-  // (moved from the central src/server/ai/tools/author-artifact.ts). Copilot
-  // keeps the surface grant via the allowlist NAMES in allowlists.ts — only the
-  // implementation ownership moved (author = create v0, update = full-html
-  // replace + version bump, ADR-0033 D6).
+  // Notes owns the interactive-artifact authoring tools; Copilot grants them by
+  // name. The backend stores the HTML opaquely (author = create v0,
+  // update = full replace + version bump).
   copilotTools: {
     tools: [
       {

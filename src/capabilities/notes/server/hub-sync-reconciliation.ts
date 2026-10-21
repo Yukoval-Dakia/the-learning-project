@@ -1,20 +1,13 @@
-// YUK-384 — durable hub-sync reconciliation: claim + renewable lease.
-//
-// PostgreSQL is authoritative. Topology triggers (drizzle/0071) advance one
-// durable `generation` per hub; workers claim EXACTLY one ready cursor at a time
-// with `FOR UPDATE SKIP LOCKED` (never pre-leasing a batch tail) and hold a
-// 2-minute lease renewed every 30 seconds by the cycle. Generations are
-// PostgreSQL `bigint` and cross the TypeScript boundary as decimal strings,
-// never JavaScript `number`.
+// Durable hub-sync reconciliation. One cursor per hub; a worker claims one ready
+// cursor at a time (never a batch tail) and holds a lease renewed every 30s.
+// Generations are bigint and cross into TypeScript as decimal strings.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 
 import { sql } from 'drizzle-orm';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-// Auto-zone builder + suppression reader live in a neutral module (YUK-384 Task 8
-// ESM-cycle lift) so both the reconciler and the nightly job — which now imports
-// runHubSyncCycle from here — depend on them without a cycle.
+// Shared with the nightly job without an import cycle.
 import {
   buildAutoZonePatch,
   normalizeMalformedAutoZoneContainer,
@@ -41,12 +34,9 @@ export interface HubSyncClaim {
 }
 
 /**
- * Claim the single most-eligible ready cursor for `owner`, or return null when
- * none is claimable. Eligible = a due `pending`/`retry_wait` row, or a
- * `claimed`/`applying` row whose lease has expired (reclaim). `FOR UPDATE SKIP
- * LOCKED` + `LIMIT 1` guarantees two workers never claim the same generation and
- * that no batch tail is pre-leased. Ordering `(next_attempt_at, last_dirty_at,
- * artifact_id)` drains fairly and deterministically.
+ * Claim the single most-eligible cursor, or null. Eligible means due
+ * pending/retry_wait or an expired claimed/applying lease. SKIP LOCKED + LIMIT 1
+ * keeps two workers off one generation and avoids pre-leasing a tail.
  */
 export async function claimNextHubSync(
   db: Db,
@@ -95,11 +85,8 @@ export async function claimNextHubSync(
 }
 
 /**
- * Extend the claim's lease by another 2 minutes, fencing on the exact
- * `artifact_id + generation + claim_token`, an active (`claimed`/`applying`)
- * status, and an unexpired lease measured by database time. Returns true iff
- * exactly one row matched; a false return means the claim was superseded, lost,
- * or expired, and the cycle must abort compute/finalize immediately.
+ * Extend the lease, fencing on id + generation + token, active status, and an
+ * unexpired lease. False means the claim was lost and compute/finalize must stop.
  */
 export async function renewHubSyncLease(db: Db, claim: HubSyncClaim): Promise<boolean> {
   const rows = await db.execute<{ artifact_id: string }>(sql`
@@ -115,8 +102,6 @@ export async function renewHubSyncLease(db: Db, claim: HubSyncClaim): Promise<bo
   `);
   return rows.length === 1;
 }
-
-// ── Deterministic compute + atomic fenced apply (Task 4) ──────────────────────
 
 export type HubSyncReason = 'mutation_wake' | 'recovery' | 'nightly_repair';
 export type HubSyncMode = 'off' | 'shadow' | 'apply';
@@ -135,10 +120,8 @@ export interface HubSyncCycleOptions {
   repairKey?: string;
   mode?: HubSyncMode;
   owner?: string;
-  // Test-only seam: fired after each per-claim reconcile so a test can commit a topology
-  // mutation MID-cycle (e.g. between two claims) and assert the next hub reconciles
-  // against a graph current as of ITS claim — not a stale cycle-start snapshot. Production
-  // callers omit it.
+  // Test seam: runs after each claim so a test can mutate topology mid-cycle and
+  // assert the next claim sees it.
   afterReconcile?: (claim: HubSyncClaim) => void | Promise<void>;
 }
 
@@ -153,9 +136,8 @@ export interface HubSyncCycleResult {
   retry_scheduled: number;
   cancelled: number;
   shadowed: number;
-  // Claimed but not processed to a finalize outcome: the lease was lost before finalize
-  // (lost_lease) or recording the classified retry itself failed (retry_record_failed).
-  // Counting them keeps `claimed` reconcilable with the sum of outcome buckets.
+  // Claimed without a finalize outcome: lost lease or a failed retry record.
+  // Counted so the buckets reconcile with `claimed`.
   lost_lease: number;
   retry_record_failed: number;
   continuation_needed: boolean;
@@ -169,8 +151,7 @@ export type FinalizeOutcome =
   | 'cancelled'
   | 'shadowed';
 
-// Fault-injection seams for the atomicity + concurrency tests (RED 11 & 13).
-// Production callers omit this argument entirely.
+// Fault-injection seams for atomicity and concurrency tests.
 type ApplyStage = 'artifact' | 'block_refs' | 'event' | 'ack';
 export interface FinalizeHubSyncHooks {
   afterCursorLock?: () => void | Promise<void>;
@@ -200,23 +181,18 @@ export interface ClassifiedHubSyncError {
 }
 
 /**
- * Every failure the reconciler recognises is retryable — there is no terminal
- * discard. HubSyncError carries its own class/code; PostgreSQL errors surface as
- * transient; anything else is unknown.
+ * All failures are retryable; there is no terminal discard. Known errors carry a
+ * class; PostgreSQL surfaces as transient; anything else is unknown.
  */
 export function classifyHubSyncError(err: unknown): ClassifiedHubSyncError {
   if (err instanceof HubSyncError) {
     return { errorClass: err.errorClass, code: err.code, message: err.message };
   }
-  // NoteRefineApplyError carries a BUSINESS code ('target_not_found' /
-  // 'invalid_body_blocks' / 'user_verified_protected'), not a SQLSTATE. It was being
-  // swept into pg_transient by the `.code` duck-type below, polluting the classification
-  // taxonomy. Map it to a dedicated apply-validation class.
+  // A business code, not a SQLSTATE; keep it out of pg_transient.
   if (err instanceof NoteRefineApplyError) {
     return { errorClass: 'apply_validation_error', code: err.code, message: err.message };
   }
-  // Only a genuine Postgres error shape (5-char SQLSTATE, e.g. '40001') is pg_transient —
-  // not any object that happens to expose a string `.code`.
+  // Require a real SQLSTATE shape, not any object with a string `.code`.
   const pgCode = (err as { code?: unknown } | null)?.code;
   if (typeof pgCode === 'string' && /^[0-9A-Z]{5}$/.test(pgCode)) {
     return {
@@ -232,8 +208,7 @@ export function classifyHubSyncError(err: unknown): ClassifiedHubSyncError {
   };
 }
 
-// Deterministic key-sorted serialization so `desiredHash` is stable regardless
-// of object key order.
+// Key-sorted so the desired hash ignores object key order.
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -255,8 +230,7 @@ function workerOwner(): string {
   return `hub-sync:${hostname()}:${process.pid}`;
 }
 
-// `type` (not `interface`) so it satisfies drizzle `execute`'s
-// `Record<string, unknown>` row constraint via the implicit index signature.
+// `type` gives the implicit index signature drizzle's execute row constraint needs.
 type HubComputeRow = {
   id: string;
   type: string;
@@ -289,10 +263,8 @@ async function loadEdgeInputs(db: Db): Promise<HubMeshEdge[]> {
   }));
 }
 
-// The tree/edges/atomics graph inputs. computeHubDesiredState loads these fresh per call
-// by default; the optional param exists ONLY so a direct test can inject a controlled
-// graph. runHubSyncCycle never passes it — each claim reloads fresh (see the revert of the
-// per-cycle snapshot in runHubSyncCycle for why a shared snapshot was a stale-win).
+// The graph inputs. computeHubDesiredState reloads them per call; the optional
+// parameter exists only for direct tests.
 export type HubMeshGraphInputs = {
   nodes: Awaited<ReturnType<typeof loadTreeSnapshot>>;
   edges: Awaited<ReturnType<typeof loadEdgeInputs>>;
@@ -300,11 +272,9 @@ export type HubMeshGraphInputs = {
 };
 
 /**
- * Recompute the hub's desired body deterministically, OUTSIDE any row/advisory
- * lock, reusing the retained `resolveHubMeshAtomics` + `buildAutoZonePatch` +
- * `applyNotePatch`. Suppression (`attrs.suppressed_block_refs[]`) is honoured
- * exactly as the nightly path does. `changed` is true iff a patch was produced;
- * the patch itself is never stored.
+ * Recompute the hub's desired body deterministically outside any lock, honouring
+ * suppressions like the nightly path. `changed` means a patch was produced; the
+ * patch itself is never stored.
  */
 export async function computeHubDesiredState(
   db: Db,
@@ -324,11 +294,8 @@ export async function computeHubDesiredState(
     );
   }
 
-  // Load the tree/edges/atomics graph FRESH (unless a test injects one) so the desired
-  // state reflects topology as of THIS claim. A shared per-cycle snapshot was a stale-win:
-  // a hub claimed at a mid-cycle-bumped generation would pass the write-side fence yet
-  // compute from an older graph and apply a stale body (see runHubSyncCycle). The `graph`
-  // param exists only for direct tests; runHubSyncCycle never passes it.
+  // Reload per claim so the desired state reflects topology as of this claim. A
+  // shared cycle-start snapshot would pass the write fence yet apply a stale body.
   const { nodes, edges, atomics } = graph ?? {
     nodes: await loadTreeSnapshot(db),
     edges: await loadEdgeInputs(db),
@@ -343,16 +310,12 @@ export async function computeHubDesiredState(
     atomics,
   ).filter((candidate) => !suppressed.has(candidate.artifact_id));
 
-  // Poison-pill guard: heal a malformed auto-links container (missing/non-string id)
-  // BEFORE building the patch, so the replace_block always targets an existing block
-  // instead of throwing target_not_found → infinite retry. Compute the patch and the
-  // desired body against the healed doc.
+  // Heal a malformed container first, or the replace can never match and the hub
+  // retries forever. Build the patch against the healed doc.
   const healed = normalizeMalformedAutoZoneContainer(hub.body_blocks, hub.id);
   const patch = buildAutoZonePatch(healed.bodyBlocks, hub.id, curated);
-  // The reconciler IS the auto-zone owner (this is the system's own automatic region), so
-  // it must be able to replace the auto-links container even if it carries user_verified
-  // attrs — otherwise replace_block throws 'user_verified_protected' → permanent poison.
-  // The guard defends USER-authored edits from AI refine jobs, a different caller.
+  // This is the system's own auto region, so it may replace the container even if
+  // marked verified; the guard protects user edits from AI refine, a different caller.
   const bodyBlocks = (
     patch
       ? applyNotePatch(healed.bodyBlocks, patch, { enforceUserVerifiedGuard: false })
@@ -369,20 +332,10 @@ export async function computeHubDesiredState(
   };
 }
 
-// Ownership fence: generation + token + active-status, NO lease predicate. The per-claim
-// token (a fresh randomUUID minted by claimNextHubSync on every claim/reclaim) is what
-// actually proves ownership — a worker that reclaimed this cursor changed the token, so a
-// stale writer matches 0 rows. Used by EVERY post-claim cursor write:
-//   • finalize's in-transaction writes — additionally exclusive under the cursor row lock;
-//   • recordHubSyncRetry — cross-transaction, protected by token rotation alone.
-// The lease is deliberately NOT checked here. It is a CLAIM-ELIGIBILITY concept (which
-// cursors claimNextHubSync may reclaim) and gates the INITIAL post-lock superseded decision
-// — it is not a write-time guard. Checking it on writes caused two poison loops on a
-// big-hub / slow-DB (degraded fsync): (1) finalize's apply (block-ref sync + event write)
-// outran the ~2min lease → the ack matched 0 rows (the renewer is blocked on the same row
-// lock) → ACK_FENCE_LOST rollback → re-claim → repeat; (2) after finalize threw, the
-// lease-fenced recordHubSyncRetry matched 0 rows → no backoff / failure_count / last_error
-// written → the reclaim arm saw only an expired lease → hot loop with blind alerts.
+// Ownership fence: generation + token + active status, never the lease. The
+// per-claim token proves ownership because any reclaim rotates it. The lease is
+// a claim-eligibility concept; fencing writes on it caused poison loops on slow
+// applies (ack matched 0 rows, then retries lost their backoff).
 function claimTokenFence(claim: HubSyncClaim) {
   return sql`
     artifact_id = ${claim.artifactId}
@@ -400,10 +353,9 @@ type CursorLockRow = {
 };
 
 /**
- * The single fenced finalization transaction. Lock order is fixed: transaction
- * advisory lock → artifact row → reconciliation cursor → edit-session inspection.
- * Outcomes are evaluated in the exact order the plan prescribes; every mutating
- * branch carries the claim fence so it is a no-op under any concurrent win.
+ * The fenced finalization transaction. Lock order: advisory → artifact → cursor →
+ * edit-session read. Every mutating branch carries the claim fence, so a
+ * concurrent win turns it into a no-op.
  */
 export async function finalizeHubSync(
   db: Db,
@@ -418,7 +370,7 @@ export async function finalizeHubSync(
       type: string;
       archived_at: Date | null;
       version: number;
-      // X1: previous body + history for the full-snapshot body_blocks_edit event (below).
+      // The before body and history ride the full-snapshot event below.
       body_blocks: ArtifactBodyBlocksT;
       history: unknown[];
     }>(sql`
@@ -427,8 +379,7 @@ export async function finalizeHubSync(
     `);
     const hub = hubRows[0];
 
-    // Reconciliation cursor lock; database time is read here (after the lock
-    // wait) so lease expiry is judged against the same instant.
+    // Read database time after the lock wait so lease expiry uses the same instant.
     const cursorRows = await tx.execute<CursorLockRow>(sql`
       select generation::text as generation, claim_token, status,
              (lease_expires_at is null or lease_expires_at < clock_timestamp()) as lease_expired
@@ -484,9 +435,7 @@ export async function finalizeHubSync(
       returning artifact_id
     `);
     if (applyingRows.length !== 1) {
-      // The claim fence (generation/token/status/unexpired-lease) was lost between
-      // the cursor lock and here (e.g. lease expired by database time). Roll the
-      // whole apply back into a classified retry rather than proceeding.
+      // Fence lost after the cursor lock: roll the apply back into a classified retry.
       throw new HubSyncError(
         'apply_validation_error',
         'APPLYING_FENCE_LOST',
@@ -495,8 +444,8 @@ export async function finalizeHubSync(
     }
 
     await hooks.beforeStage?.('artifact');
-    // Use one millisecond-precision database timestamp for the row and its event.
-    // A second application clock after block-ref work made replay change updated_at.
+    // One millisecond database timestamp for the row and its event; a second clock
+    // after block-ref work made replay change updated_at.
     const appliedRows = await tx.execute<{ version: number; updated_at: Date | string }>(sql`
       update artifact
       set body_blocks = ${JSON.stringify(desired.bodyBlocks)}::jsonb,
@@ -521,14 +470,9 @@ export async function finalizeHubSync(
     await syncBlockRefsForArtifact(tx, claim.artifactId, desired.bodyBlocks);
 
     await hooks.beforeStage?.('event');
-    // X1: write a FULL-SNAPSHOT body_blocks_edit event (fork #1) so foldArtifact REPLAYS the
-    // hub-sync apply. The op-replay note_refine_apply path is FORBIDDEN for new writes (B4 铁律,
-    // artifact.ts) and would drift on the container-heal case (replaying ops on the un-healed
-    // row body throws target_not_found). The old experimental:hub_sync_apply event was ignored
-    // by the fold → projection rebuild reverted the hub body → fold≠row. Actor is
-    // 'agent'/'hub_auto_sync' (an AI-curated structural write). generation/desiredHash live in
-    // the cursor columns + the NDJSON attempt log (the body_blocks_edit payload is .strict()).
-    // The reconciler UPDATE leaves `history` untouched, so history_after = the pre-apply history.
+    // Full-snapshot event, not op replay: the heal case would not replay cleanly,
+    // and the fold must reproduce the body. History is untouched, so carry the
+    // pre-apply value.
     await writeEvent(tx, {
       id: randomUUID(),
       session_id: null,
@@ -571,10 +515,8 @@ export async function finalizeHubSync(
       returning artifact_id
     `);
     if (ackRows.length !== 1) {
-      // Defense-in-depth: under a pathological >90s mid-transaction lease expiry the
-      // body version-CAS can commit while the ack matches 0 rows. Throwing here rolls
-      // the ENTIRE apply (body + block-refs + event + applying-set) back and reclassifies
-      // as a retry, so we never return 'applied' without actually acknowledging.
+      // A pathological mid-transaction lease expiry can commit the body while the ack
+      // matches 0 rows. Throw so the whole apply rolls back and retries.
       throw new HubSyncError(
         'apply_validation_error',
         'ACK_FENCE_LOST',
@@ -590,13 +532,9 @@ async function deferClaimedCursor(
   claim: HubSyncClaim,
   reason: 'active_editor' | 'artifact_version_changed',
 ): Promise<FinalizeOutcome> {
-  // Release the claim back to pending WITHOUT touching consecutive_failure_count
-  // (deferral and CAS conflict are non-failures). For an ACTIVE EDITOR, back next_attempt_at
-  // off by 30s — symmetric with the 30s active-session window — so an in-progress edit does
-  // not trigger a tight ~100ms reclaim → full-KG reload → back-to-back continuation churn
-  // loop; convergence still follows within ≤30s of the editor going idle.
-  // artifact_version_changed stays `now`: it is a one-shot CAS condition and the body-change
-  // trigger already re-dirtied the cursor, so an immediate re-claim converges the new body.
+  // Deferrals are not failures, so the failure count is untouched. An active
+  // editor waits 30s (the active-session window) to avoid a reclaim/reload churn
+  // loop; a version change retries immediately because the trigger re-dirtied it.
   const nextAttempt =
     reason === 'active_editor'
       ? sql`clock_timestamp() + interval '30 seconds'`
@@ -635,25 +573,14 @@ async function acknowledgeNoop(
   return outcome;
 }
 
-// Shadow re-observe backoff: after a shadow observation the claim is released back to
-// pending but pushed OUT of the immediately-ready window by this interval. Without it a
-// shadow cycle would re-claim the same never-draining hub every loop iteration and
-// dispatch an endless continuation (hasReadyHubSync would stay true forever). A real
-// topology change re-dirties via mark_hub_sync_dirty (next_attempt_at = now), and
-// nightly repair re-dirties everything, so apply-mode convergence is never blocked by it.
-// X3: kept at 2min — comfortably ≥ the 1-minute recovery tick (enough to stop the shadow
-// hot loop) yet short enough that flipping shadow→apply converges shadow-observed hubs
-// within ~2–3min (or immediately via one nightly repair / any topology change), so it no
-// longer contradicts the ADR's per-minute recovery-drain cadence.
+// Pushes a shadow-observed cursor out of the ready window so it cannot re-claim in
+// a hot loop. 2min is above the 1min recovery tick yet lets an apply flip converge
+// soon; any real topology change or nightly repair re-dirties immediately.
 const SHADOW_REOBSERVE_BACKOFF = sql`interval '2 minutes'`;
 
-// Shadow mode OBSERVES the desired state (records the hash/version for operators)
-// WITHOUT applying it and, crucially, WITHOUT consuming the obligation: the claim is
-// released back to pending with acknowledged_generation UNCHANGED. Advancing ack in
-// shadow (the old acknowledgeNoop path) meant a shadow-period change was never applied
-// after flipping to apply — recovery only claims pending/retry_wait, so the acknowledged
-// cursor was skipped until the next topology change. Leaving it pending lets apply mode
-// re-claim and converge it.
+// Shadow mode records the desired hash/version without applying and without
+// consuming the obligation: the cursor stays pending with the same acknowledged
+// generation, so apply mode can still claim and converge it.
 async function observeShadowNoApply(
   tx: Tx,
   claim: HubSyncClaim,
@@ -681,8 +608,6 @@ async function observeShadowNoApply(
 }
 
 export function readHubSyncMode(): HubSyncMode {
-  // YUK-1007：DB > env > code-default('off')；非法值 → 'off'（registry envParse
-  // 收窄到枚举，其余 → undefined → codeDefault）。
   const raw = getConfig('HUB_SYNC_MODE');
   return raw === 'apply' || raw === 'shadow' ? raw : 'off';
 }
@@ -706,10 +631,8 @@ function emptyCycleResult(reason: HubSyncReason, mode: HubSyncMode): HubSyncCycl
 }
 
 async function hasReadyHubSync(db: Db): Promise<boolean> {
-  // Mirror claimNextHubSync's eligibility EXACTLY: pending/retry_wait past their
-  // next_attempt_at OR claimed/applying whose lease has expired (reclaimable). Missing
-  // the expired-lease arm made continuation_needed under-report a backlog of dead-lease
-  // cursors, so a stuck batch would not trigger the continuation that drains it.
+  // Must match claimNextHubSync's eligibility, including expired leases, or a
+  // dead-lease backlog would not trigger the continuation that drains it.
   const rows = await db.execute<{ ready: boolean }>(sql`
     select exists(
       select 1 from hub_sync_reconciliation
@@ -728,14 +651,10 @@ export async function recordHubSyncRetry(
   claim: HubSyncClaim,
   classified: ClassifiedHubSyncError,
 ): Promise<number> {
-  // Backoff = min(5s * 2^(newFailureCount - 1), 15m) + 0–20% jitter. The SET
-  // expression reads the pre-increment count, so exponent = old count = new-1.
-  // `now()` (statement-stable) anchors BOTH next_attempt_at and last_error_at so
-  // their difference is exactly the scheduled delay (deterministic for tests).
-  // Fenced on token (NOT lease): finalize may throw AFTER a long apply expired the lease,
-  // and this write runs post-rollback; the token still proves we own the claim (a reclaim
-  // would have rotated it). Returns the rowcount so the caller only tallies a scheduled
-  // retry when the write actually landed.
+  // Exponential backoff with jitter; the SET sees the pre-increment count, so the
+  // exponent is the old count. now() anchors both timestamps so the delay is exact.
+  // Fenced on token, not lease: this runs after a failed apply whose lease may have
+  // expired, but a rotated token still proves the claim was lost.
   const rows = await db.execute<{ artifact_id: string }>(sql`
     update hub_sync_reconciliation
     set status = 'retry_wait',
@@ -778,9 +697,8 @@ function tallyOutcome(result: HubSyncCycleResult, outcome: FinalizeOutcome): voi
   }
 }
 
-// A 30-second lease-renewal timer; if renewal ever returns false the claim was
-// lost/superseded and compute/finalize must abort. Unref'd so it never keeps the
-// process alive, and always cleared by the caller.
+// Renew every 30s. A false renewal means the claim is lost and the cycle must
+// abort. Unref'd so it never holds the process open.
 function startLeaseRenewal(db: Db, claim: HubSyncClaim): { lost: () => boolean; stop: () => void } {
   let lost = false;
   const timer = setInterval(() => {
@@ -789,10 +707,8 @@ function startLeaseRenewal(db: Db, claim: HubSyncClaim): { lost: () => boolean; 
         if (!ok) lost = true;
       })
       .catch(() => {
-        // A rejected renewal query (transient DB error) must NOT surface as an
-        // unhandled promise rejection — under `--unhandled-rejections=throw` that
-        // crashes the worker. Treat a failed renewal as a lost lease: compute/finalize
-        // aborts and another worker reclaims after the lease expires.
+        // A rejected renewal must not become an unhandled rejection (which crashes
+        // the worker); treat it as a lost lease.
         lost = true;
       });
   }, 30_000);
@@ -800,8 +716,7 @@ function startLeaseRenewal(db: Db, claim: HubSyncClaim): { lost: () => boolean; 
   return { lost: () => lost, stop: () => clearInterval(timer) };
 }
 
-// One structured line per attempt for operators — ids + metadata ONLY, never
-// document bodies. NDJSON on stdout so the worker log ships it verbatim.
+// One structured line per attempt, ids and metadata only, never bodies.
 function logHubSyncAttempt(entry: {
   artifact_id: string;
   generation: string;
@@ -827,11 +742,10 @@ async function reconcileClaim(
   let outcome = 'lost_lease';
   let errorClass: string | null = null;
   try {
-    // Load fresh per claim (NOT a per-cycle snapshot) — see runHubSyncCycle for why.
+    // Fresh graph per claim, not per cycle; see computeHubDesiredState.
     const desired = await computeHubDesiredState(db, claim);
     if (renewal.lost()) {
-      // Lost lease is a non-failure; another worker reclaims after expiry. Count it so
-      // `claimed` reconciles (we already incremented claimed but produce no finalize outcome).
+      // Non-failure; another worker reclaims after expiry.
       result.lost_lease += 1;
       return;
     }
@@ -846,16 +760,13 @@ async function reconcileClaim(
       if (scheduled > 0) {
         result.retry_scheduled += 1;
       } else {
-        // The claim was superseded (token rotated by a reclaim) before we could record the
-        // retry — a non-failure supersession, not a scheduled retry. Do not over-count.
+        // A rotated token means a reclaim won; count it as superseded, not retried.
         outcome = 'superseded';
         result.superseded += 1;
       }
     } catch (retryErr) {
-      // Recording the retry is itself a DB write and can fail transiently. It must NOT
-      // escape reconcileClaim — otherwise the cycle's for-loop (which has no per-claim
-      // guard) aborts and every OTHER claimed hub is abandoned until its lease expires.
-      // Log and move on; this hub's lease expires and another worker reclaims it.
+      // This write can fail transiently. It must not escape, or one hub aborts the
+      // whole cycle; the other claims would wait for their leases.
       outcome = 'retry_record_failed';
       result.retry_record_failed += 1;
       console.error(
@@ -882,22 +793,15 @@ async function reconcileClaim(
   }
 }
 
-// Test-only seam: pause each per-hub repair transaction right before it takes
-// the artifact lock, so a lifecycle mutation can commit and be re-checked under
-// lock (RED 20). Production callers omit it.
+// Test seam: pause before the artifact lock so a test can race a lifecycle change.
 export interface RepairHubSyncHooks {
   beforeArtifactLock?: () => void | Promise<void>;
 }
 
 /**
- * Bounded, idempotent coverage repair (Task 7). Pages hub IDs ascending — every
- * cursor UNION every note_hub artifact, so cursors whose artifact was archived or
- * lost the hub type are also reconsidered. For each ID it takes the artifact
- * advisory lock, reloads the artifact and cursor under lock (never trusting the
- * page-scan snapshot), and — only when `last_repair_key IS DISTINCT FROM
- * repairKey` — dirties a live hub or cancels a non-live one, stamping the repair
- * key in the SAME write so a duplicate key is a no-op (RED 21). It NEVER computes
- * or applies desired body state; it only advances/cancels cursors.
+ * Bounded, idempotent coverage repair: page ids (cursors ∪ hub artifacts), then
+ * under the artifact lock dirty a live hub or cancel a dead one, stamping the
+ * repair key in the same write. Never computes or applies a body.
  */
 export async function repairHubSyncCoverage(
   db: Db,
@@ -907,10 +811,8 @@ export async function repairHubSyncCoverage(
   if (!/^nightly:\d{4}-\d{2}-\d{2}$/.test(input.repairKey)) {
     throw new Error(`invalid nightly repair key: ${input.repairKey}`);
   }
-  // KEYSET page: scan strictly past the last id the previous page returned. Without
-  // this the `order by id limit pageSize` scan returns the same head every call, so
-  // hubs beyond pageSize are never dirtied/cancelled and coverage repair is not
-  // convergent. The caller (nightly path) loops pages until hasMore is false.
+  // Keyset page past the last id, or every call returns the same head and coverage
+  // never converges. The caller loops until hasMore is false.
   const afterId = input.afterId ?? null;
   const ids = await db.execute<{ id: string }>(sql`
     select id from (
@@ -979,23 +881,16 @@ export async function repairHubSyncCoverage(
   return { dirtied, cancelled, hasMore: ids.length === input.pageSize, lastId };
 }
 
-// Bounded guard so a pathological coverage set (or a stuck cursor) can never spin the
-// nightly page loop forever. pageSize is maxArtifacts (default 25); 10_000 pages is
-// ~250k artifacts — orders of magnitude above any real hub population for this tool.
+// Guard against a pathological coverage set spinning the nightly page loop.
 const MAX_NIGHTLY_REPAIR_PAGES = 10_000;
 
-// Abandoned editor sessions older than this are swept by the nightly job. Far larger
-// than the 30s active-session window so a session merely between heartbeats is never
-// deleted; only genuinely abandoned rows (browser crash → no blur) are reaped.
+// Far above the 30s active window, so only truly abandoned sessions are reaped.
 const ABANDONED_EDIT_SESSION_TTL = sql`interval '1 hour'`;
 
 /**
- * Presence hygiene (bounded, best-effort): abandoned artifact_edit_session rows (browser
- * crash → no blur) are never deleted and bloat the table. The 30s active window keeps them
- * from reading as active, so this is cleanup-only. Runs from the NIGHTLY JOB, NOT gated by
- * HUB_SYNC_MODE — presence hygiene must continue even when the reconciler is 'off' or rolled
- * back, or zombie rows grow unbounded exactly in the disabled state. A sweep failure must
- * never abort the caller.
+ * Best-effort cleanup of abandoned edit sessions. Runs from the nightly job, not
+ * gated by HUB_SYNC_MODE, so rows are still reaped while the reconciler is off. A
+ * sweep failure is logged, never thrown.
  */
 export async function sweepAbandonedEditSessions(db: Db): Promise<void> {
   try {
@@ -1014,10 +909,8 @@ export async function sweepAbandonedEditSessions(db: Db): Promise<void> {
 }
 
 /**
- * Minimal unified cycle (Task 4 scope): claim → compute → finalize up to
- * `maxArtifacts`, recording retries and continuation. Immediate wake, recovery,
- * and nightly repair all route here; Task 8 extends it with repair coverage
- * and continuation dispatch.
+ * Claim → compute → finalize up to maxArtifacts. Wake, recovery, and nightly
+ * repair all route here.
  */
 export async function runHubSyncCycle(
   db: Db,
@@ -1027,13 +920,10 @@ export async function runHubSyncCycle(
   const result = emptyCycleResult(options.reason, mode);
   if (mode === 'off') return result;
 
-  // Nightly repair sweeps coverage FIRST (dirties/cancels cursors), then the same
-  // claim→compute→finalize loop converges them. No scheduled path applies directly.
+  // Nightly coverage first, then the same loop converges what it dirtied.
   if (options.reason === 'nightly_repair') {
     if (!options.repairKey) throw new Error('nightly_repair requires repairKey');
-    // LOOP keyset pages until the coverage set is exhausted, so EVERY live hub is
-    // dirtied/cancelled even when the population exceeds one page. Bounded by
-    // MAX_NIGHTLY_REPAIR_PAGES against runaway.
+    // Page until exhausted, bounded against runaway.
     let afterId: string | null = null;
     for (let page = 0; page < MAX_NIGHTLY_REPAIR_PAGES; page += 1) {
       const { hasMore, lastId } = await repairHubSyncCoverage(db, {
@@ -1051,20 +941,13 @@ export async function runHubSyncCycle(
     const claim = await claimNextHubSync(db, { owner });
     if (!claim) break;
     result.claimed += 1;
-    // Each claim reloads the tree/edges/atomics graph fresh inside computeHubDesiredState.
-    // A per-cycle snapshot was a MEDIUM stale-win: a hub claimed at a generation bumped by a
-    // mid-cycle topology commit passes the write-side generation/token/lease fence (its claim
-    // was taken at the new generation) yet computes its body from the STALE cycle-start graph
-    // → applies a stale body and acks the bump (GUC suppression prevents self-dirty),
-    // persisting staleness until the ≤24h nightly. The fence guards the write side, not
-    // read-side graph freshness. Reloading per claim keeps the desired state consistent with
-    // the topology as of the claim (the exact stale-win this reconciler exists to prevent).
+    // The graph is reloaded per claim. A cycle-start snapshot could pass the write
+    // fence yet compute from older topology, persisting staleness until the nightly.
     try {
       await reconcileClaim(db, claim, options.reason, mode, result);
     } catch (err) {
-      // Defense-in-depth: reconcileClaim handles its own errors, but one hub's
-      // unexpected throw must never abort the whole cycle and abandon the rest.
-      // Worst case is this hub's lease expiring and being reclaimed — not a cycle abort.
+      // Defensive: reconcileClaim handles its own errors, but one unexpected throw
+      // must not abandon the rest of the batch.
       console.error(
         JSON.stringify({
           event: 'hub_sync_reconcile_uncaught',

@@ -1,10 +1,6 @@
-// YUK-598 / YUK-628 — GET /api/subjects：learner 面的完整学科事实清单。
-//
-// 已注册 profile 与知识树里仅观测到的 raw domain 是两种不同事实：前者可用于
-// goal / leaning，后者只能用于诚实显示和读侧筛选。响应用 configurationStatus 明确
-// 区分，绝不把未知 domain 静默折成 general，也不把它注册成知识树实体。
-//
-// 字段仍逐项裁剪；promptFragments / judgePolicy 等 server-only AI 合同绝不下发。
+// GET /api/subjects: registered profiles and raw domains seen only in the knowledge
+// tree are different facts. configurationStatus keeps them distinct rather than
+// folding unknown domains into general; server-only AI config never crosses the wire.
 
 import { and, isNotNull, isNull } from 'drizzle-orm';
 import { knowledge } from '@/db/schema';

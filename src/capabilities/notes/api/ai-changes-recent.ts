@@ -1,7 +1,4 @@
-// M4-T5 (YUK-319)：旧 app/api/today/ai-changes GET 等价平移（since=24h +
-// limit 25 + window_hours wire 不变）。旧路由的批量 undo POST 不平移——新 UI
-// 撤销走 M3 per-event 链（POST /api/artifacts/[id]/ai-changes/[eventId]/undo），
-// 批量端点随旧 today 页一起在 T7 拆除。
+// Recent AI note changes across all artifacts; undo is per event.
 
 import { listNoteRefineChanges } from '@/capabilities/notes/server/note-refine-apply';
 import { db } from '@/db/client';

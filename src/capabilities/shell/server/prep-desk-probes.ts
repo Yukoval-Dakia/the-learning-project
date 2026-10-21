@@ -1,17 +1,6 @@
-// YUK-567 slice-2 — 备课台 active-probes read model (the "待你试做" queue).
-//
-// Lists the served-but-unanswered mind_probe questions for active conjectures:
-// `source='mind_probe'` questions with NO `experimental:probe_result` event and no
-// effective correction on their proposal. This is the LIST counterpart to
-// `countActiveProbes` (probe-lifecycle.ts), surfaced for the 作答区 UI. Bounded by
-// MAX_CONCURRENT_ACTIVE_PROBES (3) at serve time; the reader caps defensively at
-// the same felt size.
-//
-// Anti-guilt (same contract as loadPrepDeskConjectures): NO calibration number
-// crosses the wire — a probe carries only its prompt (the question the team is about
-// to ask). The claim is deliberately NOT surfaced here: the owner already saw it when
-// they accepted the conjecture; the 作答区 shows the neutral probe question, not a
-// "we think you're wrong about X" primer.
+// Served-but-unanswered probes for active conjectures. The claim is deliberately
+// absent: the owner already saw it, and the answer area shows the neutral question,
+// not a "we think you're wrong" primer. No calibration number crosses the wire.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
@@ -29,16 +18,12 @@ import {
 } from '@/db/schema';
 import { validateIssuedProbeFromProposal } from './teaching-brief';
 
-// Single-source the persisted probe contract from core without reaching into the
-// agency capability's server implementation.
+// Single-source the persisted probe contract from core, not another capability's server.
 export const ACTIVE_PROBES_MAX = MAX_CONCURRENT_ACTIVE_PROBES;
 
 export interface ActiveProbe {
-  /** The mind_probe question id — target of POST /api/conjecture/probe/[id]/answer. */
   probe_question_id: string;
-  /** The probe prompt — the question the team is about to ask. */
   prompt_md: string;
-  /** The KC the probe targets (first knowledge id), or null. */
   knowledge_id: string | null;
 }
 
@@ -46,9 +31,7 @@ export interface ActiveProbesResult {
   probes: ActiveProbe[];
 }
 
-/**
- * Load the ≤3 served-but-unanswered probes for active conjectures, newest first.
- */
+/** Load the capped served-but-unanswered probes, newest first. */
 export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
   const rows = await db
     .select({
