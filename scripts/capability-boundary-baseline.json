@@ -557,6 +557,106 @@
       "from": 50,
       "to": 49,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "canonicalJson",
+      "targetModule": "src/server/questions/submit-decision.ts",
+      "targetSymbol": "canonicalJson",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 56
+        }
+      ],
+      "evidence": "src/server/questions/submit-decision.ts:42 owns the unchanged canonical encoder; Practice tool import statement at56, request fingerprints at285/1201; original approval snapshot recorded specifier lines.",
+      "rationale": "existing public canonical request encoding moves true implementation under same owner; preserve old request/replay identity, no new public wrapper function",
+      "issue": "YUK-1568",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "deriveKind",
+      "targetModule": "src/server/questions/submit-decision.ts",
+      "targetSymbol": "deriveKind",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 78
+        }
+      ],
+      "evidence": "src/server/questions/submit-decision.ts:100 owns kind projection; immediate Practice tool re-export statement at78; ultimate source_verify.ts:103/593 freezes row projection. Ultimate consumer is evidence, not a direct facade import.",
+      "rationale": "existing stable kind projection contract retains actual verification consumer; not a compatibility shim with planned migration",
+      "issue": "YUK-1568",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "claimSubmitRequestId",
+      "targetModule": "src/server/questions/shared-submit.ts",
+      "targetSymbol": "claimSubmitRequestId",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 56
+        }
+      ],
+      "evidence": "src/server/questions/shared-submit.ts:235 owns receipt replay/conflict check; real Practice tool import statement at56. Existing caller still acquires request lock.",
+      "rationale": "existing public request replay/conflict check retained for candidate/compat consumer; caller still owns existing request-lock ordering and this residual burden is not claimed solved",
+      "issue": "YUK-1568",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "writeSubmitReceiptEvent",
+      "targetModule": "src/server/questions/shared-submit.ts",
+      "targetSymbol": "writeSubmitReceiptEvent",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 56
+        }
+      ],
+      "evidence": "src/server/questions/shared-submit.ts:251 owns canonical receipt event writing; real Practice tool import statement at56; envelope and request identity retained.",
+      "rationale": "existing public receipt writing retained for remaining candidate terminal/preflight paths; no new independent publishing/write owner",
+      "issue": "YUK-1568",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "persistDeclaredQuestionGroup",
+      "targetModule": "src/server/questions/shared-submit.ts",
+      "targetSymbol": "persistDeclaredQuestionGroup",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 56
+        }
+      ],
+      "evidence": "src/server/questions/shared-submit.ts owns persistDeclaredQuestionGroup outer transaction and post-commit drain; real Practice tool import statement at56, declared call after document/provenance assembly.",
+      "rationale": "final shared typed declared-group business operation, owns outer transaction/ID binding/save/submit/caller receipt and drains intent after commit; entry hides sequence rather than forwarding the caller through internal InTx steps",
+      "issue": "YUK-1568",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1568#comment-5ba576b6-03a8-4984-a1a3-566600a51080",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -890,6 +990,16 @@
       "issue": "YUK-1557",
       "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["promoteVerifiedGroupPartRows"],
+      "issue": "YUK-1568",
+      "owns": "组生命周期 owner 模块：统一发布 seam、lifecycle 维度与组子行晋升的完整操作（本边 = 组根来源核验成功后同事务晋升当前 revision 声明的真实 part 行）",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -991,6 +1101,51 @@
       "to": 1479,
       "issue": "YUK-1557",
       "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "7a55e6c9c79bc5d0e3a63bfc5f12c3c66e5a402d",
+      "from": 1298,
+      "to": 1320,
+      "issue": "YUK-1568",
+      "responsibilityReason": "saveDraftEdit 主体原地提升为可信事务内核 saveDraftEditInTx，新增签名不变的 Db wrapper（TxAbort 只在事务外转换）与 findDraftSaveReceipt 只读导出（R1-F1：升级前 save 半成品恢复须先甄别既有回执）——同一 save 语义的共享化接线，不新增职责；判定与子行投影在 submit-decision.ts/typed-group.ts。"
+    },
+    {
+      "path": "src/server/questions/shared-submit.ts",
+      "date": "2026-10-21",
+      "baseBlob": null,
+      "from": null,
+      "to": 1163,
+      "issue": "YUK-1568",
+      "responsibilityReason": "共享 save/submit 事务内核的单一完整职责：request 认领/回执重放、CAS、契约屏障、来源 URL claim 与 exact/near 去重、根行+typed 父子投影（子行 INSERT 字面量在本文件 submitDraftQuestionInTx —— writer 审计 per-site 同闭包）、唯一 publish seam、草稿终态、verify outbox、原子链入口（caller canonical 回执同事务 + R1-F1 升级前半成品原指纹恢复）。事务体为连续原子叙事，判定层与绑定/守闸已拆至 submit-decision.ts/typed-group.ts。"
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "9d4ecfb55b73fec558921dd642abe9ef1865c3d5",
+      "from": 1267,
+      "to": 1312,
+      "issue": "YUK-1568",
+      "responsibilityReason": "现役已声明候选由分离 save/submit/候选回执事务改为单原子提交入口；新增终态投影使同事务 canonical 回执与返回值同源。已评估拆分：本片不把来源注入和候选终态映射拆成第二套入口/额外 capability→server 边，完整声明持久化职责已迁 shared-submit，保留现有工具唯一 consumer 与 legacy 路径。"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-10-21",
+      "baseBlob": "97ec140e02266fd6fffd0edebad9b4254364bf7f",
+      "from": 1519,
+      "to": 1564,
+      "issue": "YUK-1568",
+      "responsibilityReason": "R1-F2 组拥有子行晋升 hunk：promote 分支在根行 ACTIVE+FSRS 之后、lifecycle 发布之前调 promoteVerifiedGroupPartRows（当前 revision 冻结 part_ids ∩ 子行 ∩ draft ∩ non-tombstone）并对晋升子行按根同款纪律 FSRS enroll-if-absent —— 单一 promote 叙事内的既有职责延伸，未新增判定层。"
+    },
+    {
+      "path": "src/kernel/records/assessment-publication.ts",
+      "date": "2026-10-21",
+      "baseBlob": "0a86f6b6a8ed7078c084c2db6d30539900dee030",
+      "from": 1319,
+      "to": 1393,
+      "issue": "YUK-1568",
+      "responsibilityReason": "R1-F2 组生命周期 owner 模块新增 promoteVerifiedGroupPartRows：按已核验 revision 冻结 structure.parts[].part_id 晋升真实声明子行（root→child 锁序、non-tombstone、继承证据入 metadata、同事务）——与本模块既有 archive/restore/publish 的组行级生命周期操作同一职责。"
     }
   ],
   "compatShims": [
