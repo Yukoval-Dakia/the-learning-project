@@ -13,10 +13,10 @@ export type ToolResultJson =
 
 const ToolResultJsonSchema: z.ZodType<ToolResultJson> = z.lazy(() =>
   z.union([
-    z.null(),
-    z.boolean(),
-    z.number(),
     z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
     z.array(ToolResultJsonSchema),
     z.record(z.string(), ToolResultJsonSchema),
   ]),
