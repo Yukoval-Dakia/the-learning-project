@@ -1,5 +1,4 @@
-// 内核 http facade（YUK-311 / YUK-770）— ApiError/errorResponse 本体现居 kernel，
-// capability 包的 API handler 统一从 @/kernel/http 取错误整形 + 响应契约。
+// 内核 http facade — ApiError/errorResponse 与响应契约；capability handler 统一从这里取。
 /** Shared sync-HTTP provider budget; the Hono root leaves 10s transport headroom. */
 export const HTTP_PROVIDER_SESSION_BUDGET_MS = 90_000;
 
@@ -10,11 +9,8 @@ export class ApiError extends Error {
     public readonly status: number = 400,
     public readonly headers?: HeadersInit,
     /**
-     * YUK-1404 — optional machine-readable detail bag serialized alongside
-     * {error, message} (the ApiErrorResponseSchema is .passthrough(), so this
-     * is contract-compatible). Lets typed failures like `confirm_required`
-     * carry structured facts (e.g. affected_block_count) for the client
-     * without overloading the learner-facing message.
+     * Optional machine-readable detail beside {error, message}; the passthrough
+     * response schema keeps it compatible.
      */
     public readonly details?: Record<string, unknown>,
   ) {
@@ -137,12 +133,9 @@ export function collectionPayload<T, Legacy extends object = Record<never, never
 }
 
 /**
- * Wrap a legacy route response without consuming or reshaping its body.
- *
- * RFC 9745 requires `Deprecation` to be a Structured Field Date, so the stable
- * value below records when this compatibility program began. A `Sunset` header
- * is intentionally omitted until usage evidence supports a real cutoff.
- * `successor-version` gives clients a machine-readable migration target.
+ * Wrap a legacy route response without reshaping its body. RFC 9745 makes
+ * `Deprecation` a structured date; `Sunset` stays omitted until usage evidence
+ * supports a cutoff.
  */
 export function deprecatedRouteResponse(response: Response, successorPath: string): Response {
   const headers = new Headers(response.headers);

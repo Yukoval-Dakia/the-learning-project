@@ -1,7 +1,6 @@
-// YUK-1560 — 夜间任务入队前的确定性资格判定（ADR-0075 D6 / §3）。
+// 夜间任务入队前的确定性资格判定（ADR-0075 D6）。
 //
-// 阈值在这里，调用方不能改。判断不调模型。kernel 无 IO：信号由
-// src/server/orchestration/nightly-signals.ts 读表后传入。
+// 阈值在这里，调用方不能改；判断不调模型。kernel 无 IO，信号由调用方读表传入。
 
 export const ACTIVITY_ACTIVE_MS = 24 * 60 * 60 * 1000;
 export const ACTIVITY_IDLE_MS = 3 * 24 * 60 * 60 * 1000;
