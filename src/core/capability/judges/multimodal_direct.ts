@@ -3,25 +3,12 @@ import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capabili
 import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
 import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
-// ----------------------------------------------------------------------------
-// Schemas — input from judge runner, LLM output.
-// Runtime execution lives in src/capabilities/practice/server/judge/multimodal-direct-judge.ts and
-// is reached through its capability-owned invoker. Shapes follow spec
-// docs/superpowers/specs/2026-06-02-multimodal-direct-judge-design.md §3.
+// Schemas only; runtime judging goes through the practice-owned invoker.
 //
-// multimodal_direct owns HOLISTIC, no-step-rubric vision judging (physics calc
-// with a diagram; short-answer with a figure and no reference_solution). steps@1
-// owns step/rubric-weighted vision judging for math derivation — the two are
-// disjoint by route (see question-contract.ts §2 gating: the auto-route only
-// fires when there is NO reference_solution, so steps@1 keeps its derivations).
-// ----------------------------------------------------------------------------
+// This judge owns holistic vision judging without a step rubric. steps@1 owns
+// rubric-weighted derivations; routing keeps the two disjoint.
 
-/**
- * Judge runner input — what the server-side multimodal runner validates before
- * it composes a JudgeResultV2. The holistic judge needs only the prompt, an
- * optional reference, and whether any image is present (prompt figure or student
- * answer photo). No expected_signals / step_weight — that's the steps@1 contract.
- */
+/** Holistic input: no expected signals or step weight, which belong to steps@1. */
 export const MultimodalDirectInput = z.object({
   prompt_md: z.string().min(1),
   reference_md: z.string().nullable(),
@@ -29,10 +16,7 @@ export const MultimodalDirectInput = z.object({
 });
 export type MultimodalDirectInputT = z.infer<typeof MultimodalDirectInput>;
 
-/**
- * LLM structured output schema — what the vision LLM returns, parsed and
- * validated before composing JudgeResultV2.
- */
+/** Parsed and validated before composing the result. */
 export const MultimodalDirectLlmOutput = z.object({
   coarse_outcome: z.enum(['correct', 'partial', 'incorrect']),
   score: z.number().min(0).max(1),
@@ -43,16 +27,11 @@ export const MultimodalDirectLlmOutput = z.object({
     missing_points: z.array(z.string()).default([]),
   }),
   confidence: z.number().min(0).max(1),
-  // Present only when the input carries a v2 conjecture-probe response
-  // contract. It is produced by the same judge call as correctness so no
-  // second paid model call or divergent interpretation is introduced.
+  // Produced by the same call as correctness, avoiding a second paid call and a
+  // divergent interpretation.
   probe_signature_match: ConjectureProbeSignatureMatch.optional(),
 });
 export type MultimodalDirectLlmOutputT = z.infer<typeof MultimodalDirectLlmOutput>;
-
-// ----------------------------------------------------------------------------
-// Manifest + core registry fallback.
-// ----------------------------------------------------------------------------
 
 const VERSION = '1.0.0';
 
@@ -62,22 +41,14 @@ const manifest: CapabilityManifestT = {
   version: VERSION,
   input_schema: 'MultimodalDirectInput',
   output_schema: 'JudgeResultV2 (score_meaning=correctness)',
-  // Vision LLM call; far above local exact / keyword.
   cost_class: 'expensive_llm',
-  // Vision LLM call is sync from the runner's POV (awaited inside runner).
   latency_class: 'sync',
   stability: 'experimental',
 };
 
 const CAPABILITY_REF = { id: manifest.id, version: VERSION };
 
-/**
- * Core registry fallback. multimodal_direct needs DB access and image loading,
- * so runtime judging must go through JudgeInvoker -> runMultimodalDirectJudge.
- * Keeping this fallback unsupported prevents callers from accidentally bypassing
- * the server runtime boundary while still allowing profile validation to resolve
- * the capability. Mirrors steps.ts run() fallback.
- */
+/** Unsupported by design: runtime needs DB/image access through JudgeInvoker. */
 function run(input: JudgeRunInput): JudgeResultV2T {
   return {
     score: null,

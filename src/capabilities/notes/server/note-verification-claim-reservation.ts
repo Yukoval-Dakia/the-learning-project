@@ -1,9 +1,6 @@
-// Claim transitions (reservation/fencing) for the note verification state machine:
-// the shared claim vocabulary (staged-result schemas, lease/reservation types,
-// epoch/fence/token predicates) plus the transitions that reserve a claim, cross
-// the provider boundary, supersede a stale epoch, or discard an abandoned
-// reservation. Result persistence/finalization lives in
-// note-verification-claim-result.ts; recovery in note-verification-claim-recovery.ts.
+// Reservation and fencing transitions plus the shared claim vocabulary. Results
+// live in note-verification-claim-result.ts; recovery in
+// note-verification-claim-recovery.ts.
 import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, isNull, lte, sql } from 'drizzle-orm';
@@ -64,17 +61,10 @@ export type NoteVerificationReservation =
   | { kind: 'not_queued'; artifactType?: string };
 
 /**
- * Optional backend-control admission hook (YUK-1355 paid-effect wiring).
- *
- * Contract: invoked as the FIRST statement inside the reservation
- * transaction, BEFORE the artifact row lock, so the pinned lock order is
- * family-control advisory → artifact → claim. Resolution means admitted; a
- * throw (PaidEffectControlFencedError) rejects the reservation and rolls the
- * transaction back — no claim row is created and no state changes. Default
- * absent: legacy callers behave exactly as before (no admission check).
- * Implementations must take the shared family control lock
- * (lockPaidEffectControlFamily) and verify owner/generation inside this tx —
- * a read on a separate connection does not fence the race.
+ * Backend-control admission hook. Runs first inside the reservation transaction,
+ * before the artifact lock, so the lock order stays family-control → artifact →
+ * claim. A throw rolls the whole reservation back. Implementations must take the
+ * family control lock and check owner/generation in this tx.
  */
 export type NoteVerificationControlAdmission = (tx: Tx) => Promise<void>;
 
@@ -126,10 +116,8 @@ export async function reserveNoteVerification(
   opts: { controlAdmission?: NoteVerificationControlAdmission } = {},
 ): Promise<NoteVerificationReservation> {
   return db.transaction(async (tx) => {
-    // YUK-1355: admission runs FIRST — family-control advisory before the
-    // artifact row lock (pinned order family-control → artifact → claim).
-    // A fenced delivery throws here, so the whole transaction (including the
-    // claim insert below) rolls back.
+    // Admission first to preserve the lock order; a fenced delivery rolls the
+    // whole transaction back, including the claim insert.
     await opts.controlAdmission?.(tx);
     const artifactRows = await tx
       .select({

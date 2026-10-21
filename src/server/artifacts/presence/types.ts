@@ -4,30 +4,27 @@ import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 import type { TaskTextResult } from '@/server/ai/provenance';
 
-// YUK-384 — editing presence is session-qualified: one `artifact_edit_session`
-// row per (artifact, editor session). A session is ACTIVE while its last
-// heartbeat is within this window; exactly-30s is still active, only age > 30s
-// expires. There is no 10-minute forced apply — an abandoned session simply
-// expires after this window and its work applies then.
+// Editing presence is session-qualified: one `artifact_edit_session` row per
+// (artifact, editor session). A session is ACTIVE while its last heartbeat is within
+// this window; exactly-30s is still active, only age > 30s expires. There is no
+// 10-minute forced apply — an abandoned session simply expires after this window
+// and its work applies then.
 export const EDITING_HEARTBEAT_TIMEOUT_MS = 30_000;
-// Stale-pending TTL: a note-refine patch that has waited in the defer queue
-// longer than this is dropped at load time (the queue never self-expires the way
-// the old Redis key TTL did). NOT a force-apply-while-editing path.
+// Stale-pending TTL: a deferred note-refine patch older than this is dropped at
+// load time (the queue never self-expires). NOT a force-apply-while-editing path.
 export const EDITING_FORCE_APPLY_TIMEOUT_MS = 10 * 60_000;
 
 // Provenance actor of a mutation-triggered hub sync. Single source of truth for
-// the `hub_auto_sync` literal WITHIN the presence module (the guard in pg.ts and
-// its regression test). Mirrors the `editing_presence.actor_ref` schema default +
-// check constraint (src/db/schema.ts) and hub-sync-reconciliation.ts's private
-// ACTOR_REF; those live in other layers and are intentionally NOT wired through
-// this import to avoid a capability→presence / schema→app coupling (YUK-768).
+// the literal within the presence module (the guard in pg.ts and its regression
+// test). Mirrors the `editing_presence.actor_ref` schema default/check and
+// hub-sync-reconciliation's private ACTOR_REF; those are not wired through this
+// import to avoid a capability→presence / schema→app coupling.
 export const HUB_AUTO_SYNC_ACTOR_REF = 'hub_auto_sync';
 
 export type EditingStatus = 'editing' | 'idle';
 
-// A note-refine patch deferred while the artifact is actively edited, to be
-// flushed in FIFO order once the session goes idle. Dates are carried as ISO
-// strings in the Redis serialization; the in-memory store keeps Date objects.
+// A note-refine patch deferred while the artifact is actively edited, flushed in
+// FIFO order once the session goes idle.
 export interface QueuedPatch {
   patch: NotePatchT;
   taskResult?: TaskTextResult;
@@ -41,10 +38,9 @@ interface QueuedPatchData {
   triggerEventId: string | null;
   queuedAtMs: number;
   // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
-  // for the default note-refine AI mutator. A mutation-triggered hub sync
-  // (HUB_AUTO_SYNC_ACTOR_REF) opts out of the generic force-apply ceiling, so a
-  // patch it defers must survive stale-pending pruning (YUK-768) rather than being
-  // dropped at the 10-minute TTL like an abandoned note-refine patch.
+  // for the default note-refine mutator. A mutation-triggered hub sync opts out of
+  // the generic force-apply ceiling, so its deferred patch must survive stale-pending
+  // pruning instead of being dropped at the TTL like an abandoned note-refine patch.
   actorRef?: string;
 }
 
@@ -58,7 +54,8 @@ export type NoteRefineQueueEntry = QueuedPatchData &
       }
   );
 
-// Read historical JSON without losing an already admitted drain obligation.
+// Historical JSON may predate queue state; reading it must not lose an already
+// admitted drain obligation.
 export type SerializedQueuedPatch =
   | NoteRefineQueueEntry
   | (QueuedPatchData & { state?: undefined; drainStarted?: true });
@@ -104,34 +101,30 @@ export interface MarkIdleAndFlushResult {
   results: PersistNoteRefineApplyResult[];
 }
 
-// Cross-process editing presence (YUK-148 / ADR-0023). Two concrete impls:
-//   - InMemoryPresenceStore  — process-local Map; default for fast unit tests.
-//   - PgPresenceStore        — shared via the editing_presence PG table across
-//     separate web + worker processes (YUK-321 gate 选项 b).
-// Both preserve EXACT current semantics of the original editing-session.ts state
-// machine (encoded by editing-session.test.ts). All reads/writes are async to
-// accommodate PG I/O; the in-memory impl resolves synchronously.
+// Cross-process editing presence. Two concrete impls:
+//   - InMemoryPresenceStore — process-local Map; default for fast unit tests.
+//   - PgPresenceStore       — shared via `editing_presence` across web + worker.
+// All reads/writes are async to accommodate PG I/O; the in-memory impl resolves
+// synchronously.
 export interface PresenceStore {
-  // Upsert the caller's editing session row (keyed by artifact + session), under
-  // the shared per-artifact advisory lock so it serializes with hub-sync
-  // finalization. Never touches other sessions.
+  // Upsert the caller's editing session row, under the shared per-artifact advisory
+  // lock so it serializes with hub-sync finalization. Never touches other sessions.
   recordEditingHeartbeat(input: RecordHeartbeatInput): Promise<void>;
 
   // True when NO session has heartbeat within EDITING_HEARTBEAT_TIMEOUT_MS.
   // Evaluated against database time (clock_timestamp) unless `now` is injected.
-  // Exactly-30s counts as active; only age > 30s is idle. A never-seen artifact
-  // reads as idle (safe default). Expired rows may be swept as best-effort
-  // cleanup, but correctness never depends on the sweep.
+  // A never-seen artifact reads as idle (safe default). Expired rows may be swept
+  // as best-effort cleanup, but correctness never depends on the sweep.
   isArtifactIdle(artifactId: string, now?: Date): Promise<boolean>;
 
-  // PG applies immediately only when idle with no unfinished queue entries.
-  // Otherwise append behind the existing obligations.
+  // PG applies immediately only when idle with no unfinished queue entries;
+  // otherwise append behind the existing obligations.
   enqueueOrApplyNoteRefinePatch(input: EnqueueOrApplyInput): Promise<EnqueueOrApplyResult>;
 
-  // Remove the caller's editing session; if no active session remains, flush all
-  // pending note-refine patches in FIFO order (otherwise leave them queued for
-  // the session still editing). PG commits each apply and dequeue together;
-  // transient failures retain obligations; permanent failures become dead letters.
+  // Remove the caller's session; if no active session remains, flush all pending
+  // patches in FIFO order (otherwise leave them queued for the session still
+  // editing). PG commits each apply and dequeue together; transient failures retain
+  // obligations; permanent failures become dead letters.
   markArtifactIdleAndFlush(input: MarkIdleAndFlushInput): Promise<MarkIdleAndFlushResult>;
 
   // Snapshot of the current session, or null if none recorded.

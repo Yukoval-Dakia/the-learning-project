@@ -1,22 +1,9 @@
-// YUK-229 / YUK-688 — shared, browser-safe SSRF host-literal guard. Extracted from the
-// image_candidate accept path (src/capabilities/ingestion/server/image-candidate-accept.ts)
-// so the client can apply the SAME protocol + literal-host checks BEFORE ever pointing a
-// browser <img> at an AI-written source_url, and the server keeps a single source of truth.
-//
-// SCOPE (what this module can and cannot do):
-//   ✅ Reject non-http(s) protocols, embedded credentials, and literal private / loopback /
-//      link-local / unique-local / NAT64-mapped hosts written directly in the URL.
-//   ❌ DNS-based SSRF (a public hostname whose A/AAAA answer points inside the network) and
-//      DNS-rebinding are NOT defendable in the browser — the server owns those via DNS-answer
-//      + redirect re-validation. The client's second line of defence is to never auto-load the
-//      image (user must click to reveal), demoting passive probes to explicit actions.
-//
-// Pure (no IO, no node built-ins): `new URL` is available in both the SPA and Node, and IP
-// family detection is a hand-rolled parser rather than `node:net.isIP` so `@/core` stays
-// import-safe from the browser.
+// Browser-safe SSRF guard for literal hosts, shared by client and server. It rejects
+// non-http(s), embedded credentials, and private/loopback/link-local/mapped literals.
+// DNS-based SSRF and rebinding are not defendable in the browser; the server validates
+// DNS answers and redirects. Pure and browser-safe: no node built-ins, hand-rolled IP parsing.
 
-// IANA special-purpose / private / loopback / link-local IPv4 ranges that must never be a
-// fetch/image target. Kept verbatim from the server guard so the two ends cannot drift.
+// IANA special-purpose IPv4 ranges that must never be a fetch/image target.
 export const BLOCKED_IPV4_CIDRS = [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
@@ -39,17 +26,9 @@ export function stripIpv6Brackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
-// Self-validating *canonical* dotted-quad IPv4 parse (returns the 32-bit value, or null when the
-// string is not one). Matches `node:net.isIP` strictness, which is what the header claims this
-// hand-rolled parser mirrors: a multi-digit octet with a leading zero (`012`, `001`, `0177`) is
-// NOT canonical dotted-quad and is rejected here.
-//
-// This rejection is load-bearing for SSRF (YUK-229 review): inet_aton / glibc / WHATWG-URL all
-// read a leading-zero octet as OCTAL, so `012.0.0.1` addresses 10.0.0.1 (private) — reading it as
-// decimal 12.0.0.1 would classify a private destination as public and let it through. Rejecting
-// here routes such hosts to the inet_aton branch of `isBlockedHostLiteral` below, which refuses
-// the whole octal-ambiguous form. Direct `isBlockedIpAddress` callers get `true` (fail-closed)
-// for the same input, so no leading-zero form is ever treated as public.
+// Canonical dotted-quad only; a leading-zero octet is rejected. This is load-bearing:
+// inet_aton/glibc/WHATWG-URL read `012` as octal (10.0.0.1), so treating it as decimal
+// would classify a private destination as public. Such hosts are failed closed below.
 function parseIpv4Value(address: string): number | null {
   const parts = address.split('.');
   if (parts.length !== 4) return null;
@@ -71,9 +50,8 @@ function ipv4InCidr(value: number, base: string, prefix: number): boolean {
   return Math.floor(value / blockSize) === Math.floor(baseValue / blockSize);
 }
 
-// Self-validating IPv6 parse into its 8 16-bit words (or null when not a valid IPv6 literal).
-// A string with no colon is never IPv6 — this is what keeps hostnames such as `fdic.gov`
-// (starts with the hex-looking `fd`) out of the IP path.
+// IPv6 literal → 8 words, or null. Requiring a colon keeps hex-looking hostnames
+// such as `fdic.gov` out of the IP path.
 function parseIpv6Words(address: string): number[] | null {
   let normalized = address.toLowerCase();
   if (!normalized.includes(':')) return null;
@@ -91,8 +69,7 @@ function parseIpv6Words(address: string): number[] | null {
   const tail = halves[1] ? halves[1].split(':') : [];
   const zeroCount = halves.length === 2 ? 8 - head.length - tail.length : 0;
   if (zeroCount < 0 || (halves.length === 1 && head.length !== 8)) return null;
-  // Every explicit group must be 1-4 hex digits; this rejects over-long / non-hex segments
-  // that Number.parseInt would otherwise coerce.
+  // Reject over-long / non-hex groups that Number.parseInt would otherwise coerce.
   if ([...head, ...tail].some((seg) => !/^[0-9a-f]{1,4}$/.test(seg))) return null;
   const words = [...head, ...Array.from({ length: zeroCount }, () => '0'), ...tail].map((word) =>
     Number.parseInt(word, 16),
@@ -108,10 +85,8 @@ export function ipFamily(host: string): 0 | 4 | 6 {
 }
 
 /**
- * True when the given IP literal is a non-public destination (loopback, private, link-local,
- * unique-local, multicast, or an IPv4 smuggled through IPv6 mapping / 6to4 / Teredo / NAT64).
- * Callers must pass an actual IP literal (ipFamily !== 0); a non-IP string is conservatively
- * treated as blocked.
+ * Non-public IP literal (loopback, private, link-local, multicast, or IPv4 smuggled
+ * through IPv6 mapping/6to4/Teredo/NAT64). Non-IP input is treated as blocked.
  */
 export function isBlockedIpAddress(address: string): boolean {
   const normalized = stripIpv6Brackets(address.toLowerCase());
@@ -122,10 +97,7 @@ export function isBlockedIpAddress(address: string): boolean {
 
   const words = parseIpv6Words(normalized);
   if (!words) return true;
-  // Block the two special IPv6 singletons explicitly and up front (YUK-229 review): `::`
-  // (unspecified) and `::1` (loopback). Both would otherwise only be caught incidentally by the
-  // IPv4-compatible interpretation below (as 0.0.0.0 / 0.0.0.1 in 0.0.0.0/8) — an explicit guard
-  // states the intent and is robust to that branch changing.
+  // Explicit `::` and `::1` guards, independent of the IPv4-compatible branch below.
   if (words.every((word) => word === 0)) return true; // :: unspecified
   if (words.slice(0, 7).every((word) => word === 0) && words[7] === 1) return true; // ::1 loopback
   const mappedIpv4 =
@@ -142,9 +114,8 @@ export function isBlockedIpAddress(address: string): boolean {
     return BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(compatibleIpv4, base, prefix));
   }
 
-  // RFC 6052 well-known NAT64 prefix 64:ff9b::/96 embeds an IPv4 destination in the final 32
-  // bits. Treat a mapped non-public IPv4 exactly like ::ffff:x.y.z.w; otherwise a NAT64-enabled
-  // host could reach metadata/loopback through the WKP.
+  // NAT64 64:ff9b::/96 embeds IPv4 in the final 32 bits; block a private mapping before
+  // it can reach metadata/loopback.
   if (words[0] === 0x0064 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0)) {
     const nat64Ipv4 = words[6] * 65_536 + words[7];
     if (BLOCKED_IPV4_CIDRS.some(([base, prefix]) => ipv4InCidr(nat64Ipv4, base, prefix))) {
@@ -164,10 +135,8 @@ export function isBlockedIpAddress(address: string): boolean {
   );
 }
 
-// A single inet_aton-style numeric octet: decimal (`127`), hex (`0x7f`), or octal (`017`).
-// `0x` / `0X` prefix ⇒ hex; a leading `0` on a multi-digit token ⇒ octal; otherwise decimal.
-// Returns the value, or null when the token is numeric-looking but malformed (empty hex `0x`,
-// a bad octal digit `08`, an over-long decimal) — the caller fails those closed.
+// inet_aton octet: decimal, hex (`0x7f`), or octal (`017`). Malformed numeric-looking
+// tokens return null so the caller can fail closed.
 function parseInetOctet(token: string): number | null {
   let value: number;
   if (/^0[xX][0-9a-f]+$/.test(token)) {
@@ -184,15 +153,12 @@ function parseInetOctet(token: string): number | null {
   return Number.isSafeInteger(value) ? value : null;
 }
 
-// True when a token could only be a numeric octet attempt (decimal/hex/octal digits, optionally an
-// `0x` hex prefix) — never an ordinary DNS label. This is what keeps `abc.de` / `dead.beef`
-// (no `0x`, non-numeric) on the hostname path while catching `0x7f`, `08`, `2130706433`.
+// Distinguishes numeric octet attempts from ordinary DNS labels such as `dead.beef`.
 function isNumericToken(token: string): boolean {
   return /^(0[xX][0-9a-f]*|[0-9]+)$/.test(token);
 }
 
-// inet_aton octet-count semantics: the final token absorbs all remaining low-order bytes
-// (`127.1` ⇒ 127.0.0.1, `10.0.1` ⇒ 10.0.0.1, `2130706433` ⇒ 127.0.0.1).
+// inet_aton semantics: the final token absorbs all remaining low-order bytes.
 type InetResult = 'not-numeric' | 'invalid' | number;
 function parseInetIpv4(host: string): InetResult {
   const parts = host.split('.');
@@ -222,56 +188,38 @@ function numberToDottedIpv4(addr: number): string {
 }
 
 /**
- * True when a URL hostname (possibly `[..]`-bracketed IPv6) is a literal that must never be a
- * fetch/image target: `localhost` / `*.localhost` / `*.local`, or a blocked IP literal. This is
- * the literal-host layer only — hostnames that resolve into the network via DNS are the
- * server's responsibility (DNS-answer + redirect re-validation).
+ * Literal-host check: localhost/*.localhost/*.local or a blocked IP. DNS-resolved
+ * destinations are the server's responsibility.
  */
 export function isBlockedHostLiteral(hostname: string): boolean {
   const lower = hostname.toLowerCase();
   const wasBracketed = lower.startsWith('[') && lower.endsWith(']');
-  // Normalize before matching, none of which change which host is addressed but all of which can
-  // dodge a naive literal check (YUK-229 review):
-  //   - `[..]` IPv6 brackets;
-  //   - a trailing FQDN dot (`localhost.` / `printer.local.` / `foo.localhost.`);
-  //   - an IPv6 zone id (`fe80::1%eth0` / `%25eth0`) — everything from the first `%`.
+  // Normalize brackets, a trailing FQDN dot, and IPv6 zone ids; each can dodge a naive check.
   let bareHost = stripIpv6Brackets(lower).replace(/\.+$/, '');
   const zoneAt = bareHost.indexOf('%');
   if (zoneAt !== -1) bareHost = bareHost.slice(0, zoneAt);
   const family = ipFamily(bareHost);
-  // Fail-closed: a bracketed literal is meant to be IPv6. If it does not parse as one (malformed,
-  // or a zone form we could not normalize), refuse it rather than fall through to the hostname
-  // branch where it would be treated as an ordinary — potentially allowed — name.
+  // A bracketed literal that is not valid IPv6 fails closed instead of falling through
+  // to the hostname branch.
   if (wasBracketed && family !== 6) return true;
   const blockedName =
     bareHost === 'localhost' || bareHost.endsWith('.localhost') || bareHost.endsWith('.local');
   if (blockedName) return true;
   if (family !== 0) return isBlockedIpAddress(bareHost);
-  // inet_aton-style numeric hosts (decimal 2130706433, hex 0x7f000001, octal 017700000001,
-  // short-dotted 127.1 / 10.0.1, mixed 0x7f.0.0.1, and leading-zero-octet quads 012.0.0.1 /
-  // 0177.0.0.1 that `parseIpv4Value` deliberately refuses) all address an IPv4 that a naive
-  // dotted-quad check misses. WHATWG `new URL` already normalizes these to dotted form, but this
-  // hardens the shared guard for direct / non-URL callers. A numeric-looking host that fails to
-  // parse is refused (fail-closed) rather than treated as an allowed hostname.
+  // inet_aton forms (`2130706433`, `0x7f000001`, `127.1`, `012.0.0.1`) address an IPv4
+  // that a dotted-quad check misses. Unparseable numeric-looking hosts fail closed.
   const numeric = parseInetIpv4(bareHost);
   if (numeric === 'not-numeric') return false;
-  // Fail closed on an octal-ambiguous octet — a decimal-looking token with a leading zero
-  // (`012`, `0177`, `001`, `069`). Stacks disagree on these: inet_aton / glibc / WHATWG-URL read
-  // them as OCTAL (`012.0.0.1` = 10.0.0.1, private), while a naive decimal reader sees 12.0.0.1
-  // (public). Rather than pick a winner and hope every downstream fetcher agrees, refuse the
-  // whole form — no legitimate public image host is written with a leading-zero octet, so this
-  // costs nothing and removes the parser-differential bypass class outright. Reached only after
-  // the `isNumericToken` gate inside `parseInetIpv4`, so ordinary hostnames (`01.example.com`)
-  // never land here. Hex (`0x7f`) is unambiguous across parsers and stays on the parse path.
+  // Leading-zero octets are octal-ambiguous across parsers (`012` = 10.0.0.1 or 12.0.0.1),
+  // so refuse the whole form. No legitimate public host uses one, and ordinary hostnames
+  // never reach here. Hex is unambiguous and stays on the parse path.
   if (bareHost.split('.').some((token) => /^0[0-9]+$/.test(token))) return true;
   return numeric === 'invalid' ? true : isBlockedIpAddress(numberToDottedIpv4(numeric));
 }
 
 /**
- * Browser-safe verdict for whether a URL is safe to point a passive <img>/fetch at as far as
- * static inspection can tell: valid URL, http(s), no embedded credentials, and not a blocked
- * literal host. Returns a boolean (never throws) so UI code can branch on it directly. The
- * server's `assertPublicHttpUrl` is the throwing counterpart and adds DNS-answer validation.
+ * Static browser-safe verdict: valid http(s) URL, no credentials, no blocked literal
+ * host. Never throws; the server's assertPublicHttpUrl adds DNS validation.
  */
 export function isPublicHttpUrl(url: string): boolean {
   let parsed: URL;

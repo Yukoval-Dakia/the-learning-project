@@ -1,5 +1,4 @@
-// Shared AI-cost numeric helpers (YUK-892). Pure functions; consumed by the
-// kernel proposal writer and the server AI provenance module alike.
+// Shared AI-cost numeric helpers; pure, used by the proposal writer and AI provenance.
 
 const POSTGRES_INTEGER_MAX = 2_147_483_647;
 

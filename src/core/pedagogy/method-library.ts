@@ -1,20 +1,10 @@
-// YUK-506 — 教学法 8 法 palette（方法定义 + state guard）。纯数据 + 纯函数，零 IO。
+// Deterministic pedagogy palette: method definitions plus a state guard. Pure data and
+// functions, no IO. The live consumer is agency's prepare_intervention recommendation,
+// which picks one candidate or abstains.
 //
-// WIRING STATUS: **live consumer shipped by YUK-791**，台账 = **ADR-0050 §(c)**。
-// Agency `prepare_intervention` 的 recommendation module 是真实生产 caller：
-// 本模块作为同一波次里的确定性合法候选边界；
-// 单次 recommendation task 只能从候选中选一个方法或 abstain，
-// intervention-scoped QuestionAuthor 随即在同一波次消费。
-// 它不接收 UI raw context，不学习“方法×人”的因果排名，
-// 也不独立推进 intervention lifecycle。recommendation 会在同 wave 立刻被
-// Practice QuestionAuthor 消费；没有 dead recommendation 成功态。
-//
-// 为什么**不**登记 `*_ENABLED` flag：`audit:flags` 是双向对账——ledger 每条都要求其声明的 `file` 里
-// 存在该 flag 名的**活 token**（`scripts/audit-flags.ts` reconcileFlags → STALE `name-missing`）。
-// palette 是纯数据，没有任何 runtime 判定点能承载这个 token，硬塞一个只为登记而生的 flag 会立刻
-// 制造一条 STALE 发现（为了让审计变绿而弄脏审计）。YUK-791 已在真正的 delivery
-// 判定点登记 AUTO_INTERVENTION_EXPANSION_ENABLED；它默认 OFF，只允许 shadow
-// preparation，不假装 palette 自身有开关。
+// Deliberately no *_ENABLED flag: audit:flags requires a live runtime token, and a
+// data-only flag would create a STALE finding. The real delivery gate lives at its
+// actual decision point (AUTO_INTERVENTION_EXPANSION_ENABLED).
 
 import { z } from 'zod';
 

@@ -1,9 +1,9 @@
 import curriculum from './curriculum.json';
 
 export interface KnowledgeSeed {
-  slug: string; // stable id 用，idempotent seed 靠它
+  slug: string; // Stable id; idempotent seeds key on it.
   name: string;
-  parent_slug?: string; // 顶级留空，后续多层用
+  parent_slug?: string; // Omitted at the top level.
 }
 
 export interface Curriculum {

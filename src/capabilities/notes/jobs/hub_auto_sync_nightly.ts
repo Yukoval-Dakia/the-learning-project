@@ -1,15 +1,7 @@
-// YUK-384 — hub-sync job family. The nightly job is NO LONGER a direct auto-zone
-// applier; it is one member of a family that all route through `runHubSyncCycle`:
-//   - hub_sync_mutation_wake — best-effort immediate wake after a topology commit
-//   - hub_sync_recovery       — every-minute recovery floor (drains ready cursors)
-//   - hub_auto_sync_nightly   — 02:45 BJT coverage repair sweep
-// The deterministic auto-zone compute (buildAutoZonePatch + resolveHubMeshAtomics)
-// is RETAINED but now runs INSIDE the reconciler's fenced apply, never here — no
-// scheduled path applies directly (ADR-0020 §9 preserved via the reconciler).
-//
-// Durability is the PostgreSQL topology trigger (records the dirty) + the
-// minute-recovery floor (≤60s convergence). The immediate mutation wake is a
-// pure latency optimization and best-effort.
+// Hub-sync job family. Every scheduled path converges through `runHubSyncCycle`;
+// none applies a body directly. Durability comes from the topology trigger that
+// marks a cursor dirty plus the every-minute recovery floor, so convergence is
+// bounded by about a minute even if the immediate wake is lost.
 
 import type { Job } from 'pg-boss';
 
@@ -42,14 +34,12 @@ type RecoveryFloorDeps = {
   recoverHandoffsAndClaims?: () => Promise<void>;
 };
 
-// singletonKey ALONE does not de-duplicate on a standard pg-boss queue — it needs a
-// singletonSeconds throttle window (repo lessons YUK-491 / YUK-486). One backlog-drain
-// continuation / 30s (a cycle takes far less, so 30s is ample de-dup headroom). The wake
-// seam's throttle lives in @/server/boss/hub-sync-wake.
+// singletonKey alone does not de-duplicate on a standard pg-boss queue; it needs
+// a singletonSeconds window. 30s is ample de-dup headroom for a backlog drain.
 const HUB_SYNC_CONTINUATION_SINGLETON_SECONDS = 30;
 
-// Asia/Shanghai calendar-date repair key `nightly:YYYY-MM-DD` (en-CA formats as
-// YYYY-MM-DD). One key per BJT day makes the sweep idempotent across retries.
+// One repair key per Asia/Shanghai calendar day makes the sweep idempotent across
+// retries.
 export function nightlyRepairKey(now = new Date()): string {
   const ymd = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai',
@@ -60,8 +50,7 @@ export function nightlyRepairKey(now = new Date()): string {
   return `nightly:${ymd}`;
 }
 
-// When a bounded cycle leaves ready work, enqueue exactly ONE singleton-keyed
-// continuation so a backlog drains fairly without piling up duplicate jobs.
+// Enqueue one singleton continuation so a backlog drains without duplicate jobs.
 async function dispatchContinuation(deps: HubSyncSend, result: HubSyncCycleResult): Promise<void> {
   if (result.continuation_needed) {
     await deps.send(
@@ -86,9 +75,8 @@ export function buildHubSyncRecoveryHandler(db: Db, deps: HubSyncSend) {
   };
 }
 
-// Dispatch the single continuation via the running boss (peek, no start), used
-// by the manifest-registered handlers so a backlog drains within one cron tick
-// in production. No-op when boss is not running (tests).
+// Manifest handlers get only `db`, so they peek the already-running boss instead
+// of starting one. Tests run without a boss, making this a no-op.
 async function dispatchContinuationViaRunningBoss(result: HubSyncCycleResult): Promise<void> {
   if (!result.continuation_needed) return;
   const boss = getRunningNotesBoss();
@@ -103,15 +91,13 @@ async function dispatchContinuationViaRunningBoss(result: HubSyncCycleResult): P
   }
 }
 
-// Thin nightly wrapper retained for existing callers: a repair sweep, never a
-// direct apply. Returns the cycle result.
+// Nightly wrapper: a repair sweep, never a direct apply.
 export async function runHubAutoSyncNightly(
   db: Db,
   opts: { now?: Date } = {},
 ): Promise<HubSyncCycleResult> {
-  // Presence hygiene runs UNCONDITIONALLY — before the mode-gated cycle — so abandoned
-  // artifact_edit_session rows are reaped even when HUB_SYNC_MODE=off (runHubSyncCycle
-  // returns early on 'off'). It is not reconciler work, so it must not be reconciler-gated.
+  // Presence hygiene is not reconciler work, so it runs before the mode gate:
+  // abandoned edit sessions must still be reaped when HUB_SYNC_MODE=off.
   await sweepAbandonedEditSessions(db);
   return runHubSyncCycle(db, {
     reason: 'nightly_repair',
@@ -120,12 +106,9 @@ export async function runHubAutoSyncNightly(
   });
 }
 
-// ── Manifest-loaded factories (JobHandlerFactory: (db) => (jobs) => Promise<void>) ──
-// The manifest loader passes only `db`, so these obtain the send handle by peeking
-// the ALREADY-running boss (getRunningBoss, no start) and dispatch exactly one
-// singleton-keyed continuation when the bounded cycle leaves a backlog — draining
-// it within one cron tick instead of one hub-batch per minute. The {send}-taking
-// builders above are the explicit-injection versions (tests / direct callers).
+// Manifest-loaded factories: the loader passes only `db`, so the continuation
+// goes through the running boss. The builders above are the explicit-injection
+// versions for tests and direct callers.
 
 export function buildHubAutoSyncNightlyHandler(
   db: Db,
@@ -162,8 +145,8 @@ export function buildHubSyncRecoveryJobHandler(
   };
 }
 
-// Consumer for the hub_sync_mutation_wake queue: a produced wake job drives one
-// bounded cycle so the immediate wake actually converges (not just the cron).
+// A produced wake job drives one bounded cycle; the cron floor remains the
+// backstop for lost wakes.
 export function buildHubSyncMutationWakeJobHandler(db: Db): (jobs: Job[]) => Promise<void> {
   return async () => {
     const result = await runHubSyncCycle(db, {

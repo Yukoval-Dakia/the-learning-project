@@ -8,11 +8,9 @@ export const MAX_NOTE_REFINE_FANOUT = 8;
 type DbLike = Db | Tx;
 
 /**
- * Resolve the notes owned by this capability for one mastery-progress event.
- *
- * `sourceArtifactId` preserves the direct source-note edge even when the source
- * note is not labelled with the emitted KC. Label lookups and the final result
- * are both bounded by the paid-job ceiling.
+ * Notes for one mastery-progress event. The direct source note is kept even when
+ * it lacks the emitted KC; label lookups and the result are capped by the
+ * paid-job ceiling.
  */
 export async function collectMasteryRefineTargets(
   db: DbLike,

@@ -1,19 +1,20 @@
-// Postgres-backed editing presence store (YUK-321 M5 gate 选项 b；YUK-384 起
-// session-qualified)。
+// Postgres-backed editing presence store.
 //
-// 两张表、两个关注点：
-//   1. `artifact_edit_session`（YUK-384）—— 每 (artifact, editor session) 一行的
-//      心跳表，驱动「有人在编辑吗」判定（isArtifactIdle）。心跳/blur 在共享
-//      per-artifact advisory lock 内 upsert/delete，与 hub-sync finalize 串行化。
-//      活跃 = 最近心跳 ≤ 30s（恰 30s 仍活跃，> 30s 过期）。无 10 分钟强制 apply：
-//      被遗弃的会话 30s 后自然过期，其排队工作随即 flush。
-//   2. `editing_presence.pending`（NON-HUB note-refine defer 队列，保留）—— AI
-//      mutator patch 在编辑期入队、会话全空时 FIFO flush。是否 defer 的判定改由
-//      session presence（上表）驱动；pending 存储仍在本表。陈旧项（> 10min）在
-//      load 时丢弃并 warn；已开始 drain 的项保留至事务内完成 apply + 出队。
+// Two tables, two concerns:
+//   1. `artifact_edit_session` — heartbeat row per (artifact, editor session),
+//      driving the isArtifactIdle decision. Heartbeat/blur upsert/delete under the
+//      shared per-artifact advisory lock, serializing with hub-sync finalize.
+//      Active = last heartbeat ≤ 30s (exactly 30s still active). There is no
+//      10-minute forced apply: an abandoned session expires after 30s and its
+//      queued work flushes then.
+//   2. `editing_presence.pending` — note-refine defer queue. Patches queue while
+//      editing and flush FIFO once no session remains; whether to defer is driven
+//      by session presence above. Stale entries (> 10min) are dropped at load with
+//      a warning; entries already draining survive until apply + dequeue commits.
 //
-// 原子性：drain 的正文、事件与逐项出队共用事务，失败/退出不会清掉剩余义务。
-// 铁律（YUK-324）：jsonb `pending` 经 drizzle 读出已是数组，禁止 JSON.parse。
+// Atomicity: the drain body, events, and per-item dequeue share a transaction, so
+// a failure/exit never clears the remaining obligations.
+// jsonb `pending` comes back from drizzle as an array — never JSON.parse it.
 
 import { eq, sql } from 'drizzle-orm';
 
@@ -50,7 +51,7 @@ export class PgPresenceStore implements PresenceStore {
   }
 
   // Shared per-artifact advisory lock — the SAME key hub-sync finalization takes,
-  // so first-heartbeat/reconcile races serialize (YUK-384 RED 16).
+  // so first-heartbeat/reconcile races serialize.
   private static advisoryLock(artifactId: string) {
     return sql`select pg_advisory_xact_lock(hashtextextended(${artifactId}, 0))`;
   }
@@ -160,7 +161,6 @@ export class PgPresenceStore implements PresenceStore {
     // for TTL pruning on its next retry. Each item is still in the durable queue.
     const pendingCount = await this.db.transaction(async (tx) => {
       await tx.execute(PgPresenceStore.advisoryLock(input.artifactId));
-      // Remove exactly this session.
       await tx.execute(sql`
         delete from artifact_edit_session
         where artifact_id = ${input.artifactId} and session_id = ${input.sessionId}
@@ -272,9 +272,9 @@ export class PgPresenceStore implements PresenceStore {
   }
 
   async getEditingSessionSnapshot(artifactId: string): Promise<EditingSessionSnapshot | null> {
-    // X5: only sessions within the 30s active window count as 'editing' — same fence as
-    // isArtifactIdle — so an abandoned/zombie heartbeat row (browser crash → no blur, not yet
-    // swept) does not make the snapshot falsely read 'editing'.
+    // Only sessions within the 30s active window count as 'editing' — same fence as
+    // isArtifactIdle — so an abandoned heartbeat row (browser crash → no blur, not
+    // yet swept) does not make the snapshot falsely read 'editing'.
     const sessions = await this.db.execute<{ last_heartbeat_at: string | Date }>(sql`
       select last_heartbeat_at from artifact_edit_session
       where artifact_id = ${artifactId}
@@ -309,8 +309,8 @@ export class PgPresenceStore implements PresenceStore {
   }
 }
 
-// 裁决 i：丢弃 queuedAtMs 距 now 超过 EDITING_FORCE_APPLY_TIMEOUT_MS(10min) 的项。
-// PG 行不过期，故 load 时显式丢弃以保旧语义。console.warn 带丢弃计数与 artifactId。
+// 丢弃 queuedAtMs 距 now 超过 EDITING_FORCE_APPLY_TIMEOUT_MS 的项：PG 行不会自己
+// 过期，故 load 时显式丢弃以保住 TTL 语义，并 warn 丢弃计数与 artifactId。
 function dropStalePending(
   pending: SerializedQueuedPatch[],
   now: Date,
@@ -343,10 +343,9 @@ function dropStalePending(
       `[PgPresenceStore] dropped ${dropped} stale pending patch(es) for artifact ${artifactId} (age > ${EDITING_FORCE_APPLY_TIMEOUT_MS}ms)`,
     );
   }
-  // Visibility for the intentional TTL exemption (YUK-768): only emitted when a
-  // hub_auto_sync patch is actually retained past the ceiling — normal pruning
-  // (no over-TTL hub patch) stays silent, so this never adds noise to the
-  // high-frequency common path.
+  // Visibility for the intentional TTL exemption: only emitted when a hub_auto_sync
+  // patch is actually retained past the ceiling — normal pruning stays silent, so
+  // this never adds noise to the high-frequency common path.
   if (retainedPastTtl > 0) {
     console.info(
       `[PgPresenceStore] retained ${retainedPastTtl} ${HUB_AUTO_SYNC_ACTOR_REF} pending patch(es) past the ${EDITING_FORCE_APPLY_TIMEOUT_MS}ms force-apply ceiling for artifact ${artifactId} (exempt from stale pruning)`,

@@ -1,9 +1,5 @@
-// YUK-203 P1 (ADR-0027) — note(artifact) reads by knowledge label.
-//
-// YUK-1571 — implementation moved verbatim to
-// @/kernel/read-models/notes-read (shared cross-capability read model);
-// this file remains as an explicit compat re-export for notes-internal
-// consumers and the notes/public surface.
+// Compat re-export: the implementation lives in the shared kernel read model,
+// but notes-internal consumers and notes/public keep this path.
 
 export type {
   ItemNote,

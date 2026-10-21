@@ -9,7 +9,7 @@ const ANCHORED_TYPES = new Set([
   'calloutBlock',
 ]);
 
-/** Initial generation only: content belongs to the model; anchors and trust belong to Notes. */
+/** Model owns content; Notes owns anchors and trust, so generated blocks get fresh ids. */
 export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): ArtifactBodyBlocksT {
   const visit = (node: Record<string, unknown>, topLevel = false): Record<string, unknown> => {
     const attrs = { ...(node.attrs as Record<string, unknown> | undefined) };
@@ -45,8 +45,8 @@ export function materializeGeneratedBodyBlocks(body: ArtifactBodyBlocksT): Artif
     }
     return {
       ...node,
-      // One live reference consumer: the Notes renderer and backlink index both
-      // own crossLinkBlock. Do not persist an unrenderable model alias.
+      // The renderer and backlink index only know crossLinkBlock; do not persist
+      // the model's alias type.
       ...(node.type === 'artifactRefBlock' ? { type: 'crossLinkBlock' } : {}),
       ...(anchored || node.attrs ? { attrs } : {}),
       ...(Array.isArray(node.content)

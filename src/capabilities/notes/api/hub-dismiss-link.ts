@@ -1,23 +1,8 @@
-// YUK-95 P5 Lane-D (Wave 7), ADR-0020 §9 — hub auto-link dismiss write path.
-//
-// POST /api/hubs/[id]/dismiss-link  { suppressed_artifact_id, relation? }
-//
-// Hides one system-maintained auto-link from a hub's `AutoLinksContainer`. In a
-// single transaction this:
-//   1. appends `{ artifact_id }` to `artifact.attrs.suppressed_block_refs[]`
-//      (dedup) so the nightly `hub_auto_sync_nightly` worker skips it forever
-//      (the worker reads this via `suppressedArtifactIds`);
-//   2. writes an `event(action='suppress', subject_kind='artifact')` so the
-//      dismiss is traceable (XC-5 event-driven, not a silent attrs mutation);
-//   3. immediately removes the dismissed crossLinkBlock from the container via
-//      `persistNoteRefineApply` (a single `replace_block` on the container) —
-//      this is undoable (logged as `experimental:note_refine_apply`) and keeps
-//      the chip from re-appearing on a hard refresh before the next nightly run.
-//
-// Idempotent: dismissing the same target twice leaves a single
-// suppressed_block_refs entry. The second call still writes a suppress event
-// (append-only history) but the immediate-removal patch is a no-op (the child is
-// already gone) so no second body_blocks mutation happens.
+// Dismiss one system-maintained hub auto-link. One transaction appends the
+// suppression so the nightly sync skips it, writes a traceable suppress event,
+// and removes the chip immediately (undoable) so a refresh cannot bring it back
+// before the next sync. Repeating the call leaves one suppression entry and the
+// removal becomes a no-op.
 
 import { DismissHubLinkBodySchema, HubIdParamsSchema } from '@/capabilities/notes/api/contracts';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
@@ -47,9 +32,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       throw new ApiError('validation_error', 'a hub cannot suppress a link to itself', 400);
     }
 
-    // All artifact/event writes are owned by the hub-dismiss service so the attrs
-    // suppressed_block_refs update, the suppress event, and the immediate-removal
-    // patch stay atomic in one transaction (ADR-0020 §9 single-owner write path).
+    // Single owner of the attrs/event/removal writes keeps them atomic.
     const result = await db.transaction((tx) =>
       persistHubLinkDismiss(tx, {
         hubId,

@@ -1,5 +1,5 @@
-// M4-T5 (YUK-319)：GET /api/workbench/summary 薄壳——聚合逻辑在
-// ../server/workbench-summary（today 重生读模型）。
+// GET /api/workbench/summary route shell; the aggregation lives in
+// ../server/workbench-summary.
 
 import { loadWorkbenchSummary } from '@/capabilities/shell/public';
 import { db } from '@/db/client';

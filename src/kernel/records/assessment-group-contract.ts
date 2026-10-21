@@ -1,18 +1,6 @@
-// YUK-1572 — 组权威契约解析（stored state → NormalizedContract 的唯一裁决口）。
-//
-// 自 assessment-publication 的组快照加载口拆出：加载口仍持有组行快照职责
-//（root 锁序 + parts + live 过滤 + 返回形状），「契约如何物化」的全部知识
-// 收口于本模块，两条互斥路径：
-//   - declared（YUK-1568 第 1 片中央保护）：lifecycle 指针指向的当前 revision
-//     携带 answer_shape / blank_order 声明 ⇒ 冻结四层为权威，不再从 flat
-//     question / legacy structured 重建（那会掉声明再铸新 revision），原样
-//     返回库内契约；未支持/坏声明（未知版本、未知字段）fail-loud 拒绝读取，
-//     绝不 strip 后回退旧解释；
-//   - legacy：无声明 ⇒ root + live parts 行 + figure 实内容 digest 核验 →
-//     normalizeQuestionGroupToContract。
-//
-// 注：lifecycle 指针读不加锁（快照语义）；publisher 调用方随后会 FOR UPDATE
-// 重读并做 CAS —— 声明态若被并发发布改变，CAS 冲突 fail-closed。
+// 组权威契约的唯一解析口：declared 指针优先，未声明时回退 legacy 行归一。
+// declared 路径不做 figure 核验（契约已冻结）；legacy 路径如实标注未核验 digest。
+// lifecycle 读为快照语义，调用方随后 FOR UPDATE 重读并 CAS，冲突 fail-closed。
 
 import { eq, inArray } from 'drizzle-orm';
 
@@ -44,13 +32,8 @@ export interface ResolvedGroupContract {
 }
 
 /**
- * 组根行 + live parts → NormalizedContract 的唯一裁决口：
- * 先查 declared（冻结四层），无声明再回退 legacy 行归一。两条路径产出同一
- * NormalizedContract 形状，integrity_digest 与库内 byte-identical ——
- * base_contract_digest 可比性的前提（source_verify C1 守卫、admission
- * loadDefinition 依赖）。declared 路径不做 figure digest 核验（契约已冻结，
- * 无需行级资产核验）；legacy 路径照常核验并在 normalizer 内如实标
- * unverified。
+ * 组根行 + live parts → NormalizedContract。两条路径产出同一形状，integrity_digest
+ * 与库内一致，保证 base_contract_digest 可比。declared 读失败 fail-loud，不降级旧解释。
  */
 export async function resolveGroupContract(
   db: Db | Tx,
@@ -118,9 +101,7 @@ export async function resolveGroupContract(
     }
   }
 
-  // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
-  // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
-  // 标 unverified + conversion issue（不伪造 digest）。
+  // figure 实内容 digest 来自 asset 元数据；缺失即标 unverified，不伪造。
   const figureAssetIds = new Set<string>();
   for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
   for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);

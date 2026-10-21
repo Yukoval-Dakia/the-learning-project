@@ -93,14 +93,8 @@ function validateJudgeCapabilities(
   }
 }
 
-// T-QP (YUK-165, ADR-0014 §5) — validate that the profile's scheduling policy is
-// a registered scheduler capability that serves the `question` activity kind.
-// `question` is the floor every subject schedules today; `question_part` is
-// served by the same `fsrs` scheduler (it declares both) so parts are scheduled
-// without any per-profile opt-in. A scheduler that omits `supports_activity_kinds`
-// is treated as serving everything (back-compat for non-fsrs policies that may not
-// declare the field), so this only hard-fails an explicit declaration that EXCLUDES
-// 'question'.
+// Every subject must schedule `question`; an omitted supports_activity_kinds means
+// "serves everything" for back-compat, so only an explicit exclusion fails.
 function validateSchedulingPolicy(
   profile: SubjectProfile,
   registry: CapabilityRegistry,
@@ -109,7 +103,7 @@ function validateSchedulingPolicy(
 ): void {
   const policyId = profile.schedulingHints.default_policy;
   if (typeof policyId !== 'string' || policyId.trim().length === 0) {
-    // Shape error already surfaced by SchedulingHints.safeParse below; skip here.
+    // The shape error is reported by the schema parse below.
     return;
   }
   const scheduler = registry.resolveScheduler(policyId);

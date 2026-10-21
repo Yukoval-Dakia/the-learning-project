@@ -48,7 +48,7 @@ export function memoryReconcileHandoffMode(
   }
 }
 
-/** YUK-1007：resolved config → raw string seam（保原 string-arg 测试注入点）。 */
+/** Resolved config, returned as the raw string seam used by tests. */
 function rawConfigValue(key: string): string | undefined {
   const v = getConfig(key);
   return typeof v === 'string' ? v : undefined;
@@ -75,8 +75,8 @@ export function memoryReconcileJobId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 async function readback(boss: MemoryReconcileBoss, jobId: string): Promise<boolean> {
-  // Any state for the exact deterministic id proves queue receipt. Dispatch completion
-  // is not business completion, so failed jobs must not trigger a second paid reconcile.
+  // Any state for this deterministic id proves queue receipt. Receipt is not
+  // business completion, so a failed job must not trigger a second paid reconcile.
   return boss.getJobById ? (await boss.getJobById(MEMORY_RECONCILE_QUEUE, jobId)) !== null : false;
 }
 export async function dispatchMemoryReconcile(
@@ -89,7 +89,7 @@ export async function dispatchMemoryReconcile(
     readonly mode: MemoryReconcileHandoffMode;
   },
 ): Promise<string | null> {
-  // YUK-1398：一切受限用途（answer_only / crisis）都不得进入 reconcile。
+  // Restricted-use sources (answer_only / crisis) never reach reconcile.
   if ((await readEventDerivationPolicy(db, input.sourceEventId)) !== 'allow') {
     throw new MemoryReconcileHandoffError('restricted source cannot reconcile');
   }

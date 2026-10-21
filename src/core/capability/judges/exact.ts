@@ -9,13 +9,8 @@ import type { JudgeCapabilityRunner, JudgeRunInput } from '../types';
 
 const ExactJudgeQuestion = z.object({
   reference: z.string().min(1),
-  // YUK-260: option texts for choice questions. When present, both answer and
-  // reference are resolved letter↔text before comparison so a letter submission
-  // ("A" / "BC") matches a reference stored as option text (and vice versa).
-  // nullable: DB rows / JudgeQuestionRow carry choices_md as a nullable column;
-  // a non-choice question may forward `choices_md: null`. Normalise null→[] via
-  // the schema transform so passing a raw DB shape still judges as plain exact
-  // (instead of degrading to "unsupported").
+  // Option texts resolve letters and text both ways for choice questions. Null is
+  // normalized to [] so a raw DB row still judges as plain exact, not unsupported.
   choices_md: z
     .array(z.string())
     .nullish()
@@ -68,11 +63,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
   const normalizedReference = normalize(question.reference);
   const normalizedAnswer = normalize(input.answer.content);
 
-  // YUK-260: choice questions — the student UI submits the letter ("A", multi
-  // "BC") while the reference may store option TEXT (or vice versa, depending on
-  // the sourcing line). Resolve both sides to choice indices when possible and
-  // compare as sets; fall back to plain text equality so non-choice exact
-  // judging is unchanged.
+  // Resolve both sides to choice indices when possible (letters vs option text, in
+  // either direction); otherwise fall back to plain text equality.
   const choices = question.choices_md;
   const resolveChoiceIndices = (value: string): number[] | null => {
     if (choices.length === 0) return null;
@@ -81,14 +73,11 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     // `t` is already NFKC + trim; normalize(t) would only re-add toLowerCase.
     const tLower = t.toLowerCase();
 
-    // (1) Exact option-text equality first — so an option whose text happens to
-    // be pure Latin letters (e.g. ['True','False'], or a math option 'a + b')
-    // matches by text rather than being mis-parsed as a letter index.
+    // Text equality first, so an option like 'True'/'a + b' is not parsed as a letter.
     const exact = choices.findIndex((c) => normalize(c) === tLower);
     if (exact !== -1) return [exact];
 
-    // (2) Pure letter string(s): "A" / "BC" / "B、C". Only accept when every
-    // resolved index is in range; otherwise fall through to prefix parsing.
+    // Pure letter strings; out-of-range indices fall through to prefix parsing.
     const lettersOnly = t.toUpperCase().replace(/[\s,，、和与]/g, '');
     if (/^[A-Z]+$/.test(lettersOnly)) {
       const idx = [...new Set(lettersOnly.split('').map((c) => c.charCodeAt(0) - 65))].sort(
@@ -97,13 +86,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
       if (idx.length > 0 && idx.every((i) => i < choices.length)) return idx;
     }
 
-    // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
-    // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). YUK-1003: jyeoo/web-sourced references
-    // also use the parenthesised form "（C）选项原文（+解析）" — allow an optional
-    // full/half-width open paren before the letter. Parse the leading letter
-    // when followed by a separator so 'C' answer ↔ "C。…" / "（C）…" reference
-    // are judged equal.
+    // Leading-letter prefix, including the parenthesised "（C）…" form, accepted only
+    // when followed by a separator so a bare word is never read as an index.
     const prefix = t
       .toUpperCase()
       .match(/^[（(]([A-Z]{1,4})(?:[\s.．。、,，:：)）]|$)|^([A-Z])(?:[\s.．。、,，:：)）]|$)/);
@@ -114,10 +98,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
 
     return null;
   };
-  // YUK-1003: web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
-  // judgeable surface is the extracted answer head. Same for the learner's
-  // answer ("答：X" / trailing self-written explanation is still a correct
-  // answer). resolveChoiceIndices and the text compare both run on heads.
+  // Source references and learner answers may carry an explanation tail; judge the
+  // extracted answer head only.
   const answerHead = extractAnswerHead(input.answer.content);
   const referenceHead = extractAnswerHead(question.reference);
   const answerIdx = resolveChoiceIndices(answerHead);
@@ -130,20 +112,15 @@ function run(input: JudgeRunInput): JudgeResultV2T {
 
   const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
 
-  // YUK-260 evidence: when choiceMatch wins, normalized_answer / _reference can
-  // legitimately differ (e.g. 'a' vs '选项一'), so record HOW the match was
-  // decided plus the resolved indices, otherwise the stored evidence looks
-  // self-contradictory. `match_type` is 'choice_index' only when the verdict was
-  // actually driven by the index comparison; plain text equality stays 'text'.
+  // Record how the match was decided and the indices; otherwise differing raw texts
+  // make the stored evidence look self-contradictory.
   const matchType: 'choice_index' | 'text' = choiceMatch ? 'choice_index' : 'text';
   const choiceEvidence = {
     match_type: matchType,
     answer_choice_indices: answerIdx,
     reference_choice_indices: referenceIdx,
   };
-  // YUK-1003: when either side embedded an explanation tail the compare ran on
-  // extracted heads — record them, otherwise a stripped verdict reads
-  // self-contradictory (normalized texts visibly differ).
+  // Record extracted heads when a tail was stripped, for the same reason.
   const headEvidence = {
     ...(answerHead !== input.answer.content.normalize('NFKC').trim()
       ? { answer_head: answerHead }
@@ -171,10 +148,8 @@ function run(input: JudgeRunInput): JudgeResultV2T {
     };
   }
 
-  // YUK-1407 — 头比较 miss 后确定性抽明示终态再比一次："推导…S5=11" 的 head
-  // 是整段推导（无解析 tail），与 "11" 不等 ⇒ 旧行为直接 incorrect。
-  // 提取不到/矛盾/过程文本 miss ⇒ unsupported('process_answer_unresolvable') ——
-  // 如实上报不假装 0 分；语义升级推迟到 executor+admission 切片（YUK-1407 后续）。
+  // After a head miss, try the explicit final answer ("推导…S5=11" vs "11"). If it
+  // cannot be resolved, report unsupported rather than pretend a zero score.
   const finalAnswer = extractFinalAnswer(input.answer.content);
   if (finalAnswer.kind === 'found') {
     const finalHit = finalAnswer.values.some(
