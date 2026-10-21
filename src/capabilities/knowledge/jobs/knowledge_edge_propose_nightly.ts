@@ -1,18 +1,9 @@
-// Phase 2 Dreaming — nightly knowledge_edge propose handler.
+// Nightly knowledge-edge proposal. One batch per day over recent failure attempts,
+// looking for cross-attempt graph patterns.
 //
-// Edge propose is a batch run once per day across recent failure attempts
-// (cross-attempt pattern matching). Triggered daily at BJT 02:30.
-//
-// Lane D (YUK-482): this job used to be described as paired with the
-// `knowledge_propose_nightly` cron (per-attempt node propose at BJT 02:00, then
-// edge propose at 02:30). The node-propose cron + `KnowledgeProposeTask` have
-// been removed — see docs/architecture.md §5.1. This edge-propose job is RETAINED
-// because edge proposal is a graph-topology maintenance concern (it reads
-// `recent_failures` as one input among several), not the "答错 → propose new KC"
-// coupling that Lane D unwired. The 02:30 slot no longer has a 02:00 partner to
-// 错峰 against, but the time itself is harmless and changing cron schedules has
-// ops cost (unregister/re-register queue+schedule); kept as-is until a separate
-// reason to move it.
+// The old node-propose partner at 02:00 is gone, but edge proposal is topology
+// maintenance rather than per-attempt node creation, so it stays. The 02:30 slot is
+// harmless and moving it costs a queue/schedule re-registration.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -35,25 +26,16 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
   providerAttempt?: RunEdgeProposeAndWriteParams['providerAttempt'];
   pgbossJobId?: string;
-  // YUK-583 — test-only seam to drive the backlog-paging path cheaply (mirrors
-  // merge_attribution_sweep's `maxRepair` injectable cap). Never set in prod:
-  // production always uses EDGE_PROPOSE_SCAN_LIMIT.
+  /** Test-only scan-limit override; production uses EDGE_PROPOSE_SCAN_LIMIT. */
   scanLimit?: number;
 };
 
-// YUK-583 — watermark anchor-event coordinates. A generic `experimental:*` action
-// (NOT a RESERVED_EXPERIMENTAL_ACTION) so it parses via the loose ExperimentalEvent
-// escape hatch and matches no proposalWhere()/knowledge-fold predicate — audit-only,
-// never a pending inbox item (same fold-fall-through shape as `experimental:kc_dedup_scan`).
+// Generic experimental action, so it is audit-only and never a pending proposal.
 const EDGE_PROPOSE_WATERMARK_ACTION = 'experimental:edge_propose_watermark';
-// Stable sentinel subject_id (no single KC is the subject of the scan) — mirrors
-// kc_dedup_nightly's `subject_id: 'kc_dedup_scan'`.
 const EDGE_PROPOSE_WATERMARK_SUBJECT_ID = 'edge_propose_watermark';
-// limit 200 = 自然分页: a backlog > 200 advances the cursor only to the 200th event
-// this run, and the next run continues from there (never a jump to `now`).
+// A larger backlog pages forward across runs; the cursor never jumps to `now`.
 const EDGE_PROPOSE_SCAN_LIMIT = 200;
-// First-run-only fallback window (no watermark yet) — the legacy 24h窗, kept so the
-// very first run does not re-scan all history (防重扫全史).
+// First run only, so it does not rescan all history.
 const FIRST_RUN_FALLBACK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface EdgeProposeWatermark {
@@ -62,13 +44,8 @@ export interface EdgeProposeWatermark {
 }
 
 /**
- * Recover the续扫 cursor from the LATEST watermark anchor event, or `null` on the
- * first-ever run. Ordered by the PAYLOAD cursor (last_processed_at, then
- * last_processed_event_id) DESC — i.e. the FURTHEST cursor ever recorded, matching
- * the keyset order getFailureAttempts pages by. (Ordering by the row's wall-clock
- * created_at would be fragile if two anchors shared a millisecond; the cursor value
- * is monotonic by construction, so ordering on it is exact.) ISO-8601 UTC strings
- * (written via toISOString below) sort lexically == chronologically.
+ * Latest watermark cursor, or null on the first run. Order by the payload cursor, not
+ * the row timestamp; the cursor is monotonic and ISO strings sort chronologically.
  */
 export async function loadEdgeProposeWatermark(db: Db): Promise<EdgeProposeWatermark | null> {
   const rows = await db
@@ -97,11 +74,8 @@ export async function loadEdgeProposeWatermark(db: Db): Promise<EdgeProposeWater
 }
 
 /**
- * Persist the续扫 cursor as an audit anchor event. RED LINE: only ever called on the
- * success path (see runKnowledgeEdgeProposeNightly). `ingest_at: now` opts the row
- * OUT of the memory-ingestion outbox (memory/triggers.ts `WHERE ingest_at IS NULL`)
- * so this internal bookkeeping row never fans out to Mem0/brief-regen — mirrors
- * merge_attribution_sweep's forensic-event opt-out.
+ * Persist the cursor as an audit anchor. Only call on the success path. `ingest_at`
+ * opts the row out of memory ingestion.
  */
 export async function writeEdgeProposeWatermark(
   db: Db,
@@ -157,53 +131,25 @@ export interface NightlyResult {
   skipped_unknown_node: number;
   skipped_duplicate_edge: number;
   skipped_duplicate_pending: number;
-  // P5.4 §5-Q5 / YUK-175 — batch edge proposals folded by the L1 rubric floor.
   folded_rubric_rejected: number;
-  // ADR-0034 §2 / YUK-344 — TOPOLOGY gate hard-rejects (cycle / direction
-  // contradiction). Previously spread through {...stats} but untyped here.
   folded_topology_rejected: number;
-  // ADR-0034 §2 / YUK-344 — TOPOLOGY transitive-redundancy WARNINGS (proposed live
-  // but marked). Previously spread through {...stats} but untyped here.
   warned_transitive_redundancy: number;
-  // YUK-689 — RECONCILE SUPERSEDE recommendations emitted as pending proposals.
-  // Historical result key retained for compatibility; no edge is mutated nightly.
+  /** Supersede recommendations awaiting approval; no edge is mutated nightly. */
   reconcile_superseded: number;
-  /**
-   * YUK-779 — 1 when runEdgeProposeAndWrite SWALLOWED a fault (`ok === false`), else 0.
-   *
-   * `ok` was already computed here (it gates the watermark advance) but was DISCARDED
-   * before the result was returned, so a 吞错夜 reported `proposed: 0` and finished
-   * `succeeded` — indistinguishable from a batch the model legitimately declined.
-   */
+  /** 1 when the pipeline swallowed a fault (`ok === false`). */
   llm_failed: number;
-  /**
-   * YUK-779 — 1 once the batch LLM call was actually issued (a non-empty attempt
-   * batch), else 0. The vacuum-tail branch (0 attempts) never calls the model.
-   */
+  /** 1 when the model was actually called; 0 for an empty tail. */
   llm_attempted: number;
 }
 
 /**
- * Scan failure attempts FORWARD from the durable watermark cursor (YUK-583) and run
- * KnowledgeEdgeProposeTask once with the batch. Replaces the old lossy 24h rolling
- * window: a failure event that landed between the last cursor and the 24h window (a
- * swallowed nightly LLM failure, or a missed cron trigger) is no longer dropped —
- * the cursor is only advanced past events that were actually, successfully processed.
+ * Scan failure attempts forward from the watermark and run the propose task once.
+ * A swallowed failure or missed cron no longer drops events, because the cursor only
+ * advances past successfully processed batches.
  *
- * - First run (no watermark): fall back to the legacy 24h窗 so we do NOT re-scan all
- *   history, then establish the cursor from that batch.
- * - Every run after: read attempts strictly after (last_processed_at,
- *   last_processed_event_id), ASC, capped at EDGE_PROPOSE_SCAN_LIMIT. A backlog >
- *   limit pages forward across runs (自然分页) — the cursor advances only to the last
- *   event this run processed, NEVER to `now`.
- * - 0 attempts (vacuum tail) → no-op, no LLM call, cursor unchanged (re-scanning the
- *   empty tail next run is a cheap indexed 0-row lookup).
- *
- * RED LINE: the watermark advances iff runEdgeProposeAndWrite returns `ok === true`.
- * `ok` is false ONLY when that pipeline SWALLOWED an error (its catch-all), so a
- * 吞错夜 never advances — the batch is re-scanned next run. A successfully-processed
- * batch advances even when it produced ZERO proposals (the gate is "batch processed",
- * never "proposed > 0" — else a批次 the LLM keeps declining would be re-scanned forever).
+ * First run falls back to 24h. Later runs page forward from the cursor, capped per
+ * run. An empty tail is a no-op. The cursor advances only when `ok` is true, even if
+ * the batch produced zero proposals; otherwise a declined batch would rescan forever.
  */
 export async function runKnowledgeEdgeProposeNightly(
   db: Db,
@@ -245,8 +191,7 @@ export async function runKnowledgeEdgeProposeNightly(
   }
 
   const runTaskFn: RunTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  // `llm_attempted` 单独取出：它在下游结果体里是 number（0/1），此处是 boolean，
-  // 留在 ...stats 里会把布尔值铺进 number 字段。
+  // Pull llm_attempted out: it is a boolean upstream and a number in this result.
   const {
     ok,
     llm_attempted: llmAttempted,
@@ -255,22 +200,14 @@ export async function runKnowledgeEdgeProposeNightly(
     db,
     recentFailures: attempts,
     runTaskFn,
-    // YUK-344: pass env explicitly so the live edge-reconcile judge resolves its
-    // GLM (ZHIPU) config from the same env the rest of the pipeline uses. The live
-    // judge falls back to process.env when env is undefined, but threading it here
-    // keeps the nightly handler aligned with judgeEdgeReconcile({ env }) and the
-    // runTask provenance ctx (both env-scoped).
+    // Thread env so the reconcile judge uses the same config as the rest of the run.
     env: process.env,
     providerAttempt: deps.providerAttempt,
     pgbossJobId: deps.pgbossJobId,
     subjectProfile: await resolveDominantSubjectProfile(db, attempts),
   });
 
-  // RED LINE (YUK-583): advance the cursor ONLY inside the success path. `ok` is the
-  // success/failure discriminant on runEdgeProposeAndWrite's return — false ONLY when
-  // it swallowed an error. `attempts` is ASC, so its LAST element is the max
-  // (created_at, id) = the new keyset cursor. (attempts.length ≥ 1 here — the vacuum
-  // branch returned above.)
+  // Advance only on success. Attempts are ascending, so the last is the new cursor.
   if (ok) {
     const last = attempts[attempts.length - 1];
     await writeEdgeProposeWatermark(db, {
@@ -279,14 +216,8 @@ export async function runKnowledgeEdgeProposeNightly(
     });
   }
 
-  // YUK-779: carry `ok` out instead of dropping it — it is the ONLY discriminant
-  // between a swallowed fault and a batch the model legitimately declined.
-  //
-  // `llm_attempted` comes from runEdgeProposeAndWrite, NOT hardcoded to 1 (PR #1076
-  // review): a non-empty attempt batch does NOT imply the model ran. That function
-  // returns early — before ever calling it — when the knowledge tree is empty
-  // (propose_edge.ts, the `tree.length === 0` no-op). Hardcoding 1 there claimed a
-  // fallible unit was attempted on a night when nothing ran.
+  // Carry `ok` out: it separates a swallowed fault from a batch the model declined.
+  // llm_attempted comes from the pipeline, since an empty tree returns before the call.
   return {
     ...stats,
     attempts_considered: attempts.length,
@@ -310,17 +241,8 @@ export function buildKnowledgeEdgeProposeNightlyHandler(
         },
       });
       console.log('[knowledge_edge_propose_nightly] result', result);
-      // YUK-779 — the fallible unit is the single batch LLM call.
-      //
-      // attempted = llm_attempted OR llm_failed (PR #1076 review). Both disjuncts
-      // are load-bearing:
-      //  · `llm_attempted` alone would report `idle` for a fault swallowed BEFORE
-      //    the model was reached (e.g. the tree read throwing) — hiding a real
-      //    swallowed error behind "nothing to do tonight", the exact failure this
-      //    ticket exists to kill;
-      //  · `llm_failed` alone would miss the ordinary success path.
-      // A genuinely empty night (vacuum tail, or an empty knowledge tree) sets
-      // neither → attempted 0 → level `idle`, no alarm.
+      // Attempted covers both a model call and a swallowed pre-model fault. A truly
+      // empty night sets neither and reports idle.
       const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
       return reportJobYield('knowledge_edge_propose_nightly', {
         attempted,

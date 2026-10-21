@@ -19,8 +19,7 @@ import {
 
 export { AdminSubjectCasBodySchema, AdminSubjectControlParamsSchema, RenameAdminSubjectBodySchema };
 
-// Preserve the running HTTP schema: partial enum records are accepted, alien keys rejected.
-// The declaration schema in subject-control-contracts strips alien keys instead.
+// Preserve the running HTTP schema: partial records are accepted, alien keys rejected.
 export const ValidateAdminSubjectInputSchema = z.object({
   traitPayloadOverrides: z.record(z.enum(SUBJECT_TRAIT_KINDS), z.unknown()).optional(),
 });
@@ -41,8 +40,8 @@ async function hydrateCommittedResult(
   db: Db,
   result: AdminSubjectControlResult,
 ): Promise<AdminSubjectControlResult> {
-  // Each writer owns its transaction. Hydration runs only after that transaction resolves.
-  // Its existing never-throws report preserves last-good on failure; no retry or rollback.
+  // Hydrate only after the writer's transaction; the hydrator never throws and keeps
+  // the last good state on failure, so there is no retry or rollback here.
   if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
   return result;
 }

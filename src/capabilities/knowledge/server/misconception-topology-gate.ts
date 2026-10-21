@@ -1,26 +1,9 @@
-// YUK-531 (A5 S4 / ADR-0034 §后果/风险 #45) — PARALLEL heterogeneous topology gate
-// for misconception_edge writes.
+// Topology gate for misconception edges. Unlike the prerequisite DAG gate, these edges
+// are cross-kind and unordered, so cycles are meaningless. The meaningful checks are:
+// endpoint kinds, self-loops, and symmetric redundancy for confusable_with.
 //
-// This is the RT1 counterpart the HOMOGENEOUS knowledge_edge gate (topology-gate.ts)
-// explicitly punted ("the heterogeneous-edge / misconception-edge topology gate is
-// RT1's"). It is NOT a clone of checkEdgeTopology: the cycle / direction / transitive
-// checks there police a `prerequisite` learning-ORDER DAG over a single kind
-// (knowledge_id ↔ knowledge_id). Those do not map onto misconception edges, which are
-// CROSS-KIND (misconception → knowledge / event / misconception) and not ordered, so a
-// cycle is meaningless. The structurally meaningful checks for these relations are:
-//   ① endpoint-kind validity — a misconception edge MUST originate at a misconception,
-//      and each relation pins its target kind (caused_by → knowledge, observed_in →
-//      event, confusable_with → misconception|knowledge). `experimental:*` is the
-//      ADR-0036 escape valve: from_kind is still pinned, but to_kind is unconstrained.
-//   ② self-loop — a same-entity edge (from_kind==to_kind ∧ from_id==to_id) is the
-//      degenerate "X confusable with itself" case → reject.
-//   ③ symmetric redundancy — `confusable_with` is symmetric, so an inverse edge
-//      (to → from, confusable_with) already in the graph makes the candidate redundant
-//      → warn (mirrors the homogeneous gate's transitive_redundancy: warn, not reject).
-//
-// PURE: no DB, no LLM. The caller (PR-3 promotion writer / accept route) filters
-// `existing` to the live (archived_at IS NULL) edge set and stacks this with the Zod
-// vocabulary check (core/schema/misconception-edge.ts) and the soft-track red line.
+// Experimental relations still pin the source kind but leave the target free. Pure: the
+// caller supplies live neighbors and stacks this with schema validation.
 
 import {
   CANONICAL_MISCONCEPTION_RELATIONS,
@@ -43,21 +26,18 @@ export type MisconceptionTopologyVerdict =
   | { status: 'reject'; gate: MisconceptionTopologyGate; reason: string }
   | { status: 'warn'; gate: MisconceptionTopologyGate; reason: string };
 
-// Every misconception edge originates at a misconception (RT1 invariant). knowledge /
-// event only ever appear as the TARGET kind.
+// Every misconception edge originates at a misconception; knowledge and event are
+// targets only.
 const FROM_KIND = 'misconception';
 
-// Per-relation target-kind constraints. Keys MUST cover every canonical relation
-// (asserted below); `experimental:*` is handled separately (from pinned, to free).
+// Target-kind constraints per relation; experimental relations are handled separately.
 const ENDPOINT_RULES: Record<string, readonly string[]> = {
-  caused_by: ['knowledge'], // 误区 → 它在哪个 KC 上致错 (the "指向此点" join)
-  confusable_with: ['misconception', 'knowledge'], // 误区 ↔ 易混的误区/正确概念
-  observed_in: ['event'], // 误区 → 观测到它的 event (provenance 回链)
+  caused_by: ['knowledge'],
+  confusable_with: ['misconception', 'knowledge'],
+  observed_in: ['event'],
 };
 
-// Fail-loud drift guard: if a canonical relation gains/loses membership without a
-// matching ENDPOINT_RULES entry, this throws at module load rather than silently
-// accepting an unconstrained relation.
+// Drift guard: a new canonical relation without a rule fails at module load.
 for (const rel of CANONICAL_MISCONCEPTION_RELATIONS) {
   if (!Object.hasOwn(ENDPOINT_RULES, rel)) {
     throw new Error(
@@ -66,23 +46,15 @@ for (const rel of CANONICAL_MISCONCEPTION_RELATIONS) {
   }
 }
 
-// Single source of truth = EXPERIMENTAL_RELATION, imported from misconception-edge.ts
-// (the SAME regex Zod uses). An experimental relation requires a non-empty tag — a bare
-// `experimental:` is NOT experimental and falls through to the unknown-relation reject
-// (keeps the gate ≥ as strict as Zod, and the two layers cannot silently drift).
+// Same regex as Zod. A bare `experimental:` is not experimental; it falls through to
+// the unknown-relation reject so the gate stays at least as strict as the schema.
 function isExperimental(relationType: string): boolean {
   return EXPERIMENTAL_RELATION.test(relationType);
 }
 
 /**
- * Run the pure heterogeneous topology checks for one candidate misconception_edge
- * against the live (already filtered to archived_at IS NULL by the caller) edge set.
- *
- * reject takes priority over warn, numbered in run order:
- *   ① from_kind not 'misconception' / target kind wrong for the relation → reject (endpoint_kind)
- *   ② same-entity self-loop                                              → reject (self_loop)
- *   ③ confusable_with inverse already exists                            → warn   (symmetric_redundancy)
- *   - otherwise                                                          → ok
+ * Check one candidate against live neighbors. Endpoint-kind and self-loop failures
+ * reject; an existing inverse confusable_with only warns.
  */
 export function checkMisconceptionEdgeTopology(
   candidate: MisconceptionTopologyEdge,
@@ -90,7 +62,6 @@ export function checkMisconceptionEdgeTopology(
 ): MisconceptionTopologyVerdict {
   const { from_kind, from_id, to_kind, to_id, relation_type } = candidate;
 
-  // ① endpoint-kind validity — from MUST be a misconception (RT1 invariant).
   if (from_kind !== FROM_KIND) {
     return {
       status: 'reject',
@@ -99,14 +70,9 @@ export function checkMisconceptionEdgeTopology(
     };
   }
 
-  // ① (cont.) target kind must match the relation. experimental:* pins from_kind
-  // (checked above) but leaves to_kind unconstrained (ADR-0036 escape valve).
+  // Target kind must match the relation unless the relation is experimental.
   if (!isExperimental(relation_type)) {
-    // Object.hasOwn (NOT bracket truthiness) so a prototype-chain key like
-    // 'constructor' / 'toString' / '__proto__' hits this defensive reject instead of
-    // resolving to an inherited member and throwing on `.includes` below. Vocabulary
-    // is Zod-validated upstream; reaching here means an unknown relation slipped
-    // through — reject defensively (a defense layer must reject, never crash).
+    // hasOwn, not truthiness, so a prototype key rejects instead of crashing.
     if (!Object.hasOwn(ENDPOINT_RULES, relation_type)) {
       return {
         status: 'reject',
@@ -124,8 +90,6 @@ export function checkMisconceptionEdgeTopology(
     }
   }
 
-  // ② self-loop — degenerate same-entity edge (only possible when kinds match, e.g.
-  // a misconception confusable_with itself).
   if (from_kind === to_kind && from_id === to_id) {
     return {
       status: 'reject',
@@ -134,14 +98,8 @@ export function checkMisconceptionEdgeTopology(
     };
   }
 
-  // ③ symmetric redundancy — `confusable_with` is symmetric, so an inverse edge
-  // (to → from, same relation) already in the live graph makes the candidate
-  // redundant. Warn (caller decides to fold/downweight), do not reject.
-  // NOTE: this is reachable ONLY for misc↔misc confusable_with. The inverse match
-  // needs e.from_kind === to_kind, and the RT1 invariant pins every live edge's
-  // from_kind to 'misconception' — so a misc→knowledge confusable_with candidate can
-  // never have a legal inverse in `existing` (returns ok, no false warn). misc↔misc
-  // exact-forward dups + canonical ordering are the PR-3 writer's job (DB unique idx).
+  // An inverse confusable_with already states the same relation. Only misc-to-misc
+  // can have one, since live edges always originate at a misconception.
   if (relation_type === 'confusable_with') {
     const inverseExists = existing.some(
       (e) =>
