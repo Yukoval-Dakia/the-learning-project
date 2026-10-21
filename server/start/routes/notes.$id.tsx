@@ -3,6 +3,7 @@ import { Suspense, lazy } from 'react';
 import { loadNoteReaderPage } from '@/capabilities/notes/ui-public';
 import { startNoteAiChangesClient, startNotePageClient } from '../note-page-client';
 import { startNoteSaveClient } from '../note-save-client';
+import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadNoteReaderPage().then((defaultPage) => ({ default: defaultPage })));
@@ -22,6 +23,7 @@ function NoteReaderPage() {
           read={startNotePageClient}
           save={startNoteSaveClient}
           readAiChanges={startNoteAiChangesClient}
+          undo={startWorkbenchClient.undoAiChange}
         />
       </Suspense>
     </StartWorkbenchShell>
