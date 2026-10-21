@@ -15,7 +15,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
+import type { KnowledgeTreeNode } from '@/capabilities/knowledge/ui-public';
+import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
@@ -96,6 +97,7 @@ function OpenCommandPalette({
 }: Omit<CommandPaletteProps, 'open'> & {
   trapRef: (panel: HTMLElement | null) => (() => void) | undefined;
 }) {
+  const { getTree } = useWorkbenchClient();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
 
