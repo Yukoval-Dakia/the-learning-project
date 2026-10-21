@@ -166,15 +166,20 @@ export default function NoteReaderPage({
   navigate,
   read = getNotePage,
   save = saveBodyBlocks,
+  readAiChanges = getAiChanges,
 }: {
   id: string;
   navigate: (to: string) => void;
   read?: typeof getNotePage;
   save?: typeof saveBodyBlocks;
+  readAiChanges?: typeof getAiChanges;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
-  const changesQ = useQuery({ queryKey: ['note-ai-changes', id], queryFn: () => getAiChanges(id) });
+  const changesQ = useQuery({
+    queryKey: ['note-ai-changes', id],
+    queryFn: () => readAiChanges(id),
+  });
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');
   const [outlineOpen, setOutlineOpen] = useState(true);

@@ -18,3 +18,5 @@ export type NoteListClient = typeof import('./ui/notes-api').listNotes;
 export type NotePageClient = typeof import('./ui/notes-api').getNotePage;
 
 export type NoteSaveClient = typeof import('./ui/notes-api').saveBodyBlocks;
+
+export type NoteAiChangesClient = typeof import('./ui/notes-api').getAiChanges;

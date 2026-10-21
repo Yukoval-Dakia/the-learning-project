@@ -21,3 +21,22 @@ export async function readStartNotePage(input: { id: string }, options: { databa
     throw errorResponse(error);
   }
 }
+
+// Keep the retained HTTP history selection: this artifact, newest 50 changes.
+// Notes owns ordering and undo correlation; do not infer them from page history.
+export async function readStartNoteAiChanges(
+  input: { id: string },
+  options: { database?: Db } = {},
+) {
+  try {
+    if (typeof input?.id !== 'string' || !input.id) {
+      throw new ApiError('validation_error', 'artifact id is required', 400);
+    }
+    const { listNoteRefineChanges } = await import('@/capabilities/notes/public');
+    const database = options.database ?? (await import('@/db/client')).db;
+    const rows = await listNoteRefineChanges(database, { artifactId: input.id, limit: 50 });
+    return { artifact_id: input.id, rows };
+  } catch (error) {
+    throw errorResponse(error);
+  }
+}
