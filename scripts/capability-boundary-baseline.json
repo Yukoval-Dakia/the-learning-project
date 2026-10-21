@@ -799,7 +799,7 @@
       "date": "2026-10-21",
       "baseBlob": "213b6c6b7607e57af0a236e98c9ff8a33d28850a",
       "from": 1453,
-      "to": 1461,
+      "to": 1457,
       "issue": "YUK-1557",
       "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
     }
