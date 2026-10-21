@@ -2,10 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useState } from 'react';
 import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
+import { SubjectClientProvider } from '@/ui/hooks/subject-client';
 import '../../web/src/globals.css';
 import { RootShell } from '../../web/src/RootShell';
 import { TokenGate } from '../../web/src/TokenGate';
 import { startAgentNoteClient } from './agent-note-client';
+import { startSubjectClient } from './subject-client';
 import { startWorkbenchClient } from './workbench-client';
 
 export function StartWorkbenchShell({
@@ -21,9 +23,11 @@ export function StartWorkbenchShell({
       <TokenGate>
         <WorkbenchClientProvider value={startWorkbenchClient}>
           <AgentNoteClientProvider value={startAgentNoteClient}>
-            <RootShell pathname={pathname} navigate={startNavigate}>
-              {children}
-            </RootShell>
+            <SubjectClientProvider value={startSubjectClient}>
+              <RootShell pathname={pathname} navigate={startNavigate}>
+                {children}
+              </RootShell>
+            </SubjectClientProvider>
           </AgentNoteClientProvider>
         </WorkbenchClientProvider>
       </TokenGate>

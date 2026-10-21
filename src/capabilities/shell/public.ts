@@ -14,6 +14,7 @@ export { loadOvernightDigest } from './server/overnight-digest';
 
 export { loadPrepDeskConjectures } from './server/prep-desk';
 export { type ProposalInboxQuery, readProposalInbox } from './server/proposal-inbox-read';
+export { type LearnerSubjectRow, loadLearnerSubjects } from './server/subjects-list';
 export { isCandidateError, validateAckableOutcome } from './server/teaching-brief';
 export type {
   BriefSeenPayload,
