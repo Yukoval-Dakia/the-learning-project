@@ -74,12 +74,12 @@ export const TERMINAL_PROBE_RESOLUTIONS = [
 export function isProbeResolution(value: unknown): value is ProbeResolution {
   return typeof value === 'string' && (PROBE_RESOLUTIONS as readonly string[]).includes(value);
 }
-/** Writer rule stamped on results whose resolution passed the YUK-787 recurrence fold. */
+/** Writer rule stamped on results whose resolution passed the recurrence fold. */
 export const PROBE_RESOLUTION_RULE_VERSION = 'within_learner_probe_recurrence_v2' as const;
 
 /**
  * The append-only event that acknowledges (dismisses) a delivered teaching-brief
- * outcome (YUK-708 / contract §4.2). Keyed by the probe_result event it acks:
+ * outcome (contract §4.2). Keyed by the probe_result event it acks:
  * `subject_kind='event'`, `subject_id=<probe_result event id>`. It NEVER writes
  * derived status back onto the proposal / question / result — an ack is one new
  * row; the read model treats its existence as "this outcome is done". Not reserved,
@@ -88,7 +88,7 @@ export const PROBE_RESOLUTION_RULE_VERSION = 'within_learner_probe_recurrence_v2
 export const BRIEF_ACK_ACTION = 'experimental:brief_acknowledged' as const;
 
 /**
- * Append-only interaction ledger events (YUK-710 / P0F/6 — teaching-brief survival
+ * Append-only interaction ledger events (teaching-brief survival
  * telemetry). Both are minimal, opt-out-of-mem0 UI-interaction rows written by
  * `src/capabilities/shell/server/teaching-brief-interactions.ts`. Like BRIEF_ACK_ACTION
  * they are NOT reserved — they validate through the loose generic ExperimentalEvent path;

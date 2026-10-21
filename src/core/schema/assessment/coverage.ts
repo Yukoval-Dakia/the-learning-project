@@ -20,7 +20,7 @@ import { ResponseSlot } from './response';
 //     open_response 今天【没有】确定性比较器，模型切片未经 D17 准入，故
 //     manual_evidence=true；这不是缺陷声明，是准入前的诚实表达。
 //   - table 是布局容器：不直接作答、不直接计分，单元格按自身原语各自评估。
-//   - ResponseSet 投递链（作答面 → evaluation_record）尚未接线（后续 lane），
+//   - ResponseSet 投递链（作答面 → evaluation_record）尚未接线，
 //     collectable 档按「契约 + 现有输入原语能否承载」评估。
 
 /** ResponseSlot 判别联合的 kind 词表（从 zod 联合 option 派生 —— 单源）。 */

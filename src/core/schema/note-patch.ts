@@ -1,4 +1,4 @@
-// YUK-127 / T-88 P4-A — Block-level patch op schema for Living Note v0.
+// Block-level patch op schema for Living Note v0.
 //
 // Defines the discriminated union of patch operations that NoteRefineTask
 // produces and that the apply pipeline executes against an artifact's
@@ -7,12 +7,12 @@
 // Op anchors live on `target_block_id` (stable per ADR-0020 §2 block_id rules).
 // `append_block` has no anchor because it always appends to the doc root tail.
 //
-// The shape is intentionally derivable: P4-B (mutator vs propose gating)
-// reads `ops.length` + the count of ops that introduce new blocks to apply the
+// The shape is intentionally derivable: the mutator-vs-propose gating reads
+// `ops.length` + the count of ops that introduce new blocks to apply the
 // locked threshold `≤3 patch ops AND ≤2 new blocks → mutator; else propose`.
 // `countNewBlocks` + `summarizeNotePatch` expose those counts so callers
-// don't have to re-derive the rule. P4-B owns the gating call site; this
-// lane only defines the shape and the counters.
+// don't have to re-derive the rule. The gating call site lives elsewhere; this
+// module only defines the shape and the counters.
 
 import { z } from 'zod';
 import { TipTapNodeJson } from './business';
@@ -102,7 +102,7 @@ export type NotePatchOpT = z.infer<typeof NotePatchOp>;
 // NotePatch — ordered list of ops applied left-to-right. Empty patch is legal
 // (apply is a no-op, no event written). Upper bound is loose at the schema
 // level (200) so a wild AI run doesn't OOM the apply pipeline; the mutator
-// threshold is enforced at a different gate (P4-B).
+// threshold is enforced at a different gate.
 export const NotePatch = z.object({
   ops: z.array(NotePatchOp).max(200),
 });
@@ -110,11 +110,11 @@ export type NotePatchT = z.infer<typeof NotePatch>;
 
 // ---------- Derived counts ----------
 //
-// Exposed so P4-B can apply the locked mutator threshold without
+// Exposed so the gating caller can apply the locked mutator threshold without
 // re-implementing op-kind awareness. Locked threshold (see
 // `docs/superpowers/plans/2026-05-29-wave6-ready-to-launch.md` §Human
 // decision points): `≤3 patch ops AND ≤2 new blocks → mutator; else
-// propose`. The thresholds themselves live with the gating code (P4-B),
+// propose`. The thresholds themselves live with the gating code,
 // not here.
 
 const NEW_BLOCK_OP_KINDS = new Set<NotePatchOpT['kind']>(['insert_after', 'append_block']);

@@ -296,7 +296,7 @@ function extractUnitSuffix(rawInput: string): string | null {
 
 /** 确定性比较器：单槽命中判定（全对=发布 points，否则 0；无部分分）。
  * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。
- * declaredShape（YUK-1568 第 2 片）：主槽位冻结的 answer_shape —— 仅有
+ * declaredShape（YUK-1568）：主槽位冻结的 answer_shape —— 仅有
  * blank_exact 消费（同一共享比较核心，见 blank-answer-compare.ts）。 */
 async function runDeterministicComparator(
   comparator: DeterministicComparatorIdT,
@@ -544,7 +544,7 @@ async function runDeterministicComparator(
         };
       }
       // 无印规则：typed 部分对 —— 记正确数/总数、points=null（分数未知）。
-      // 绝不伪零分也不造分；聚合进 no_mapping（ADR-0074 D3a / 独立复核 P1-1）。
+      // 绝不伪零分也不造分；聚合进 no_mapping（ADR-0074 D3a）。
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
@@ -627,7 +627,7 @@ async function runDeterministicComparator(
       // 必然 miss ⇒ 旧路径按规则判 0。对过程文本先确定性抽明示终态再比；
       // 提取不到/矛盾/过程文本 miss ⇒ pending needs_review，绝不伪零分。
       // 数值空已由 numericCorrect 的 unparseable → pending 覆盖，不动。
-      // 本拦截只在分发点运行，不改 grade.ts（该文件有在途 PR 所有权）。
+      // 本拦截只在分发点运行，不改 grade.ts。
       // YUK-1568 合入适配：带声明 answer_shape 的槽走共享比较核心
       // （compareDeclaredBlank），本拦截仅作用于未声明文本空。
       const criterion = unit.criterion;
@@ -980,7 +980,7 @@ export async function evaluateSubmissionCore(
       }
     }
 
-    // 格式不可解释：numeric 槽 value=null 且 raw_input 非空（P1-4：不是空白）。
+    // 格式不可解释：numeric 槽 value=null 且 raw_input 非空（不是空白）。
     const unparseable = entries.find(
       (entry) =>
         entry.kind === 'numeric' &&
@@ -1046,7 +1046,7 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
-      // YUK-1568 第 2 片：冻结 slot 声明随比较器分发传入（仅 blank_exact
+      // YUK-1568：冻结 slot 声明随比较器分发传入（仅 blank_exact
       // 消费）；无声明槽传 undefined，保持旧 exact 文本/数值行为逐字不变。
       const primarySlot = spec.slots.find(
         (candidate) => candidate.slot_id === primaryEntry.slot_id,

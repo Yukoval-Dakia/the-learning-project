@@ -8,7 +8,7 @@ import type {
 } from './types';
 
 // ====================================================================
-// YUK-1048 — migration manifest 构建器（grounding §14）—— 纯函数
+// migration manifest 构建器（grounding §14）—— 纯函数
 // ====================================================================
 //
 // Manifest 覆盖 §14 清单：观测来源/版本/redacted flags、语义 row 计数+PK、
@@ -27,7 +27,7 @@ export const MAX_PK_LIST = 5_000;
 /** 分类输出版本（分类语义变化时 bump —— manifest 刷新判据之一）。 */
 export const CLASSIFICATION_VERSION = '1';
 
-/** manifest 构建选项 = checkpoint provenance（P1-1：provenance 进 checkpoint 身份）。 */
+/** manifest 构建选项 = checkpoint provenance（provenance 进 checkpoint 身份）。 */
 export interface ManifestOptions extends CheckpointProvenance {}
 
 /** 引用边（from → to），用于 edge hash。 */
@@ -192,7 +192,7 @@ export function buildMigrationManifest(
         ? 'in_sync'
         : 'drift';
 
-  // P2-B（终轮）：classification_version 进哈希 —— 分类语义版本 bump 时，
+  // classification_version 进哈希 —— 分类语义版本 bump 时，
   // 同 checkpoint 的 manifest 必须被识别为过期（refreshed）而不是同内容跳过。
   const classificationHash = canonicalHash({
     classification_version: CLASSIFICATION_VERSION,

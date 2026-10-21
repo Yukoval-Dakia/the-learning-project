@@ -57,7 +57,7 @@ export const CauseSchema = z
     analysis_md: z.string(),
     confidence: z.number().min(0).max(1),
   })
-  // YUK-672: optional at the event boundary so every historical judge remains
+  // Optional at the event boundary so every historical judge remains
   // parseable. Derive the six optional-nullable fields from the strict live-writer
   // shape above, so adding or renaming one field cannot silently drift the two
   // contracts. The live attribution writer completes all six before writing.
@@ -65,9 +65,8 @@ export const CauseSchema = z
 export type CauseSchemaT = z.infer<typeof CauseSchema>;
 
 /**
- * YUK-739 — the cold-start meta-cause prior moved ONTO each subject's category
- * declaration (`meta_cause_prior`). The pre-YUK-739 cross-subject
- * DEFAULT_META_CAUSE_BY_CATEGORY mirror is deleted: the prior is a fact about
+ * The cold-start meta-cause prior lives ON each subject's category declaration
+ * (`meta_cause_prior`) — NOT in a cross-subject table: the prior is a fact about
  * the subject's OWN vocabulary (math `calculation` and physics `computation`
  * both mean execution_slip, but each subject says so itself). Instance-level
  * attribution may override from behavioral evidence; an explicit `null` means
@@ -92,7 +91,7 @@ export type CauseProfileLike = {
     description?: string;
     review_priority?: 1 | 2 | 3 | 4 | 5;
     variant_targetable?: boolean;
-    // YUK-739 — subject-owned evaluation semantics (see profile-decl.ts).
+    // subject-owned evaluation semantics (see profile-decl.ts).
     meta_cause_prior?: MetaCauseT | null;
     rating_lean?: 'carelessness' | 'conceptual' | null;
     variant_strategy?: string;

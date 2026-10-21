@@ -55,7 +55,7 @@ export const NumericKeyCriterion = z.object({
 export type NumericKeyCriterionT = z.infer<typeof NumericKeyCriterion>;
 
 /**
- * 配对题答案键（P1-8）：显式编码【哪个左项配哪个右项】—— 不能用 option
+ * 配对题答案键：显式编码【哪个左项配哪个右项】—— 不能用 option
  * 集合冒充（集合无法表达映射关系）。与 exact_matching_pairs 比较器配套。
  * 私有判据：随 revision 冻结，公开 issuance DTO 不含 criterion，反馈
  * 揭示走 RevealedAnswerKey（dto.ts）。
@@ -176,7 +176,7 @@ export const BlankKeyCriterion = z.object({
       accepted: z.array(z.string().min(1)).min(1),
       normalization: BlankNormalization,
       /**
-       * Jev 等价判定的声明域（YUK-1496 C2；统一设计 §4 jev 行 / 附录 A4）：
+       * Jev 等价判定的声明域（YUK-1496；统一设计 §4 jev 行 / 附录 A4）：
        * 声明后该空可路由到 model_executor（Jev 三值判定 equivalent /
        * different / undecidable）；未声明的文本空只属于 blank_exact 确定性
        * 比较器。Jev 只判声明域内的等价，单位/数值/开闭区间严格性仍归
@@ -202,7 +202,7 @@ export const BlankKeyCriterion = z.object({
 export type BlankKeyCriterionT = z.infer<typeof BlankKeyCriterion>;
 
 /**
- * AI rubric（YUK-1496 C2；统一设计 §3 free 段 / §4 ai-rubric 行 / 附录 A5）：
+ * AI rubric（YUK-1496；统一设计 §3 free 段 / §4 ai-rubric 行 / 附录 A5）：
  * free 单元的逐 criterion 评分细则。每个 criterion 有稳定 ID、说明、满分与
  * 可给分档位；模型只返回逐 criterion 的 award + 理由 + 证据引用，代码校验
  * ID/档位/范围并求和 —— 模型不得新增评分点、修改满分或自报总分（输出契约
@@ -363,10 +363,10 @@ export interface ScoringBasisIssue {
   detail: string;
 }
 
-// P1-8：判据↔槽位种类相容表 —— 答案键必须落在能承载它的槽位上。
+// 判据↔槽位种类相容表 —— 答案键必须落在能承载它的槽位上。
 /**
  * 浮点相等（相对 ε=1e-9）：卷面十进制分值（如 1.5×3、0.5×2）不得因二进制
- * 表示误差被误拒（独立复核 P1-2 —— 校验“可达满分=发布满分”，非重算权重）。
+ * 表示误差被误拒（校验“可达满分=发布满分”，非重算权重）。
  */
 function samePoints(a: number, b: number): boolean {
   return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -450,7 +450,7 @@ export function validateScoringBasis(
         });
       }
     }
-    // P1-8：判据↔槽位种类相容 + 键内 id 可解析（防止“集合冒充映射”之类的错配）。
+    // 判据↔槽位种类相容 + 键内 id 可解析（防止“集合冒充映射”之类的错配）。
     const expectedKinds = expectsSlotKinds(unit.criterion);
     const referencedSlots = unit.slot_refs
       .map((slotId) => slotById.get(slotId))
@@ -522,7 +522,7 @@ export function validateScoringBasis(
           }
         }
       }
-      // 独立复核 P1-2：印规则可达满分必须等于发布 unit.points —— 矛盾规则
+      // 印规则可达满分必须等于发布 unit.points —— 矛盾规则
       // 在发布/服务共用的 canonical 校验处拒绝，不封顶、不折算、不让精确
       // 集合静默绕过矛盾规则。
       if (unit.criterion.rule?.kind === 'per_correct_pair' && unit.points != null) {
@@ -566,7 +566,7 @@ export function validateScoringBasis(
           detail: `unit '${unit.scoring_unit_id}' rule max_breaks=${unit.criterion.rule.max_breaks} is below the accepted break count ${unit.criterion.accepted_positions.length} — the exact reference set would be zeroed by its own rule`,
         });
       }
-      // 独立复核 P1-2：同配对 —— 印规则可达满分必须等于发布 unit.points。
+      // 同配对 —— 印规则可达满分必须等于发布 unit.points。
       if (unit.criterion.rule?.kind === 'per_correct_break' && unit.points != null) {
         const attainable =
           unit.criterion.rule.points_per_break * unit.criterion.accepted_positions.length;
@@ -580,7 +580,7 @@ export function validateScoringBasis(
     }
     issues.push(...validateK1Unit(unit, referencedSlots));
     if (unit.criterion.kind === 'rubric') {
-      // YUK-1496 C2 — rubric 发布期校验：criterion id 唯一；可给分档位落在
+      // YUK-1496 — rubric 发布期校验：criterion id 唯一；可给分档位落在
       // [0, max]；各 criterion 满分之和必须等于 unit.points（模型只见细则，
       // 满分一致性在发布 barrier 钉死，判分时代码只求和、不重算满分）。
       const seenCriteria = new Set<string>();

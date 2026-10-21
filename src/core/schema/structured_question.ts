@@ -73,21 +73,19 @@ export const QuestionOption = z.object({
 
 export const StructuredQuestionSource = z.enum([
   'tencent_ocr',
-  // YUK-253: GLM-OCR replaces Tencent as the default OCR engine. Stamped on
+  // GLM-OCR replaces Tencent as the default OCR engine. Stamped on
   // GLM-fallback questions (VLM-down path); the VLM path keeps 'vlm_structure'.
   // Zod enum only — NOT a DB column (no audit:schema impact).
   'glm_ocr',
   'vision_rescue',
-  // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the normalized
-  // structure tree; Tencent structure is demoted to a text hint. See
-  // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
+  // VLM StructureTask owns the normalized structure tree; Tencent structure is
+  // demoted to a text hint.
   'vlm_structure',
   'manual',
   'agent_edit',
-  // YUK-258: DOCX text-line ingestion. Stamped on blocks segmented from pandoc
-  // gfm markdown (语文/纯文本卷, zero MathType). Zod enum only — NOT a DB column
-  // (no audit:schema impact). Added at the enum TAIL to minimise the merge面 with
-  // #333 (yuk-253-glm-ocr-swap) which inserts 'glm_ocr' mid-enum.
+  // DOCX text-line ingestion. Stamped on blocks segmented from pandoc gfm
+  // markdown (语文/纯文本卷, zero MathType). Zod enum only — NOT a DB column
+  // (no audit:schema impact).
   'docx_text',
 ]);
 
@@ -104,11 +102,11 @@ export type StructuredQuestionT = {
   /**
    * 0-based source page this question/node was extracted from. Populated per node
    * (incl. sub_questions) on BOTH the VLM StructureTask path (nodeToStructured copies
-   * node.page_index recursively — YUK-227 S3 Slice A P1 fix, structure.ts:197) and the
+   * node.page_index recursively) and the
    * Tencent multi-page fallback path (parser stamps it per page). A cross-page 大题
    * carries DIFFERENT page_index across its sub_questions. ABSENT only on legacy
    * single-page trees / the GLM fallback when it omits it. Used by `assignFigures` to
-   * gate figure↔question attachment to the same page (YUK-163), and by YUK-488's
+   * gate figure↔question attachment to the same page, and by
    * `pageScopedQuestionImageRefs` to feed the whole-page judge only the page(s) a
    * question spans (with a full-page fallback when this signal is absent).
    */
@@ -118,19 +116,19 @@ export type StructuredQuestionT = {
   source?: z.infer<typeof StructuredQuestionSource>;
   last_modified_by?: string;
   /**
-   * Advisory question-type hint (YUK-195, design note §4.3). Written by the
+   * Advisory question-type hint (design note §4.3). Written by the
    * `set_question_type` agent-edit DomainTool onto a draft-block structured
    * node. This is a jsonb-internal field — NOT a DDL column, NOT an
    * `audit:schema` business field. Import behavior is UNCHANGED by this hint:
    * `question.kind` is still supplied per-block by the import request. The
-   * hint's only consumer is the future OC-5 review UI (YUK-169 redraw), which
+   * hint's only consumer is the review UI, which
    * will pre-fill the import kind selector from it.
    */
   kind?: z.infer<typeof QuestionKind>;
   /**
-   * YUK-482 cut ④ — advisory "this node carries student work" flag emitted by the
+   * Advisory "this node carries student work" flag emitted by the
    * VLM StructureTask (per-node / per-page). The VLM NEVER transcribes handwriting
-   * (pixels stay pixels — constraint #3 / OC-1); it only reports PRESENCE so the
+   * (pixels stay pixels — constraint #3); it only reports PRESENCE so the
    * student-answer grading path (auto-enroll.ts `detectStudentWork`) knows the page
    * image holds a learner's answer to grade. jsonb-internal — NOT a DDL column, NOT
    * an `audit:schema` business field (rides inside the existing `structured` jsonb,
@@ -139,7 +137,7 @@ export type StructuredQuestionT = {
    */
   student_answer_present?: boolean;
   /**
-   * YUK-1497 — 冻结展示层草稿（Generative UI blocks-v1）。只写在【树根】
+   * 冻结展示层草稿（Generative UI blocks-v1）。只写在【树根】
    * （一个 block 一份组级 presentation），由 compose_presentation DomainTool
    * 在 validatePresentation 通过后写入；随 import 进入 question.structured，
    * 发布时提升为 contract.presentation（同道绑定校验）。jsonb-internal ——
@@ -166,11 +164,11 @@ export const StructuredQuestion: z.ZodType<StructuredQuestionT> = z.lazy(() =>
       extraction_evidence: ExtractionEvidence.optional(),
       source: StructuredQuestionSource.optional(),
       last_modified_by: z.string().optional(),
-      // YUK-195 §4.3 — advisory question-type hint (jsonb-internal, no DDL).
+      // advisory question-type hint (jsonb-internal, no DDL).
       kind: QuestionKind.optional(),
-      // YUK-482 cut ④ — advisory student-work presence flag (jsonb-internal, no DDL).
+      // advisory student-work presence flag (jsonb-internal, no DDL).
       student_answer_present: z.boolean().optional(),
-      // YUK-1497 — 冻结展示层草稿（jsonb-internal，仅 compose_presentation 读写）。
+      // 冻结展示层草稿（jsonb-internal，仅 compose_presentation 读写）。
       presentation: Presentation.optional(),
     })
     .refine(
@@ -206,13 +204,13 @@ export function structuredToPromptMarkdown(q: StructuredQuestionT): string {
   return md;
 }
 
-// YUK-1011 — analysis MUST carry a recognizable marker in the derived
+// analysis MUST carry a recognizable marker in the derived
 // reference: the exact judge (and the write-path exact-capability guard)
 // resolves a reference to its bare answer head via extractAnswerHead
 // (judge-routing.ts), which only cuts a tail introduced by 解析：/【详解】/….
 // A bare analysis glued on with '\n' makes the whole blob the "head" —
 // unmatchable against a learner's bare answer or option letter. Mirrors the
-// web-sourced convention "<bare answer>\n解析：…" (YUK-1003). Marker set kept
+// web-sourced convention "<bare answer>\n解析：…". Marker set kept
 // local (judge-routing owns the authoritative tail regex; this file stays
 // import-light and only needs the leading-marker check).
 const ANALYSIS_MARKED_RE =
@@ -341,7 +339,7 @@ export function projectAddressableStructure(
 // PermanentError —— 不可重试（认证错误 / 账号欠费 / 参数非法），立即 archive
 //   并写 cost_ledger(outcome='failed_permanent')。
 //
-// 见 Sub 0c plan Step 6 + ADR-0002 修订（Tencent SDK error mapping）
+// 见 ADR-0002 修订（Tencent SDK error mapping）
 
 export class RetryableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {

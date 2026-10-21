@@ -12,7 +12,7 @@ import { ScoringRule } from './assessment/scoring-rule';
 import type { FigureRefT, StructuredQuestionT } from './structured_question';
 
 // ====================================================================
-// YUK-1468 — 统一题库草稿文档（schema_version 2）
+// 统一题库草稿文档（schema_version 2）
 // ====================================================================
 //
 // `question_block.structured` 升级为可识别的统一草稿文档：question → parts →
@@ -95,7 +95,7 @@ export const DraftSelectSpec = z.object({
 export type DraftSelectSpecT = z.infer<typeof DraftSelectSpec>;
 
 /**
- * blank 作答面。answer_shape（YUK-1568，可选）声明这一空回答的数学对象
+ * blank 作答面。answer_shape（可选）声明这一空回答的数学对象
  * （公开输入语义；唯一定义在 assessment/blank-answer-shape.ts）。缺省 =
  * 未声明，不注入默认值，旧文本 exact 语义与 digest 不变；未知版本/字段
  * 在 schema 上 parse 失败，保存被拒 —— 不能 strip 后当未声明。
@@ -288,7 +288,7 @@ export const DraftPart = z.object({
   material_ids: z.array(z.string().min(1)).default([]),
   units: z.array(DraftUnit).default([]),
   /**
-   * YUK-1568（第 1 片，可选）：本 part 独立 blank 槽的默认逻辑序（显式
+   * （可选）本 part 独立 blank 槽的默认逻辑序（显式
    * slot_id 列表，恰覆盖本 part 的 blank 槽各一次；交叉校验在发布 barrier）。
    * 缺省 = 未声明，不注入默认值，旧文档 JSON/digest 不变。
    */
@@ -335,7 +335,7 @@ export const QuestionDraftDocument = z.object({
   materials: z.array(DraftMaterial).default([]),
   knowledge_ids: z.array(z.string().min(1)).default([]),
   metadata: DraftMetadata.default({}),
-  /** 呈现层（另一 lane 的契约）：不透明透传保存，本 lane 不解析不验证。 */
+  /** 呈现层（presentation 契约归另一子系统）：不透明透传保存，本模块不解析不验证。 */
   presentation: z.unknown().optional(),
   source: DraftSource.optional(),
   base: DraftBase.optional(),

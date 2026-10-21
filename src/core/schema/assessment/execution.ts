@@ -20,7 +20,7 @@ import type { ScoringBasisT, ScoringUnitCriterionT } from './scoring';
 
 /**
  * 确定性比较器 id（保留的确定性能力子集；新历史政策不当默认）。
- * P1-8：每个比较器只与一种判据相容（见 COMPARATOR_CRITERION），
+ * 每个比较器只与一种判据相容（见 COMPARATOR_CRITERION），
  * 不相容组合在 validateExecutionPlan 拦截。
  */
 export const DeterministicComparatorId = z.enum([
@@ -114,8 +114,8 @@ export interface ExecutionPlanIssue {
 
 /**
  * 纯校验：每个 scoring unit 恰好被一个 assignment 覆盖（不漏不重 —— 与
- * scoring unit“贡献恰好一次”配套）；assignment 只能引用声明过的 unit
- * （P1-8）；确定性比较器只能判相容判据（P1-8，见 COMPARATOR_CRITERION）；
+ * scoring unit“贡献恰好一次”配套）；assignment 只能引用声明过的 unit；
+ * 确定性比较器只能判相容判据（见 COMPARATOR_CRITERION）；
  * model_executor 未携带准入切片时给出显式问题（发布侧据此 withhold，
  * 而不是悄悄执行）。
  */

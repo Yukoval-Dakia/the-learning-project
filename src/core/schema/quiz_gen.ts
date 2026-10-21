@@ -1,13 +1,8 @@
 // Search-grounded QuizGen (T-SQ) — Zod types.
 //
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
-//   §0  Decisive constraint: search-call provenance cannot be recovered from
-//       logs, so the QuizGen agent MUST self-declare its sources. These types
-//       are built around that self-declaration.
-//   §2  Data model — `question.metadata.quiz_gen` (jsonb, zero migration).
-//   §5  Q2 — the QuizGenTask LLM structured output schema.
-//
-// Two layers live here:
+// Decisive constraint (spec 2026-06-02 §0): search-call provenance cannot be
+// recovered from logs, so the QuizGen agent MUST self-declare its sources —
+// these types are built around that self-declaration. Two layers live here:
 //   1. Persisted shape  — `QuizGenMetadata` (what lands in question.metadata.quiz_gen).
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
@@ -27,12 +22,12 @@ type QuestionKindT = z.infer<typeof QuestionKind>;
 
 // Where a source URL was used in generation. 'fact' = grounded a factual claim
 // in the question; 'inspiration' = informed the topic/framing only. Drives the
-// QuizVerify grounding + copy_safety checks (Q5).
+// QuizVerify grounding + copy_safety checks.
 export const QuizGenUsedFor = z.enum(['fact', 'inspiration']);
 export type QuizGenUsedForT = z.infer<typeof QuizGenUsedFor>;
 
-// §0: every URL the agent actually used must appear here (agent self-reported —
-// it cannot be recovered from runner logs).
+// Every URL the agent actually used must appear here (agent self-reported —
+// it cannot be recovered from runner logs, §0).
 export const QuizGenSourceRef = z.object({
   url: z.string().url(),
   title: z.string().min(1),
@@ -46,26 +41,24 @@ export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
 export const QuizGenSourcePack = z.object({
   query_plan: z.array(z.string().min(1)),
   searched_at: z.string().min(1),
-  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；Tavily→Exa 换装后
-  // 'exa' 为新报告值，历史 'tavily' 行保留可 parse。
-  // 会把整批输出打死（spike 2026-07-10 实测 RC 批阵亡第二因）。'.tool' 无生产消费方，
-  // 纯 provenance 记录，放宽无下游影响。
+  // closed_book 跑法根本不挂检索，'none' 是诚实自报；Tavily→Exa 换装后 'exa' 为
+  // 新报告值，历史 'tavily' 行保留可 parse（过紧的 enum 会把整批输出打死，
+  // spike 2026-07-10 实测）。纯 provenance 记录，无生产消费方。
   tool: z.enum(['tavily', 'exa', 'none']),
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
-// YUK-216 S2 / YUK-224 (slice 3, tier 3 'material_grounded') — the REAL source
-// material the agent fetched and grounds its questions in (e.g. a reading passage
-// / authentic dataset). The agent SELF-REPORTS this block (provenance is NOT
-// recoverable from runner logs, §0); the Q3 handler then persists `body_md` to a
-// `source_document` row (with `provenance` carrying the URL) and back-fills the
-// resulting row id into metadata.quiz_gen.material_source_document_id. The agent
-// cannot know that id (it is minted at persist time), so the OUTPUT carries the
-// material CONTENT + URL, not the doc id.
+// The REAL source material the agent fetched and grounds its questions in
+// (e.g. a reading passage / authentic dataset). The agent SELF-REPORTS this
+// block (provenance is NOT recoverable from runner logs, §0); the Q3 handler
+// then persists `body_md` to a `source_document` row (with `provenance`
+// carrying the URL) and back-fills the resulting row id into
+// metadata.quiz_gen.material_source_document_id. The agent cannot know that id
+// (it is minted at persist time), so the OUTPUT carries the material CONTENT +
+// URL, not the doc id.
 export const QuizGenMaterial = z.object({
-  // the fetched material itself — the passage / dataset text the questions probe.
-  // This is what gets persisted to source_document.body_md and is the "真原文"
-  // a reading question is grounded in (spec §6.1 row 3: 原文持久化 + 题面强制引用).
+  // the fetched material itself — what gets persisted to source_document.body_md
+  // and the "真原文" a reading question is grounded in（原文持久化 + 题面强制引用）。
   body_md: z.string().min(1),
   // where the material came from. Persisted into source_document.provenance.
   url: z.string().url(),
@@ -75,12 +68,9 @@ export const QuizGenMaterial = z.object({
 });
 export type QuizGenMaterialT = z.infer<typeof QuizGenMaterial>;
 
-// YUK-216 S2 — 'material_grounded' (tier 3 "material"): QuizGen first fetches
-// REAL source material (e.g. a reading passage / authentic dataset), persists it
-// to source_document, then writes questions that probe that material. The grounded
-// material's id is carried in metadata.quiz_gen.material_source_document_id (see
-// QuizGenMetadata below). Code-contract addition only — no DDL.
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §4.
+// 'material_grounded' (tier 3 "material"): QuizGen first fetches REAL source
+// material, persists it to source_document, then writes questions that probe
+// that material. Code-contract addition only — no DDL.
 export const QuizGenGenerationMethod = z.enum([
   'search_grounded',
   'closed_book',
@@ -117,28 +107,26 @@ export const QuizGenMetadata = z
     // Set by QuizGenTask handler on successful parse (Q3). 'ready' = generated,
     // pending verification.
     generation_status: z.literal('ready'),
-    // YUK-607（PR #750 review round）— 生成输出经【jsonrepair 级】修复带救回时置 true：
-    // 语法救回但内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过本
-    // schema 的 min(1) 门）。quiz_verify 晋级门据此封顶 needs_review（不自动 active）。
-    // 确定性修复级（引号/控制字符转义，内容保真）不置此标记。
+    // 生成输出经【jsonrepair 级】修复带救回时置 true：语法救回但内容完整性无法机证
+    // （启发式可能截断/重划字符串边界，且截断串能过本 schema 的 min(1) 门）。
+    // quiz_verify 晋级门据此封顶 needs_review（不自动 active）。确定性修复级
+    // （引号/控制字符转义，内容保真）不置此标记。
     parse_repaired: z.boolean().optional(),
     verification: QuizGenVerification.optional(),
-    // YUK-216 S2 — tier 3 'material_grounded' only: the source_document row id the
-    // generated questions are grounded in. question has no source_document_id column
+    // tier 3 'material_grounded' only: the source_document row id the generated
+    // questions are grounded in. question has no source_document_id column
     // (zero-DDL), so material provenance lives here in the quiz_gen metadata
-    // namespace. Absent for search_grounded / closed_book. deriveSourceTier() reads
-    // this (with generation_method='material_grounded') to land tier 3.
-    // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1 / §2.3.
+    // namespace. Absent for search_grounded / closed_book. deriveSourceTier()
+    // reads this (with generation_method='material_grounded') to land tier 3.
     material_source_document_id: z.string().min(1).optional(),
   })
   .superRefine((meta, ctx) => {
     // Time-ordering guard: a 'material_grounded' row MUST carry the grounding
-    // material id, otherwise it would land in the question table flagged as tier 3
-    // by deriveSourceTier yet be demoted to tier 4 (no material id → fails the tier-3
-    // branch). Make the contract reject the half-formed shape at parse time. The live
-    // material writer (slice 3 / YUK-224) persists the source_document first, so it
-    // naturally satisfies this; this guard fails fast if any earlier writer flips the
-    // method without wiring the id.
+    // material id, otherwise it would land in the question table flagged as
+    // tier 3 by deriveSourceTier yet be demoted to tier 4 (no material id →
+    // fails the tier-3 branch). The live material writer persists the
+    // source_document first, so it naturally satisfies this; this guard fails
+    // fast if any writer flips the method without wiring the id.
     if (meta.generation_method === 'material_grounded' && !meta.material_source_document_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -152,9 +140,9 @@ export type QuizGenMetadataT = z.infer<typeof QuizGenMetadata>;
 
 // ---------- §5 Q2 QuizGenTask LLM output ----------
 
-// YUK-609 — choices_md is the option BODY list. Renderers own A/B/C labels by
-// array index, so persisting an agent-emitted "A. ..." prefix makes every
-// consumer render "A. A. ...". To avoid corrupting natural bodies such as
+// choices_md is the option BODY list. Renderers own A/B/C labels by array
+// index, so persisting an agent-emitted "A. ..." prefix makes every consumer
+// render "A. A. ...". To avoid corrupting natural bodies such as
 // "C. elegans", normalize only when the WHOLE array forms an A/B/C... indexed
 // set. Partial/mismatched prefix-like text stays verbatim. A fully indexed set
 // with a label-only entry is rejected instead of storing an empty body.
@@ -210,20 +198,16 @@ const QuizGenRubric = Rubric.extend({
   }).optional(),
 });
 
-// YUK-1406 — producer 数学定界契约的 schema 侧接线（R1 修复轮收窄）。
-// 覆盖面只限「显示字段」：prompt_md / choices_md 与 structured 各节点
-// prompt_text / options[].text —— 两处实证缺陷（cooygx C/D、ubm B）均在
-// 选项正文。刻意不查答案值承载字段（R1 P1）：reference_md 与小题
-// answers / analysis 会经 extractAnswerHead / structuredToReferenceMarkdown
-// 进入 exact text_key（assessment-normalization → definition-from-contract
-// blank_key → grade），该链不去数学定界；在这里强制包装/拒收会把显示定界
-// 带进评分键，造成 solve_seed_mismatch 或裸公式正确作答被判错。参考展示
-// 与答案值分离归后续 K1 quiz_gen typed 生产迁移，本片不动评分语义。
-// 落地形态（R1 核实）：handler 为 posthoc safeParse（TaskSpec 无
-// structuredOutputMode，非同 run 结构化反馈）；失败经 placementSchemaFailure
-// 收敛为 code/path（错误文案不透传），pg-boss 既有 retryLimit=2 有界重试会
-// 重新消费付费额度；本片不新增重试/反馈/预算。不查 source_refs /
-// material.body_md / rubric_json 等非渲染字段。
+// Producer 数学定界契约的 schema 侧接线。覆盖面只限「显示字段」：prompt_md /
+// choices_md 与 structured 各节点 prompt_text / options[].text。刻意不查答案值
+// 承载字段（R1 P1）：reference_md 与小题 answers / analysis 会经
+// extractAnswerHead / structuredToReferenceMarkdown 进入 exact text_key
+// （assessment-normalization → definition-from-contract blank_key → grade），
+// 该链不去数学定界；在这里强制包装/拒收会把显示定界带进评分键，造成
+// solve_seed_mismatch 或裸公式正确作答被判错。落地形态：handler 为 posthoc
+// safeParse（TaskSpec 无 structuredOutputMode）；失败经 placementSchemaFailure
+// 收敛为 code/path（错误文案不透传），pg-boss 既有 retryLimit=2 有界重试会重新
+// 消费付费额度。不查 source_refs / material.body_md / rubric_json 等非渲染字段。
 function reportBareMath(
   ctx: z.RefinementCtx,
   path: (number | string)[],
@@ -258,7 +242,7 @@ function reportStructuredBareMath(
       option.text,
     );
   });
-  // R1 P1：answers / analysis 是答案值承载字段（进 exact 参考链），不套显示定界。
+  // answers / analysis 是答案值承载字段（进 exact 参考链），不套显示定界。
   node.sub_questions?.forEach((sub, index) => {
     reportStructuredBareMath(ctx, sub, `${labelPrefix}sub_questions[${index}].`, [
       ...basePath,
@@ -278,13 +262,12 @@ export const QuizGenQuestion = z
     prompt_md: z.string().min(1),
     reference_md: z.string().min(1),
     choices_md: QuizGenChoiceBodies.nullable().optional(),
-    // Only judge routes a GENERATED question can actually be graded by. The judge
-    // layer's RUNNABLE_ROUTES is { exact, keyword, semantic, steps, unit_dimension },
-    // but 'steps' / 'unit_dimension' are first-class / profile-preferred routes
-    // (math derivation, physics units), never generator overrides, and 'rubric' has
-    // no runner at all. Allowing those here would let a verified question enter the
-    // review pool yet return `unsupported` the moment the learner submits an answer.
-    // The QuizGen handler routes derivation/prose to semantic, choice to exact, etc.
+    // Only judge routes a GENERATED question can actually be graded by. The
+    // judge layer's RUNNABLE_ROUTES also contains 'steps' / 'unit_dimension'
+    // (first-class / profile-preferred routes, never generator overrides) and
+    // 'rubric' has no runner at all. Allowing those here would let a verified
+    // question enter the review pool yet return `unsupported` the moment the
+    // learner submits an answer.
     judge_kind_override: z.enum(['exact', 'keyword', 'semantic']).nullable().optional(),
     rubric_json: QuizGenRubric.nullable().optional(),
     difficulty: z.number().int().min(1).max(5),
@@ -293,8 +276,8 @@ export const QuizGenQuestion = z
     // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
     // or inspired THIS question.
     source_refs: z.array(QuizGenSourceRef),
-    // YUK-1011 — composite (篇) carrier. Present ONLY on a composite_parent_only
-    // run: a role='stem' node whose sub_questions (role='sub', ≥2 enforced by the
+    // Composite (篇) carrier. Present ONLY on a composite_parent_only run: a
+    // role='stem' node whose sub_questions (role='sub', ≥2 enforced by the
     // handler gate) are the independently judgeable 小题. The handler normalizes
     // the tree via normalizeAuthorStructured (server-side id regeneration +
     // stem/leaf validation), persists it on the parent row's `structured`
@@ -316,9 +299,9 @@ export const QuizGenQuestion = z
       });
     }
   })
-  // YUK-1406 — 数学定界契约：裸 \frac/\sqrt 族命令 = 整批拒收（fail-closed）。
-  // 仅显示字段（prompt_md / choices_md / structured prompt_text / options[].text）；
-  // reference_md 与 answers/analysis 不查（R1 P1，评分链不去定界）。
+  // 数学定界契约：裸 \frac/\sqrt 族命令 = 整批拒收（fail-closed）。仅显示字段
+  // （prompt_md / choices_md / structured prompt_text / options[].text）；
+  // reference_md 与 answers/analysis 不查（评分链不去定界）。
   .superRefine((question, ctx) => {
     reportBareMath(ctx, ['prompt_md'], 'prompt_md', question.prompt_md);
     question.choices_md?.forEach((choice, index) => {
@@ -335,21 +318,22 @@ export const QuizGenOutput = z
     questions: z.array(QuizGenQuestion).min(1).max(10),
     source_pack: QuizGenSourcePack,
     generation_method: QuizGenGenerationMethod,
-    // Agent's own copy-safety self-assessment (§0 / §1). QuizVerify (Q5) may later
+    // Agent's own copy-safety self-assessment (§0). QuizVerify may later
     // overwrite metadata.copy_safety with checked_by='quiz_verify'.
     self_copy_safety: QuizGenCopySafety,
-    // YUK-224 (slice 3) — the fetched material a `material_grounded` run grounds its
-    // questions in. Absent for search_grounded / closed_book; REQUIRED (enforced
-    // below) for material_grounded so the Q3 handler can persist it to source_document
+    // The fetched material a `material_grounded` run grounds its questions in.
+    // Absent for search_grounded / closed_book; REQUIRED (enforced below) for
+    // material_grounded so the Q3 handler can persist it to source_document
     // and back-fill material_source_document_id.
     material: QuizGenMaterial.nullable().optional(),
   })
   .superRefine((out, ctx) => {
-    // §0 — a `search_grounded` question MUST carry at least one source_ref. Search
-    // provenance is NOT recoverable from runner logs, so an empty source_refs on a
-    // search-grounded question would persist a draft with zero URL provenance that
-    // QuizVerify (closed-book) can only trust blindly (deterministic overlap is 0
-    // with no snippet). `closed_book` legitimately allows empty refs.
+    // §0 — a `search_grounded` question MUST carry at least one source_ref.
+    // Search provenance is NOT recoverable from runner logs, so an empty
+    // source_refs on a search-grounded question would persist a draft with
+    // zero URL provenance that QuizVerify (closed-book) can only trust blindly
+    // (deterministic overlap is 0 with no snippet). `closed_book` legitimately
+    // allows empty refs.
     if (out.generation_method === 'search_grounded') {
       out.questions.forEach((q, i) => {
         if (q.source_refs.length === 0) {
@@ -362,16 +346,11 @@ export const QuizGenOutput = z
         }
       });
     }
-    // YUK-224 (slice 3) — material grounding 正向校验。PR #312 的 V1 时序守卫
-    // （拒收一切 material_grounded 输出，等 live writer 落地）已被本 slice 取代：
-    // 素材检索 + source_document 持久化 + material_source_document_id 回填的 live
-    // writer 现在就在 quiz_gen handler 里（runQuizGen material_grounded 分支）。
-    // 守卫从「拒收」翻转为「必须携带 material 来源」：material_grounded 时 output
-    // 必须自报 `material`（passage 原文 + URL），handler 才能据此持久化 source_document
-    // 并回填 doc id（metadata 层 superRefine 已就位：material_source_document_id 必填，
-    // 由 handler 回填后满足）。漏报 material → 无真原文可持久化，deriveSourceTier 会把
-    // 题降到 tier 4 跳过 material_grounding 检查 → 在 parse 期 fail-fast（spec §6.1
-    // row 3「阅读类题有真原文：原文持久化 + 题面强制引用」的入口约束）。
+    // Material grounding 正向校验：material_grounded 时 output 必须自报
+    // `material`（passage 原文 + URL），handler 才能据此持久化 source_document
+    // 并回填 doc id（metadata 层 superRefine 已就位）。漏报 material → 无真原文
+    // 可持久化，deriveSourceTier 会把题降到 tier 4 跳过 material_grounding 检查
+    // → 在 parse 期 fail-fast（「阅读类题有真原文」的入口约束）。
     if (out.generation_method === 'material_grounded' && !out.material) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -385,7 +364,6 @@ export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 
 // ---------- ADR-0038 决定#2 — plan-then-generate Phase-1 plan artifact ----------
 //
-// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定#2 first bullet:
 // 出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），
 // 再据计划生成题面。The plan is a MACHINE-CHECKABLE artifact (not prompt-internal
 // prose): the Q3 handler validates it deterministically (schema + real
@@ -394,15 +372,14 @@ export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 // never proceed to generation. Non-objective kinds still get plans (knowledge
 // point + kind selection); the answer anchor is REQUIRED only where applicable.
 
-// 客观题 set per ADR-0038 决定#2 second bullet: fill_blank / choice / true_false —
-// answers that can be deterministically compared against the material.
-// `translation` is NOT here (its answer-class is semantic — subjective).
-// YUK-391 (kind Step 4)：不再手维护集合——由 answer-class 单一真相派生
-// （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
-// canonical kinds，core/schema/answer-class.ts；PROSE_KINDS 时代的注释语义不变）。
-// YUK-386: membership is over the KNOWN label ids only — a free-form custom
-// label is never a member (it classifies semantic by default), so the
-// answer_anchor requirement fires exactly for the recognised objective labels.
+// 客观题 set：fill_blank / choice / true_false — answers that can be
+// deterministically compared against the material. `translation` is NOT here
+// (its answer-class is semantic — subjective). 不手维护集合——由 answer-class
+// 单一真相派生（OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落
+// exact|keyword 的 canonical kinds，core/schema/answer-class.ts）。membership
+// is over the KNOWN label ids only — a free-form custom label is never a member
+// (it classifies semantic by default), so the answer_anchor requirement fires
+// exactly for the recognised objective labels.
 export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
   OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
@@ -411,18 +388,18 @@ export const QuizGenPlanItem = z
     // which knowledge point the planned question tests — must be a REAL,
     // unarchived node (the handler's gate reads the knowledge table).
     knowledge_id: z.string().min(1),
-    // what kind of question face will be generated — free-form display label
-    // (YUK-386); the KNOWN vocabulary is the conventional suggestion set.
+    // what kind of question face will be generated — free-form display label;
+    // the KNOWN vocabulary is the conventional suggestion set.
     kind: QuestionKind,
     difficulty: z.number().int().min(1).max(5),
     // 客观题标准答案锚点 — the exact intended correct answer. REQUIRED for
     // objective kinds (deterministic-comparable); optional elsewhere. The
     // generation phase must realize the question so this anchor grades correct.
     answer_anchor: z.string().trim().min(1).optional(),
-    // YUK-1011 — this item plans a COMPOSITE (篇) question: one stem + ≥2
-    // sub_questions in the generation output's `structured` field. Only legal
-    // when the run pins composite_parent_only (the plan gate rejects it
-    // otherwise). Composite items skip answer_anchor — answers live per-sub.
+    // This item plans a COMPOSITE (篇) question: one stem + ≥2 sub_questions
+    // in the generation output's `structured` field. Only legal when the run
+    // pins composite_parent_only (the plan gate rejects it otherwise).
+    // Composite items skip answer_anchor — answers live per-sub.
     composite: z.boolean().optional(),
   })
   .superRefine((item, ctx) => {
@@ -452,16 +429,17 @@ export type QuizGenPlanT = z.infer<typeof QuizGenPlan>;
 //
 // Two-axis verification (mirrors VariantVerificationResult but adds the
 // copy_safety axis). QuizVerify is CLOSED-BOOK (§1 default): it trusts the
-// agent's self-reported source_refs and does NOT run its own Tavily loop. It
-// answers three §5 checks, each carrying its own verdict + note, then rolls them
-// up into an `overall` verdict that the Q5 handler maps to the Option-B gate:
-//   pass      → promote draft→active + FSRS enroll
-//   needs_review / fail → stay draft (never reaches the pool)
+// agent's self-reported source_refs and does NOT run its own search loop. It
+// answers three §5 checks, each carrying its own verdict + note, then rolls
+// them up into an `overall` verdict that the Q5 handler maps to the Option-B
+// gate: pass → promote draft→active + FSRS enroll; needs_review / fail → stay
+// draft (never reaches the pool).
 //
-// The copy_safety axis is separate from `overall` because the handler also folds
-// a DETERMINISTIC normalized n-gram overlap into the persisted copy_safety
-// verdict; the LLM's copy_safety verdict here is the model's independent read,
-// and `'too_close'` blocks promotion even when the other two checks pass.
+// The copy_safety axis is separate from `overall` because the handler also
+// folds a DETERMINISTIC normalized n-gram overlap into the persisted
+// copy_safety verdict; the LLM's copy_safety verdict here is the model's
+// independent read, and `'too_close'` blocks promotion even when the other two
+// checks pass.
 
 export const QuizVerifyCheckVerdict = z.enum(['pass', 'fail', 'unclear']);
 export type QuizVerifyCheckVerdictT = z.infer<typeof QuizVerifyCheckVerdict>;
@@ -484,13 +462,13 @@ export type QuizVerifyCopySafetyT = z.infer<typeof QuizVerifyCopySafety>;
 export const QuizVerificationResult = z.object({
   // §5 three checks.
   grounding: QuizVerifyCheck.extend({
-    // Required by learner-visible assessment, optional for existing pool consumers.
-    // YUK-993 — 'executed_remote_evidence': the grounding rests on THIS turn's
-    // actually executed remote-MCP calls (input.remote_tool_evidence) that the
-    // judge independently re-read — execution evidence, not a self-declaration.
-    // The learner-visible gate admits it only when the forwarded packet is
-    // non-empty; the pool verify path carries no such field and stays
-    // fail-closed (its gate never reads `basis` at all).
+    // Required by learner-visible assessment, optional for existing pool
+    // consumers. 'executed_remote_evidence': the grounding rests on THIS
+    // turn's actually executed remote-MCP calls (input.remote_tool_evidence)
+    // that the judge independently re-read — execution evidence, not a
+    // self-declaration. The learner-visible gate admits it only when the
+    // forwarded packet is non-empty; the pool verify path carries no such
+    // field and stays fail-closed (its gate never reads `basis` at all).
     basis: z
       .enum([
         'closed_world_givens',
@@ -504,42 +482,43 @@ export const QuizVerificationResult = z.object({
   }),
   copy_safety: QuizVerifyCopySafety, // plagiarism / originality vs source snippets
   knowledge_hit: QuizVerifyCheck, // does the question actually test its knowledge_ids
-  // YUK-224 (slice 3, tier 3 'material_grounded') — material-grounding verdict axis.
-  // OPTIONAL + additive: the verifier only emits it when the input carries a
-  // `material` block (tier-3 questions). Older verifier outputs (no material) omit
-  // it and still parse. Distinct from `grounding`: `grounding` asks "is the question
-  // factually supported by source_refs"; this asks "does the question actually PROBE
-  // the persisted material passage" (spec §6.1 row 3 真原文判据). The tier-3 gate
-  // consumes THIS verdict instead of merely checking the material row is non-empty,
-  // so an irrelevant-but-present material can no longer promote a question.
+  // material-grounding verdict axis. OPTIONAL + additive: the verifier only
+  // emits it when the input carries a `material` block (tier-3 questions).
+  // Older verifier outputs (no material) omit it and still parse. Distinct
+  // from `grounding`: `grounding` asks "is the question factually supported by
+  // source_refs"; this asks "does the question actually PROBE the persisted
+  // material passage". The tier-3 gate consumes THIS verdict instead of merely
+  // checking the material row is non-empty, so an irrelevant-but-present
+  // material can no longer promote a question.
   material_grounding: QuizVerifyCheck.optional(),
-  // YUK-225 (S2 slice 4) — kind_conformance verdict axis (题型规范符合). OPTIONAL +
-  // additive: the verifier only emits it when the (subject, kind) quiz-gen规范包
-  // skill was loaded (tier 3/4 with an authored skill pack). Older outputs / runs
-  // without a matching skill omit it and still parse. The gate consumes a 'fail' as
-  // a promotion blocker (the question does not look like a real item of its kind);
-  // 'unclear' / absent falls through (don't harden a missing optional into a fail).
+  // kind_conformance verdict axis (题型规范符合). OPTIONAL + additive: the
+  // verifier only emits it when the (subject, kind) quiz-gen规范包 skill was
+  // loaded (tier 3/4 with an authored skill pack). Older outputs / runs
+  // without a matching skill omit it and still parse. The gate consumes a
+  // 'fail' as a promotion blocker (the question does not look like a real item
+  // of its kind); 'unclear' / absent falls through (don't harden a missing
+  // optional into a fail).
   kind_conformance: QuizVerifyCheck.optional(),
-  // Roll-up verdict driving the Option-B gate.
-  // YUK-350 (RL1, Plan B) — phase-deferred / red-line invariant: the LLM-parse
-  // enum stays EXACTLY 3-value (pass|needs_review|fail). 'error' is a SYSTEM-error
-  // class assigned ONLY by the handler's catch-bottom (a task/parse/DB blowup before
-  // a verdict); the model can NEVER emit it through this parse path, which is the
-  // strongest boundary for red line 1 (a model self-reporting "system error" must be
-  // impossible). The 4-value result-layer projection lives in `QuizVerifyOverall`
-  // below; do NOT widen this enum to carry 'error'.
+  // Roll-up verdict driving the Option-B gate. Red-line invariant: the LLM-parse
+  // enum stays EXACTLY 3-value (pass|needs_review|fail). 'error' is a
+  // SYSTEM-error class assigned ONLY by the handler's catch-bottom (a
+  // task/parse/DB blowup before a verdict); the model can NEVER emit it through
+  // this parse path (a model self-reporting "system error" must be impossible).
+  // The 4-value result-layer projection lives in `QuizVerifyOverall` below; do
+  // NOT widen this enum to carry 'error'.
   overall: z.enum(['pass', 'needs_review', 'fail']),
   summary_md: z.string().min(1).max(1000),
   confidence: z.number().min(0).max(1),
 });
 export type QuizVerificationResultT = z.infer<typeof QuizVerificationResult>;
 
-// YUK-350 (B5 increment C) — result-layer overall union LIFTED UP into the shared
-// core verify contract (`./verify-contract`), the correct home now that all three
-// promote-gated handlers (quiz/source/variant) project onto one shape. Re-exported
-// here type-only for back-compat with existing importers (no runtime cycle: a
-// type-only re-export is erased at compile time, so quiz_gen.ts still owns the FROZEN
-// 3-value LLM-parse `QuizVerificationResult.overall`, while the 4-value result-layer
-// projection — the 3 model verdicts PLUS the catch-bottom-only 'error' — lives in the
-// contract module). See verify-contract.ts for the full red-line-1 rationale.
+// Result-layer overall union LIFTED UP into the shared core verify contract
+// (`./verify-contract`), the correct home now that all three promote-gated
+// handlers (quiz/source/variant) project onto one shape. Re-exported here
+// type-only for back-compat with existing importers (no runtime cycle: a
+// type-only re-export is erased at compile time, so quiz_gen.ts still owns the
+// FROZEN 3-value LLM-parse `QuizVerificationResult.overall`, while the
+// 4-value result-layer projection — the 3 model verdicts PLUS the
+// catch-bottom-only 'error' — lives in the contract module). See
+// verify-contract.ts for the full red-line rationale.
 export type { QuizVerifyOverall } from './verify-contract';

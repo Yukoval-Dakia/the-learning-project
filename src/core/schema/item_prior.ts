@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-// B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask LLM 输出形状。
+// ADR-0035 慢热阶段① — ItemPriorTask LLM 输出形状。
 //
 // 给一道新题估冷启先验难度 b（logit 尺度，与 θ̂ 同度量）。propose-only 冷启锚；
 // item-更新半边锁死（G4），慢热由 fixed-anchor 校准 firm-up。⚠️ prompt 走「抽教学
 // 特征推 b」路线——直接 prompt 估难度文献 r≈0（phase2-synthesis-lanes:770）。
 export const ItemPriorDraft = z.object({
-  // IRT b，logit 尺度（与 θ̂ 同度量）。界 [-6,6]（review NIT）：prompt 软引导
+  // IRT b，logit 尺度（与 θ̂ 同度量）。界 [-6,6]：prompt 软引导
   // -3..+3，但 LLM 偶发极端值（如 50）会写进 item_calibration.b 并满步污染 θ̂
   // （expectedScore(θ,50)≈0 → 答对 Δθ≈k 满步）。越界由 parseItemPriorOutput 的
   // Zod barrier 当本轮跳过（下轮重试），符合现有失败语义。±6 ≈ p∈[0.0025,0.9975]，
@@ -17,7 +17,7 @@ export const ItemPriorDraft = z.object({
 });
 export type ItemPriorDraftT = z.infer<typeof ItemPriorDraft>;
 
-// ─── YUK-376 — LLaSA 学生模拟变体（opt-in，不动默认 feature→b 路径）────────
+// ─── LLaSA 学生模拟变体（opt-in，不动默认 feature→b 路径）──────────────
 //
 // LLaSA「LLMs are Students at Various Levels」（EMNLP 2024）：让 LLM 扮演不同
 // 能力档的学习者**实际作答**，从各档答对率反推题目难度 b——间接学生模拟，

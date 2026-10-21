@@ -35,17 +35,17 @@ import type {
 } from './types';
 
 // ====================================================================
-// YUK-1050 — 历史迁移 apply · 纯规划器（grounding §13、§15；review P1-3..P1-7）
+// 历史迁移 apply · 纯规划器（grounding §13、§15）
 // ====================================================================
 //
-// 输入：YUK-1048 capture + classification（manifest 持久化的完整分类输出）
-//       + revision registry v2（语料导入 lane 的接缝工件：occurrence/snapshot
+// 输入：capture + classification（manifest 持久化的完整分类输出）
+//       + revision registry v2（语料导入的接缝工件：occurrence/snapshot
 //         感知绑定）+ 目标库的 revision contracts（question_revision 行的五层
 //         内容，由执行器装载后传入 —— 规划器保持纯函数）。
 // 输出：MigrationApplyPlan —— 逐分类记录的确定性写意图（mapping /
 //       issuance / group / submission / evaluation / effective head）。
 //
-// 纪律（grounding §13，不可弱化；review 后收紧）：
+// 纪律（grounding §13，不可弱化）：
 //   - 全量迁移 ≠ 批量历史重判：判词只作为 legacy 证据迁移（provenance），绝不
 //     重算、绝不换算成发布侧 points（无获准映射 ⇒ unit 结果显式 pending，
 //     aggregate unresolved/pending_units —— 不冒充 no_mapping 也不造假分）。
@@ -63,7 +63,7 @@ import type {
 // 幂等基座：一切主键内容寻址派生（mapping_id 含裁决内容 —— pending→resolved
 // 的 supersession 换行不换 id 冲突），同输入 ⇒ 同 plan 同 id 同 digest。
 //
-// YUK-1572 拆分（实现逐字不变，三个完整决策各归其主）：
+// 模块拆分（三个完整决策各归其主）：
 //   ./revision-registry —— registry v2 工件解析 + occurrence/snapshot 绑定裁决；
 //   ./snapshot-fidelity —— 冻结 snapshot 提取 + 内容/坐标 fidelity 校验；
 //   本文件 —— 确定性写意图装配（mapping/submission/evaluation/head + rollup）。
@@ -104,8 +104,8 @@ const SUBMISSION_BEARING_CATEGORIES: ReadonlySet<NativeCategory> = new Set([
   'embedded_tutor_grade',
 ]);
 
-// ─── revision registry v2 工件解析 + occurrence/snapshot 绑定裁决：已迁至
-// ./revision-registry（本模块唯一 owner；公开导出经上方 re-export 原样对外）。
+// ─── revision registry v2 工件解析 + occurrence/snapshot 绑定裁决：
+// owner 是 ./revision-registry（公开导出经上方 re-export 原样对外）。
 
 // ───────────────────────── 写意图类型 ─────────────────────────
 
@@ -126,7 +126,7 @@ export interface MappingRowPlan {
   algorithm_version: string;
   status: MappingStatus;
   created_at: Date;
-  /** pending→resolved supersession（P1-5）：指向被本行接替的旧当前映射。 */
+  /** pending→resolved supersession：指向被本行接替的旧当前映射。 */
   supersedes_mapping_id: string | null;
 }
 
@@ -178,7 +178,7 @@ export interface EffectiveHeadRowPlan {
   evaluation_group_id: string;
   submission_id: string;
   /**
-   * 终裁 P1-5：head 保留 legacy effective 语义 —— 分类器 has_effective_head
+   * head 保留 legacy effective 语义 —— 分类器 has_effective_head
    * ⇒ 指向被导入的 head evaluation（generation=1，保存历史生效事实，非激活：
    * 无 settlement/FSRS/重算）。无 effective head ⇒ 初态 (null, 0)。
    */
@@ -217,7 +217,7 @@ export interface ConflictedEntry {
   reason: string;
 }
 
-/** live draft（submitted_at IS NULL 的 answer 行）的显式处置清单（P1-7）。 */
+/** live draft（submitted_at IS NULL 的 answer 行）的显式处置清单。 */
 export interface LiveDraftEntry {
   source_locator: string;
   question_id: string;
@@ -225,7 +225,7 @@ export interface LiveDraftEntry {
   disposition: 'preserved-in-legacy-awaiting-autosave-migration';
 }
 
-/** 忠实重建被阻断的 anchor（P1-6）：显式降级清单，绝不产看似正常的冻结 submission。 */
+/** 忠实重建被阻断的 anchor：显式降级清单，绝不产看似正常的冻结 submission。 */
 export interface ReconstructionBlockedEntry {
   source_locator: string;
   original_question_id: string;
@@ -262,7 +262,7 @@ export interface MigrationApplyPlan {
 }
 
 /**
- * plan digest 覆盖【完整行内容】（review P1-3）：改任何 planned 响应/证据/
+ * plan digest 覆盖【完整行内容】：改任何 planned 响应/证据/
  * 判词映射都改变 digest —— 同 run 混入不同 plan 的写入被账本当场拒绝。
  */
 export function planDigestOf(plan: MigrationApplyPlan): string {
@@ -348,7 +348,7 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
-/** 冻结作答输入的 digest（P1-7：覆盖真实 pending 输入面 —— 题身/时间/正文/图片）。 */
+/** 冻结作答输入的 digest（覆盖真实 pending 输入面 —— 题身/时间/正文/图片）。 */
 export function responseDigestOf(input: {
   question_id: string | null;
   submitted_at: string | null;
@@ -395,7 +395,7 @@ function originalQuestionIdOf(
 }
 
 /**
- * legacy 作答输入（P1-7 修正）：attempt/review 事件读顶层 answer_image_refs；
+ * legacy 作答输入：attempt/review 事件读顶层 answer_image_refs；
  * durable pending 读 submit.body.*（CreateAttemptBody 冻结面 —— 图片在
  * body.answer_image_refs，不在 payload 顶层）。
  */
@@ -520,8 +520,8 @@ function pendingRecoveryEnvelopeOf(
   };
 }
 
-// ─── 冻结 snapshot 提取 + 内容/坐标 fidelity 校验：已迁至
-// ./snapshot-fidelity（本模块唯一 owner；公开导出经上方 re-export 原样对外）。
+// ─── 冻结 snapshot 提取 + 内容/坐标 fidelity 校验：
+// owner 是 ./snapshot-fidelity（公开导出经上方 re-export 原样对外）。
 
 /** source_asset 行 → 契约原生 EvidenceAttachment（digest/mime/bytes 齐备才忠实）。 */
 function evidenceAttachmentOf(asset: RawSourceAssetRow): EvidenceAttachmentT {
@@ -616,7 +616,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
   };
   const resolutionByLocator = new Map<string, Resolution>();
 
-  // 阶段 1（分两遍，P1-6/P1-4 一致性）：先解析【非镜像】记录（attempt/review
+  // 阶段 1（分两遍）：先解析【非镜像】记录（attempt/review
   // 锚、pending 事件等），随后做锚的忠实重建（降级会改写锚的裁决），最后才
   // 解析 judge/answer 镜像 —— 镜像继承的是锚【最终】裁决（含降级），不会出现
   // 锚 historical 而镜像 mapped 的分叉。
@@ -749,7 +749,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         });
       }
     }
-    // P1-2（终轮）：mapped 绑定的【普适】验证 —— 坐标对契约（part/slot/unit 关联）、
+    // mapped 绑定的【普适】验证 —— 坐标对契约（part/slot/unit 关联）、
     // digest_verified 的内容可推导性（题干/选项机械比对）、part_ref 兼容性。
     // 任一不通过 ⇒ conflicted（registry 缺陷可见可修），镜像随后继承降级裁决。
     if (resolution.status === 'mapped' && resolution.entry !== null) {
@@ -1015,7 +1015,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       continue;
     }
 
-    // issuance 绑定（P1-6）：materials 来自契约（同版资产 digest）；发出范围内
+    // issuance 绑定：materials 来自契约（同版资产 digest）；发出范围内
     // 的选择槽给声明序 option_order（此路径下 scope 无选择槽 —— 由校验兜底）。
     const boundPartIds = new Set(entry.part_ids);
     const boundMaterials = contract.structure.materials
@@ -1056,7 +1056,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     const submittedAt = toDate(response.submitted_at, fallbackTime);
 
     // evaluation 候选：配对 verdict judge（分类输出）+ 嵌入判词。判词只作
-    // legacy 证据迁移 —— unit 结果显式 pending（无获准 points 映射，P2）。
+    // legacy 证据迁移 —— unit 结果显式 pending（无获准 points 映射）。
     interface EvalCandidate {
       evaluation_id: string;
       run_refs: string[];
@@ -1176,7 +1176,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
       e.attempt = index + 1;
     });
 
-    // legacy effective head（终裁 P1-5）：imported 目标声明 has_effective_head 时，
+    // legacy effective head：imported 目标声明 has_effective_head 时，
     // 被生效的 evaluation = head judge（judge_event_id）或 embedded 判词。
     let legacyHeadEvaluationId: string | null = null;
     let legacyHeadAt: Date = submittedAt;
@@ -1199,7 +1199,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
     }
 
     // head：随 submission 建立 —— legacy effective 语义见下方 head 字段注释
-    // （P1-5 终裁：保存历史生效事实，非激活；无 head ⇒ (null, 0)）。
+    // （保存历史生效事实，非激活；无 head ⇒ (null, 0)）。
     const chain: SubmissionChainPlan = {
       anchor_locator: record.source_locator,
       issuance: {
@@ -1230,7 +1230,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         submitted_at: submittedAt,
       },
       evaluations,
-      // P1-5（终裁）：head 保留 legacy effective 语义 —— 分类器判定
+      // head 保留 legacy effective 语义 —— 分类器判定
       // has_effective_head 时指向被导入的 head evaluation（generation=1：本
       // 导入即该 head 的第一次生效）。这是【保存历史生效事实】，不是激活：
       // 无 settlement、无 FSRS、无重算 —— learning 侧零触碰。分类器判定无
@@ -1252,7 +1252,7 @@ export function buildMigrationApplyPlan(input: BuildApplyPlanInput): MigrationAp
         kind: a.kind,
         digest: a.asset.digest,
       }));
-      // P1-3（终轮）：重建【默认值】显式披露 —— 这些列不是观测到的历史事实，
+      // 重建【默认值】显式披露 —— 这些列不是观测到的历史事实，
       // 是迁移在无证据时的诚实缺省，审计者不得读作 observed history。
       intent.mapping.evidence.reconstruction_defaults = {
         container_occurrence_ref: 'null（历史容器观测缺失 —— 缺省，非事实）',
@@ -1343,7 +1343,7 @@ function verdictValid(payload: { coarse_outcome?: unknown; score?: unknown }): b
   );
 }
 
-/** 目标 part 选择（P1-4）：answer.part_ref 优先且必须在该绑定的 part 集内；否则唯一 part；否则不猜。 */
+/** 目标 part 选择：answer.part_ref 优先且必须在该绑定的 part 集内；否则唯一 part；否则不猜。 */
 function selectTargetPart(
   entry: RevisionRegistryEntry | null,
   partRef: string | null,

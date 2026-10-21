@@ -149,8 +149,7 @@ export function deriveCoarseVerdict(
   }
   const aggregate = record.aggregate;
   if (aggregate.kind === 'partial_unknown_points') {
-    // ADR-0074 D3a / 复核 P1-1 收口（coordinator 最终裁决 2026-10-11）：
-    // 调度面与公开面分离 —— 本函数驱动 server settle 的 rating/FSRS/θ，
+    // ADR-0074 D3a：调度面与公开面分离 —— 本函数驱动 server settle 的 rating/FSRS/θ，
     // 必须返回【既有非调度 verdict】（unsupported ⇒ ratingForVerdict=null ⇒
     // 无 FSRS/无 θ），绝不返回 partial；typed reason `partial_unknown_points`
     // 保留给公开投影（evaluation-authority）识别并展示为 partial。
@@ -269,7 +268,7 @@ export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResult
   }
   const max = unit.points ?? 0;
   if (max <= 0) return { kind: 'uninformative' };
-  // ADR-0074 D3a / owner override（2026-10-11）：分数未知的部分对【不产生
+  // ADR-0074 D3a / owner override：分数未知的部分对【不产生
   // 任何 KC 证据】—— 不按正确计数映射 partial/zero（0 对也不是已判零：
   // 分数未知时 0/total 不构成 failure 证据），更不得经 points_awarded ?? 0
   // 落成 zero。知识证据只来自分数已知的单元。
@@ -299,7 +298,7 @@ export interface UnitLocalizationInput {
 /**
  * unit 作答面 → KC 集。slot_refs 与 evidence_slot_refs 均为空 ⇒ 组级单元
  * （material/group evidence），归组级 KC；否则并集其引用槽位所在 part 的
- * KC（part 未映射 ⇒ 回落组级）。YUK-1093 P1-4：evidence-only 单元（判据
+ * KC（part 未映射 ⇒ 回落组级）。YUK-1093：evidence-only 单元（判据
  * 不直对作答槽、只挂 evidence_slot_refs）同样 part-局部 —— unitPartIdsOf
  * 已把证据槽解析到所属 part，判据投票不得越过该 part 落到全组 KC 上。
  * KC 集为空 ⇒ null（不可归因，不计任何 KC 的票）。

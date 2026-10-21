@@ -6,11 +6,11 @@ import type { ScoringBasisT } from './scoring';
 import type { QuestionGroupStructureT } from './structure';
 
 // ====================================================================
-// YUK-1497 — Generative UI · 题目展示契约 presentation（spec v1 §1）
+// Generative UI · 题目展示契约 presentation（spec v1 §1）
 // ====================================================================
 //
-// 真相源：docs/design/2026-10-16-presentation-spec-v1.md（含 7bb5d0236
-// §1.2.1/规则 6 更正）；讨论 §8（tlp-status/unified-question-grading-design.md）。
+// 真相源：docs/design/2026-10-16-presentation-spec-v1.md；讨论 §8
+// （tlp-status/unified-question-grading-design.md）。
 //
 // presentation 是题目 revision 上【冻结的公开展示层】：一棵声明式积木树。
 // 纪律：
@@ -385,9 +385,9 @@ export interface PresentationIssue {
     | 'response_class_mismatch'
     /** 规则 4：输入积木种类与槽形态不相容（§1.2 表）。 */
     | 'slot_shape_incompatible'
-    /** 规则 6（7bb5d0236 更正）：break_tap 字缝不在字素簇边界上。 */
+    /** 规则 6：break_tap 字缝不在字素簇边界上。 */
     | 'break_gap_not_grapheme_boundary'
-    /** 规则 6（717ad010a 更正）：break_tap 字缝紧跟在 `\n` 之后（与换行前字缝歧义）。 */
+    /** 规则 6：break_tap 字缝紧跟在 `\n` 之后（与换行前字缝歧义）。 */
     | 'break_gap_after_newline'
     /** 规则 1：发出范围内可作答槽未被绑定。 */
     | 'slot_not_bound'
@@ -552,7 +552,7 @@ function checkSelectShape(
         });
         continue;
       }
-      // 717ad010a：紧跟 `\n` 之后的字缝与换行前的字缝同位置，歧义 —— 拒绝；
+      // 紧跟 `\n` 之后的字缝与换行前的字缝同位置，歧义 —— 拒绝；
       // 行末断句用 `\n` 之前的字缝（界面把它画在行尾）。
       if (index.chars[gap - 1] === '\n') {
         issues.push({
@@ -571,7 +571,7 @@ function checkSelectShape(
       });
     }
     // 与 matching_columns 同律：每个 (position, object) 关系 item 都必须带坐标，
-    // 否则界面无法把作答映射回 item（review R1）。
+    // 否则界面无法把作答映射回 item。
     if (!select.items.every((item) => item.coordinates != null)) {
       issues.push({
         code: 'slot_shape_incompatible',
@@ -630,7 +630,7 @@ function validateBind(
       checkSelectShape(state, slot, blockId, inputKind);
     }
   }
-  // 覆盖计数与公开投影的整枝剪除同律（review R1）：槽在发出范围内还不够 ——
+  // 覆盖计数与公开投影的整枝剪除同律：槽在发出范围内还不够 ——
   // bind 的单元也必须存活。单元的 slot_refs/evidence_slot_refs 只要有一个
   // 不在发出范围内，dto 投影就会剪掉该积木；若此处仍计为覆盖，校验会宣称
   // 已绑定而学习者看到的 DTO 里没有输入面。
@@ -674,7 +674,7 @@ function checkMaterialRef(
     }
   }
   if (options.requirePassage) {
-    // review R1：normalizer 只铸造 plaintext 内联材料（从不产 passage kind），
+    // normalizer 只铸造 plaintext 内联材料（从不产 passage kind），
     // passage_layout 接受 passage 或内联 plaintext 材料（spec §1.1 更正）；
     // 其余 kind 用专门 issue code 拒绝。
     if (material.kind !== 'passage' && material.kind !== 'plaintext') {
@@ -960,7 +960,7 @@ export function defaultPresentation(
       kind: 'text_math',
       part_ref: part.part_id,
     });
-    // YUK-1568：声明了 blank_order 的 part，其 blank 输入积木按默认逻辑序生成
+    // 声明了 blank_order 的 part，其 blank 输入积木按默认逻辑序生成
     //（只在各自位置内重排；未声明的 part 保持槽数组序）。显式 K5 布局仍以
     // block→slot_id 绑定为准，不受默认序影响。
     const partSlots = slotsInDefaultOrder(
@@ -980,7 +980,7 @@ export function defaultPresentation(
           slot.kind === 'select' ? 'select' : slot.kind === 'blank' ? 'blank' : 'free',
       };
       if (slot.kind === 'select') {
-        // 先看 item 形状（review R1）—— axes 只在 coordinated 分支里细分。
+        // 先看 item 形状 —— axes 只在 coordinated 分支里细分。
         const allGaps =
           slot.items.length > 0 && slot.items.every((item) => item.gap_after_codepoint != null);
         const allCoordinated =
