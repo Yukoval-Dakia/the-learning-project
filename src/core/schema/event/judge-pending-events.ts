@@ -2,18 +2,18 @@ import { z } from 'zod';
 import { AssessmentAttemptCapture } from '../assessment/capture';
 
 // ====================================================================
-// JudgePendingAttemptExperimental — YUK-777 A2 record-unjudged-at-submit
+// JudgePendingAttemptExperimental — record-unjudged-at-submit
 // ====================================================================
 //
 // `experimental:judge_pending_attempt` is the IMMUTABLE evidence that a learner
 // answered, written at submit time on the durable judge lane — BEFORE any judging.
 //
-// Why it exists (codex #Tu71c, confirmed real data loss): the W1/W2 durable lane
+// Why it exists (confirmed real data loss): the durable lane
 // returned 202 after `boss.send` alone, so between the 202 and a successful backfill
 // the answer lived nowhere but the pg-boss payload. A run whose deliveries all failed
 // into `judge_run_dlq`, or whose question was deleted before pickup, lost that answer
 // permanently — absent from the domain log, with no pending attempt for a sweeper or a
-// human to recover. Design doc §2 ("record-unjudged-then-backfill", RULED D3) and
+// human to recover. Design doc §2 ("record-unjudged-then-backfill") and
 // §3.6b (the domain-state-scan sweeper) both presuppose this row.
 //
 // **It is deliberately NOT `action='attempt'`.** An `attempt` event is a JUDGED outcome:
@@ -35,15 +35,10 @@ import { AssessmentAttemptCapture } from '../assessment/capture';
 
 /**
  * The frozen judge input — byte-for-byte the `submit` block of `JudgeRunJobData`
- * (capabilities/practice/jobs/judge_run.ts). Kept structurally loose on purpose: the
- * worker re-validates each part with its own owning schema (`CreateAttemptBodySchema`,
- * `SubjectProfileSchema`, `FrozenQuestionSnapshotSchema`), and re-declaring those trees
- * here would be exactly the double-write `judge-run-payload.ts` exists to avoid. This
- * barrier's job is to reject STRUCTURAL corruption, not to re-litigate domain schemas.
- *
- * Storing it verbatim is what makes the row self-sufficient: the sweeper re-enqueues it
- * unchanged, so a recovered run judges the profile + question face the learner actually
- * answered (D5 freezing survives recovery) instead of whatever those rows say later.
+ * (capabilities/practice/jobs/judge_run.ts). Deliberately loose: the worker re-validates
+ * each part with its owning schema; re-declaring those trees here would be the double-write
+ * `judge-run-payload.ts` exists to avoid. Stored verbatim so the sweeper re-enqueues it
+ * unchanged and a recovered run judges the face the learner actually answered.
  */
 export const JudgePendingSubmitInput = z.object({
   body: z.record(z.string(), z.unknown()),
@@ -68,7 +63,7 @@ const LegacyJudgePendingAttemptPayload = z.object({
    * exist?" — one indexed PK lookup, independent of `job_events` and its retention.
    */
   run_id: z.string().min(1),
-  /** Originating face. W2/W3-core only ever writes 'submit'; other faces land in YUK-800. */
+  /** Originating face. Core paths only ever write 'submit'; other faces land in YUK-800. */
   caller: z.literal('submit'),
   /**
    * Load-bearing: the material this verdict will write, denormalised so the late-arrival
@@ -82,7 +77,7 @@ const LegacyJudgePendingAttemptPayload = z.object({
    * `mastery_state(subject_kind='ability_global')` row without sharing a knowledge id, so the
    * immutable late-arrival watermark must carry domains as well as KC labels.
    *
-   * Optional only for rows written before YUK-777 added this field; readers degrade those rows
+   * Optional only for rows written before this field existed; readers degrade those rows
    * to the legacy knowledge-only overlap check.
    */
   ability_global_ids: z.array(z.string()).optional(),

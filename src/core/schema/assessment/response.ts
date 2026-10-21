@@ -51,7 +51,7 @@ const PartId = z.string().min(1);
 
 // ---------- 槽位原语（discriminated on `kind`） ----------
 
-// P1-6（YUK-1046 复审）：每个槽位显式声明所属 part —— issuance 选择 part 子集时，
+// 每个槽位显式声明所属 part —— issuance 选择 part 子集时，
 // 投影只包含该范围内的槽位；不得从数组顺序或题面文本推断归属。
 const slotBase = {
   slot_id: SlotId,
@@ -321,7 +321,7 @@ export const NumericResponse = z.object({
   kind: z.literal('numeric'),
   /** null = 未解析出数值。是否算【主动空白】取决于 raw_input：见 isBlankSlotResponse。 */
   value: z.number().nullable(),
-  /** 学习者原始输入；非空且 value=null ⇒ 未解析（不可当空白计零，P1-4）。 */
+  /** 学习者原始输入；非空且 value=null ⇒ 未解析（不可当空白计零）。 */
   raw_input: z.string().optional(),
   self_confidence: SelfConfidence,
 });
@@ -537,7 +537,7 @@ function validateSelectSlot(slot: SelectSlotT): ResponseSpecIssue[] {
 
 /**
  * 纯校验：ResponseSpec 自身一致性（身份唯一、引用可解析、约束自洽）。
- * 传入 structure 时同时校验 slot.part_id 可解析（P1-6 part 作用域）。
+ * 传入 structure 时同时校验 slot.part_id 可解析（part 作用域）。
  */
 export function validateResponseSpec(
   spec: ResponseSpecT,
@@ -595,7 +595,7 @@ export function validateResponseSpec(
         itemIds.add(item.item_id);
       }
       if (slot.kind === 'matching') {
-        // P2：右选项 option_id 重复也必须拦截（与 choice 同纪律）。
+        // 右选项 option_id 重复也必须拦截（与 choice 同纪律）。
         const rightOptionIds = new Set<string>();
         for (const option of slot.right_options) {
           if (rightOptionIds.has(option.option_id)) {
@@ -635,7 +635,7 @@ export function validateResponseSpec(
   }
 
   // 第二遍：表格单元格引用（需要完整 slot 集合）。
-  // P1-B：单元格与表格必须同 part（scope closure）—— 否则 part 子集发题会
+  // 单元格与表格必须同 part（scope closure）—— 否则 part 子集发题会
   // 产生悬空表格；跨 part 表格如未来需要，须另立显式依赖契约，不在此默许。
   const partBySlotId = new Map(spec.slots.map((slot) => [slot.slot_id, slot.part_id] as const));
   for (const slot of spec.slots) {
@@ -742,7 +742,7 @@ export function validateResponseSpec(
 
 /**
  * spec 中存在、但 ResponseSet 中【没有条目】的【可作答】槽位 = missing（非空白）。
- * 表格是布局容器（P1-5）：不直接作答，不参与完整性判定 —— 每格子槽各自计。
+ * 表格是布局容器：不直接作答，不参与完整性判定 —— 每格子槽各自计。
  */
 export function missingSlotIds(spec: ResponseSpecT, responseSet: ResponseSetT): string[] {
   const answered = new Set(responseSet.entries.map((entry) => entry.slot_id));
@@ -754,7 +754,7 @@ export function missingSlotIds(spec: ResponseSpecT, responseSet: ResponseSetT): 
 
 /**
  * 主动空白判定（显式空值；与 missing —— 缺条目 —— 严格区分）。
- * 数值槽（P1-4）：value=null 且 raw_input 为空才算空白；
+ * 数值槽：value=null 且 raw_input 为空才算空白；
  * value=null 但 raw_input 非空 = 【未解析】，不是空白 —— 不得进计零路径，
  * 应由执行器给出 unparseable_response 未决态。既不造数也不丢原文。
  */
@@ -864,7 +864,7 @@ export function validateResponseSet(
           : slot.kind === 'matching'
             ? new Set(slot.right_options.map((option) => option.option_id))
             : new Set<string>();
-      // YUK-1096 P1-4：同一 option 被重复选择是结构违背 —— 不是
+      // YUK-1096：同一 option 被重复选择是结构违背 —— 不是
       // “多选了一个”的量变，重复本身就意味着上游提交面出 bug。
       const selected = new Set<string>();
       for (const optionId of entry.option_ids) {
@@ -882,14 +882,14 @@ export function validateResponseSet(
         }
         selected.add(optionId);
       }
-      // P2：单选槽收到多个选择是结构性错误（空白 = 0 个；多选 = 换 multi 原语）。
+      // 单选槽收到多个选择是结构性错误（空白 = 0 个；多选 = 换 multi 原语）。
       if (slot.kind === 'single_choice' && entry.option_ids.length > 1) {
         issues.push({
           code: 'single_choice_multiple_selection',
           detail: `slot '${entry.slot_id}' is single_choice but received ${entry.option_ids.length} selections`,
         });
       }
-      // YUK-1096 P1-4：multi_choice 的非空选择必须落在声明的
+      // YUK-1096：multi_choice 的非空选择必须落在声明的
       // [min_select, max_select] 内 —— 少于 min / 超出 max 是违例。
       // 空数组 = 主动空白（§7.2），不是“选了 0 个”，不走 count 校验；
       // 空白是否计零由 basis.blank_scores_zero 另行裁决。
@@ -1055,7 +1055,7 @@ export function scopeResponseSpec(spec: ResponseSpecT, partIds: readonly string[
   };
 }
 
-// ---------- blank_order 默认逻辑序投影（YUK-1568 第 1 片） ----------
+// ---------- blank_order 默认逻辑序投影（YUK-1568） ----------
 
 /**
  * 把声明的 blank_order 投影成槽位默认顺序（纯函数；展示、公开 DTO 与缺省

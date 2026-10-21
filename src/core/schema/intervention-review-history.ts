@@ -287,7 +287,7 @@ export type InterventionPackageReviewModelOutputT = z.infer<
 
 /** Read-only blind-solve audit emitted before atomized required_operations. */
 const PreOperationHistoricalSolutionGenerateOutput = z.object({
-  // Freeze the bff7b3a9/4a23c50b solver contract here. The current shared
+  // Freeze the historical solver contract here. The current shared
   // writer caps signals by count and size, but already-persisted rows were
   // valid with any non-empty list of non-empty signals.
   reference_solution: z.object({

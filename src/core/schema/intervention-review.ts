@@ -362,7 +362,7 @@ export type InterventionPackageReviewPackageChecksT = z.infer<
 >;
 
 /**
- * Provider-facing package checks (YUK-1624): the comparator no longer judges
+ * Provider-facing package checks: the comparator no longer judges
  * `tested_claims_match` / `target_errors_match`. Those two bits are a plain
  * string equality between the frozen snapshot claim identity and the
  * server-normalized diagnostic fields, so the server derives them at bind time.

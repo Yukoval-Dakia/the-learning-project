@@ -1,4 +1,4 @@
-// YUK-454 increment-1 (ADR-0036 身份层) — misconception identity-table skeleton.
+// ADR-0036 身份层 — misconception identity-table skeleton.
 //
 // HAND-WRITTEN Zod (NOT drizzle-zod generated). This is the canonical domain
 // shape for a misconception: a named, reusable "误区" identity that diagnosis /
@@ -8,7 +8,7 @@
 //   1. ADR-0035 — misconception is the SOFT track. There is NO mastery / p(L) /
 //      θ̂ / b / FSRS / difficulty field here, and `.strict()` makes any such key
 //      a hard parse failure. The soft-track invariant is enforced at the schema
-//      boundary BEFORE any writer exists (this is increment-1; the promotion-flow
+//      boundary BEFORE any writer exists (the promotion-flow
 //      writer is gated behind the ADR-0034 consistency gate). The REVERSE red-line
 //      test (step9-invariant-audit) also asserts this module references none of
 //      the soft-track engine symbols by name.
@@ -38,7 +38,7 @@ export const MisconceptionSchema = z
     reasoning: z.string().nullable(),
     // CONFIDENCE-only salience weight (NOT mastery). Defaults to 1.
     weight: z.number().default(1),
-    // YUK-531 (A5 S4 / RT1 promotion) — lifecycle + provenance. ALL soft-track:
+    // RT1 promotion — lifecycle + provenance. ALL soft-track:
     // `.strict()` still rejects any θ/pL/mastery/FSRS/difficulty key. status is the
     // promotion lifecycle ('draft'→'active'); `fading`/`retracted` are read-model
     // DISPLAY projections (weight decay / archived_at), never stored enum values.
@@ -68,7 +68,7 @@ export const MisconceptionInsert = z
     title: z.string(),
     reasoning: z.string().nullish(),
     weight: z.number().default(1),
-    // YUK-531 — defaulted, so optional on insert (mirrors weight/proposed_by_ai).
+    // defaulted, so optional on insert (mirrors weight/proposed_by_ai).
     status: z.enum(['draft', 'active']).default('draft'),
     source: z.enum(['hard', 'soft']).default('soft'),
     seen: z.number().int().nonnegative().default(0),

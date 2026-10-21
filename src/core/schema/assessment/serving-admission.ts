@@ -42,7 +42,7 @@ export type AutomaticServingDecision =
       detail: string;
     };
 
-// ---------- YUK-1496 C2 — 模型准入切片（服务门只读视图） ----------
+// ---------- YUK-1496 — 模型准入切片（服务门只读视图） ----------
 
 /** 模型可判的响应类（设计 §4 准入门第 4 步：科目/响应类/任务/模型版本切片）。 */
 export type ModelResponseClass = 'blank' | 'free';
@@ -116,8 +116,7 @@ export function modelResponseClassForUnit(
 /**
  * 模型单元准入判定（纯函数）：admitted_slice_id 必须解析到一个 active 切片，
  * 且切片的 task kind 能服务该判据、响应类与本次执行一致、模型版本与当前
- * pin 一致。上下文缺省 = 登记处未接线，全部模型单元扣留（YUK-1496 C2 之前
- * 的行为）。
+ * pin 一致。上下文缺省 = 登记处未接线，全部模型单元扣留。
  */
 function checkModelUnitAdmission(
   unit: ScoringUnitT,
@@ -273,7 +272,7 @@ export function decideAutomaticServing(
   const answerSlots = revision.response_spec.slots.filter(
     (slot) => selected.has(slot.part_id) && slot.kind !== 'table',
   );
-  // YUK-1568（第 2 片）：发出范围内的已声明 blank 槽现在由共享比较核心判定
+  // YUK-1568：发出范围内的已声明 blank 槽现在由共享比较核心判定
   // 判分就绪（声明被支持 + 被 blank_key unit 读取 + 私有键可编译）。任一缺
   // 项（未知版本、未实现 notation、键冲突、缺判分单元）仍明确拒绝发题，
   // 绝不回退普通 exact 文本判分。此闸在渲染面检查之前：判不了分比画不出
@@ -290,7 +289,7 @@ export function decideAutomaticServing(
       detail: `declared answer_shape not gradable: ${declaredReadiness.reason} (comparator ${DECLARED_BLANK_COMPARE_VERSION})`,
     };
   }
-  // YUK-1497 —— 展示层形状门先行（review R1）：行读面（revisionRowToContract）对解析
+  // YUK-1497 —— 展示层形状门先行：行读面（revisionRowToContract）对解析
   // 失败的展示层原样透传而非丢列（丢列 = 静默降级为逐槽渲染的 fail-open）；这里以
   // invalid_presentation 拒绝，绝不带着坏展示层发题，原因也不被输入面检查盖住。
   const shapedPresentation =
@@ -378,7 +377,7 @@ export function decideAutomaticServing(
       };
     }
     if (executor.kind === 'model_executor') {
-      // YUK-1496 C2：模型单元只在 admitted_slice_id 解析到 active 切片且
+      // YUK-1496：模型单元只在 admitted_slice_id 解析到 active 切片且
       // task kind 能服务该判据、响应类 / 模型版本一致时放行；登记处未接线
       // （无 admission 上下文）时维持旧行为 —— 全部扣留，绝不发明准入。
       const admissionIssue = checkModelUnitAdmission(

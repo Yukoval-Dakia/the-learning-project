@@ -5,7 +5,7 @@ import { MetaCause } from './cause';
 
 const CAUSE_ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 
-// YUK-739 — subject-owned rating/cause semantics. The three fields below move
+// subject-owned rating/cause semantics. The three fields below move
 // semantics that used to live in cross-subject mirrors (the universal
 // DEFAULT_META_CAUSE_BY_CATEGORY table, rating-advisor's hard-coded id lists,
 // variant-gen's VARIANT_CAUSE_STRATEGIES) onto the per-subject cause category
@@ -41,8 +41,7 @@ export const CauseCategoryDeclaration = z.object({
     })
     .optional(),
   /**
-   * Cold-start meta-cause prior for this category (YUK-739). Replaced the
-   * cross-subject DEFAULT_META_CAUSE_BY_CATEGORY mirror: the prior is a fact
+   * Cold-start meta-cause prior for this category. The prior is a fact
    * about the subject's OWN category vocabulary, not a global id table.
    * `null` = deliberately non-diagnostic (e.g. `other`). Undefined (custom /
    * historical declarations) = no prior — attribution normalization falls
@@ -52,8 +51,7 @@ export const CauseCategoryDeclaration = z.object({
   /** Rating-advisory lean (see CauseRatingLean). Undefined = neutral. */
   rating_lean: CauseRatingLean.nullable().optional(),
   /**
-   * Targeted-variant authoring strategy copy for this category (YUK-739).
-   * Replaced variant-gen's cross-subject VARIANT_CAUSE_STRATEGIES table.
+   * Targeted-variant authoring strategy copy for this category.
    * Undefined = the generic per-category fallback line.
    */
   variant_strategy: z.string().trim().min(1).optional(),
@@ -72,7 +70,7 @@ export const SchedulingHints = z.object({
 });
 export type SchedulingHintsT = z.infer<typeof SchedulingHints>;
 
-// ── YUK-739 — rating policy (judge verdict → FSRS rating surface) ────────────
+// ── rating policy (judge verdict → FSRS rating surface) ──────────────────────
 //
 // The coarse_outcome → FsrsRating map was previously duplicated as inline
 // copies in src/capabilities/practice/server/judge-rating.ts and
@@ -96,7 +94,7 @@ export type RatingFromOutcomePolicyT = z.infer<typeof RatingFromOutcomePolicy>;
 
 /**
  * The genuinely-universal default every subject inherits unless it declares
- * otherwise. Byte-identical to the pre-YUK-739 inline mappings (replay
+ * otherwise. Byte-identical to the former inline mappings (replay
  * compatibility: historical FSRS states were scheduled under exactly these
  * values). Consumers WITHOUT a profile in scope (e.g. the core fsrs scheduler
  * capability, which by design receives no SubjectProfile) read this constant
@@ -125,7 +123,7 @@ export type RatingPolicyProfileLike = {
 
 /**
  * Resolve the verdict → rating mapping for a profile. Absent/`null` profile or
- * a pre-YUK-739 profile object without the section inherits the universal map.
+ * a profile object without the section inherits the universal map.
  */
 export function ratingFromOutcomeFor(
   profile?: RatingPolicyProfileLike | null,

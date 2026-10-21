@@ -4,7 +4,7 @@ import type { ThetaGridPosterior } from '@/core/theta-grid'; // FIX-5 shape-lock
 import { SchedulingStateSchema } from '../scheduling-state';
 
 // ====================================================================
-// StateSnapshotExperimental — A-class snapshot reversibility (YUK-471 Wave 0)
+// StateSnapshotExperimental — A-class snapshot reversibility
 // ====================================================================
 //
 // ADR-0044 §3 — θ̂/FSRS 快照 event. Appended in the SAME attempt tx as
@@ -20,12 +20,12 @@ import { SchedulingStateSchema } from '../scheduling-state';
 // in ./experimental.ts) so a malformed payload can never lose schema validation.
 //
 // HARD REQ 2 (ADR-0044): the snapshot event skips the memory outbox by writing
-// `ingest_at: now` (non-NULL opt-out) at INSERT — see w0-PLAN.md §1. The
+// `ingest_at: now` (non-NULL opt-out) at INSERT. The
 // outbox poller's `WHERE ingest_at IS NULL` never selects it (internal
 // rollback ledger row, not a learner fact — shouldExtractToMemory's user-only
 // gate semantics agree).
 //
-// actor_kind pinned to `'system'` per w0-PLAN.md §6.3: the snapshot is a
+// actor_kind pinned to `'system'`: the snapshot is a
 // system-emitted rollback ledger row, not an agent action.
 
 // ---------- θ̂ segment ----------
@@ -35,7 +35,7 @@ import { SchedulingStateSchema } from '../scheduling-state';
 // mastery/state.ts:560 coerces missing→0 for math, but the snapshot stores the
 // raw row presence so revert deletes cold-start rows instead of writing θ̂=0).
 
-// YUK-561 S1 — jsonb-roundtrip-safe zod mirrors of the two persisted shadow
+// jsonb-roundtrip-safe zod mirrors of the two persisted shadow
 // columns (core/theta.ts RtCorrectBuffer, core/theta-grid.ts ThetaGridPosterior).
 // Kept local (not imported from those modules — they export TS interfaces, no zod)
 // so the parse barrier validates the FULL restored row, not a loose record.
@@ -47,7 +47,7 @@ const ThetaGridPosteriorSnapshot = z.object({
   evidence: z.number().int(),
 });
 
-// YUK-561 FIX-5 — nested-shape drift lock. The two local zod mirrors above shadow the
+// Nested-shape drift lock. The two local zod mirrors above shadow the
 // source TS interfaces (core/theta.ts RtCorrectBuffer, core/theta-grid.ts
 // ThetaGridPosterior) that the persisted mastery_state shadow columns actually hold.
 // These compile-time type-equality assertions turn typecheck RED the moment a source
@@ -67,12 +67,12 @@ const _thetaGridPosteriorShapeLock: AssertEqual<
   ThetaGridPosterior
 > = true;
 
-// YUK-561 S1 (revert-bracket) — the FULL pre-attempt mastery_state row snapshot.
+// The FULL pre-attempt mastery_state row snapshot.
 // `before` must capture EVERY column an attempt writes so revert = VERBATIM whole-
 // row restore (not just θ̂ + zeroed counts). SRT_ENABLED is LIVE (theta.ts:259) so
 // `rt_correct_ms` is written on every SRT-eligible correct attempt TODAY — a θ̂-only
 // restore would leave a post-attempt RT sample behind (non-verbatim). `theta_grid_json`
-// is A4-dark (THETA_GRID_ENABLED=false) but captured anyway so the flag flip never
+// is dark (THETA_GRID_ENABLED=false) but captured anyway so the flag flip never
 // silently loses verbatim fidelity. Column set is drift-guarded against mastery_state
 // (tests/schema/theta-snapshot-column-drift.test.ts).
 export const ThetaRowSnapshot = z.object({
@@ -90,16 +90,16 @@ export type ThetaRowSnapshotT = z.infer<typeof ThetaRowSnapshot>;
 
 export const ThetaSnapshot = z.object({
   kc_id: z.string().min(1),
-  // YUK-1093 — A2 (HIERARCHICAL_ELO_ENABLED, live) writes per-domain
+  // HIERARCHICAL_ELO_ENABLED (live) writes per-domain
   // 'ability_global' rows in the SAME attempt tx; their before/after MUST be
   // bracketed alongside the KC rows or a revert leaves θ_global double-counted.
   // subject_kind: which mastery_state partition this entry restores.
-  //   absent ⇒ 'knowledge' (pre-YUK-1093 on-disk payloads never carried it —
+  //   absent ⇒ 'knowledge' (legacy on-disk payloads never carried it —
   //   rollback-compat: old snapshots keep parsing, old readers ignore the key).
   //   kc_id holds the DOMAIN id when subject_kind='ability_global'.
   subject_kind: z.enum(['knowledge', 'ability_global']).optional(),
-  // YUK-561 S1 union (rollback-compat, Lens B F9): the rich ThetaRowSnapshot (new
-  // writers) | a bare number (pre-S1 on-disk snapshots) | null (cold-start). Both
+  // Union (rollback-compat): the rich ThetaRowSnapshot (new
+  // writers) | a bare number (legacy on-disk snapshots) | null (cold-start). Both
   // legacy shapes parse through the barrier so a code rollback never breaks the read
   // side; the RESTORE primitive refuses a bare-number `before` (typed `legacy_snapshot`
   // refusal) rather than lossy-restore. z.union tries ThetaRowSnapshot first: a bare
@@ -155,17 +155,16 @@ export const StateSnapshotExperimental = z.object({
 });
 export type StateSnapshotExperimentalT = z.infer<typeof StateSnapshotExperimental>;
 
-// ---------- GradingCheckpointExperimental (YUK-561 S2 / O2 dual-sibling) ----------
+// ---------- GradingCheckpointExperimental ----------
 //
-// The reversible ANCHOR a state_snapshot hangs off (revert-bracket §4.1). Pre-S2 the
-// snapshot hung directly off the attempt event E (caused_by=E); E has caused_by=null
-// so it can only ever be a cascade ROOT, and classifyRow(E)='irreversible' → the
-// snapshot's success path was structurally UNREACHABLE (register F8). S2 inserts a
-// grading_checkpoint C between E and the snapshot: revert(C) closes over {snapshot}
-// only (E is C's PARENT, the reverse-CTE never climbs up), so the snapshot is now
-// reachable + reversible.
+// The reversible ANCHOR a state_snapshot hangs off (revert-bracket §4.1). Hanging the
+// snapshot directly off the attempt event E (caused_by=E) left its success path
+// structurally UNREACHABLE: E has caused_by=null so it can only ever be a cascade ROOT,
+// and classifyRow(E)='irreversible'. The grading_checkpoint C sits between E and the
+// snapshot: revert(C) closes over {snapshot} only (E is C's PARENT, the reverse-CTE
+// never climbs up), so the snapshot is reachable + reversible.
 //
-// O2 completeness (owner 2026-07-04): ONE checkpoint action carries BOTH the θ̂ and
+// ONE checkpoint action carries BOTH the θ̂ and
 // FSRS segments as two SIBLING instances, discriminated by `payload.segment`:
 //   C_θ = `${E}:checkpoint:theta` anchors `${E}:snapshot:theta` (θ̂ segment)
 //   C_f = `${E}:checkpoint:fsrs`  anchors `${E}:snapshot:fsrs`  (FSRS segment)
@@ -177,7 +176,7 @@ export type StateSnapshotExperimentalT = z.infer<typeof StateSnapshotExperimenta
 // a `correct`(retract) event IS its complete reversal — same shape as the
 // copilot_user_ask / chip_trigger anchors. ingest_at:now (internal ledger row, not a
 // learner fact). Reserved + this dedicated schema so a malformed checkpoint payload
-// can't lose validation (parse barrier) — MUST land with the writer (spec §4.2 red-flag).
+// can't lose validation (parse barrier) — MUST land with the writer (spec §4.2).
 export const GradingCheckpointExperimental = z.object({
   actor_kind: z.literal('system'),
   actor_ref: z.string().min(1), // e.g. 'attempt_snapshot'
@@ -195,10 +194,10 @@ export const GradingCheckpointExperimental = z.object({
 });
 export type GradingCheckpointExperimentalT = z.infer<typeof GradingCheckpointExperimental>;
 
-// ---------- ReprojectDeferredExperimental (YUK-561 S4) ----------
+// ---------- ReprojectDeferredExperimental ----------
 //
 // The residual-visibility marker a judge-overturn writes after (or in place of) a θ̂
-// revert (revert-bracket §4.5 / Q2d). revert-only removes the WRONG θ̂ transition but
+// revert (revert-bracket §4.5). revert-only removes the WRONG θ̂ transition but
 // does NOT re-apply the correct outcome (second-instance reprojection principle), so
 // EVERY overturn that touched θ̂ leaves a residual for the future reprojection engine:
 //   - `reapply_correct_outcome` — the revert succeeded; the correct outcome was never
@@ -207,9 +206,9 @@ export type GradingCheckpointExperimentalT = z.infer<typeof GradingCheckpointExp
 //   - `full_reprojection` — the θ̂ transition could NOT be reverted (no checkpoint / a
 //     legacy snapshot / a later attempt moved θ̂ → conflict), so the whole KC needs
 //     replay. reason ∈ { no_checkpoint, later_theta_movement }.
-// This is the COMPLETE worklist the second-instance engine consumes (register "make the
-// residual visible"). ingest_at:now (internal ledger, not a learner fact). Reserved +
-// this dedicated schema (O1 owner default) so a malformed marker fails the parse barrier.
+// This is the COMPLETE worklist the second-instance engine consumes. ingest_at:now
+// (internal ledger, not a learner fact). Reserved +
+// this dedicated schema so a malformed marker fails the parse barrier.
 export const ReprojectDeferredExperimental = z.object({
   actor_kind: z.literal('agent'),
   actor_ref: z.string().min(1), // 'rejudge'
@@ -230,7 +229,7 @@ export const ReprojectDeferredExperimental = z.object({
         subjectId: z.string(),
       })
       .optional(),
-    // best-effort YUK-543 merge target (the winner the conflicting KC was merged into).
+    // best-effort merge target (the winner the conflicting KC was merged into).
     merged_into: z.string().optional(),
     prior_outcome: z.string(),
     new_outcome: z.string(),

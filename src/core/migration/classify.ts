@@ -14,12 +14,12 @@ import {
 } from './validation';
 
 // ====================================================================
-// YUK-1048 — native 分类器（grounding §13；review P1-3/4/5/7 修订）
+// native 分类器（grounding §13）
 // ====================================================================
 //
 // 纯函数、确定性、无 LLM。输入是 capture 的 rawFacts（可从工件离线重放）。
 //
-// ── occurrence 与 effective head（P1-4）──────────────────────────────
+// ── occurrence 与 effective head ──────────────────────────────
 // 「一次作答」的锚（anchor）= attempt 事件 或 携带作答的 review 事件
 // （review-settlement 的 durable 回填/solo review submit 都把 user_response_md
 // + embedded judge 写进 review 事件本体）。correct 闭包按 anchor 级传播：
@@ -28,7 +28,7 @@ import {
 // 语义）选至多一个 head，其余保留为 imported evaluation（not_selected）；
 // created_at 并列 ⇒ 无法可辩护选头 ⇒ ambiguous_held（anchor pending）。
 //
-// ── snapshot/verdict 完整性（P1-5）──────────────────────────────────
+// ── snapshot/verdict 完整性 ──────────────────────────────────
 // issued snapshot 必须是【被识别的冻结形状】：
 //   - attempt/solve_tutor 事件：AttemptQuestionSnapshot（question-evidence-snapshot.ts）
 //   - durable pending 输入：FrozenQuestionSnapshot 结构（practice 侧
@@ -37,7 +37,7 @@ import {
 // 形状不识别 ⇒ historical_unresolved —— 绝不用当前 revision 补造。
 // verdict = coarse_outcome/score（judge_route 只说明跑了哪条 runner，不是判词）。
 //
-// ── review 双形态（P1-3）────────────────────────────────────────────
+// ── review 双形态 ─────────────────────────────────────
 // review-settlement.ts:534–565 的 review 事件可能携带完整作答与判分：
 //   - rating-only（无 user_response_md/answer_image_refs/judge 块）⇒ FSRS 评级
 //     provenance（D15），不是 submission。
@@ -47,7 +47,7 @@ import {
 //     historical_unresolved —— 证据保留，不补造。answer-bearing 无判词 ⇒
 //     自评作答（manual provenance only，D9/D15）。
 //
-// ── 因果/证据闭包（P1-7）────────────────────────────────────────────
+// ── 因果/证据闭包 ─────────────────────────────────────
 // capture 捕获全部 event 分区；attempt/judge/review/correct/评估态事件之外的
 // 事件是闭包引用（caused_by、kc_typed evidence_event_ids 等）⇒
 // causal_closure_lineage（只作引用世系，不产生 submission/evaluation 语义）。
@@ -132,7 +132,7 @@ interface HeadDecision {
 }
 
 /**
- * 一次 anchor 的 effective head 选择（P1-4）：eligible = 未入纠正闭包的
+ * 一次 anchor 的 effective head 选择：eligible = 未入纠正闭包的
  * verdict judge。>1 时按 legacy newest-judge-wins（created_at 最新；读语义同
  * practice-read.ts:269–308 的 newest-judge）选头；created_at 并列 ⇒ 无法辩护
  * ⇒ ambiguous_held（全部不选，anchor 侧 pending）。
@@ -212,7 +212,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
     (q) => q.name === JUDGE_RUN_QUEUE_NAME && q.state !== 'completed',
   );
 
-  // ---- 纠正闭包（fixpoint，P1-4 传播）----
+  // ---- 纠正闭包（fixpoint 传播）----
   // 种子：correct 的 target + replacement。传播：成员 anchor 的全部 judge；
   // 成员 judge 的 anchor；成员 judge 的 caused_by 链上的 judge（replacement 之外
   // 不再外扩 —— 语义上只沿「同一 occurrence 的评估」与「纠正关系」传播）。
@@ -370,7 +370,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       };
     }
 
-    // P1-3（终轮）：有效 verdict 先于 unsupported_judge —— 后到的合法判分
+    // 有效 verdict 先于 unsupported_judge —— 后到的合法判分
     // 把「提交时未判」的作答升级为完整 attempt（anchor 与 judge 一致提升）；
     // 无有效判分时 unsupported 才落 pending（已接收未判，不是错答）。
     const decision = headDecisionFor(attempt);
@@ -479,7 +479,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
     };
   };
 
-  // —— review 分类（P1-3）——
+  // —— review 分类 ——
   const classifyReview = (review: (typeof events)[number]): RecordClassification => {
     const payload = payloadOf(review.payload);
     const locator = locatorOf('event', review.action, review.id);
@@ -541,7 +541,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
           'event',
         );
       }
-      // P1-2（终轮）：manual/self-rated 需要【肯定证据】—— 无任何机器判分
+      // manual/self-rated 需要【肯定证据】—— 无任何机器判分
       // 声明（无 embedded judge 块、无配对 judge 事件）的用户自评作答才可
       // 迁移为 manual provenance；机器判分已声明（auto_rate/embedded 块/
       // judge 事件）而无 verdict ⇒ 判分缺件 blocked，不冒充人工断言。
@@ -690,7 +690,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
       const payload = payloadOf(e.payload);
       const verdict = verdictOf(payload);
       if (verdict === 'invalid') {
-        // P1-1（终轮）：声明了判词但值域非法 —— 损坏记录，fail-visible。
+        // 声明了判词但值域非法 —— 损坏记录，fail-visible。
         records.push(
           historicalUnknownClassification(
             e.id,
@@ -704,7 +704,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
         continue;
       }
       if (verdict === 'valid') {
-        // P1-3（终轮）：head 资格以【锚的最终可导入性】为门 —— 只有锚分类为
+        // head 资格以【锚的最终可导入性】为门 —— 只有锚分类为
         // complete_attempt 的 occurrence 才存在 effective head；锚处于
         // pending/human/historical/纠正 等任何不可导入态时，judge 保留为评估
         // 证据但绝不声明 has_effective_head（迁移指令不再自相矛盾）。
@@ -834,7 +834,7 @@ export function classifyMigrationCapture(capture: MigrationCapture): MigrationCl
     }
 
     if (!RULE_COVERED_ACTIONS.has(e.action)) {
-      // P1-7：完整 event 分区捕获带进了非评估事件（caused_by / evidence_event_ids
+      // 完整 event 分区捕获带进了非评估事件（caused_by / evidence_event_ids
       // 等闭包引用）—— 只作引用世系，不产生 submission/evaluation 语义。
       records.push({
         category: 'causal_closure_lineage',
