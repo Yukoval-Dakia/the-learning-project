@@ -1,6 +1,5 @@
-// YUK-384 — GET /api/admin/hub-sync: durable hub-sync reconciler health snapshot
-// for operators (status counts, generation lag, oldest dirty/invalid age,
-// failures, latest ack/repair). Read-only; one aggregate query.
+// Operator health snapshot for hub sync: status counts, lag, stale ages, failures
+// and the latest ack/repair. Read-only; one aggregate query.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

@@ -24,9 +24,7 @@ import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 
-// M3-T1 (YUK-317)：knowledge 包骨架。routes 在 T4（API 上 Hono）逐条填充——
-// 8 条：/api/knowledge（树快照）/[id]（节点页）/proposals /proposals/[id]
-// /edges /edges/proposals/[id] /review /review-due-summary。
+// Knowledge capability: tree, node page, edges, proposals and review reads.
 export const knowledgeCapability = defineCapability({
   name: 'knowledge',
   description:
@@ -34,8 +32,8 @@ export const knowledgeCapability = defineCapability({
     'knowledge_edge 关系网、节点页聚合（node-page，跨包读 notes 导出）、提议双链' +
     '（节点 propose / 边 propose_edge + rubric 校验 + accept/dismiss）。',
   api: {
-    // M3-T4 (YUK-317)：8 条路由全带 load 懒加载 thunk（M1/M2 配方）。静态段
-    // proposals/edges/review* 在 Hono 中优先于 :id 匹配。
+    // Static segments match before the :id catch-all, so their order here is not
+    // load-bearing for Hono.
     routes: [
       {
         method: 'GET',
@@ -136,8 +134,7 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./api/review-due-summary').then((m) => m.GET),
       },
       {
-        // A5 S2 (YUK-354)：FrontierRail 读模型（learnable_frontier 横幅）。静态段，
-        // 须在 :id catch-all 之前匹配（同 proposals/edges/review*）。
+        // Static segment; must not be captured by the :id route.
         method: 'GET',
         path: '/api/knowledge/frontier',
         operationId: 'listKnowledgeFrontier',
@@ -156,8 +153,7 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./api/node-page-route').then((m) => m.GET),
       },
       {
-        // A5 S4 (YUK-531)：per-KC 误区 funnel 读模型（「指向此点的误区」）。4 段路径
-        // （:id/misconceptions），与 frontier(3 段)/[id](3 段) 无段数碰撞，顺序无关。
+        // Four segments, so it cannot collide with the three-segment routes.
         method: 'GET',
         path: '/api/knowledge/[id]/misconceptions',
         operationId: 'listKnowledgeNodeMisconceptions',
@@ -171,9 +167,7 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./api/misconceptions').then((m) => m.GET),
       },
       {
-        // A5 S4 (YUK-531 PR-5)：candidate(猜想/候选) 误区 veto = dismiss pending conjecture。
-        // 静态段 misconceptions 在前（5 段 POST），与 [id]/misconceptions(GET) 方法+段序均不碰，
-        // 与 proposals/edges 同样静态优先。Option A：仅 candidate 段 live，confirmed archive 延后。
+        // Dismisses a pending conjecture. Only the candidate segment is live here.
         method: 'POST',
         path: '/api/knowledge/misconceptions/[id]/veto',
         operationId: 'vetoKnowledgeMisconceptionLegacy',
@@ -192,21 +186,12 @@ export const knowledgeCapability = defineCapability({
     ],
   },
   jobs: {
-    // M4-T3 (YUK-319)：knowledge 夜链 job 入容器。注册由
-    // server/boss/register-capability-jobs.ts 收集挂载，此处声明是唯一归属源。
+    // This declaration is the single ownership source; registration collects it.
     handlers: [
-      // Lane D (YUK-482): knowledge_propose_nightly was removed — its sole job was
-      // getFailureAttempts → propose-new-KC, i.e. answer-wrong → propose coupling.
-      // KC creation is a CONTENT-axis action (driven by what the material covers),
-      // independent of answer correctness; failures are PERFORMANCE-axis and feed
-      // 错因/mastery only. KC creation lives in the content-driven paths
-      // (cold-start-bridge / image-candidate-accept matcher / agent proposal tools)
-      // plus the maintenance producer KnowledgeReviewTask (knowledge_maintenance_nightly).
+      // Node proposal was removed: KC creation is content-driven, not triggered by a
+      // wrong answer. Failures feed cause/mastery instead.
       {
-        // Phase 2 Dreaming：knowledge_edge mesh propose。
-        // YUK-758 DAG 成员（根）：propose-only 图拓扑生产者，读 recent_failures 等产 edge 提议入
-        // 人审 inbox，不消费其它夜链 job 的 live 产物（旧 02:30 是链头错峰，无真上游）。cron 移除，
-        // orchestrator 起步即触发。dreaming / knowledge_maintenance 对它是软边（读 inbox 去重基线）。
+        // Propose-only topology producer. No real upstream, which is why it is a root.
         name: 'knowledge_edge_propose_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure'),
@@ -217,13 +202,8 @@ export const knowledgeCapability = defineCapability({
           ),
       },
       {
-        // YUK-349 B3 PR-2：empty-frontier prerequisite bootstrap（BJT 05:15，compose
-        // 跑 05:30 之前，错峰）。learnableFrontier 空时 propose-only 低置信 prereq 边，
-        // 破解冷启「没 prereq 边 → 前沿空 → 不知道先教什么」死锁。graph-topology 生产者，
-        // 与 knowledge_edge_propose_nightly 同包同域。
-        // YUK-758 DAG 成员（根）：PROPOSE-ONLY——只写 knowledge_edge 提议，learnableFrontier 只读
-        // live 边，故其产物当夜对 compose 零影响（需人先 accept）。旧 05:15「compose 05:30 前」
-        // 是时钟巧合，非真上游边。cron 移除，orchestrator 触发。
+        // Propose-only bootstrap for an empty frontier. The old pre-compose slot was a
+        // clock coincidence: proposals do not affect compose until a human accepts.
         name: 'frontier_fill_nightly',
         dependsOn: [],
         eligibility: nightlyEligibility('structure', { respectPendingCap: true }),
@@ -232,11 +212,8 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/frontier_fill_nightly').then((m) => m.buildFrontierFillNightlyHandler),
       },
       {
-        // YUK-48：KnowledgeReviewTask maintenance producer（多步 agent 档）。
-        // YUK-758 DAG 成员：读 proposal inbox（before/after delta）在 cheap producer 之后跑。
-        // 对 knowledge_edge_propose 是**软边**（旧 03:00 在 edge_propose 02:30 之后；上游失败它照跑、
-        // 只是少看几条 pending，仍正确产出；handler 不感知上游状态，YUK-778 已删掉那条无人
-        // 读的 stale payload）。cron 移除，orchestrator 触发。
+        // Multi-step maintenance producer. The edge-propose dependency is soft: it reads
+        // the inbox and still produces correctly if that upstream fails.
         name: 'knowledge_maintenance_nightly',
         dependsOn: [{ job: 'knowledge_edge_propose_nightly', soft: true }],
         eligibility: nightlyEligibility('structure'),
@@ -247,27 +224,9 @@ export const knowledgeCapability = defineCapability({
           ),
       },
       {
-        // P5 (YUK-489): dedup-on-maintenance. Deterministic (zero-LLM) nightly scan
-        // for near-duplicate auto-created KC pairs by pgvector cosine distance →
-        // emits MERGE PROPOSALS (pending inbox items). PROPOSE-ONLY: it NEVER calls
-        // applyMerge (a merge is destructive — archives the from-KC, sets merged_from[],
-        // and repairs the downstream attribution surfaces — YUK-543; stays behind the
-        // human accept gate). cron 05:05 Asia/Shanghai — AFTER embed_backfill 04:40
-        // (YUK-377 复审 §3.3): the pair scan hard-gates `embedding IS NOT NULL`, and a KC
-        // minted during the day only gets its vector at the 04:40 embed pass, so the old
-        // 02:00 slot made every new KC wait one extra night before its first dedup scan.
-        // Accepted trade-off: same-night edge_propose 02:30 / maintenance 03:00 no longer
-        // see tonight's merge proposals in the inbox — neither consumes them
-        // programmatically (grep-verified 2026-07-06); pending proposals persist, so the
-        // agent context picks them up the next night. queue 'llm': matches the pure-derivation sibling
-        // answer_class_backfill (also declared 'llm') and every other nightly
-        // backfill — even though the scan makes NO model call, the 'llm' tier is the
-        // family's shared DLQ/retry bucket; 'fast' would skip the DLQ (a dropped run
-        // would just wait for the next cron, but the merge-propose write deserves DLQ
-        // retry coverage like its siblings). Auto-mounted by register-capability-jobs.
-        // YUK-758 DAG 成员：kc_dedup 硬门 embedding IS NOT NULL（pgvector cosine 配对扫描），故对
-        // embed_backfill 是**真硬边**（旧注已述「AFTER embed_backfill 04:40」）。跨包上游（embed 在
-        // practice 包）。cron 移除，orchestrator 在 embed_backfill 成功后触发。
+        // Deterministic near-duplicate scan that only proposes merges; accepting stays
+        // with a human because applyMerge is destructive. It hard-depends on
+        // embed_backfill, since pairs need embeddings.
         name: 'kc_dedup_nightly',
         dependsOn: ['embed_backfill'],
         eligibility: nightlyEligibility('hygiene_dedup'),
@@ -275,18 +234,9 @@ export const knowledgeCapability = defineCapability({
         load: () => import('./jobs/kc_dedup_nightly').then((m) => m.buildKcDedupNightlyHandler),
       },
       {
-        // YUK-543/YUK-544: merge-attribution sweep — census report + BOUNDED AUTO-REPAIR. Low-frequency
-        // safety net for the residual async-grading race that applyMerge's in-tx locking narrows but
-        // cannot fully close (a stale pre-merge grading upsert can re-orphan a mastery/fsrs row keyed
-        // to a merged-away KC). Phase 1 censuses + reports the counts (YUK-543 shape preserved);
-        // phase 2 (YUK-544, spec Appendix C D-C) auto-invokes the SAME idempotent
-        // repairMergeAttributionForFromId the accept path uses on the drifted subset — never raw table
-        // writes, never merges/archives a KC itself — bounded by a per-run hard cap (leftover defers to
-        // next run), with a forensic `experimental:merge_attribution_repaired` event per repaired
-        // from_id and a post-repair zero re-census. Weekly (Mon 04:00 Asia/Shanghai — off the nightly
-        // cluster). queue 'llm': now that the sweep WRITES (repairs + audit events), it joins the
-        // backfill family's shared DLQ/retry bucket like kc_dedup_nightly above ('fast' would skip the
-        // DLQ, and a repair write deserves DLQ retry coverage like its siblings). Auto-mounted.
+        // Low-frequency safety net for the residual grading race that accept-time
+        // locking cannot close. It censuses, then repairs drifted ids through the accept
+        // path's own idempotent function, capped per run. It never merges or archives.
         name: 'merge_attribution_sweep',
         schedule: { cron: '0 4 * * 1', tz: 'Asia/Shanghai' },
         eligibility: nightlyEligibility('deterministic'),
@@ -295,13 +245,8 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/merge_attribution_sweep').then((m) => m.buildMergeAttributionSweepHandler),
       },
       {
-        // YUK-548 (worklist #5, Q4a): projection-drift oracle — weekly REPORT-ONLY sweep over the ON
-        // projection entities (symmetric anchor-gated audit: FIELD_DRIFT + GHOST/MISSING). Detects
-        // out-of-band writes + rowset existence anomalies; NEVER writes an entity table, NEVER
-        // auto-repairs (a projection auto-fix = a silent local SoT flip — red line). Weekly (Mon 04:30
-        // Asia/Shanghai — 30min after merge_attribution_sweep). queue 'llm': it WRITES a fold-inert
-        // forensic breadcrumb, so it joins the DLQ/retry bucket like its siblings ('fast' skips the
-        // DLQ → a dropped run = a silent week-long evidence blind spot). Auto-mounted.
+        // Report-only projection drift audit. It never writes an entity table or repairs:
+        // an automatic projection fix would silently flip the source of truth.
         name: 'projection_oracle_sweep',
         schedule: { cron: '30 4 * * 1', tz: 'Asia/Shanghai' },
         eligibility: nightlyEligibility('deterministic'),
@@ -310,17 +255,8 @@ export const knowledgeCapability = defineCapability({
           import('./jobs/projection_oracle_sweep').then((m) => m.buildProjectionOracleSweepHandler),
       },
       {
-        // YUK-559 (S3, worklist #6): kg-borrowing SHADOW sweep — weekly REPORT-ONLY,
-        // FLAG-INDEPENDENT shadow of the A5/A6 soft layer. Re-runs the SAME pure math the
-        // live path would (smoothThetaByComponent / propagatePrereq) over live mastery_state +
-        // related_to/prerequisite/derived_from edges WITHOUT the dark flag check, and emits ONE
-        // summary event (experimental:kg_borrow_shadow, ingest_at=now opt-out) carrying the
-        // flip's move/borrow/component-size distribution — so the owner gets data DURING dark
-        // (data门只 gate 翻转不 gate build; breaks the "wait for data to flip" dead loop).
-        // Weekly Mon 05:00 Asia/Shanghai — offset from projection_oracle_sweep (04:30) +
-        // merge_attribution_sweep (04:00), before the daily frontier_fill (05:15). queue 'llm':
-        // WRITES an evidence event, joining the backfill DLQ/retry family like its siblings
-        // (the runner self-swallows, so a failed run logs but never DLQ-thrashes). Auto-mounted.
+        // Flag-independent shadow of the dark A5/A6 layer. It computes what a flip would
+        // change and emits one summary event, so there is data before the flags move.
         name: 'kg_borrow_shadow_sweep',
         schedule: { cron: '0 5 * * 1', tz: 'Asia/Shanghai' },
         eligibility: nightlyEligibility('deterministic'),
@@ -330,11 +266,8 @@ export const knowledgeCapability = defineCapability({
       },
     ],
   },
-  // M4-T4 (YUK-319)：proposal kind 归属声明。knowledge_node / knowledge_mutation 的
-  // accept 委托 ./server/proposals（M3 起）；knowledge_edge 的决策器
-  // decideKnowledgeEdgeProposal 仍在壳层（写 knowledge_edge 行 + 链式 event，
-  // plan 裁决 T4 只补声明不迁体）；archive 按 producer 域归属本包
-  // （./server/review.ts 在产），无 accept applier——壳层 default throw 注 YUK-44。
+  // Proposal kinds owned here. `archive` is produced by this package and has no
+  // applier; the shell's default throws for it.
   proposals: {
     kinds: [
       {
@@ -383,7 +316,7 @@ export const knowledgeCapability = defineCapability({
       { kind: 'archive' },
     ],
   },
-  // M5-T3 (YUK-321) — copilot 工具归属声明（图谱读 4 + 知识提议写 2）。
+  // Four graph readers and two proposal writers.
   copilotTools: {
     tools: [
       {

@@ -175,7 +175,6 @@ export const CostTodayResponseSchema = z.object({
   }),
 });
 
-// YUK-384 — durable hub-sync reconciler health (GET /api/admin/hub-sync).
 export const HubSyncHealthResponseSchema = z.object({
   by_status: z.object({
     pending: z.number().int().nonnegative(),
@@ -195,7 +194,6 @@ export const HubSyncHealthResponseSchema = z.object({
   max_generation_lag: z.string(),
   last_acknowledged_at: z.string().nullable(),
   last_repair_key: z.string().nullable(),
-  // False = the 0071 durable-dirty triggers are absent (db:push bootstrap) → reconciler
-  // inert despite the tables existing. Provision with db:migrate. See rollout doc.
+  // False means the dirty triggers are absent; provision with migrations, not push.
   triggers_installed: z.boolean(),
 });

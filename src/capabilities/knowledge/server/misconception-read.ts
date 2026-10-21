@@ -1,44 +1,23 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — per-KC misconception read model. Assembles the
-// 「指向此点的误区」funnel for ONE KC from TWO segments:
+// Per-KC misconception funnel, in two segments.
 //
-//   - CONFIRMED segment (RT1 误区): live `misconception(status='active', archived_at IS
-//     NULL)` rows joined to the KC via a non-archived `caused_by` misconception_edge
-//     (the heterogeneous edge whose to_kind='knowledge' points at this KC). The writer
-//     is PR-3, gated behind MISCONCEPTION_PROMOTE_ENABLED — so this segment is genuinely
-//     EMPTY day-one (honest empty, NEVER zero-filled). Mirrors frontier-read.ts's
-//     edge-join read style.
-//   - CANDIDATE segment (猜想/候选): the per-KC PENDING conjecture proposals (the
-//     identity-preserving substrate the promotion flow draws from). Read DIRECTLY from
-//     the proposal inbox + filtered by proposed_change.knowledge_id — NOT via
-//     loadPrepDeskConjectures, which caps globally at top-3 with NO knowledge_id filter
-//     (a KC with a real pending conjecture could otherwise show 0). This segment carries
-//     the day-one content while the confirmed segment is still empty.
+// Confirmed: live misconceptions linked through a non-archived `caused_by` edge. The
+// promotion writer is flag-gated, so this is honestly empty on day one, never zero-filled.
+// Candidates: pending conjecture proposals read directly from the inbox and filtered by
+// knowledge_id; a global top-3 reader would hide real candidates for a given KC.
 //
-// RED LINES (⑥ anti-guilt governance, LOAD-BEARING):
-//   - Raw weight / confidence / predicted_p / baseline_p NEVER serialize. The confirmed
-//     `conf` is the QUALITATIVE confBand(weight) discretization (weight read locally then
-//     dropped); the candidate `conf` is the FIXED '低' — change.confidence is read
-//     NOWHERE. The conf-strip test proves both the keys and the raw seeded numbers stay
-//     off the wire.
-//   - `seen` (recurrence COUNT, an int) IS allowed on the wire — only probabilities are
-//     banned (mirrors the prep-desk recurrence_count precedent).
-//   - PURE READ: this module writes nothing.
-//
-// See docs/design/2026-06-29-yuk-a5-knowledge-explorer-build-plan.md (S4) and screen-
-// knowledge-a5.jsx (MisconceptionList / MisconceptionCard) for the PR-5 render contract.
+// Raw weight, confidence and probabilities never cross the wire. Confirmed confidence is
+// a qualitative band computed locally; candidate confidence is fixed '低'. `seen` is a
+// count and is allowed. This module only reads.
 
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
 import { listProposalInboxPage } from '@/kernel/proposals/inbox';
 
-/** Qualitative confidence band — the ONLY confidence signal that crosses the wire. */
+/** Qualitative confidence band — the only confidence signal that crosses the wire. */
 export type MisconceptionConfBand = '高' | '中' | '低';
 
-// Owner-prior conf-band cut points over the [0,1] CONFIDENCE-salience weight. Default
-// even thirds; display-only, owner-tunable (NOT an n=1 calibration red line). The SAME
-// low cut doubles as the status-fading threshold (below) so there is no second magic
-// number for "low-confidence ⇒ fading".
+// Display-only even thirds. The low cut is reused as the fading threshold.
 const CONF_LOW_HI = 0.34;
 const CONF_MID_HI = 0.67;
 
@@ -48,56 +27,33 @@ function confBand(weight: number): MisconceptionConfBand {
   return '高';
 }
 
-// Char cap on the candidate `label` (claim_md head). `belief` carries the full claim;
-// `label` is the short, title-equivalent head. Mirrors frontier-read's reason clamp.
+/** Short label cap; belief carries the full claim. */
 const CANDIDATE_LABEL_CAP = 40;
 
-// Scan cap on the pending-conjecture window. listProposalInboxPage is recency-ordered;
-// 50 comfortably covers a single KC's pending conjectures (nightly induction keeps the
-// pending set small). Degenerate-defense, NOT a business cap — mirrors PREP_DESK_FETCH_LIMIT.
-// SILENT-DROP TRADEOFF: the cap is applied to the GLOBAL recency window BEFORE the per-KC
-// filter, so a KC's conjecture ranked beyond the global top-50 window is silently DROPPED
-// (not just deprioritized). Acceptable while the single-user pending set stays small; if
-// pending volume ever grows, this must become a SQL-level knowledge_id predicate pushed
-// into listProposalInboxPage — bumping the scan cap would not fix the drop.
+// The inbox window is global and capped before the per-KC filter, so a conjecture past
+// the top 50 is silently dropped, not deprioritized. Acceptable while pending volume is
+// small; a growing set needs a knowledge_id predicate in the inbox query.
 const CANDIDATE_SCAN_CAP = 50;
 
-// Defensive row cap on the confirmed `caused_by` join. Single-KC scoped + dormant day-one
-// (PR-3 writer is flag-gated), so this is degenerate-defense not a business cap — kept
-// symmetric with CANDIDATE_SCAN_CAP. Owner-tunable; raise if a single KC ever legitimately
-// accrues >50 live misconceptions.
+/** Defensive cap for one KC's confirmed rows. */
 const CONFIRMED_CAP = 50;
 
-/**
- * One row in the per-KC misconception funnel. ALL confidence is qualitative — raw
- * weight / confidence / predicted_p / baseline_p are deliberately ABSENT from this type.
- */
+/** One funnel row. Confidence is qualitative; raw probabilities are absent. */
 export interface MisconceptionRow {
   /**
-   * SEGMENT-SCOPED id — confirmed = misconception.id; candidate = proposal event id. The
-   * two id spaces are disjoint substrates, so PR-5 MUST key actions on `segment` (never id
-   * alone) to route to the right backend (live misconception vs pending-conjecture proposal).
+   * Segment-scoped: a misconception id for confirmed rows, a proposal event id for
+   * candidates. Actions must key on `segment` too, because the id spaces differ.
    */
   id: string;
-  /** 'confirmed' = RT1 误区 (live promoted); 'candidate' = 猜想/候选 (pending conjecture). */
   segment: 'confirmed' | 'candidate';
-  /** Short label — confirmed←title / candidate←claim_md head. */
   label: string;
-  /** The belief statement — confirmed←reasoning / candidate←full claim_md. */
   belief: string;
-  /** Display projection (NOT the stored draft|active enum). 'retracted' never surfaces. */
+  /** Display projection; retracted rows never surface. */
   status: 'active' | 'fading';
-  /** Provenance track — confirmed←row.source / candidate←'soft' (fixed). */
   source: 'hard' | 'soft';
-  /** Qualitative confidence band — confirmed←confBand(weight) / candidate←'低' (fixed). */
   conf: MisconceptionConfBand;
-  /** Recurrence COUNT (int) — allowed on the wire; only probabilities are banned. */
   seen: number;
-  /**
-   * Evidence event-id back-links — event-ids ONLY. The candidate segment filters its
-   * evidence_refs to kind==='event' (see loadCandidates), so non-event refs never reach
-   * the wire and PR-5 can render every id as an event 回链 without dead links.
-   */
+  /** Event ids only, so every link the UI renders is live. */
   evidence: string[];
 }
 
@@ -105,14 +61,14 @@ function clampHead(text: string, cap: number): string {
   return text.length > cap ? `${text.slice(0, cap)}…` : text;
 }
 
-/** CONFIRMED segment — live `caused_by` misconception_edge → active misconception join. */
+/** Live `caused_by` edges to active misconceptions. */
 async function loadConfirmed(db: Db, kcId: string): Promise<MisconceptionRow[]> {
   const rows = await db
     .select({
       id: misconception.id,
       title: misconception.title,
       reasoning: misconception.reasoning,
-      // weight read LOCALLY for confBand only — NEVER selected into the wire row (⑥).
+      // Read locally for the band; never selected into the wire row.
       weight: misconception.weight,
       source: misconception.source,
       seen: misconception.seen,
@@ -131,7 +87,7 @@ async function loadConfirmed(db: Db, kcId: string): Promise<MisconceptionRow[]> 
         isNull(misconception.archived_at),
       ),
     )
-    // Most-recurrent first; id tiebreaker keeps any >cap ordering deterministic.
+    // Most recurrent first; id tiebreak keeps capped ordering deterministic.
     .orderBy(desc(misconception.seen), desc(misconception.id))
     .limit(CONFIRMED_CAP);
 
@@ -142,9 +98,7 @@ async function loadConfirmed(db: Db, kcId: string): Promise<MisconceptionRow[]> 
       segment: 'confirmed' as const,
       label: r.title,
       belief: r.reasoning ?? '',
-      // Fading is the low-confidence (decaying-salience) display projection; reuse the
-      // conf '低' cut so there is no second threshold. 'retracted' never appears here —
-      // archived misconceptions/edges are filtered out by the WHERE above.
+      // Fading reuses the low band, so there is no second threshold.
       status: band === '低' ? 'fading' : 'active',
       source: r.source === 'hard' ? 'hard' : 'soft',
       conf: band,
@@ -154,7 +108,7 @@ async function loadConfirmed(db: Db, kcId: string): Promise<MisconceptionRow[]> 
   });
 }
 
-/** CANDIDATE segment — per-KC pending conjecture proposals (inbox read + KC filter). */
+/** Pending conjectures for one KC. */
 async function loadCandidates(db: Db, kcId: string): Promise<MisconceptionRow[]> {
   const { rows } = await listProposalInboxPage(db, {
     status: 'pending',
@@ -163,32 +117,24 @@ async function loadCandidates(db: Db, kcId: string): Promise<MisconceptionRow[]>
   });
 
   const candidates = rows.flatMap((row): MisconceptionRow[] => {
-    // Narrow the discriminated union to the conjecture variant.
     if (row.payload.kind !== 'conjecture') return [];
     const change = row.payload.proposed_change;
-    // Per-KC filter — the inbox window is global; keep only THIS KC's conjectures.
+    // The inbox window is global; keep only this KC.
     if (change.knowledge_id !== kcId) return [];
-    // CONF-STRIP: change.confidence / predicted_p / baseline_p_at_induction are read
-    // NOWHERE here — a candidate is low-confidence by construction, so `conf` is the
-    // FIXED qualitative '低' and ordering uses recurrence_count, never a probability.
+    // Confidence fields are deliberately unread: a candidate is fixed '低', and
+    // ordering uses recurrence count.
     return [
       {
         id: row.id,
         segment: 'candidate',
         label: clampHead(change.claim_md, CANDIDATE_LABEL_CAP),
         belief: change.claim_md,
-        // A pending conjecture is an ACTIVELY-tracked hypothesis (induced BY recurrence),
-        // never "fading" — status is fixed 'active'; segment+source already tag it soft.
+        // A pending conjecture is actively tracked, never fading.
         status: 'active',
         source: 'soft',
         conf: '低',
         seen: change.recurrence_count,
-        // EVENT-回链 contract: ONLY kind==='event' refs cross the wire — uniform with the
-        // confirmed segment (whose evidence is genuine event-ptrs) and the UI's event-回链
-        // design. A conjecture's evidence_refs can also carry question/knowledge/artifact/
-        // record kinds (e.g. the question whose recurrence induced it); those are
-        // INTENTIONALLY DROPPED here — a non-event id rendered by PR-5 as an event backlink
-        // would be a dead link.
+        // Drop non-event refs; rendering them as event links would create dead links.
         evidence: row.payload.evidence_refs
           .filter((ref) => ref.kind === 'event')
           .map((ref) => ref.id),
@@ -196,25 +142,20 @@ async function loadCandidates(db: Db, kcId: string): Promise<MisconceptionRow[]>
     ];
   });
 
-  // Most-recurrent first (recurrence_count is the only ordering signal; NOT confidence).
-  // id.localeCompare is the deterministic tiebreaker for equal `seen` — Array.sort is not
-  // guaranteed stable across equal keys, mirroring the confirmed segment's SQL desc(id).
+  // Recurrence is the only ordering signal (not confidence); id tiebreaks.
   return candidates.sort((a, b) => b.seen - a.seen || a.id.localeCompare(b.id));
 }
 
 /**
- * loadMisconceptionsForKc — the per-KC「指向此点的误区」funnel. Confirmed (RT1) rows
- * first, then candidate (conjecture) rows. Returns [] for a KC with neither (honest
- * empty — NEVER zero-filled). PURE READ.
+ * Confirmed rows first, then candidates. Empty means no misconceptions, never a
+ * zero-filled placeholder.
  */
 export async function loadMisconceptionsForKc(db: Db, kcId: string): Promise<MisconceptionRow[]> {
   const [confirmed, candidates] = await Promise.all([
     loadConfirmed(db, kcId),
     loadCandidates(db, kcId),
   ]);
-  // NO double-surfacing across segments: PR-3's promotion writer rides
-  // acceptConjectureProposal, which writes a rate(accept) event so the source conjecture
-  // leaves `pending` — a promoted belief therefore surfaces ONCE (as confirmed only), never
-  // simultaneously as its originating candidate.
+  // Promotion accepts the source conjecture, so it leaves pending and cannot surface
+  // twice.
   return [...confirmed, ...candidates];
 }

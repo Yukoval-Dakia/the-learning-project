@@ -1,6 +1,5 @@
-// YUK-601 (v3.2 §3.5) — GET /api/admin/traits/:id/journal：append-only 历史
-// （rollback UI 数据源），倒序。不下发 payload（doc v1.1 §2.2：纯 revision 列表；
-// diff 查看器 = owner 点名后的 follow-up）。业务在 src/server/subjects/admin-read.ts。
+// Append-only trait history for the rollback UI, newest first. Payloads are not
+// included; this is a revision list.
 
 import { z } from 'zod';
 import { db } from '@/db/client';

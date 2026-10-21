@@ -1,25 +1,13 @@
-// YUK-573 — judge-calibration agreement stats read model. READ-ONLY (pure
-// drizzle reads, zero writes, zero flags — calibration-maturity /
-// conjecture-scores precedent). Aggregates the report-only observation events
-// written by the practice `judge_calibration_sample` job:
-//   - experimental:judge_calibration_sample      (one per re-judged pair)
-//   - experimental:judge_calibration_run_summary (one per run — health signal)
+// Read-only judge agreement stats from the sample job's observation events.
 //
-// Honesty rails baked into the response shape:
-//   - MIN_N gate (S4): a stratum below MIN_N returns { status:
-//     'insufficient_data', n } — never a bare ratio on tiny n.
-//   - same_lane exclusion (MF5): samples whose inferred original lane equals
-//     the re-judge lane (Opus-vs-Opus self-consistency, not a contrast) are
-//     EXCLUDED from the headline + strata and only counted separately.
-//   - notes[] carries agreement≠accuracy + the same_lane inference-staleness
-//     caveat (复核吸收 2: the inference reads SAMPLE-TIME env; a lane flip
-//     inside the window skews it — per-row snapshots allow recomputation).
+// Strata below the minimum sample size report insufficient data, never a bare ratio.
+// Same-lane samples (where the re-judge lane matches the inferred original) measure
+// self-consistency, so they are excluded from headline and strata and counted apart.
+// Notes state that agreement is not accuracy and that lane inference uses sample-time
+// env, which a mid-window flip can skew.
 //
-// Re-judge run dilution (S1): re-judge runs share task_kind with production
-// judge runs in ai_task_runs / cost_ledger. Their id set is identifiable via
-// each sample's rejudge_task_run_id (surfaced in recent_samples); existing
-// admin runs/cost surfaces do NOT yet exclude them (out of scope — design doc
-// §8 follow-up).
+// Re-judge runs share a task kind with production runs, so admin runs/cost surfaces
+// still include them; the per-sample task-run id allows later separation.
 
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { z } from 'zod';
@@ -29,7 +17,7 @@ import { event } from '@/db/schema';
 export const JUDGE_CALIBRATION_MIN_N = 5;
 const RECENT_SAMPLES_LIMIT = 20;
 const RECENT_RUNS_LIMIT = 10;
-/** OCR review: bound the sample scan — nightly batches accumulate unboundedly. */
+/** Bound the sample scan; nightly batches accumulate indefinitely. */
 const SAMPLE_WINDOW_DAYS = 90;
 
 const SAMPLE_ACTION = 'experimental:judge_calibration_sample';
@@ -56,7 +44,7 @@ const RunSummaryPayload = z
     agreed: z.number(),
     disagreed: z.number(),
     skipped: z.number(),
-    // optional: rows written before the OCR-major-2 counter landed lack it.
+    // Optional: older rows predate this counter.
     skipped_missing_input: z.number().optional(),
     skipped_unsupported: z.number(),
     errors: z.number(),
@@ -139,9 +127,7 @@ function groupBy(rows: ParsedSample[], key: (r: ParsedSample) => string) {
 }
 
 export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibrationStats> {
-  // Rolling window (OCR review): sample events accumulate nightly and are
-  // never pruned — an unbounded scan would degrade this admin endpoint over
-  // months. 90d comfortably covers the job's 7d sampling window many times over.
+  // Events are never pruned, so bound the scan; 90d covers the 7d sampling window.
   const windowStart = new Date(Date.now() - SAMPLE_WINDOW_DAYS * 24 * 3600 * 1000);
   const sampleRows = await db
     .select({
@@ -154,28 +140,22 @@ export async function loadJudgeCalibrationStats(db: Db): Promise<JudgeCalibratio
     .where(and(eq(event.action, SAMPLE_ACTION), gte(event.created_at, windowStart)))
     .orderBy(desc(event.created_at));
 
-  // Defensive DISTINCT by caused_by (MF8 边带): the partial unique index makes
-  // duplicates structurally impossible; this is a read-side backstop only.
+  // Dedup by the anchored judge event; a null anchor falls back to the row id so
+  // unexpected rows cannot collapse into one bucket.
   const byJudge = new Map<string, ParsedSample>();
   for (const row of sampleRows) {
-    // Null caused_by is structurally unexpected (the writer always anchors the
-    // judge event id) — fall back to the row's OWN id so such rows never
-    // collapse into one shared '' bucket and silently swallow each other (OCR
-    // review; note the partial unique index does not constrain NULLs).
     const key = row.caused_by_event_id ?? row.id;
     if (byJudge.has(key)) continue;
     const parsed = SamplePayload.safeParse(row.payload);
-    if (!parsed.success) continue; // fail-closed: malformed rows never enter aggregates
+    if (!parsed.success) continue;
     byJudge.set(key, parsed.data);
   }
   const all = [...byJudge.values()];
   const sameLane = all.filter((r) => r.same_lane_suspected);
   const contrastive = all.filter((r) => !r.same_lane_suspected);
 
-  // Run summaries are AT-LEAST-ONCE (review finding 2): the write has no
-  // unique index (caused_by null), so a mid-batch redeliver can emit a second
-  // summary for the same run. Dedup by subject_id (deterministic per run
-  // timestamp), keeping the newest row; over-fetch to keep the limit honest.
+  // Summaries are at-least-once, so dedup by the per-run subject id and over-fetch
+  // to keep the returned limit honest.
   const runRows = await db
     .select({ payload: event.payload, created_at: event.created_at, subject_id: event.subject_id })
     .from(event)

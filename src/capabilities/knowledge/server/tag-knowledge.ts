@@ -1,37 +1,12 @@
-// P2 (YUK-489) — unified match-or-propose KC tagging step.
+// Shared match-or-propose KC tagging. Embed the question, retrieve nearest active
+// KCs, and either match by cosine distance or propose a new child KC.
 //
-// `tagKnowledge` is the shared content→KC-attribution step that will run on every
-// question-creation entry point (auto-enroll / upload, manual /api/mistakes, import,
-// image-candidate-accept) in P3. It REPLACES today's per-entry tagging (auto-enroll's
-// LLM-prefilled knowledge_ids + the cold-start-bridge ① half) with a single embedding
-// retrieval + threshold decision:
+// Propose mints the KC immediately so day-one tagging is not blocked, but marks it
+// approval_status='pending': an agent-invented KC is not self-approved. Both branches
+// write audit-only events; neither creates an inbox proposal.
 //
-//   1. embed the question text → qvec (DashScope text-embedding-v4, 1024-dim)
-//   2. matchKnowledgeBySimilarity(db, qvec, {topK}) → nearest active embedded KCs
-//   3. nearest cosine_distance <= MATCH_THRESHOLD  → kind:'match' (all candidates within)
-//      else                                         → kind:'propose' (mint a child KC)
-//
-// PROPOSE mints the new KC immediately (no human review wall, day-one usable — the tag
-// still applies) and writes an AUDIT-ONLY event (`experimental:auto_tag_kc_created`) that
-// is NOT a pending inbox proposal (proposalWhere() in inbox.ts does not fold generic
-// experimental:* actions), mirroring the live cold-start primitive in auto-enroll.ts.
-// YUK-1405: the minted row is `approval_status='pending'` — an agent-invented KC is an
-// unauthorised new knowledge point, honestly marked instead of self-approved.
-//
-// MATCH also writes an AUDIT-ONLY event (`experimental:auto_tag_kc_matched`, YUK-540) —
-// a silent MATCH was previously untraceable even though its knowledge_ids feed
-// mastery/FSRS one hop downstream via question.knowledge_ids. Best-effort (never throws);
-// see the MATCH branch below for the full rationale and the collision-safety note on the
-// action name (it must NOT reuse `_created` — see that branch's comment).
-//
-// LIVE-WIRED (stale "ADDITIVE-ONLY / no entry point calls this yet" claim removed, YUK-540
-// review): two production entry points call this — auto-enroll.ts (ENROLL mode, per
-// question_block) and image-candidate-accept.ts (thin-seed accept path). Reference-answer
-// generation is intentionally OUT of scope (that is P4a) — this is the pure CONTENT/KC axis
-// (design §6), orthogonal to grading (YUK-488).
-//
-// The LLM naming call (PROPOSE path) runs OUTSIDE any DB transaction (design §3 — never a
-// model call inside a DB tx). Node creation is event-first, projected in the same transaction.
+// The naming model call runs outside any DB transaction. Creation is event-first and
+// projected in the same transaction.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -44,7 +19,7 @@ import {
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/embed';
 import { questionEmbedText } from '@/server/ai/embed-source';
-// YUK-471 W1 PR-A2b — accept-time projection parity assert (dev/test throws, prod warns).
+// Projection parity assert: throws in dev/test, warns in prod.
 import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
@@ -56,9 +31,8 @@ export function isTagKnowledgeInvariantError(error: unknown): boolean {
 }
 
 /**
- * Naming seam — given the question (subject already resolved), return a concise
- * child-KC name. The ingestion caller owns model naming (or reuses an existing
- * bridge result); Knowledge owns only the match-or-propose decision and its writes.
+ * Naming seam: the caller owns model naming; Knowledge owns only the match-or-propose
+ * decision and its writes.
  */
 export type NameKcFn = (args: {
   questionText: string;
@@ -69,10 +43,8 @@ export type NameKcFn = (args: {
 
 export interface TagKnowledgeDeps {
   /**
-   * Top-level DB handle. Typed `Db` (not `Db | Tx`) deliberately: the retriever
-   * (matchKnowledgeBySimilarity) requires a top-level handle, AND the whole flow runs OUTSIDE
-   * any enroll transaction by design (the LLM naming call must never sit inside a DB tx; the
-   * tag verdict is computed first, then passed INTO the caller's tx — design §3).
+   * Top-level handle: the retriever needs it, and the verdict is computed before the
+   * caller's transaction because naming must never run inside a DB transaction.
    */
   db: Db;
   /** Embed the question text → query vector. Injected in tests. Defaults to embedText. */
@@ -83,17 +55,11 @@ export interface TagKnowledgeDeps {
   /** Override the MATCH cutoff (cosine distance). Defaults to MATCH_THRESHOLD. */
   threshold?: number;
   /**
-   * Per-run batch-coherence cache (design §4): a Map keyed by
-   * `${subjectRootId}::${normalizedName}` → knowledge_id. Sibling questions in one upload
-   * that would PROPOSE the same name reuse the first-proposed KC id instead of re-proposing
-   * a duplicate. The caller owns the Map's lifetime (one per upload pass) — `tagKnowledge`
-   * reads + writes it but never clears it. Omit for one-shot tags.
+   * Per-upload cache of `${subjectRootId}::${normalizedName}` → knowledge_id, so
+   * siblings proposing the same name reuse one KC. The caller owns its lifetime.
    *
-   * CONTRACT — calls sharing one `batchCache` MUST run SEQUENTIALLY (await each before the
-   * next), NOT concurrently (no `Promise.all`). The cache GET (miss) and SET straddle two
-   * awaits (the propose tx), so concurrent siblings proposing the same name would BOTH miss
-   * and double-create, the later SET silently overwriting the first (OCR #562). All P3
-   * callers loop sequentially (auto-enroll per-question, import per-block), satisfying this.
+   * Calls sharing a cache must run sequentially: the get/set straddle the propose
+   * transaction, so concurrent siblings would both miss and double-create.
    */
   batchCache?: Map<string, string>;
 }
@@ -104,38 +70,22 @@ export interface TagKnowledgeInput {
   /** Soft topic hint from extraction (non-authoritative), or null. */
   knowledgeHint?: string | null;
   /**
-   * YUK-1408 — the ingestion session this question text came from, when the
-   * caller is an ingestion path (auto-enroll / image-candidate). Bound onto the
-   * audit events so the shared derivation filter resolves the LIVE
-   * source-document usage policy and the payload carries the write-time stamp.
-   * Omitted by non-ingestion callers: today's behaviour (session_id null, no
-   * policy stamp) is preserved.
+   * Ingestion session, when applicable. Bound onto audit events so consent
+   * withdrawal stays retroactive through the shared derivation filter.
    */
   sessionId?: string | null;
   /** Resolved subject root id — `seed:<subjectId>:root`. The PROPOSE parent. */
   subjectRootId: string;
   /** Closed subject-id vocabulary (anti-hallucination for the naming invoker). */
   knownSubjects?: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
-  /**
-   * Optional caller-supplied provenance anchor for audit traceability (YUK-540) — e.g. the
-   * ingestion `question_block.id` (auto-enroll) or the accepted `image_candidate` proposal id
-   * (image-candidate-accept). PURELY OBSERVATIONAL: never read by the match/propose decision
-   * itself, only threaded into the MATCH audit event's payload. Omit when no natural anchor
-   * exists at call time (e.g. the question row doesn't exist yet).
-   */
+  /** Audit-only provenance anchor; never read by the decision. */
   sourceRef?: { kind: string; id: string } | null;
 }
 
 /**
- * Discriminated result. `propose` ALWAYS yields a concrete (auto-approved) knowledge id —
- * the dead `knowledge_ids:[]` zero-match gate is gone (design §2/§3).
- *
- * - `match`: ≥1 existing KC within threshold. `knowledge_ids` are the matching ids,
- *   nearest-first. NO new KC created; DOES write an audit-only event (YUK-540,
- *   `experimental:auto_tag_kc_matched`) — no row mutation, best-effort (never throws).
- * - `propose`: minted a new child KC under `subjectRootId`. `knowledge_ids=[newId]`,
- *   `kc_name` is the minted name. A batch-cache reuse (a sibling already proposed this
- *   name this run) ALSO returns `kind:'propose'` with the cached id but creates nothing.
+ * - `match`: existing KCs within threshold, nearest first; no new KC, audit only.
+ * - `propose`: a concrete id, either newly minted under the subject root or reused
+ *   from the batch cache (in which case nothing was created).
  */
 export type TagKnowledgeResult =
   | { kind: 'match'; knowledge_ids: string[] }
@@ -153,11 +103,8 @@ function batchCacheKey(subjectRootId: string, kcName: string): string {
 }
 
 /**
- * Unified match-or-propose tagging. See module header + design §3.
- *
- * Flow: embed → retrieve top-K KCs → nearest within threshold ? MATCH : PROPOSE.
- * PROPOSE consults the batch cache first (sibling reuse), else names a KC (LLM, OUTSIDE any
- * tx), records its approved creation event, projects the node, and caches its id.
+ * Match-or-propose tagging: embed, retrieve, then match within threshold or propose.
+ * A proposal reuses the batch cache before naming, and projects in the same transaction.
  */
 export async function tagKnowledge(
   deps: TagKnowledgeDeps,
@@ -167,44 +114,29 @@ export async function tagKnowledge(
   const embedFn = deps.embedFn ?? ((text: string) => embedText(text, deps.providerAttempt));
   const nameKcFn = deps.nameKcFn;
   const threshold = deps.threshold ?? matchThreshold();
-  // Guard the explicit-empty-array case too: `?? default` fires only on `undefined`, so a
-  // caller passing `[]` would otherwise leave `knownSubjectIds[0]` undefined and propagate
-  // `[undefined]` into the naming invoker (OCR #562). Treat empty as "use the default vocab".
-  // YUK-600：默认回退改活 registry 词表（getKnownSubjects——不读编译期冻结快照；
-  // custom 科目 hydrate 后自动入表）。显式空数组同样落默认（OCR #562 守卫保留）。
+  // An explicit empty list also means "use the live registry"; otherwise the naming
+  // invoker would receive an undefined subject.
   const knownSubjects = input.knownSubjects?.length ? input.knownSubjects : getKnownSubjects();
   const knowledgeHint = input.knowledgeHint ?? null;
 
-  // YUK-1408 — when the caller threads the ingestion session, both audit events
-  // inherit the source document's consented usage: the write-time stamp covers
-  // payload readers, and binding session_id lets the shared derivation filter
-  // resolve the LIVE document policy (consent withdrawal stays retroactive).
+  // Stamp both events with the session policy; binding the id keeps consent
+  // withdrawal retroactive.
   const sessionId = input.sessionId ?? null;
   const derivationPolicy = sessionId
     ? await resolveSessionDerivationPolicy(db, sessionId)
     : 'allow';
   const policyField = derivationPolicy === 'allow' ? {} : { derivation_policy: derivationPolicy };
 
-  // (1) embed the question text → query vector.
   const qvec = await embedFn(
     questionEmbedText({ prompt_md: input.questionText, reference_md: null, choices_md: null }),
   );
 
-  // (2) retrieve nearest active embedded KCs (pure read; [] for empty query vec).
   const candidates = await matchKnowledgeBySimilarity(db, qvec, { topK: RETRIEVAL_TOP_K });
 
-  // (2b) D1 (YUK-489) — SUBJECT-SCOPE the candidates. matchKnowledgeBySimilarity is a GLOBAL
-  // top-K retriever (it documents that the caller applies the effective-domain filter), so a
-  // math question whose nearest vector happens to be a physics KC would otherwise return
-  // kind:'match' under the WRONG subject. Resolve the target subject's effective domain once,
-  // then keep only candidates that resolve to the SAME effective domain. The cross-subject
-  // near-neighbour is dropped here (BEFORE the match/propose decision) so it can never cause a
-  // match; the question falls through to PROPOSE under the correct subject root. topK=10 →
-  // ≤11 short parent-walks per tag (the target + ≤10 candidates), not a hot loop.
+  // The retriever is global, so scope candidates to the target subject before
+  // deciding. Otherwise a nearest physics KC could match a math question. Parallel
+  // lookups preserve the nearest-first order.
   const targetDomain = await getEffectiveDomain(db, input.subjectRootId);
-  // Resolve each candidate's effective domain in PARALLEL — the lookups are independent (each a
-  // short parent-walk) and Promise.all preserves input order, so the nearest-first property of
-  // the retriever is retained while collapsing 10 sequential multi-query chains into one batch.
   const candidateDomains = await Promise.all(
     candidates.map((c) => getEffectiveDomain(db, c.knowledge_id)),
   );
@@ -212,9 +144,7 @@ export async function tagKnowledge(
     (_c, i) => candidateDomains[i] === targetDomain,
   );
 
-  // (3) decide MATCH vs PROPOSE. matchKnowledgeBySimilarity returns nearest-first and the
-  // subject filter preserves that order, so the first candidate is the nearest IN-SUBJECT one.
-  // MATCH when it is within the (distance) threshold.
+  // Nearest in-subject candidate decides the branch.
   const nearest = subjectScoped[0];
   if (nearest && nearest.cosine_distance <= threshold) {
     const matchingCandidates = subjectScoped.filter(
@@ -222,18 +152,10 @@ export async function tagKnowledge(
     );
     const matchingIds = matchingCandidates.map((c) => c.knowledge_id);
 
-    // Audit-only MATCH event (YUK-540) — this branch previously wrote ZERO event ("NO new KC
-    // created, NO event written" per the docstring above), making a wrong silent match
-    // completely untraceable even though knowledge_ids feed mastery/FSRS one hop downstream via
-    // question.knowledge_ids. Mirrors the PROPOSE branch's audit shape (same actor_ref,
-    // subject_kind:'knowledge', outcome:'success') with a DISTINCT action name — reusing
-    // `experimental:auto_tag_kc_created` would corrupt the fold reducer
-    // (core/projections/knowledge.ts:180, which treats that exact action as a node CREATE) and
-    // kc_dedup_nightly's `recent_auto` CTE (which would then treat an old, established KC as
-    // "recently auto-created"). Best-effort (never throws): unlike PROPOSE's event (paired with
-    // a real mutation inside one tx), this event has NOTHING to roll back, so a transient write
-    // failure must not turn a successful MATCH decision into a routed-to-review failure —
-    // mirrors kc_dedup_nightly's own audit-event catch (kc_dedup_nightly.ts:244-275).
+    // Audit-only MATCH event: attribution feeds mastery and FSRS downstream, so a
+    // silent match must stay traceable. Use a distinct action name; `_created` would
+    // make the fold reducer and dedup job treat this KC as newly created. Best effort:
+    // a failed audit write must not fail a good match.
     try {
       await writeEvent(db, {
         id: newId(),
@@ -268,27 +190,22 @@ export async function tagKnowledge(
     return { kind: 'match', knowledge_ids: matchingIds };
   }
 
-  // (4) PROPOSE — name a child KC (LLM, OUTSIDE any DB tx), then auto-approve + audit.
+  // Propose: name outside any transaction, then create and audit atomically.
   const subjectId = subjectIdFromRoot(input.subjectRootId);
   const { kc_name } = await nameKcFn({
     questionText: input.questionText,
     knowledgeHint,
-    // When the root id isn't the canonical seed shape, fall back to the first known subject
-    // so the naming invoker still has a valid pinned vocabulary entry (anti-hallucination).
+    // A non-canonical root still needs a valid pinned subject for the naming invoker.
     subjectId: subjectId ?? knownSubjects[0].id,
     knownSubjects,
   });
 
-  // Defensive: nameKcFn is injectable and ultimately model-backed; an empty / whitespace-only
-  // name would persist a blank KC (OCR #562). Fail loud instead. The bridge schema already
-  // caps length (≤60 chars), so we only guard the empty case here.
+  // Model-backed naming can return a blank string; fail loud instead of persisting it.
   if (!kc_name?.trim()) {
     throw new Error('tagKnowledge: nameKcFn returned an empty KC name');
   }
 
-  // Batch-coherence (design §4): a sibling this run already proposed this name under this
-  // root → reuse its id instead of minting a duplicate. Returned as a propose result (it WAS
-  // a propose decision) but creates nothing.
+  // Reuse a sibling's identical proposal from this run instead of minting a duplicate.
   if (deps.batchCache) {
     const key = batchCacheKey(input.subjectRootId, kc_name);
     const cachedId = deps.batchCache.get(key);
@@ -297,9 +214,8 @@ export async function tagKnowledge(
     }
   }
 
-  // Automatic approval remains atomic with its creation event and projection.
+  // Creation event, projection and timestamp are atomic.
   const newKcId = await db.transaction(async (tx) => {
-    // One event timestamp defines the new node metadata.
     const now = new Date();
     const createdId = await prepareProposedKnowledgeId(tx, {
       mutation: 'propose_new',
@@ -323,11 +239,8 @@ export async function tagKnowledge(
         name: kc_name,
         knowledge_hint: knowledgeHint,
         generated_by: 'tag_knowledge',
-        // YUK-1405 (Stage 1 B6 S5) — an agent-minted KC is an unauthorised new
-        // knowledge point: it lands 'pending' (the reserved AI-review status),
-        // not self-approved. Nothing gates on approval_status today, so the tag
-        // still applies and learning is never blocked; the marker makes the
-        // node honestly unapproved for the review flow that reads it later.
+        // Agent-minted KCs are not self-approved. Nothing gates on this today, so
+        // tagging still works, but the node is honestly marked for later review.
         approval_status: 'pending',
         reasoning: `unified tagging auto-created KC "${kc_name}" under ${input.subjectRootId} (no live KC within matchThreshold()=${threshold}); pending owner review, applied as ${createdId}`,
         ...policyField,
@@ -338,7 +251,6 @@ export async function tagKnowledge(
       created_at: now,
     });
 
-    // The recorded event is the only source of the new node.
     await projectKnowledgeNodeGuarded(tx, createdId);
     return createdId;
   });

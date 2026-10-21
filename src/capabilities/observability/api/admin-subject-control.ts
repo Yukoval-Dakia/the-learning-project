@@ -1,11 +1,6 @@
-// YUK-601 (v3.2 §3.4) — 控制行写面五壳：
-//   PATCH    /api/admin/subjects/:id           → renameSubject
-//   RETIRE   /api/admin/subjects/:id/retire    → retireSubject
-//   RESTORE  /api/admin/subjects/:id/restore   → restoreSubject
-//   RESET    /api/admin/subjects/:id/reset     → resetSubject（只换绑）
-//   VALIDATE /api/admin/subjects/:id/validate  → validateSubject（无状态，零落库）
-// 共享操作在 server/subject-control-operations.ts；写成功后重水合上架
-// （rename/reset 改 displayName/绑定拓扑，retire/restore 改三集合归属）。
+// Subject control writes: rename, retire, restore, reset (rebind only) and a
+// stateless validate. Shared operations live in the server module; a successful
+// write rehydrates the registry.
 
 import { type Db, db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
@@ -90,8 +85,7 @@ export async function VALIDATE(req: Request, params: Record<string, string>): Pr
   try {
     const p = parseSubjectId(params);
     if (!p.ok) return p.response;
-    // 无 body / 空 body 合法（纯现状校验）；**畸形** JSON 仍 400（review-765
-    // P3-2：与其余端点的 readJsonBody 纪律一致，不静默吞坏请求）。
+    // Empty body is valid for a pure check, but malformed JSON is still 400.
     let overrides: Record<string, unknown> | undefined;
     const rawText = await req.text();
     if (rawText.trim().length > 0) {
