@@ -781,8 +781,8 @@
     {
       "path": "src/server/ai/runner.ts",
       "date": "2026-10-21",
-      "baseBlob": "1577ea4d79eb72c18832c4c898c0102c8a37870c",
-      "from": 1457,
+      "baseBlob": "213b6c6b7607e57af0a236e98c9ff8a33d28850a",
+      "from": 1453,
       "to": 1461,
       "issue": "YUK-1557",
       "responsibilityReason": "Stop duplicating executed tool calls in streaming runners and record estimated abort usage for every task kind."
