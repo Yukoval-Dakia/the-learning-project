@@ -3,14 +3,14 @@ import { Suspense, lazy } from 'react';
 import {
   type PlacementProfileClient,
   PlacementProfileClientProvider,
-  getPlacementProfile,
   loadPlacementProfilePage,
 } from '@/capabilities/onboarding/ui-public';
 import { startCoachCalibrationClient } from '../coach-client';
+import { startPlacementProfileClient } from '../profile-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const profileClient: PlacementProfileClient = {
-  getPlacementProfile,
+  getPlacementProfile: startPlacementProfileClient,
   getCalibrationMaturity: startCoachCalibrationClient,
 };
 

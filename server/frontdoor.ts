@@ -4,6 +4,7 @@ import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { readStartMistakes } from './start/mistakes-reader';
+import { readStartPlacementProfile } from './start/profile-reader';
 import { readStartSubjects } from './start/subject-reader';
 
 export function buildLegacySpa(root: string): Hono {
@@ -44,6 +45,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readMistakes: readStartMistakes,
+    readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
