@@ -29,9 +29,11 @@ export const getStartTodayCost = createServerFn({ method: 'GET' }).handler(({ co
 export const getStartAutoApplied = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartAutoApplied),
 );
-export const getStartKnowledgeTree = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeTree),
-);
+export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
+  .inputValidator((input: { subject?: string } | undefined) => input)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), () => readStartKnowledgeTree(data)),
+  );
 export const getStartConjectures = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartConjectures),
 );

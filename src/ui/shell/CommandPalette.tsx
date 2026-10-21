@@ -103,7 +103,7 @@ function OpenCommandPalette({
 
   // 知识节点 open 时才 fetch（设计 index 在 open 时构建）；与 KnowledgePage 同
   // queryKey ['knowledge-tree'] → React Query 去重，不增请求。
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => getTree() });
   const knowledge = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
 
   // 全量 index（页面组静态 + 知识节点组）。设计 paletteIndex 等价物。

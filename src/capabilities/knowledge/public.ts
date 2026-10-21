@@ -1,5 +1,7 @@
 // Stable server contract for consumers outside the knowledge capability.
 
+export { KnowledgeTreeQuerySchema } from './api/contracts';
+
 export { isDirectTreePair } from '@/core/topology-gate';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {

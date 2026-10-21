@@ -60,7 +60,8 @@ export const startWorkbenchClient: WorkbenchClient = {
         input: { decision: 'retract' },
       },
     }).then((json) => ProposalDecisionResource.parse(JSON.parse(json)).result),
-  getTree: () => getStartKnowledgeTree(transport),
+  getTree: (subject) =>
+    getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
   getRecentAiChanges: () => getStartRecentAiChanges(transport),
   undoAiChange: async (artifactId, eventId) => {
