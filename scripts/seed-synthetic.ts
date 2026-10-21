@@ -1,40 +1,16 @@
-// Station 1 — synthetic seed (YUK-184).
+// Local-only synthetic seed for the FSRS / proposal / detection slices.
 //
-// Spec: docs/superpowers/specs/2026-06-01-station1-synthetic-seed-design.md
+// Re-runnable and idempotent by deterministic ids: writes through production chokepoints where
+// they exist (writeEvent, recordProposalDecisionSignal, upsertFsrsState) and uses markered direct
+// inserts for the rest. Synthetic events carry `payload.__synthetic = true`; knowledge nodes use a
+// `synthetic:` id prefix. Guarded by SEED_SYNTHETIC_OK=1 plus a loopback DATABASE_URL.
 //
-// A re-runnable dev script that manufactures a realistic, causally-chained,
-// time-distributed event history so the FSRS / proposal / detection slices of
-// Layer-8 light up and become observable on a LOCAL dev DB only.
-//
-// This is a FOCUSED dev script, NOT a framework (scope discipline). It writes
-// via the production chokepoints where they exist
-// (`writeEvent` for events, `recordProposalDecisionSignal` for signals,
-// `upsertFsrsState` for FSRS state) and markered direct-insert for the rest
-// (knowledge / knowledge_edge / question). All synthetic events carry
-// `payload.__synthetic = true`; all synthetic knowledge nodes use a `synthetic:`
-// id prefix; everything is idempotent by deterministic ids.
-//
-// CLI:
-//   pnpm seed:synthetic                  # idempotent seed (insert-or-skip)
-//   pnpm seed:synthetic --reset          # scoped teardown of synthetic rows only
-//   pnpm seed:synthetic --reset --reseed # clean re-seed
-//   pnpm seed:synthetic --observe        # seed (if needed) + stubbed-nightly + report
-//
-// Guard env required for ALL invocations (D3 prod fence):
-//   SEED_SYNTHETIC_OK=1  and  a loopback DATABASE_URL.
-//
-// The pipeline fns are parameterized on a `DbLike` handle + exported so the DB
-// test can drive them against the testcontainer. The fence + main() auto-run
-// only fire when this module is executed as the CLI entry point, so importing it
-// (in tests) is side-effect-free.
+// The pipeline fns take a DbLike handle and are exported so the DB test can drive them; the fence
+// and main() only fire when this module is the CLI entry point.
 
-// D3 / Step 0 — load `.env` BEFORE importing `@/db/client` (the client throws on
-// a missing DATABASE_URL at construction). This MUST be the first import: ESM
-// evaluates an imported module's side effects before the importing module's
-// later imports, so a side-effect import lexically before `@/db/client`
-// guarantees config() runs first. (dev-local.ts / migrate-local-db.ts are NOT
-// precedents — they spawn a child process and never import @/db/client.)
-// Scripts load `.env`, NOT `.env.local`.
+// Load `.env` before `@/db/client`: the client throws at construction when DATABASE_URL is missing,
+// and ESM evaluates imported modules' side effects before later imports. Scripts load `.env`, not
+// `.env.local`.
 import './load-env';
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -68,14 +44,10 @@ import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 
 type DbLike = Db | Tx;
 
-// ── D3 prod fence: refuse to run unless BOTH guards hold ────────────────────
-// (1) explicit opt-in env, (2) loopback DATABASE_URL. Belt-and-suspenders: the
-// codebase has NO NODE_ENV fence and the destructive /api/_/* routes are
-// token-gated but not env-gated, so for a pre-product synthetic seed the cost of
-// a misfire against a real DB is total. This is a STRICTER check than
-// `@/db/client`'s `/localhost|127\.0\.0\.1/` substring regex: we parse the URL
-// and exact-match the hostname, so `postgres://u:p@localhost.evil.com/db` (or
-// `localhost` smuggled into credentials/query) is correctly refused.
+// ── D3 prod fence: refuse unless both guards hold ─────────────────────────
+// Require explicit opt-in plus a loopback DATABASE_URL. Parse the URL and exact-match the hostname:
+// a substring check would accept localhost.evil.com or localhost smuggled into credentials/query.
+// For a pre-product synthetic seed, a misfire against a real database costs everything.
 export function assertProdFence(env: NodeJS.ProcessEnv = process.env): void {
   if (env.SEED_SYNTHETIC_OK !== '1') {
     throw new Error(

@@ -1,61 +1,17 @@
 /**
- * audit:flags — 全仓 flag 双轨清点对账（红线审查 wave F / A5）
+ * audit:flags — 全仓 flag 双轨清点对账
  *
- * 决策来源：红线挑战审查（2026-07-07）§5 条目 7 + A5-darkship 簇终裁 KEEP-WITH-COST（B1）。
- * A5 dark-ship / flag 纪律红线（flag 钉在 act/消费点，OFF 期间采集面照常 live；整能力 go-live 门
- * 须当刻登记翻转单）条文健康，但全仓 `*_ENABLED` flag 是**双轨无对账**的散文登记面：env 型
- * （`process.env.X`）与 const 型（`const X = true/false`）混用；env 型的「开」字面量在首跑时
- * 曾混用 `=== '1'` / `=== 'true'` / 双字面量 / 大小写不敏感等写法。YUK-586 已把 runtime
- * reader 收敛到 shared parseFlag；本审计继续清点它们、抓「代码有 / 登记无」和未来语法漂移。
+ * `_ENABLED` controls exist in two forms: runtime `process.env.X` reads and compile-time consts.
+ * The ledger is hand-maintained; this audit reconciles it against live source so a new flag or a
+ * removed/renamed one fails --strict instead of drifting silently. Non-ENABLED boolean and
+ * enum/CSV/JSON controls are covered by a bounded, independent census; this is not a general
+ * configuration-discovery engine.
  *
- * YUK-1088: also covers the 11 explicitly named non-ENABLED controls in
- * SCOPED_CONTROL_NAMES. Boolean controls keep env grammar; enum/CSV/JSON controls
- * use kind=config with their actual value shape and live reader marker. This
- * bounded census is independent of the ledger, so deleting registration fails.
- * It does not discover every arbitrary future configuration knob.
+ * Scanning strips comments but keeps strings, because many flags are read through a FLAG-name
+ * constant. A name left only in a comment therefore does not count as live.
  *
- * ── 什么是「flag」───────────────────────────────────────────────────────────
- *
- * 全仓以 `_ENABLED` 结尾的标识符（`[A-Z][A-Z0-9_]*_ENABLED`，末尾 word-boundary 排除
- * `DEFAULT_ENABLED_BY_KIND` 之类前缀撞名）。两轨：
- *   - **env 型**：运行时读 `process.env.<NAME>`（直读或经 helper + FLAG-name 常量），按比较的
- *     **精确字面量**判真（'1' / 'true' / 大小写不敏感…）。runtime-flippable。
- *   - **const 型**：`export const <NAME> = true|false`，编译期定死，改要重新 build。
- *
- * ── 判据（声明式 ledger + 源码反查，同 audit:relations）─────────────────────────
- *
- * `audit-flags-ledger.json` 是**手维护**的 flag 台账（首版由实扫播种），每条声明 kind / literals
- * （env 的开值集）/ case_insensitive / polarity（opt-in 默认 OFF、opt-out 默认 ON）/ file / notes。
- * 扫描器在**剥注释保字符串**的源码（src/ + server/ + scripts/）上抓每个 `*_ENABLED` token
- * （标识符 + 字符串字面量都算——很多 flag 经 FLAG-name 常量字符串间接读），得到**代码中在册的 flag
- * 名集合**，与 ledger 对账：
- *   - UNREGISTERED       —— 代码里出现但 ledger 没有（新增 flag 漏登记）。
- *   - STALE              —— ledger 有，但其声明的 `file` 里 name 不再命中（flag 删/改名/挪窝 → 台账漂移）。
- *   - READER-DRIFT       —— env flag 的声明文件不再包含 ledger 钉住的 shared `parseFlag` reader marker。
- *   - LITERAL-VARIANCE   —— **report-only 信息表**：把 env flag 按「开值约定签名」（literals + 大小写）
- *                          分组，曝光跨 flag 字面量约定不一致（polarity 是独立的默认值语义）。
- *   - LEDGER-PROBLEM     —— ledger 条目 schema 坏（kind/literals/file/reader_marker 缺失或类型错）。
- *
- * 注释里的 flag 名（如 renamed-away 的 `PREREQ_PROPAGATION_ENABLED` 只剩注释残留）被剥掉 ⇒ 不误报
- * UNREGISTERED——只有**活代码**里的 flag 才入册。
- *
- * ── 默认 report-only（exit 0）；--strict 才非零 exit ────────────────────────────
- *
- * 与 audit:relations / audit:fold-writes 同待遇：默认只报告、**不进 `pnpm test` 硬链**（advisory）。
- * `--strict` 下 UNREGISTERED>0 / STALE>0 / READER-DRIFT>0 / LEDGER-PROBLEM>0 才非零 exit。LITERAL-VARIANCE **永不** fail
- * ——它是信息呈现，字面量统一是 runtime 改动（本 lane 不改 runtime；升级由 owner 拍）。
- *
- * ── 已知限制 ────────────────────────────────────────────────────────────────
- *
- * (1) ledger 手维护：新增 flag 须补一条（否则 UNREGISTERED）。kind/literals 由**人**从实扫填；env
- *     条目还必须钉住 reader_marker。审计不尝试解析任意 TypeScript 表达式，而是用 comment-stripped
- *     exact marker 确认 reader 仍走 shared parseFlag，兼容直接读、computed key 和共享 kind map。
- * (2) 判据是 name-token 级：一个 flag 名在**任意** src/server/scripts 非测试文件里出现即「在册」。
- *
- * 用法：
- *   pnpm audit:flags          # 双轨对账 + 字面量变体表（report-only）
- *   pnpm audit:flags --json   # JSON 输出
- *   pnpm audit:flags --strict # UNREGISTERED / STALE / READER-DRIFT / LEDGER-PROBLEM 即非零 exit
+ * Default report-only. --strict exits non-zero on UNREGISTERED / STALE / READER-DRIFT /
+ * LEDGER-PROBLEM; LITERAL-VARIANCE is informational and never fails.
  */
 
 import { type Dirent, readFileSync, readdirSync } from 'node:fs';
@@ -68,19 +24,15 @@ const LEDGER_PATH = join(__dirname, 'audit-flags-ledger.json');
 
 const SCAN_ROOTS = ['src', 'server', 'scripts'] as const;
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
-// The audit's own script must not scan itself (it names flags in doc examples). Its ledger is JSON,
-// never walked. Test files are excluded by the walk's suffix filter.
+// The audit's own script names flags in doc examples, so it must not scan itself. Its ledger is
+// JSON and never walked; test files are excluded by the walk's suffix filter.
 const EXCLUDE_FILES = new Set(['scripts/audit-flags.ts', 'scripts/audit-flags.test.ts']);
 
-// `*_ENABLED` identifier/string token. Trailing (?![A-Z0-9_]) is the KEY guard: it stops
-// `DEFAULT_ENABLED` from being extracted out of `DEFAULT_ENABLED_BY_KIND` (a defaults Record, not a
-// flag). Leading (?<![A-Z0-9_]) keeps the match to a whole token.
+// Whole-token match; the trailing guard keeps DEFAULT_ENABLED out of DEFAULT_ENABLED_BY_KIND.
 export const FLAG_TOKEN_RE = /(?<![A-Z0-9_])[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_ENABLED(?![A-Z0-9_])/g;
 
-// YUK-1088 census is deliberately bounded and INDEPENDENT of ledger membership.
-// Removing a ledger entry cannot remove its name from source discovery. New controls
-// outside *_ENABLED and this list still require a census update; this is not an
-// arbitrary configuration discovery engine. Retired SKIP_BOSS_INGEST is not live.
+// Bounded census, independent of ledger membership: removing a ledger entry cannot hide a live
+// control. New controls outside *_ENABLED and this list still require an explicit census update.
 export const SCOPED_CONTROL_NAMES = [
   'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
   'HUB_SYNC_MODE',
@@ -189,11 +141,9 @@ export function validateLedgerEntry(name: string, entry: unknown): LedgerProblem
 
 // ── comment stripping (keeps strings; a flag name in a string literal DOES count) ──────────────
 //
-// Same technique as audit-fold-writes.ts: strip line + block comments, KEEP string/template
-// content (many flags are read via a FLAG-name string constant, so the token appears inside a
-// string), preserve newlines for line-number alignment. Escape/quote-aware so `//` inside a string
-// is not a comment. This is what makes a renamed-away flag that survives ONLY in comments (e.g.
-// PREREQ_PROPAGATION_ENABLED) correctly NOT counted as a live flag.
+// Strip comments, keep string/template content (many flags are read through a FLAG-name string),
+// and preserve newlines for line alignment. Escape-aware, so `//` inside a string stays a string.
+// This is what keeps a flag that survives only in comments from counting as live.
 export function stripComments(src: string): string {
   let out = '';
   let i = 0;
@@ -340,10 +290,9 @@ export function scanFlagTokens(
 
 function hasLiveFlagReference(code: string, name: string, allowEnvNameConstant: boolean): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // A few readers centralize the env-key string in a `<NAME>_ENV` constant. Count that whole
-  // identifier for env flags without loosening const-flag matching or accepting arbitrary
-  // prefixes. Env entries separately require a live reader_marker, so a leftover key constant
-  // alone still fails reconciliation as READER-DRIFT.
+  // Some readers centralize the env-key string in a `<NAME>_ENV` constant. Count that identifier
+  // for env flags only; env entries still require a live reader_marker, so a leftover key constant
+  // alone fails as READER-DRIFT.
   const suffix = allowEnvNameConstant ? '(?:_ENV)?' : '';
   return new RegExp(`(?<![A-Z0-9_])${escaped}${suffix}(?![A-Z0-9_])`).test(code);
 }
@@ -363,10 +312,9 @@ export type FlagReconciliation = {
 };
 
 /**
- * Reconcile the code-found flag set against the ledger. STALE is a PER-ENTRY reverse-check: the
- * ledger entry's declared file must exist AND still contain the flag as a live token. Env entries
- * must also contain their exact reader marker in live code, catching regressions to ad-hoc parsing.
- * Exported pure for unit testing.
+ * Reconcile live flag tokens against the ledger. STALE is per-entry: the declared file must exist
+ * and still contain the name as a live token. Env/config entries must also contain their exact
+ * reader marker, which catches regressions to ad-hoc parsing. Pure.
  */
 export function reconcileFlags(
   found: Set<string>,
@@ -403,8 +351,8 @@ export function reconcileFlags(
 
     if (entry.kind === 'env' || entry.kind === 'config') {
       const marker = entry.reader_marker;
-      // Keep the runtime guard because the JSON ledger is untrusted at load time even though the
-      // public TypeScript type is precise; validateLedgerEntry reports malformed shapes above.
+      // The JSON ledger is untrusted at load time; validateLedgerEntry reports malformed shapes
+      // above, but the runtime guard keeps the reader check safe.
       if (typeof marker === 'string' && marker.trim() !== '' && !code.includes(marker)) {
         readerDrift.push({ name, file, marker });
       }
@@ -433,11 +381,9 @@ export type VarianceGroup = {
 };
 
 /**
- * Group env flags by their literal-parsing convention (literals + case sensitivity) so the report
- * can surface the inconsistency (the "四变体字面量" the challenge flagged). Polarity remains an
- * explicit ledger property, but does not create a second literal grammar: opt-in and opt-out flags
- * share parseFlag and differ only in their fallback default. const flags have no runtime literal,
- * so they are excluded. Pure.
+ * Group env flags by literal-parsing convention so inconsistent enabled-literals show up in the
+ * report. Polarity is a separate ledger property, not another grammar. Const flags have no runtime
+ * literal and are excluded. Pure.
  */
 export function computeLiteralVariance(ledger: Ledger): VarianceGroup[] {
   const bySig = new Map<string, string[]>();

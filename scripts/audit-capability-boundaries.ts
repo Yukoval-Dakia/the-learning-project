@@ -93,7 +93,7 @@ const baselineSchema = z.object({
   changes: z.array(z.union([baselineChangeSchema, stableContractRulingSchema])).default([]),
   /** Registration log: every new audited dependency edge needs one entry. */
   edgeRecords: z.array(edgeRecordSchema).default([]),
-  /** Registration log: >1000-line growth/crossing/new files (proposal §1.4). */
+  /** Registration log: >1000-line growth/crossing/new files. */
   sourceSizeRecords: z.array(sourceSizeRecordSchema).default([]),
   /** Coordinator-approved compat shims — max 14-day windows, real consumers. */
   compatShims: z.array(compatShimSchema).default([]),
@@ -1142,13 +1142,10 @@ function auditedRatchetEdges(dependencies: readonly SemanticDependency[]): Ratch
 }
 
 /**
- * A new `server/**` edge may reach capabilities only through the approved
- * ports — `public`/`ui-public` entrypoints. A new edge to a private `api/`,
- * `ui/` or `server/` module, or to the `src/capabilities` barrel (a second
- * composition-root entry), fails — regardless of kind; owner ruling gives
- * top-level server no private type-only exemption (the kernel reverse-edge
- * type split is a different direction and does not carry over). Base stock
- * is grandfathered; a type→value upgrade on an existing pair counts as new.
+ * A new `server/**` edge may reach capabilities only through `public`/`ui-public`. A new edge to a
+ * private api/ui/server module, or to the capabilities barrel, fails regardless of kind: top-level
+ * server gets no private type-only exemption. Base stock is grandfathered; a type→value upgrade on
+ * an existing pair counts as new.
  */
 function auditServerEntryEdges(input: {
   base: readonly ServerEntryEdge[];
