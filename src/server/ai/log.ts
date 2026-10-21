@@ -6,13 +6,10 @@ import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
 import type { ProviderTransportEvidence } from './provider-transport';
 
-// cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
-// INSERT/UPDATE works against either a top-level Db or a Tx. Accepting DbLike lets callers
-// fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
-// the per-accept cost row into the question-INSERT tx for atomicity). FIX-R2-10 — all
-// THREE correlation-log writers (writeCostLedger, writeToolCallLog,
-// setToolCallLogMirroredEventId) accept DbLike for the same reason; only the ai_task_runs
-// lifecycle writers below stay Db (they are written by the runner outside any caller tx).
+// cost_ledger / tool_call_log are loose-coupled correlation logs (no FK), so one
+// INSERT works against either a top-level Db or a Tx. All three correlation-log
+// writers accept DbLike so a caller can fold the write into its transaction; the
+// ai_task_runs lifecycle writers stay Db (runner-owned, outside caller txs).
 type DbLike = Db | Tx;
 
 export interface ToolCallLogEntry {
@@ -24,11 +21,11 @@ export interface ToolCallLogEntry {
   iteration: number;
   latency_ms: number;
   cost: number;
-  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
+  /** DomainTool registry effect. Omit for rows not owned by the registry. */
   effect?: 'read' | 'propose' | 'write' | 'control';
-  /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
+  /** Set when tool execution hard-fails (timeout / parse / unsupported). */
   error_reason?: string;
-  /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
+  /** Set when the mirror policy writes the `tool_use` event; FK to event.id. */
   mirrored_event_id?: string;
 }
 
@@ -107,8 +104,8 @@ export async function writeCostLedger(db: DbLike, entry: CostLedgerEntry): Promi
 }
 
 /**
- * One models-catalog auth probe. Uses the attempt columns so an unpriced call
- * stays `cost = null` instead of a legacy zero. Not a runner task run.
+ * One models-catalog auth probe. Uses the attempt columns so an unpriced call stays
+ * `cost = null` instead of a legacy zero. Not a runner task run.
  */
 export async function writeModelCatalogProbeCost(
   db: DbLike,
@@ -168,10 +165,9 @@ async function insertCostLedger(
 }
 
 /**
- * YUK-1557 — record a remote tool call that has no provider-reported USD
- * price. The cost is explicitly `unknown` (never a fabricated zero) and the
- * synthetic task_run_id keeps the attempt-ledger uniqueness separate from the
- * model attempt row on the same run.
+ * YUK-1557 — record a remote tool call with no provider-reported USD price. The
+ * cost is explicitly `unknown` (never a fabricated zero); the synthetic task_run_id
+ * keeps ledger uniqueness separate from the model attempt row.
  */
 export async function writeUnpricedToolCost(
   db: DbLike,
@@ -259,9 +255,8 @@ export interface AiTaskUsage {
   inputTokens: number;
   outputTokens: number;
   /**
-   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
-   * (0 when the lane reported no cache) so the scoreboard can compute cache
-   * share without treating absence as unknown.
+   * YUK-1557 — provider prompt-cache counters, written on every terminal row (0 when
+   * the lane reported no cache) so cache share never reads absence as unknown.
    */
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
@@ -273,7 +268,7 @@ export interface AiTaskUsage {
    */
   usage_basis?: 'reported' | 'estimated';
   phases?: NoteGeneratePhaseTimings;
-  /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
+  /** Metadata-only proof that the provider returned reasoning blocks; raw CoT is never persisted. */
   thinkingBlocks?: number;
   thinkingCharacters?: number;
   /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
@@ -282,10 +277,8 @@ export interface AiTaskUsage {
     last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
   };
   /**
-   * YUK-1630 — per-attempt provider transport evidence: the timeout budget
-   * receipt (task timeout source + each derived layer) plus per-request wire
-   * milestones (fetch invoked / request sent / response / failure layer).
-   * Metadata only — it never feeds token counts or cost truth.
+   * YUK-1630 — per-attempt transport evidence: timeout budget receipt plus wire
+   * milestones. Metadata only — it never feeds token counts or cost truth.
    */
   transport?: ProviderTransportEvidence;
 }
@@ -335,8 +328,8 @@ export async function writeAiTaskRunFinished(
 }
 
 /**
- * Mark a settled failure only after the next SDK query has actually started.
- * A missed marker is conservative (`error`); a false positive is forbidden.
+ * Mark a settled failure only after the next provider query actually started. A
+ * missed marker is conservative (`error`); a false positive is forbidden.
  */
 export async function writeAiTaskRunRetried(db: DbLike, id: string): Promise<boolean> {
   const rows = await db
@@ -365,12 +358,9 @@ export interface AiTaskAttemptFinishEntry {
 }
 
 /**
- * Commit the two durable projections of one AI attempt as one unit.
- *
- * The transaction is intentionally owned here rather than by an adapter: every
- * runner path gets exactly one ai_task_runs terminal update and one attempt
- * ledger row carrying the same amount / basis / ref. A ledger uniqueness or
- * constraint failure therefore rolls the terminal update back too.
+ * Commit the two durable projections of one attempt as one unit: every runner path
+ * gets exactly one ai_task_runs terminal update and one ledger row with the same
+ * amount/basis/ref, so a ledger failure rolls the terminal update back.
  */
 export async function writeAiTaskAttemptFinished(
   db: Db,

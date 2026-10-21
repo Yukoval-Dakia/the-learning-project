@@ -28,14 +28,10 @@ export async function writeRetryableAiFailureLedger(
 }
 
 /**
- * YUK-379 (B1): permanent AI failure ledger — the LLM call itself SUCCEEDED
- * (cost incurred) but a downstream deterministic step (parse / schema validate)
- * failed, so retrying is wasteful. When present, `taskRunId` lets this row join
- * into run-detail observability (the task_run_id join) — the row is written FOR
- * that read surface. If the task runner returned no task_run_id the row degrades
- * to task_run_id=NULL. A capability may provide a durable job correlation key,
- * query the outcome + key as its terminal marker, and require the write to
- * succeed before acknowledging the job.
+ * YUK-379 (B1) — permanent AI failure ledger: the LLM call SUCCEEDED (cost
+ * incurred) but a downstream deterministic step failed, so retrying is wasteful.
+ * `taskRunId` joins the row into run-detail observability; without one it degrades
+ * to NULL. A capability may require the write to succeed before acking its job.
  */
 export async function writePermanentAiFailureLedger(
   db: Db | Tx,

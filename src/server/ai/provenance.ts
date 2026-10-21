@@ -20,12 +20,8 @@ export interface TaskTextResult {
   cost_basis?: 'reported' | 'estimated' | 'unknown';
   cost_ref?: string;
   /**
-   * YUK-299 seam: Agent SDK structured-output passthrough. runTask's full
-   * RunTaskResult (runner.ts) is a structural superset of this interface, so a
-   * handler-injected TaskTextRunFn can read `result.structured_output` and do
-   * three-state dispatch (structured value present / undefined / fallback).
-   * undefined ⇒ outputFormat not set, endpoint unsupported, or model fell back
-   * to text — caller must run the text-fallback parse.
+   * YUK-299 seam: structured-output passthrough. `RunTaskResult` is a structural
+   * superset, so a TaskTextRunFn can read it. undefined ⇒ fall back to text parsing.
    */
   structured_output?: unknown;
   /** NoteGenerateTask phase timings recorded on the task run. */

@@ -1,23 +1,13 @@
-// YUK-921 P3 (YUK-1022) — pi nested-subagent surface.
+// YUK-921 P3 (YUK-1022) — pi nested-subagent surface, built on the shared
+// spawn-contract (`createSpawnDecider`):
 //
-// Nested agents are declared via `ctx.piAgents` + the shared spawn-contract
-// (`createSpawnDecider` — memoized gate + depth-one definitions). This file
-// serves the contract through three pieces:
+//   - `toPiSubagentSpecs`     — depth-one AgentDefinitions → engine-neutral specs.
+//   - `createPiSpawnContract` — the shared decider as a beforeToolCall gate; deny
+//     is an error tool result, never a hard stop.
+//   - `buildPiSpawnAgentTools` — Task/Agent tools that hand off to the adapter's
+//     `PiSubagentHost` (it owns the nested loop, abort lineage and task_* frames).
 //
-//   - `toPiSubagentSpecs`   — maps the contract's depth-one AgentDefinitions to
-//     an engine-neutral spec (description/prompt/tool allowlist/maxTurns).
-//   - `createPiSpawnContract` — the shared `createSpawnDecider` wrapped as a
-//     PiHookBridge `beforeToolCall` entry: deny → `{block:true, reason}`
-//     (an error tool result, not a hard stop — no terminate).
-//     `run_in_background`/model/isolation overrides are denied inside decide();
-//     pi has no background tasks, so the allow path needs no `updatedInput`
-//     rewriting — foreground is structural.
-//   - `buildPiSpawnAgentTools` — the `Task`/`Agent` AgentTool whose execute()
-//     hands off to an adapter-provided `PiSubagentHost` (the adapter owns the
-//     nested agentLoop, the parent's abort, and the task_* frame sink).
-//
-// Depth-one is structural here: the spawn tools are mounted only on the parent
-// loop, never in the child's tool set — nested Task calls cannot exist.
+// Depth-one is structural: spawn tools mount only on the parent loop.
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { PiBeforeToolCall } from '../pi-hooks';
@@ -33,10 +23,8 @@ import {
 } from '../spawn-contract';
 
 /**
- * Engine-neutral nested-agent spec — the subset of SDK AgentDefinition the pi
- * lane can serve. `tools`/`disallowedTools` carry the same wire names
- * (`mcp__<server>__<tool>` or local names) the SDK def declares; the adapter
- * filters its mounted AgentTools by them.
+ * Engine-neutral nested-agent spec: the subset of AgentDefinition the pi lane can
+ * serve. Tool names are the same wire names the parent mounts.
  */
 export interface PiSubagentSpec {
   description: string;
@@ -48,14 +36,13 @@ export interface PiSubagentSpec {
   /** Per-child assistant-turn ceiling (def.maxTurns); unbounded when absent. */
   maxTurns?: number;
   /**
-   * Pi catalog model id or 'inherit'/undefined ⇒ parent model. SDK alias names
-   * ('sonnet', 'opus', …) have no pi meaning — declaring one fails closed.
+   * Pi catalog model id, or 'inherit'/undefined for the parent model. SDK alias
+   * names have no pi meaning — declaring one fails closed.
    */
   model?: string;
 }
 
-/** Reduce one SDK AgentDefinition to the pi spec (model alias rejection lives
- *  in the adapter, which owns the catalog). */
+/** Reduce one AgentDefinition to the pi spec (alias rejection lives in the adapter). */
 export function toPiSubagentSpec(definition: AgentDefinition): PiSubagentSpec {
   return {
     description: definition.description,
@@ -79,16 +66,15 @@ export function toPiSubagentSpecs(
 }
 
 /**
- * The pi spawn contract: the shared memoized decider exposed as a
- * PiHookBridge beforeToolCall entry, plus the depth-one specs the adapter
- * turns into the Task/Agent tool. `readBudgetReport` surfaces the decider's
- * observation ledger for the caller's spawn evidence.
+ * The pi spawn contract: the shared decider as a beforeToolCall entry plus the
+ * depth-one specs the adapter turns into Task/Agent tools.
  */
 export interface PiSpawnContract {
   /** Depth-one specs for the adapter's Task/Agent tool (mount via piAgents). */
   piAgents: Record<string, PiSubagentSpec>;
   /** Gate entry for `piHooks.beforeToolCall` — the spawn permission surface. */
   gate: PiBeforeToolCall;
+  /** Observation ledger for the caller's spawn evidence. */
   readBudgetReport(): SpawnBudgetReport;
   /** Direct decider access (tests drive decide() without the hook wrapper). */
   decider: SpawnDecider;
@@ -120,16 +106,13 @@ export function createPiSpawnContract(
 }
 
 /**
- * Adapter-supplied nested-run host. The adapter owns the real agentLoop, the
- * resolved model/catalog, the caller abort, and the durable task_* frame sink —
- * the tool itself stays a thin serializer.
+ * Adapter-supplied nested-run host: the adapter owns the agentLoop, model, abort
+ * lineage and task_* frame sink; the tool stays a thin serializer.
  */
 export interface PiSubagentHost {
   /**
-   * Run one nested agentLoop for the declared subagent. Returns the child's
-   * final assistant text (the Task tool result). Must emit the task_started /
-   * task_updated lifecycle frames through the parent's frame sink and must
-   * throw on failure (the loop turns it into an error tool result — SDK parity).
+   * Run one nested agentLoop and return the child's final text (the tool result).
+   * Must emit task_started/task_updated frames and throw on failure.
    */
   runNested(input: {
     toolCallId: string;
@@ -157,9 +140,8 @@ const TASK_INPUT_SCHEMA = {
 } as const;
 
 /**
- * Build the `Task` + `Agent` AgentTools (SDK canonicalizes both names). The
- * description lists the declared subagents so the model sees the same
- * affordance the SDK `agents` option provides.
+ * Build the Task + Agent AgentTools. The description lists declared subagents so the
+ * model sees the same affordance the SDK `agents` option provided.
  */
 export function buildPiSpawnAgentTools(
   specs: Record<string, PiSubagentSpec>,
@@ -174,8 +156,7 @@ export function buildPiSpawnAgentTools(
     const subagentType = input.subagent_type;
     const spec = typeof subagentType === 'string' ? specs[subagentType] : undefined;
     if (!spec) {
-      // The beforeToolCall gate denies unknown types first; this is the
-      // belt-and-suspenders guard for direct/unfiltered mounts.
+      // The gate denies unknown types first; this guards direct/unfiltered mounts.
       throw new Error(
         `unknown subagent_type; allowed: ${Object.keys(specs).join(', ') || '(none)'}`,
       );

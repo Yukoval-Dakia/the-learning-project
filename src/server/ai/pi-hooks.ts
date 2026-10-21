@@ -1,25 +1,19 @@
-// YUK-921 P3 (YUK-1022) / P4 (YUK-1025) — the hook surface.
+// YUK-921 P3 (YUK-1022) / P4 (YUK-1025) — the hook surface, the only tool-call
+// interception surface since the SDK's `Options.hooks`/`canUseTool` retired.
 //
-// Post-P4 this is the ONLY tool-call interception surface (the retired SDK's
-// `Options.hooks`/`canUseTool` are gone). Producers (spawn-contract /
-// cancellation / reply-finalization) emit their entries from one shared
-// decision core:
+//   deny           → beforeToolCall { block, reason }
+//   interrupt      → beforeToolCall { block, reason, terminate }
+//   post-execution → afterToolCall (isError covering failures)
+//   compaction     → transformContext re-injection (adapter-owned)
 //
-//   deny              → beforeToolCall { block, reason }
-//   interrupt         → beforeToolCall { block, reason, terminate }
-//   post-execution    → afterToolCall (isError=false / true for failures)
-//   compaction        → transformContext re-injection (adapter-owned)
-//
-// Ordering: all beforeToolCall entries run in declaration order (first defined
-// result short-circuits); afterToolCall observers run in declaration order
-// after the tool settles. Observer failures are logged and fail open —
-// visibility must never abort paid work.
+// beforeToolCall entries run in declaration order with first defined result
+// short-circuiting; afterToolCall observers all run after the tool settles.
+// Observer failures are logged and fail open — visibility must never abort paid work.
 
 import type { AfterToolCallResult, BeforeToolCallResult } from '@earendil-works/pi-agent-core';
 
-/** The tool invocation a hook observes. `agentType` is set when the call runs
- *  inside a nested subagent loop — the pi equivalent of the SDK hook input's
- *  `agent_id` field (reply-finalization uses it to mark `root_call`). */
+/** The tool invocation a hook observes. `agentType` marks nested calls
+ *  (reply-finalization reads it to distinguish `root_call`). */
 export interface PiHookToolCall {
   id: string;
   name: string;
@@ -42,16 +36,13 @@ export interface PiToolCallObservation {
   output?: unknown;
   /** The thrown/settled error value when isError. */
   error?: unknown;
-  /** True when the abort lineage was live as the tool settled — the pi
-   *  equivalent of SDK PostToolUseFailure's `is_interrupt`. */
+  /** True when the abort lineage was live as the tool settled. */
   interrupted?: boolean;
 }
 
 /**
- * Post-execution observer. May return an AfterToolCallResult override — the
- * pi equivalent of SDK PostToolUse's `additionalContext` write-back (e.g.
- * reply-finalization appends `tool_use_id=` context the model sees). Most
- * observers return undefined.
+ * Post-execution observer. May return an override — e.g. reply-finalization
+ * appends `tool_use_id=` context the model sees.
  */
 export type PiAfterToolCall = (
   observation: PiToolCallObservation,
@@ -79,9 +70,8 @@ export async function runPiBeforeToolCall(
   return undefined;
 }
 
-/** Fan an observation out to every afterToolCall entry; failures log+continue.
- *  Returns the merged override — later entries' defined fields win over
- *  earlier ones (pi applies the result field-wise). */
+/** Fan an observation out to every observer. Returns the merged override —
+ *  later defined fields win (pi applies the result field-wise). */
 export async function emitPiAfterToolCall(
   bridge: PiHookBridge | undefined,
   observation: PiToolCallObservation,

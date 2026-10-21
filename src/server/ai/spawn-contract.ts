@@ -12,8 +12,8 @@ export function isSpawnToolName(toolName: string): boolean {
 }
 
 /**
- * YUK-572/YUK-757 v2 deliberately observes real spend before choosing a number.
- * This mode never denies an enabled spawn because of an attempt count.
+ * YUK-572/YUK-757 v2 observes real spend before choosing a number, so this mode
+ * never denies an enabled spawn because of an attempt count.
  */
 export const SPAWN_BUDGET_MODE = 'report_only' as const;
 
@@ -80,10 +80,8 @@ function makeDepthOneAgents(
 }
 
 /**
- * Depth-one reduction applied by the shared contract — strips spawn tools from
- * `tools`, adds them to `disallowedTools`, pins `background:false`. The pi
- * subagent host consumes the reduced definitions when it builds the
- * Task/Agent AgentTool.
+ * Depth-one reduction from the shared contract: strips spawn tools from `tools`,
+ * adds them to `disallowedTools`, pins `background:false`.
  */
 export function toDepthOneAgents(
   agents: Record<string, AgentDefinition>,
@@ -92,10 +90,8 @@ export function toDepthOneAgents(
 }
 
 /**
- * The engine-neutral half of the spawn contract (YUK-1022): memoized
- * per-toolUseId decisions plus the report-only budget ledger. The pi
- * beforeToolCall gate consults this decider so duplicate consultations cannot
- * double-count or disagree.
+ * Engine-neutral half of the spawn contract: memoized per-toolUseId decisions plus
+ * the report-only ledger, so duplicate consultations cannot double-count.
  */
 export interface SpawnDecider {
   decide(toolUseId: string, input: unknown): { decision: SpawnBudgetDecision; message?: string };
@@ -132,11 +128,10 @@ export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDe
         'name' in taskInput ||
         taskInput.run_in_background === true
       ) {
-        // Role definitions, not model-emitted Task input, own model/isolation and
-        // foreground completion. A background override can let the parent finish
-        // without receiving the child conclusion, breaking one-voice product flow.
-        // Reject rather than silently strip so both guard surfaces make the same
-        // correlation-id keyed decision and the attempted privilege change is visible.
+        // Role definitions own model/isolation and foreground completion: a
+        // background override could let the parent finish without the child's
+        // conclusion. Reject rather than strip so the attempted privilege change is
+        // visible on both guard surfaces with the same correlation-id decision.
         record = {
           decision: 'deny_input_override',
           message: 'Agent model/isolation/name/background overrides are not allowed',

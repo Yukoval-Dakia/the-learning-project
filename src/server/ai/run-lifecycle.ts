@@ -92,24 +92,17 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
   kind: TaskKind;
   taskRunId: string;
   timeoutMs: number;
-  /**
-   * YUK-1630 — which budget layer produced `timeoutMs` ('caller' | 'config' |
-   * 'definition'); forwarded into the transport evidence budget receipt.
-   */
+  /** YUK-1630 — which budget layer produced `timeoutMs`; forwarded to transport evidence. */
   timeoutSource?: TaskTimeoutSource;
   /**
-   * Optional controller shared with in-process tools spawned by this attempt.
-   * The lifecycle remains its owner: provider timeout, lease fencing and caller
-   * cancellation all abort this exact controller so borrowed child work cannot
-   * outlive the parent admission permit.
+   * Optional controller shared with in-process tools. The lifecycle owns it:
+   * timeout, lease fencing and caller cancellation all abort this controller.
    */
   abortController?: AbortController;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /**
-   * YUK-1013 — per-run model binding, forwarded verbatim from RunTaskCtx. The
-   * constructor merges its provider/model into provider resolution (override
-   * wins per-field — explicitProviderRouting), reads `effort` for the run
-   * metadata event, and `adapter` for the recorded execution engine.
+   * YUK-1013 — per-run model binding. Provider/model merge into resolution
+   * (override wins per-field); `effort` feeds run metadata, `adapter` the engine.
    */
   modelBinding?: ModelBinding;
   /** Active outer central attempt when a DomainTool starts a nested task. */
@@ -141,7 +134,7 @@ export interface LifecycleAttemptDecision {
 }
 
 export interface ProviderSessionExecution<T> {
-  /** Start the exact task-configured SDK transport without submitting a prompt. */
+  /** Start the exact task-configured provider transport without submitting a prompt. */
   prepare(): Promise<void>;
   /** Submit the prompt and consume the provider-backed session. */
   run(): Promise<T>;
@@ -179,14 +172,9 @@ function safeInputHash(input: unknown): string {
 }
 
 /**
- * One task attempt's state owner.
- *
- * SDK adapters only translate messages into `recordTerminalResult`, text
- * deltas and tool calls. This module owns the durable lifecycle invariant for
- * every adapter: started row, abort propagation, cost, terminal row and
- * after-run observation. Terminal methods have one sequential owner; a
- * concurrent terminal call is unsupported and fails closed rather than joining
- * the in-flight transaction.
+ * One task attempt's state owner: started row, abort propagation, cost, terminal
+ * row and after-run observation. Terminal methods have one sequential owner; a
+ * concurrent terminal call fails closed rather than joining the transaction.
  */
 export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly abortController: AbortController;
@@ -194,16 +182,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly taskRunId: string;
   readonly kind: TaskKind;
   /**
-   * YUK-924 — effective ModelProfile for the resolved (provider, model) lane,
-   * including `source` ('binding' | 'catalog' | 'defaults') for run metadata.
+   * YUK-924 — effective ModelProfile for the resolved lane, incl. `source`
+   * ('binding' | 'catalog' | 'defaults') for run metadata.
    */
   readonly modelProfile: ModelProfile;
   /**
-   * YUK-1630 — this attempt's transport evidence sink. The runner forwards it
-   * to the adapter via `options.transportEvidence`; every provider request the
-   * pi drivers issue records wire milestones into it. Its snapshot rides
-   * `usage_json` on every terminal write — including aborts that never saw a
-   * result frame.
+   * YUK-1630 — this attempt's transport evidence sink, forwarded to the adapter.
+   * Its snapshot rides `usage_json` on every terminal write, including aborts.
    */
   readonly transportEvidence: ProviderTransportCollector;
 
@@ -247,16 +232,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.abortController = config.abortController ?? new AbortController();
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
-    // YUK-1013 — the binding's provider/model merge in here (escape-hatch
-    // override wins per-field) so EVERY lifecycle caller gets the same
-    // env chat pin > explicit > DB global > task/default layering, not just the runner's three sites.
+    // YUK-1013 — merge the binding here (override wins per-field) so every
+    // lifecycle caller gets the same provider-resolution layering.
     this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
-    // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
-    // declares needsToolCall / isMultimodal may only run on a lane whose
-    // ModelProfile CONFIRMS the capability ('unknown' rejects too; the remedy
-    // is an explicit provider-binding entry). Thrown from the constructor —
-    // before any admission row, attempt row, or paid call — exactly like a
-    // missing provider credential, so no retry layer ever sees it.
+    // YUK-924 P2 — fail-closed capability gate: a task declaring needsToolCall /
+    // isMultimodal may only run on a profile that CONFIRMS it ('unknown' rejects).
+    // Thrown before any admission row, attempt row or paid call.
     assertModelProfileCapabilityFit(
       tasks[config.kind],
       this.resolved.provider,
@@ -284,11 +265,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Record which layer initiated the abort synchronously BEFORE the signal
-   * fires, so wire evidence names the real initiator (execution timer,
-   * session deadline, caller signal, lease loss, generic lifecycle abort)
-   * instead of leaving operators to guess from elapsed time. Only the first
-   * abort transition records a marker.
+   * Record the abort initiator synchronously BEFORE the signal fires so wire
+   * evidence names the real layer. Only the first transition records a marker.
    */
   private initiateAbort(kind: TransportAbortInitiator): void {
     if (!this.abortController.signal.aborted) {
@@ -307,12 +285,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         numTurns: 0,
       };
     const phased = !this.notePhases ? base : { ...base, phases: { ...this.notePhases } };
-    // YUK-1630 — transport evidence is metadata namespaced beside the token
-    // truth: it never feeds tokenCounts/costTruth, and a usage 0 / cost null
-    // row keeps its meaning (unknown, not free). It is attached ONLY when a
-    // consumer armed the controlled pi lane — an unobserved lane (e.g. the
-    // typed-primitive runner's direct POST) must not persist an empty
-    // `requests: []` that would read as false `not_sent` evidence.
+    // YUK-1630 — transport evidence sits beside the token truth and never feeds
+    // it; attached only when the controlled lane was armed, so an unobserved lane
+    // cannot persist `requests: []` that reads as false `not_sent` evidence.
     if (!this.transportEvidence.isArmed) return phased;
     return { ...phased, transport: this.transportEvidence.snapshot() };
   }
@@ -324,9 +299,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Persist a bounded estimate when a provider call ended without a usable
-   * usage payload. `failure-estimate` covers non-abort failures; `timeout-estimate`
-   * stays reserved for budget aborts.
+   * Persist a bounded estimate when a provider call ended without usable usage:
+   * `failure-estimate` for non-abort failures, `timeout-estimate` for budget aborts.
    */
   async recordEstimatedUsage(input: {
     promptText: string;
@@ -387,9 +361,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * YUK-1557 — the persisted projection of usage. `usage` stays the public
-   * run-result shape (existing callers pin it), while the terminal row carries
-   * the provider cache counters and completed-turn count in one place.
+   * YUK-1557 — persisted usage: `usage` stays the public run-result shape while
+   * the terminal row carries cache counters and completed turns.
    */
   private get persistedUsage(): AiTaskUsage {
     const counts = this.tokenCounts;
@@ -465,18 +438,16 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Own the complete provider-session boundary without holding the permit during
-   * terminal DB settlement. Admission wait precedes the durable model-attempt
-   * row and the execution timer, so queue time can never masquerade as model
-   * runtime or create an unknown-cost YUK-841 attempt that never called the SDK.
+   * Own the provider-session boundary without holding the permit during terminal
+   * settlement. Admission wait precedes the durable attempt row and timer, so queue
+   * time never masquerades as model runtime.
    */
   async withProviderSession<T>(
     actualInput: unknown,
     execution: ProviderSessionExecution<T>,
   ): Promise<T> {
-    // Canonicalization may synchronously hash binary input. Prepare it before
-    // acquiring the lease so large local inputs cannot starve its heartbeat;
-    // the durable attempt row itself still starts only after admission.
+    // Canonicalization may synchronously hash binary input. Prepare it before the
+    // lease so large local inputs cannot starve its heartbeat.
     const inputHash = safeInputHash(actualInput);
     const permit =
       this.admissionPlan.mode === 'off'
@@ -509,9 +480,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       if (this.admissionFailure) throw this.admissionFailure;
       if (this.abortController.signal.aborted) {
         // Caller cancellation and the ordinary model timer are not admission
-        // failures. Keep them as plain errors so an already-aborted request
-        // cannot manufacture provider_admission truth before any attempt row,
-        // and a started attempt still binds to budget_timeout.
+        // failures; keep them plain so they cannot manufacture provider_admission
+        // truth before an attempt row exists.
         throw new Error(`provider attempt aborted ${phase}`);
       }
       if (
@@ -535,11 +505,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     };
 
     const assertProviderSessionCompletionAllowed = () => {
-      // Recheck the lease and cancellation after the SDK iterator finishes.
-      // Cooperative abort is not proof that a provider/CLI stopped, and an
-      // event-loop stall can let a terminal continuation run before its timer.
-      // Do not recheck providerStartDeadlineAt here: it is only a gate for
-      // beginning a retry and must never truncate a query already in flight.
+      // Recheck lease and cancellation after the iterator finishes: cooperative
+      // abort is not proof the provider stopped. providerStartDeadlineAt is not
+      // rechecked — it only gates beginning a retry, never a query in flight.
       permit?.assertProviderStartAllowed();
       if (this.admissionFailure) throw this.admissionFailure;
       const sessionDeadlineElapsed =
@@ -547,9 +515,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         Date.now() >= this.config.providerSessionDeadlineAt;
       if (sessionDeadlineElapsed) this.initiateAbort('session_deadline');
       if (this.abortController.signal.aborted) {
-        // This can be the ordinary model budget or caller cancellation, not an
-        // admission/control-plane failure. Keep it as a plain error so the
-        // runner's existing `aborted` binding preserves budget_timeout truth.
+        // Ordinary model budget or caller cancellation, not a control-plane
+        // failure; a plain error keeps budget_timeout truth.
         throw sessionDeadlineElapsed
           ? new ProviderSessionWallClockBudgetError('during query')
           : new Error('provider attempt aborted during query');
@@ -560,16 +527,14 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     try {
       assertProviderStartAllowed('before adapter startup');
       await execution.prepare();
-      // Adapter startup performs the engine's tool-mount/connect handshake but
-      // submits no prompt. Keep that uninterruptible cold-start work inside the
-      // admission slot and outside model-attempt runtime/cost accounting.
+      // Adapter startup performs the tool-mount/connect handshake but submits no
+      // prompt. Keep that cold-start work inside the admission slot.
       assertProviderStartAllowed('during adapter startup');
       await permit?.completeStartup();
       assertProviderStartAllowed('after startup lease transition');
       await this.startWithInputHash(inputHash);
-      // Admission can return just inside the retry window while the durable
-      // start write blocks past it. Recheck the lease, cancellation and wall
-      // clock at the final pre-prompt seam.
+      // Admission can return inside the retry window while the durable start write
+      // blocks past it; recheck at the final pre-prompt seam.
       assertProviderStartAllowed('during durable start');
       this.armExecutionTimer();
       assertProviderStartAllowed('before provider query');
@@ -584,9 +549,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     try {
       await execution.close();
     } catch (error) {
-      // Cleanup is best-effort and must not overwrite the provider/admission
-      // truth. Keep the permit until this attempt has at least tried to close
-      // its local CLI resource.
+      // Cleanup is best-effort and must not overwrite provider/admission truth.
       console.warn(`[${this.config.logScope}] provider session cleanup failed`, {
         task_run_id: this.taskRunId,
         kind: this.kind,
@@ -606,9 +569,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   private async startWithInputHash(inputHash: string): Promise<void> {
-    // The registry map's value type is the union of every spec's inferred
-    // literal shape; read optional declared fields through this interface view
-    // (same pattern as runner.ts buildQueryOptions).
+    // The registry map's value type is the union of every spec's inferred literal
+    // shape; read optional declared fields through this interface view.
     const declaredDef: TaskDefinition = tasks[this.kind];
     try {
       await writeAiTaskRunStarted(this.config.db, {
@@ -622,11 +584,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       });
       this.durableStart = true;
       this.trace?.metadata({ task_run_id: this.taskRunId, durable_settled: false });
-      // YUK-924 P2 — run lifecycle metadata: record where the effective model
-      // profile came from and which reasoning effort the run wires (the task
-      // spec's YUK-923 declaration, else the profile's operational default).
-      // Emitted as a structured event on the same channel as the lifecycle's
-      // other run events; no schema change.
+      // YUK-924 P2 — record the profile source and the wired reasoning effort on
+      // the same event channel as the lifecycle's other run events.
       console.info(`[${this.config.logScope}] model_profile_resolved`, {
         event: 'model_profile_resolved',
         task_run_id: this.taskRunId,
@@ -635,16 +594,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         model: this.resolved.model,
         profile_source: this.modelProfile.source,
         reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
-        // YUK-1547 — per-task model-native reasoning params resolved from
-        // task.<kind>.reasoning (verbatim wire passthrough; null = none).
+        // YUK-1547 — native reasoning params (verbatim wire passthrough; null = none).
         native_reasoning_params: this.resolved.nativeReasoningParams ?? null,
-        // YUK-1547 — which config layer produced this binding, frozen at
-        // resolution (opt-in task pair / global pin / call override / …).
+        // YUK-1547 — which config layer produced this binding, frozen at resolution.
         selection_rule: this.resolved.selectionRule ?? null,
-        // YUK-921 §2.1 — adapter selection stays observable on the run record.
-        // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
-        // tasks report 'typed' — their transport is the decisions endpoint,
-        // not a pi adapter.
+        // YUK-921 §2.1 — adapter selection stays observable. 'pi' is the only legal
+        // adapter id; YUK-1049 typed tasks report 'typed'.
         execution_adapter:
           this.config.modelBinding?.adapter ??
           ((declaredDef as { execution?: string }).execution === 'typed' ? 'typed' : 'pi'),
@@ -675,9 +630,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Keep the latest aggregate SDK usage even when no terminal result arrives.
-   * Result-error messages carry authoritative aggregate usage; budget aborts can
-   * still contribute the assistant turns observed before the stream was cut.
+   * Keep the latest aggregate usage even when no terminal result arrives (budget
+   * aborts still contribute the assistant turns observed before the cut).
    */
   recordObservedUsage(observation: ObservedRunUsage): void {
     if (this.terminal) return;
@@ -827,17 +781,15 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         ? Number.POSITIVE_INFINITY
         : Math.max(0, this.config.providerSessionDeadlineAt - Date.now());
     const timeoutMs = Math.min(this.config.timeoutMs, deadlineRemainingMs);
-    // The armed timer represents min(task budget, deadline remaining) — name
-    // the initiator by which bound actually governs it.
+    // Name the initiator by which bound actually governs the armed timer.
     const timeoutInitiator: TransportAbortInitiator =
       deadlineRemainingMs < this.config.timeoutMs ? 'session_deadline' : 'execution_timeout';
     if (timeoutMs <= 0) {
       this.initiateAbort(timeoutInitiator);
       return;
     }
-    // Non-finite bound = uncapped execution window: skip arming entirely.
-    // setTimeout(Infinity) degenerates to ~1ms (TimeoutInfinityWarning), which
-    // would abort the run instantly instead of leaving it unbounded.
+    // Unbounded window: setTimeout(Infinity) degenerates to ~1ms and would abort
+    // the run instantly.
     if (!Number.isFinite(timeoutMs)) return;
     this.transportEvidence.noteExecutionTimeoutMs(timeoutMs);
     this.timer = setTimeout(() => this.initiateAbort(timeoutInitiator), timeoutMs);
@@ -860,10 +812,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     if (this.terminalWriteInFlight) return false;
     if (this.terminalWriteAttempts.has(input.status)) return false;
 
-    // A failed success projection may be downgraded exactly once to an
-    // application failure. Never retry an ambiguous status, upgrade failure to
-    // success, or allow concurrent terminal transactions. The DB's running-row
-    // CAS and unique attempt ledger remain the final double-write guards.
+    // A failed success projection may be downgraded exactly once to failure. Never
+    // retry an ambiguous status, upgrade failure to success, or allow concurrent
+    // terminal transactions; the DB's CAS and unique ledger remain the last guards.
     if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
     this.terminalWriteAttempts.add(input.status);
     this.terminalWriteInFlight = true;
