@@ -55,6 +55,10 @@ interface WeeklyResponse {
   top_knowledge: Array<{ id: string; name: string; failure_count: number }>;
 }
 
+export type CoachWeeklyReader = (days: number, timeZone: string) => Promise<WeeklyResponse>;
+const readHttpWeekly: CoachWeeklyReader = (days, timeZone) =>
+  apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone));
+
 type Window = 7 | 30 | 90;
 
 const WINDOW_OPTIONS: { days: Window; label: string }[] = [
@@ -113,7 +117,13 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
 };
 
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
-export default function CoachHub({ navigate }: { navigate: (to: string) => void }) {
+export default function CoachHub({
+  navigate,
+  readWeekly = readHttpWeekly,
+}: {
+  navigate: (to: string) => void;
+  readWeekly?: CoachWeeklyReader;
+}) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
   const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
     activity: null,
@@ -188,7 +198,7 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
         aria-labelledby={`coach-tab-${view}`}
         className="coachhub-panel"
       >
-        {view === 'activity' && <CoachActivityView navigate={hubGo} />}
+        {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
         {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
         {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
       </section>
@@ -198,13 +208,19 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
 
 // 活动量视图 = 原 CoachPage 周报，逻辑零改（query / Stateful / CoachReport 逐字保留）。只把自己的
 // page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
-function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
+function CoachActivityView({
+  navigate,
+  readWeekly,
+}: {
+  navigate: (to: string) => void;
+  readWeekly: CoachWeeklyReader;
+}) {
   const [days, setDays] = useState<Window>(7);
   const timeZone = browserTimeZone();
 
   const q = useQuery({
     queryKey: ['weekly-review', days, timeZone],
-    queryFn: () => apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone)),
+    queryFn: () => readWeekly(days, timeZone),
   });
 
   // Empty only when the window has NO signal at all — a failure-only window
