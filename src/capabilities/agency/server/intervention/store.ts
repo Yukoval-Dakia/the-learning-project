@@ -557,7 +557,7 @@ export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
     );
     const { loadNativeInterventionDiagnosticState } = await import(
-      '@/capabilities/practice/public'
+      '@/kernel/read-models/intervention-diagnostic-verdict'
     );
     const native = await loadNativeInterventionDiagnosticState(tx, attemptId);
     if (!native) return null;

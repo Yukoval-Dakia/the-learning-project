@@ -1,5 +1,4 @@
 import { eq } from 'drizzle-orm';
-import { loadLatestTrustedInterventionDiagnosticVerdict } from '@/capabilities/practice/public';
 import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
 import { InterventionDiagnosticQuestionMetadata } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -10,6 +9,7 @@ import type {
   EventSubscriptionHandlerFactory,
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
+import { loadLatestTrustedInterventionDiagnosticVerdict } from '@/kernel/read-models/intervention-diagnostic-verdict';
 import {
   recordInterventionDiagnosticReview,
   recordNativeInterventionDiagnosticReview,
