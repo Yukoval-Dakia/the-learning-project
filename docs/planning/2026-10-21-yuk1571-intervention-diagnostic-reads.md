@@ -208,3 +208,9 @@ merge冲突、原红/恢复后的tighten与AST事实在c46目录的
 `diagnostic-read-mainf52a-integration/`；manifest SHA256
 `76241984673614fce8068d9f20c66afc6a29974a6e063db97869627e7af7a59b`。
 本节随后仅文档提交；独立终态seal绑定受检9031源码/账目，不冒称final doc提交重跑五门。
+
+## 父接管最新 main 整合（2026-10-21）
+
+原writer provider启动失败，父核terminal/null active、无遗留进程及clean后接管。普通合入main `ea000ff69ccc202b488923c74b4521a7bd5b391f`；受检源码 `6f951eda15523287099f47bbcc65703be54e5923`，heavy.sh全机2槽五门真实rc0。原R1不重开；全部产品非import正文与R1相同，main全部非owned mode/type/blob保留。baseline历史34条raw entry前缀保持，仅原生tighten登记本片真实变化。当前候选server=393、cross=36，不计已合main。测试、DB、provider/runtime、install均未执行。
+
+证据 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/6f951eda15523287099f47bbcc65703be54e5923/parent-main-ea-gates`（results.json、parent-proof.json、五门raw）。本提交仅追加文档，受检源码/baseline不变，旧seal不覆盖。父接续PR/exactCI及合后实际main审计。
