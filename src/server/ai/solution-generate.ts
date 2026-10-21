@@ -14,11 +14,11 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/knowledge/public';
+import { embedHash, questionEmbedText } from '@/core/embed-source';
 import { Rubric } from '@/core/schema/business';
 import { SolutionGenerateOutput } from '@/core/schema/solution';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
-import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
