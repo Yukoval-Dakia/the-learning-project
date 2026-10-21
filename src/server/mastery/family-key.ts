@@ -19,11 +19,9 @@ import { buildFamilyKey } from './family-key-format';
 type DbLike = Db | Tx;
 
 export interface FamilyKeyInput {
-  /** 题目的主 knowledge_id（q.knowledge_ids[0]）。空 → 无法成键 → null。 */
+  /** 题目主 KC（q.knowledge_ids[0]）；空则无法成键。 */
   primaryKnowledgeId: string | null | undefined;
-  /** question.kind。 */
   kind: string | null | undefined;
-  /** question.source。 */
   source: string | null | undefined;
 }
 

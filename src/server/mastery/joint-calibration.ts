@@ -1,36 +1,21 @@
-// YUK-439 (ADR-0043 2026-10-19 Amendment A1–A6) — 先验锚定的 b×θ̂ 联合标定：批量写者。
+// YUK-439 (ADR-0043 A1–A6) — 先验锚定的 b×θ̂ 联合标定批量写者。
 //
-// ─── 这台机器做什么 ─────────────────────────────────────────────────────────
-// 小批 b 后验更新（A2 节奏：nightly `recalibration_nightly` 承载；θ̂ 仍每作答在线 Elo，
-// updateThetaForAttempt 路径不变、读 b_post）。批内以每条证据的 θ_before 快照对 θ̂
-// 准静态（thetaBefore 纪律）做条件后验更新；θ|b 的另一半交替由在线 θ̂ 在批间自然承担
-// （每次作答读新 b_post）——票面验收 4 的「或每次 b 更新后做对齐」选项。
+// 小批 b 后验更新（A2：nightly recalibration_nightly 承载；θ̂ 仍每作答在线 Elo，
+// updateThetaForAttempt 不变、读 b_post）。批内以每条证据的 θ_before 快照对 θ̂ 准静态，
+// 做条件后验更新；θ|b 的另一半由在线 θ̂ 在批间承担。
 //
-// 每题后验从**证据账本全量重算**（幂等；更正/撤销删改账本行后下批自然跟随）：
-//   b_post(j) = MAP[ N(μ_j, τ_j²) 先验 + Σ_e w_e·(s_e·log σ(θ_e−b) + (1−s_e)·log(1−σ(θ_e−b))) ]
-// 数学在 src/core/difficulty-posterior.ts（纯层）；本模块是 DB 编排 + 写者。
+// 每题后验从证据账本全量重算（幂等；更正/撤销删改账本行后下批自然跟随）：
+//   b_post(j) = MAP[ N(μ_j, τ_j²) + Σ_e w_e·(s_e·log σ(θ_e−b) + (1−s_e)·log(1−σ(θ_e−b))) ]
+// 数学在 src/core/difficulty-posterior.ts；本模块只做 DB 编排与写。
 //
-// ─── 写者契约（G4 改写后的红线，A3）─────────────────────────────────────────
-// b_post / posterior_variance / calibration_n / calibration_weight /
-// calibration_source / last_calibrated_at 的批量写只由本模块承担；锚写者
-// （applyItemPrior / setFixedAnchor）只在写锚时**初始化**后验（= 先验）；结算
-// revert/withdraw 删掉某题最后一条证据后，由 item-calibration.ts
-// resetPosteriorToPriorIfNoEvidence 在**同一事务**把该题后验修回先验（否则零证据题
-// 不再进批，会永久保留含已撤销作答的后验）。在线 attempt 路径只 READS（effectiveB），
-// 从不写 b——b 单写者由标定批保。
+// 写者契约（A3）：后验列族的批量写只由本模块承担；锚写者只在写锚时初始化后验；
+// 结算 revert 删掉最后一条证据后由 item-calibration.ts 在同一事务修回先验。在线
+// attempt 路径只读 effectiveB，从不写 b。
 //
-// ─── A5 尺度漂移审计（Kolen-Brennan mean/sigma linking）──────────────────────
-// 每批边界：参照集 = 后验仍由先验主导的强锚题（证据精度贡献 ≤
-// REFERENCE_EVIDENCE_PRECISION_FRACTION_MAX），把 (θ̂, b) 场对回先验锚尺度。
-// |shift| / |slope−1| 超容差 → θ̂ 与 b 场整体归一回锚尺度（平移分量保预测不变，
-// slope 分量是单位修正）+ 触发先验质量调查（日志 flag）。归一是先验锚住整体平移的
-// 落点——数据只能把场拖离锚到容差内，越界即拉回。
-//
-// ─── 红线 ──────────────────────────────────────────────────────────────────
-// G1：本模块在 job 顶层调（非 attempt tx 内）→ per-item try/catch 隔离，不加 SAVEPOINT。
-// G3：只写 item_calibration 后验列族（+ 归一时的 mastery_state θ̂ / evidence θ 快照 /
-//     family b_delta 尺度随动）；never item b / stream / due / 判分。
-// G5：候选 JOIN question 排 draft（notDraftPredicate）。
+// A5 尺度漂移审计：每批边界用先验主导的强锚题做 Kolen-Brennan mean/sigma linking；
+// 越界则整体归一回锚尺度并 flag 先验质量调查。G1：job 顶层 per-item try/catch；
+// G3：只写 item_calibration 后验列族（归一随动 θ̂/证据快照/family delta）；G5：候选
+// JOIN question 排 draft。
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import {
@@ -53,16 +38,10 @@ import { attemptLocalDate } from './recalibration';
 // ─────────────────────────────────────────────────────────────────────────────
 // 模型判分路由级复判一致率（A4 w_e 的 agreement 因子）。
 //
-// live 资产：nightly judge-calibration sampler 写的 experimental:judge_calibration_sample
-// 观测事件（practice 包 job）+ /api/admin/judge-calibration agreement 读面。此处按
-// **bit 一致率**（correct/incorrect 二分位一致——标定证据消费的正是分数方向）在模型
-// 路由（legacy JudgeKind 里非 objective 的路由）上聚合；same_lane 样本（同 lane 自一致，
-// 非对照）排除——与观测读面同纪律。样本 < MIN_N → null（批时落登记默认 0.6，
-// MODEL_ROUTE_DEFAULT_RELIABILITY）。
-//
-// 读 seam 说明：payload 形状归 practice 的 sampler job 所有；本处是最小只读聚合
-//（与 admin 读面同一事件源、不同投影——那边带 notes/近期样本，这边只要一个比率），
-// 不拉 observability 包依赖（capability 边界）。
+// 从 nightly sampler 写的 experimental:judge_calibration_sample 事件按 bit 一致率
+// 聚合，排除 same_lane 自一致样本。样本 < MIN_N → null（批时落默认 0.6）。payload
+// 形状归 practice sampler 所有；这里只做最小只读聚合，不拉 observability 依赖
+// （capability 边界）。
 // ─────────────────────────────────────────────────────────────────────────────
 const JUDGE_SAMPLE_ACTION = 'experimental:judge_calibration_sample';
 const JUDGE_SAMPLE_WINDOW_DAYS = 90;
@@ -178,8 +157,7 @@ export async function runJointCalibrationBatch(
   const windowStart = candidateWindowStart(now);
   const agreementRate = await loadModelAgreementRate(db);
 
-  // 1. 候选（结构同旧 nightly：GROUP BY + HAVING；LEFT JOIN miss ⇒ stale，正确纳入
-  //    有证据但无 calibration 行的题）。
+  // LEFT JOIN miss ⇒ stale：有证据但无 calibration 行的题也要进候选。
   const candidates = await db
     .select({ questionId: difficulty_calibration_evidence.question_id })
     .from(difficulty_calibration_evidence)
@@ -230,7 +208,6 @@ export async function runJointCalibrationBatch(
     return result;
   }
 
-  // 2. 批量取证据 + 现行标定行（每题一次内存牛顿，无 per-item 读放大）。
   const evidenceRows = await db
     .select()
     .from(difficulty_calibration_evidence)
@@ -255,7 +232,6 @@ export async function runJointCalibrationBatch(
     evidenceByQuestion.set(row.question_id, list);
   }
 
-  // 3. 逐题后验重算 + 写（per-item try/catch，G1）。
   const deltas: number[] = [];
   for (const questionId of candidateIds) {
     try {
@@ -315,7 +291,6 @@ export async function runJointCalibrationBatch(
   result.delta_median = summary.median;
   result.delta_max = summary.max;
 
-  // 4. KB 漂移审计 + 越界归一（A5），然后 A6 全局指标。
   await auditAndMaybeRenormalize(db, result, now);
   await collectEvidenceMix(db, result);
   return result;

@@ -195,7 +195,7 @@ export async function replaceKcTypedState(
 export async function upsertKcTypedState(db: Db, input: UpsertKcTypedStateInput): Promise<void> {
   const subjectKind = input.subject_kind ?? 'knowledge';
   await db.transaction(async (tx) => {
-    // Released at transaction commit. Namespace is not mastery `fsrs:` or `mastery:`.
+    // Released at tx commit; this namespace is separate from the mastery locks.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`kc_typed:${subjectKind}:${input.subject_id}`}))`,
     );
