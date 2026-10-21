@@ -165,10 +165,12 @@ export default function NoteReaderPage({
   id,
   navigate,
   read = getNotePage,
+  save = saveBodyBlocks,
 }: {
   id: string;
   navigate: (to: string) => void;
   read?: typeof getNotePage;
+  save?: typeof saveBodyBlocks;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -248,7 +250,7 @@ export default function NoteReaderPage({
 
   const saveM = useMutation({
     mutationFn: () =>
-      saveBodyBlocks(id, {
+      save(id, {
         artifact_version: note?.version ?? 0,
         body_blocks: { type: 'doc', content: draft ?? [] },
       }),
