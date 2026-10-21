@@ -1413,6 +1413,36 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns active misc cause label resolution. Practice owns the weekly cause ranking and display projection; this reference moves out of the HTTP adapter.",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/chat-acceptance.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1572",
+      "owns": "Kernel owns the existing typed API error contract. Copilot owns acceptance recovery decisions and preserves their status, retry headers and causes; HTTP response serialization remains in the route.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/chat-acceptance.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["fromPgBossDrizzleTx", "getStartedBoss"],
+      "issue": "YUK-1572",
+      "owns": "Boss owns queue startup and the transaction adapter. Copilot owns accepted-turn recovery and retains the existing per-branch bootstrap timing; this dependency moves from api/chat.ts without increasing the owner-pair total.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/chat-acceptance.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1572",
+      "owns": "Events owns job-event persistence on the supplied transaction. Copilot owns legacy enqueue-failure compensation under the existing dispatch lock; this dependency moves from api/chat.ts without increasing the owner-pair total.",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
