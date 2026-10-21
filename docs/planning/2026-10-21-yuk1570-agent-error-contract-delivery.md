@@ -131,3 +131,9 @@ main 全 33 条 changes 的逻辑与原始 entry 字节前缀相同，现共 35 
 
 所有本机 tests/vitest/DB/TEST/Docker/daemon/provider/runtime/demo/paid、push/PR/自派审、
 Linear/清树均 NOT_RUN。无新范围外 actionable follow-up；父 PR/exact-head CI 统一处理。
+
+## 父接管最新 main 整合（2026-10-21）
+
+原writer provider启动失败，父核terminal/null active、无遗留进程及clean后接管。普通合入main `ea000ff69ccc202b488923c74b4521a7bd5b391f`；受检源码 `8cf1dcbc05315f8573e1888f2a53357f7ed25450`，heavy.sh全机2槽五门真实rc0。原R1不重开；全部产品非import正文与R1相同，main全部非owned mode/type/blob保留。baseline历史34条raw entry前缀保持，仅原生tighten登记本片真实变化。当前候选server=389、cross=37，不计已合main。测试、DB、provider/runtime、install均未执行。
+
+证据 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1570/8cf1dcbc05315f8573e1888f2a53357f7ed25450/parent-main-ea-gates`（results.json、parent-proof.json、五门raw）。本提交仅追加文档，受检源码/baseline不变，旧seal不覆盖。父接续PR/exactCI及合后实际main审计。
