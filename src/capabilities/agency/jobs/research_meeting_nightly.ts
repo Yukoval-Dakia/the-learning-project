@@ -1,45 +1,24 @@
-// YUK-406 Phase 0 (关系脑 thin slice) / YUK-440 (A13) — nightly 教研例会
-// (research-meeting) propose handler.
+// Nightly 教研例会 (research-meeting) propose handler.
 //
-// Structurally a clone of goal_scope_propose_nightly.ts: a thin candidate-picker +
-// dedup gate + a bounded parallel producer batch (NOT an MCP tool-agent loop). The job is
-// the SINGLE proposer of conjectures. It does NOT use a DomainTool / MCP server —
-// it calls induceConjecture (the Opus self-consistency orchestrator) + writeAiProposal
-// directly, exactly like goal_scope calls runGoalScopeAndWrite. Cloning dreaming_nightly
-// (an MCP agent loop) would be wrong: that loop's cost-cap only triggers on tool-calls,
-// and this deterministic flow never calls MCP tools (a13-design critic #1).
+// Thin candidate-picker + dedup gate + a bounded parallel producer batch (NOT an MCP
+// tool-agent loop). The job is the SINGLE proposer of conjectures: it calls
+// induceConjecture (the Opus self-consistency orchestrator) + writeAiProposal directly.
 //
-// Per run:
-//   1. (PRE-LLM, retryable) read recent failures (with their YUK-562 reasoning
-//      traces) + per-KC mastery projection + the set of cause×KC keys that
-//      already have a PENDING conjecture (first dedup);
-//   2. deterministic 取证 (gatherConjectureEvidence) → owner-decision/terminal
-//      history gate (30-day dismiss cooldown; terminal reopen needs two fresh
-//      failures) → prediction-accountability re-rank;
-//   3. (PRE-LLM, retryable) GROUND cells in salience-order batches until K usable
-//      cells are found or candidates are exhausted (enrichEvidenceCells, YUK-786):
-//      KC name + subject identity + the first-hand attempt evidence (question,
-//      the owner's wrong answer, their reasoning trace, the attribution). Without
-//      this the LLM sees 7 opaque scalars and can only invent the domain;
-//   4. for each grounded top-K cell: induceConjecture (Opus N=3 self-consistency on
-//      the anthropic-sub OAuth lane, with the latest owner claim on a valid reopen)
-//      → frozen hypothesis → independently authored/reviewed probe package
-//      → writeAiProposal (propose-only).
+// Per run: PRE-LLM reads (recent failures with reasoning traces, per-KC mastery, pending
+// cause×KC keys) → deterministic evidence gathering + owner-decision/terminal history gate
+// (30-day dismiss cooldown; terminal reopen needs two fresh failures) → prediction-
+// accountability re-rank → salience-order grounding (KC name, subject identity, first-hand
+// attempt evidence) → per grounded top-K cell induceConjecture → probe package →
+// writeAiProposal.
 //
-// Failure asymmetry (D7 / F-1): shared PRE-LLM reads run OUTSIDE the per-cell swallow —
-// a throw there is a legit retryable DB fault that propagates to the builder's
-// rethrow so pg-boss retries. Candidate-local grounding/image failures refill from
-// lower salience; ordinary per-cell induction failures are swallow-safe (one cell's
-// failure logs a retryable AI ledger row and continues; partial progress is fine).
-// Probe author/reviewer operational failures are different: completing the execution
-// would make the idempotency guard suppress the promised retry, so those escape to
-// pg-boss after recording health. Durable write failures also escape.
+// Failure asymmetry: shared PRE-LLM reads run OUTSIDE the per-cell swallow, so a throw is a
+// retryable DB fault that propagates. Candidate-local grounding/image failures refill from
+// lower salience; ordinary per-cell induction failures are swallowed and counted. Probe
+// author/reviewer operational failures escape to pg-boss after recording health, because a
+// completion marker would suppress the promised retry.
 //
-// ND-5: this job NEVER writes FSRS state. The conjecture is propose-only — the owner
-// accepts/edits/rejects in the inbox. The proposal snapshots predicted_p (the
-// claim's bet) + baseline_p_at_induction (the number to beat); YUK-795 consumes
-// the resulting score history only for conjecture ordering. It never writes
-// mastery/θ/FSRS.
+// Propose-only: this job NEVER writes FSRS state. The proposal snapshots predicted_p and
+// baseline_p_at_induction; accept/edit remains with the owner.
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -99,7 +78,7 @@ import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
-/** N self-consistency samples per conjecture (D2 — Opus agreement tally). */
+/** N self-consistency samples per conjecture (Opus agreement tally). */
 export const RESEARCH_MEETING_SAMPLES = 3;
 /** Fail closed instead of silently dropping pixels from unusually image-heavy evidence. */
 export const RESEARCH_MEETING_MAX_IMAGES_PER_CELL = 60;
@@ -120,20 +99,13 @@ export interface ResearchMeetingResult {
   /** grounded induction completed but correctly refused to fabricate a proposal. */
   conjectures_abstained: number;
   /**
-   * YUK-779 — cells whose induction THREW and was swallowed by the per-cell catch
-   * below. Invariant:
-   * `cells_failed + conjectures_created + conjectures_abstained === considered`.
-   *
-   * Before this counter existed the swallow was visible only as
-   * `considered > conjectures_created`, which the job never asserted on — under a
-   * 限流风暴 every cell failed, the job returned `conjectures_created: 0` and still
-   * finished `succeeded`, so the DAG node went green and hard downstream ran on
-   * stale data.
+   * Cells whose induction THREW and was swallowed by the per-cell catch below.
+   * Invariant: `cells_failed + conjectures_created + conjectures_abstained === considered`.
    */
   cells_failed: number;
   /** pending conjectures already open at run start (the dedup base). */
   pending_before: number;
-  /** prior probe outcomes scored + ledger-updated this run (U8 reconcile, A13). */
+  /** prior probe outcomes scored + ledger-updated this run. */
   reconciled: number;
   /** probe outcomes skipped this run (dangling / malformed / unreadable conjecture ref). */
   reconcile_skipped: number;
@@ -146,9 +118,8 @@ export interface ResearchMeetingResult {
   trigger_event_id: string;
 }
 
-// Durable completion payload contract: append-only and backward-compatible.
-// Future fields must be optional/defaulted so already-committed executions
-// remain readable across deployments.
+// Durable completion payload contract: append-only and backward-compatible. Future fields
+// must be optional/defaulted so already-committed executions remain readable.
 const ResearchMeetingResultSchema = z
   .object({
     considered: z.number().int().nonnegative(),
@@ -159,8 +130,8 @@ const ResearchMeetingResultSchema = z
     reconciled: z.number().int().nonnegative(),
     reconcile_skipped: z.number().int().nonnegative(),
     cost_usd: z.number().nonnegative().nullable(),
-    // Empty runs deliberately have no trigger/scan anchor; the completion event
-    // still persists that `''` sentinel so redelivery can return the exact result.
+    // Empty runs have no trigger/scan anchor; the `''` sentinel persists so redelivery
+    // can return the exact result.
     trigger_event_id: z.string(),
   })
   .refine(
@@ -221,9 +192,9 @@ function conjectureCellEventId(
   executionId: string,
   cell: EnrichedEvidenceCell,
 ): string {
-  // preparedTopCells contains at most one entry per deterministic cell.key.
-  // Deliberately hash the stable input rather than non-deterministic model output
-  // so a retry cannot create a second event merely by citing a different subset.
+  // preparedTopCells contains at most one entry per deterministic cell.key. Hash the
+  // stable input, not non-deterministic model output, so a retry cannot create a second
+  // event merely by citing a different subset.
   const evidenceKey = [...cell.evidence_event_ids].sort().join('\0');
   const digest = createHash('sha256')
     .update(`${executionId}\0${cell.key}\0${evidenceKey}`)
@@ -237,9 +208,9 @@ function conjectureAbstentionEventId(executionId: string, cell: EnrichedEvidence
 }
 
 function conjectureProposalEventId(executionId: string, cell: EnrichedEvidenceCell): string {
-  // A concurrent pg-boss redelivery can pass the completion read while the first
-  // worker is still running. The deterministic proposal id turns that race into
-  // first-write-wins rather than two pending conjectures for one logical cell.
+  // A concurrent pg-boss redelivery can pass the completion read while the first worker
+  // is still running. The deterministic proposal id makes that race first-write-wins
+  // instead of two pending conjectures for one logical cell.
   return conjectureCellEventId('conjecture_proposal', executionId, cell);
 }
 
@@ -248,11 +219,11 @@ async function defaultRunWithExecutionLock<T>(
   executionId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  // Hold one dedicated connection-scoped transaction lock across the whole
-  // orchestration. Business reads/writes still use their existing short
-  // transactions on `db`; this outer transaction owns only the advisory lock.
-  // A crash releases it automatically, and a concurrent redelivery blocks here,
-  // then observes the first worker's committed completion before model work.
+  // Hold one dedicated connection-scoped transaction lock across the whole orchestration.
+  // Business reads/writes keep their own short transactions on `db`; this outer
+  // transaction owns only the advisory lock. A crash releases it automatically, and a
+  // concurrent redelivery blocks here, then observes the first worker's committed
+  // completion before model work.
   return db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`research_meeting_execution:${executionId}`}, 0))`,
@@ -393,19 +364,16 @@ export interface ResearchMeetingDeps {
    * schedule. The real handler supplies `job.id`; direct callers get a fresh id.
    */
   executionId?: string;
-  /**
-   * YUK-786: the trace-bearing LIST reader. The bare `FailureAttempt` projection
-   * is unchanged — the YUK-562 reasoning_trace rides in the wrapper alongside it.
-   */
+  /** Trace-bearing failure reader; the reasoning_trace rides in the wrapper. */
   getFailureAttemptsWithTraceFn?: GetFailureAttemptsWithTraceFn;
   getMasteryProjectionFn?: GetMasteryProjectionFn;
-  /** YUK-786: PRE-LLM grounding read (KC name + subject + first-hand samples). */
+  /** PRE-LLM grounding read (KC name + subject + first-hand samples). */
   enrichEvidenceCellsFn?: EnrichEvidenceCellsFn;
   /** First dedup base: cause×KC keys with a PENDING conjecture. */
   loadKnownConjectureKeysFn?: (db: Db) => Promise<Set<string>>;
-  /** YUK-788: owner decisions + terminal lifecycle for tonight's candidate identities. */
+  /** Owner decisions + terminal lifecycle for tonight's candidate identities. */
   loadConjectureHistoryFn?: LoadConjectureHistoryFn;
-  /** YUK-795: correction-aware score history folded by cause×KC identity. */
+  /** Correction-aware score history folded by cause×KC identity. */
   loadPredictionAccountabilityFn?: LoadPredictionAccountabilityFn;
   /** injected runner — defaults to the real db-bound runTask. */
   runTaskFn?: TaskTextRunFn;
@@ -426,7 +394,7 @@ export interface ResearchMeetingDeps {
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
   loadEvidenceImagesFn?: LoadEvidenceImagesFn;
-  /** U8 (A13): score prior probe outcomes → prediction_score event + typed-ledger. */
+  /** Score prior probe outcomes → prediction_score event + typed-ledger. */
   reconcileFn?: (db: Db) => Promise<ReconcileResult>;
 }
 
@@ -444,9 +412,8 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
 }
 
 /**
- * Real runner: wrap runTask and INJECT `db` into the ctx that induceConjecture
- * supplies ({ override, modelBinding }). induceConjecture stays db-free (unit
- * testable); the job is the seam that binds db (same role as runGoalScopeAndWrite).
+ * induceConjecture stays db-free; this seam binds `db` into the ctx it supplies
+ * ({ override, modelBinding }).
  */
 function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
   return makeRunTaskFn(db);
@@ -547,12 +514,12 @@ export function planConjectureEvidenceImageLoad(
     }
     if (!RUNNER_IMAGE_MIME_TYPES.has(row.mime_type)) transcodeAssetIds.add(ref.asset_id);
     loadableRefs.push(ref);
-    // One R2 object recurring across attempts is still one byte/pixel allocation. Occurrence
-    // refs remain expanded for semantic ordering, but safety accounting follows unique assets.
+    // One R2 object recurring across attempts is still one byte/pixel allocation.
+    // Occurrence refs stay expanded for semantic ordering, but safety accounting follows
+    // unique assets.
     if (!countedAssetIds.has(ref.asset_id)) {
       countedAssetIds.add(ref.asset_id);
-      // Each unique image block is sent once in every self-consistency request. Occurrence
-      // roles live in the manifest, so recurring refs do not multiply the transport again.
+      // Each unique image block is sent once per self-consistency request.
       totalTransportBytes += base64TransportBytes(row.byte_size) * RESEARCH_MEETING_SAMPLES;
       if (row.width !== null && row.height !== null) {
         if (
@@ -611,13 +578,12 @@ export async function defaultLoadEvidenceImages(
     .where(inArray(source_asset.id, assetIds));
   const { loadableRefs, transcodeAssetIds } = planConjectureEvidenceImageLoad(refs, metadata);
   if (loadableRefs.length === 0) return [];
-  // Download/base64 each R2 object once. The same diagram can recur in several attempts
-  // without paying N identical reads or sending N duplicate multimodal blocks.
+  // Download/base64 each R2 object once; the same diagram can recur across attempts.
   const uniqueAssetIds = [...new Set(loadableRefs.map((ref) => ref.asset_id))];
   const fetched = await imageFetchFn(uniqueAssetIds, db);
-  // `defaultImageFetch` preserves input order but skips missing DB/R2 rows.
-  // A partial packet would let the model compare text against the wrong image index, so fail
-  // the cell rather than guessing which asset was absent.
+  // `defaultImageFetch` preserves input order but skips missing DB/R2 rows. A partial
+  // packet would let the model compare text against the wrong image index, so fail the
+  // cell rather than guessing which asset was absent.
   if (fetched.length !== uniqueAssetIds.length) {
     throw new Error(
       `conjecture evidence image load incomplete: expected ${uniqueAssetIds.length}, got ${fetched.length}`,
@@ -729,10 +695,10 @@ function buildConjectureProposalInput(
   proposalEventId: string,
 ): WriteAiProposalInput {
   const draft = induced.draft;
-  // Memory policy (YUK-515): conjecture proposals intentionally remain outbox-eligible.
-  // Unlike probe/scan bookkeeping, this is a durable, evidence-backed belief about the
-  // learner that the memory layer should retain. writeAiProposal therefore receives no
-  // ingest_at opt-out; owner accept/edit remains the later calibration boundary.
+  // Conjecture proposals intentionally remain outbox-eligible: unlike probe/scan
+  // bookkeeping this is a durable, evidence-backed belief about the learner, so
+  // writeAiProposal gets no ingest_at opt-out. Owner accept/edit is the later
+  // calibration boundary.
   return {
     id: proposalEventId,
     actor_ref: RESEARCH_MEETING_ACTOR,
@@ -747,15 +713,15 @@ function buildConjectureProposalInput(
       proposed_change: {
         claim_md: draft.claim_md,
         // Deterministic cell facts win over the LLM echo (cause/recurrence are the
-        // ground truth the evidence_refs back; the draft only restates them).
+        // ground truth the evidence_refs back).
         knowledge_id: cell.knowledge_id,
         cause_category: cell.cause_category,
         confidence: induced.confidence, // internal sort only — NEVER rendered as a number
         recurrence_count: cell.recurrence_count,
         probe_md: draft.probe_md,
         followup_probe_md: draft.followup_probe_md,
-        // conjecture-wire #13 — single-writer judge gold reference flows draft →
-        // proposal change → acceptConjectureProposal → serveProbeOnce.referenceMd.
+        // Single-writer judge gold reference flows draft → proposal change →
+        // acceptConjectureProposal → serveProbeOnce.referenceMd.
         probe_reference_md: draft.probe_reference_md,
         followup_probe_reference_md: draft.followup_probe_reference_md,
         diagnostic_spec: draft.diagnostic_spec,
@@ -764,15 +730,15 @@ function buildConjectureProposalInput(
         probe_quality: draft.probe_quality,
         discriminating: draft.discriminating,
         corrected_by_owner: false,
-        // A13 (YUK-440): the falsifiable bet + the number it must later beat.
+        // The falsifiable bet + the number it must later beat.
         predicted_p: draft.predicted_p,
         baseline_p_at_induction: cell.baseline_p ?? 0.5, // 0.5 = cold-start neutral
       },
       cooldown_key: `conjecture:${cell.key}`,
     },
     caused_by_event_id: triggerEventId,
-    // Keep the scalar correlation column for the primary sample, and retain the
-    // complete self-consistency evidence trail in the proposal event payload.
+    // Keep the scalar correlation column for the primary sample; the payload retains
+    // the complete self-consistency evidence trail.
     event_override: {
       action: 'experimental:proposal',
       subject_kind: 'mind_model',
@@ -837,18 +803,16 @@ async function runResearchMeetingNightlyClaimed(
   const completedResult = await loadCompletedRunResultFn(db, executionId);
   if (completedResult) return completedResult;
 
-  // ── A13 reconcile (U8): project PRIOR probe outcomes into the typed ledger.
-  // Sequence 1 appends a prediction_score consumed by the accountability ranker;
-  // recurrence results append a score-free projection anchor. Typed-state remains
-  // soft. Runs BEFORE the propose half: deterministic DB work, idempotent
-  // (already-scored probes are excluded by the reader), and a throw here is a legit
-  // retryable DB fault that propagates so pg-boss retries the whole job.
+  // ── Reconcile: project PRIOR probe outcomes into the typed ledger.
+  // Sequence 1 appends a prediction_score consumed by the accountability ranker; recurrence
+  // results append a score-free projection anchor. Runs BEFORE the propose half:
+  // deterministic, idempotent (already-scored probes are excluded by the reader), and a
+  // throw here is retryable so pg-boss retries the whole job.
   let reconcileResult = await loadReconciliationResultFn(db, executionId);
   if (!reconcileResult) {
-    // Both derived anchor actions are individually idempotent. Count any anchor rows
-    // stamped by an earlier attempt of this execution (crash after reconcile but
-    // before checkpoint), then persist one deterministic aggregate checkpoint
-    // before proposal work. A later final-write retry reuses the original counts.
+    // Both derived anchor actions are individually idempotent. Count anchor rows stamped by
+    // an earlier attempt (crash after reconcile, before checkpoint), then persist one
+    // deterministic aggregate checkpoint before proposal work.
     const previouslyReconciled = await countReconciledForExecutionFn(db, executionId);
     const freshResult = await reconcileFn(db);
     reconcileResult = {
@@ -865,10 +829,9 @@ async function runResearchMeetingNightlyClaimed(
 
   // ── PRE-LLM reads (OUTSIDE the per-cell swallow — a throw here is retryable) ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  // YUK-786: same rows as before, each paired with its YUK-562 reasoning_trace —
-  // the owner's own account of how they thought, which is the single most
-  // load-bearing piece of first-hand evidence for a mind-model claim. Derived
-  // from the attempt rows the reader already selects (no extra round-trip).
+  // Each failure row is paired with its reasoning trace — the owner's own account of how
+  // they thought, and the most load-bearing first-hand evidence for a mind-model claim.
+  // Derived from the rows the reader already selects (no extra round-trip).
   const failureRows = await getFailureAttemptsWithTraceFn(db, {
     includeReviewFailures: true,
     since,
@@ -899,14 +862,10 @@ async function runResearchMeetingNightlyClaimed(
       : new Map<string, PredictionAccountability>();
   const cells = rankEvidenceCellsByAccountability(historyGate.cells, accountabilityByKey);
 
-  // Empty-night early return (YUK-377 复审 §3.5): zero cells (no recurring failure
-  // evidence, or every cell deduped/gated by conjecture lifecycle history) means the
-  // propose half has nothing to anchor. Skip trigger + scan events; persist only the
-  // execution completion guard so a same-job redelivery cannot reconcile or discover
-  // new work twice.
-  // MUST stay AFTER the reconcile call above:
-  // the deterministic settlement half is never skipped. Zero external consumers of these
-  // events exist (grep-verified 2026-07-06), so skipping them changes no downstream reader.
+  // Empty-night early return: zero cells means the propose half has nothing to anchor.
+  // Skip trigger + scan; persist only the execution completion guard so a redelivery
+  // cannot reconcile or discover new work twice.
+  // MUST stay AFTER the reconcile call above: settlement is never skipped.
   if (cells.length === 0) {
     const idleResult: ResearchMeetingResult = {
       considered: 0,
@@ -923,13 +882,11 @@ async function runResearchMeetingNightlyClaimed(
     return idleResult;
   }
 
-  // ── PRE-LLM grounding read (YUK-786; still OUTSIDE the per-cell swallow) ──
-  // Enrich in bounded salience batches and refill from lower-ranked cells whenever
-  // mutable/missing question context leaves an earlier candidate ungrounded. Raw
-  // recurrence is only an UPPER BOUND: after enrichment validates the immutable
-  // evidence ids, re-apply accountability to the reproducible count before the
-  // final top-K cut. Stop early only when no unprocessed raw upper bound can enter
-  // the validated top-K.
+  // ── PRE-LLM grounding read (still OUTSIDE the per-cell swallow) ──
+  // Enrich in bounded salience batches and refill from lower-ranked cells when mutable or
+  // missing question context leaves a candidate ungrounded. Raw recurrence is only an
+  // UPPER BOUND: after enrichment validates the immutable evidence ids, re-apply
+  // accountability to the reproducible count before the final top-K cut.
   const preparedCandidates: PreparedConjectureCell[] = [];
   const reproduciblePriorClaimMdByKey = new Map<string, string>();
   let cellOffset = 0;
@@ -944,10 +901,9 @@ async function runResearchMeetingNightlyClaimed(
     });
     const reproducibleCells: EnrichedEvidenceCell[] = [];
     for (const cell of enriched) {
-      // Recurrence is a claim about reproducible historical context, not the raw attempt tally.
-      // Enrichment validates every attempt and keeps all reproducible ids even though prompt
-      // text samples are capped. Filtered mutable/missing contexts count toward neither the
-      // threshold nor provenance, while a 4+ recurrence is not truncated back to the quote cap.
+      // Recurrence is a claim about reproducible historical context, not the raw attempt
+      // tally. Enrichment validates every attempt and keeps all reproducible ids even
+      // though prompt text samples are capped.
       const evidenceEventIds = [...new Set(cell.evidence_event_ids)];
       if (evidenceEventIds.length < CONJECTURE_RECURRENCE_FLOOR) continue;
       reproducibleCells.push({
@@ -956,10 +912,9 @@ async function runResearchMeetingNightlyClaimed(
         evidence_event_ids: evidenceEventIds,
       });
     }
-    // A terminal conjecture may clear the raw two-fresh-failures gate before
-    // enrichment removes a missing/mutated attempt. Re-run the same lifecycle
-    // gate over only reproducible ids so older pre-terminal evidence cannot
-    // substitute for the required post-terminal failures.
+    // A terminal conjecture may clear the raw two-fresh-failures gate before enrichment
+    // removes a missing/mutated attempt. Re-run the lifecycle gate over only reproducible
+    // ids so older pre-terminal evidence cannot substitute for post-terminal failures.
     const reproducibleHistoryGate = applyConjectureHistoryGate(
       reproducibleCells,
       failures,
@@ -996,10 +951,8 @@ async function runResearchMeetingNightlyClaimed(
     );
     if (preparedCandidates.length >= RESEARCH_MEETING_MAX_CONJECTURES) {
       const preparedKeys = new Set(preparedCandidates.map((candidate) => candidate.cell.key));
-      // Unprocessed cells intentionally retain their raw recurrence count as an
-      // upper bound. Giving them the benefit of the doubt can only delay this
-      // optimization and enrich an extra batch; it cannot skip a candidate that
-      // would enter the validated top-K.
+      // Unprocessed cells retain their raw recurrence count as an upper bound, so this
+      // early stop can only enrich an extra batch — never skip a validated top-K cell.
       const bestPossibleTopKeys = rankEvidenceCellsByAccountability<EvidenceCell>(
         [...preparedCandidates.map((candidate) => candidate.cell), ...cells.slice(cellOffset)],
         accountabilityByKey,
@@ -1040,15 +993,14 @@ async function runResearchMeetingNightlyClaimed(
     return ungroundedResult;
   }
 
-  // Anchor the run (provenance for each proposal + the scan subject). The actual
-  // trigger write joins the result writes and scan in one transaction below.
-  // The pg-boss execution id is stable across retries, so every durable fact in
-  // one logical run retains the same anchor even if a later sibling write fails.
+  // Anchor the run (provenance for each proposal + the scan subject). The trigger write
+  // joins the result writes and scan in one transaction below; the stable pg-boss
+  // execution id keeps every durable fact anchored to the same logical run.
   const triggerEventId = scheduledEventId('trigger', executionId);
 
   // ── LLM half: independent top cells run in parallel ─────────────────────────
-  // Only provider/induction failures are cell-local and swallow-safe. Durable
-  // writes happen after all inductions and commit atomically below.
+  // Only provider/induction failures are cell-local and swallow-safe. Durable writes
+  // happen after all inductions and commit atomically below.
   const cellResults = await Promise.all(
     preparedTopCells.map(
       async ({
@@ -1073,10 +1025,9 @@ async function runResearchMeetingNightlyClaimed(
             samples: RESEARCH_MEETING_SAMPLES,
             runTaskFn,
             ...(priorClaimMd ? { priorClaimMd } : {}),
-            // YUK-786: render the prompt in the cell's OWN subject voice. An
-            // untagged KC (subject_id null) stays on the neutral `general`
-            // profile — inheriting a concrete subject would re-introduce exactly
-            // the wrong-subject steer this ticket removed from the prompt copy.
+            // Render the prompt in the cell's OWN subject voice. An untagged KC
+            // (subject_id null) stays on the neutral `general` profile; inheriting a
+            // concrete subject would steer the claim toward the wrong subject.
             subjectProfile: resolveSubjectProfileFn(cell.subject_id),
           });
         } catch (err) {
@@ -1100,10 +1051,10 @@ async function runResearchMeetingNightlyClaimed(
               cost_usd: null,
             };
           }
-          // YUK-779: keep swallowing (one bad cell must not fail the batch) but COUNT it,
-          // so the handler can tell "no evidence tonight" from "every cell blew up".
-          // Partial sample spend is retained in per-call cost_ledger rows, but the
-          // thrown orchestrator exposes no reliable partial total for this aggregate.
+          // Keep swallowing (one bad cell must not fail the batch) but COUNT it, so the
+          // handler can tell "no evidence tonight" from "every cell blew up". Partial
+          // sample spend stays in per-call cost_ledger rows; the thrown orchestrator
+          // exposes no reliable partial total for this aggregate.
           return {
             cell,
             induced: null,
@@ -1163,11 +1114,10 @@ async function runResearchMeetingNightlyClaimed(
     trigger_event_id: triggerEventId,
   };
 
-  // Trigger + every successful cell result + scan commit together. A single
-  // durable-write failure rolls the whole batch back, so retry-time pending
-  // proposal dedup can never shrink the logical run into a partial scan.
-  // Each runTask call has already committed its own ai_task_runs + cost_ledger
-  // rows; this transaction governs business outcomes, not model-spend accounting.
+  // Trigger + every successful cell result + scan commit together. A single durable-write
+  // failure rolls the whole batch back, so retry-time pending-proposal dedup can never
+  // shrink the logical run into a partial scan. Each runTask call already committed its
+  // own ai_task_runs + cost_ledger rows; this transaction governs business outcomes only.
   await runInTransactionFn(db, async (tx) => {
     await writeEventFn(tx, {
       id: triggerEventId,
@@ -1200,9 +1150,8 @@ async function runResearchMeetingNightlyClaimed(
       const { cell, induced } = result;
       if (induced.outcome === 'abstain') {
         await writeEventFn(tx, {
-          // A pg-boss retry reuses job.id and therefore this first-write-wins
-          // event; the next scheduled execution has a distinct job.id and keeps
-          // its own reason/votes/task-run/cost provenance.
+          // A pg-boss retry reuses job.id and therefore this first-write-wins event; the
+          // next scheduled execution has a distinct job.id and keeps its own provenance.
           id: conjectureAbstentionEventId(executionId, cell),
           actor_kind: 'agent',
           actor_ref: RESEARCH_MEETING_ACTOR,
@@ -1239,8 +1188,8 @@ async function runResearchMeetingNightlyClaimed(
       }
     }
 
-    // Observability scan event — NOT cost-bearing: each outcome event already
-    // carries its own cost, so summing the run total here would double-count it.
+    // Observability scan event — NOT cost-bearing: each outcome event already carries its
+    // own cost, so a run total here would double-count it.
     await writeEventFn(tx, {
       id: scheduledEventId('scan', executionId),
       actor_kind: 'agent',
@@ -1297,10 +1246,9 @@ export function buildResearchMeetingNightlyHandler(
         executionId,
       });
       console.log('[research_meeting_nightly] result', result);
-      // YUK-779 — the fallible units are the top-K cells. An empty night early-returns
-      // with considered:0 → level `idle` (no alarm); a 限流风暴 fails every cell →
-      // considered:3 / created:0 → level `stalled` (loud) and the report rides the job
-      // output into the DAG node detail.
+      // The fallible units are the top-K cells. An empty night returns considered:0 →
+      // `idle` (no alarm); every cell failing → `stalled` (loud), and the report rides the
+      // job output into the DAG node detail.
       return reportJobYield('research_meeting_nightly', {
         attempted: result.considered,
         // abstain is a successful, fail-closed model decision, not an AI failure.

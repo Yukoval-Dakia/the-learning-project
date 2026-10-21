@@ -240,9 +240,9 @@ export async function reserveCopilotDurableAcceptance(
     jobData?: CopilotAcceptedJobData;
     assertActive?: () => void;
     /**
-     * YUK-1398：危机回合的非身份化守卫事件。命中时与 user_ask 同事务写入，
-     * 回滚同进退；幂等重放（outcome!=='created'）不会重复写。askEventId 由
-     * 本函数回填（= 事务内实际写入的 run id）。
+     * 危机回合的非身份化守卫事件：命中时与 user_ask 同事务写入，回滚同进退；
+     * 幂等重放（outcome!=='created'）不会重复写。askEventId 由本函数回填
+     * （= 事务内实际写入的 run id）。
      */
     crisisGuard?: Omit<CrisisGuardEventInput, 'askEventId'>;
   },
@@ -252,9 +252,8 @@ export async function reserveCopilotDurableAcceptance(
     nowMs?: () => number;
   } = {},
 ): Promise<ReserveCopilotDurableAcceptanceResult> {
-  // Resolve the queue client before opening the business transaction. Keeping
-  // this runtime dependency at the route/worker composition edges also avoids
-  // making the durable state owner know how pg-boss is bootstrapped.
+  // Resolve the queue client before opening the business transaction, keeping the
+  // pg-boss bootstrap at the route/worker composition edges.
   if (input.jobData && (!deps.boss || !deps.transactionDb)) {
     throw new Error('session-queue acceptance requires transaction-capable queue dependencies');
   }
@@ -289,7 +288,7 @@ export async function reserveCopilotDurableAcceptance(
     });
     input.assertActive?.();
     const bossJobId = copilotBossJobId(runId);
-    // YUK-1398：守卫事件与接纳同事务（仅创建路径；重用/冲突路径不写）。
+    // 守卫事件与接纳同事务（仅创建路径；重用/冲突路径不写）。
     if (input.crisisGuard) {
       await writeCrisisGuardEvent(tx, { ...input.crisisGuard, askEventId: runId });
     }
@@ -367,9 +366,9 @@ async function acquireCopilotSessionQueueLock(tx: Tx, sessionId: string): Promis
 }
 
 /**
- * Pick the oldest non-terminal accepted turn for a session.  The session lock
- * and the SQL ordering make this a single-winner operation; dispatch_seq stays
- * in SQL and is never converted through JavaScript.
+ * Pick the oldest non-terminal accepted turn for a session. The session lock and
+ * SQL ordering make this a single-winner operation; dispatch_seq stays in SQL
+ * and is never converted through JavaScript.
  */
 export async function readCopilotSessionHead(
   db: Db | Tx,

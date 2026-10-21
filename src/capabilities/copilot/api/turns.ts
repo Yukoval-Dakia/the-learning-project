@@ -1,5 +1,3 @@
-// M5-T3 (YUK-321) — GET /api/copilot/turns?limit=20（重放 last-N，等价平移）。
-
 import { getCopilotConversationSnapshot } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

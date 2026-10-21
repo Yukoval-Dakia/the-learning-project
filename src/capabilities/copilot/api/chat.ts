@@ -41,9 +41,9 @@ import { classifyCopilotTurn } from '../server/crisis-guard';
 let durableDispatchReservations = 0;
 
 function requestAbortedError(): ApiError {
-  // 499 is the conventional server-side status for a client-closed request.
-  // The caller is already gone; the important contract is that no new durable
-  // side effect is committed after this guard observes the abort.
+  // 499 is the conventional server-side status for a client-closed request. The
+  // contract: no new durable side effect may commit after this guard observes
+  // the abort.
   return new ApiError('request_aborted', 'request aborted before acceptance', 499);
 }
 
@@ -108,8 +108,8 @@ async function dispatchAcceptedRun(
       return;
     }
 
-    // Retained v1 acceptances did not persist a replayable worker job body or a
-    // DISPATCHED marker. Keep their old exact-run recovery path during rollout.
+    // Retained v1 acceptances persisted no replayable worker job body or
+    // DISPATCHED marker; keep their exact-run recovery path.
     const outcome = await withCopilotDurableDispatchLock(db, acceptance.runId, async (tx) => {
       // A terminal replay is still the same accepted operation. Never recreate a
       // deleted pg-boss row after its durable public result already exists.
@@ -158,10 +158,10 @@ async function dispatchAcceptedRun(
         }
         // A successful readback proving absence is the only path allowed to mark
         // this accepted turn enqueue_failed. The compensation MUST commit while
-        // this same dispatch advisory lock is still held. Releasing the lock and
-        // compensating in a second transaction would let a same-key contender
-        // enqueue the stable job between those two critical sections, producing
-        // a FAILED run whose worker is already executing.
+        // this same dispatch advisory lock is held: releasing it and compensating
+        // in a second transaction would let a same-key contender enqueue the
+        // stable job between those two critical sections, producing a FAILED run
+        // whose worker is already executing.
         await writeJobEvent(tx, {
           business_table: COPILOT_RUN_TABLE,
           business_id: acceptance.runId,
@@ -196,17 +196,16 @@ async function dispatchAcceptedRun(
   }
 }
 
-// 签名对齐 kernel RouteHandler 双参形（path 无参数段，_params 不用）。
+// kernel RouteHandler 双参签名（path 无参数段，_params 不用）。
 export async function POST(req: Request, _params: Record<string, string>): Promise<Response> {
   // Validate before any durable side effect. HTTP owns acceptance, not execution.
   //
-  // R1 addendum（YUK-1398）：危机分类必须先于 review_answer 契约检查——
-  // 处于危机中的学习者绝不能因为携带附件而收到 400 校验错误而不是支持
-  // 回应。命中危机分类时把 review_answer 从原始 body 中剔除：该回合按普通
-  // 危机回合接纳（不附答案、不判分，worker 出同一条确定性支持模板），守卫
-  // 事件记 dropped_attachment_kind（只记类型，不记原文）。非危机回合不受
-  // 影响，契约行为与之前完全一致。分类是纯函数：同一 body 重放结果相同，
-  // 剔除后的 parsed 与 durableInputHash 保持确定性。
+  // 危机分类必须先于 review_answer 契约检查——危机中的学习者绝不能因为携带
+  // 附件而收到 400 校验错误而不是支持回应。命中危机分类时把 review_answer 从
+  // 原始 body 中剔除：该回合按普通危机回合接纳（不附答案、不判分，worker 出
+  // 同一条确定性支持模板），守卫事件只记 dropped_attachment_kind（记类型，不记
+  // 原文）。分类是纯函数：同一 body 重放结果相同，剔除后的 parsed 与
+  // durableInputHash 保持确定性。
   let parsed: ReturnType<typeof CopilotChatRequest.parse>;
   let crisisPreClassified: ReturnType<typeof classifyCopilotTurn> | null = null;
   let droppedReviewAnswer = false;
@@ -224,9 +223,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     }
     parsed = CopilotChatRequest.parse(raw);
   } catch (err) {
-    // M5-T3 plan 钉测：schema 校验失败 → 400 validation_error JSON（plan Task 2
-    // 单测 + curl 冒烟双钉）。旧栈裸 errorResponse(ZodError) 实回 500 —— 计划与
-    // 现实冲突处以计划为准，对齐 practice/accept-chip 的 validation_error 形制。
+    // A bare errorResponse(ZodError) would surface as 500; schema failures are 400.
     if (err instanceof ZodError) {
       return errorResponse(
         new ApiError('validation_error', err.issues.map((i) => i.message).join('; '), 400),
@@ -251,7 +248,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
   }
   const durableInputHash = hashCopilotDurableInput(parsed);
 
-  // Replay accepted durable work before backlog/rate-limit/model triage. A
+  // Replay accepted durable work before backlog/rate-limit/model triage.
   if (idempotencyKey) {
     let accepted: CopilotDurableAcceptance | null = null;
     try {
@@ -315,22 +312,20 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
     checkRateLimit();
     assertRequestActive(req.signal);
 
-    // 1) 复用 inline 同一会话信封——durable run 的 user_ask / 回复事件共享 session_id。
+    // 1) 复用 inline 同一会话信封：user_ask 与回复事件共享 session_id。
     const conv = await Conversation.findOrCreateCopilotConversation(db, {
       sessionId: parsed.session_id,
     });
     assertRequestActive(req.signal);
-    // 2) One transaction reserves the stable handle and commits user_ask +
-    // QUEUED together. Same key + same normalized input reuses that handle;
-    // a changed input is an explicit 409 rather than a second paid run.
+    // 2) 一个事务同时预留稳定 handle 并提交 user_ask + QUEUED。同 key + 同
+    // normalized input 复用该 handle；input 变化是显式 409，而不是第二个付费 run。
     //
-    // YUK-1398（S2/S3）：接纳点危机分类（确定性词法，无模型调用）。命中时
-    // 服务端强制 derivation_policy='crisis'（覆盖客户端送值）——该回合及其
-    // 回复、镜像经既有 derivation-policy 机制被记忆摄取/简报横幅/画像排除；
-    // 守卫事件与 user_ask 同事务写入。回应模板在 worker 执行层出（见
-    // jobs/copilot_run.ts 的 crisis 分支），本层不产生文案。
-    // R1 addendum：优先用接纳前的预分类（它已驱动附件剔除）；未预分类的奇异
-    // body 由 parse 后文本再分类兑底。
+    // 接纳点危机分类（确定性词法，无模型调用）。命中时服务端强制
+    // derivation_policy='crisis'（覆盖客户端送值）——该回合及其回复、镜像经既有
+    // derivation-policy 机制被记忆摄取/简报横幅/画像排除；守卫事件与 user_ask
+    // 同事务写入。回应模板在 worker 执行层出（见 jobs/copilot_run.ts 的 crisis
+    // 分支），本层不产生文案。优先用接纳前的预分类（它已驱动附件剔除）；未预
+    // 分类的奇异 body 由 parse 后文本再分类兜底。
     const crisis = crisisPreClassified ?? classifyCopilotTurn(parsed.user_message);
     const acceptedDerivationPolicy =
       crisis.forcedPolicy ?? parsed.derivation_policy ?? ('allow' as const);
@@ -377,7 +372,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
                       : ('copilot_chat' as const),
                   eventId: `crisis_guard_${createId()}`,
                   now: new Date(),
-                  // R1 addendum：被剔除的附件只记类型，不记内容。
+                  // 被剔除的附件只记类型，不记内容。
                   ...(droppedReviewAnswer
                     ? { droppedAttachmentKind: 'review_answer' as const }
                     : {}),
@@ -423,22 +418,19 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
       );
     }
     const acceptance = reservation.acceptance;
-    // ask + QUEUED is now committed: this is the server-side acceptance
-    // boundary. If this turn was the session head, its physical job and
-    // DISPATCHED marker committed in that same transaction; otherwise its
-    // complete job_data remains accepted for a later terminal wake.
-    // 3) 幂等唤醒当前 session head。run 在 worker 进程跑、进度落 job_events、SSE 经泛化
-    //    GET /api/jobs/copilot_run/[run_id]/events（YUK-310 caller-agnostic 路由，
-    //    copilot_run 已在其 allowlist）重连；dock 消费端由 YUK-596（PR2）接。
-    //    ambient/chip/correction/skill context 随 QUEUED job_data 持久化，等待 turn
-    //    被推进时无需客户端重发；conversation_history / learner-state 仍从事件重建。
+    // ask + QUEUED is now committed: the server-side acceptance boundary. If this
+    // turn was the session head, its physical job and DISPATCHED marker committed
+    // in that same transaction; otherwise its complete job_data remains accepted
+    // for a later terminal wake.
+    // 3) 幂等唤醒当前 session head。ambient/chip/correction/skill context 随 QUEUED
+    //    job_data 持久化，等待 turn 被推进时无需客户端重发；conversation_history /
+    //    learner-state 仍从事件重建。
     await dispatchAcceptedRun(acceptance, parsed);
     return durableAcceptanceResponse(acceptance, parsed);
   } catch (err) {
-    // Session-queue v2 acceptance and physical head dispatch roll back
-    // together. dispatchAcceptedRun retains the old compensation/readback
-    // protocol only for legacy acceptances encountered during rollout.
-    // enqueue 链路任一步失败 → 普通 JSON error（绝不开半截 SSE 流）。run 未受理。
+    // v2 acceptance and physical head dispatch roll back together; the old
+    // compensation/readback protocol remains only for legacy acceptances.
+    // enqueue 任一步失败 → 普通 JSON error，绝不开半截 SSE 流。
     return errorResponse(err);
   } finally {
     if (reservedDispatchSlot) durableDispatchReservations--;

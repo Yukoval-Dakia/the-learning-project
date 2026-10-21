@@ -28,12 +28,8 @@ import {
 import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from './contracts';
 
 /**
- * Map the judge's coarse outcome onto grading only. Conjecture-survival resolution
- * is a separate historical fold inside `answerProbe`.
- *
- * 'incorrect'   → outcome=0
- * 'correct'     → outcome=1
- * 'partial' / 'unsupported' → null (fail closed)
+ * Map the judge's coarse outcome onto grading; conjecture-survival resolution is a
+ * separate fold inside `answerProbe`. Anything other than correct/incorrect fails closed.
  */
 function mapGradingOutcome(coarse: JudgeResultV2T['coarse_outcome']): 0 | 1 | null {
   switch (coarse) {
@@ -71,9 +67,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     const probeQuestionId = parsedParams.data.id;
 
-    // Intentional null fallback: an unparseable body is treated as an invalid
-    // request (→ 400 below), NOT a 500. This is request-validation gating, not a
-    // swallowed error — safeParse(null) produces a clear validation failure.
+    // Unparseable body → 400 validation failure, not a 500 (safeParse(null) fails clearly).
     const raw = await req.json().catch(() => null);
     const parsed = ProbeAnswerBodySchema.safeParse(raw);
     if (!parsed.success) {
@@ -85,9 +79,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
     const { answer_md: answerMd, answer_image_refs: answerImageRefs } = parsed.data;
 
-    // Load the probe question row. Only `source='mind_probe'` rows are answerable
-    // here — a non-probe question id is a 409 (this endpoint is conjecture-probe
-    // scoped, NOT a general answer surface; regular submits go through /api/review/submit).
+    // Only `source='mind_probe'` rows are answerable here; anything else is a 409 — regular
+    // submits go through /api/review/submit.
     const [probe] = await db
       .select()
       .from(question)
@@ -104,10 +97,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // Idempotency pre-check (LLM cost guard): if a probe_result is already
-    // recorded, short-circuit to the RECORDED values WITHOUT invoking the judge.
-    // answerProbe re-validates on its own locked path; peek is the cheap read-only
-    // front door. `coarse_outcome: null` signals "not judged this call".
+    // Idempotency / LLM cost guard: a recorded probe_result short-circuits to the RECORDED
+    // values without invoking the judge. answerProbe re-validates on its locked path; this
+    // peek is the cheap read-only front door. `coarse_outcome: null` = not judged this call.
     const existing = await peekExistingProbeResult(db, probeQuestionId);
     if (existing) {
       return Response.json({
@@ -121,9 +113,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
     }
 
-    // Fail malformed proposal provenance before claiming or paying the judge.
-    // Well-formed v1 proposals remain answerable under answerProbe's terminal legacy
-    // rule, while v2 proposals continue through the recurrence gate.
+    // Fail malformed proposal provenance before claiming or paying the judge. Well-formed
+    // v1 proposals stay answerable under answerProbe's terminal legacy rule; v2 proposals
+    // continue through the recurrence gate.
     await assertProbeJudgeReady(db, probeQuestionId);
     const metadata =
       probe.metadata !== null &&
@@ -218,9 +210,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     };
     const responseKey = canonicalHash(responseSet);
 
-    // YUK-691 — close both amplification dimensions immediately before the paid
-    // call: the process-wide AI budget bounds bursts across probes, while the
-    // persisted per-probe claim closes concurrent read-then-judge races.
+    // Close both amplification dimensions immediately before the paid call: the
+    // process-wide AI budget bounds bursts across probes, while the persisted per-probe
+    // claim closes concurrent read-then-judge races.
     const claimedResult = await claimProbeJudging(db, probeQuestionId);
     if (claimedResult) {
       return Response.json({

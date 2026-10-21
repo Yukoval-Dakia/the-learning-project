@@ -1,14 +1,10 @@
-// YUK-203 U4 / L-memtool — `search_memory_facts` DomainTool.
+// `search_memory_facts` — read-only DomainTool over the Mem0 fact layer (pgvector),
+// orthogonal to the Dreaming-maintained `query_memory_brief` note layer.
 //
-// First agent-layer tool over the Mem0 fact layer (pgvector). Reads through the
-// server/memory read seam; orthogonal to the Dreaming-maintained
-// `query_memory_brief` note layer (context-readers.ts).
-//
-// Governance (docs/design/2026-06-04-u0-decisions.md D7②): granted to
-// coach / dreaming / copilot ONLY. Per ADR-0017 memory is an attention prior,
-// not a source of truth — this tool only READS facts; it never mutates due /
-// mastery / FSRS and never biases judging. `mirrorEvent: 'never'` keeps the
-// internal retrieval out of the user-visible event stream.
+// Governance: granted to coach / dreaming / copilot only. Per ADR-0017 memory is an
+// attention prior, not a source of truth — this tool only reads facts, never mutates
+// due / mastery / FSRS, and never biases judging. mirrorEvent 'never' keeps internal
+// retrieval out of the user-visible event stream.
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -16,10 +12,8 @@ import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
 import { type MemoryReadClientFactory, readMemoryFacts } from '@/server/memory/read';
 
-// P3 (YUK-351): default topK for the wrapper when the caller omits it. The
-// pre-wrapper code passed `topK: undefined` straight to mem0 (its own default was
-// 10/20). The recency-rerank wrapper needs a concrete topK to overfetch + truncate
-// against, so name the fallback here instead of leaking `undefined` into the math.
+// Concrete default topK so the recency-rerank wrapper can overfetch + truncate;
+// never pass undefined into the math.
 const DEFAULT_FACTS_TOP_K = 10;
 
 export const SearchMemoryFactsInputSchema = z.object({
@@ -31,15 +25,10 @@ export const SearchMemoryFactsInputSchema = z.object({
     .max(20)
     .optional()
     .describe('Max facts to return (1-20). Defaults to 10 when omitted.'),
-  // ADR-0017 fixes 5 scope prefixes: `global` / `subject:*` / `topic:*` /
-  // `mistake_cluster:*` / `meta:orchestrator_self`. The value is matched against
-  // a fact's `affected_scopes` via `{ contains: scopeKey }` (client.ts:181-183).
-  //
-  // TRAP (memory map bullet 8): attempt/review-derived learning facts carry ONLY
-  // `global` + `topic:*` scopes — never `subject:X`. Passing a `subject:yuwen`
-  // scopeKey therefore silently drops nearly all learning facts. Prefer `topic:*`
-  // or leave unset (global) for learning retrieval; reserve `subject:*` for facts
-  // you know were tagged at subject scope.
+  // ADR-0017 fixes 5 scope prefixes: global / subject:* / topic:* /
+  // mistake_cluster:* / meta:orchestrator_self. TRAP: attempt/review-derived
+  // learning facts carry only global + topic:* scopes, never subject:X — passing
+  // a subject:yuwen scopeKey silently drops nearly all learning facts.
   scopeKey: z
     .string()
     .optional()
@@ -50,10 +39,8 @@ export const SearchMemoryFactsInputSchema = z.object({
 });
 export type SearchMemoryFactsInput = z.infer<typeof SearchMemoryFactsInputSchema>;
 
-// Mem0 `SearchResult` has no project Zod schema (memory map bullet 1). Define a
-// minimal typed projection instead of `z.unknown()` so the output is
-// summarizable and the LLM sees a stable shape. `.passthrough()` keeps any extra
-// MemoryItem fields (hash / createdAt / metadata) without pinning them.
+// Mem0 SearchResult has no project schema; project the fields we use and let
+// `.passthrough()` keep extra MemoryItem fields (hash / createdAt / metadata).
 export const SearchMemoryFactsOutputSchema = z.object({
   facts: z.array(
     z
@@ -68,9 +55,8 @@ export const SearchMemoryFactsOutputSchema = z.object({
 });
 export type SearchMemoryFactsOutput = z.infer<typeof SearchMemoryFactsOutputSchema>;
 
-// Inject seam (plan §62). The read module owns lazy client construction because
-// its env is NOT carried on ToolContext. Tests pass a stub factory so unit tests
-// never touch real env / pgvector.
+// Injectable client factory: the read module owns lazy client construction because
+// its env is not carried on ToolContext.
 export type MemoryClientFactory = MemoryReadClientFactory;
 
 export function buildSearchMemoryFactsTool(
@@ -82,11 +68,9 @@ export function buildSearchMemoryFactsTool(
     ctx: ToolContext,
     input: SearchMemoryFactsInput,
   ): Promise<SearchMemoryFactsOutput> {
-    // P3 (YUK-351): read through the searchMemories wrapper so soft-superseded
-    // facts (P2 reconcile markers) are filtered out and survivors are recency-
-    // reranked. `user_id` is still forced to 'self' inside the client wrapper
-    // (client.ts:195) — single-user invariant. `scopeKey` is threaded through the
-    // documented `{ contains }` filter shape (client.ts:191-194).
+    // Read through the searchMemories wrapper: soft-superseded facts are filtered
+    // out and survivors recency-reranked. `user_id` is forced to 'self' in the client
+    // (single-user invariant).
     if (ctx.providerAttemptCaller === undefined) {
       throw new TypeError('search_memory_facts requires the actual provider attempt caller');
     }
@@ -127,13 +111,13 @@ export function buildSearchMemoryFactsTool(
     effect: 'read',
     inputSchema: SearchMemoryFactsInputSchema,
     outputSchema: SearchMemoryFactsOutputSchema,
-    // Embedding API hit (OpenAI) on every search — memory map bullet 4.
+    // Embedding API hit (OpenAI) on every search.
     costClass: 'cheap_llm',
     execute,
     summarize(input, output) {
       return `memory facts · "${input.query.slice(0, 24)}" · ${output.count} hits`;
     },
-    // Internal planner-style retrieval, not user-visible — memory map bullet 4.
+    // Internal planner-style retrieval, not user-visible.
     mirrorEvent: 'never',
   };
 }

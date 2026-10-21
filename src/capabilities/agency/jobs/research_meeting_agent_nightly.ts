@@ -1,29 +1,23 @@
-// YUK-572 PR-2 §3 — agent-led 教研例会 nightly job (shadow lane, dark-ship).
+// Agent-led 教研例会 nightly job (shadow lane, dark-ship).
 //
-// The pg-boss handler for the agent director lane. Structurally distinct from the
-// deterministic research_meeting_nightly (which is the untouched control group): this
-// runs the charter-agent director (runResearchMeetingDirector) behind two guards:
+// Runs the charter-agent director (runResearchMeetingDirector) behind two guards; the
+// deterministic research_meeting_nightly remains the untouched control group:
 //
-//   1. Kill switch RESEARCH_MEETING_AGENT_ENABLED — default OFF (dark-ship). The cron is
-//      registered (the job exists) but the handler early-returns unless the shared
-//      runtime-flag grammar enables it:
-//      zero spend, zero events, zero proposals. Flip = set the worker container .env +
-//      restart (single-process, one env — no AI-provider three-process wiring here).
+//   1. Kill switch RESEARCH_MEETING_AGENT_ENABLED — default OFF. The cron stays registered
+//      but the handler early-returns: zero spend, zero events, zero proposals.
 //
 //   2. dayKey nonce-claim idempotency — a deterministic per-day claim event + nonce
-//      read-back gates the initial spend. Sequential/concurrent delivery skips unless
-//      the controlled one-shot recovery protocol below proves the initial run ended.
+//      read-back gates the initial spend.
 //
-//      CONTROLLED RECOVERY: claim + no scan is NOT sufficient by itself. Each initial
-//      claim carries a lease longer than the director's own wall-clock budget. While
-//      that lease is active, a delivery cannot spend; the production handler keeps a
-//      redelivery alive until the lease boundary instead of acknowledging it early.
-//      A caught retryable failure writes an explicit failure marker and makes the claim
-//      immediately recoverable; an unmarked hard crash becomes recoverable only after
-//      lease expiry. Recovery itself must win a SECOND fixed-id nonce claim and carries
-//      recovery_attempt=1. That marker is never reused or updated, so only one recovery
-//      can run and any concurrent/repeated redelivery skips. A scan still wins over
-//      every recovery path.
+//      CONTROLLED RECOVERY: claim + no scan is NOT sufficient. Each claim carries a lease
+//      longer than the director's own wall-clock budget. While that lease is active, a
+//      delivery cannot spend; the production handler keeps a redelivery alive until the
+//      lease boundary instead of acknowledging it early. A caught retryable failure writes
+//      an explicit failure marker and makes the claim immediately recoverable; an unmarked
+//      hard crash becomes recoverable only after lease expiry. Recovery must win a SECOND
+//      fixed-id nonce claim and carries recovery_attempt=1. That marker is never reused, so
+//      only one recovery can run and concurrent/repeated redelivery skips. A scan still
+//      wins over every recovery path.
 //
 // NEVER calls reconcile (settlement single-home stays with the deterministic lane).
 
@@ -67,13 +61,9 @@ type RunDirectorFn = (db: Db, deps: DirectorDeps) => Promise<ResearchMeetingDire
 type WaitUntilFn = (retryAt: Date) => Promise<void>;
 
 export interface AgentNightlyDeps extends DirectorDeps {
-  /** injectable director run (unit tests stub this; db tests let it run for real). */
   runDirectorFn?: RunDirectorFn;
-  /** injectable claim read-back (default reads the event table). */
   readEventByIdFn?: ReadEventByIdFn;
-  /** injectable scan-existence check (default queries the event table). */
   hasScanEventForDayFn?: HasScanEventForDayFn;
-  /** injectable lease-boundary wait (production uses a timer; unit tests advance a fake clock). */
   waitUntilFn?: WaitUntilFn;
 }
 
@@ -94,8 +84,7 @@ async function defaultReadEventById(db: Db, id: string): Promise<{ payload: unkn
   return rows[0] ?? null;
 }
 
-/** §2 review fix default: queries whether a scan event for `dayKey` already landed.
- *  SCAN_ACTION events always carry `day_key` in their payload (director.ts). */
+/** SCAN_ACTION events always carry `day_key` in their payload. */
 async function defaultHasScanEventForDay(db: Db, dayKey: string): Promise<boolean> {
   const rows = await db
     .select({ id: event.id })
@@ -142,11 +131,11 @@ async function defaultWaitUntil(retryAt: Date): Promise<void> {
 
 /**
  * Atomically claim the day. Returns `won: true` only for the caller allowed to run the
- * director this invocation — either because it is the FIRST writer whose claim persists
- * (first-write-wins via writeEvent's onConflictDoNothing, covering the concurrent
- * redeliver window where both insert but only one nonce sticks), or because the initial
- * run is explicitly failed/lease-expired AND this caller wins the one fixed recovery
- * claim. Active leases, completed scans, and an existing recovery marker return false.
+ * director this invocation — either the FIRST writer whose claim persists (first-write-wins
+ * via writeEvent's onConflictDoNothing, covering the concurrent redelivery window where both
+ * insert but only one nonce sticks), or the caller that wins the one fixed recovery claim
+ * after the initial run is explicitly failed or its lease expired. Active leases, completed
+ * scans, and an existing recovery marker return false.
  */
 async function claimDay(
   db: Db,
@@ -278,10 +267,8 @@ export async function runResearchMeetingAgentNightly(
     return { skipped: true, reason: 'already_claimed_today', day_key: dayKey };
   }
 
-  // §8 review fix — destructure OUT the job-only fields before forwarding to the
-  // director: DirectorDeps has no use for them, and a blanket `...deps` spread would
-  // silently leak job-internal plumbing (runDirectorFn / readEventByIdFn /
-  // hasScanEventForDayFn) into the director's deps surface.
+  // Destructure OUT the job-only fields before forwarding: DirectorDeps has no use for
+  // them, and a blanket `...deps` spread would leak job-internal plumbing.
   const {
     runDirectorFn: _runDirectorFn,
     readEventByIdFn: _readEventByIdFn,
@@ -330,9 +317,8 @@ export function buildResearchMeetingAgentNightlyHandler(
   deps: AgentNightlyDeps = {},
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
   return async () => {
-    // Dark-ship gate: default OFF. cron stays registered (the job exists); the handler
-    // early-returns. Zero spend / zero events / zero proposals.
-    // YUK-1007：DB > env > code-default(false)。
+    // Dark-ship gate: default OFF. cron stays registered; the handler early-returns.
+    // Zero spend / zero events / zero proposals. Flag resolution is DB > env > default(false).
     if (!getConfigFlag(RESEARCH_MEETING_AGENT_ENABLED_ENV)) {
       console.log(
         `[research_meeting_agent_nightly] disabled (${RESEARCH_MEETING_AGENT_ENABLED_ENV})`,

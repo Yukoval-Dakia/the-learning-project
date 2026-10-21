@@ -1,31 +1,6 @@
-// M5-T3 (YUK-321) — POST /api/teaching-sessions/[id]/accept-chip 等价平移
-// （自 app/api/teaching-sessions/[id]/accept-chip/route.ts；仅签名 / params 取法 /
-// runtime 行三处机械变换，body schema / 事件写入 / acceptAiProposal 逻辑逐字保留）。
-//
-// P5.6 / YUK-178 (call-site 12, §5.2 / §6) — accept-chip writer.
-//
 // POST /api/teaching-sessions/[id]/accept-chip
-//   { suggestion_kind, chip_label, source_event_id?, target_tool?, target_args?,
-//     proposal_id? }
-//   → 200 { ok, event_id }
-//
-// This is the FIRST code that ever writes `action:'accept_suggestion'` (the
-// AcceptSuggestionChip event was a dead letterbox since ADR-0011 v2 §1.5). On
-// click it:
-//  - re-validates session ownership + state via Conversation.assertActive — PIN
-//    9: NOT assertAcceptingTurns (that auto-resumes an idle session + writes
-//    conversation.resumed as a side-effect, undesirable for a chip click).
-//    assertActive returns 409-on-ended with no resume side-effect.
-//  - writes the AcceptSuggestionChip event with payload { suggestion_kind,
-//    chip_label, source_event_id } (ND-SK-3: a corrective chip-accept is still a
-//    full event — only the KPI aggregate excludes it, §5.2 reader).
-//  - resolves source_event_id per ADR-0011 §2.1 when the caller omits it: the
-//    latest agent `explain` teach_message for a proactive chip, the latest agent
-//    `tool_use`-shaped (ask_check) teach_message for a corrective chip.
-//  - if target_tool materializes a proposal accept (proposal_id present), also
-//    calls acceptAiProposal so Lane 1's §5.1 gate applies on the proposal-signal
-//    side (the two gates compose — a corrective signal is excluded at whichever
-//    path it takes; ND-SK-4).
+// Writes `action:'accept_suggestion'` for a chip click. A corrective chip-accept
+// is still a full event; only the KPI reader excludes it.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray } from 'drizzle-orm';
@@ -42,29 +17,20 @@ import { Conversation } from '@/server/session';
 import { AcceptTeachingChipBodySchema, CopilotRouteIdParamsSchema } from './contracts';
 
 // ADR-0011 §2.1 — a chip's source_event_id may only anchor to an agent
-// teach_message in the same session (explain / tool_use shape). Both the
-// resolver and the explicit-id validator enforce this structural constraint so a
-// counted accept_suggestion can never anchor to an unrelated agent event.
+// message in the same session, so a counted accept_suggestion can never anchor
+// to an unrelated agent event.
 const TEACH_MESSAGE_ACTION = 'experimental:teach_message';
-// AF S4 / YUK-203 U6 (R1, Cross-统合 §4.2) — under the single-session merge a
-// teaching ask_check turn inside Copilot writes an `experimental:copilot_reply`
-// event (not a teach_message). The resolver/validator are ADDITIVELY widened to
-// also anchor on copilot_reply so an accept-chip click posted with the COPILOT
-// session id finds the right agent reply. The endpoint identity, the
-// `action='accept_suggestion'` write, and the §5.2 KPI-exclusion reader are
-// UNCHANGED — spec :527 freezes the endpoint + KPI separation, not the resolver
-// internals. R3: legacy `teach_message` anchoring MUST NOT regress.
+// Under the single-session merge, a Copilot ask_check turn writes
+// `experimental:copilot_reply` (not a teach_message), so the resolver and
+// validator accept both; legacy teach_message anchoring must not regress.
 const COPILOT_REPLY_ACTION = 'experimental:copilot_reply';
 const ANCHOR_ACTIONS = [TEACH_MESSAGE_ACTION, COPILOT_REPLY_ACTION] as const;
 
 /**
- * Resolve `source_event_id` per ADR-0011 §2.1 when the caller did not supply it:
- *  - proactive chip → the agent `explain` event (turn_kind === 'explain'),
- *  - corrective chip → the agent `tool_use` event, modeled here as the latest
- *    agent `ask_check` event (the failure-retry context).
- * Anchors on agent teach_message OR copilot_reply events (AF S4 single-session).
- * Falls back to the latest agent anchor of any turn_kind so the REQUIRED
- * `source_event_id` is always populated.
+ * Resolve `source_event_id` when the caller omits it: the latest agent
+ * `explain` turn for a proactive chip, the latest `ask_check` turn for a
+ * corrective chip. Falls back to the latest agent anchor of any turn_kind so the
+ * required field is always populated.
  */
 async function resolveSourceEventId(
   sessionId: string,
@@ -86,9 +52,8 @@ async function resolveSourceEventId(
   const preferredTurnKind = kind === 'corrective' ? 'ask_check' : 'explain';
   let fallback: string | null = null;
   for (const row of rows) {
-    // The event row is already actor_kind='agent' (filtered above). teach_message
-    // carries payload.role='agent'; copilot_reply has no role — match on the row's
-    // actor_kind instead, so both anchor shapes resolve.
+    // The row is already filtered to actor_kind='agent'; don't gate on
+    // payload.role, because copilot_reply has none. Both anchor shapes resolve here.
     const p = row.payload as { turn_kind?: string } | null;
     if (fallback === null) fallback = row.id;
     if (p?.turn_kind === preferredTurnKind) return row.id;
@@ -97,10 +62,9 @@ async function resolveSourceEventId(
 }
 
 /**
- * Validate a client-supplied `source_event_id`: it must reference an agent
- * teach_message OR copilot_reply in THIS session. Without this a stale or
- * malformed client could write a counted accept_suggestion anchored to an
- * unrelated/nonexistent event.
+ * A client-supplied `source_event_id` must reference an agent anchor in THIS
+ * session; otherwise a stale or malformed client could write a counted
+ * accept_suggestion anchored to an unrelated/nonexistent event.
  */
 async function isValidAnchorEvent(sessionId: string, eventId: string): Promise<boolean> {
   const rows = await db
@@ -131,8 +95,8 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // PIN 9 — assertActive (409-on-ended, no resume side-effect), NOT
-    // assertAcceptingTurns (which auto-resumes idle + writes conversation.resumed).
+    // assertActive (409-on-ended, no resume side-effect), NOT
+    // assertAcceptingTurns (which would auto-resume idle + write conversation.resumed).
     await Conversation.assertActive(db, sessionId);
 
     let sourceEventId: string | null;
@@ -173,21 +137,17 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
     // Order matters: run the proposal accept BEFORE persisting the chip event.
     // writeEvent-first + a failing accept would leave a counted accept_suggestion
-    // behind, and the retry would write a second — double-counting §5.1's KPI for
-    // an action that never completed (P5.6 review finding). The accept-first order
-    // trades that silent double-count for an under-count on the (rare) accept-OK /
-    // write-fails window: acceptAiProposal is idempotent only for the kinds whose
-    // dispatchAccept honors `result.idempotent` (learning_item / variant_question /
-    // completion / goal_scope); for the others a re-accept throws, so a retry
-    // surfaces an error rather than double-counting. Under-count + recoverable is
-    // the lesser evil. NOTE: this branch is latent today — the only caller
-    // (TeachingDrawer) sends no proposal_id. Gates compose: a corrective signal is
-    // excluded on either path (ND-SK-4).
+    // behind, and the retry would write a second one — double-counting the KPI
+    // for an action that never completed. Accept-first trades that silent
+    // double-count for an under-count on the rare accept-OK / write-fails window:
+    // acceptAiProposal is idempotent only for kinds whose dispatch honors
+    // `result.idempotent`, so for the others a retry surfaces an error instead of
+    // double-counting. Under-count + recoverable is the lesser evil.
     if (parsed.data.proposal_id) {
       await acceptAiProposal(db, parsed.data.proposal_id);
-      // YUK-384 — a chip-driven proposal accept is a topology mutation; best-effort
-      // hub-sync wake AFTER commit. Fire-and-forget (`void`, W1) — never binds this
-      // response to pg-boss availability/latency; the seam double-swallows its own errors.
+      // A chip-driven proposal accept is a topology mutation; best-effort
+      // hub-sync wake AFTER commit. Fire-and-forget, so the response never waits
+      // on pg-boss availability/latency; the seam swallows its own errors.
       void wakeHubSyncAfterCommit();
     }
 

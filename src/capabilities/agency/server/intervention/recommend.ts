@@ -57,10 +57,9 @@ export async function recommendPedagogy(
   }
 
   // Operational/provider errors deliberately propagate to pg-boss so its
-  // durable retry policy can run. Only a returned-but-invalid model artifact is
-  // translated into an epistemic preparation failure below.
-  // YUK-1624 — with one legal candidate the deterministic policy has already
-  // made the selection; the model is only asked whether to abstain.
+  // durable retry policy can run; only a returned-but-invalid model artifact
+  // becomes an epistemic preparation failure below. With one legal candidate
+  // the deterministic policy has already chosen; the model only may abstain.
   const result: TaskTextResult = await input.runTaskFn(
     'InterventionRecommendationTask',
     {

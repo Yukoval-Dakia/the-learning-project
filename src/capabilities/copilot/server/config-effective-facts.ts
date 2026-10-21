@@ -1,5 +1,5 @@
-// YUK-1007 — copilot 拥有键的 consumer-effective 事实（真实 reader 调用）。
-// 经 copilot/public.ts 透出给组合根 facts seam。
+// copilot 拥有键的 consumer-effective 事实（真实 reader 调用）；经 copilot/public.ts
+// 透出给组合根 facts seam。
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { loadNudgeConfig } from './nudge-config';
 

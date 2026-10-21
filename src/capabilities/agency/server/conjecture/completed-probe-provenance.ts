@@ -97,10 +97,10 @@ export type CompletedProbeProvenanceResult =
   | { reason: string };
 
 /**
- * Issued probes use the original proposal, issuance and revision.
- * Question source/refs/sequence are not editor fields and remain identity guards.
- * Editable KC, draft status, kind, choices and content cannot reinterpret a result.
- * Callers retain correction/status folds and the historical unissued row contract.
+ * Issued probes are validated against the original proposal, issuance and revision.
+ * Question source/refs/sequence are identity guards, not editor fields; editable KC,
+ * draft status, kind, choices and content cannot reinterpret a result. Callers own
+ * correction/status folds and the historical unissued row contract.
  */
 export function validateIssuedProbeProvenance({
   probe,
@@ -156,11 +156,10 @@ export function validateIssuedProbeProvenance({
     if (promptMd !== expectedPrompt) return { reason: 'probe_prompt_mismatch' };
     const criterion = unit.criterion;
     const expectedNativeSpec = ConjectureProbeSpecV2.safeParse(expectedSpec);
-    // Proposal loaders parse the complete original spec; the published schema
-    // parses the frozen counterpart. Compare every typed field, including nested
-    // signatures, without depending on editable question metadata or key order.
-    // Only V2 publishes a native spec. V1 retains the legacy frozen reference.
-    // Either-side V2 presence prevents a native spec from becoming legacy scoring.
+    // Proposal loaders parse the complete original spec, the published schema parses
+    // the frozen counterpart. Compare every typed field without depending on editable
+    // question metadata or key order. Only V2 publishes a native spec; either-side V2
+    // presence prevents a native spec from becoming legacy scoring.
     if (expectedNativeSpec.success || criterion.probe_spec !== undefined) {
       if (
         !expectedNativeSpec.success ||
@@ -169,8 +168,8 @@ export function validateIssuedProbeProvenance({
       ) {
         return { reason: 'probe_spec_mismatch' };
       }
-      // The model consumes the entire criterion, including rule identity,
-      // authority and scoring instructions outside the embedded probe spec.
+      // The model consumes the entire criterion, including rule identity and
+      // scoring instructions outside the embedded probe spec.
       const expectedCriterion = createProbeV2Criterion({
         scoringUnitId: unit.scoring_unit_id,
         probeSpec: expectedNativeSpec.data,
@@ -188,8 +187,8 @@ export function validateIssuedProbeProvenance({
     const plan = published.execution_plan;
     const assignment = plan.assignments[0];
     // Bind the evaluator's inputs and binary scoring, including paths that run
-    // before model dispatch. These are fixed by the native probe publisher.
-    // Slice IDs and cost caps remain admission-time parameters, not identity.
+    // before model dispatch. Slice IDs and cost caps remain admission-time
+    // parameters, not identity.
     if (
       unit.slot_refs.length !== 1 ||
       unit.slot_refs[0] !== slot.slot_id ||

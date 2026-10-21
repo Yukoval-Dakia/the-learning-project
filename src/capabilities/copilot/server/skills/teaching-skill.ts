@@ -1,27 +1,21 @@
-// AF S4 / YUK-203 U6 (OQ2=B2, R2/R5) — the Copilot teaching skill.
+// Copilot teaching skill.
 //
-// A teaching-context turn COMPOSES a call to the existing TeachingTurnTask at the
-// SERVICE layer (it does NOT enter the CopilotTask LLM tool loop and does NOT
-// enter the tool surface — R2/R5 double-guard). TeachingTurnTask stays a narrow
-// internal task; this module renders its single structured ask_check/explain/end
-// turn as a Copilot reply + (for ask_check) a materialized question + chips.
+// Composes TeachingTurnTask at the service layer — never through the CopilotTask
+// LLM tool loop or tool surface — and renders its single ask_check/explain/end
+// turn as a Copilot reply plus, for ask_check, a materialized question + chips.
 //
-// SINGLE-SESSION model (Cross-统合 §3.1/§4.2): the turn lives ENTIRELY on the
-// Copilot `entrypoint='copilot'` session that runCopilotChat already resolved.
-// There is NO second teaching session. The ask_check question is stamped with
-// metadata.session_id = the Copilot session id (via materializeAskCheckQuestion)
-// as session provenance; the accept-chip lineage keys off that same Copilot
-// session id (resolved via the event table, not the question stamp).
+// SINGLE-SESSION: the turn lives entirely on the Copilot `entrypoint='copilot'`
+// session that runCopilotChat already resolved; there is no second teaching
+// session. The ask_check question is stamped with metadata.session_id = the
+// Copilot session id, and accept-chip lineage resolves against that same id via
+// the event table, not the question stamp.
 //
-// The TeachingTurnTask call runs with allowedTools:[] → the SDK gets an empty
-// tool list + maxTurns:1 (registry.ts) → a single structured-JSON reply, never a
-// tool loop, NO memory (R6), NO tool budget (OQ5).
+// ATOMICITY: this skill returns unpersisted question params instead of writing the
+// row, so the caller can wrap the copilot_reply event write and the question INSERT
+// in one transaction and avoid a dangling question row if the reply write fails.
 //
-// ATOMICITY NOTE (PR #305 review): this skill deliberately does NOT materialize
-// the ask_check question itself. Instead it returns the un-persisted structured
-// question params so the caller (runCopilotChat in chat.ts) can wrap BOTH the
-// copilot_reply event write AND the question INSERT in a single db.transaction,
-// preventing a dangling question row if the reply event write fails mid-flight.
+// allowedTools:[] → empty SDK tool list + maxTurns:1 → one structured JSON reply,
+// never a tool loop, no memory, no tool budget.
 
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
@@ -33,9 +27,7 @@ import {
   parseTurnOutput,
 } from '../teaching';
 
-// Same injectable runner seam the orchestrator uses (kind, input, ctx) → { text }.
-// Defaults to runAgentTask; unit tests inject a fixture so the {}-stub db is
-// never touched.
+// Injectable runner seam (kind, input, ctx) → { text }; defaults to runAgentTask.
 type RunAgentTaskFn = (
   kind: string,
   input: unknown,
@@ -50,38 +42,26 @@ export interface RunTeachingSkillParams {
   signal?: AbortSignal;
   /** Absolute deadline shared with the enclosing Copilot run. */
   providerSessionDeadlineAt?: number;
-  /** The Copilot session this turn belongs to (already resolved by runCopilotChat). */
+  /** Owning Copilot session, already resolved by runCopilotChat. */
   sessionId: string;
-  /** The teaching ref id — a learning_item id (skill_context.ref.id). */
+  /** learning_item id (skill_context.ref.id). */
   learningItemId: string;
-  /** The user's typed message for this turn. */
   userMessage: string;
 }
 
-// Pending question params: the structured question + context needed for
-// materializeAskCheckQuestion, without the sourceRef (which is the reply event id
-// determined by the caller after this fn returns).
+// Question params minus sourceRef, which the caller assigns after this returns.
 export type PendingAskCheckParams = Omit<MaterializeAskCheckParams, 'sourceRef'> & {
   structured_question: TeachingStructuredQuestionT;
 };
 
 export interface TeachingSkillResult {
-  /** The reply markdown to surface as the Copilot reply (= turn.text_md). */
+  /** Reply markdown to surface as the Copilot reply. */
   text_md: string;
-  /** The discriminated turn kind. */
   kind: TeachingTurnOutputT['kind'];
   suggested_next: TeachingTurnOutputT['suggested_next'];
-  /**
-   * Present only for an ask_check turn. NOT yet persisted — the caller
-   * (runCopilotChat) materializes it inside the same transaction as the reply
-   * event write so the two are atomic (PR #305 review comment #1).
-   */
+  /** ask_check only; unpersisted — the caller materializes it in the reply transaction. */
   pendingQuestion?: PendingAskCheckParams;
-  /**
-   * The real task_run_id returned by the TeachingTurnTask runner. The caller
-   * writes this onto the reply event for cost-tracing + observability
-   * (PR #305 review comment #3).
-   */
+  /** Real task_run_id for cost tracing; the caller writes it onto the reply event. */
   task_run_id: string;
 }
 
@@ -90,14 +70,8 @@ export interface RunTeachingSkillDeps {
 }
 
 /**
- * Run one teaching-skill turn inside the Copilot session.
- *
- * Steps:
- *  1. load the teaching context (reuses the orchestrator's single loader),
- *  2. compose a TeachingTurnTask call with allowedTools:[] (no tool loop, no memory),
- *  3. parse the single structured turn,
- *  4. for ask_check, return a pendingQuestion (NOT yet persisted — the caller
- *     is responsible for wrapping the INSERT + reply event in one transaction).
+ * Run one teaching-skill turn in the Copilot session; an ask_check turn returns
+ * unpersisted question params for the caller to materialize atomically.
  */
 export async function runTeachingSkill(
   params: RunTeachingSkillParams,
@@ -110,10 +84,8 @@ export async function runTeachingSkill(
   const context = await loadTeachingContext(db, learningItemId);
   params.signal?.throwIfAborted();
 
-  // Single-turn teaching: the user's message is the only message. (The legacy
-  // route replays prior teach_message events; the Copilot session does not carry
-  // teach_message events, so the skill drives one turn from the current message —
-  // §4.2: the structured contract is preserved, the history seam is not.)
+  // Single-turn: the Copilot session carries no teach_message history, so the
+  // structured contract is preserved but prior turns are not replayed.
   const input = {
     learning_item: context.learning_item,
     parent_hub_summary: context.parent_hub_summary,
@@ -124,7 +96,7 @@ export async function runTeachingSkill(
   const result = await run('TeachingTurnTask', input, {
     db,
     subjectProfile: context.subjectProfile,
-    // R5/R6/OQ5: empty tool list → no memory, no tool budget, single structured turn.
+    // Empty tool list → no memory, no tool budget, single structured turn.
     allowedTools: [],
     ...(params.taskRunId ? { taskRunId: params.taskRunId } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
@@ -141,8 +113,8 @@ export async function runTeachingSkill(
     pendingQuestion = {
       structured_question: turn.structured_question,
       learningItemId,
-      // SINGLE-SESSION: stamp the Copilot session id as question provenance;
-      // the accept-chip lineage resolves against that same Copilot session.
+      // Stamp the Copilot session id as question provenance; accept-chip lineage
+      // resolves against that same session.
       sessionId,
       fallbackPromptMd: turn.text_md,
     };

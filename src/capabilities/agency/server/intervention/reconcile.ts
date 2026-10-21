@@ -49,9 +49,9 @@ export interface InterventionSettlementRecoveryReport {
 }
 
 /**
- * Recreate eligible diagnostic questions/FSRS cards after restoring an archive
- * created before or during YUK-792. Completed one-shot diagnostics are retained
- * as immutable questions but are not re-enrolled.
+ * Recreate eligible diagnostic questions/FSRS cards after restoring an archive.
+ * Completed one-shot diagnostics are retained as immutable questions but are not
+ * re-enrolled.
  */
 export async function recoverEligibleInterventionDiagnostics(
   db: Db,
@@ -122,9 +122,9 @@ export async function recoverEligibleInterventionDiagnostics(
             package: current.package,
             settlement: current.settlement,
             snapshot: current.snapshot,
-            // Recovery may be materializing a pre-deploy eligible row for the
-            // first time. Place its immediate delivery in today's stream while
-            // preserving the immutable due times already frozen in settlement.
+            // Recovery may materialize an eligible row for the first time: place
+            // its immediate delivery in today's stream while preserving the
+            // immutable due times already frozen in settlement.
             now,
           });
           return 'ensured' as const;
@@ -150,10 +150,10 @@ export async function recoverEligibleInterventionDiagnostics(
 /**
  * Recreate operational pg-boss work for durable `preparing` aggregates.
  *
- * Backup/restore intentionally preserves the business aggregate but not pg-boss
- * rows. A frequent recovery job therefore checks queue liveness, reserves a
- * fresh job UUID when the archived id is missing, and makes retry exhaustion
- * visible as a terminal aggregate failure instead of paying forever.
+ * Backup/restore preserves aggregates but not pg-boss rows, so recovery checks
+ * queue liveness, reserves a fresh job UUID when the archived id is missing, and
+ * turns retry exhaustion into a terminal aggregate failure instead of paying
+ * forever.
  */
 export async function recoverPreparingInterventions(
   db: Db,

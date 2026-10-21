@@ -14,7 +14,7 @@ export interface ToolResultSsePayload {
   input: Record<string, unknown>;
   summary: string;
   errorReason?: string;
-  /** YUK-920 — 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
+  /** 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
   toolUseId?: string;
 }
 

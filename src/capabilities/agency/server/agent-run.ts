@@ -1,20 +1,10 @@
-// YUK-1570 — the agency nightly domain-agent scan operation.
+// The agency nightly domain-agent scan operation.
 //
-// Single owner of the complete run assembly that dreaming_nightly and
-// coach_daily previously copied line-for-line: inbox before-read → consumer
-// signal reads → `experimental:trigger_<surface>_scan` provenance event →
-// ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput
-// throttle on a piDomainMount → runAgentTask with the YUK-290 `hard+1` summary
-// turn budgetOverride → inbox after-diff → consumer per-new-row hook →
-// `experimental:<surface>_scan` success/failure events → rethrow.
-//
-// Injection seams are preserved exactly: every swappable dep keeps the name and
-// shape the jobs declared (`now`, `writeEventFn`, `listProposalInboxRowsFn`,
-// `runAgentTaskFn`), and the mount keeps the same ctx fields, gates, and
-// BuildMcpServerOptions semantics — including the unused cancellationSignals /
-// onExecute* hooks the options type still supports for future consumers.
-// Surface differences stay in the spec: trigger actor_ref, run_kind payload
-// slots, TodayPlan extras, and Dreaming's note-refine fan-out.
+// Single owner of the complete run assembly: inbox before-read → `experimental:trigger_<surface>_scan`
+// event → ContextBudgetTracker + propose-cap beforeExecute gate + interceptInput throttle on a
+// piDomainMount → runAgentTask with the `hard+1` summary-turn budgetOverride → inbox after-diff →
+// per-new-row hook → `experimental:<surface>_scan` success/failure events → rethrow. Surface
+// differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
 
 import { createId } from '@paralleldrive/cuid2';
 import type { Db } from '@/db/client';
@@ -33,23 +23,19 @@ import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
 
 /**
- * The inbox row slice the scan diff needs. Dreaming reads `kind`/`target` on the
- * after-rows for its note-refine fan-out; Coach reads neither — so both stay
- * optional here and each consumer narrows in its own code.
+ * The inbox row slice the scan diff needs. Only Dreaming's note-refine fan-out reads
+ * `kind`/`target`, so both stay optional and each consumer narrows in its own code.
  */
 export type AgencyScanInboxRow = Pick<ProposalInboxRow, 'id' | 'status'> &
   Partial<Pick<ProposalInboxRow, 'kind' | 'target'>>;
 
 /**
- * The result slice the scan bookkeeping needs. `task_run_id` is always present
- * on a settled run; `cost_usd`/`text` stay optional because injected runners
- * (and some task kinds) don't promise them — Coach's extras tolerate a missing
- * `text` via the plan-parse fallback.
+ * The result slice the scan bookkeeping needs. `task_run_id` is always present;
+ * `cost_usd`/`text` stay optional because injected runners may omit them.
  */
 export type AgencyScanRunResult = Pick<RunTaskResult, 'task_run_id' | 'cost_usd'> &
   Partial<Pick<RunTaskResult, 'text'>>;
 
-/** The ctx the scan hands to its runner — the same fields the jobs passed. */
 export type AgencyScanRunCtx = Pick<
   RunAgentTaskCtx,
   'db' | 'budgetOverride' | 'piToolMounts' | 'allowedTools'
@@ -66,23 +52,19 @@ export interface AgencyProposalScanDeps {
   now?: () => Date;
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
   listProposalInboxRowsFn?: (db: Db) => Promise<AgencyScanInboxRow[]>;
-  /** Runner seam — the old `deps.runAgentTaskFn ?? runAgentTask` injection. */
+  /** Runner seam. */
   runAgentTaskFn?: AgencyScanRunFn;
 }
 
 export interface AgencyProposalScanSpec {
   /**
-   * DomainTool surface — resolves the mount toolNames + MCP allowedTools, names
-   * the agent actor_ref, the `experimental:trigger_<surface>_scan` /
-   * `experimental:<surface>_scan` actions, the `<surface>_{trigger,tool,scan}_`
-   * event ids, and the proposal-cap message label.
+   * DomainTool surface — resolves the mount toolNames + MCP allowedTools, names the agent
+   * actor_ref, the trigger/scan actions and event ids, and the proposal-cap label.
    */
   surface: DomainToolSurface;
   /**
-   * Registered task kind, also stamped as tool_call_log task_kind. Declared as a
-   * literal union (not `string`) — the task census resolves production callers
-   * through this declared type, and the op is intentionally narrow: extend the
-   * union when another nightly scan surface joins.
+   * Registered task kind, also stamped as tool_call_log task_kind. A literal union so the
+   * task census resolves production callers; extend it when another scan surface joins.
    */
   taskKind: 'DreamingTask' | 'CoachTask';
   /** actor_ref on the cron trigger event (e.g. 'nightly_dreaming'). */
@@ -91,9 +73,8 @@ export interface AgencyProposalScanSpec {
   budget: ContextBudget;
   deps?: AgencyProposalScanDeps;
   /**
-   * Read signals after the inbox snapshot, before the trigger event. Return
-   * the input builder so assembly still occurs inside the scan failure boundary
-   * at the runner call, after the trigger and mount options have been prepared.
+   * Read signals after the inbox snapshot, before the trigger event. Return the input
+   * builder so assembly still happens inside the scan failure boundary at the runner call.
    */
   prepareInput: (ctx: {
     db: Db;
@@ -103,10 +84,9 @@ export interface AgencyProposalScanSpec {
   /** Extra trigger payload fields (Coach stamps `run_kind`). */
   extraTriggerPayload?: Record<string, unknown>;
   /**
-   * Scan-success payload extras computed from the task result and the built
-   * runner input — the SAME input object passed to runAgentTask, so consumer
-   * facts computed in prepareInput (e.g. Coach's reviewPlan) reach the payload
-   * without a second read or shared state.
+   * Scan-success payload extras computed from the task result and the built runner input —
+   * the SAME object passed to runAgentTask, so facts computed in prepareInput reach the
+   * payload without a second read.
    */
   buildScanSuccessPayloadExtras?: (
     taskResult: AgencyScanRunResult,
@@ -115,9 +95,8 @@ export interface AgencyProposalScanSpec {
   /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
   extraScanFailurePayload?: Record<string, unknown>;
   /**
-   * Runs between the after-diff and the scan-success write — Dreaming's
-   * note_update → note-refine enqueue fan-out. Receives only the NEW rows
-   * (not in the before-read).
+   * Runs between the after-diff and the scan-success write — Dreaming's note_update →
+   * note-refine enqueue fan-out. Receives only the NEW rows.
    */
   onNewProposalRows?: (args: {
     db: Db;
@@ -172,8 +151,8 @@ export async function runAgencyProposalScan(
   try {
     let proposalWrites = 0;
     const budgetTracker = new ContextBudgetTracker(spec.budget);
-    // piDomainMount compiles the DomainTools into AgentTools with the
-    // identical beforeExecute/interceptInput gates via executeDomainToolCall.
+    // piDomainMount compiles the DomainTools into AgentTools with the same
+    // beforeExecute/interceptInput gates via executeDomainToolCall.
     const domainMountOptions = {
       ctx: {
         db,
@@ -204,8 +183,8 @@ export async function runAgencyProposalScan(
     const input = buildInput();
     const taskResult = await run(taskKind, input, {
       db,
-      // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
-      // Keep one final turn for the agent's summary after the last allowed tool call.
+      // maxTurns must not pre-empt the runtime tool-call ceiling: keep one final turn
+      // for the agent's summary after the last allowed tool call.
       budgetOverride: { maxIterations: spec.budget.toolCalls.hard + 1 },
       piToolMounts: [piDomainMount(domainMountOptions)],
       allowedTools: [...resolveMcpAllowedTools(spec.surface)],

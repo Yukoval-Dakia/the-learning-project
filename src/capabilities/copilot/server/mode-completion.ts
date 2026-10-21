@@ -8,9 +8,8 @@ import {
 export type CopilotTerminalOutcome = { kind: 'success' | 'partial' | 'failed' | 'cancelled' };
 
 /**
- * Resolve product mode completion without adding transport or model-input state.
- * Teaching progress already comes from its behavior pack; quiz is the only
- * free-form one-shot mode. Legacy solve and old replies stay unclassified.
+ * Quiz is the only free-form one-shot mode; teaching progress comes from its
+ * behavior pack. Legacy solve and old replies stay unclassified.
  */
 export function resolveCopilotModeCompletion(
   skillContext: CopilotSkillContextT | undefined,

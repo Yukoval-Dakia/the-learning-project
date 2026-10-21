@@ -1,10 +1,8 @@
-// YUK-879 — MindModelInductionTask + ConjectureGroupingTask contracts, owned by
-// the agency capability (YUK-406 / YUK-440 / YUK-786 / YUK-821 lineage). The
-// envelope schemas are the single source the induce orchestrator
+// MindModelInductionTask + ConjectureGroupingTask contracts. The envelope
+// schemas are the single source the induce orchestrator
 // (../server/conjecture/induce) parses samples against.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import { z } from 'zod';
@@ -81,18 +79,10 @@ export const mindModelInductionTaskSpec = {
       'YUK-406 / YUK-821 — induce/update ONE evidence-grounded conjecture and freeze its DiagnosticSpec. This stage emits no probes. Bounded structured-output run; the nightly job runs it on the Opus anthropic-sub lane via per-call override for self-consistency.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    // YUK-786: 120s (was 60s). MEASURED, not guessed — a 12-cell real-Opus run on
-    // the grounded packet took 42–61s per successful sample, and the old 60s cap
-    // aborted roughly half the remainder mid-flight ('Claude Code process aborted
-    // by user' at ~62s). The grounding packet is strictly more input (question
-    // text + learner answers + reasoning traces) and asks for evidence-citing
-    // reasoning, so the task is simply heavier than it was as a 7-scalar prompt.
-    // Leaving 60s in place would have silently dropped cells every night —
-    // grounding that never returns is not grounding. 120s matches the registry's
-    // established heavy-output band (MemoryBriefTask has the same history).
-    // YUK-800: maxIterations=2 is measured, not speculative. With one turn, 10/24
-    // grounded Opus samples ended as error_max_turns after writing reasoning and
-    // before emitting JSON. No tools are allowed, so turn two can only finish output.
+    // Measured: a 12-cell real-Opus run on the grounded packet took 42–61s per
+    // successful sample, and the old 60s cap aborted roughly half mid-flight. One turn
+    // ended 10/24 samples as error_max_turns after writing reasoning but before
+    // JSON; no tools are allowed, so turn two can only finish output.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 120_000 },
     needsToolCall: false,
     isMultimodal: true,
@@ -103,9 +93,9 @@ export const mindModelInductionTaskSpec = {
   parseText: parseMindModelInductionOutput,
 } satisfies TaskSpec<unknown, MindModelInductionOutput>;
 
-// YUK-821 — semantic grouping covers claim + complete DiagnosticSpec, not claim
-// alone. Called once per induceConjecture invocation when samples are not
-// unanimously byte-identical. Cost: +1 mimo call per conjecture per run.
+// Semantic grouping covers claim + complete DiagnosticSpec, not claim alone.
+// Called once per induceConjecture invocation when samples are not unanimously
+// byte-identical.
 export const conjectureGroupingTaskSpec = {
   ownership: 'owned',
   definition: {
@@ -114,9 +104,8 @@ export const conjectureGroupingTaskSpec = {
       'Groups misconception hypotheses by semantic equivalence across claim_md and the complete DiagnosticSpec. Input = { hypotheses: [{ claim_md, diagnostic_spec }] }. Output = { groups: number[][] }.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // A structured response can consume early SDK turns on reasoning before
-    // emitting JSON. This call is load-bearing whenever no exact surface-form
-    // quorum exists; measured fixed-batch runs still timed out at 2 turns/60s.
+    // Structured output can spend early turns on reasoning before emitting JSON;
+    // measured fixed-batch runs timed out at 2 turns under the old 60s cap.
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 120_000 },
     needsToolCall: false,
     isMultimodal: false,

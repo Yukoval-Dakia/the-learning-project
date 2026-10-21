@@ -5,8 +5,8 @@ import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
 
-// Wire-wide values stay backward-compatible even though only teaching remains
-// a server-side behavior pack. Persisted solve/quiz contexts must keep parsing.
+// Wire values stay backward-compatible: only teaching is a server-side behavior
+// pack, but persisted solve/quiz contexts must keep parsing.
 export const COPILOT_SKILL_CONTEXT_KINDS = ['teaching', 'solve', 'quiz'] as const;
 export type CopilotSkillContextKind = (typeof COPILOT_SKILL_CONTEXT_KINDS)[number];
 export const COPILOT_BEHAVIOR_PACK_KINDS = ['teaching'] as const;
@@ -21,7 +21,7 @@ export const CopilotSkillContext = z.object({
 });
 export type CopilotSkillContextT = z.infer<typeof CopilotSkillContext>;
 
-/** Existing product-state carrier shared by inline, durable, and replay paths. */
+/** Product-state carrier shared by inline, durable, and replay paths. */
 export interface CopilotSkillTurn {
   kind: 'explain' | 'ask_check' | 'end';
   /** Present only for an ask_check turn that materialized a question. */
@@ -40,7 +40,7 @@ export interface CopilotModeState {
   skill_context: CopilotSkillContextT;
 }
 
-/** Narrow the persisted teaching projection identically for history and live recovery. */
+/** One projection reader for history and live recovery. */
 export function readCopilotSkillTurn(
   payload: Record<string, unknown>,
 ): CopilotSkillTurn | undefined {

@@ -25,9 +25,8 @@ export const PresentPrimaryViewOutputSchema = z.discriminatedUnion('source', [
 
 export type PresentPrimaryViewInput = z.infer<typeof PresentPrimaryViewOutputSchema>;
 
-// mcp-bridge consumes a ZodObject's raw shape. Keep the discriminated pairing
-// as a refinement on that object, while the output schema remains the canonical
-// typed DTO used by the reply finalizer.
+// mcp-bridge consumes a ZodObject's raw shape, so the discriminated pairing stays
+// a refinement; PresentPrimaryViewOutputSchema remains the canonical typed DTO.
 export const PresentPrimaryViewInputSchema = z
   .object({
     source: z.enum(['tool_result', 'artifact', 'ephemeral_html']),
