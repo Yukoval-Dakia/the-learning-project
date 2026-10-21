@@ -53,9 +53,6 @@ function usageWithThinking(
   const usage: LifecycleUsage = {
     inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
     outputTokens: aggregate.outputTokens,
-    cacheReadTokens: aggregate.cacheReadTokens,
-    cacheWriteTokens: aggregate.cacheCreationTokens,
-    numTurns,
     ...(compaction ? { compaction } : {}),
     ...(thinking.blocks > 0
       ? { thinkingBlocks: thinking.blocks, thinkingCharacters: thinking.characters }
@@ -63,6 +60,7 @@ function usageWithThinking(
   };
   return {
     tokenUsageObserved,
+    numTurns,
     usage,
     tokenCounts: {
       inputTokens: aggregate.inputTokens,

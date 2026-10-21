@@ -68,6 +68,8 @@ export interface LifecycleResult {
 export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
+  /** YUK-1557 — completed assistant turns; persisted beside the token counters. */
+  numTurns?: number;
   /** Distinguishes missing usage from explicitly observed zero token counts. */
   tokenUsageObserved?: boolean;
   costUsd?: number;
@@ -77,7 +79,7 @@ export interface TerminalResultEvidence {
 
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,
-  'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
+  'usage' | 'tokenCounts' | 'numTurns' | 'tokenUsageObserved' | 'costUsd'
 > & {
   /** Set when tokens and any catalog USD came from an aborted stream, not a final usage payload. */
   priceOrigin?: 'timeout-estimate';
@@ -347,12 +349,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.observedUsage = {
       tokenUsageObserved: true,
       priceOrigin: 'timeout-estimate',
+      numTurns: 1,
       usage: {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        numTurns: 1,
         usage_basis: 'estimated',
       },
       tokenCounts: {
@@ -369,6 +369,21 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       this.terminal?.tokenCounts ??
       this.observedUsage?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 }
     );
+  }
+
+  /**
+   * YUK-1557 — the persisted projection of usage. `usage` stays the public
+   * run-result shape (existing callers pin it), while the terminal row carries
+   * the provider cache counters and completed-turn count in one place.
+   */
+  private get persistedUsage(): AiTaskUsage {
+    const counts = this.tokenCounts;
+    return {
+      ...this.usage,
+      cacheReadTokens: counts.cacheReadTokens ?? 0,
+      cacheWriteTokens: counts.cacheCreationTokens ?? 0,
+      numTurns: this.terminal?.numTurns ?? this.observedUsage?.numTurns ?? 0,
+    };
   }
 
   get costTruth(): AttemptCostTruth {
@@ -851,7 +866,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         id: this.taskRunId,
         status: input.status,
         finish_reason: input.finishReason,
-        usage: this.usage,
+        usage: this.persistedUsage,
         cost_truth: this.costTruth,
         outcome: input.outcome,
         error_message: input.errorMessage,
