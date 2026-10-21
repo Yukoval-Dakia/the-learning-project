@@ -96,8 +96,9 @@ export async function findIdempotentIngestionOperation(
 }
 
 /**
- * 原子保留 operation handle。Idempotency-Key 只在同一 session 的 operations
- * collection 内作用；相同 key + 相同规范化输入复用 handle，不同输入返回冲突。
+ * Atomically reserves an operation handle. The idempotency key scopes to one
+ * session's operation collection: the same key and normalized input reuse the
+ * handle, while different input conflicts.
  */
 export async function reserveIngestionOperation(
   db: Db,
@@ -314,7 +315,7 @@ export async function hasQueuedIngestionOperationEvent(
   return rows.length > 0;
 }
 
-/** 串行化 accepted→pg-boss→queued 缝隙上的首次投递与崩溃恢复。 */
+/** Serializes first dispatch and crash recovery across the accepted-to-queued gap. */
 export async function withIngestionOperationDispatchLock<T>(
   db: Db,
   operationId: string,
@@ -328,7 +329,7 @@ export async function withIngestionOperationDispatchLock<T>(
   });
 }
 
-/** 从 append-only job_events 投影可轮询的 operation 资源。 */
+/** Projects the pollable operation resource from append-only job_events. */
 export async function readIngestionOperation(
   db: Db | Tx,
   operationId: string,

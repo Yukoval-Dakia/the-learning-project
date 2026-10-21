@@ -2,19 +2,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { clampBBox } from '@/core/schema/bbox-utils';
 import type { BBoxT, StructuredQuestionT } from '@/core/schema/structured_question';
 
-// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
-// Tencent parser is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
-// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
-// No removal planned. Dual engines also enable same-page A/B quality
-// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
+// Tencent parser, retained permanently as the selectable tencent engine. Dual
+// engines allow same-page A/B quality comparison and per-scenario switching.
 
 /**
- * Parser for Tencent QuestionMarkAgent DONE response → 系统内 StructuredQuestion 树。
- *
- * 输入：Tencent DescribeQuestionMarkAgentJob 的 raw 响应（JobStatus='DONE'）。
- * 输出：StructuredQuestion[] + figures bbox 信息 + layout_quality + warnings。
- *
- * 见 Sub 0c plan Step 7 + spec § 1.6 + ADR-0002 修订（extraction_evidence 概念）。
+ * Parses a DONE QuestionMarkAgent response into structured questions, figures,
+ * layout quality, and warnings.
  */
 
 export type PageMeta = {
@@ -57,7 +50,7 @@ export function flat8ToBBox(flat: number[], pageWidth: number, pageHeight: numbe
   // canonical BBox refine `x + width <= 1` / `y + height <= 1`, not just per-component [0,1]. Clamping
   // each component INDEPENDENTLY (the old behavior) let a near-full-page polygon (OCR coords meeting
   // or exceeding the declared page dimension) yield x+width > 1, which FAILS BBox.parse. Latent until
-  // YUK-471 W3-C1δ routed the `structured` tree (+ figure source_bbox) through the canonical
+  // The structured tree (plus figure source_bbox) goes through the canonical
   // QuestionBlockRowSnapshot at the create-event parse barrier, where it would roll back the
   // extraction tx. Shared `clampBBox` applies the sum-safe cap (verified: x + min(w, 1-x) <= 1).
   return clampBBox({

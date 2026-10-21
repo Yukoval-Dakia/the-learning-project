@@ -1,19 +1,8 @@
 /**
- * WorkflowJudge — T-OC slice 3 (YUK-145, OC-4).
- *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §6 + ADR-0026.
- *
- * Per spec §7 Q1 + §8 (single-user), this is a DETERMINISTIC single-pass
- * confidence aggregator, NOT a second LLM / multi-agent vote. It combines the
- * extraction confidence (from extraction) with the TaggingTask confidence and
- * decides whether a captured block can be auto-enrolled (high confidence) or must
- * fall through to the existing human review (low confidence / no suggestions).
- *
- * The combined confidence is the WEAKEST LINK — `min(extraction, tagging)` — so
- * either a shaky structure OR a shaky tagging forces human review. Conservative
- * by construction; the threshold itself is configurable
- * (workflow-judge-config.ts) and the whole auto path is OFF by default.
+ * Deterministic single-pass confidence aggregator, not another model. It combines
+ * extraction and tagging confidence to route a block to auto-enroll or human
+ * review. Combined confidence is the weakest link, so either shaky input forces
+ * review. The threshold is configurable, and the auto path is off by default.
  */
 import type { z } from 'zod';
 

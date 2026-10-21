@@ -66,7 +66,7 @@ async function readBudgetLimit(tx: Tx): Promise<{ value: number; revision: numbe
     return { value: parsed.data as number, revision: row.revision };
   }
 
-  // DB 无行 → registry fallback 语义：env 显式值优先，其次 code default。
+  // No DB row: use the registry fallback, explicit env first, then code default.
   const envRaw = def.envName != null ? process.env[def.envName] : undefined;
   if (envRaw !== undefined) {
     const envParsed = def.envParse ? def.envParse(envRaw) : envRaw;
@@ -74,7 +74,7 @@ async function readBudgetLimit(tx: Tx): Promise<{ value: number; revision: numbe
     if (validated.success && typeof validated.data === 'number') {
       return { value: validated.data as number, revision: null };
     }
-    // env 显式给值但非法 → fail closed，不静默下探 default。
+    // An explicit but invalid env value fails closed instead of using the default.
     budgetUnavailable('budget_read_unavailable');
   }
   return { value: def.codeDefault as number, revision: null };
@@ -152,7 +152,7 @@ async function authorizeGrant(
     operationId: string;
   },
 ): Promise<void> {
-  // 先全局串行，再碰行数据——所有 start 判定同一次序，无锁次序分叉。
+  // Serialize globally before touching rows so every start decision shares one order.
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${BUDGET_LOCK_KEY}))`);
 
   await retainUnprovenAgentReservations(tx);
@@ -168,20 +168,20 @@ async function authorizeGrant(
   }
   if (ownBudget && Object.hasOwn(ownBudget.grants, input.operationId)) return;
 
-  // 2) 在途/待结算扫描（含本 session 的其它陈旧 grant）：
-  //    in_flight 只在宿主 session 仍可能继续时才占位；确证不可继续的走
-  //    费用终态判定（未结清 → awaiting_cost，占位仍阻新启动）。
+  // Scan in-flight and awaiting-cost grants. An in-flight grant blocks only while
+  // its session can still continue; proven-dead sessions go through cost settlement,
+  // and unsettled cost keeps blocking as awaiting_cost.
   for (const row of rows) {
     const budget = row.id === input.sessionId ? ownBudget : parseAgentBudget(row.agentBudget);
     if (budget == null) {
-      // 有 agent_budget 行但解析失败 → 无法证无在途 → fail closed。
+      // Unparseable budget means in-flight work cannot be ruled out; fail closed.
       budgetUnavailable('budget_read_unavailable');
     }
     const open = findOpenGrant(budget);
     if (!open) continue;
 
     if (open.grant.state === 'awaiting_cost') {
-      // 待结算占位惰性重评：仍未结 → 继续阻；已落定 → 收口放行。
+      // Re-evaluate an awaiting-cost claim: unsettled still blocks; settled releases.
       const spend = await hasUnresolvedAgentSpend(tx);
       if (spend.unsettled) {
         budgetUnavailable('unsettled_cost', {
@@ -197,8 +197,8 @@ async function authorizeGrant(
     }
 
     if (RUN_OVER_SESSION_STATUSES.has(row.status)) {
-      // run 已结束但 settle 未写（worker 崩溃边界）→ 费用终态判定后收口；
-      // 对应 operation 收到明确失败，未结清则占位转 awaiting_cost。
+      // The run ended without settlement (worker crash). Settle it; the operation
+      // gets an explicit failure, and unsettled cost moves to awaiting_cost.
       const state = await finalizeGrant(tx, row.id, open.operationId, open.grant, {
         settleReason: 'session_terminal',
         opTerminal: {
@@ -216,8 +216,8 @@ async function authorizeGrant(
       continue;
     }
     if (row.status === 'queued' && !(await hasLiveAgentJob(tx, row.id))) {
-      // queued 但 pg-boss 侧无活 job：send 后 job 失败归档/未送达的 wedge ——
-      // job 消失不等于未发送（已 claim 后崩也可能），仍走费用终态判定。
+      // Queued with no live pg-boss job: a vanished job is not proof nothing was
+      // sent, so still go through cost settlement.
       const state = await finalizeGrant(tx, row.id, open.operationId, open.grant, {
         settleReason: 'queue_vanished',
         opTerminal: {
@@ -234,13 +234,14 @@ async function authorizeGrant(
       }
       continue;
     }
-    // 'queued' 有活 job / 'extracting'（含 suspended-on-ask，无 job 也是真在途）
-    // / 'uploaded'（理论不可达：grant 与翻转同一事务）→ 明确拒绝。
+    // A queued session with a live job, an extracting run (including suspended on
+    // an ask), or an uploaded one (unreachable: grant and transition share a tx) is
+    // genuinely in flight, so reject.
     budgetUnavailable('another_ingestion_in_flight', { session_id: row.id });
   }
 
-  // 2b) 预授权时代遗留：无 grant 但 agent lane 的 queued session 同样在途
-  // （30 天 job_events 窗内可见 ingestion.queued lane='agent' 或 agent run 事件）。
+  // Pre-grant legacy: a queued agent-lane session with no grant is still in flight
+  // when its events are visible in the 30-day window.
   const legacy = await tx.execute<{ id: string }>(sql`
     SELECT s.id FROM learning_session s
     WHERE s.type = 'ingestion' AND s.id <> ${input.sessionId}
@@ -266,8 +267,8 @@ async function authorizeGrant(
     budgetUnavailable('another_ingestion_in_flight', { session_id: legacy[0].id });
   }
 
-  // 2c) 全局未结费用证据：无 grant 的孤儿 running attempt / bound attempt
-  //     已发未结同样不放行（含 pre-gate 遗留与崩溃残留）。
+  // Global unsettled cost (orphan running or bound attempts) blocks new starts,
+  // including pre-gate and crash residue.
   const unresolved = await hasUnresolvedAgentSpend(tx);
   if (unresolved.unsettled) {
     budgetUnavailable('unsettled_cost', {
@@ -278,14 +279,14 @@ async function authorizeGrant(
     });
   }
 
-  // 3) 权威配置（事务内读行 + revision）。
+  // Authoritative config, read in-transaction with its revision.
   const limit = await readBudgetLimit(tx);
   if (limit.value <= 0) {
-    // 显式 0 = kill switch：额度语义下 used(>=0) >= limit(0) 恒成立 → 429。
+    // Explicit 0 is a kill switch: used is always >= 0, so it returns 429.
     budgetExceeded();
   }
 
-  // 4) 本周成本：USD 已知计入；unknown/外币 → 503；used>=limit → 429。
+  // Weekly spend: known USD counts; unknown/foreign currency is 503; used >= limit is 429.
   const week = learnerLocalWeekWindowUtc(now);
   const spend = await readAgentWeekSpend(tx, week.from, now);
   if (spend.unresolved) {
@@ -297,8 +298,8 @@ async function authorizeGrant(
     budgetExceeded();
   }
 
-  // 5) 写 grant（与 session 翻转 + send 同事务提交/回滚），附 durable
-  //    幂等绑定：key 摘要 + 输入摘要 + operation/run 身份 + op 状态。
+  // Write the grant in the same tx as the session transition and send, with the
+  // durable idempotency binding: key/input digests, operation identity, and status.
   await persistGrant(tx, input.sessionId, input.operationId, {
     state: 'in_flight',
     week_start: week.from.toISOString(),
@@ -407,7 +408,7 @@ export async function settleAgentRunBudget(
   if (input.executionClosed !== false) await closeAgentExecution(tx, input.sessionId, operationId);
 }
 
-/** G6: the event owner atomically advances durable identity and stream. */
+/** The event owner advances durable identity and stream atomically. */
 export async function recordAgentOperationRunning(
   tx: Tx,
   input: { sessionId: string; operationId?: string },

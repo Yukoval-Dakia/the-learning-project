@@ -46,34 +46,14 @@ import type { Db } from '@/db/client';
 import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 /**
- * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
+ * WorkflowJudge auto-enroll path.
  *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4/OC-5) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §5 + ADR-0026.
- *
- * ============================================================================
- * CRITICAL SAFETY — OFF BY DEFAULT. With `WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED`
- * unset (the default), this function short-circuits to a no-op BEFORE any
- * tagging / judging / enrollment. Nothing auto-enrolls; every captured block
- * stays 'draft' for the EXISTING human review flow. Production = today,
- * byte-for-byte. See workflow-judge-config.ts file header.
- * ============================================================================
- *
- * When a flag is explicitly ON: for at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN
- * 'draft' question_blocks in the session
- * it runs TaggingTask → WorkflowJudge. Blocks routed 'auto' (high combined
- * confidence) are enrolled WITHOUT human review by INSERTing a `question` and
- * calling `enrollCapturedBlock(tx, { ..., generatedBy: 'workflow_judge' })` (the
- * SAME enrollment owner the human path uses — only the provenance differs).
- * Blocks routed 'review' are left UNTOUCHED ('draft') for the human flow — no
- * behaviour change for them.
- *
- * This runs BETWEEN extraction ('extracted') and human review: it does NOT close
- * the session (no `commitImport`). The human review then handles the remaining
- * draft blocks exactly as before, alongside the auto-enrolled ones.
- *
- * The DEFERRED "AI auto-enrolled N items" review surface (slice 3b) reads the
- * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
+ * Off by default: with the flag unset the function returns before any tagging,
+ * judging, or enrollment, so every block stays 'draft' for human review. When
+ * enabled it tags and judges at most AUTO_ENROLL_MAX_BLOCKS_PER_RUN draft blocks;
+ * 'auto' blocks are enrolled through the same enrollCapturedBlock owner as the
+ * human path (only provenance differs), and 'review' blocks stay untouched. It
+ * runs between extraction and review and never closes the session.
  */
 import { writeEvent } from '@/kernel/events';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
@@ -93,7 +73,7 @@ export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_sta
 export interface AutoEnrolledBlock {
   block_id: string;
   question_id: string;
-  /** The attempt event id, or null for an unanswered (item-bank) enrollment. */
+  /** Null for an unanswered (item-bank) enrollment. */
   attempt_event_id: string | null;
   record_id: string;
   confidence: number;
@@ -102,11 +82,10 @@ export interface AutoEnrolledBlock {
 
 export interface RunAutoEnrollResult {
   status: 'completed' | `skipped:${AutoEnrollSkipReason}`;
-  /** Count of blocks auto-enrolled (0 when skipped or all routed to review). */
   enrolled: number;
-  /** Count of blocks the judge routed to human review (left 'draft'). */
+  /** Blocks left 'draft' for human review. */
   routed_to_review: number;
-  /** Per-block detail for the auto-enrolled blocks (evidence / logging). */
+  /** Per-block detail for enrolled blocks. */
   blocks: AutoEnrolledBlock[];
 }
 
@@ -114,46 +93,24 @@ export interface RunAutoEnrollParams {
   db: Db;
   sessionId: string;
   providerAttempt?: Parameters<typeof tagKnowledge>[0]['providerAttempt'];
-  /** Restrict TaggingTask's candidate grid to one subject (single-subject default omits). */
+  /** Restrict TaggingTask's candidate grid to one subject. */
   subjectId?: string;
-  /**
-   * Inject in tests; defaults to the production TaggingTask invoker. OBSERVE-mode only — the
-   * ENROLL path runs the unified `tagKnowledge` (P3, YUK-489), not this grid-prefill TaggingTask.
-   */
+  /** Test seam for observe-mode TaggingTask; enroll mode uses tagKnowledgeFn. */
   runTaggingFn?: (params: RunTaggingTaskParams) => Promise<TaggingOutputT>;
   /**
-   * P3 (YUK-489) — the unified ENROLL-path tagging step. Defaults to the production `tagKnowledge`
-   * (embedding match-or-propose). DB tests inject a stub so the embedding/naming model is not
-   * called (mirrors tag-knowledge.db.test.ts's embedFn/nameKcFn stubs at one level up): the stub
-   * returns the attributed ids directly, and a throw routes the block to review (tagging outage).
-   * Receives the same deps shape tagKnowledge does (db / nameKcFn / batchCache) plus the
-   * input, so a real-default test can still seed embeddings + stub only the naming model.
+   * Enroll-path tagging. Defaults to `tagKnowledge` (embedding match-or-propose); a throw
+   * routes the block to review.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
-  /**
-   * Inject in tests; defaults to the real `writeEvent`. Used by observe mode to
-   * write the per-block audit event. Mirrors `runTaggingFn?` — tests inject a fn
-   * that throws for a chosen block to prove per-block observe-write isolation.
-   */
+  /** Test seam for observe-mode audit writes; a throw must affect only that block. */
   writeEventFn?: (db: Db, input: WriteEventInput) => Promise<string>;
-  /**
-   * Inject in tests; defaults to the production MistakeEnrollTask invoker. Used
-   * in observe mode to draft mistake metadata for ANSWERED blocks (A1, YUK-145).
-   */
+  /** Test seam for observe-mode mistake metadata on answered blocks. */
   runMistakeEnrollFn?: (params: RunMistakeEnrollTaskParams) => Promise<MistakeEnrollOutputT>;
-  /**
-   * Inject in tests; defaults to the production BlockAssemblyTask invoker
-   * (YUK-202, design 2026-06-02 §3). Drives the per-session block-merge proposal
-   * pass below — tests pass a fake returning candidates / throwing.
-   */
+  /** Test seam for the per-session block-merge proposal pass. */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
-  /**
-   * Model seam for the ingestion-owned naming adapter supplied to `tagKnowledge`.
-   * One ColdStartBridge call names a PROPOSE child; tests can replace that call while
-   * retaining Knowledge's real match/propose behavior. Existing bridge results can be reused.
-   */
+  /** Naming seam passed to `tagKnowledge`; lets tests reuse a bridge result. */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
-  /** Override env for the flag / threshold reads (tests). */
+  /** Override env for flag and threshold reads. */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
   now?: Date;
@@ -161,19 +118,14 @@ export interface RunAutoEnrollParams {
   ctx?: unknown;
 }
 
-/**
- * Runs the gated auto-enroll path for one ingestion session. See file header for
- * the OFF-by-default safety contract.
- */
+/** Runs the gated auto-enroll path for one ingestion session. */
 export async function runAutoEnrollForSession(
   params: RunAutoEnrollParams,
 ): Promise<RunAutoEnrollResult> {
   const env = params.env ?? process.env;
 
-  // ---- Mode resolution (Strategy D Slice B, YUK-190). ----
-  // enroll flag ON  → 'enroll' (the original auto-import path, UNCHANGED).
-  // enroll OFF + observe explicitly ON → 'observe' (tag+judge, audit-only).
-  // both flags absent/OFF (the default) → 'off' (hard no-op).
+  // Enroll writes the imported question; observe only tags/judges for audit; the
+  // default (both flags off) is a hard no-op.
   const mode: 'enroll' | 'observe' | 'off' = autoEnrollEnabled(env)
     ? 'enroll'
     : observeEnabled(env)
@@ -190,13 +142,11 @@ export async function runAutoEnrollForSession(
   const tagKnowledgeFn = params.tagKnowledgeFn ?? tagKnowledge;
   const writeEventFn = params.writeEventFn ?? writeEvent;
   const runMistakeEnrollFn = params.runMistakeEnrollFn ?? runMistakeEnrollTask;
-  // YUK-482 cut ④ — student-answer grading is a SEPARATE opt-in knob (independent
-  // of the auto-enroll flag). It only acts in enroll mode (it writes durable
-  // learning data). When OFF (the default), detectStudentWork is never consulted →
-  // the per-block flow below is byte-for-byte today's text-draft path.
+  // Student-answer grading is a separate opt-in and only writes durable data in
+  // enroll mode.
   const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
 
-  // Load the session (must be an ingestion session in an extractable state).
+  // Load the session; it must be an ingestion session in an extractable state.
   const sessionRows = await params.db
     .select()
     .from(learning_session)
@@ -205,20 +155,15 @@ export async function runAutoEnrollForSession(
   if (!session) {
     return { status: 'skipped:session_not_found', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
-  // Auto-enroll runs after extraction, before human review. Both modes share the
-  // {extracted, partial} entry gate, BUT enroll mode narrows to 'extracted' only
-  // (§8 guard): enroll flips blocks to 'imported', and the manual import guard
-  // rejects 'partial' (assertSessionAvailableForImport(['extracted','reviewed'])),
-  // so letting enroll act on a 'partial' session would create the YUK-164 #1
-  // 409-mismatch the day someone flips the flag. observe acts on both — observing
-  // a degraded-layout session is harmless and we want its quality distribution.
+  // Both modes accept 'partial' here, but enroll later narrows to 'extracted':
+  // enroll flips blocks to imported, while the manual import guard rejects partial,
+  // which would create a 409 mismatch. Observing a partial session is harmless.
   if (session.status !== 'extracted' && session.status !== 'partial') {
     return { status: 'skipped:wrong_status', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
 
-  // YUK-1408 / R1 P2-3 — resolve the session's document usage ONCE per run:
-  // every enrolled block inherits it (the per-call resolver inside
-  // enrollCapturedBlock would pay an unindexed lookup per block).
+  // Resolve document usage once per run; every enrolled block inherits it instead of
+  // paying an unindexed lookup per block.
   const sessionDocUsage = {
     policy: await resolveSessionDerivationPolicy(params.db, params.sessionId),
     sessionId: params.sessionId,
@@ -229,9 +174,8 @@ export async function runAutoEnrollForSession(
   const sourceDocumentId = session.source_document_id ?? '';
   const sessionEntrypoint = session.entrypoint ?? 'vision_paper';
 
-  // Bound the paid fan-out before block assembly, tagging, judging, or grading.
-  // Extraction enqueues this job once per session, so excess blocks stay draft
-  // for the existing human review flow instead of generating unbounded spend.
+  // Bound the paid fan-out before assembly/tagging/judging/grading. Extraction enqueues
+  // this job once per session; excess blocks stay draft for human review.
   const blocks = await params.db
     .select()
     .from(question_block)
@@ -244,15 +188,9 @@ export async function runAutoEnrollForSession(
     .orderBy(question_block.id)
     .limit(AUTO_ENROLL_MAX_BLOCKS_PER_RUN);
 
-  // ---- YUK-202 — BlockAssembly path-B per-session merge-proposal pass. ----
-  // Runs in BOTH modes ('enroll' + 'observe', i.e. mode !== 'off' which already
-  // short-circuited above), AFTER the draft blocks are loaded and BEFORE any
-  // enroll import (so blocks are still 'draft' — mergeQuestions on user accept
-  // needs draft) (design 2026-06-02 §3). AI ONLY proposes; mergeQuestions runs
-  // only on user accept (§5 hard boundary). The AI failure is SWALLOWED + logged
-  // — merge proposals are nice-to-have, not the critical path; an outage must
-  // NOT flip session state or abort enrollment (mirrors the per-block
-  // observe-write fault swallow). observe mode still proposes (zero mutation).
+  // Block-assembly merge proposals run in both modes before any enroll import, while
+  // blocks are still draft (mergeQuestions on user accept requires draft). AI only
+  // proposes; an outage is logged and swallowed because it must not abort enrollment.
   try {
     await runBlockAssemblyForSession(params.db, {
       sessionId: params.sessionId,
@@ -260,9 +198,8 @@ export async function runAutoEnrollForSession(
         id: b.id,
         structured: b.structured,
         layout_quality: b.layout_quality,
-        // YUK-227 S3 Slice A (F4): pass page_spans so projectBlock can include
-        // real page_index for VLM-path sessions. Tencent-path blocks carry
-        // placeholder page_index=0 which triggers all-placeholder degradation.
+        // page_spans lets projectBlock keep real page_index for VLM-path sessions;
+        // Tencent-path blocks carry placeholder page_index=0.
         page_spans: b.page_spans,
       })),
       runTaskFn: params.runBlockAssemblyFn,
@@ -275,16 +212,12 @@ export async function runAutoEnrollForSession(
   const enrolled: AutoEnrolledBlock[] = [];
   let routedToReview = 0;
 
-  // D5 (YUK-489) — ONE batch-coherence cache per ingestion-session run, shared across every
-  // block's tagKnowledge call below. A single upload often has same-topic sibling questions; with
-  // one shared cache the first sibling that PROPOSEs a KC name caches its id and every later
-  // sibling proposing the same name reuses it (one KC, not N duplicates the P5 dedup lane would
-  // otherwise reconcile). The loop awaits each block sequentially, satisfying the cache's
-  // SEQUENTIAL-per-run contract. Used only on the enroll path (observe never tags via tagKnowledge).
+  // One cache per run so siblings proposing the same KC name reuse the first id instead
+  // of minting duplicates. The sequential loop below satisfies the cache's contract.
   const tagBatchCache = new Map<string, string>();
 
   for (const block of blocks) {
-    // Render the question text from the structured tree (the canonical source).
+    // The structured tree is the canonical prompt source.
     const questionMd = block.structured
       ? structuredToPromptMarkdown(block.structured)
       : (block.extracted_prompt_md ?? '');
@@ -294,40 +227,20 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // YUK-488 — the page(s) THIS question spans (full source_asset_ids fallback when the
-    // structured tree carries no page_index). Used as BOTH the judge's prompt image_refs and
-    // the student image_refs below, AND the stored answer image_refs at enroll — so the judge
-    // sees only this question's pages (not every sibling's), narrowing inter-page bleed.
+    // This question's pages, falling back to all source assets without page_index. Used
+    // for the judge, student images, and stored answer refs to limit inter-page bleed.
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
 
-    // ---- Tagging (CONTENT/KC axis). ----------------------------------------------
-    // P3 (YUK-489): the ENROLL path now runs the UNIFIED `tagKnowledge` (embedding
-    // match-or-propose) instead of the old grid-prefill TaggingTask + cold-start-bridge.
-    // `tagKnowledge` ALWAYS yields ≥1 knowledge_id (match an existing KC OR auto-approve a
-    // freshly-PROPOSED child under the subject root, INSIDE its own tx, with an audit event) —
-    // the dead `knowledge_ids:[]` zero-match window is gone (design §2/§3). We then SYNTHESIZE a
-    // TaggingOutputT from the result so the EXISTING deterministic runWorkflowJudge stays
-    // UNCHANGED: tagKnowledge attribution is structurally valid (matched existing OR
-    // proposed-exactly-for-this), so tagging is no longer a routing-uncertainty source —
-    // route='auto' fires on extraction confidence (always 1.0) ≥ threshold and hasSuggestions is
-    // always true. The judge + mistakeDraft + observe paths keep reading
-    // verdict.prefilled.knowledge_ids unchanged.
-    //
-    // OBSERVE mode keeps the old grid-prefill TaggingTask: tagKnowledge auto-approves a PROPOSE
-    // KC (a mutation), which would violate observe's zero-domain-mutation contract (§5.4). Observe
-    // is the audit-only quality probe — it must NOT create KCs — so it stays on runTaggingFn.
+    // Enroll uses tagKnowledge, which always attributes at least one KC, so tagging is no
+    // longer a routing uncertainty. Synthesizing TaggingOutputT keeps the existing judge
+    // unchanged. Observe keeps the read-only TaggingTask because tagKnowledge mutates KCs.
     let tagging: TaggingOutputT;
     if (mode === 'enroll') {
       try {
-        // Resolve the PROPOSE parent + D1 subject root. params.subjectId is the cheap signal when
-        // a caller supplies it (tests / any subject-pinned invocation). But the PRODUCTION job
-        // (jobs/auto_enroll.ts) passes NO subjectId — subject is a derived view, never stored on
-        // learning_session — so when it is absent we CLASSIFY the subject per-block via the
-        // cold-start bridge (one LLM pass, mirroring image-candidate-accept), derive
-        // seed:<subject>:root, and run tagKnowledge under it REUSING the bridge's name (no second
-        // model call). Without this an absent subjectId would build `seed:undefined:root`, every
-        // PROPOSE would throw in applyProposeNew→assertParentExists, and every thin-tree block
-        // would silently route to review the moment the enroll flag is flipped on.
+        // Resolve the PROPOSE parent. The production job passes no subjectId (subject is a
+        // derived view), so classify it per block through the cold-start bridge, then reuse
+        // that name for tagKnowledge so no second model call is made. Without this, a
+        // missing subjectId would build `seed:undefined:root` and route every block to review.
         let subjectRootId: string;
         let bridgeNameKc: NameKcFn | undefined;
         if (params.subjectId) {
@@ -336,17 +249,15 @@ export async function runAutoEnrollForSession(
           const bridge = await runColdStartBridge({
             db: params.db,
             questionMd,
-            // Placeholder so the bridge takes its ECHO path — we discard its reference_md (P4a
-            // owns reference generation) and use only the classified subject_id.
+            // Placeholder forces the ECHO path; only the classified subject_id is used.
             existingReferenceMd: '(reference answer not needed for tagging)',
             knowledgeHint: block.knowledge_hint,
-            knownSubjects: getKnownSubjects(), // YUK-600：活 registry 词表（custom 入表）
+            knownSubjects: getKnownSubjects(),
             runTaskFn: params.runColdStartBridgeFn,
             ctx: params.ctx ?? { db: params.db },
           });
           subjectRootId = `seed:${bridge.subject_id}:root`;
-          // Reuse the bridge's already-classified name so a PROPOSE does NOT make a second model
-          // call (mirrors image-candidate-accept).
+          // Reuse the classified name so a PROPOSE makes no second model call.
           bridgeNameKc = async () => ({ kc_name: bridge.kc_name });
         }
         const tag = await tagKnowledgeFn(
@@ -360,18 +271,12 @@ export async function runAutoEnrollForSession(
                 runTaskFn: params.runColdStartBridgeFn,
                 ctx: params.ctx ?? { db: params.db },
               }),
-            // D5 (YUK-489): ONE per-run cache shared across every block in this session, so
-            // sibling questions proposing the same KC name reuse the first-minted id instead of
-            // minting duplicates. The loop awaits each block sequentially (the cache's contract).
             batchCache: tagBatchCache,
           },
           {
-            // YUK-1408 — the embed step inside tagKnowledge sends this text to a
-            // model; deterministically redact identifiers at the call boundary.
-            // knowledgeHint is redacted too so the value tagKnowledge stores on
-            // its audit events matches the model-facing contract. sessionId
-            // binds the audit events to this ingestion session for the shared
-            // derivation filter (live document policy / withdrawal).
+            // Redact identifiers at the model boundary; redact the hint too so audit
+            // events match the model-facing contract. sessionId binds the events to this
+            // session for the live derivation policy.
             questionText: redactIngestionText(questionMd).text,
             knowledgeHint: block.knowledge_hint
               ? redactIngestionText(block.knowledge_hint).text
@@ -384,20 +289,9 @@ export async function runAutoEnrollForSession(
         tagging = synthesizeTaggingOutput(tag.knowledge_ids);
       } catch (err) {
         if (isTagKnowledgeInvariantError(err)) throw err;
-        // A tagging outage (provider down / unparseable name / missing seed root inside
-        // applyProposeNew) must NEVER auto-enroll — route to review (block stays 'draft', upload
-        // preserved). Mirrors the old TaggingTaskError swallow. We swallow ANY throw here (not
-        // just a typed error) because tagKnowledge can throw a plain Error from applyProposeNew's
-        // assertParentExists when the subject's seed root was never planted — that must
-        // route-to-review, not abort the whole batch into a pg-boss retry-forever loop (the LOW
-        // missing-seed-root guard the old inline cold-start path enforced).
-        //
-        // DELIBERATE best-effort contract: other unexpected faults (DB blip, programming bug) are
-        // caught here — they are LOGGED via console.error (visible to monitoring) and the block is
-        // routed to review rather than re-thrown. A best-effort enroll lane must never abort the
-        // whole session batch, and the human review surface is the backstop for any block that did
-        // not auto-enroll (nothing is lost). We trade pg-boss retry-on-transient for batch
-        // resilience; a systemic fault surfaces as "everything routed to review" + the error log.
+        // Tagging failures must never auto-enroll, including plain errors from a missing
+        // seed root. Swallow and log every non-invariant throw: aborting the batch would
+        // retry forever, while human review is the backstop for anything not enrolled.
         console.error(
           `[auto_enroll] tagKnowledge failed for block ${block.id}; routing to review`,
           err,
@@ -406,8 +300,7 @@ export async function runAutoEnrollForSession(
         continue;
       }
     } else {
-      // OBSERVE — the old grid-prefill TaggingTask (zero mutation). A tagging outage routes to
-      // review (no observe event, block stays 'draft').
+      // Observe uses the zero-mutation TaggingTask; an outage leaves the block draft.
       try {
         tagging = await runTaggingFn({
           db: params.db,
@@ -454,18 +347,14 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // A1/A2 (YUK-145/164): for an ANSWERED block routed 'auto', draft the mistake
-    // metadata (outcome / cause) the human fills by hand. Computed ONCE here and
-    // shared: observe attaches it to the audit event (A1); enroll enrolls the real
-    // outcome from it (A2). Best-effort — a MistakeEnrollTaskError leaves it
-    // undefined (observe writes a draft-less event; enroll falls back to
-    // 'unanswered'); a non-MistakeEnrollTaskError re-raises (infra fault → retry).
+    // For an answered block routed auto, draft the mistake metadata once and share it:
+    // observe attaches it to the audit event, enroll uses its outcome. A draft failure
+    // leaves it undefined; non-draft faults re-raise so the job retries.
     let mistakeDraft: MistakeEnrollOutputT | undefined;
     const studentAnswer = block.wrong_answer_md?.trim() ?? '';
     if (mode === 'observe' && verdict.route === 'auto' && studentAnswer.length > 0) {
-      // YUK-1016 — enroll 词表 = 声明 ∪ overlay.active：owner accept 的 ov_
-      // 类目必须出现在 allowedCauseIds 且 clamp 不掉（否则收编类目 enroll
-      // 表达不了，全被挤回 'other'）。
+      // The enroll vocabulary must include owner-accepted overlay categories, or clamping
+      // would push them all back to 'other'.
       const profile = await withActiveCauseCategoryOverlays(
         params.db,
         await resolveSubjectProfileForKnowledgeIds(params.db, verdict.prefilled.knowledge_ids),
@@ -486,18 +375,14 @@ export async function runAutoEnrollForSession(
       }
     }
 
-    // ---- Phase B — OBSERVE (flag OFF, observe ON): write a standalone audit ----
-    // event per block (BOTH 'auto' and 'review' routes — we want the full quality
-    // distribution) and continue. Zero domain rows, no block UPDATE, no
-    // enrollCapturedBlock, no commitImport. Best-effort: a single failed audit
-    // write logs + continues so one bad write never aborts the batch (§5.4).
+    // Observe writes one audit event per block for both routes, mutating no domain rows.
+    // A failed audit write logs and continues so one bad write never aborts the batch.
     if (mode === 'observe') {
       try {
         await writeEventFn(params.db, {
           id: observeEventId(params.sessionId, block.id),
-          // YUK-1408 — bind to the ingestion session so the shared derivation
-          // filter resolves the LIVE source-document usage policy on reads
-          // (the verdict embeds document-derived text in `reasoning`).
+          // Bind to the session so the derivation filter applies the live document policy
+          // on reads; the verdict embeds document-derived text in `reasoning`.
           session_id: params.sessionId,
           actor_kind: 'agent',
           actor_ref: 'workflow_judge',
@@ -521,12 +406,8 @@ export async function runAutoEnrollForSession(
           caused_by_event_id: null,
           task_run_id: null,
           cost_micro_usd: null,
-          // ★ Memory-outbox OPT-OUT (§3.5): stamping ingest_at non-NULL makes the
-          // outbox poller (triggers.ts: WHERE ingest_at IS NULL) skip this row, so
-          // no Mem0 `add` / brief-regen fan-out fires for a judge-verdict on the
-          // inert OFF path. This is an opt-out of memory ingestion, NOT a claim
-          // that ingestion already ran; a future slice that wants verdicts in
-          // memory removes this stamp.
+          // Opt out of memory ingestion: a non-null ingest_at makes the outbox poller
+          // skip this row. This does not claim ingestion already ran.
           ingest_at: now,
           created_at: now,
         });
@@ -536,78 +417,43 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // ---- Review gate. -----------------------------------------------------------------
-    // P3 (YUK-489): the old cold-start-bridge gate is GONE — tagKnowledge subsumes it. The
-    // thin-seed "zero KC match → invisible to placement" failure mode that the bridge worked
-    // around can no longer occur: tagKnowledge ALWAYS attributes ≥1 KC (match OR a freshly
-    // auto-approved PROPOSE child under the subject root, created in its own tx pre-enroll with
-    // an audit event), so on the enroll path runWorkflowJudge always sees ≥1 suggestion +
-    // extraction confidence 1.0 → route='auto'. A 'review' route here therefore means a genuine
-    // low-confidence extraction — leave it 'draft' for human review (unchanged).
+    // tagKnowledge always attributes at least one KC, so a review route here means a
+    // genuinely low-confidence extraction: leave it draft for human review.
     if (verdict.route !== 'auto') {
       routedToReview += 1;
       continue;
     }
 
-    // Genuine unanswered material retains the existing item-bank path.
+    // Genuine unanswered material keeps the item-bank path.
     const outcome = 'unanswered' as const;
     const answerMd = '';
     const answerImageRefs: string[] = [];
     const captureMode = block.image_refs.length > 0 ? 'image' : 'text';
     const result = await params.db.transaction(async (tx) => {
-      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
-      // material_fsrs_state / mastery_state writer and the cascade revert); this tx reaches
-      // updateThetaForAttempt / FSRS enroll below.
+      // Same tx-entry order as every learning-state writer and the cascade revert.
       await acquireLearningStateWriteLock(tx);
-      // ---- YUK-486 idempotency claim — guard concurrent double-consume. ----------------
-      // Two pg-boss consumers (dev: rw:api's embedded RW_WORKER + standalone worker:dev; or a
-      // prod retry re-delivered mid-flight) can both fetch an `auto_enroll` job for this session
-      // and race: both pass the status='draft' SELECT above before either flips the block, then
-      // both INSERT a question → duplicate enrollment (the YUK-486 symptom: 1 session/2 blocks →
-      // 4 questions). Re-read THIS block FOR UPDATE inside the tx and bail if it is no longer
-      // 'draft'. The row lock serializes the two runners on this block row: the first acquires it,
-      // enrolls + flips status='auto_enrolled', commits → releases; the second then acquires it,
-      // sees 'auto_enrolled', and skips (returns null). THIS claim is the STRUCTURAL guarantee
-      // against double-INSERT — it holds for every producer and every run, including two jobs that
-      // run truly concurrently. The singletonKey+singletonSeconds on the sends
-      // (tencent_ocr_extract / docx-ingestion) is a best-effort layer that only REDUCES how many
-      // duplicate jobs reach here; it does not bear correctness (and a bare singletonKey with no
-      // seconds is inert on a standard-policy queue — see AUTO_ENROLL_SINGLETON_SECONDS). The
-      // pre-tx tagKnowledge LLM work the loser already did is wasted but harmless —
-      // correctness, not cost, is the contract here. Precedent: revert-auto-enroll.ts.
+      // Concurrent consumers can both pass the draft SELECT above and insert duplicate
+      // questions. Re-read this block FOR UPDATE and skip unless it is still draft; this
+      // row lock is the structural double-consume guard. Singleton keys only reduce the
+      // number of duplicate jobs and do not bear correctness.
       const claimRows = await tx
         .select({ status: question_block.status })
         .from(question_block)
         .where(eq(question_block.id, block.id))
         .for('update');
       if (claimRows[0]?.status !== 'draft') {
-        return null; // already enrolled by a concurrent runner — skip (idempotent no-op)
+        return null; // already enrolled by a concurrent runner
       }
 
-      // ---- KC attribution (P3, YUK-489). -----------------------------------------------
-      // The attributed KCs are exactly what tagKnowledge returned pre-tx (matched existing KCs,
-      // or a single auto-approved PROPOSE child it already created under the subject root in its
-      // OWN tx + its own `experimental:auto_tag_kc_created` audit event). The old in-tx
-      // applyProposeNew + `experimental:cold_start_kc_created` block is GONE — tagKnowledge owns
-      // KC creation now (the cold-start bridge ① is subsumed).
-      //
-      // ATOMICITY (D2.7, accepted): tagKnowledge mints a PROPOSE KC in ITS OWN tx, BEFORE this
-      // enroll tx opens. If this enroll tx rolls back, that auto-approved KC is already committed
-      // (orphaned). This is BENIGN and matches image-candidate-accept's existing posture: the
-      // orphan is a valid leaf under the subject root (live, approved, effective-domain-inherited),
-      // harmless to placement, and reconciled by the P5 dedup-on-maintenance lane. We deliberately
-      // do NOT fold tagKnowledge into this tx (its LLM naming call must never sit inside a DB tx —
-      // design §3).
+      // Attributed KCs are exactly what tagKnowledge returned pre-tx. Any KC it minted
+      // is committed in its own tx, so a rollback here can orphan it; that is benign
+      // (valid leaf under the subject root, reconciled by dedup-on-maintenance), and the
+      // naming call must never sit inside this transaction.
       const enrollKnowledgeIds = verdict.prefilled.knowledge_ids;
 
-      // ---- Structural-verify gate (D2.6, ex-MEDIUM-1) — enforced for EVERY enroll. ----
-      // A question is 'active' (placement-answerable) only when it has a non-empty prompt AND a
-      // valid (truthy) kind AND ≥1 LIVE (non-archived) KC equal to the attributed-id count.
-      // Previously this gated only cold-start enrolls; now it applies to ALL enrolled questions
-      // (tagKnowledge always attributes a LIVE KC — matched or freshly auto-approved — so the
-      // happy path is 'active' as before, but a structurally incomplete row, e.g. an id that
-      // resolves to no live KC, can NEVER be silently forced active — it lands 'draft' for human
-      // review). The invariant "active ⇔ ≥1 live KC" now holds for every enroll, never force-'active'.
+      // A question is active only with a non-empty prompt, a valid kind, and at least one
+      // live KC matching the attributed count. Structurally incomplete rows always land
+      // draft; never force them active.
       let draftStatus: 'active' | 'draft';
       {
         let liveKnowledgeCount = 0;
@@ -648,10 +494,7 @@ export async function runAutoEnrollForSession(
           kind: verdict.prefilled.question_kind,
           choices_md: capturedQuestionShape(block.structured).choices_md,
           prompt_md: questionMd,
-          // P3 (YUK-489) — reference_md is the OCR-extracted answer directly (block.reference_md),
-          // or null. The cold-start bridge ③ reference GENERATION (when OCR got the prompt but no
-          // answer, reference_md===null) is OUT of scope here — it is decoupled to P4a (the
-          // `reference_md===null` trigger). We never synthesize a reference on this path.
+          // OCR-extracted answer only; reference generation is out of scope.
           reference_md: block.reference_md ?? null,
           knowledge_ids: enrollKnowledgeIds,
           difficulty: verdict.prefilled.difficulty,
@@ -662,24 +505,16 @@ export async function runAutoEnrollForSession(
             assets: figureAssets,
           }),
           image_refs: block.image_refs,
-          // Carry the structured tree only if prompt_md is regenerable from it
-          // (ADR-0002 revision invariant). questionMd is derived from structured,
-          // so when structured exists they always match.
+          // Carry structured only when prompt_md is regenerable from it (ADR-0002);
+          // questionMd is derived from structured, so they match when present.
           structured: block.structured ?? null,
-          // draft_status from the structural-verify gate above ('active' when prompt + valid kind
-          // + ≥1 live KC; else 'draft'). placement-select.ts excludes only draft_status='draft'
-          // (NULL and 'active' both pass), so an 'active' row is immediately placement-answerable.
-          // Set explicitly for EVERY enroll now (P3): tagKnowledge always attributes a live KC, so
-          // the happy path is 'active'. The audit:draft-status gate passes an allowlisted-AND-
-          // explicit file.
+          // Placement excludes only 'draft'; null and 'active' both pass.
           draft_status: draftStatus,
           metadata: {
             source_document_id: sourceDocumentId,
             ingestion_session_id: params.sessionId,
             question_block_id: block.id,
-            // OC-5: surface the judge decision on the question for traceability. With tagKnowledge
-            // always attributing ≥1 KC, the enroll path is reached only when route==='auto', so
-            // route + judge_route agree.
+            // Judge decision for traceability; this path is reached only on auto.
             workflow_judge: {
               route: verdict.route,
               judge_route: verdict.route,
@@ -693,18 +528,16 @@ export async function runAutoEnrollForSession(
         }),
       );
 
-      // YUK-1043（复审裁决：可行写口即刻收敛）—— OCR/VLM 收录 INSERT 同事务
-      // 铸首版 revision。原始提取/学生作答分离：reference 仅在 OCR 提取到答案
-      // 时存在（缺 ⇒ conversion_issue ⇒ withheld）；学生作答走 attempt 事件，
-      // 绝不进答案键。
+      // Mint the first revision in the same transaction. Extraction and student answers
+      // stay separate: a missing OCR answer is withheld, and student work goes through
+      // the attempt event, never the answer key.
       await publishQuestionGroupFromRow(tx, {
         rootId: questionId,
         actorRef: 'auto-enroll:question',
         now,
       });
 
-      // SAME enrollment owner as the human path — only generatedBy + the (drafted)
-      // outcome/answer differ. enrollCapturedBlock routes all 4 outcomes.
+      // Same enrollment owner as the human path; only provenance and answer differ.
       const enroll = await enrollCapturedBlock(tx, {
         questionId,
         outcome,
@@ -723,7 +556,7 @@ export async function runAutoEnrollForSession(
         .set({
           imported_question_id: questionId,
           imported_attempt_event_id: enroll.attemptEventId,
-          // A2 (D1=C): a distinct terminal-but-revertible state, NOT human 'imported'.
+          // Distinct from human 'imported' so auto-enrollment stays revertible..
           status: 'auto_enrolled',
           updated_at: now,
           version: sql`${question_block.version} + 1`,
@@ -731,9 +564,8 @@ export async function runAutoEnrollForSession(
         .where(eq(question_block.id, block.id))
         .returning({ version: question_block.version });
 
-      // YUK-471 W3-D — make the auto-enroll status/imports transition fold-visible (additive
-      // double-write; same `now`/tx). op='set_status' carries status + imported_* + bumped version so
-      // foldQuestionBlock reproduces this row. actor mirrors the chained judge event ('workflow_judge').
+      // Fold-visible additive double-write in the same tx; carries everything
+      // foldQuestionBlock needs to reproduce the row.
       await writeQuestionBlockLifecycleEvent(tx, {
         blockId: block.id,
         op: 'set_status',
@@ -752,21 +584,17 @@ export async function runAutoEnrollForSession(
         attempt_event_id: enroll.attemptEventId,
         record_id: enroll.recordId,
         confidence: verdict.confidence,
-        // The actually-attributed set: the unified tagKnowledge verdict's ids (a MATCH to
-        // existing KC(s) or a freshly auto-approved PROPOSE child), uniform for every enroll.
         knowledge_ids: enrollKnowledgeIds,
       } satisfies AutoEnrolledBlock;
     });
 
-    // YUK-486 — the tx returned null because the idempotency claim found this block already
-    // enrolled by a concurrent runner; skip without counting or enqueuing follow-up work.
+    // A concurrent runner already enrolled this block.
     if (result === null) continue;
 
     enrolled.push(result);
 
-    // Failure-learning follow-up is derived from the committed attempt event by
-    // the practice-owned durable subscription. This producer intentionally has
-    // no queue dependency or post-transaction best-effort side effect.
+    // Failure-learning follows from the committed attempt event via the practice-owned
+    // durable subscription, so this producer has no queue dependency.
   }
 
   return {
@@ -778,23 +606,16 @@ export async function runAutoEnrollForSession(
 }
 
 /**
- * Deterministic event id for an observe-only audit event (Slice B, YUK-190).
- * A stable sha256 of `auto_enroll_observed:${sessionId}:${blockId}` so a pg-boss
- * redelivery / re-run of the `auto_enroll` job writes NO duplicate event
- * (writeEvent's onConflictDoNothing makes the second write a no-op, preserving
- * the already-stamped `ingest_at`). A random cuid would break this idempotency.
+ * Deterministic observe-event id: a stable sha256 so a job redelivery writes no
+ * duplicate event and keeps the original `ingest_at`.
  */
 export function observeEventId(sessionId: string, blockId: string): string {
   return createHash('sha256').update(`auto_enroll_observed:${sessionId}:${blockId}`).digest('hex');
 }
 
 /**
- * P3 (YUK-489) — adapt a tagKnowledge result (a list of attributed knowledge ids) into the
- * TaggingOutputT shape the EXISTING deterministic runWorkflowJudge consumes, so the judge stays
- * UNCHANGED. tagKnowledge attribution is structurally valid (matched an existing KC OR proposed a
- * KC exactly for this question), so tagging is no longer a routing-uncertainty source: every
- * suggestion is full-confidence and overall_confidence is 1.0. With extraction confidence always
- * 1.0 and ≥1 suggestion, the weakest-link judge routes 'auto' on the enroll path.
+ * Adapts tagKnowledge ids to the TaggingOutputT the existing judge consumes. Attribution
+ * is always structurally valid, so every suggestion is full-confidence.
  */
 function synthesizeTaggingOutput(knowledgeIds: string[]): TaggingOutputT {
   return {
@@ -809,14 +630,9 @@ function synthesizeTaggingOutput(knowledgeIds: string[]): TaggingOutputT {
 }
 
 /**
- * YUK-482 cut ④ — does this block carry student work? OR-based across two signals
- * so the Tencent path works even without the VLM flag:
- *   - Tencent path: any node in the structured tree has a non-empty
- *     `extraction_evidence.handwriting` (stamped at tencent_mark_parser.ts:298).
- *   - VLM path: any node has `student_answer_present === true` (emitted by the
- *     StructureTask prompt; NEVER a transcription — pixels stay pixels).
- * Walks the recursive tree (stem → sub_questions). A block with no structured tree
- * → false (nothing to detect on; the human review path is unchanged).
+ * Whether the block carries student work, detected from either the Tencent handwriting
+ * evidence or the VLM's student_answer_present flag. Pixels stay pixels; this is not a
+ * transcription. No structured tree means nothing to detect.
  */
 export function detectStudentWork(block: { structured: StructuredQuestionT | null }): boolean {
   const root = block.structured;
@@ -836,13 +652,9 @@ export function detectStudentWork(block: { structured: StructuredQuestionT | nul
 }
 
 /**
- * YUK-487 — whether the extraction engine RELIABLY assessed handwriting (so a *false*
- * detectStudentWork from this block is a TRUSTWORTHY "no student work"). Only the VLM
- * StructureTask ('vlm_structure', sets student_answer_present) and Tencent QuestionMark
- * ('tencent_ocr', sets extraction_evidence.handwriting) do — the exact two signals
- * detectStudentWork reads. 'glm_ocr' (the VLM-down fallback) never assesses; 'vision_rescue'
- * sets handwriting evidence only OPPORTUNISTICALLY (from legacy wrong_answer_md), so its
- * absence is still uninformative.
+ * Whether this extraction source reliably assessed handwriting, so a false
+ * detectStudentWork is trustworthy. Only the VLM StructureTask and Tencent QuestionMark
+ * do; glm_ocr never assesses and vision_rescue only opportunistically.
  */
 export function extractionAssessedHandwriting(block: {
   structured: StructuredQuestionT | null;
@@ -852,10 +664,8 @@ export function extractionAssessedHandwriting(block: {
 }
 
 /**
- * Scan/photo extraction sources — the ones where handwriting is physically possible, so a
- * degraded "no handwriting" reading is worth fail-opening on. Text/manual sources
- * ('docx_text' / 'manual' / 'agent_edit') and an absent/unknown source have no whole-page
- * handwriting to miss, so they are NEVER failed-open.
+ * Sources where handwriting is physically possible, so a degraded "no handwriting"
+ * reading may be wrong. Text/manual sources have no whole-page handwriting to miss.
  */
 const SCAN_SOURCES: ReadonlySet<string> = new Set([
   'glm_ocr',
@@ -865,18 +675,10 @@ const SCAN_SOURCES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * YUK-487 — gate for whole-page student-answer grading. Grade when EITHER detectStudentWork
- * flagged real handwriting, OR the block came from a SCAN/photo source whose handwriting was
- * NOT reliably assessed (fail-OPEN) — the YUK-487 failure: StructureTask down → 'glm_ocr' →
- * detectStudentWork false despite real handwriting → judge never ran.
- *
- * The fail-open is SCOPED to scan sources on purpose: the grading branch routes an
- * 'unsupported' verdict to review and `continue`s (skipping tagging/auto-enroll), so
- * fail-opening a non-scan block (e.g. a 'docx_text' question with evidence images) would
- * DIVERT a normally-auto-enrollable question into review. Text/manual sources have no
- * handwriting to miss, so they keep the normal path. Skip when a scan source assessed and
- * found none (cost guard). Holistic per-page grading that drops the extraction dependency
- * entirely = YUK-488.
+ * Grades when handwriting was detected, or when a scan source did not reliably assess it
+ * (fail-open; StructureTask down must not skip grading). The fail-open stays scoped to
+ * scan sources: elsewhere it would divert an auto-enrollable block into review, and text
+ * sources have no handwriting to miss. An assessed scan with none skips to save cost.
  */
 export function shouldGradeStudentWork(block: { structured: StructuredQuestionT | null }): boolean {
   if (detectStudentWork(block)) return true;
@@ -885,37 +687,14 @@ export function shouldGradeStudentWork(block: { structured: StructuredQuestionT 
 }
 
 /**
- * YUK-488 — page-scope the images fed to the whole-page student-answer judge.
+ * Narrows the images fed to the student-answer judge to the pages this question spans,
+ * avoiding cross-page bleed on multi-page uploads. Every page comes from the structured
+ * subtree's page_index mapped into source_asset_ids (stored in page order).
  *
- * Before this, cut ④ fed EVERY session page (block.source_asset_ids = all assets, and the
- * judge's prompt image_refs = block.image_refs = all assets too) to every block's judge
- * call — so the judge grading question A also saw questions B/C/D's pages. On a MULTI-PAGE
- * upload that is the inter-page attribution bleed YUK-485 flagged. This narrows the fed
- * images to the page(s) THIS question actually spans.
- *
- * Page set = every `page_index` in the question's structured subtree (top node + all
- * sub_questions). The VLM StructureTask populates page_index per node — incl. subs —
- * (nodeToStructured copies it recursively, YUK-227 P1; a cross-page 大题 carries DIFFERENT
- * page_index across its subs), and the Tencent multi-page fallback stamps it per page. Each
- * index maps to source_asset_ids[idx] (asset ids are stored in page order by
- * tencent_ocr_extract). Returns the matched assets in ascending page order, deduped.
- *
- * FALLBACK to the full source_asset_ids (today's behavior, ZERO regression) UNLESS EVERY node
- * in the subtree carries a valid integer page_index. So it falls back on: NO page_index at all
- * (legacy single-page tree / a fallback path that omits it), PARTIAL population (some nodes have
- * it, some don't — trusting a partial set could DROP a page the answer is on), a non-integer
- * value (NaN/float from a bad edit), OR any derived index out of range. Deliberately
- * conservative: an incomplete/unreliable page signal must never narrow — better to over-feed
- * (today's bleed) than to silently starve the judge of the answer page.
- *
- * KNOWN LIMIT (accepted — narrow scope, owner-directed): scoping to the structured (prompt)
- * pages can drop a SEPARATE answer-sheet page (机读卡 / a continuation not in the prompt's
- * span). For the cold-start worked-paper upload (handwriting inline ON the question page)
- * the answer shares the prompt's page → kept. The separate-answer-sheet case degrades to the
- * judge seeing no answer → unsupported/low-confidence → the EXISTING needs-review gate routes
- * it to a human (never a silent wrong grade). SAME-PAGE dense attribution (the YUK-485
- * headline) is NOT addressed by page-scoping — it is a no-op when every question is on one
- * page; that needs whole-page holistic reasoning, deferred out of this cut.
+ * Falls back to all source assets unless every subtree node has a valid integer
+ * page_index in range; a partial or broken signal must never drop the page holding the
+ * answer. Known limit: a separate answer-sheet page outside the prompt span is dropped,
+ * which surfaces as unsupported/low-confidence and routes to human review.
  */
 export function pageScopedQuestionImageRefs(block: {
   structured: StructuredQuestionT | null;
@@ -932,12 +711,8 @@ export function pageScopedQuestionImageRefs(block: {
     const node = stack.pop();
     if (!node) continue;
     totalNodes += 1;
-    // Number.isInteger (not `typeof === 'number'`): the schema types page_index as int≥0, but
-    // structured is jsonb and an agent-edit / malformed VLM output could carry NaN or a float.
-    // typeof would admit those; then NaN slips the out-of-range guard below (NaN<0 and
-    // NaN>=len are both false) → all[NaN] = undefined fed to R2/judge. Integer-only entry keeps
-    // such a node OUT of the trusted set (and, via the complete-signal gate below, forces the
-    // feed-all fallback). (augment review #573 + independent reviewer #7.)
+    // Number.isInteger, not typeof: jsonb may carry NaN or a float, and NaN would slip
+    // the range guard below and map to undefined.
     const pi = node.page_index;
     if (typeof pi === 'number' && Number.isInteger(pi)) {
       pages.add(pi);
@@ -947,17 +722,12 @@ export function pageScopedQuestionImageRefs(block: {
       for (const sub of node.sub_questions) stack.push(sub);
     }
   }
-  // COMPLETE-signal gate (concern #2 — both reviewers): scope ONLY when EVERY node in the subtree
-  // carries a valid integer page_index. PARTIAL population (some nodes have it, some don't) is NOT
-  // trusted: a sub on a page whose node omitted page_index would be DROPPED, starving the judge of
-  // the answer page (the VLM does not guarantee per-node page_index — figure_attach.ts:27 documents
-  // the same partial-population reality). Partial OR zero signal → feed all (today's behavior, ZERO
-  // regression — the conservative direction: never drop a page the answer might be on). The
-  // dominant win is preserved: a standalone question wholly on one page has its single node carry
-  // page_index → complete → scoped; a cross-page 大题 narrows only when the VLM stamped EVERY node.
+  // Scope only when every node carries a page_index. Partial population could drop the
+  // page holding the answer, so it feeds all pages instead.
   if (pages.size === 0 || nodesWithPage < totalNodes) return all;
   const sorted = [...pages].sort((a, b) => a - b);
-  // Belt-and-suspenders: any out-of-range index ⇒ the page map is untrustworthy → feed all.
+  // An out-of-range index makes the page map untrustworthy.
+
   if (sorted.some((p) => p < 0 || p >= all.length)) return all;
   return sorted.map((p) => all[p]);
 }

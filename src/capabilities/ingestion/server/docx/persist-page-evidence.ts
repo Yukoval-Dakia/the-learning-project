@@ -16,12 +16,11 @@ if (MAX_DOCX_PAGES !== MAX_PDF_PAGES) {
   );
 }
 
-// YUK-258 — 原图同步存储不变式 (owner 铁律, BOTH lines execute this).
+// Original-image invariant: both DOCX lines execute this.
 //
-// Every uploaded .docx is rendered once via LibreOffice→PDF→PDFium into page
-// images persisted as source_asset rows:
-//   - 视觉线: the page images ARE the extract input (fed to tencent_ocr_extract).
-//   - 文本线: blocks come from pandoc markdown; the page images are evidence only
+// Every upload renders once through LibreOffice/PDF/PDFium into persisted page
+// images. The visual line feeds those pages to OCR; the text line keeps them as
+// evidence only.
 //     (VLM 兜底 / 人工 review 时有图可读).
 //
 // Reuses #332全套 unchanged: renderPdfToPngPages (PDFium, 30s timeout + 15-page
@@ -32,8 +31,7 @@ export interface PageEvidence {
   /** source_asset row ids, in page order. */
   assetIds: string[];
   pageCount: number;
-  /** YUK-1404 (B2/R1) — the LibreOffice-rendered PDF itself, persisted as a
-   * kind='pdf' source_asset so the source package keeps every artifact. */
+  /** The rendered PDF as a kind='pdf' asset, so the package keeps every artifact. */
   pdfAssetId: string;
 }
 

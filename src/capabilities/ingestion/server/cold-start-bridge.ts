@@ -3,19 +3,10 @@ import {
   parseColdStartBridgeOutput,
 } from '@/capabilities/ingestion/tasks/cold-start-bridge';
 /**
- * ColdStartPlacementBridgeTask invoker — YUK-478 (cold-start upload→placement bridge).
- *
- * Single-shot structured-output AI task (NOT multimodal — the question is already
- * text by the time the VLM has extracted it). Mirrors the `runTaggingTask`
- * invoker pattern: an injectable `runTaskFn` seam (so DB tests stub the model),
- * strict-JSON parse + Zod validation, and an anti-hallucination check that the
- * returned `subject_id` is the `id` of one of the supplied `known_subjects`.
- *
- * Called from the image-candidate accept path (src/.../image-candidate-accept.ts)
- * ONLY when the sourcing-resolved knowledge_ids are empty — i.e. the uploaded
- * question matched no node on the thin-seed tree (YUK-477). It returns the subject
- * to root a new child KC under (bridge ①) + a reference answer for the prompt
- * (bridge ③), in one LLM pass.
+ * Cold-start placement bridge: a single-shot, text-only structured task with an
+ * injectable runner and strict JSON/Zod parsing. The returned subject_id must be
+ * one of the supplied known subjects. It runs only when sourced knowledge_ids are
+ * empty, returning both the subject root for a new child KC and a reference answer.
  */
 import {
   ColdStartBridgeInput,
@@ -44,7 +35,7 @@ export interface RunColdStartBridgeParams {
   existingReferenceMd: string | null;
   /** Soft topic hint from extraction (block.knowledge_hint), or null. */
   knowledgeHint: string | null;
-  /** 闭集分类词表（YUK-600：对象数组——display_name 分类、id 原样回传；活 registry 取数）。 */
+  /** Closed classification vocabulary from the live registry; ids are returned as-is. */
   knownSubjects: ReadonlyArray<{ id: string; display_name: string; aliases?: string[] }>;
   /** Inject in tests; defaults to the production runner. */
   runTaskFn?: ColdStartBridgeRunTaskFn;
@@ -63,8 +54,7 @@ export async function runColdStartBridge(
   params: RunColdStartBridgeParams,
 ): Promise<ColdStartBridgeOutputT> {
   const knownSubjects = Array.from(params.knownSubjects);
-  // YUK-1408 — extracted question text is deterministically redacted before the
-  // model sees it; the closed subject vocabulary stays untouched.
+  // Redact text before the model sees it; the closed subject vocabulary is untouched.
   const input: ColdStartBridgeInputT = ColdStartBridgeInput.parse({
     question_md: redactIngestionText(params.questionMd).text,
     existing_reference_md:

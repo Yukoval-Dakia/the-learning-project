@@ -38,9 +38,8 @@ function runtimeOptions(input: ProposalAcceptInput, runtime: unknown): Ingestion
     ...seams,
     decision: input.decision,
     user_note: input.user_note,
-    // YUK-1404 — the lossy confirmation is canonical input, never a runtime
-    // seam: set AFTER the spread so runtime can neither inject nor override it.
-    // (Undefined for non-accept decisions — the field is `never` there.)
+    // Lossy confirmation is input, not a runtime seam: set after the spread so
+    // runtime cannot inject or override it. Non-accept decisions leave it never.
     confirm_lossy:
       input.decision === 'accept' || input.decision === undefined ? input.confirm_lossy : undefined,
   };

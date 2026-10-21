@@ -199,10 +199,8 @@ export async function executeGlmOcrWireAttempt<T>(
 }
 
 /**
- * YUK-1404 (B2/R5) — same wire attempt, but returns the attempt identity so a
- * caller (the glm_ocr tool) can hand the agent an honest `run_ref`. Usage/cost
- * truth lives on the provider_attempt row under this attemptId; the tool
- * reports what the wire actually returned and never fabricates cost.
+ * Same wire attempt, returning the identity so the tool can report an honest
+ * run_ref. Usage and cost live on the provider_attempt row, never fabricated.
  */
 export async function executeGlmOcrWireAttemptResult<T>(
   context: OcrPageProviderContext,
@@ -213,11 +211,9 @@ export async function executeGlmOcrWireAttemptResult<T>(
 }
 
 /**
- * YUK-1404 (B2/R5 P1-4) — the glm_ocr TOOL's wire descriptor. Same lane and
- * operation kind (honest billing attribution), but `providerStartFence:
- * 'operation_kind'` serializes dispatch on the same operation anchor: a second
- * call while a prior attempt's lease is live is fenced instead of double-
- * dispatching an unknown-paid request (design §9: unknown-paid 不自动重发).
+ * The glm_ocr tool's descriptor. It fences dispatch on the operation anchor, so a
+ * second call during a live lease is rejected instead of double-spending an
+ * unknown-paid request.
  */
 const GLM_OCR_TOOL_ATTEMPT_DESCRIPTOR = {
   ...GLM_OCR_ATTEMPT_DESCRIPTOR,

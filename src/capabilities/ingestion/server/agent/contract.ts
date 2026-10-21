@@ -1,14 +1,11 @@
 import { z } from 'zod';
 
-// YUK-1522 (R8) — ingestion-agent durable event + ask contracts.
+// Ingestion-agent durable event and ask contracts.
 //
-// The UI was built against the R8 section of
-// `ui-backend-contracts-2026-10-17.md`; field names and enums here are the
-// binding wire shape. Every `ingestion_agent.*` payload carries `kind` equal to
-// its event_type so SSE frames are self-describing on replay.
-//
-// 纯 schema / 常量 / 工具函数 —— 本文件不得 import @/server/*（事件写口在
-// server/events/agent-progress.ts，ask 存取在 server/agent/asks.ts）。
+// Field names and enums are the binding wire shape. Every ingestion_agent payload
+// carries `kind` equal to its event_type so SSE replay is self-describing. This
+// file is pure schema/constants and must not import @/server/*; writers live in
+// events/agent-progress.ts and asks.ts.
 
 export const INGESTION_AGENT_STAGE = 'ingestion_agent.stage' as const;
 export const INGESTION_AGENT_ITEM = 'ingestion_agent.item' as const;
