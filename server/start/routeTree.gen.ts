@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as AgentNotesRouteImport } from './routes/agent-notes'
+import { Route as CoachRouteImport } from './routes/coach'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as MistakesRouteImport } from './routes/mistakes'
@@ -48,6 +49,11 @@ const SplatRoute = SplatRouteImport.update({
 const AgentNotesRoute = AgentNotesRouteImport.update({
   id: '/agent-notes',
   path: '/agent-notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CoachRoute = CoachRouteImport.update({
+  id: '/coach',
+  path: '/coach',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InboxRoute = InboxRouteImport.update({
@@ -165,6 +171,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
@@ -192,6 +199,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
@@ -249,6 +258,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -276,6 +286,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -303,6 +314,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -331,6 +343,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   AgentNotesRoute: typeof AgentNotesRoute
+  CoachRoute: typeof CoachRoute
   InboxRoute: typeof InboxRoute
   KnowledgeRoute: typeof KnowledgeRouteWithChildren
   MistakesRoute: typeof MistakesRoute
@@ -374,6 +387,13 @@ declare module '@tanstack/react-router' {
       path: '/agent-notes'
       fullPath: '/agent-notes'
       preLoaderRoute: typeof AgentNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/coach': {
+      id: '/coach'
+      path: '/coach'
+      fullPath: '/coach'
+      preLoaderRoute: typeof CoachRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inbox': {
@@ -561,6 +581,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   AgentNotesRoute: AgentNotesRoute,
+  CoachRoute: CoachRoute,
   InboxRoute: InboxRoute,
   KnowledgeRoute: KnowledgeRouteWithChildren,
   MistakesRoute: MistakesRoute,
