@@ -32,7 +32,8 @@ import {
   composeSoftmaxStream,
   statisticalWeights,
 } from './softmax-selection';
-import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
+import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
@@ -627,38 +628,12 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
-    // Recovery rows (unsupported pinned contract + accepted submission) are not
-    // prospective work: they stay visible as the settlement/recovery entry point
-    // but sit outside the budget economy entirely — never a trimmable tail, and
-    // never consuming the minutes that decide other rows' fate.
-    const frozen = eligible.filter(
-      (row) => row.status !== 'pending' && !recoveryRowIds.has(row.id),
-    );
-    const frozenMinutes = frozen.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
-      0,
-    );
-    const pending = eligible.filter(
-      (row) => row.status === 'pending' && !recoveryRowIds.has(row.id),
-    );
-    // An intervention row is the learner-visible delivery of approved material,
-    // not an ordinary recommendation tail. Never trim it merely because it was
-    // appended after the day's budget was composed; instead budget the remaining
-    // pending rows around this protected delivery.
-    const protectedPending = pending.filter((row) => row.source === 'intervention');
-    const budgetablePending = pending.filter((row) => row.source !== 'intervention');
-    const protectedMinutes = protectedPending.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
-      0,
-    );
-    const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
-    const keptBudgetable =
-      remaining === 0
-        ? []
-        : fitStreamToTimeBudget(budgetablePending, remaining, questionMinutes).kept;
-    const keptPending = [...protectedPending, ...keptBudgetable];
-    const keptIds = new Set(keptPending.map((row) => row.id));
-    const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
+    const deleteIds = planStoredStreamBudgetTrim({
+      rows: eligible,
+      recoveryRowIds,
+      budgetMinutes,
+      questionMinutes,
+    });
     if (deleteIds.length > 0) {
       await tx.delete(practice_stream_item).where(inArray(practice_stream_item.id, deleteIds));
     }
@@ -746,12 +721,13 @@ export async function getStream(
   ]);
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
-  // Recovery rows are visible but not prospective: their minutes must neither
-  // trigger the trim nor decide other rows' fate (same carve-out as the trim).
-  const storedMinutes = rows
-    .filter((row) => !gated.recoveryRowIds.has(row.id))
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionPace.minutes), 0);
-  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
+  const exceedsBudget = storedStreamExceedsBudget({
+    rows,
+    recoveryRowIds: gated.recoveryRowIds,
+    budgetMinutes: budget.minutes,
+    questionMinutes: questionPace.minutes,
+  });
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
     rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
   }
 
