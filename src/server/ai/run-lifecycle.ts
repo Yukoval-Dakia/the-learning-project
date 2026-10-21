@@ -7,6 +7,7 @@ import {
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
+import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import {
   type AttemptCostTruth,
@@ -48,7 +49,6 @@ import {
   createProviderTransportCollector,
 } from './provider-transport';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
-import { taskInputHash } from './task-input-hash';
 import { estimateAbortedUsage } from './timeout-usage';
 
 export type LifecycleUsage = AiTaskUsage;

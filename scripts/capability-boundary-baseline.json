@@ -495,8 +495,16 @@
     },
     {
       "debt": "capabilityToServer",
-      "pair": "ingestion -> ai",
+      "pair": "practice -> ai",
       "date": "2026-10-20",
+      "from": 55,
+      "to": 54,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-21",
       "from": 16,
       "to": 15,
       "direction": "decrease"
@@ -504,9 +512,9 @@
     {
       "debt": "capabilityToServer",
       "pair": "practice -> ai",
-      "date": "2026-10-20",
-      "from": 55,
-      "to": 52,
+      "date": "2026-10-21",
+      "from": 54,
+      "to": 51,
       "direction": "decrease"
     }
   ],
@@ -898,7 +906,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 390,
+      "total": 389,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -954,7 +962,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 52,
+        "practice -> ai": 51,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
