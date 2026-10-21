@@ -1,6 +1,11 @@
 // Stable server contract for consumers outside the notes capability.
 
-export { NoteListQuerySchema, NoteListResponseSchema } from './api/contracts';
+export {
+  EditArtifactBodyBlocksBodySchema,
+  NoteIdParamsSchema,
+  NoteListQuerySchema,
+  NoteListResponseSchema,
+} from './api/contracts';
 export type {
   ArtifactCorrectionState,
   ArtifactCorrectionStatus,
@@ -20,6 +25,7 @@ export {
 // The teaching context loader projects body blocks into note sections; expose
 // that one projection instead of letting other capabilities deep-import.
 export { bodyBlocksToNoteSections } from './server/body-blocks';
+export { editArtifactBodyBlocks } from './server/body-blocks-edit';
 // Notes owns the consumer-effective facts for its config keys; the composition
 // root folds them into GET /api/admin/config.
 export { notesConfigEffectiveFacts } from './server/config-effective-facts';
@@ -36,6 +42,7 @@ export {
 } from './server/note-handoff';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
+export { loadNotePage } from './server/note-page';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,

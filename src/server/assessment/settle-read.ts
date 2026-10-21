@@ -5,7 +5,8 @@
 // in settle.ts and consumes these projections; this module writes nothing.
 // Plans recorded before sealed forgetting inputs existed are re-derived through
 // the caller-bound RederiveSettlementPlan port — scope loading and plan
-// derivation remain settle.ts internals, so there is no settle.ts import edge.
+// derivation remain settlement-writer internals, so there is no import edge
+// back from the read module.
 
 import { eq } from 'drizzle-orm';
 

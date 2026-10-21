@@ -81,47 +81,64 @@ function jumpToBlockAnchor(anchorId: string) {
 // artifact (StrictMode's simulated remount, or React re-running the ref callback)
 // keeps the same session instead of blurring and minting a second one.
 function createEditingPresence() {
-  type Lease = {
-    artifactId: string;
-    sessionId: string;
-    heartbeat: number;
-    pendingRelease: number | null;
-  };
+  type Lease = { artifactId: string; sessionId: string; heartbeat: number };
   let lease: Lease | null = null;
+  let attachedArtifact: string | null = null;
+  let pendingRelease: number | null = null;
+  let listening = false;
 
-  const end = (ended: Lease) => {
+  const end = () => {
+    const ended = lease;
+    if (!ended) return;
+    lease = null;
     window.clearInterval(ended.heartbeat);
-    if (ended.pendingRelease !== null) window.clearTimeout(ended.pendingRelease);
-    if (lease === ended) lease = null;
+    // Document navigation need not unmount React. Keep the authenticated blur
+    // eligible to finish after pagehide; server expiry remains the fallback.
     void editingBlur(ended.artifactId, ended.sessionId).catch(() => {});
+  };
+
+  const begin = (artifactId: string) => {
+    if (lease?.artifactId === artifactId) return;
+    end();
+    const sessionId = randomId();
+    const beat = () => {
+      void editingHeartbeat(artifactId, sessionId).catch(() => {});
+    };
+    lease = { artifactId, sessionId, heartbeat: window.setInterval(beat, 5000) };
+    beat();
+  };
+
+  const onPageHide = () => end();
+  const onPageShow = () => {
+    // A bfcache restoration keeps the mounted editor and its draft, but the old
+    // session was released. Rejoin with a new identity, never revive that lease.
+    if (attachedArtifact) begin(attachedArtifact);
   };
 
   return {
     acquire(artifactId: string) {
-      if (lease && lease.artifactId === artifactId) {
-        if (lease.pendingRelease !== null) {
-          window.clearTimeout(lease.pendingRelease);
-          lease.pendingRelease = null;
-        }
-        return;
+      if (pendingRelease !== null) {
+        window.clearTimeout(pendingRelease);
+        pendingRelease = null;
       }
-      if (lease) end(lease);
-      const sessionId = randomId();
-      const beat = () => {
-        void editingHeartbeat(artifactId, sessionId).catch(() => {});
-      };
-      beat();
-      lease = {
-        artifactId,
-        sessionId,
-        heartbeat: window.setInterval(beat, 5000),
-        pendingRelease: null,
-      };
+      attachedArtifact = artifactId;
+      if (!listening) {
+        window.addEventListener('pagehide', onPageHide);
+        window.addEventListener('pageshow', onPageShow);
+        listening = true;
+      }
+      begin(artifactId);
     },
     release() {
-      const current = lease;
-      if (!current || current.pendingRelease !== null) return;
-      current.pendingRelease = window.setTimeout(() => end(current), 0);
+      attachedArtifact = null;
+      if (pendingRelease !== null) return;
+      pendingRelease = window.setTimeout(() => {
+        pendingRelease = null;
+        end();
+        window.removeEventListener('pagehide', onPageHide);
+        window.removeEventListener('pageshow', onPageShow);
+        listening = false;
+      }, 0);
     },
   };
 }
@@ -147,13 +164,22 @@ function sectionKindLabel(b: BodyBlock): string | null {
 export default function NoteReaderPage({
   id,
   navigate,
+  read = getNotePage,
+  save = saveBodyBlocks,
+  readAiChanges = getAiChanges,
 }: {
   id: string;
   navigate: (to: string) => void;
+  read?: typeof getNotePage;
+  save?: typeof saveBodyBlocks;
+  readAiChanges?: typeof getAiChanges;
 }) {
   const qc = useQueryClient();
-  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => getNotePage(id) });
-  const changesQ = useQuery({ queryKey: ['note-ai-changes', id], queryFn: () => getAiChanges(id) });
+  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
+  const changesQ = useQuery({
+    queryKey: ['note-ai-changes', id],
+    queryFn: () => readAiChanges(id),
+  });
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');
   const [outlineOpen, setOutlineOpen] = useState(true);
@@ -229,7 +255,7 @@ export default function NoteReaderPage({
 
   const saveM = useMutation({
     mutationFn: () =>
-      saveBodyBlocks(id, {
+      save(id, {
         artifact_version: note?.version ?? 0,
         body_blocks: { type: 'doc', content: draft ?? [] },
       }),

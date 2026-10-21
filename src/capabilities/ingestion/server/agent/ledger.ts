@@ -40,6 +40,10 @@ export interface ItemLedgerEntry {
   readonly preview_md?: string;
   readonly draft_ref?: string;
   readonly question_id?: string;
+  /** Model-written reason on the latest item event (withheld/failed context). */
+  readonly reason?: string;
+  /** ISO time of the latest session-stream item event. */
+  readonly status_at?: string;
 }
 
 export interface AgentRunLedger {
@@ -58,12 +62,13 @@ export interface AgentRunLedger {
 type RawEventRow = {
   readonly event_type: string;
   readonly payload: Record<string, unknown>;
+  readonly occurred_at: string | Date;
 };
 
 export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promise<AgentRunLedger> {
   const floor = await readAgentEventFloor(db, sessionId);
   const sessionRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
+    SELECT event_type, payload, occurred_at
     FROM job_events
     WHERE business_table = ${SESSION_TABLE}
       AND business_id = ${sessionId}
@@ -72,7 +77,7 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
     ORDER BY id ASC
   `);
   const runRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
+    SELECT event_type, payload, occurred_at
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
@@ -100,6 +105,8 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
       status: p.status,
       ...(p.page !== undefined ? { page: p.page } : {}),
       ...(p.preview_md !== undefined ? { preview_md: p.preview_md } : {}),
+      ...(p.reason !== undefined ? { reason: p.reason } : {}),
+      status_at: new Date(row.occurred_at).toISOString(),
     });
   }
 
