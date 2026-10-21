@@ -38,7 +38,7 @@ provider/paid、effective-domain图读、事务/CAS/恢复/embedding写入失效
 父唯一frozen install通过且依赖三hash不变。首轮typecheck/lint/build通过；boundary仅实测下降待登记，architecture另发现原backfill版本转出的新目标站点。总协调批准最窄两文件收口：inventory把版本binding移至已有core import，保两await/模块加载顺序；backfill仅删旧export，排除这些binding/出口后全文一致，无新stable/compat。
 
 原生tighten只登记knowledge→ai12→10、practice→ai50→49、total387→384；39历史changes原entry字节前缀全保→41，其他分类字段不变。父仅恢复native重排的历史entry键序，JSON语义同native；不以此数字作为目标或并行收益。最终源码 `370c7bdc19a635af1e93c69e38070e0fa788a4e9` 五门经heavy串行全部rc0；两audit固定base214，旧失败raw保留。实测384/0/36、SCC1（三成员）、超长12、新边0、pass-through1086（+0 new），只作诊断。依赖未重复安装，三hash同唯一安装回执。
-tests/DB/TEST/Docker/provider/runtime均NOT_RUN。首次独立R1与exact-head CI尚待；父将以最终完整diff交首次R1，不拆出绕审。
+tests/DB/TEST/Docker/provider/runtime均NOT_RUN。该轮后首次独立R1已完成（见下文）；每次新组合仍需其exact-head CI，不拆出绕审。
 
 最终源码及七caller保护：`YUK-1570/370c7bdc19a635af1e93c69e38070e0fa788a4e9/embedding-final-proof/proof.json`；五门raw/argv/UTC/rc在同head `embedding-final-gates/`。原获批出口收口patch SHA `be9304bcdf4e3733e7133befd12a9c98646b057c6323ffc8863cf18ec7acb64d`，9cbc相对证据保留。
 
@@ -59,3 +59,36 @@ tests/DB/TEST/Docker/provider/runtime均NOT_RUN。首次独立R1与exact-head CI
 证据：`YUK-1570/7d505f163e0f537d9cbd3c85a699f21b9ff8a809/embedding-main102-integration/`
 含五门raw/argv/UTC/rc、整树/账本/依赖proof、裸scanner失败定位、AST与两份emit。
 这对真实变更成功在同文件不同hunk组合且无产品修复；不能外推任意需求并行零返工。
+
+
+## 当前 tsrs 组合与一次依赖装配
+
+main `d64c5a94001dbe91c35a7155cb1e0f7f819fb2f0` 的 #1941 改用 tsrs，并更新
+package/lock 与 copilot 类型声明。正常merge得 `77eb2815c07a052637bd19415ffb64b4765e0b5a`；
+本片全部blob同5381，其余main条目保留。总协调补批本树仅一次
+`heavy.sh pnpm install --frozen-lockfile`，失败不自动重装/改锁；已于12:58:58–12:59:07Z执行rc0。
+安装前后及五门后hash均相同：package.json
+`b010a6212d08d57ca5b737202ba7484754916fa5bdbd954135d029c1b6f6dccf`，pnpm-lock.yaml
+`7db662b99461425475cdce4c2cfcedff7eaddd1cf9ff490a95d0615325aa13dc`，workspace
+`92d5cb05ea8434e7c2e4553748bfed386dbf191e3ed5b82fdcfe3de5c3bac98e`。
+
+12:59:07–12:59:51Z在77eb新跑当前tsrs双配置typecheck、lint（182 warnings）、build、
+两audit全部rc0；audit base固定d64。全机HEAVY_SLOTS=2、本线串行、Node堆3072。
+诊断384/0/36、SCC三成员、超长12、pass-through1086（+0 new），未改变原账目。
+原R1及本片blob证明继续适用，无新审查/test/DB/provider/runtime；最终仅文档增量，
+须normal push后新exact CI和新保守窗，旧5381的tsc/CI不充现行门。
+证据：`YUK-1570/77eb2815c07a052637bd19415ffb64b4765e0b5a/main-d64-approved-gates/`，
+含授权、一次安装/五门argv、UTC、原始输出、真实rc及前后hash；manifest SHA256
+`04bcd8957c696b1f11a910cb609e8fb293777a105d312588d118119586c66b93`。
+
+## 候选并行案例：提交事务与文本规则维护
+
+以下为源码推演及在途工作边界，不是已完成的并行产品验收，不新增任务或测试：
+
+| 需求 | 可独立负责的修改 | 必须协调的契约与状态 | 实际交付证据 |
+| --- | --- | --- | --- |
+| K1完整提交/首发事务（真实在途功能） | questions事务owner负责save/submit InTx、typed父子投影、首发回执与提交后intent drain；本片不碰其五源/私有模块 | 题目schema、发布与来源身份、事务边界；若改变嵌入输入字段，需与文本规则owner对齐 | K1与本片共同集成尚待证，不称独立交付已验收 |
+| 输入拼接/截断规则维护（真实规则的变化场景，尚未实施） | core/embed-source负责文本规则、EMBED_VERSION及exact-text hash；迁前后仍1→1 | 规则变化须评估版本升级；questions/write负责内容变化后置空，embed_backfill负责版本选择、同源校验/CAS和重算写入，inventory负责同判据观察；provider/model或schema变化另由各owner协调 | 本PR未改规则/版本，不运行回填；caller知识基本不变，维护联动是否减少待真实需求验证 |
+
+#1935注释与本片import已正常组合、无产品修复，只证明一次不同hunk的占用协调。
+新core归属不免除版本/hash/失效/回填契约协商，不据此宣称大规模并行零返工。
