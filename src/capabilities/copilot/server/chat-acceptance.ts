@@ -261,9 +261,7 @@ export async function acceptCopilotTurnAfterAdmission(
                 eventId: `crisis_guard_${createId()}`,
                 now: new Date(),
                 // 被剔除的附件只记类型，不记内容。
-                ...(droppedReviewAnswer
-                  ? { droppedAttachmentKind: 'review_answer' as const }
-                  : {}),
+                ...(droppedReviewAnswer ? { droppedAttachmentKind: 'review_answer' as const } : {}),
               },
             }
           : {}),
