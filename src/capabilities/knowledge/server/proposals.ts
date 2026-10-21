@@ -20,6 +20,7 @@ import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/capabilities/practice/public';
+import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
@@ -32,7 +33,6 @@ import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/propo
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';

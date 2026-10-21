@@ -1,6 +1,7 @@
 // YUK-1560 — 资格判定的读表侧。一次夜间 tick 读完共享信号，再按 job 投影。
 
 import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { EMBED_VERSION } from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
 import {
@@ -22,7 +23,6 @@ import {
   classifyActivityTier,
 } from '@/kernel/nightly-eligibility';
 import { loadReturnStockGaps } from '@/kernel/read-models/return-stock';
-import { EMBED_VERSION } from '@/server/ai/embed-source';
 
 const TERMINAL_FOR_HISTORY = ['succeeded', 'failed', 'skipped', 'not_needed', 'degraded'] as const;
 

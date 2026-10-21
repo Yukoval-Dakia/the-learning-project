@@ -541,6 +541,22 @@
       "from": 51,
       "to": 50,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-21",
+      "from": 12,
+      "to": 10,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-21",
+      "from": 50,
+      "to": 49,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1097,7 +1113,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 387,
+      "total": 384,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -1132,7 +1148,7 @@
         "ingestion -> records": 1,
         "ingestion -> session": 8,
         "knowledge -> advisory-locks": 5,
-        "knowledge -> ai": 12,
+        "knowledge -> ai": 10,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
@@ -1153,7 +1169,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 50,
+        "practice -> ai": 49,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,

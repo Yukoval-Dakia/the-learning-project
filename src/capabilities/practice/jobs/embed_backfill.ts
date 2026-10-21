@@ -24,6 +24,12 @@
 
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import {
+  EMBED_VERSION,
+  embedHash,
+  knowledgeEmbedText,
+  questionEmbedText,
+} from '@/core/embed-source';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
@@ -33,14 +39,6 @@ import {
   type EmbedProviderAttemptOptions,
   embedMany,
 } from '@/server/ai/embed';
-import {
-  EMBED_VERSION,
-  embedHash,
-  knowledgeEmbedText,
-  questionEmbedText,
-} from '@/server/ai/embed-source';
-
-export { EMBED_VERSION };
 
 /** 入库已经算过的向量。文本必须是即将落库的题面，否则不要写，留给本任务重算。 */
 export function questionEmbedStamp(
