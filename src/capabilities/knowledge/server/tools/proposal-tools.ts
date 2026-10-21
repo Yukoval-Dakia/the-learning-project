@@ -45,6 +45,10 @@ import type { DomainTool, ToolContext } from './types';
 
 type DbLike = Db | Tx;
 
+// resolveEvidence resolves refs one-by-one; cap model input so a malformed call
+// cannot amplify into an unbounded query sequence.
+const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
+
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
 }
@@ -177,7 +181,7 @@ const ProposeKnowledgeEdgeInputSchema = z.object({
   // archive-op target: the live knowledge_edge.id to soft-delete.
   edge_id: z.string().min(1).optional(),
   reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
+  evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator. Set
   // 'corrective' ONLY when this edge repairs a failure the model itself observed;
   // omit (→ 'proactive') for a next-step suggestion. There is NO deterministic
@@ -679,7 +683,7 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
 const KnowledgeMutationInputSchema = z.object({
   change: KnowledgeMutationChangeSchema,
   reasoning: z.string().min(1).max(2000),
-  evidence_event_ids: z.array(z.string().min(1)).optional(),
+  evidence_event_ids: EvidenceEventIdsSchema.optional(),
   // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator;
   // omit (→ 'proactive') unless this mutation repairs a model-observed failure.
   suggestion_kind: SuggestionKind.optional(),

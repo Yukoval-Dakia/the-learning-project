@@ -195,18 +195,42 @@ export interface KnowledgeMutationCooldown {
   /** Proposal kind the writer stores / the gate queries. */
   kind: 'knowledge_node' | 'archive' | 'knowledge_mutation';
   /**
-   * Canonical key first (the one this writer persists). Legacy equivalent keys
-   * follow: proposals projected from pre-`ai_proposal` events carry them, and a
-   * dismissal on either side must suppress the other.
+   * Canonical key first (the one this writer persists). Archive also carries
+   * its legacy equivalent; change-scoped mutations have no node-level alias,
+   * so a different change to the same node is neither deduped nor cooled down.
    */
   cooldownKeys: readonly string[];
 }
 
 /**
+ * The change a reparent/merge/split proposal actually asks for, independent of
+ * the CAS token. Two proposals with the same identity are duplicates; a
+ * different target/parent/from-set/layout is a different proposal even when it
+ * touches the same node.
+ */
+function mutationChangeIdentity(
+  payload: ReparentPayload | MergePayload | SplitPayload,
+): readonly unknown[] {
+  switch (payload.mutation) {
+    case 'reparent':
+      return [payload.node_id, payload.new_parent_id];
+    case 'merge':
+      return [payload.into_id, [...payload.from_ids].sort()];
+    case 'split':
+      return [
+        payload.from_id,
+        payload.into
+          .map(({ name, parent_id }) => [name, parent_id])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      ];
+  }
+}
+
+/**
  * Single source for a mutation's `(kind, cooldown_key)` dedup identity, shared
  * by {@link writeKnowledgeProposeEvent} (stored marker) and the propose tool's
- * pending/dismiss gate. All five branches are covered: reparent/merge/split
- * previously had no propose-side gate at all.
+ * pending/dismiss gate. reparent/merge/split key on the change itself so
+ * different proposals on one node do not suppress each other.
  */
 export function knowledgeMutationCooldown(
   payload: KnowledgeMutationPayload,
@@ -225,16 +249,13 @@ export function knowledgeMutationCooldown(
       };
     case 'reparent':
     case 'merge':
-    case 'split': {
-      const subjectId = mutationSubjectId(payload);
+    case 'split':
       return {
         kind: 'knowledge_mutation',
         cooldownKeys: [
-          `knowledge_mutation:${payload.mutation}:${subjectId}`,
-          `legacy_knowledge:${payload.mutation}:${subjectId}`,
+          `knowledge_mutation:${payload.mutation}:${encodeURIComponent(JSON.stringify(mutationChangeIdentity(payload)))}`,
         ],
       };
-    }
   }
 }
 
