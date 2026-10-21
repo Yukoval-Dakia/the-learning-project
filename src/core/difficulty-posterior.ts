@@ -7,8 +7,9 @@
 //
 //   Q(b) = Σ_e w_e·[s_e·log σ(θ_e − b) + (1−s_e)·log(1−σ(θ_e − b))] − (b−μ_j)²/(2τ_j²)
 //
-// Q 严格凹（Bernoulli 对数似然 + 二次先验罚项）⇒ 唯一 MAP，牛顿迭代收敛。后验方差取
-// MAP 处 Laplace 近似 V = 1/(1/τ² + Σ w_e·p_e(1−p_e)) —— 先验精度垫底 ⇒ V ≤ τ² 结构性
+// Q 严格凹（Bernoulli 对数似然 + 二次先验罚项）⇒ 唯一 MAP；Q' 严格单调递减，用二分
+// 求根（不振荡/发散）。后验方差取 MAP 处 Laplace 近似 V = 1/(1/τ² + Σ w_e·p_e(1−p_e))
+// —— 先验精度垫底 ⇒ V ≤ τ² 结构性
 // 成立（A2 收敛条件 1：单调收缩、不超先验方差）。
 //
 // ─── 识别性（A1，n=1 红线的在线化）──────────────────────────────────────────
@@ -129,14 +130,32 @@ export function evidenceWeight(input: {
 /** 每批每题 |Δb| 的 damping 上限（A2 收敛条件 2：信任域，防 θ̂↔b 交替正反馈）。 */
 export const MAX_ABS_STEP_PER_BATCH = 0.75;
 
-/** 牛顿迭代收敛容差（|Δb|）与上限轮数。 */
-const NEWTON_TOL = 1e-10;
-const NEWTON_MAX_ITERS = 60;
+/** Q' 二分求解的迭代上限。Q' 严格单调递减 ⇒ 二分不会振荡/发散。 */
+const BISECTION_MAX_ITERS = 120;
+
+/** 数值稳定的 logistic（θ−b 很大时 exp 溢出方向只影响一侧，结果仍为 0/1）。 */
+function logistic(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+/** Q'(b) = Σ_e w_e·(σ(θ_e−b) − s_e) − (b−μ)/τ²。Q' 严格单调递减，零点即唯一 MAP。 */
+function qPrime(
+  b: number,
+  priorMu: number,
+  priorPrecision: number,
+  points: readonly DifficultyEvidencePoint[],
+): number {
+  let grad = -(b - priorMu) * priorPrecision;
+  for (const e of points) {
+    grad += e.weight * (logistic(e.theta - b) - e.score);
+  }
+  return grad;
+}
 
 export interface DifficultyPosterior {
   /** 后验均值（MAP，信任域 clamp 后的落点）。0 条证据 ⇒ = μ（A3：无 NULL 哨兵）。 */
   bPost: number;
-  /** 后验方差（MAP 处 Laplace）。结构性 ≤ τ²；0 条证据 ⇒ = τ²。 */
+  /** 后验方差（已验证 MAP 处 Laplace；不随信任域 clamp 的 bPost 虚高）。≤ τ²；0 证据 ⇒ τ²。 */
   variance: number;
 }
 
@@ -152,8 +171,10 @@ export function updateDifficultyPosterior(
   evidence: readonly DifficultyEvidencePoint[],
   opts: { previousBPost?: number | null } = {},
 ): DifficultyPosterior {
-  if (!(prior.tau > 0))
-    throw new Error(`updateDifficultyPosterior: tau must be > 0, got ${prior.tau}`);
+  if (!Number.isFinite(prior.tau) || !(prior.tau > 0))
+    throw new Error(`updateDifficultyPosterior: tau must be finite and > 0, got ${prior.tau}`);
+  if (!Number.isFinite(prior.mu))
+    throw new Error(`updateDifficultyPosterior: mu must be finite, got ${prior.mu}`);
   const priorPrecision = 1 / (prior.tau * prior.tau);
   const points: DifficultyEvidencePoint[] = [];
   for (const e of evidence) {
@@ -166,41 +187,79 @@ export function updateDifficultyPosterior(
     if (!Number.isFinite(e.weight) || e.weight < 0) {
       throw new Error(`updateDifficultyPosterior: weight must be finite >= 0, got ${e.weight}`);
     }
-    if (e.weight === 0) continue; // 零权重证据无信息，跳过（不计入牛顿）。
+    if (e.weight === 0) continue; // 零权重证据无信息，跳过。
     points.push(e);
   }
 
-  // 牛顿迭代最大化 Q。从 μ 出发（凹函数 + 先验主导远处，收敛稳定）。
-  let b = prior.mu;
-  for (let iter = 0; iter < NEWTON_MAX_ITERS; iter++) {
-    let grad = -(b - prior.mu) * priorPrecision; // Q' = −Σw(s−p) − (b−μ)/τ²
-    let curvature = priorPrecision; // −Q'' = Σ w·p(1−p) + 1/τ²
-    for (const e of points) {
-      const p = 1 / (1 + Math.exp(-(e.theta - b)));
-      grad += -e.weight * (e.score - p);
-      curvature += e.weight * p * (1 - p);
-    }
-    const step = grad / curvature;
-    b += step;
-    if (Math.abs(step) < NEWTON_TOL) break;
-  }
+  // Q 严格凹、Q' 严格单调递减 ⇒ 用二分求 Q 的唯一零点（MAP）。无阻尼牛顿在
+  // θ−b 很大时曲率≈先验精度，步长会越过整段证据区、来回振荡或发散到错侧；二分
+  // 只依赖 Q' 的符号，先验主导远处也有有限 bracket。
+  const mode = points.length === 0 ? prior.mu : solveMode(prior, priorPrecision, points);
 
   // 信任域（A2.2）：相对上一批落点的每批 |Δb| 上限。legacy 载入值（b_post 回填自
   // b_calib）也经它逐批收敛进后验——部署时刻读数连续，无一次性跳变。
+  let bPost = mode;
   if (typeof opts.previousBPost === 'number' && Number.isFinite(opts.previousBPost)) {
-    const delta = b - opts.previousBPost;
+    const delta = mode - opts.previousBPost;
     if (Math.abs(delta) > MAX_ABS_STEP_PER_BATCH) {
-      b = opts.previousBPost + Math.sign(delta) * MAX_ABS_STEP_PER_BATCH;
+      bPost = opts.previousBPost + Math.sign(delta) * MAX_ABS_STEP_PER_BATCH;
     }
   }
 
-  // Laplace 方差在最终落点取值：V = 1/(1/τ² + Σ w·p(1−p))，结构性 ≤ τ²。
-  let curvatureAtB = priorPrecision;
+  // Laplace 方差在**已验证的 MAP** 取值：V = 1/(1/τ² + Σ w·p(1−p))，结构性 ≤ τ²。
+  // 信任域只 clamp 对外落点 bPost；方差不跟着 clamp 点虚高，否则 KB 参照集会误把
+  // 证据充分的题当成「先验主导」。
+  let curvatureAtMode = priorPrecision;
   for (const e of points) {
-    const p = 1 / (1 + Math.exp(-(e.theta - b)));
-    curvatureAtB += e.weight * p * (1 - p);
+    const p = logistic(e.theta - mode);
+    curvatureAtMode += e.weight * p * (1 - p);
   }
-  return { bPost: b, variance: 1 / curvatureAtB };
+  return { bPost, variance: 1 / curvatureAtMode };
+}
+
+/**
+ * 求 Q' 的唯一零点。Q' 严格递减；由 |Q' 的先验项| = Σw(p−s) ≤ Σw 可得
+ * |b−μ| ≤ τ²·Σw，故有限 bracket 必然包住根。bracket 反向（浮点边界）时加倍扩展，
+ * 扩展失败或有非有限量则 fail-fast，绝不返回未经验证的迭代末值。
+ */
+function solveMode(
+  prior: DifficultyPrior,
+  priorPrecision: number,
+  points: readonly DifficultyEvidencePoint[],
+): number {
+  const sumWeight = points.reduce((acc, e) => acc + e.weight, 0);
+  if (!Number.isFinite(sumWeight)) {
+    throw new Error(`updateDifficultyPosterior: non-finite evidence weight sum ${sumWeight}`);
+  }
+  let span = prior.tau * prior.tau * sumWeight + 1;
+  let lo = prior.mu - span;
+  let hi = prior.mu + span;
+  for (let expand = 0; expand < 64; expand++) {
+    if (!Number.isFinite(span) || !Number.isFinite(lo) || !Number.isFinite(hi)) {
+      throw new Error('updateDifficultyPosterior: failed to build a finite MAP bracket');
+    }
+    const gLo = qPrime(lo, prior.mu, priorPrecision, points);
+    const gHi = qPrime(hi, prior.mu, priorPrecision, points);
+    if (gLo >= 0 && gHi <= 0) break;
+    span *= 2;
+    lo = prior.mu - span;
+    hi = prior.mu + span;
+  }
+  if (
+    !(qPrime(lo, prior.mu, priorPrecision, points) >= 0) ||
+    !(qPrime(hi, prior.mu, priorPrecision, points) <= 0)
+  ) {
+    throw new Error('updateDifficultyPosterior: failed to bracket the MAP');
+  }
+  for (let iter = 0; iter < BISECTION_MAX_ITERS; iter++) {
+    const mid = lo + (hi - lo) / 2;
+    if (mid === lo || mid === hi) return mid;
+    const g = qPrime(mid, prior.mu, priorPrecision, points);
+    if (g === 0) return mid;
+    if (g > 0) lo = mid;
+    else hi = mid;
+  }
+  return lo + (hi - lo) / 2;
 }
 
 // ─── 尺度漂移审计（A5：Kolen-Brennan mean/sigma linking，降格为审计 + 越界归一）──

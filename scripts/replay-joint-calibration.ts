@@ -8,6 +8,7 @@
 // ─── 用法 ──────────────────────────────────────────────────────────────────
 //   pnpm replay:joint-calibration --synthetic            # 内存合成史（默认 2000 作答）
 //   pnpm replay:joint-calibration --synthetic=5000 --json
+//   pnpm replay:joint-calibration --synthetic --seed=1   # 多 seed 复核（默认 0x439）
 //   DATABASE_URL=... pnpm replay:joint-calibration      # 从 DB 读真实历史（owner 本地跑）
 //   DATABASE_URL=... pnpm replay:joint-calibration --seed-legacy-db
 //                                                         # 合成史写进隔离库（legacy 事件形状）
@@ -564,17 +565,20 @@ export async function runCli(args: string[]): Promise<number> {
     const n = syntheticArg?.includes('=') ? Number(syntheticArg?.split('=')[1]) : 2000;
     return Number.isFinite(n) && n > 0 ? n : 2000;
   };
+  const seedArg = args.find((a) => a.startsWith('--seed='));
+  const parsedSeed = seedArg === undefined ? Number.NaN : Number(seedArg.slice('--seed='.length));
+  const seed = Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : 0x439;
   let attempts: JointReplayAttempt[];
   let mode: string;
   if (seedDb) {
-    const world = generateSyntheticHistory(syntheticN());
+    const world = generateSyntheticHistory(syntheticN(), seed);
     await seedLegacyDb(world);
     attempts = await loadAttemptsFromDb();
-    mode = `seeded legacy DB → read back (n=${attempts.length})`;
+    mode = `seeded legacy DB → read back (n=${attempts.length}, seed=${seed})`;
   } else if (syntheticArg !== undefined || process.env.DATABASE_URL === undefined) {
-    const world = generateSyntheticHistory(syntheticN());
+    const world = generateSyntheticHistory(syntheticN(), seed);
     attempts = world.attempts;
-    mode = `synthetic in-memory (n=${attempts.length})`;
+    mode = `synthetic in-memory (n=${attempts.length}, seed=${seed})`;
   } else {
     attempts = await loadAttemptsFromDb();
     mode = `database (${attempts.length} attempts)`;

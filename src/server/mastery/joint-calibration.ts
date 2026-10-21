@@ -133,6 +133,13 @@ export interface JointCalibrationBatchResult {
 
 const DEFAULT_MAX_PER_RUN = 2000;
 
+/**
+ * A5 参照集位置 leash：|b_post − μ| > 3τ 的题不作为「先验主导的强锚」。
+ * 旧求解器的发散行会把自己的方差报成 ≈τ²，只按方差筛会把它们当参照点、把整场
+ * θ̂/b_post 平移；位置 leash 是方差筛之外的第二道守卫（正常先验主导题在 1–2τ 内）。
+ */
+const REFERENCE_MAX_ABS_DELTA_TAU = 3;
+
 /** 候选窗起点：昨日本地日（Asia/Shanghai）零点（同旧 nightly 的 empty-today 防护）。 */
 function candidateWindowStart(now: Date): Date {
   const yesterdayLocal = attemptLocalDate(new Date(now.getTime() - 24 * 3600 * 1000));
@@ -358,10 +365,14 @@ async function auditAndMaybeRenormalize(
     const mu = r.b_anchor ?? null;
     if (mu === null) continue;
     const tau = priorTau(r.source);
+    const bPost = r.b_post ?? mu;
+    if (!Number.isFinite(bPost)) continue;
+    if (Math.abs(bPost - mu) > REFERENCE_MAX_ABS_DELTA_TAU * tau) continue;
     const variance = r.posterior_variance ?? tau * tau; // 未标定 ⇒ 先验方差 ⇒ 主导。
+    if (!Number.isFinite(variance) || variance <= 0) continue;
     const evidenceFraction = 1 - variance / (tau * tau);
     if (evidenceFraction <= REFERENCE_EVIDENCE_PRECISION_FRACTION_MAX) {
-      reference.push({ mu, bPost: r.b_post ?? mu });
+      reference.push({ mu, bPost });
     }
   }
   const drift = kbDrift(reference);
