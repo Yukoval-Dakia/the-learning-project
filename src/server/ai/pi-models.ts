@@ -48,6 +48,18 @@ function executableFacts(facts: PiModelFacts): ExecutableModelFacts | undefined 
   return facts as ExecutableModelFacts;
 }
 
+/**
+ * The model ids this provider can actually serve right now — the same
+ * required-facts gate `createLoomPiModels().getModel` applies, so a panel that
+ * lists these never offers a model the save-time check rejects.
+ */
+export function executablePiModelIds(provider: Provider): readonly string[] {
+  return Object.entries(nativePiModels(provider))
+    .filter(([, facts]) => executableFacts(facts) !== undefined)
+    .map(([id]) => id)
+    .sort();
+}
+
 function thinkingLevelMapOf(
   source: Record<string, string | null> | undefined,
 ): ThinkingLevelMap | undefined {
@@ -164,7 +176,7 @@ export async function createLoomPiModels() {
             input: rates?.input ?? 0,
             output: rates?.output ?? 0,
             cacheRead: rates?.cache_read ?? 0,
-            cacheWrite: 0,
+            cacheWrite: rates?.cache_write ?? 0,
           },
           catalogReasoning: executable.catalogReasoning,
           thinkingLevelMap: thinkingLevelMapOf(executable.thinkingLevelMap),

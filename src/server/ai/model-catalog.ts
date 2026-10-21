@@ -22,6 +22,7 @@ import {
   type CustomProviderDefinition,
   type CustomProviderProtocol,
   customProviderDefinitions,
+  customProvidersRegistryHydrated,
 } from '@/core/config/custom-providers';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
@@ -91,6 +92,8 @@ export interface TokenRates {
   input: number;
   output: number;
   cache_read: number;
+  /** Present only when the catalog card declares a finite cache-write rate. */
+  cache_write?: number;
 }
 
 export interface ParsedCatalogModel {
@@ -352,6 +355,11 @@ function mergeCustomProviderBuckets(input: {
   index: ReturnType<typeof buildCustomModelFactsIndex>;
   pinned: ReadonlySet<string>;
 }): { providers: ProviderMap; findings: CatalogFinding[] } {
+  // A failed boot hydrate must not look like "every provider was deleted":
+  // keep the stored buckets until the watch retries the table read.
+  if (!customProvidersRegistryHydrated()) {
+    return { providers: input.previous, findings: [] };
+  }
   const providers: ProviderMap = {};
   const findings: CatalogFinding[] = [];
   for (const definition of input.definitions) {
@@ -517,7 +525,15 @@ export function catalogModelCost(
   if (typeof input !== 'number' || !Number.isFinite(input)) return undefined;
   if (typeof output !== 'number' || !Number.isFinite(output)) return undefined;
   if (typeof cacheRead !== 'number' || !Number.isFinite(cacheRead)) return undefined;
-  return { input, output, cache_read: cacheRead };
+  const cacheWrite = cost.cache_write;
+  return {
+    input,
+    output,
+    cache_read: cacheRead,
+    ...(typeof cacheWrite === 'number' && Number.isFinite(cacheWrite) && cacheWrite >= 0
+      ? { cache_write: cacheWrite }
+      : {}),
+  };
 }
 
 function addModelId(ids: Set<string>, value: unknown): void {

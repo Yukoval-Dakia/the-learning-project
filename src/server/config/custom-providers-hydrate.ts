@@ -17,7 +17,8 @@ import {
 } from '@/core/config/custom-providers';
 import { type Db, db as defaultDb } from '@/db/client';
 import { custom_provider } from '@/db/schema';
-import { catalogModelIds, currentModelCatalog } from '@/server/ai/model-catalog';
+import { currentModelCatalog } from '@/server/ai/model-catalog';
+import { executablePiModelIds } from '@/server/ai/pi-models';
 import { providerAuthLabel } from '@/server/ai/provider-models-check';
 
 const SELECTION = {
@@ -89,7 +90,10 @@ export function startCustomProvidersWatch(
 /**
  * Wire the server-side catalog integration (API process): the panel facts
  * source (fresh per call from the live catalog) and the post-write change
- * handler (unbilled /models refresh on put, locked bucket prune on delete).
+ * handler. A put runs the shared catalog refresh: custom providers never get
+ * an auth probe of their own, but a due built-in 1-token probe can ride the
+ * same refresh; a delete prunes its bucket/check/findings under the refresh
+ * lock.
  */
 export function registerCustomProviderCatalogIntegration(db: Db = defaultDb): void {
   setCustomProviderCatalogFactsSource(() => {
@@ -97,7 +101,9 @@ export function registerCustomProviderCatalogIntegration(db: Db = defaultDb): vo
     return new Map(
       customProviderDefinitions().map((definition) => {
         const check = catalog.providerChecks.find((entry) => entry.provider === definition.id);
-        const runnable = catalogModelIds(definition.id);
+        // The executable set, not the bucket ids: this is exactly what
+        // createLoomPiModels().getModel (the save-time check) accepts.
+        const runnable = executablePiModelIds(definition.id);
         const unknown = check ? check.providerOnly.filter((id) => !runnable.includes(id)) : [];
         return [
           definition.id,

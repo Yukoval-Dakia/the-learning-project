@@ -4988,7 +4988,7 @@ export const custom_provider = pgTable(
     ),
     check(
       'custom_provider_base_url_ck',
-      sql`${t.base_url} LIKE 'https://' AND ${t.base_url} NOT LIKE '%@%' AND ${t.base_url} NOT LIKE '%?%' AND ${t.base_url} NOT LIKE '%#%'`,
+      sql`${t.base_url} LIKE 'https://%' AND ${t.base_url} NOT LIKE '%@%' AND ${t.base_url} NOT LIKE '%?%' AND ${t.base_url} NOT LIKE '%#%'`,
     ),
   ],
 );

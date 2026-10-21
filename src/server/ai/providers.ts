@@ -645,8 +645,13 @@ export function resolveTaskBinding(
     dbTaskOverride?.provider &&
     !dbTaskProvider
   ) {
+    const configured = dbTaskOverride.provider;
+    // A deleted custom provider is the common way to land here: say what
+    // actually happened instead of pointing at the legacy zhipu id.
     throw new Error(
-      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zhipuai-coding-plan' and choose a model from its pi catalog.`,
+      looksLikeCustomProviderId(configured)
+        ? `task.${kind}.provider='${configured}' no longer exists (the custom provider definition was deleted). Recreate the provider or clear task.${kind}.provider; this never falls back to another lane.`
+        : `task.${kind}.provider='${configured}' is not a native provider; migrate legacy 'zhipu' to 'zhipuai-coding-plan' and choose a model from its pi catalog.`,
     );
   }
   const providerName: Provider =

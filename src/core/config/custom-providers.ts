@@ -43,6 +43,44 @@ const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{2,63}$/;
 const PROTOCOLS: readonly CustomProviderProtocol[] = ['openai-completions', 'anthropic-messages'];
 
+/**
+ * A custom provider's `api_key_env` value is sent as a bearer credential to
+ * the admin-chosen base_url. Only dedicated provider credentials may be named:
+ * the name must end in `_API_KEY`/`_TOKEN`, and shared infrastructure/secret
+ * families are refused outright so a custom endpoint can never be handed
+ * DATABASE_URL, the internal token, or a cloud role credential.
+ */
+const KEY_ENV_SUFFIX_PATTERN = /_(?:API_KEY|TOKEN)$/;
+const DENIED_KEY_ENV_NAMES: ReadonlySet<string> = new Set([
+  'INTERNAL_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'DATABASE_URL',
+  'DATABASE_URL_UNPOOLED',
+]);
+const DENIED_KEY_ENV_PREFIXES: readonly string[] = [
+  'DATABASE_',
+  'POSTGRES_',
+  'PG_',
+  'AWS_',
+  'GOOGLE_',
+  'GCP_',
+  'AZURE_',
+  'GITHUB_',
+  'CLOUDFLARE_',
+  'R2_',
+  'S3_',
+  'LMNR_',
+  'LAMINAR_',
+  'SENTRY_',
+  'OPENCODE_',
+  'X_INTERNAL',
+];
+
+function deniedKeyEnvName(name: string): boolean {
+  if (DENIED_KEY_ENV_NAMES.has(name)) return true;
+  return DENIED_KEY_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 export function customProviderSlug(id: string): string | undefined {
   const slug = id.startsWith('custom:') ? id.slice('custom:'.length) : undefined;
   return slug && SLUG_PATTERN.test(slug) ? slug : undefined;
@@ -58,13 +96,19 @@ export function customProviderIdFor(slug: string): `custom:${string}` {
 
 /** Same endpoint rules as the models.dev catalog reader (catalogEndpoint). */
 export function validateCustomProviderBaseUrl(raw: string): string {
+  // The scheme must be the literal lowercase prefix: `new URL` normalizes
+  // `HTTPS://` to protocol 'https:', which would pass the URL check but then
+  // violate the DB check (a 500 instead of this 422).
+  if (!raw.startsWith('https://')) {
+    throw new ApiError('invalid_custom_provider_input', 'base_url must be an https:// URL', 422);
+  }
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     throw new ApiError('invalid_custom_provider_input', 'base_url must be a valid URL', 422);
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+  if (url.username || url.password || url.search || url.hash) {
     throw new ApiError(
       'invalid_custom_provider_input',
       'base_url must be HTTPS without credentials, query, or fragment',
@@ -107,6 +151,13 @@ export function validateCustomProviderInput(
       422,
     );
   }
+  if (!KEY_ENV_SUFFIX_PATTERN.test(input.apiKeyEnv) || deniedKeyEnvName(input.apiKeyEnv)) {
+    throw new ApiError(
+      'invalid_custom_provider_input',
+      'api_key_env must name a dedicated provider credential ending in _API_KEY or _TOKEN; shared infrastructure/secret env names (DATABASE_*, POSTGRES_*, INTERNAL_TOKEN, cloud credentials) are refused because the value is sent to this provider.',
+      422,
+    );
+  }
   if (!PROTOCOLS.includes(input.protocol as CustomProviderProtocol)) {
     throw new ApiError(
       'invalid_custom_provider_input',
@@ -126,9 +177,20 @@ export function validateCustomProviderInput(
 
 let registry: ReadonlyMap<string, CustomProviderDefinition> = new Map();
 let registryStamp: string | undefined;
+let registryHydrated = false;
 
 function stampOf(records: readonly CustomProviderRecord[]): string {
   return records.map((record) => `${record.id}@${record.updatedAt}`).join('|');
+}
+
+/**
+ * False until a DB read succeeded (including an empty table). The catalog
+ * merge must not read an un-hydrated registry as "every custom provider was
+ * deleted"; a failed boot hydrate keeps the stored buckets until the watch
+ * retries.
+ */
+export function customProvidersRegistryHydrated(): boolean {
+  return registryHydrated;
 }
 
 /** Atomic registry swap (hydrate, write, and watch paths all come through here). */
@@ -146,6 +208,7 @@ export function installCustomProviders(records: readonly CustomProviderRecord[])
     ]),
   );
   registryStamp = stampOf(records);
+  registryHydrated = true;
 }
 
 /** Drizzle row (snake_case columns, Date timestamps) → registry record. Shared by both IO faces. */
@@ -230,9 +293,10 @@ let changeHandler:
 
 /**
  * Injected by the server composition root: after a definition write the server
- * refreshes the runtime catalog (an unbilled /models read, no paid probe) and
- * prunes a deleted provider's bucket. Without wiring (tests, tooling) the
- * caller gets an honest `not_wired`.
+ * runs the shared catalog refresh (custom providers themselves only get the
+ * unbilled /models read — a due built-in 1-token probe can ride the same
+ * refresh) and prunes a deleted provider's bucket. Without wiring (tests,
+ * tooling) the caller gets an honest `not_wired`.
  */
 export function setCustomProviderChangeHandler(
   handler: (event: CustomProviderChangeEvent) => Promise<CustomProviderRefreshOutcome>,

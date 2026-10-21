@@ -1302,7 +1302,7 @@
           "api_key_env": "MY_GATEWAY_API_KEY",
           "protocol": "openai-completions"
         },
-        "notes": "需 x-internal-token。id 是 slug（小写字母/数字/连字符），provider id 为 custom:<slug>。写后触发一次不含付费探针的目录刷新（只做 GET /models 这类不计费读取）；返回写后摘要与目录结果（stored/kept）。key 只按 env 变量名引用，值放 .env.local/容器 env，不进库不进日志。上限 16 个。"
+        "notes": "需 x-internal-token。id 是 slug（小写字母/数字/连字符），provider id 为 custom:<slug>。写后跑一次共享目录刷新：自定义 provider 只做 GET /models 这类不计费读取（该到期的内置 provider 1-token 探针可能随同一刷新发出）；返回写后摘要与目录结果（stored/kept/not_wired）。key 只按 env 变量名引用（必须以 _API_KEY/_TOKEN 结尾，DATABASE_*/POSTGRES_*/INTERNAL_TOKEN/云凭据等共享 env 名被拒绝），值放 .env.local/容器 env，不进库不进日志。上限 16 个。"
       },
       {
         "method": "DELETE",
@@ -1310,7 +1310,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "需 x-internal-token。同锁事务内删除定义行、模型 bucket、provider check 与该 provider 的 findings。仍钉在该 provider 上的任务配置在下一次解析时 fail-closed（unknown provider 配置错误），不静默回退。"
+        "notes": "需 x-internal-token。定义行在自身事务里删除；随后在目录刷新锁内清该 provider 的模型 bucket、provider check 与 findings（prune 失败只告警，下一次刷新会清掉残留）。仍钉在该 provider 上的任务配置在下一次解析时 fail-closed（自定义 provider 已删除的错误），不静默回退。"
       }
     ]
   },
