@@ -1243,10 +1243,7 @@ export async function reRankAfterAnswer(
       const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
       slot++;
       const signal = signalByRef.get(s.refId);
-      const presentation = presentNonDueQuestion(
-        sourceByRef.get(s.refId),
-        labelByRef.get(s.refId),
-      );
+      const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
       const newRowId = newId();
       const inserted = await tx
         .insert(practice_stream_item)
