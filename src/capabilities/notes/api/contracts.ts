@@ -87,7 +87,8 @@ const ArtifactBodyBlockWireSchema = z
         version: z.number().int().optional(),
         source_markdown: z.string().optional(),
         artifact_id: z.string().optional(),
-        block_id: z.string().optional(),
+        // Whole-note links use null; the canonical block writer preserves it.
+        block_id: z.string().nullish(),
         title: z.string().optional(),
         question_id: z.string().optional(),
         prompt_preview: z.string().optional(),
