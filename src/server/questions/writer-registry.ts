@@ -69,10 +69,13 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043', 'YUK-1468'],
     note: 'INSERT 走 sourced-draft-insert（converged）；图题事后富集 UPDATE（structured/figures/judge_override/multimodal —— 改变判分输入）之后同事务重发组 revision（复审 P1-6 补齐；纯 metadata 富集 digest 不变 ⇒ 幂等 noop）。',
   },
-  'src/server/questions/submit-question.ts': {
+  // submit-question.ts 自 YUK-1568 S3 起降为 facade（委托 shared-submit.ts
+  // 内核 + re-export），自身无 content 写点 —— 原登记按真实闭包迁移到
+  // shared-submit（同收敛纪律）。
+  'src/server/questions/shared-submit.ts': {
     status: 'publisher-converged',
-    tickets: ['YUK-1468'],
-    note: '草稿提交闸：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）。',
+    tickets: ['YUK-1468', 'YUK-1568'],
+    note: '草稿提交闸内核：question 行 INSERT/UPDATE（prompt_md/reference_md/choices_md/structured —— v2 文档的 legacy 投影）与 publishQuestionGroup 同事务铸 revision（未决转换 withheld、CAS/dedup 冲突拒绝、admission 维度如实入契约）；typed 声明多 part 组的 question_part 子行 INSERT 同闭包（per-site：写点所在函数即 seam 调用方，锁/查重在 typed-group）。',
   },
   'src/capabilities/practice/jobs/question_admission_run.ts': {
     status: 'publisher-converged',
