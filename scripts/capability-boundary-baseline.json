@@ -860,6 +860,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f83914c-ad03-479d-824c-28f16dc1fd40",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "loadLearnerSubjects",
+      "targetModule": "src/capabilities/shell/server/subjects-list.ts",
+      "targetSymbol": "loadLearnerSubjects",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/subject-reader.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "The frontdoor-bound subject reader imports the complete learner list owner from the initialized Hono module graph. The retained HTTP handler directly invokes the same owner.",
+      "rationale": "Keep the hydrated registry, fallback cache, observed knowledge domains and learner projection together; do not substitute admin subjects or construct another Start registry.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-b41ee1db-5dd1-4392-bf99-dcfa0c58454b",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
@@ -1282,6 +1302,16 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the canonical API error envelope. Notes owns reference-search validation and selection rules.",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/shell/server/subjects-list.ts",
+      "module": "src/server/subjects/resolution-cache.ts",
+      "kind": "value",
+      "symbols": ["isGeneralFallbackFor"],
+      "issue": "YUK-1358",
+      "owns": "Resolution cache owns hydrated general-fallback facts. Shell owns the complete learner subject list projection. This existing dependency moves from the HTTP module with that operation.",
       "date": "2026-10-21"
     }
   ],
