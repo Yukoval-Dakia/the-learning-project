@@ -1,21 +1,14 @@
-// YUK-598/599 — trait 装配溯源缓存（db-free 轻模块）。
-//
-// hydrate 引擎（同目录 subject-hydration.ts）是唯一写者；读者（GET
-// /api/subjects 的 isGeneralFallback 派生、YUK-601 §3.5 管理读面）只需这份
-// 内存缓存——独立模块不拖 postgres import 链。每轮 hydrate 整体换 Map 引用
-// （不改旧对象——in-flight 已捕获引用天然稳定，v3 §5.1）。
-//
-// YUK-1567：模块本体迁入 kernel read-models（付费输入 strict 消费者与全局
-// boot/refresh 共用一个引擎，capability 不得深 import server/subjects）。
-// `src/server/subjects/resolution-cache.ts` 保留为兼容入口。
+// Trait assembly provenance cache (db-free). The hydrate engine is the sole writer;
+// readers only need this in-memory map. Each hydrate replaces the map reference,
+// leaving in-flight captured references stable.
 
 import type { TraitVersionComponent } from '@/subjects/trait-compose';
 import type { SubjectTraitKind } from '@/subjects/trait-schemas';
 
 export type TraitDegradation = 'journal_fallback' | 'code_seed' | null;
 
-// per (subject, kind) 的装配溯源——revision（live）vs effective（实际采用）vs
-// degraded 的三元事实；D6 provenance 与管理读面共用。
+// Per (subject, kind): revision (live), effective, and degraded, shared by
+// provenance readers.
 export interface TraitResolution {
   kind: SubjectTraitKind;
   traitId: string;
@@ -33,16 +26,14 @@ export function getSubjectTraitResolutions(): ReadonlyMap<string, TraitResolutio
   return traitResolutions;
 }
 
-// 唯一写者 = hydrate（每轮整体替换）。
+// Sole writer: hydrate replaces the whole map.
 export function replaceSubjectTraitResolutions(next: Map<string, TraitResolution[]>): void {
   traitResolutions = next;
 }
 
-// YUK-598（v3 §2.3）— isGeneralFallback 派生（不落列）：≡ 六绑定全部指向 general
-// 的种子 trait（按 trait **身份**判定，不比内容——owner 编辑过 general 后未 fork
-// 的科目仍为真：它们确实在活跟随，这正是标签的诚实语义）。general 自身豁免
-// （对自己恒真是语义噪音）→ null。无水合溯源的科目（代码地板 builtin / 未水合）
-// → false（builtin 绑自己的种子，天然非 fallback）。
+// Derived, not stored: true when all six bound traits are general seed traits by
+// identity, so an edited general still counts. general itself returns null; subjects
+// with no hydration return false.
 export function isGeneralFallbackFor(subjectId: string): boolean | null {
   if (subjectId === 'general') return null;
   const res = traitResolutions.get(subjectId);

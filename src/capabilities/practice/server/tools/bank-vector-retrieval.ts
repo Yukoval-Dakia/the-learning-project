@@ -1,29 +1,15 @@
-// YUK-1516 — search_bank 向量通道的「检索计入」规则（与查重阈值分离）。
+// search_bank vector-channel counting rules, separate from duplicate detection.
 //
-// 背景（实测，见 docs/planning/2026-10-17-yuk1516-bank-vector-retrieval-threshold.md）：
-// 通道 B 原先复用查重常量 MATCHER_COSINE_MAX_DISTANCE=0.35（matcher §4，question↔question
-// 查重轴）。那是「同一道题」的判重档位，不是「同主题检索」档位：真实题库副本上
-// 「文言断句 划分句子朗读停顿」的正确目标题距查询向量 0.422，被 0.35 挡掉；而库中并无
-// 离子方程式题，「离子方程式的书写与正误判断」的最近命中是一道无关数学题（0.436）。
-// 绝对距离分不开这两类（收 0.422 必收 0.436），能分开的是 top-1 领先幅度：
-// 正确目标领先第二名 0.253（0.422 → 0.675），无关命中只领先 0.110（0.436 → 0.546）。
-//
-// 规则 v1（保守方向：拿不准时宁可 none + gap_request，不造 false enough）：
-//   ① 召回进候选池（scope 内）：distance ≤ MAX_DISTANCE（绝对天花板，取代查重 0.35
-//      的池门角色）；
-//   ② 计入 coverage.verdict：仅「合格库面（baseline，无 scope 过滤）」的 rank-1，且需
-//      top-1 领先 decisive——合格库面上存在 rank-2 且 (rank2 − rank1) ≥ TOP1_MARGIN
-//      （R1 review P1：margin 基线绝不能算在 scoped pool 上——scope 过滤掉全局
-//      rank-2 竞争者会凭空制造 decisive margin，把缺题科目顶成 sparse/enough 并吞掉
-//      gap_request。标定脚本与引擎共用 bankVectorBaselinePredicates()，两边不可能漂移）。
-//      drop-off 之后（≥δ 落后于 rank-1）的命中按规则自身的逻辑不是已证实的主题匹配；
-//      rank-1/rank-2 贴成簇（margin < δ）时没有任何 decisive 证据——两者都只在候选列表
-//      展示（match_evidence.counted=false，语义同 fts weak），不抬 verdict。
-//   ③ 合格库面内不足两题时无竞争者证据 ⇒ 不计入（保守）。
-//
-// 参数为 PROVISIONAL：以本规则落地时的两组实测为锚（0.253 vs 0.110 取中带），待 lead 在
-// 真实题库副本上跑 scripts/calibrate-bank-vector-threshold.ts 标定后由代码 PR 修订；
-// 版本号随规则形状（不是参数值）改动递增。
+// Reusing the duplicate threshold (0.35) for topic retrieval dropped valid targets and
+// admitted unrelated ones; the separating signal is the top-1 lead over rank 2.
+// 1. Recall into the scoped candidate pool at distance <= MAX_DISTANCE.
+// 2. Count toward coverage.verdict only for rank 1 on the baseline (unscoped) pool when a
+//    rank 2 exists and (rank2 - rank1) >= TOP1_MARGIN. Margin must never be measured on the
+//    scoped pool, which would invent decisive margins.
+// 3. Fewer than two baseline candidates means no competitor evidence, so nothing counts.
+// Weak or clustered hits stay visible with counted=false and do not raise the verdict.
+// Parameters are provisional until calibrated on a real bank copy.
+
 import { type SQL, sql } from 'drizzle-orm';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { question, question_group_lifecycle } from '@/db/schema';

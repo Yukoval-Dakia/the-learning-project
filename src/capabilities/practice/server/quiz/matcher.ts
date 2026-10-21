@@ -6,27 +6,12 @@ import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schem
 import type { Db } from '@/db/client';
 import { isPoolVisible } from '@/db/predicates';
 import { knowledge } from '@/db/schema';
-// Phase 1 增量 3 (YUK-399/YUK-396) — caller-agnostic matcher 仲裁器骨架.
-//
-// matcher(demand) 召回单 KC 候选 (poolFetch, activeOnly:false) → app 层复合保守仲裁
-// (kind 垫片过滤 + 合约五 tier 排序 + slice) → 三态输出 (used / residual / satisfiedFromPool).
-//
-// 与 runSourcingSequence 的判别轴根本不同 (后者 Step 1 写死 activeOnly:true、enqueue-then-
-// forget；matcher activeOnly:false 召回 active+draft 当场仲裁)，故是新模块、不改造之 (plan §1).
-//
-// ── 增量切分 (plan §Tasks) ───────────────────────────────────────────────────
-// Task 1: 纯 active 命中骨架 — poolFetch(activeOnly:false) 召回但暂当全 active
-//   (poolFetch 当前不投影 draft_status — Task 5 才扩 projection 接 draft 分支)，全填 used；
-//   无 cosine 阈值过滤 (Task 5)、无残余生成 (Task 3)、无 draft lazy verify (Task 5).
-// Task 2 (本提交): cosine 软排序 (hybrid 检索) + NULL embedding 降级.
-//   入参解析 queryEmbedding (路 A) 优先于 queryText (路 B，经可注入 embedFn seam)；都无则
-//   不排序 (poolFetch 退 created_at,id)。得到的向量透传 poolFetch.queryEmbedding —— cosine
-//   排序由 poolFetch 的 `ORDER BY embedding <=> qvec` 给 (无需 distance projection；阈值过滤
-//   推迟到 Task 5 扩 projection 时一起做，plan §185)。NULL embedding 降级: 传 queryEmbedding
-//   时 poolFetch isNotNull(embedding) 排除 NULL 行 (不崩，用回来的有向量行)；不传则纯标量集
-//   含 NULL 行 (§7).
-// 镜像 queryExistingPool (sourcing-sequence.ts:121-145) 的 app 层 kind 过滤 + tier 排序 +
-//   slice 链 (同源单一真相)。CRITICAL: 不传 limit 给 poolFetch — 截断在 app 层 (F2 防线).
+// Caller-agnostic matcher: recall candidates for one KC, filter by kind compatibility,
+// rank by the contract's source tiers, then return used / residual / satisfiedFromPool.
+// Unlike runSourcingSequence (active-only, enqueue-and-forget), this recalls active and
+// draft candidates and arbitrates in-process. Cosine ranking comes from poolFetch's
+// ORDER BY; a query vector excludes NULL embeddings, while scalar ordering keeps them.
+// Truncation happens here, so poolFetch receives no limit.
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -62,12 +47,12 @@ import {
 import type { SourcingNeed, SourcingSequenceStep } from './sourcing-sequence';
 import { verifyAndPromote } from './verify-and-promote';
 
-// ── §4 cosine 阈值 ────────────────────────────────────────────────────────────
+// ── cosine 阈值 ────────────────────────────────────────────────────────────
 // pgvector `<=>` 是 cosine *距离* (0=同向、1=正交、2=反向)：越小越近。候选 cosine_distance
-// 超此值 → 丢弃 (不入保守集 → 落残余生成)。保守=偏严=阈值偏小 (§4 owner 决策 2「宁残余不塞次品」)。
+// 超此值 → 丢弃（不入保守集 → 落残余生成）。保守 = 偏严 = 阈值偏小：宁可残余也不塞次品。
 // 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
-// TODO 实测调参 — YUK-677 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
-// Exported (YUK-677) so the report-only `pnpm audit:threshold-calibration` replay reads the
+// TODO 实测调参 — follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
+// Exported so the report-only `pnpm audit:threshold-calibration` replay reads the
 // SAME constant under review — a second hard-coded copy in scripts/ would silently drift.
 export const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 
@@ -78,7 +63,7 @@ export const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 // ">= cap"). Bounding here reuses poolFetch unchanged (single-truth WHERE), no inline COUNT.
 const MATCHER_DIAGNOSTIC_POOL_CAP = 1000;
 
-// ── §3.1.5 三层 Demand (v1 子集) ──────────────────────────────────────────────
+// ── 三层 Demand (v1 子集) ──────────────────────────────────────────────
 export interface Demand {
   // ① 硬过滤 → poolFetch WHERE
   /** 必填，v1 单 KC. */
@@ -89,12 +74,12 @@ export interface Demand {
   difficultyMax?: number | null;
   /** 结构轴 unit==='篇' (poolFetch compositeParentOnly). */
   compositeParentOnly?: boolean;
-  /** answer_class VERIFICATION axis (exact/keyword/semantic/steps). gated YUK-395 / B4 YUK-386:
-   *  RECEIVED here, but only enters the pool-fetch WHERE when MATCHER_ANSWER_CLASS_FILTER is on
-   *  (dark-ship, default false). When the flag is off the field is收下不进 WHERE (unchanged). When
-   *  on AND present, it adds a NULL-lenient hard filter (a `steps` demand can't be filled by an
-   *  `exact` candidate; NULL answer_class is NOT excluded). NULL/absent → no answer_class
-   *  constraint either way. */
+  /** answer_class VERIFICATION axis (exact/keyword/semantic/steps). gated: RECEIVED here,
+   * RECEIVED here, but only enters the pool-fetch WHERE when MATCHER_ANSWER_CLASS_FILTER is on
+   * (dark-ship, default false). When the flag is off the field is收下不进 WHERE (unchanged). When
+   * on AND present, it adds a NULL-lenient hard filter (a `steps` demand can't be filled by an
+   * `exact` candidate; NULL answer_class is NOT excluded). NULL/absent → no answer_class
+   * constraint either way. */
   answerClass?: string;
   // ② 软排序
   /** matcher 内部 embed (路 B)；Task 2 接入. */
@@ -103,8 +88,8 @@ export interface Demand {
   queryEmbedding?: number[];
   /** 源档底线 (R2)，喂残余 target + 排序参考. */
   minSourceTier?: 1 | 2 | 3;
-  /** YUK-386 — 请求侧的 kind 标签（自由文本）。过滤语义是 answer-class 相容
-   *  (answerClassCompatible)：kind 名不进分支，同名与否只看判分类是否一致。 */
+  /**请求侧的 kind 标签（自由文本）。过滤语义是 answer-class 相容
+   * (answerClassCompatible)：kind 名不进分支，同名与否只看判分类是否一致。 */
   kind?: string;
   // ③ 信封 (不进检索)
   /** 错因：embed→召回 + 喂残余 generate prompt (经 target.reason 透传，Task 3). */
@@ -123,7 +108,7 @@ export interface MatchedQuestion {
   question_id: string;
   source: string;
   tier: number;
-  /** false=本来 active；true=本次 gate promote (Task 5 才会 true). */
+  /** false = already active; true = promoted by this call. */
   promotedFromDraft: boolean;
   /** promote 留痕引用 (evidence-first，Task 5). */
   verifyEventId?: string;
@@ -140,7 +125,7 @@ export interface MatcherResult {
   selectionMiss?: SelectionMissV1;
 }
 
-// promote 决策 seam 返回值 (Task 5). verifyAndPromote 返 superset
+// Promote seam result. verifyAndPromote returns a superset
 // ({promoted,status,verifyEventId,reason})，matcher 只读 promoted + verifyEventId 这两字段。
 export interface MatcherVerifyResult {
   /** run 函数 status==='verified' (或 override 路径) → promote 成功. */
@@ -149,26 +134,26 @@ export interface MatcherVerifyResult {
   verifyEventId?: string;
 }
 
-// Injectable seams (db 测试注 vi.fn() 不打真 DashScope/真派发/真 verify).
-// Task 2 引入 embedFn，Task 3 引入 dispatch，Task 5 引入 verify + runTaskFn.
+// Injectable seams (db 测试注 vi.fn 不打真 DashScope/真派发/真 verify).
+// embedFn, dispatch, verify, and runTaskFn are injected seams.
 export interface MatcherDeps {
   /** queryText 路 B 的 embedder seam. 默认 embedText (DashScope text-embedding-v4@1024).
-   *  铁律: 与池中向量同一 seam，否则 cosine 跨空间无意义 (plan §190). */
+   * 铁律: 与池中向量同一 seam，否则 cosine 跨空间无意义. */
   embedFn?: (text: string) => Promise<number[]>;
   providerAttempt?: EmbedProviderAttemptOptions;
-  /** 残余生成派发 seam (Task 3). 默认 dispatchSupplyTarget (route-plan → enqueue 既有队列，
-   *  带 7 天 fingerprint cooldown 防无界 re-dispatch). db 测试注 vi.fn() 捕获 target、不打
-   *  真 pg-boss / 真 Tavily. */
+  /** 残余生成派发 seam. 默认 dispatchSupplyTarget (route-plan → enqueue 既有队列，
+   * 带 7 天 fingerprint cooldown 防无界 re-dispatch). db 测试注 vi.fn 捕获 target、不打
+   * 真 pg-boss / 真 Tavily. */
   dispatch?: (db: Db, target: QuestionSupplyTarget) => Promise<DispatchResult>;
-  /** draft 命中 lazy verify-promote seam (Task 5). 默认 verifyAndPromote (caller-agnostic
-   *  gate，按 source 转调现有 runSourceVerify/runQuizVerify). db 测试注 vi.fn() 验「派 + 透传」、
-   *  不打真 AI. 入参 {db, questionId, runTaskFn}，返 {promoted, verifyEventId?}. */
+  /** draft 命中 lazy verify-promote seam. 默认 verifyAndPromote (caller-agnostic
+   * gate，按 source 转调现有 runSourceVerify/runQuizVerify). db 测试注 vi.fn 验「派 + 透传」、
+   * 不打真 AI. 入参 {db, questionId, runTaskFn}，返 {promoted, verifyEventId?}. */
   verify?: (p: {
     db: Db;
     questionId: string;
     runTaskFn: RunTaskFn;
   }) => Promise<MatcherVerifyResult>;
-  /** 透传给 verify 的 task runner seam；默认绑定当前 db，测试可注入 vi.fn()。 */
+  /** 透传给 verify 的 task runner seam；默认绑定当前 db，测试可注入 vi.fn。 */
   runTaskFn?: RunTaskFn;
   /** Observe-only event seam. It must not enqueue supply work or alter selection. */
   emitSelectionMiss?: (db: Db, miss: SelectionMissV1) => Promise<unknown>;
@@ -176,9 +161,9 @@ export interface MatcherDeps {
 
 /**
  * Resolve the query vector for hybrid retrieval. queryEmbedding (路 A，caller 预算) 优先于
- * queryText (路 B，matcher 内部 embed)；二者都给 Embedding 优先 (spec §9 开放问题 3)。都无 →
+ * queryText (路 B，matcher 内部 embed)；二者都给 Embedding 优先 (开放问题 3)。都无 →
  * null (poolFetch 退 created_at,id 标量序)。queryText 经可注入 embedFn (默认 embedText)，
- * 保证与池向量同一 embedding seam (plan §190 铁律).
+ * 保证与池向量同一 embedding seam (铁律).
  */
 async function resolveQueryEmbedding(
   db: Db,
@@ -213,8 +198,8 @@ function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean |
   return typeof match === 'boolean' ? match : null;
 }
 
-// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value);
-// YUK-308 — a proposal-dismissed draft carries metadata.dismissed_at (same tombstone
+// a soft-archived draft carries metadata.archived_at (any non-empty value);
+// a proposal-dismissed draft carries metadata.dismissed_at (same tombstone
 // family). poolFetch(activeOnly:false) recalls either, but the matcher must treat both as
 // unusable and never promote them back to active. Reads the metadata the consumer already
 // projects (PoolRow.metadata) — no extra query.
@@ -224,7 +209,7 @@ function isArchivedDraft(metadata: Record<string, unknown> | null): boolean {
   return meta.archived_at != null || meta.dismissed_at != null;
 }
 
-// codex P2-4 — mirror sourcing-sequence.ts:resolveLiveKnowledgeNode (module-private there):
+// mirror sourcing-sequence.ts:resolveLiveKnowledgeNode (module-private there):
 // a KC is live iff a row exists AND archived_at IS NULL. The residual dispatch gates on this
 // so a stale/archived/missing anchor never enqueues a job the worker guard would just reject
 // (sourcing.ts / quiz_gen.ts filter isNull(archived_at)). getEffectiveDomain does NOT check
@@ -277,7 +262,7 @@ async function observeSelectionMissBestEffort(
  * must NOT receive limit — slicing happens here, AFTER the in-memory tier sort (F2 防线).
  *
  * `sliceToLimit` defaults true (queryExistingPool 同款 slice-after-sort). The matcher passes
- * false so its §3.2 arbitration loop can fall past a verify-failed draft to the next ranked
+ * false so its arbitration loop can fall past a verify-failed draft to the next ranked
  * candidate — the loop itself enforces `limit` via its `used.length >= limit` break, which
  * IS the app-layer slice-after-sort (just relocated to where draft-skip needs it).
  */
@@ -299,25 +284,25 @@ export function rankPool(rows: PoolRow[], demand: Demand, sliceToLimit = true): 
   return sliceToLimit ? sorted.slice(0, demand.limit) : sorted;
 }
 
-// ── Task 3: 残余生成分支 (demandToSupplyTarget + dispatchSupplyTarget) ──────────
+// ── 残余生成分支 (demandToSupplyTarget + dispatchSupplyTarget) ──────────
 
-// 类型阻抗 (plan §196, critic 已证): dispatchSupplyTarget 返 DispatchResult.chosenRoute:
+// 类型阻抗 (, critic 已证): dispatchSupplyTarget 返 DispatchResult.chosenRoute:
 // SupplyRoute (词表 author_question/sourcing_web/ingest_existing/image_candidate/quiz_gen)，
 // 而 MatcherResult.residual: SourcingNeed[] 需要 SourcingSequenceStep (词表 external_sourcing/
 // material_grounded/closed_book) —— 两者不同构。用显式映射表把 chosenRoute 翻成 SourcingNeed.source，
 // 不硬塞 SupplyRoute 进 SourcingNeed 类型。
-//   sourcing_web   → external_sourcing  (tier 2 在线检索线，sourcing 队列)
-//   quiz_gen       → material_grounded | closed_book (据 result.preferredGenerationMethod；缺省 closed_book)
-//   author_question / image_candidate / ingest_existing → closed_book
-//     (这三条无对应 SourcingSequenceStep；它们是 manual 出口 = owner gate，inc-4 闭环。
-//      落 closed_book 是「最重兜底」语义占位，残余 SourcingNeed 只是「池缺、有后台生产在路上」标记，
-//      实际派路由 + manual 决策都在 DispatchResult.routePlan/chosenRoute 里如实留痕，这里只折出一个步。)
+// sourcing_web → external_sourcing (tier 2 在线检索线，sourcing 队列)
+// quiz_gen → material_grounded | closed_book (据 result.preferredGenerationMethod；缺省 closed_book)
+// author_question / image_candidate / ingest_existing → closed_book
+// (这三条无对应 SourcingSequenceStep；它们是 manual 出口 = owner gate，inc-4 闭环。
+// 落 closed_book 是「最重兜底」语义占位，残余 SourcingNeed 只是「池缺、有后台生产在路上」标记，
+// 实际派路由 + manual 决策都在 DispatchResult.routePlan/chosenRoute 里如实留痕，这里只折出一个步。)
 const SUPPLY_ROUTE_TO_SOURCING_STEP: Record<
   Exclude<SupplyRoute, 'quiz_gen'>,
   SourcingSequenceStep
 > = {
   sourcing_web: 'external_sourcing',
-  // YUK-697 — jyeoo_fetch is a tier-2 web-existing-question line like sourcing_web
+  // jyeoo_fetch is a tier-2 web-existing-question line like sourcing_web
   // (deterministic scraper vs agent), so its residual step is the same external_sourcing.
   jyeoo_fetch: 'external_sourcing',
   author_question: 'closed_book',
@@ -331,7 +316,7 @@ const SUPPLY_ROUTE_TO_SOURCING_STEP: Record<
  * preferredGenerationMethod (material_grounded vs closed_book — the field lives on
  * QuestionSupplyTarget, NOT DispatchResult; dispatcher's generationMethodFor reads it the
  * same way); the other routes map via SUPPLY_ROUTE_TO_SOURCING_STEP. chosenRoute === null
- * (manual: dispatch found no auto-dispatchable route, owner gate is the loop exit, inc-4) →
+ *→
  * closed_book 兜底 step (the heaviest fallback; the real manual disposition lives in the
  * DispatchResult.routePlan/stopCondition, this only picks a step for the residual marker).
  */
@@ -384,9 +369,9 @@ function supplyGapKindFor(demand: Demand): SupplyGapKind {
  * (mirror target-discovery loadFrontierKnowledge try/catch 兜底)，绝不留空/硬编码。
  *
  * cause→prompt 透传缺口: QuizGenJobData/SourcingJobData payload 当前不带 cause/answer_class/
- * 难度带——spec §3.1.5 要 demand.cause 喂残余 generate prompt，但 inc-3 不扩 JobData (避免动两个
+ * 难度带—— 要 demand.cause 喂残余 generate prompt，但 inc-3 不扩 JobData (避免动两个
  * handler 契约)；把 cause 塞进 target.reason (人读字符串，dispatcher 已留痕)。扩 JobData 是后续
- * 增量，见 spec §3.1.5 + Linear follow-up.
+ * 增量，见 + Linear follow-up.
  */
 export async function demandToSupplyTarget(
   db: Db,
@@ -430,7 +415,7 @@ export async function demandToSupplyTarget(
   }
 
   // fingerprint: import targetFingerprint，与 target-discovery 同算法 → 同 demand 产同 fingerprint
-  // (7 天 cooldown 前提，plan §218). 绝不复刻算法.
+  // (7 天 cooldown 前提，). 绝不复刻算法.
   const fingerprint = targetFingerprint({
     subjectId,
     knowledgeIds,
@@ -452,19 +437,19 @@ export async function demandToSupplyTarget(
     minSourceTier,
     // import seedRoutePreference (不硬编码空数组)；空 profile 退 [] → dispatcher 落 manual.
     routePreference: seedRoutePreference(profile),
-    // FINDING #3 — quiz_gen 的 material vs closed_book 区分 (与 target-discovery seedGenerationMethod
+    // quiz_gen 的 material vs closed_book 区分 (与 target-discovery seedGenerationMethod
     // 同款，单一真相)；undefined → dispatcher 退 minSourceTier 推导。residual step 折叠也读它.
     preferredGenerationMethod: seedGenerationMethod(profile),
     priority: demand.priority ?? GAP_KIND_BASE_PRIORITY[gapKind],
     // cause→prompt 透传缺口: 把 demand.cause 塞进 reason (人读字符串，dispatcher 留痕)。
-    // 扩 JobData 是后续增量，见 spec §3.1.5.
+    // 扩 JobData 是后续增量，见
     reason: residualReason(demand, gap),
-    // YUK-401 Fix 2 — thread the demand's 篇-only structural axis into target.constraints so
+    // Fix 2 — thread the demand's 篇-only structural axis into target.constraints so
     // the 「篇」 constraint reaches the generation end (dispatcher persists target.constraints
     // into the question_supply observability payload; route-planner reads sibling flags).
     // Only set when the demand declares it (additive; absent → unconstrained, matching pre-fix).
-    // NOTE (codex #2): constraints 暂只到 target（route-planner/observability 读）；穿到生成
-    // JobData（QuizGenJobData/SourcingJobData payload）见 YUK-400（同 cause→JobData 同类，本 PR
+    // NOTE : constraints 暂只到 target（route-planner/observability 读）；穿到生成
+    // JobData（QuizGenJobData/SourcingJobData payload）见 （同 cause→JobData 同类，本 PR
     // 不扩 dispatcher/JobData 契约）。
     constraints: demand.compositeParentOnly ? { compositeParentOnly: true } : {},
     context: evidenceDemandToTargetContext(evidenceDemand),
@@ -488,18 +473,18 @@ function residualReason(demand: Demand, gap: number): string {
 }
 
 /**
- * caller-agnostic matcher 仲裁器 (Task 1 骨架 + Task 2 cosine 软排序 + Task 5 draft 仲裁).
+ * caller-agnostic matcher arbitration.
  *
  * 召回单 KC 候选池 (hybrid: 标量硬过滤 + 可选 cosine 排序) → rankPool (kind 过滤 + tier 排序
- * + slice) → §4 cosine 阈值过滤 → §3.2 逐候选仲裁 (active 直接用 / draft lazy verify-promote)
+ * + slice) → cosine 阈值过滤 → 逐候选仲裁 (active 直接用 / draft lazy verify-promote)
  * → 三态输出. queryEmbedding/queryText 解析为查询向量透传 poolFetch (NULL embedding 在 vector
- * mode 由 poolFetch 排除，§7 降级)。
- * Task 5 (本提交):
- *   ① cosine 阈值: 有 queryEmbedding 时丢弃 cosine_distance > MATCHER_COSINE_MAX_DISTANCE 的候选
- *      (无 queryEmbedding → distance 全 null → 纯标量集不按阈值过滤). 宁残余不塞次品 (§4 决策 2).
- *   ② 逐候选仲裁: draft_status NULL/'active' → 直接 used.push(promotedFromDraft:false)；'draft'
- *      → await deps.verify (默认 verifyAndPromote)，promoted 则 push(promotedFromDraft:true,
- *      verifyEventId)，否则跳下一候选 (耗尽仍不足 → 残余补差).
+ * mode 由 poolFetch 排除， 降级)。
+ *
+ * ① cosine 阈值: 有 queryEmbedding 时丢弃 cosine_distance > MATCHER_COSINE_MAX_DISTANCE 的候选
+ * (无 queryEmbedding → distance 全 null → 纯标量集不按阈值过滤)。宁可残余也不塞次品。
+ * ② 逐候选仲裁: draft_status NULL/'active' → 直接 used.push(promotedFromDraft:false)；'draft'
+ * → await deps.verify (默认 verifyAndPromote)，promoted 则 push(promotedFromDraft:true,
+ * verifyEventId)，否则跳下一候选 (耗尽仍不足 → 残余补差).
  * gap = limit - used.length → demandToSupplyTarget → deps.dispatch → 折一 SourcingNeed 填 residual.
  * satisfiedFromPool = 无缺口 (gap <= 0).
  */
@@ -508,11 +493,11 @@ export async function matcher(
   demand: Demand,
   deps: MatcherDeps = {},
 ): Promise<MatcherResult> {
-  // YUK-401 Fix 3 — live-KC guard FRONT-LOADED to the top, BEFORE poolFetch (was previously
+  // Fix 3 — live-KC guard FRONT-LOADED to the top, BEFORE poolFetch (was previously
   // only a pre-residual check). An archived/missing KC may still carry stale active questions
   // on its knowledge_ids; if we poolFetch first, those stale rows would be served as `used`.
   // An archived KC serves no stale items AND dispatches no residual (the worker anchor guard
-  // — sourcing.ts/quiz_gen.ts isNull(archived_at) — would just reject the job). So a dead KC
+  // sourcing.ts/quiz_gen.ts isNull(archived_at) — would just reject the job). So a dead KC
   // returns the empty triple immediately: used [], residual [], satisfiedFromPool false —
   // a distinguishable「dead KC, gap unfillable」signal (cf. satisfiedFromPool semantics below).
   // This is the matcher's own pre-fetch guard (getEffectiveDomain does NOT check archived_at).
@@ -547,8 +532,8 @@ export async function matcher(
   // 召回全量候选 (activeOnly:false 召回 active+draft 当场仲裁).
   // 不传 limit — 截断在 app 层 rankPool 的 slice (F2 回归防线).
   // queryEmbedding 非空 → poolFetch ORDER BY embedding <=> qvec (cosine 软排序) 且
-  // isNotNull(embedding) 排除 NULL 行；null → 退 created_at,id 标量序含 NULL 行 (§7 降级).
-  // B4 (YUK-386) — answer_class hard filter is forwarded ONLY when MATCHER_ANSWER_CLASS_FILTER
+  // isNotNull(embedding) 排除 NULL 行；null → 退 created_at,id 标量序含 NULL 行（降级）。
+  // answer_class hard filter is forwarded ONLY when MATCHER_ANSWER_CLASS_FILTER
   // is on (dark-ship, default false) AND the demand declares answerClass. Flag off OR no
   // answerClass → undefined → poolFetch adds no answer_class predicate → WHERE byte-identical
   // to pre-B4 (the answerClassCompatible label filter in rankPool is untouched in both directions). The
@@ -566,18 +551,18 @@ export async function matcher(
     answerClass,
   });
 
-  // §4 cosine 阈值过滤 — 仅在 vector mode (有 queryEmbedding) 生效. cosine_distance 与 ORDER BY
-  // 同源单一真相 (Task 5 扩的 projection). 超阈候选不入保守集 → 落残余 (宁残余不塞次品，§4 决策 2)。
+  // cosine 阈值过滤 — 仅在 vector mode (有 queryEmbedding) 生效. cosine_distance 与 ORDER BY
+  // 同源单一真相. 超阈候选不入保守集 → 落残余 (宁可残余也不塞次品)。
   // scalar mode 下 cosine_distance 全 null → 不过滤 (纯标量集). 偏严=保守=阈值偏小.
   const thresholded = rows.filter(
     (r) => r.cosine_distance == null || r.cosine_distance <= MATCHER_COSINE_MAX_DISTANCE,
   );
 
   // rankPool 不 slice (sliceToLimit:false) — 仲裁循环的 break 才是 app 层 slice-after-sort，
-  // 这样 verify 失败的 draft 可跳到下一 ranked 候选 (slice 到 limit 会提前砍掉后续 active).
+  // 这样 verify 失败的 draft 可跳到下一 ranked 候选.
   const ranked = rankPool(thresholded, demand, false);
 
-  // §3.2 逐候选仲裁循环. rankPool 后 (kind 过滤 + tier 排序) 逐候选——active 直接用、draft lazy
+  // 逐候选仲裁循环. rankPool 后 (kind 过滤 + tier 排序) 逐候选——active 直接用、draft lazy
   // verify-promote. 凑够 limit 停 (loop break = slice-after-sort)；耗尽仍不足 → 下面残余补差.
   const verify = deps.verify ?? verifyAndPromote;
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
@@ -587,7 +572,7 @@ export async function matcher(
     // PROVENANCE tier (4-level: 1 authentic → 4 generated) — kept for the A2 sort tier that
     // travels on the `used` entry (compareBySourceTierThenWhitelist reads provenance, 不动).
     const tier = deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier;
-    // YUK-401 Fix 1 (+ codex #3 round-2) — Demand.minSourceTier is an ACQUISITION-tier floor
+    // Fix 1 (+ round-2) — Demand.minSourceTier is an ACQUISITION-tier floor
     // (1-3), NOT a provenance tier. The supply-side contract maps the 4-level provenance tier
     // onto the 3-level acquisition scale via acquisitionTierForQuestion (provenance 1→1, 2→2,
     // 3 material + 4 generated → 3). So the floor judgement MUST compare acquisition tier, not
@@ -611,7 +596,7 @@ export async function matcher(
       knowledgeIds: [],
     });
     if (demand.minSourceTier != null && acqTier > demand.minSourceTier) continue;
-    // 仓库「可用」语义 (codex P2-1) = draft_status <> 'draft'. NULL≡active、'active'、legacy
+    // 仓库「可用」语义 = draft_status <> 'draft'. NULL≡active、'active'、legacy
     // 'final' 等任何非 'draft' 行都直接用——唯一送 lazy verify 的是 r.draft_status === 'draft'。
     // (此前误把「非 NULL 非 active」整批送 verify，'final' 等可用行被错送验证门。)
     // F1 pool-visibility JS twin — shared isPoolVisible (@/db/predicates).
@@ -619,14 +604,14 @@ export async function matcher(
       used.push({ question_id: r.id, source: r.source, tier, promotedFromDraft: false });
       continue;
     }
-    // codex P2-2 — soft-archived draft (draft_status='draft' + metadata.archived_at) 不可用:
+    // soft-archived draft (draft_status='draft' + metadata.archived_at) 不可用:
     // poolFetch(activeOnly:false) 会召回它，但 lazy verify 绝不能把已归档 draft promote 回 active。
-    // YUK-308 — 同款: proposal-dismissed draft (metadata.dismissed_at) 已被 owner 拒绝，
+    // 同款: proposal-dismissed draft (metadata.dismissed_at) 已被 owner 拒绝，
     // lazy verify 也绝不能 promote。
     // 当作不可用跳过 (落下一候选 / 残余)，不 verify、不 promote。
     if (isArchivedDraft(r.metadata)) continue;
     // draft 行 → lazy verify-promote (转调现有 gate). promoted 则升用，否则跳下一候选.
-    // codex P2-3 — 单候选 verify 抛错 (坏 metadata / LLM/parse/DB 瞬时失败) 不能打断整个仲裁:
+    // 单候选 verify 抛错 (坏 metadata / LLM/parse/DB 瞬时失败) 不能打断整个仲裁:
     // try/catch 包住，抛错按「该候选不可用」处理，继续下一 ranked 候选 (耗尽落残余)。留痕不静默。
     let result: MatcherVerifyResult;
     try {
@@ -650,13 +635,13 @@ export async function matcher(
     // promoted===false → 不入 used，看下一候选 (rankPool 的 tier 序内逐个找；耗尽则 gap > 0 落残余).
   }
 
-  // Task 3 — 残余生成分支. 池满足不了 limit (gap > 0) → 派一个供给目标补差.
+  // 残余生成分支. 池满足不了 limit (gap > 0) → 派一个供给目标补差.
   // gap = limit - used.length (active 命中 + promote 的 draft 都进 used 算满足；超阈丢弃 / verify
   // 失败 / 池空 都体现为 used 不足 → gap > 0).
   const gap = demand.limit - used.length;
   const residual: SourcingNeed[] = [];
-  // codex P2-4 + codex #1 (round-2) — the YUK-401 Fix 3 front-loaded guard at the top of
-  // matcher() proves the KC was live BEFORE poolFetch, but pool fetch + per-candidate lazy
+  // the Fix 3 front-loaded guard at the top of
+  // matcher proves the KC was live BEFORE poolFetch, but pool fetch + per-candidate lazy
   // verify run AFTER it, and a KC can be archived during that window (TOCTOU). The worker-side
   // anchor guard (sourcing.ts/quiz_gen.ts isNull(archived_at)) would reject a residual
   // dispatched to a now-dead anchor, so re-check liveness immediately before dispatch — the
@@ -682,12 +667,12 @@ export async function matcher(
 
   // satisfiedFromPool = 池独立满足了整个 limit (gap <= 0)。基于 gap 而非 residual.length。
   // 三态读法:
-  //   ① satisfiedFromPool=true                  ⇒ 池满足 (gap<=0，含 limit=0 → gap=0)，无 residual。
-  //   ② satisfiedFromPool=false + residual 非空 ⇒ 池有缺口 (gap>0) 且 KC live → 已派在途生产。
-  //   ③ satisfiedFromPool=false + residual 空   ⇒ 有缺口 (gap>0) 但 KC 在 fetch/verify 窗口被归档
-  //      (Fix B 的 pre-dispatch recheck 拦下 dispatch；这是状态③的唯一成因)。
+  // ① satisfiedFromPool=true ⇒ 池满足 (gap<=0，含 limit=0 → gap=0)，无 residual。
+  // ② satisfiedFromPool=false + residual 非空 ⇒ 池有缺口 (gap>0) 且 KC live → 已派在途生产。
+  // ③ satisfiedFromPool=false + residual 空 ⇒ 有缺口 (gap>0) 但 KC 在 fetch/verify 窗口被归档
+  // (Fix B 的 pre-dispatch recheck 拦下 dispatch；这是状态③的唯一成因)。
   // dead/archived KC (顶部 guard) 直接 short-circuit 成 {used:[], residual:[], satisfiedFromPool:
-  // false}，根本走不到这里 (YUK-401 Fix 3)。
+  // false}，根本走不到这里 (Fix 3)。
   const satisfiedFromPool = gap <= 0;
 
   let selectionMiss: SelectionMissV1 | undefined;

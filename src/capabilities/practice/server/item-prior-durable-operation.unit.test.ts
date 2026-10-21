@@ -9,6 +9,7 @@ import {
   itemPriorPaidEffectRevision,
   validateItemPriorAppliedApplication,
 } from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
+import { parseItemPriorOutput } from '@/core/item-prior-estimation';
 import {
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
@@ -16,7 +17,6 @@ import {
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
-import { parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {

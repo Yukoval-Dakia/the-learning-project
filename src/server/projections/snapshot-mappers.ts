@@ -140,6 +140,10 @@ export function itemCalibrationRowToSnapshot(
     calibration_n: row.calibration_n,
     calibration_weight: row.calibration_weight,
     last_calibrated_at: row.last_calibrated_at,
+    // YUK-439 — 后验列随锚快照携带（历史 genesis 无这些键，optional 解析）。
+    b_post: row.b_post,
+    posterior_variance: row.posterior_variance,
+    calibration_source: row.calibration_source,
     irt_a: row.irt_a,
     irt_c: row.irt_c,
     cdm_json: row.cdm_json ?? null,

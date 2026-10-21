@@ -73,7 +73,7 @@ export async function createNativeAppeal(
 }
 
 /**
- * YUK-1407 — proposal 接受的判分纠错入口（judge_retraction accept applier 调）。
+ * proposal 接受的判分纠错入口（judge_retraction accept applier 调）。
  *
  * 与 createNativeAppeal 的差异：纠错可以针对**非 effective** 的 completed
  * 评价（未决/被替换的评价同样允许复核请求）；expected head 锚定的是该组
@@ -224,7 +224,7 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     .from(evaluation_effective_head)
     .where(eq(evaluation_effective_head.evaluation_group_id, original.evaluation_group_id))
     .limit(1);
-  // YUK-1407 — 纠错请求允许非 effective 目标：组可能没有 head（全未决评价）。
+  // 纠错请求允许非 effective 目标：组可能没有 head（全未决评价）。
   // null-safe 比较；head 缺失时只有 expected=null/0 的请求能推进。
   if (
     (head?.effective_evaluation_id ?? null) !== intent.data.expected_effective_id ||

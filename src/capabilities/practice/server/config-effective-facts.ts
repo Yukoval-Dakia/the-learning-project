@@ -1,4 +1,4 @@
-// YUK-1007 — practice 拥有键的 consumer-effective 事实（单一真相：逐键调用
+// practice 拥有键的 consumer-effective 事实（单一真相：逐键调用
 // 真实 reader，绝不复述 clamp/fallback 规则）。经 practice/public.ts 透出，
 // 供组合根 facts seam（server/config/admin-config-facts.ts）聚合进
 // GET /api/admin/config 的 keys[].effective——capability 边界审计只放行
@@ -20,7 +20,7 @@ export function practiceConfigEffectiveFacts(): ConfigEffectiveFacts {
   const calibration = readJudgeCalibrationConfig();
   const fallbackProvider = judgeFallbackProvider();
   const spawnTimeoutMs = jyeooSpawnTimeoutMs();
-  // YUK-1007 P1（验证审反例）：solve-lane 覆盖的 effective 必须来自真实 reader
+  // P1（验证审反例）：solve-lane 覆盖的 effective 必须来自真实 reader
   // （solve-lane.ts resolveSolveOverrideFromEnv——凭据缺失/未知名/缺 model 时
   // fail-open 返回 {}）。降级说明直接取 reader 自己的 warn 文本（注入收集器，
   // 读面轮询不重复打 operator 日志；降级事实进 payload）。

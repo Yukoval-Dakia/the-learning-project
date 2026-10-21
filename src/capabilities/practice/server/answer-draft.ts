@@ -1,17 +1,14 @@
-// U5 (YUK-203) — paper answer-sheet draft layer over the revived `answer` table.
-//
+// paper answer-sheet draft layer over the revived `answer` table.
 // Per-slot grain (Q5): a slot is (session_id, question_id, part_ref). A
 // composite question with parts gets one row per part; atomic questions have
 // part_ref=null. The partial unique index `answer_draft_slot_uk`
 // (session_id, question_id, COALESCE(part_ref,'')) WHERE submitted_at IS NULL
 // guarantees ONE live draft per slot.
-//
 // Lifecycle: autosave (upsert the live draft) → freeze (set submitted_at +
-// event_id at submit). Frozen rows are APPEND-ONLY history (§4.5): re-submission
+// event_id at submit). Frozen rows are APPEND-ONLY history : re-submission
 // after abandon→reopen writes a NEW draft + a NEW frozen row; a frozen row is
-// never mutated or deleted. This is why `pos` (§4.10 Q9) is COUNT(DISTINCT slot)
+// never mutated or deleted. This is why `pos` (no double-count) is COUNT(DISTINCT slot)
 // over submitted rows, not a raw COUNT.
-//
 // Session binding: autosave and freeze REQUIRE the session to be a review session
 // bound to the paper artifact AND in a mutable state (started/paused). This is
 // validated by assertSessionMutable before any write path executes.
@@ -105,16 +102,16 @@ export async function assertSessionMutable(
  * the conflict target is a PARTIAL expression index; the explicit path is
  * clearer and avoids inference-predicate quirks. Callers should run this inside
  * a transaction with a per-slot advisory lock if concurrent autosaves on the
- * same slot are possible (the answering page is UI-sequential per slot, §4.6
+ * same slot are possible (the answering page is UI-sequential per slot,
  * Q6, so contention is bounded in practice).
  *
  * Concurrency safety:
- *   UPDATE is scoped with `isNull(submitted_at)` so a race where a concurrent
- *   freeze commits between SELECT and UPDATE results in 0 rows affected (the
- *   frozen row is not touched). In that case we return the frozen row's id (the
- *   slot was already submitted) — the autosave is a no-op, which is correct.
- *   On INSERT, a concurrent first-autosave that committed between SELECT and
- *   INSERT raises 23505; we catch it and re-read the live draft.
+ * UPDATE is scoped with `isNull(submitted_at)` so a race where a concurrent
+ * freeze commits between SELECT and UPDATE results in 0 rows affected (the
+ * frozen row is not touched). In that case we return the frozen row's id (the
+ * slot was already submitted) — the autosave is a no-op, which is correct.
+ * On INSERT, a concurrent first-autosave that committed between SELECT and
+ * INSERT raises 23505; we catch it and re-read the live draft.
  *
  * @returns the id of the live draft row and whether this call created it.
  */
@@ -226,10 +223,10 @@ export interface FreezeAnswerDraftInput extends AnswerSlot {
  * history is complete.
  *
  * Concurrency safety:
- *   UPDATE is scoped with `isNull(submitted_at)` so a race where the row was
- *   already frozen by a concurrent request results in 0 rows affected. In that
- *   case we re-read the existing frozen row and return its id (idempotent freeze
- *   — the concurrent freeze won, which is correct for the append-only model).
+ * UPDATE is scoped with `isNull(submitted_at)` so a race where the row was
+ * already frozen by a concurrent request results in 0 rows affected. In that
+ * case we re-read the existing frozen row and return its id (idempotent freeze
+ * the concurrent freeze won, which is correct for the append-only model).
  *
  * @returns the id of the frozen row.
  */
@@ -312,7 +309,7 @@ export async function freezeAnswerDraft(
 
 /**
  * Count answered slots for a session: COUNT(DISTINCT (question_id,
- * COALESCE(part_ref,''))) WHERE submitted_at IS NOT NULL (§4.10 Q9). Distinct on
+ * COALESCE(part_ref,''))) WHERE submitted_at IS NOT NULL. Distinct on
  * slot so a slot submitted, abandon→reopened, and re-submitted (two frozen rows)
  * counts ONCE — a raw row count would render "5/4".
  */

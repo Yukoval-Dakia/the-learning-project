@@ -1,20 +1,16 @@
-// YUK-608 — heterogeneous solve/verify lane resolution.
-//
+// heterogeneous solve/verify lane resolution.
 // docs decision: owner 2026-07-23 决策清单① — solve/verify 用不同模型（异源），接线既有
 // verify-framework `solverModelOverride`/`solverProviderOverride` 旋钮。落选项（人审门/接受残差）不做。
-//
 // WHY 异源: solve_check has the SAME model solve a draft question from scratch and compares its
 // answer to the persisted one. When the SOLVER and the GENERATOR are the same model, a systematic
 // blind spot (e.g. 误判「以…为…」意动用法) is reproduced on both sides and the check rubber-stamps
 // it. Running the solve_check leg (SolutionGenerateTask + the semantic SemanticJudgeTask fallback)
 // on a DIFFERENT provider breaks that correlation so an independent model can dissent.
-//
 // SCOPE — deliberately NOT the global `AI_PROVIDER_OVERRIDE` (which would also move QuizGen /
 // QuizVerify and defeat the point). A dedicated pair of envs moves ONLY the solve_check leg:
-//   VERIFY_SOLVE_PROVIDER_OVERRIDE — provider name, e.g. `anthropic-sub` (Opus 4.8 via Max sub).
-//   VERIFY_SOLVE_MODEL_OVERRIDE    — optional model id; the provider's default applies when unset
-//                                    (`anthropic-sub` → claude-opus-4-8).
-//
+// VERIFY_SOLVE_PROVIDER_OVERRIDE — provider name, e.g. `anthropic-sub` (Opus 4.8 via Max sub).
+// VERIFY_SOLVE_MODEL_OVERRIDE — optional model id; the provider's default applies when unset
+// (`anthropic-sub` → claude-opus-4-8).
 // FAIL-OPEN (owner decision, grounded in the existing solve_check conservatism): verify is an
 // AUTOMATIC supply path — a misconfigured / unavailable 异源 lane must NEVER block promotion or
 // strand a draft. So this resolver PRE-FLIGHTS the override against the SAME providers.ts predicates
@@ -58,7 +54,7 @@ export interface SolveOverride {
 export function resolveSolveOverrideFromEnv(
   warn: (message: string) => void = (m) => console.warn(m),
 ): SolveOverride {
-  // YUK-1007：DB 层（lane.verify_solve.provider/model）> env 层（VERIFY_SOLVE_*
+  // DB 层> env 层（VERIFY_SOLVE_*
   // env fallback）。getLaneOverride 每 key 已合并两层。
   const resolved = getLaneOverride('verify_solve');
   const provider = resolved?.provider?.trim() || undefined;

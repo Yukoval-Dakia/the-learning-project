@@ -1,14 +1,12 @@
-// U5 (YUK-203, §4.7) — mid-attempt paper adaptation event (RL5, ADR-0006 v2
+// mid-attempt paper adaptation event (RL5, v2
 // evidence-first).
-//
 // When the paper artifact is mutated in place mid-attempt (optimistic-
 // concurrency version bump), an `experimental:adaptation` event MUST be written
 // in the SAME transaction as the artifact update, or the audit trail drifts from
 // the mutation. Uses the ExperimentalEvent escape hatch (Q10) — NOT a new
-// KnownEvent: mid-attempt adaptation is exploratory (CO §5.7) and promoting it
+// KnownEvent: mid-attempt adaptation is exploratory (CO) and promoting it
 // to a first-class schema + migration is premature until the shape stabilizes.
-//
-// DEFER (§11 completeness): the U5 MVP answering page is static text+choice and
+// DEFER (completeness): the U5 MVP answering page is static text+choice and
 // has NO mid-attempt adaptation trigger (no UI/Coach path rewrites the paper
 // in-session). This helper is the CONTRACT — the write point any future
 // adaptation trigger must call. It is exercised by a contract test (helper +

@@ -11,9 +11,9 @@ type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
 type Rating = z.infer<typeof FsrsRating>;
 
 /**
- * YUK-56/YUK-98 — coarse judge outcomes map onto the current 3-state review UI.
+ * coarse judge outcomes map onto the current 3-state review UI.
  *
- * YUK-739 — the mapping is subject-owned policy: with a SubjectProfile in
+ * the mapping is subject-owned policy: with a SubjectProfile in
  * scope, the verdict → rating map resolves through the profile's
  * `ratingPolicy.outcomeToRating` section (every built-in declares the
  * universal correct→good / partial→hard / incorrect→again / unsupported→null

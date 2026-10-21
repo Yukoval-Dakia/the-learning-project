@@ -22,7 +22,7 @@ import { readJudgeRunPermanent } from './judge-run-observation';
 import { type SelectPlacementItemInput, selectNextPlacementItem } from './placement-select';
 
 const ACTION = 'experimental:assessment_placement_issued';
-/** YUK-1405 L1 — learner-released held issuance (recorded unresolved, never wrong). */
+/** Learner-released held issuance: recorded unresolved, never wrong. */
 export const PLACEMENT_HELD_RELEASE_ACTION = 'experimental:assessment_placement_released';
 const PlacementIssueReceipt = z.object({
   ordinal: z.number().int().positive(),
@@ -33,10 +33,10 @@ const PlacementIssueReceipt = z.object({
   evaluation_group_id: z.string(),
   submission_id: z.string(),
   idempotency_key: z.string(),
-  // YUK-1405 L2 — optional for back-compat with pre-change receipts. supply_scope says
-  // which selection tier produced the item ('scope' = the probe's own scope,
-  // 'nearby' = the same-subject widened scope); served_after_ms is the real elapsed
-  // session→first-item time, emitted on ordinal 1 only.
+  // Optional for receipts written before this field existed. supply_scope says which
+  // selection tier produced the item ('scope' = the probe's own scope, 'nearby' = widened
+  // same-subject scope); served_after_ms is the real elapsed session→first-item time,
+  // emitted on ordinal 1 only.
   supply_scope: z.enum(['scope', 'nearby']).optional(),
   served_after_ms: z.number().int().nonnegative().optional(),
 });
@@ -104,9 +104,9 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
     )
     .where(eq(assessment_issuance.container_occurrence_ref, `placement:${sessionId}`))
     .orderBy(asc(assessment_issuance.issued_at), asc(assessment_issuance.issuance_id));
-  // YUK-1405 L1 — learner-released issuances never block again: the release event is
-  // the durable "recorded unresolved" marker, so refresh/re-entry re-derives the
-  // same progress (skip past them) without re-reading per-item judge state.
+  // Learner-released issuances never block again: the release event is the durable
+  // "recorded unresolved" marker, so refresh/re-entry re-derives the same progress
+  // without re-reading per-item judge state.
   const releasedRows = await tx
     .select({ issuanceId: event.subject_id })
     .from(event)
@@ -190,9 +190,9 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
         state,
         phase,
         pending_run: pendingRun,
-        // YUK-1405 L1 — the typed exit travels with the held item itself: continue
-        // releases it (recorded unresolved, never wrong), end closes the probe and
-        // marks it in unresolved_items. Re-derived on every read → refresh-safe.
+        // The typed exit travels with the held item itself: continue releases it
+        // (recorded unresolved, never wrong), end closes the probe and marks it in
+        // unresolved_items. Re-derived on every read, so refresh-safe.
         ...(phase === 'held'
           ? {
               held_exit: {
@@ -219,13 +219,11 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
 /**
  * Reuse the outstanding issuance before selecting; new identities belong to a session ordinal.
  *
- * YUK-1405 L2 — `input.fallbackKnowledgeIds` is the pre-resolved SAME-SUBJECT widened
- * scope (scope ∪ nearby KCs). Selection tries the probe's own scope first; only when it
- * is fully exhausted does it retry over the widened set. Every candidate still passes
- * selectNextPlacementItem → readAutomaticallyServableQuestionIds → decideAutomaticServing,
- * so a non-gradable item can never be served by the fallback. The receipt records which
- * tier produced it (`supply_scope`) and, for the session's first item, the real elapsed
- * session→serve time (`served_after_ms`, needs `ctx.startedAt`).
+ * `input.fallbackKnowledgeIds` is the pre-resolved same-subject widened scope. Selection
+ * tries the probe's own scope first and retries over the widened set only when the primary
+ * is exhausted. Every candidate still passes selectNextPlacementItem → decideAutomaticServing,
+ * so the fallback cannot serve a non-gradable item. The receipt records the producing tier
+ * (`supply_scope`) and, for the first item, the real elapsed session→serve time.
  */
 export async function ensurePlacementAssessment(
   tx: Tx,
@@ -345,11 +343,10 @@ export async function ensurePlacementAssessment(
 }
 
 /**
- * YUK-1405 L1 — write the durable held-release marker. Deterministic event id +
- * first-write-wins makes the record exactly-once; the marker's effect is that
- * placementAssessmentProgress never surfaces the issuance as outstanding again.
- * No submission, verdict, or settlement is written — the item stays unresolved,
- * never wrong. A late real judge settlement still lands on its own idempotent path.
+ * Writes the durable held-release marker. The deterministic event id makes the record
+ * exactly-once, and placementAssessmentProgress never surfaces the issuance as outstanding
+ * again. No submission, verdict, or settlement is written: the item stays unresolved, never
+ * wrong. A late judge settlement still lands on its own idempotent path.
  */
 export async function writePlacementHeldRelease(
   tx: Tx,
@@ -405,13 +402,12 @@ export async function readPlacementSessionInfo(
 }
 
 /**
- * YUK-1405 — the honest end-of-probe list: every issued item with no verdict at
- * read time. Unlike placementAssessmentProgress this is a LIGHT reader — it does
- * not need the serving-decision state and never throws not_admitted, so a session
- * can always end/report honestly. Reasons:
- *   held_released       — learner released a held item (recorded unresolved).
- *   awaiting_evaluation — submission accepted, no settlement yet.
- *   unanswered          — issued but never submitted (the card left open at end).
+ * The honest end-of-probe list: every issued item with no verdict at read time. This LIGHT
+ * reader needs no serving-decision state and never throws not_admitted, so a session can
+ * always end/report honestly. Reasons:
+ * held_released — learner released a held item (recorded unresolved).
+ * awaiting_evaluation — submission accepted, no settlement yet.
+ * unanswered — issued but never submitted.
  * An item answered through another path in the same session is not listed.
  */
 export async function readPlacementUnresolvedItems(

@@ -1,35 +1,13 @@
-// YUK-533 (ADR-0036 RT1 consumer) — confusable_with read model. Assembles the set
-// of CONFUSABLE KC PAIRS the downstream contrast-question supply consumes.
+// Confusable KC pairs for contrast-question supply.
 //
-// A `confusable_with` misconception_edge is SYMMETRIC and POLYMORPHIC: it always
-// originates at a misconception (from_kind='misconception', RT1 invariant) and
-// points at EITHER another misconception OR a KC (to_kind ∈ misconception|knowledge).
-// To turn an edge into a contrast pair of UNDERLYING knowledge points we resolve each
-// endpoint to its KC(s):
-//   - the misconception endpoint(s) → underlying KC via the `caused_by` edge
-//     (the same heterogeneous edge loadConfirmed joins in misconception-read.ts),
-//   - the knowledge endpoint → already a KC (used directly).
-// The two resolved KC sets are crossed into pairs (self-pairs dropped), deduped on a
-// canonical sorted pair key so A↔B and B↔A collapse to ONE pair (mirrors the edge's
-// own canonical ordering in misconception-edges.ts createMisconceptionEdge).
+// A confusable_with edge starts at a misconception and points at another
+// misconception or a KC. Each endpoint resolves to its underlying KC(s) via
+// caused_by; the sets are crossed, self-pairs dropped, and canonical sorted keys
+// dedupe A<->B with B<->A.
 //
-// RED LINES (mirror misconception-read.ts loadConfirmed):
-//   - ⑥ anti-guilt: the raw edge `weight` is read LOCALLY to derive a QUALITATIVE
-//     confidence band (confBand) and then DROPPED — raw weight / confidence /
-//     predicted_p NEVER serialize. The conf-strip test pins both the keys and the
-//     seeded numbers off the wire.
-//   - ND-5 / ADR-0035 SOFT track: this edge's weight is CONFIDENCE salience only.
-//     The band is a display/priority hint; it NEVER feeds θ̂/p(L)/FSRS/difficulty/
-//     mastery. The contrast question generated downstream takes an INDEPENDENT
-//     b-anchor (ItemPriorTask), never inheriting this edge's confidence (三轴正交).
-//   - PURE READ: this module writes nothing. Day-one EMPTY (no live producer of
-//     confusable_with edges) — honest empty, NEVER zero-filled.
-//
-// Day-one this read is genuinely EMPTY: no live writer mints confusable_with edges
-// yet, so a fresh install returns []. The feature is dark behind CONFUSABLE_CONTRAST_
-// ENABLED (gated at the discovery layer, src/server/question-supply/confusable-
-// contrast-discovery.ts) — this reader stays flag-agnostic (a pure read model, like
-// misconception-read.ts whose gating lives in the writer/promote layer).
+// Raw edge weight stays local and becomes a qualitative band; it never serializes
+// and never feeds theta/mastery/difficulty. Pure read: no writer mints these edges
+// yet, so a fresh install returns [] honestly.
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -38,10 +16,7 @@ import { misconception_edge } from '@/db/schema';
 /** Qualitative confidence band — the ONLY confidence signal that crosses the wire. */
 export type ConfusableConfBand = '高' | '中' | '低';
 
-// Owner-prior conf-band cut points over the [0,1] CONFIDENCE-salience edge weight.
-// MIRRORS misconception-read.ts confBand (CONF_LOW_HI / CONF_MID_HI) verbatim — kept
-// as a local copy so this reader is self-contained (the sibling cut points are module-
-// private). Display/priority-only, owner-tunable (NOT an n=1 calibration red line).
+// Mirrors misconception-read's confBand cut points; display/priority only.
 const CONF_LOW_HI = 0.34;
 const CONF_MID_HI = 0.67;
 
@@ -51,32 +26,28 @@ function confBand(weight: number): ConfusableConfBand {
   return '高';
 }
 
-// '高' > '中' > '低' rank — when several edges/pairs resolve to the SAME KC pair we
-// keep the STRONGEST band (the raw weights are compared locally then dropped — ⑥).
+// Keep the strongest band when several edges resolve to the same KC pair.
 const BAND_RANK: Record<ConfusableConfBand, number> = { 低: 0, 中: 1, 高: 2 };
 
-// Defensive scan cap on the live confusable_with edge set. Day-one EMPTY + single-user,
-// so this is degenerate-defense, NOT a business cap (mirrors misconception-read's
-// CONFIRMED_CAP). Owner-tunable; raise if the confusable mesh ever legitimately grows.
+// Degenerate-defense scan cap; this set is empty on day one, not a business cap.
 const CONFUSABLE_EDGE_CAP = 500;
 
 /**
- * One confusable contrast pair = two UNDERLYING KCs the learner repeatedly confuses.
- * Raw weight / confidence are deliberately ABSENT — only the qualitative `conf` band.
+ * One contrast pair of underlying KCs. Raw weight and confidence are absent; only
+ * the qualitative band crosses the wire.
  */
 export interface ConfusablePair {
-  /** Canonical pair key (sorted KC ids joined) — symmetric dedup + fingerprint stability. */
+  /** Canonical sorted pair key; symmetric dedup and fingerprint stability. */
   pairKey: string;
-  /** The two underlying KC ids in canonical sorted order (a < b). */
+  /** The two KC ids in sorted order (a < b). */
   knowledgeIds: [string, string];
-  /** Qualitative confidence band — raw edge weight read LOCALLY then DROPPED (⑥). */
+  /** Qualitative band; the raw weight is read locally and dropped. */
   conf: ConfusableConfBand;
 }
 
 /**
- * Batch-resolve misconception ids → their underlying KC(s) via live `caused_by` edges
- * (from_kind='misconception', to_kind='knowledge', archived_at IS NULL). A misconception
- * MAY caused_by multiple KCs (returns all). Reuses the SAME edge loadConfirmed reads.
+ * Resolve misconception ids to their underlying KCs via live caused_by edges. A
+ * misconception may map to several KCs.
  */
 async function resolveMisconceptionKcs(db: Db, miscIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
@@ -105,8 +76,8 @@ async function resolveMisconceptionKcs(db: Db, miscIds: string[]): Promise<Map<s
 }
 
 /**
- * loadConfusablePairs — the live `confusable_with` mesh resolved into canonical, deduped
- * KC contrast pairs. Returns [] when no confusable edges exist (honest empty). PURE READ.
+ * Live confusable_with mesh as canonical, deduped KC contrast pairs. Honest empty
+ * when no edges exist; pure read.
  */
 export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
   const edges = await db
@@ -114,7 +85,7 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
       from_id: misconception_edge.from_id,
       to_kind: misconception_edge.to_kind,
       to_id: misconception_edge.to_id,
-      // weight read LOCALLY for confBand only — NEVER carried onto a ConfusablePair (⑥).
+      // Local to confBand only; never carried onto a pair.
       weight: misconception_edge.weight,
     })
     .from(misconception_edge)
@@ -125,9 +96,7 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
       ),
     )
     .limit(CONFUSABLE_EDGE_CAP);
-  // [no silent caps] — the degenerate-defense cap silently truncates the mesh once hit;
-  // surface it (day-one EMPTY keeps this cold, but a legitimately-grown mesh must not drop
-  // confusable pairs unnoticed). Raise CONFUSABLE_EDGE_CAP if this ever fires in practice.
+  // Surface truncation instead of silently dropping pairs; raise the cap if it fires.
   if (edges.length === CONFUSABLE_EDGE_CAP) {
     console.warn(
       `[confusable-read] loadConfusablePairs hit CONFUSABLE_EDGE_CAP=${CONFUSABLE_EDGE_CAP}; confusable_with edges beyond the cap were truncated (pairs may be incomplete).`,
@@ -135,8 +104,8 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
   }
   if (edges.length === 0) return [];
 
-  // Misconception ids needing KC resolution: every from_id (always a misconception) plus
-  // every misconception-kind to_id. knowledge-kind to_ids are KCs already.
+  // Misconception ids needing resolution: every from_id, plus every
+  // misconception-kind to_id. Knowledge endpoints are already KCs.
   const miscIds = new Set<string>();
   for (const e of edges) {
     miscIds.add(e.from_id);
@@ -144,24 +113,24 @@ export async function loadConfusablePairs(db: Db): Promise<ConfusablePair[]> {
   }
   const kcsByMisc = await resolveMisconceptionKcs(db, [...miscIds]);
 
-  // Accumulate the STRONGEST raw weight per canonical pair key (weights stay LOCAL —
-  // the band is derived once at the end, the raw numbers never escape this function).
+  // Keep the strongest weight per canonical pair; raw weights stay local.
   const bestWeightByPair = new Map<string, { a: string; b: string; weight: number }>();
   for (const e of edges) {
     const leftKcs = kcsByMisc.get(e.from_id) ?? [];
-    // Resolve the RIGHT endpoint to its underlying KC(s) by to_kind (no nested ternary):
+    // Resolve the right endpoint by kind; an event endpoint is invalid here and
+    // yields no pair.
     let rightKcs: string[];
     if (e.to_kind === 'knowledge') {
-      rightKcs = [e.to_id]; // knowledge endpoint is already a KC.
+      rightKcs = [e.to_id]; // Already a KC.
     } else if (e.to_kind === 'misconception') {
-      rightKcs = kcsByMisc.get(e.to_id) ?? []; // resolve the misconception → its KC(s).
+      rightKcs = kcsByMisc.get(e.to_id) ?? []; // Resolve misconception -> KC(s).
     } else {
-      rightKcs = []; // event endpoint (invalid topology for confusable_with) → no pair.
+      rightKcs = []; // Event endpoint is invalid topology for confusable_with.
     }
     const w = e.weight ?? 1;
     for (const a of leftKcs) {
       for (const b of rightKcs) {
-        if (a === b) continue; // a misconception confusable with one resolving to the same KC → no pair.
+        if (a === b) continue; // A misconception resolving to the same KC yields no pair.
         const [lo, hi] = a < b ? [a, b] : [b, a];
         const key = `${lo}|${hi}`;
         const prev = bestWeightByPair.get(key);

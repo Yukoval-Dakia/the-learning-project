@@ -20,35 +20,17 @@ import {
   question_revision,
 } from '@/db/schema';
 
-// ====================================================================
-// YUK-1050 — 历史迁移 apply · DB 执行器（grounding §15；review P1-1..P1-5 修订）
-// ====================================================================
+// Migration apply DB executor. Consumes the pure MigrationApplyPlan and writes it in
+// idempotent phases: preflight → plan → apply_mappings → apply_submissions → reconcile.
 //
-// 消费纯规划器（core/migration/apply.ts）的 MigrationApplyPlan，分阶段幂等
-// 落库：preflight → plan → apply_mappings → apply_submissions → reconcile。
-//
-// 纪律：
-//   - 单写者 fence：advisory lock（跨阶段持有；由调用方提供专用连接实现，
-//     池化连接上的 session lock 会在连接归还时释放，不能作 fence）。
-//   - 幂等：一切主键内容寻址派生 + INSERT ... ON CONFLICT DO NOTHING；
-//     已存在的行做【完整内容】对账（P1-3：digest 覆盖全部不可变载荷，
-//     divergence fail-visible，绝不覆盖 —— guarded 表的 UPDATE/DELETE 由
-//     0105/0106/0107 trigger 拒绝，这里也不尝试）。
-//   - pending→resolved 续跑（P1-5）：registry 后到的 mapped 裁决对【本工具
-//     早前写入的 pending 当前映射】走显式 supersession —— 旧行 is_current=false
-//     （status/evidence 原样保留），新行 is_current=true 并链
-//     supersedes_mapping_id。其余任何状态迁移（mapped↔conflicted、改判目标）
-//     一律 divergence fail-visible，属显式修正工作流。
-//   - crash 续跑：阶段进度入账本（migration_apply_run/phase）；重跑跳过
-//     completed 阶段，未完成阶段靠幂等收敛。reconcile 在标记 completed【之前】
-//     做全内容对账（P1-3：断言失败 ⇒ run=failed，绝不先记账后失败）。
-//   - 观测：每阶段 duration、rows_written/already_present、WAL LSN 位移
-//     （权限不足时为 null —— 不冒装）。
-//   - 无学习重放：写面仅限 6 张评估真相表 + 2 张账本表；FSRS/θ̂/calibration
-//     等学习状态表零触碰（reconciliation 报告显式声明）。
-//
-// 本模块不做 DB epoch/启动 fence（YUK-1055 lane）；advisory fence 只防
-// 并发执行器，不防旧 writer —— cutover runbook 负责停全部 writer。
+// The advisory fence is held across phases and needs a dedicated connection; a pooled
+// session lock would release on return. Writes are content-addressed with ON CONFLICT DO
+// NOTHING, and existing rows are compared by full immutable payload — divergence is
+// fail-visible, never overwritten. Registry-late verdicts may supersede this tool's own
+// pending rows; any other status/target change is a divergence. Phase progress lives in
+// the ledger, and reconcile must pass before the run is marked completed. Only the six
+// assessment truth tables and two ledger tables are written; learning state is untouched.
+// This fence limits concurrent executors, not old writers — the cutover runbook stops those.
 
 export type ApplyPhaseName =
   | 'preflight'
@@ -65,7 +47,7 @@ const PHASE_ORDER: readonly ApplyPhaseName[] = [
   'reconcile',
 ];
 
-/** 单写者 fence：acquire 持有至 release（专用连接；池化连接不可用）。 */
+/** Single-writer fence: acquired until release on a dedicated connection. */
 export interface MigrationApplyFence {
   acquire(): Promise<boolean>;
   release(): Promise<void>;
@@ -75,7 +57,7 @@ export interface MigrationApplyArgs {
   db: Db;
   plan: MigrationApplyPlan;
   runId: string;
-  /** 非 dry-run 必须提供 fence（fail-visible：无 fence 拒绝写库）。 */
+  /** Required outside dry-run; a missing fence refuses to write. */
   fence: MigrationApplyFence | null;
   dryRun?: boolean;
   batchSize?: number;
@@ -154,8 +136,7 @@ export class MigrationApplyError extends Error {
 async function currentWalLsn(db: Db | { execute: Db['execute'] }): Promise<string | null> {
   try {
     const result = (await db.execute(sql`select pg_current_wal_lsn()::text as lsn`)) as unknown;
-    // postgres-js drizzle：execute 直接返回行数组（非 {rows} 信封）—— 两种形态
-    // 都容错，权限不足抛错时降级 null（不冒装观测）。
+    // postgres-js returns rows directly; tolerate both shapes and null on missing perms.
     const rows = Array.isArray(result)
       ? (result as Array<{ lsn: string | null }>)
       : ((result as { rows?: Array<{ lsn: string | null }> }).rows ?? []);
@@ -198,11 +179,8 @@ async function ensureRunRow(
   dryRun: boolean,
 ): Promise<LedgerRunRow | null> {
   if (dryRun) return null;
-  // YUK-1100（review P1）：先查同 checkpoint 的既有账本行做【全部】校验，验证
-  // 通过后才 insert —— 被拒的 run 不落行（账本 CHECK 无 'rejected' 态，
-  // 不落行即终态处置）。旧次序（先 insert 'running' 再校验）会把被拒 run
-  // 的 running 行留在 checkpoint 上，毒化 checkpoint：后续合法 run 的 sibling
-  // 校验反复命中毒行。
+  // Validate every existing run on the checkpoint before inserting: a rejected run
+  // must not leave a running row that poisons sibling checks for later runs.
   const checkpointRows = await db
     .select({
       run_id: migration_apply_run.run_id,
@@ -218,8 +196,8 @@ async function ensureRunRow(
       `run ${runId} 已按不同 plan_digest 执行过（账本 ${ownRow.plan_digest} vs 本次 ${planDigestOf(plan)}）—— 同 run 的分类/registry 变化必须走显式新 run，不得混写`,
     );
   }
-  // 同 checkpoint 的其它 run 若已介入，拒绝并行第二套输入（分类刷新/registry
-  // 更替属显式 supersede 工作流；新 run 与既有 run 的分类必须一致）。
+  // Reject a second classification on the same checkpoint; refresh is an explicit
+  // supersede workflow.
   for (const sibling of checkpointRows) {
     if (sibling.run_id === runId) continue;
     if (sibling.classification_hash !== plan.classification_hash) {
@@ -244,8 +222,8 @@ async function ensureRunRow(
         wal_lsn_start: walStart,
       })
       .onConflictDoNothing();
-    // 重新读取（fence 外/并发旁路下可能已有他行抢先写入；读到的行仍须过
-    // digest 校验 —— 二次校验同样零写入路径，不毒化 checkpoint）。
+    // Reread after the insert; a concurrent writer may have won, and the row must
+    // still match the plan digest.
     const existing = await db
       .select({
         run_id: migration_apply_run.run_id,
@@ -413,7 +391,7 @@ async function applyMappings(
       batch.map((b) => [b.mapping.source_locator, b.mapping] as const),
     );
     const result = await db.transaction(async (tx) => {
-      // 同 locator 的当前行（含 pending→resolved 接替判断）+ 非当前行（历史链）。
+      // Current rows (for pending→resolved supersession) plus the historical chain.
       const stored = await tx
         .select()
         .from(assessment_identity_mapping)
@@ -422,8 +400,7 @@ async function applyMappings(
       for (const row of stored) {
         if (row.is_current) currentByLocator.set(row.source_locator, row);
       }
-      // 插入对象就地构造（不走 helper）—— audit:schema 的词法写路径检测需要
-      // 字段键出现在 insert 语句载荷内。
+      // Build insert objects inline: audit:schema needs the field keys in the payload.
       const toInsert: Array<{
         planned: (typeof batch)[number]['mapping'];
         supersedes: string | null;
@@ -435,22 +412,19 @@ async function applyMappings(
           continue;
         }
         if (mappingContentDigest(existing) === plannedMappingContentDigest(planned)) {
-          stats.alreadyPresent += 1; // 逐字节同判 —— 幂等跳过
+          stats.alreadyPresent += 1; // Byte-identical, so idempotent skip.
           continue;
         }
-        // P1-5：pending 是【未裁决】的操作性占位 —— 本工具可对自写的 pending 行
-        // 显式接替（registry 后到的 mapped/conflicted 裁决，或同裁决的 reason
-        // 刷新）；已裁决行（mapped/conflicted/historical）的任何内容迁移一律
-        // fail-visible，属显式修正工作流。
+        // Pending is an undecided placeholder this tool may supersede with a later
+        // verdict or note refresh; decided rows only change through explicit correction.
         const authoredByThisTool = planned.algorithm_version.startsWith('yuk1050-apply');
         const existingAuthoredByThisTool = existing.algorithm_version.startsWith('yuk1050-apply');
         const supersedeOk =
           existing.status === 'pending' && authoredByThisTool && existingAuthoredByThisTool;
         if (supersedeOk) {
           if (planned.status === 'pending') {
-            // pending→pending：仅允许【操作性注释】刷新（reason/evidence 文案）。
-            // 裁决字段（status/targets/snapshot_digest）必须逐字一致 —— 否则不是
-            // 注释刷新而是裁决变化，必须走 supersede/divergence，绝不原地覆盖。
+            // pending→pending only refreshes reason/evidence text; adjudication fields
+            // must stay identical or the change is a divergence, never an in-place edit.
             const adjudicationIdentical =
               existing.status === planned.status &&
               existing.target_revision_id === planned.target_revision_id &&
@@ -473,8 +447,7 @@ async function applyMappings(
               .where(eq(assessment_identity_mapping.mapping_id, existing.mapping_id));
             stats.alreadyPresent += 1;
           } else {
-            // pending→mapped/conflicted：新裁决新行（mapping_id 含裁决内容），
-            // 旧行 is_current=false + supersedes 链（裁决历史原样保留）。
+            // A new verdict gets a new row; the old row is retired with a supersedes link.
             await tx
               .update(assessment_identity_mapping)
               .set({ is_current: false })
@@ -511,11 +484,8 @@ async function applyMappings(
               created_at: entry.planned.created_at,
             })),
           )
-          // 冲突裁决交给任意 unique violation（arbiter-less）：本表在 (source_kind,
-          // source_id, source_locator) 上的唯一索引是【部分索引】（WHERE
-          // is_current），当前 drizzle 版本不支持 conflict target 的 index
-          // predicate —— 而内容寻址 mapping_id 与 locator 裁决一一对应，PK 冲突
-          // 与当前映射唯一索引语义重合。
+          // Arbiter-less conflict handling: the current-mapping index is partial and
+          // drizzle cannot target its predicate, while mapping_id and locator are 1:1.
           .onConflictDoNothing()
           .returning({ mapping_id: assessment_identity_mapping.mapping_id });
         stats.written += inserted.length;
@@ -550,9 +520,8 @@ async function applySubmissions(
   if (chains.length === 0 || dryRun) return stats;
   for (let i = 0; i < chains.length; i += batchSize) {
     const batch = chains.slice(i, i + batchSize);
-    // FK 拓扑序（0105/0106 非 DEFERRABLE）：issuance/group → submission →
-    // evaluation → head；单批单事务，崩即整批回滚（幂等重放收敛）。
-    // 冲突行的【完整内容】对账在同一事务内完成（P1-3：先验证后提交）。
+    // FK order: issuance/group → submission → evaluation → head. One transaction per
+    // batch, and conflicting rows are fully compared before commit.
     await db.transaction(async (tx) => {
       const issuanceInserted = await tx
         .insert(assessment_issuance)
@@ -636,7 +605,7 @@ async function applySubmissions(
         .onConflictDoNothing()
         .returning({ id: evaluation_effective_head.evaluation_group_id });
 
-      const plannedRows = batch.length * 4 + flatEvals.length; // issuance+group+submission+head+eval
+      const plannedRows = batch.length * 4 + flatEvals.length;
       const actualInserted =
         issuanceInserted.length +
         groupInserted.length +
@@ -653,10 +622,10 @@ async function applySubmissions(
   return stats;
 }
 
-/** 事务内读回冲突行，比对【完整不可变载荷】；head 是可变行，走显式推进规则。
- * ──── P1-1（终轮）：共享的全内容比较器 ────
- * 批事务断言与最终/已完成-run 对账复用同一套【完整载荷】比较 —— 任何一处存储
- * 内容与 plan 不符都产生 divergence 描述（批内立即抛，reconcile 汇入报告）。 */
+/**
+ * Read conflicting rows back and compare full immutable payloads. Batch assertions and
+ * final/completed-run reconciliation share this comparator; any mismatch is a divergence.
+ */
 
 type StoredIssuance = typeof assessment_issuance.$inferSelect;
 type StoredGroup = typeof evaluation_group.$inferSelect;
@@ -741,9 +710,9 @@ async function readChainRows(
 }
 
 /**
- * 全内容比较（不可变载荷逐字段 digest；issuance 只比冻结绑定列 —— claim 生命
- * 周期列 0105 允许 runtime 变更；head 是可变行，走显式推进规则）。返回
- * divergence 描述列表（空 = 一致）。
+ * Full-content comparison: immutable payload digests; issuance only compares frozen
+ * binding columns because runtime may change claim state. Head follows its advance rule.
+ * Returns divergence descriptions (empty = consistent).
  */
 function compareChains(chains: readonly SubmissionChainPlan[], stored: ChainRowSnapshot): string[] {
   const divergences: string[] = [];
@@ -865,7 +834,7 @@ function compareChains(chains: readonly SubmissionChainPlan[], stored: ChainRowS
   return divergences;
 }
 
-/** 批事务内断言：先读后比，任何 divergence 在提交前抛出。 */
+/** Batch assertion: read, compare, throw any divergence before commit. */
 async function assertSubmissionBatchContent(
   tx: Tx,
   batch: readonly SubmissionChainPlan[],
@@ -877,10 +846,8 @@ async function assertSubmissionBatchContent(
 }
 
 /**
- * head 是【可变行】（runtime activation 推进 generation）：迁移写入的是导入
- * 终态（legacy effective ⇒ effective 指向导入 evaluation、gen=1；否则 null/0）。
- * 库内状态合法当且仅当：submission 坐标一致，且 (a) 与 plan 相同，或
- * (b) generation 更高 —— 迁移后被 settlement/runtime 激活/替换（合法演进）。
+ * Head is mutable: runtime activation advances generation. Stored state is acceptable
+ * when the submission matches and it either equals the plan or has a higher generation.
  */
 function headStateAccepted(
   stored: { submission_id: string; effective_evaluation_id: string | null; generation: number },
@@ -926,7 +893,7 @@ async function reconcile(
   };
   if (dryRun) return out;
 
-  // 映射行：存在性 + 【全内容】对账（P1-1 终轮：不是只数 ID）。
+  // Mapping rows: presence plus full-content comparison.
   if (mappingRows.length > 0) {
     const stored = await db
       .select()
@@ -962,8 +929,7 @@ async function reconcile(
     );
   out.mapping_rows_superseded_in_run = supersededCount[0]?.count ?? 0;
 
-  // submission 链：读回全部存储行，走与批事务断言【同一套】全内容比较器
-  // （P1-1 终轮：最终对账与已完成-run 重放都覆盖完整载荷，绝非只比 ID）。
+  // Submission chains use the same full-payload comparator as the batch assertion.
   const storedChains = await readChainRows(db, chains);
   out.divergences.push(...compareChains(chains, storedChains));
   out.issuances_present = chains.filter((c) =>
@@ -1002,10 +968,9 @@ export interface MigrationApplyResult {
 }
 
 /**
- * 分阶段执行 plan。幂等 + 可续跑：同 runId 重跑跳过 completed 阶段；
- * 未完成阶段靠内容寻址 id + ON CONFLICT DO NOTHING 收敛；任何 divergence
- * fail-visible（MigrationApplyError），绝不覆盖既有行。run 标记 completed
- * 【之前】必须通过全内容 reconciliation 断言（P1-3）。
+ * Run the plan in phases. Same runId skips completed phases; unfinished phases converge
+ * via content-addressed ids and ON CONFLICT DO NOTHING. Divergence is fail-visible and
+ * full reconciliation must pass before the run is marked completed.
  */
 export async function runMigrationApply(args: MigrationApplyArgs): Promise<MigrationApplyResult> {
   const dryRun = args.dryRun ?? false;
@@ -1048,8 +1013,8 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
     runRow = await ensureRunRow(args.db, args.plan, args.runId, startedAt, dryRun);
     const priorPhases = dryRun ? new Map() : await phaseStatusOf(args.db, args.runId);
     if (runRow !== null && runRow.status === 'completed') {
-      // 整 run 已完成 —— 幂等重放：不再写任何行；仍做全内容对账（head 推进等
-      // 迁移后合法演进在此显形），断言失败则报 divergence（不静默）。
+      // Completed run replay writes nothing but still reconciles full content so
+      // post-migration head advances surface instead of being silently ignored.
       const skippedOutcomes: PhaseOutcome[] = PHASE_ORDER.map((phase) => ({
         phase,
         status: 'skipped' as const,
@@ -1089,7 +1054,7 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
             await preflight(args.db, args.plan);
             break;
           case 'plan':
-            // plan 已在调用方构建（纯函数）；此阶段落账 plan_digest 身份。
+            // The pure plan is built by the caller; this phase records its digest.
             break;
           case 'apply_mappings': {
             const result = await applyMappings(args.db, args.plan, batchSize, dryRun);
@@ -1162,8 +1127,8 @@ export async function runMigrationApply(args: MigrationApplyArgs): Promise<Migra
       }
     }
 
-    // P1-3：先全内容对账断言，后标记 completed —— 断言失败 ⇒ run=failed。
-    // dry-run 零写入，presence 恒为 0 —— 跳过断言（report 仍产出对账面）。
+    // Reconcile before marking completed so assertion failure leaves run=failed.
+    // Dry-run writes nothing, so presence stays 0 and the assertion is skipped.
     const report = await assembleReport(args, startedAt, outcomes);
     if (!dryRun) assertReconciliationClean(report);
     await finishRun(
@@ -1217,12 +1182,12 @@ async function assembleReport(
   };
 }
 
-/** 报告工件文件名（内容寻址：run id）。 */
+/** Report artifact filename (content-addressed by run id). */
 export function applyReportFileName(runId: string): string {
   return `apply-report-${runId}.json`;
 }
 
-/** reconciliation 断言：plan 与库内逐表一致（数量 + 内容 divergences 为空）。 */
+/** Reconciliation assertion: per-table counts match and divergences are empty. */
 export function assertReconciliationClean(report: ApplyReconciliationReport): void {
   const r = report.reconciliation;
   const problems: string[] = [];

@@ -1,5 +1,4 @@
-// YUK-673 — ADR-0042 L3 learning-mix guard.
-//
+// L3 learning-mix guard.
 // This module is intentionally pure: it receives an already assembled StreamPlan plus the
 // stable question identities needed for repetition checks, then returns a repaired plan and
 // structured degradation diagnostics. It never reads the DB, changes membership, or touches
@@ -259,14 +258,14 @@ function reorderForFatigue(
 }
 
 /**
- * Apply the thin ADR-0042 L3 learning-mix guard.
+ * Apply the thin L3 learning-mix guard.
  *
  * - fatigue/repetition: stable-reorder questions to avoid >2 consecutive items with the same
- *   primary KC or question kind. Papers delimit runs. Membership and due relative order stay
- *   unchanged; if no legal alternative exists, retain the item and emit a diagnostic.
+ * primary KC or question kind. Papers delimit runs. Membership and due relative order stay
+ * unchanged; if no legal alternative exists, retain the item and emit a diagnostic.
  * - anti-comfort floor: current supply has no deterministic transfer source, so a missing
- *   frontier is surfaced as a structured degradation signal rather than silently inventing or
- *   force-selecting a question. YUK-361 Phase 3 owns the future transfer fallback.
+ * frontier is surfaced as a structured degradation signal rather than silently inventing or
+ * force-selecting a question. owns the future transfer fallback.
  */
 export function applyL3LearningMixGuard(plan: StreamPlan, context: LearningMixContext): StreamPlan {
   if (plan.items.length === 0) return plan;

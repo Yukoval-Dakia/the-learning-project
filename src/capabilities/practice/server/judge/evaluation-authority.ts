@@ -14,9 +14,9 @@ import {
   evaluateSubmission,
 } from './evaluate-submission';
 
-// ---------- 入口登记（grounding §4.2 表） ----------
+// ---------- 入口登记（grounding 表） ----------
 
-/** §4.2 八个权威评分入口的标识。 */
+/** 八个权威评分入口的标识。 */
 export type GradingEntryPoint =
   | 'solo_submit'
   | 'durable_judge_run'
@@ -88,7 +88,7 @@ export const EVALUATION_ENTRY_POINTS: readonly EntryPointDisposition[] = [
 
 // ---------- 输入 ----------
 
-/** contract lane：作答已落契约表，直接给 §4.3 坐标。 */
+/** contract lane：作答已落契约表，直接给 坐标。 */
 export interface ContractGradingRef {
   judge_execution?: EvaluateSubmissionRequest['judge_execution'];
   submission_id: string;
@@ -133,7 +133,7 @@ const CONTRACT_CAPABILITY_REF = { id: 'evaluate_submission', version: '1.0.0' } 
 /**
  * 把 EvaluationRecord 投影为 JudgeResultV2（消费侧兼容形状）。
  *
- * 计分纪律（§4.4）：未决/未映射绝不造伪分 —— 一律 coarse='unsupported'
+ * 计分纪律：未决/未映射绝不造伪分 —— 一律 coarse='unsupported'
  * + 显式 reason（evaluation 行保留全部 pending 细节）；分数只在
  * points_total 聚合下归一化到 [0,1]（binary comparator ⇒ 只可能 0/满分，
  * 部分分来自多 unit 子集）。level 聚合有显式映射时同样归一化；无映射
@@ -145,7 +145,7 @@ export function projectEvaluationToJudgeResult(
   record: EvaluationRecordT,
   basis: ScoringBasisT,
 ): JudgeResultV2T {
-  // YUK-1053 — verdict 派生单源到 core/schema/assessment/settlement.ts
+  // verdict 派生单源到 core/schema/assessment/settlement.ts
   // （学习结算读同一函数；阈值/未映射/分母纪律不再双写）。
   const verdict = deriveCoarseVerdict(record, basis);
   const pendingEvidence = {
@@ -200,7 +200,7 @@ export function projectEvaluationToJudgeResult(
     };
   }
   if (verdict.points == null) {
-    // 命中未映射档位 —— 不凭空造总分（§4.4 / judgment.ts no_mapping 同纪律）。
+    // Unmapped band — do not fabricate a total (same rule as judgment.ts no_mapping).
     return {
       score: null,
       score_meaning: 'correctness',
@@ -226,9 +226,9 @@ export function projectEvaluationToJudgeResult(
     unit_results: record.unit_results,
   };
   if (normalized == null) {
-    // YUK-1095 — 分母不可得（deriveCoarseVerdict reason='no_denominator'）⇒
+    // 分母不可得（deriveCoarseVerdict reason='no_denominator'）⇒
     // 绝不伪造 0 分 / incorrect / confidence=1：points>0 但没有已发布分母时
-    // 归一化不了，按 §4.4「不凭空造总分」纪律回落 unsupported，如实带原因。
+    // 归一化不了，按「不凭空造总分」纪律回落 unsupported，如实带原因。
     return {
       score: null,
       score_meaning: 'correctness',

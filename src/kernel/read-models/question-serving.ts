@@ -1,16 +1,9 @@
-// YUK-1514 — question serving hold read projection.
+// Question serving hold projection. Every bank row reports whether it is servable,
+// the hold reason and since when, the owner's next action, and any in-flight action.
 //
-// Contract (yuk1514-serving-holds-ui-contract.md): every question-bank row
-// reports a `serving` object — whether the group can be served right now, why
-// not (`hold_reason`), since when (`held_since`), the one command the owner
-// may run (`next_action`), and any still-running command (`pending_action`).
-//
-// Derivation reuses existing truth only — question_group_lifecycle (admission
-// state + withheld reason / suspension / withdrawal), question.draft_status,
-// question_admission_verification (which check failed), the frozen current
-// revision through the issuance gate's own decideAutomaticServing
-// (no_input_renderer / invalid_presentation), the serving-action command
-// event log, and in-flight pg-boss jobs. No parallel state store.
+// Derives from existing truth only: lifecycle rows, draft status, admission
+// verification, the frozen revision through the issuance gate, serving-action
+// events, and in-flight pg-boss jobs.
 
 import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { QUESTION_ADMISSION_PAID_UNITS } from '@/core/question-admission-policy';
@@ -56,13 +49,11 @@ export type ServingActionCommand = (typeof SERVING_ACTION_COMMANDS)[number];
 /** Command ledger action. Generic experimental:* — payload is a loose record. */
 export const SERVING_ACTION_EVENT_ACTION = 'experimental:question_serving_action' as const;
 
-/** Question-family queue that re-runs scoring admission (YUK-1445 C1 / YUK-1507). */
+/** Question-family queue that re-runs scoring admission. */
 export const SERVING_ADMISSION_JOB = 'question_admission_run' as const;
 export const SERVING_SOURCE_VERIFY_JOB = 'source_verify' as const;
 
-/** paid_effect family of the admission claim (mirrors ADMISSION_FAMILY in
- * practice/server/admission/enqueue.ts — duplicated as a literal because
- * kernel may not import capability modules). */
+/** Admission paid-effect family; a literal because kernel may not import the capability. */
 const PAID_EFFECT_ADMISSION_FAMILY = 'question_admission_run' as const;
 const PAID_EFFECT_ADMISSION_UNITS = QUESTION_ADMISSION_PAID_UNITS;
 
@@ -231,7 +222,7 @@ function stateHoldReason(state: ServingState): ServingHoldReason | null {
   }
 }
 
-/** Called within the list's repeatable-read snapshot. Frozen scoring/presentation
+/** Runs inside the list's repeatable-read snapshot. Frozen scoring/presentation
  * validation stays in the issuance gate, not a SQL copy. */
 export async function questionServingSet(db: Db | Tx, filters: SQL[]): Promise<SQL> {
   const facts = servingFactsQuery(filters);
@@ -285,12 +276,9 @@ export async function countQuestionServing(db: Db | Tx, servingSet: SQL): Promis
 }
 
 /**
- * Batch serving derivation for question ids (roots or parts). A part id
- * resolves to its parent group (parent_question_id ?? id) for the shared
- * lifecycle facts, but its servable/hold_reason comes from the issuance
- * gate's own per-part check — mirroring the real issuance binding: a root is
- * checked with ONE decideAutomaticServing(revision, allPartIds), a part with
- * [partId]. Batched — five relation reads + one pgboss probe for any page.
+ * Batch serving derivation for question ids. A part resolves to its parent group for
+ * shared lifecycle facts, but its verdict comes from the issuance gate's own per-part
+ * scope: a root is checked with every part, a part with itself.
  */
 export async function readQuestionServing(
   db: Db | Tx,
@@ -344,10 +332,8 @@ export async function readQuestionServing(
   }>(servingFactsQuery([inArray(question.id, ids)]));
   const factsById = new Map(facts.map((row) => [row.id, row]));
 
-  // Serving command events per group, newest first — pending_action's event
-  // half. Kept as a list per group (not just the latest): a later REJECTED or
-  // finished command must not mask an earlier async command whose job is
-  // still in flight.
+  // Keep every command per group, newest first: a later rejected or finished
+  // command must not mask an earlier in-flight one.
   const commandRows = groupIds.length
     ? await db
         .select({
@@ -374,10 +360,8 @@ export async function readQuestionServing(
     else commandsByGroup.set(row.subjectId, [entry]);
   }
 
-  // In-flight queue half of pending_action: an async command stays "submitted"
-  // while its job is still created/retry/active. pgboss.job is pg-boss owned —
-  // a raw probe like admission/receipt.ts's, not a new dependency. to_regclass
-  // keeps the projection honest on databases the worker schema never reached.
+  // In-flight job half of pending_action. pgboss.job is pg-boss owned; to_regclass
+  // keeps this honest on databases the worker schema never reached.
   const inflightAdmission = new Set<string>();
   const inflightSourceVerify = new Set<string>();
   const pgbossProbe =
@@ -407,9 +391,8 @@ export async function readQuestionServing(
     }
   }
 
-  // Parse each current revision's contract once per group — the part scope
-  // differs per item (root = all parts, part = itself) but the frozen contract
-  // parse is shared.
+  // Parse each group's frozen contract once; scope differs per item but the parse
+  // is shared.
   const contractByGroup = new Map<
     string,
     { allPartIds: string[]; revision: PublishedQuestionRevisionT | null }
@@ -503,10 +486,9 @@ export async function readQuestionServing(
 
     let nextAction: QuestionServing['next_action'] = null;
     if (!servable && pendingAction == null) {
-      // reverify only exists where a claim could still produce a NEW verdict:
-      // a never-run or stuck pending cycle, or an errored/unknown outcome the
-      // paid-effect claim allows to resume. An applied verdict for the current
-      // digest is terminal — the identical base is never re-paid.
+      // reverify only when a claim could still produce a new verdict: never run,
+      // stuck pending, or a resumable error. An applied verdict for the current
+      // digest is terminal and never re-paid.
       const mayReverify = fact.may_reverify;
       const command: ServingActionCommand | null =
         holdReason === 'admission_failed' && mayReverify

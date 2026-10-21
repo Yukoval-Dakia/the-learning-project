@@ -1,4 +1,4 @@
-// YUK-1571 — implementation moved verbatim to
+// implementation moved verbatim to
 // @/kernel/read-models/question-evidence-snapshot (shared cross-capability
 // read model); this file remains as an explicit compat re-export for the
 // practice/public surface.

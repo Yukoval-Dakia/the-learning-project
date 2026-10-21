@@ -1,31 +1,12 @@
-// YUK-226 S2 slice 5b — unified 找题次序 orchestration (spec §3.2 B+).
-//
-// docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §3.2
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §6.1 (B2 裁决)
-//
-// spec §3.2 defines a SINGLE 找题次序 every "需要知识点 X 的题" consumer (组卷 /
-// 弱点专项 / QuizGen 触发 / 复习池补题) must follow:
-//
-//   1. 先查已入库   question 表既有题（任意 tier，优先高 tier）        ← SYNC
-//   2. 外部检索     SourcingTask 找现成题 → 自动入库 draft → 验证门    ← ASYNC enqueue
-//   3. 素材生成     material_grounded → 验证门                          ← ASYNC enqueue
-//   4. 闭卷兜底     closed_book / variant_gen → 验证门（最重）          ← ASYNC enqueue
-//
-// B2 裁决（plan §6.1, BLOCKER）: the four steps are NOT串完 in one call. Step 1 is a
-// synchronous query against the existing pool (so组卷 can use a hit immediately);
-// steps 2-4 are "trigger background production + mark a need" — the next组卷 round
-// sees the newly-ingested questions (spec §3.2「题库是用出来的，不是囤出来的」—— the
-// sequence is memory-ful: 今天检索入库，明天第 1 步命中).
-//
-// This module does NOT touch the ReviewPlanTask needs[] path: ReviewPlanTask's
-// "only declare needs[], never CRUD" is a systemPrompt + write-tool boundary
-// constraint (review-plan-tools.ts). The consumer-SIDE wiring (a缺题 entry like
-// /api/questions/quiz-gen) calls THIS orchestrator instead of enqueuing quiz_gen
-// directly, so step 1 + the tiered次序 run before any自产.
-//
-// 边界 (spec §3.2): step 1「已入库」含 owner 做过的真题; this次序 serves the
-// "要新题/扩充练习" scenario and does NOT绕过错题本 (the orchestrator only READS the
-// active pool and ENQUEUES production — it never touches mistakes / review state).
+// Unified question-sourcing order for every consumer that needs a question for KC X:
+// 1. existing pool (any tier, highest first) - synchronous;
+// 2. external sourcing -> draft ingest -> verify - async enqueue;
+// 3. material-grounded generation -> verify - async enqueue;
+// 4. closed-book / variant generation -> verify - async enqueue.
+// Step 1 is synchronous so callers can use a hit immediately; steps 2-4 enqueue production
+// and record the need, so the next round finds the new questions. ReviewPlanTask's
+// "declare needs only" boundary stays untouched. This orchestrator only reads the active
+// pool and enqueues production; it never touches mistakes or review state.
 
 import { and, eq, isNull } from 'drizzle-orm';
 
@@ -48,7 +29,7 @@ export const SOURCING_SEQUENCE_STEPS = [
 export type SourcingSequenceStep = (typeof SOURCING_SEQUENCE_STEPS)[number];
 
 // Default后台 production次序 when the profile declares no per-题型 preference.
-// Mirrors spec §3.2 steps 2→3→4 verbatim.
+// Mirrors steps 2→3→4 verbatim.
 export const DEFAULT_SOURCING_ROUTE: readonly SourcingSequenceStep[] = SOURCING_SEQUENCE_STEPS;
 
 // How many existing-pool hits make step 1 "sufficient" by default — caller can
@@ -63,7 +44,7 @@ export interface ExistingPoolHit {
   tier: number;
 }
 
-// OF-2 (plan §12) — read metadata.web_sourced.whitelist_match for the within-tier-2
+// OF-2 — read metadata.web_sourced.whitelist_match for the within-tier-2
 // demotion comparator. Returns null for non-web_sourced rows (no whitelist semantics).
 // Mirrors context-readers' readWhitelistMatch predicate verbatim; the ORDER logic
 // itself is the shared compareBySourceTierThenWhitelist comparator (合约五), so only
@@ -85,25 +66,25 @@ async function queryExistingPool(
   db: Db,
   knowledgeId: string,
   limit: number,
-  // YUK-226 S2-5b (验证轮 A2) — when the sequence targets a specific 题型, the
+  //5b (验证轮 A2) — when the sequence targets a specific 题型, the
   // existing pool must be filtered so a node full of off-class questions does
   // NOT short-circuit the request (e.g. `reading` rows cannot satisfy a
-  // `choice`/exact request). YUK-386: the compare runs in answer-class space
+  // `choice`/exact request). : the compare runs in answer-class space
   // (answerClassCompatible) — a `computation` request and `reading` rows share
   // the semantic class so they DO satisfy it; `reading_comprehension` matches
   // `reading` and `calculation` matches `computation` via the profile-vocab
   // fold; any free-form label conforms via its implied answer class. null kind
   // → no filter (whole active pool).
   kind: string | null,
-  // YUK-275 — free-text 求卷扩两个维度过滤:
-  //   difficultyMin: only count questions whose difficulty >= n (null → no filter).
-  //   unit='篇' : only count COMPOSITE parent questions (a parent that itself is not a
-  //     part AND has ≥1 child part). 'unit'='题'/null → no composite filter (whole pool).
+  // free-text 求卷扩两个维度过滤:
+  // difficultyMin: only count questions whose difficulty >= n (null → no filter).
+  // unit='篇' : only count COMPOSITE parent questions (a parent that itself is not a
+  // part AND has ≥1 child part). 'unit'='题'/null → no composite filter (whole pool).
   // Both default to null on every existing caller (5b 调用方字节级不变).
   difficultyMin: number | null,
   unit: '题' | '篇' | null,
 ): Promise<ExistingPoolHit[]> {
-  // F2 (PR #318 round-1): tier is a DERIVED (metadata-driven) value, not a column, so
+  // tier is a DERIVED (metadata-driven) value, not a column, so
   // it cannot be expressed in SQL ORDER BY. The previous code截断 to limit×4 in SQL
   // BEFORE the in-memory tier sort, which could drop a newer high-tier row in favour of
   // older low-tier ones (the truncation키ed off created_at, not tier). We instead fetch
@@ -112,8 +93,7 @@ async function queryExistingPool(
   // and exclude drafts — a node's active question pool is bounded (tens, not millions);
   // there is no unbounded-table scan here. created_at asc gives a stable base order so
   // the comparator below is a stable secondary sort within equal (tier, demotion).
-  //
-  // YUK-398 inc-2 — the raw scalar pool query is now the unified poolFetch operator
+  // inc-2 — the raw scalar pool query is now the unified poolFetch operator
   // (pool-fetch.ts). The WHERE clause is byte-identical (poolFetch covers all four
   // predicates: KC containment / draft exclusion via activeOnly default true /
   // difficultyMin floor / unit='篇' composite parent) and the non-vector ORDER is the
@@ -150,7 +130,7 @@ async function queryExistingPool(
     .map(({ question_id, source, tier }) => ({ question_id, source, tier }));
 }
 
-// YUK-226 S2-5b (验证轮 B) — resolve the knowledge node ONCE: whether it exists as a
+//5b (验证轮 B) — resolve the knowledge node ONCE: whether it exists as a
 // LIVE (non-archived) node, plus its domain (F5: subject for the route preference when
 // the caller omits `domain`). The orchestrator must NOT enqueue background production
 // for a missing/archived node — that produces a need[] marker that can never resolve
@@ -172,7 +152,7 @@ async function resolveLiveKnowledgeNode(
 
 // ── Profile route preference (S2-4 adds the field) ────────────────────────────
 
-// F1 (PR #320 round-4): the profile's `sourcingRoutePreference` is keyed in PROFILE
+// the profile's `sourcingRoutePreference` is keyed in PROFILE
 // tokens (SubjectProfileSchema:89 — `sourced | material | closed_book | variant`), but
 // the orchestrator drives SEQUENCE STEPS (`external_sourcing | material_grounded |
 // closed_book`). The old code filtered profile values against the sequence-step name
@@ -180,16 +160,15 @@ async function resolveLiveKnowledgeNode(
 // `material`, `variant`) was silently dropped — yuwen reading collapsed to just
 // `closed_book` and math/physics skipped external sourcing entirely. We translate via
 // a single explicit token→step map instead.
-//
-// Mapping derives directly from spec §3.2 (四线 ↔ 找题次序, design doc lines 60-76):
-//   `sourced`     → external_sourcing  (tier 2「在线检索线」/ SourcingTask)
-//   `material`    → material_grounded  (tier 3「素材生成线」)
-//   `closed_book` → closed_book        (tier 4「闭卷兜底」)
-//   `variant`     → closed_book        (tier 4: spec §3.2 lines 65/75 bind「闭卷/variant
-//                   线」into the SAME tier-4 fallback; the sequence enum has no separate
-//                   variant_gen step, so the profile's `variant` token routes through the
-//                   tier-4 closed_book line. Adjacent duplicates are deduped below so a
-//                   route like `['closed_book','variant']` enqueues closed_book once.)
+// Mapping derives directly from (四线 ↔ 找题次序, design doc lines 60-76):
+// `sourced` → external_sourcing (tier 2「在线检索线」/ SourcingTask)
+// `material` → material_grounded (tier 3「素材生成线」)
+// `closed_book` → closed_book (tier 4「闭卷兜底」)
+// `variant` → closed_book (tier 4: lines 65/75 bind「闭卷/variant
+// 线」into the SAME tier-4 fallback; the sequence enum has no separate
+// variant_gen step, so the profile's `variant` token routes through the
+// tier-4 closed_book line. Adjacent duplicates are deduped below so a
+// route like `['closed_book','variant']` enqueues closed_book once.)
 const PROFILE_TOKEN_TO_STEP: Record<string, SourcingSequenceStep> = {
   sourced: 'external_sourcing',
   material: 'material_grounded',
@@ -197,9 +176,9 @@ const PROFILE_TOKEN_TO_STEP: Record<string, SourcingSequenceStep> = {
   variant: 'closed_book',
 };
 
-// Read the subject profile's per-题型 找题次序偏好 (§3.2 / plan row 4.x
-// `sourcingRoutePreference`). When the field is absent (or holds no usable preference for
-// this 题型) this resolves to the default次序 — the容错 form the task spec calls for
+// Read the subject profile's per-kind sourcing order preference.
+// When the field is absent (or holds no usable preference for this kind) this resolves to
+// the default order — the tolerant form the task spec calls for
 // ("若 profile 有偏好则用、无则默认次序"). Profile tokens are translated to sequence steps
 // via PROFILE_TOKEN_TO_STEP; an unknown token is skipped with a (non-silent) warning so a
 // future profile typo surfaces instead of quietly shrinking the route.
@@ -242,11 +221,11 @@ export function resolveRoutePreference(
 // ── Async enqueue seam (DB-test injectable) ──────────────────────────────────
 
 // The orchestrator enqueues background production jobs but never waits for them to
-// ingest (B2). The default impl sends to the existing pg-boss queues (slice 2/3):
-//   external_sourcing → 'sourcing'  (SourcingTask, tier 2)
-//   material_grounded → 'quiz_gen'  (QuizGenTask PINNED to material_grounded, tier 3)
-//   closed_book       → 'quiz_gen'  (QuizGenTask PINNED to closed_book, tier 4)
-// F1 (PR #318 round-1): material_grounded vs closed_book both ride the quiz_gen queue,
+// ingest (B2). The default impl sends to the existing pg-boss queues :
+// external_sourcing → 'sourcing' (SourcingTask, tier 2)
+// material_grounded → 'quiz_gen' (QuizGenTask PINNED to material_grounded, tier 3)
+// closed_book → 'quiz_gen' (QuizGenTask PINNED to closed_book, tier 4)
+// material_grounded vs closed_book both ride the quiz_gen queue,
 // but the quiz_gen payload now carries an EXPLICIT generation_method so the worker
 // knows WHICH of the two tiers the次序 asked for. Without it the agent free-chose the
 // method (Tavily availability + prompt) and the次序's step 3 vs step 4 distinction was
@@ -257,20 +236,20 @@ export type EnqueueSequenceJobFn = (
     trigger: SourcingTrigger;
     ref_id: string;
     count?: number;
-    // F1 — pinned generation_method for quiz_gen steps (material_grounded /
+    // pinned generation_method for quiz_gen steps (material_grounded /
     // closed_book). Absent for external_sourcing (the sourcing queue has no method axis).
     generation_method?: 'material_grounded' | 'closed_book';
-    // F3 — the knowledge node this need keys to. Forwarded so a manual trigger with a
+    // the knowledge node this need keys to. Forwarded so a manual trigger with a
     // free-form ref_id still attributes produced questions to the right node.
     knowledge_id?: string;
-    // F4 (PR #318 round-4) — the 题型 hint this次序 selected. The route was chosen with
+    // the 题型 hint this次序 selected. The route was chosen with
     // `kind` (resolveRoutePreference) but `kind` was then dropped; forward it so each
     // produced job (sourcing / quiz_gen) can target the题型. Additive — absent → no hint.
     kind?: string;
   },
 ) => Promise<void>;
 
-// F1 — map a quiz_gen step to the generation_method it must pin. external_sourcing has
+// map a quiz_gen step to the generation_method it must pin. external_sourcing has
 // no method axis (it rides the sourcing queue), so it maps to undefined.
 function methodForStep(
   step: SourcingSequenceStep,
@@ -306,11 +285,11 @@ async function defaultEnqueueSequenceJob(
     trigger: data.trigger,
     ref_id: data.ref_id,
     ...(data.count !== undefined ? { count: data.count } : {}),
-    // F1 — only quiz_gen steps carry a pinned method; the sourcing queue ignores it.
+    // only quiz_gen steps carry a pinned method; the sourcing queue ignores it.
     ...(data.generation_method !== undefined ? { generation_method: data.generation_method } : {}),
-    // F3 — forward the knowledge node for attribution (quiz_gen reads it for manual triggers).
+    // forward the knowledge node for attribution (quiz_gen reads it for manual triggers).
     ...(data.knowledge_id !== undefined ? { knowledge_id: data.knowledge_id } : {}),
-    // F4 — forward the 题型 hint so the produced job can target it (sourcing→kinds,
+    // forward the 题型 hint so the produced job can target it (sourcing→kinds,
     // quiz_gen→kind). Both queue handlers read it additively.
     ...(data.kind !== undefined ? { kind: data.kind } : {}),
   });
@@ -325,7 +304,7 @@ const WEB_SEARCH_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
   'material_grounded',
 ]);
 
-// Reuse the worker's availability判定 verbatim: buildExaMcpServer() returns a config
+// Reuse the worker's availability判定 verbatim: buildExaMcpServer returns a config
 // iff EXA_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
 // sourcing handlers gate on — no second copy of the env logic here.
 function defaultWebSearchAvailable(): boolean {
@@ -349,7 +328,7 @@ function degradeRouteWithoutWebSearch(
 
 // ── needs[] markers ───────────────────────────────────────────────────────────
 
-// Reuse the ReviewPlanNeedSchema `question_generation` 先例 shape (plan §6.1(b):
+// Reuse the ReviewPlanNeedSchema `question_generation` 先例 shape ((b):
 // 枚举不动、payload 加性). We add a `source` discriminator to distinguish which
 // of the four lines was triggered, mirroring the S1 `unsupported_judge` additive-
 // optional-flag手法. This is NOT the same object instance as ReviewPlanNeedSchema
@@ -377,12 +356,12 @@ export interface SourcingSequenceParams {
   refId?: string;
   // How many existing-pool hits count as "sufficient" (step 1 short-circuit).
   count?: number;
-  // 题型 hint for the profile route preference (§3.2 per-题型偏好). Optional.
+  // 题型 hint for the profile route preference (per-kind preference). Optional.
   kind?: string | null;
-  // YUK-275 — free-text 求卷扩两个池查询维度. Both filter step-1 (existing pool) only;
+  // free-text 求卷扩两个池查询维度. Both filter step-1 (existing pool) only;
   // they do NOT influence the background production route. Default null = 字节级不变.
-  //   difficultyMin: only count questions whose difficulty >= n.
-  //   unit='篇': only count composite parent questions (篇 = a multi-part 阅读 paper).
+  // difficultyMin: only count questions whose difficulty >= n.
+  // unit='篇': only count composite parent questions (篇 = a multi-part 阅读 paper).
   difficultyMin?: number | null;
   unit?: '题' | '篇' | null;
   // Subject domain → resolves the profile (route preference + future whitelist).
@@ -391,7 +370,7 @@ export interface SourcingSequenceParams {
   // DB-test seam.
   enqueueSequenceJob?: EnqueueSequenceJobFn;
   // 验证轮 C — test seam for the web 检索后端 availability判定. Defaults to the SAME
-  // buildExaMcpServer()-backed predicate the workers use (single judgment, no copy).
+  // buildExaMcpServer-backed predicate the workers use (single judgment, no copy).
   webSearchAvailable?: () => boolean;
 }
 
@@ -404,7 +383,7 @@ export interface SourcingSequenceResult {
   enqueued: SourcingSequenceStep[];
   // Consumer-side need markers for the in-flight background production.
   needs: SourcingNeed[];
-  // YUK-226 S2-5b (验证轮 B) — true when the knowledge node does not exist or is
+  //5b (验证轮 B) — true when the knowledge node does not exist or is
   // archived. The orchestrator enqueued NOTHING and returns empty existing/needs; the
   // HTTP caller maps this to a 4xx (the route does), other consumers treat it as「no
   // questions, nothing in flight」. Absent/false on the normal path.
@@ -412,7 +391,7 @@ export interface SourcingSequenceResult {
 }
 
 /**
- * Run the unified §3.2 找题次序 for one knowledge node.
+ * Run the unified 找题次序 for one knowledge node.
  *
  * Step 1 (existing pool) is synchronous: if it yields ≥ `count` active questions the
  * orchestrator returns immediately and enqueues NOTHING (题库是用出来的 —
@@ -428,7 +407,7 @@ export async function runSourcingSequence(
   const trigger = params.trigger ?? 'knowledge';
   const refId = params.refId ?? knowledgeId;
   const kind = params.kind ?? null;
-  // YUK-275 — the two free-text 求卷 pool-filter dimensions; default null (字节级不变).
+  // the two free-text 求卷 pool-filter dimensions; default null (字节级不变).
   const difficultyMin = params.difficultyMin ?? null;
   const unit = params.unit ?? null;
   const enqueue = params.enqueueSequenceJob ?? defaultEnqueueSequenceJob;
@@ -451,14 +430,14 @@ export async function runSourcingSequence(
   }
 
   // Step 1 — synchronous existing-pool query (high tier first), kind-filtered (A2),
-  // plus the YUK-275 difficulty-floor + 篇=composite-parent filters (default null = no-op).
+  // plus the difficulty-floor + 篇=composite-parent filters (default null = no-op).
   const existing = await queryExistingPool(db, knowledgeId, count, kind, difficultyMin, unit);
   if (existing.length >= count) {
     return { existing, satisfiedFromPool: true, enqueued: [], needs: [] };
   }
 
   // Steps 2-4 — enqueue background production in the profile's preference order.
-  // F5 (PR #318 round-1): when the caller omits `domain`, resolve the subject from the
+  // when the caller omits `domain`, resolve the subject from the
   // knowledge node's own domain instead of silently falling back to the default
   // subject. A 'knowledge' trigger keys off a real node, so its domain is the
   // authoritative subject for the route preference (a math node must not route through
@@ -469,7 +448,7 @@ export async function runSourcingSequence(
 
   // 验证轮 C — 检索后端 awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
   // both lean on web fetch (SourcingTask searches the web; material_grounded must拉真原文).
-  // When Exa is unconfigured the worker-side buildExaMcpServer() returns null and
+  // When Exa is unconfigured the worker-side buildExaMcpServer returns null and
   // those steps degrade to closed_book ANYWAY — but enqueuing them first wastes a job and
   // produces a misleading need[]. Reuse the SAME availability判定 the worker uses (no
   // second copy) to skip them up front and degrade to a single closed_book line, recording
@@ -486,13 +465,13 @@ export async function runSourcingSequence(
       trigger,
       ref_id: refId,
       count,
-      // F1 — pin the generation_method for quiz_gen steps so the worker executes the
+      // pin the generation_method for quiz_gen steps so the worker executes the
       // requested tier (material_grounded vs closed_book) rather than free-choosing.
       ...(methodForStep(step) !== undefined ? { generation_method: methodForStep(step) } : {}),
-      // F3 — forward the knowledge node so produced questions attribute to it even when
+      // forward the knowledge node so produced questions attribute to it even when
       // the trigger is manual with a free-form ref_id.
       knowledge_id: knowledgeId,
-      // F4 — forward the 题型 hint that selected this route so the produced job can target
+      // forward the 题型 hint that selected this route so the produced job can target
       // it. The route was chosen with this same kind; threading it through closes the gap
       // where kind drove选路 then vanished. Absent → no hint (agent free-targets).
       ...(kind ? { kind } : {}),
