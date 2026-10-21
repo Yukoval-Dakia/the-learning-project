@@ -739,6 +739,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff05cf94-d838-47b6-8b70-759ffe6c069d",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "editArtifactBodyBlocks",
+      "targetModule": "src/capabilities/notes/server/body-blocks-edit.ts",
+      "targetSymbol": "editArtifactBodyBlocks",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-save-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Notes owns the complete body edit transaction, row lock, version check, history event, projection and backlink sync; the authorized Start operation directly consumes that same owner.",
+      "rationale": "Reuse the retained HTTP save owner without duplicating write decisions or exposing actorRef, eventId or now to the client.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff576bd3-b10a-4e3f-9617-6be80abe4df0",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "EditArtifactBodyBlocksBodySchema",
+      "targetModule": "src/capabilities/notes/api/contracts.ts",
+      "targetSymbol": "EditArtifactBodyBlocksBodySchema",
+      "owner": "notes",
+      "consumers": [
+        {
+          "file": "server/start/note-save-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start save operation imports the exact input schema used by the retained HTTP PATCH.",
+      "rationale": "Preserve canonical block validation and artifact version input after token/epoch authorization; no alternate write contract.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ff576bd3-b10a-4e3f-9617-6be80abe4df0",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
