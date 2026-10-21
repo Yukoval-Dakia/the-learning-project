@@ -22,7 +22,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { deriveSourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
@@ -315,7 +315,7 @@ function projectSlot(slot: SlotLike): z.infer<typeof SlotProjectionSchema> {
 
 // ---------- — 角色 / cursor / focus ----------
 
-type ReadRole = 'owner' | 'private' | 'restricted';
+export type ReadRole = 'owner' | 'private' | 'restricted';
 
 /**
  * 允许读私有层（answers 键值 / rubric / scoring / execution / private 材料 /
@@ -335,7 +335,7 @@ const PRIVATE_LAYER_READERS = new Set([
   'author_question',
 ]);
 
-function roleForActor(actor: ToolContext['callerActor'] | undefined): ReadRole {
+export function bankReadRoleForActor(actor: ToolContext['callerActor'] | undefined): ReadRole {
   if (actor == null) return 'restricted';
   if (actor.kind === 'user') return 'owner';
   if (actor.ref.startsWith('system:')) return 'private';
@@ -510,7 +510,7 @@ export interface RunReadBankOptions {
 }
 
 export async function runReadBank(
-  db: Db,
+  db: Db | Tx,
   rawInput: ReadBankInputParam,
   runOpts?: RunReadBankOptions,
 ): Promise<ReadBankOutput> {
@@ -996,7 +996,7 @@ export async function runReadBank(
 
 async function executeReadBank(ctx: ToolContext, rawInput: ReadBankInput): Promise<ReadBankOutput> {
   return runReadBank(ctx.db, rawInput, {
-    role: roleForActor(ctx.callerActor),
+    role: bankReadRoleForActor(ctx.callerActor),
     callerRef: ctx.callerActor?.ref ?? null,
   });
 }

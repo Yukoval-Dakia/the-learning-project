@@ -2102,6 +2102,34 @@ export const tool_call_log = pgTable('tool_call_log', {
   mirrored_event_id: text('mirrored_event_id'),
 });
 
+// YUK-1448: short-lived, actor/role-bound semantic search pagination only.
+// No gap, quiz or issuance authority. Learner archive restore wipes this cache.
+export const bank_search_snapshot = pgTable(
+  'bank_search_snapshot',
+  {
+    search_id: uuid('search_id').primaryKey(),
+    actor_key: text('actor_key').notNull(),
+    read_role: text('read_role').notNull(),
+    request_digest: text('request_digest').notNull(),
+    result_digest: text('result_digest').notNull(),
+    payload: jsonb('payload').$type<JsonObject>().notNull(),
+    as_of: timestamp('as_of', { withTimezone: true }).notNull(),
+    expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('bank_search_snapshot_expiry_idx').on(t.expires_at),
+    check('bank_search_snapshot_role_ck', sql`${t.read_role} IN ('owner','private','restricted')`),
+    check(
+      'bank_search_snapshot_digest_ck',
+      sql`${t.request_digest} ~ '^[a-f0-9]{64}$' AND ${t.result_digest} ~ '^[a-f0-9]{64}$'`,
+    ),
+    check(
+      'bank_search_snapshot_ttl_ck',
+      sql`${t.expires_at} > ${t.as_of} AND ${t.expires_at} <= ${t.as_of} + interval '15 minutes'`,
+    ),
+  ],
+);
+
 export const tool_operation = pgTable(
   'tool_operation',
   {

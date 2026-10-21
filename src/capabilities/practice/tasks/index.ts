@@ -2,6 +2,10 @@ import { defineOwnedTaskSpecs } from '@/ai/owned-task-specs';
 import { assessmentRubricTaskSpec } from './assessment-rubric';
 import { assessmentRuleTaskSpec } from './assessment-rule';
 import { attributionRerankTaskSpec, attributionTaskSpec } from './attribution';
+import {
+  bankConditionVerifyTaskSpec,
+  bankRequirementInterpretTaskSpec,
+} from './bank-search-semantic';
 import { causeCategoryProposeTaskSpec } from './cause-category-propose';
 import { itemPriorLlasaTaskSpec, itemPriorTaskSpec } from './item-prior';
 import { jevScoringDecisionTaskSpec } from './jev-typed';
@@ -27,6 +31,8 @@ import { variantGenTaskSpec } from './variant-gen';
 import { variantVerifyTaskSpec } from './variant-verify';
 
 export const practiceTaskSpecs = defineOwnedTaskSpecs('practice', {
+  BankRequirementInterpretTask: bankRequirementInterpretTaskSpec,
+  BankConditionVerifyTask: bankConditionVerifyTaskSpec,
   AttributionTask: attributionTaskSpec,
   AttributionRerankTask: attributionRerankTaskSpec,
   CauseCategoryProposeTask: causeCategoryProposeTaskSpec,

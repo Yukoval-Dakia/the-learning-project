@@ -401,6 +401,8 @@ export type TableName = (typeof FK_ORDER)[number];
 // only transient / derived / operational state belongs here, never authored or
 // slow-accumulated cognitive data.
 export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
+  // YUK-1448: 15-minute actor/role-bound pagination evidence; no durable gap/issuance authority.
+  'bank_search_snapshot',
   // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs
   // run (ADR-0005/0008). Not authored data — restoring stale replay rows is wrong.
   'job_events',
@@ -488,6 +490,8 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
 // Cascading children of backed-up parents need no separate entry here.
 // Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
+  // A learner archive restore must invalidate even unexpired pre-restore cursors.
+  'bank_search_snapshot',
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
   'provider_attempt_admission',
   'provider_session_admission',

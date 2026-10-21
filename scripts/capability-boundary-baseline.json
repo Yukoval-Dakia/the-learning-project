@@ -1072,6 +1072,16 @@
       "issue": "YUK-1568",
       "owns": "Stable canonical JSON SHA-256 for the compose save operation fingerprint; binds tool, actor, draft block/version and presentation to the existing request receipt.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/bank-search-scope.ts",
+      "module": "src/kernel/read-models/knowledge-tree.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectKnowledgeIds"],
+      "issue": "YUK-1448",
+      "owns": "The existing subject→live KC scope resolver stays kernel-owned. The complete hard-scope resolution/SQL responsibility moved from bank-search.ts to bank-search-scope.ts; its former import is removed, so this is a path relocation with zero new kernel dependency count.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -1218,6 +1228,15 @@
       "to": 1393,
       "issue": "YUK-1568",
       "responsibilityReason": "R1-F2 组生命周期 owner 模块新增 promoteVerifiedGroupPartRows：按已核验 revision 冻结 structure.parts[].part_id 晋升真实声明子行（root→child 锁序、non-tombstone、继承证据入 metadata、同事务）——与本模块既有 archive/restore/publish 的组行级生命周期操作同一职责。"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-22",
+      "baseBlob": "38cd149a7bc039f8d5e7d8b35680b30981c08b9e",
+      "from": 4974,
+      "to": 5002,
+      "issue": "YUK-1448",
+      "responsibilityReason": "Add the owner-approved standalone short-lived bank_search_snapshot table before tool_operation; no existing table, field, lock or consumer changes. Search/read/task/snapshot logic stays in complete practice-owned modules; schema declaration remains in the existing single DB schema owner."
     }
   ],
   "compatShims": [
