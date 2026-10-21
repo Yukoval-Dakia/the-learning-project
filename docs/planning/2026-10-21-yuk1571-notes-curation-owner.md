@@ -60,17 +60,23 @@ namespace/export-star。两个非字面量加载分别是历史视觉原型 THRE
 首轮静态证明脚本 rc1 是审计语句比较误含已授权路径注释；改为跳过 trivia 的 token
 比较后通过，原失败 stdout/stderr/argv/UTC/rc 保留，不属于产品门失败。
 
-本树缺 `node_modules`；已报告父方 frozen install 需求，未获安装授权。package 实际命令
-已核：`typecheck`、`lint`、`build`、`audit:capability-boundaries --base 9173b0291cbff0beebcfd0bc4f177ea7004c763f`、
-`audit:architecture-deepening --base 9173b0291cbff0beebcfd0bc4f177ea7004c763f`、
-`audit:relations`、`audit:hub-sync-writers` 七门全部 **NOT_RUN**，rc=null。
-后续须本 lane 串行经 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh`
-且 `HEAVY_SLOTS=2`；各门实际 argv/未运行原因已分档。
+父方在 writer 停止后完成唯一一次 `pnpm install --frozen-lockfile`，rc0；package/lock/workspace
+三项哈希前后相同。安装回执在原交付 `8ef3213515c88de3276e6b74ca8099eb6330ffa8/parent-frozen-install/`。
+父另删 `knowledge/server/AGENTS.md` 中已退役文件的一行目录说明，未改任何规则。
 
-测试编写/修改/运行、DB/TEST/Docker/daemon/provider/runtime/demo/paid、独立 review、
-push/PR/watch/CI/Linear 全部 NOT_RUN；父方统一首次 R1/CI 与 tracker。baseline 未改。
-无新增行为缺陷；唯一目录说明后续由父处理：`src/capabilities/knowledge/server/AGENTS.md:11`
-仍列已退出 `hub-mesh.ts`，本 writer 未越权修改。PLAN/.remember 不在本片写权，父统一对齐。
+父受检 head `79751769b8a735f8910bb0cbfbd7bbbf6ef587a1` 的七门均真实 rc0：
+typecheck、lint（181 warnings）、build、capability-boundaries、architecture-deepening、relations、hub-sync-writers。
+两项架构 audit 的 base 均为 `9173b0291cbff0beebcfd0bc4f177ea7004c763f`；全部经
+heavy.sh / HEAVY_SLOTS=2 本 lane 串行，raw stdout/stderr、argv、UTC、真实 rc 封存于
+`architecture-deepening/YUK-1571/79751769b8a735f8910bb0cbfbd7bbbf6ef587a1/parent-seven-gates/`。
+
+实测 server389/deep0/cross36、SCC1×3、超长12均与base持平；new dependency edges=0，
+pass-through sites1087（+0 new）。baseline全文与base相同，未tighten、未改任何历史登记。
+这不是新算法深度或消环；public64→60及旧口退出才是本片验收差量。
+本文验证结果更新是门后唯一差异，产品/脚本/配置字节与受检head相同。
+
+测试编写/修改/运行、DB/TEST/Docker/daemon/provider/runtime/demo/paid均NOT_RUN。
+独立R1与exact-head CI由父后续单独记录；本地门不冒充CI或运行验收。
 
 永久证据位于
 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/`
