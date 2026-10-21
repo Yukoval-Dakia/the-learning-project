@@ -960,6 +960,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c035b586-df8a-48c5-9a21-dce8d2b58fc9",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "loadActiveProbes",
+      "targetModule": "src/capabilities/shell/server/prep-desk-probes.ts",
+      "targetSymbol": "loadActiveProbes",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 146
+        }
+      ],
+      "evidence": "The authenticated Start workbench reader dynamically imports the existing complete active-probes loader. The retained HTTP adapter directly consumes the same owner.",
+      "rationale": "Shell owns served-but-unanswered probe selection, correction filtering and issuance provenance validation after the capped query. Both live UI queries share the same transport without copying SQL, changing ordering or touching answer and grading writes.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-73cd2d4f-a00c-472c-9c9b-d9a3258f3cbb",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
