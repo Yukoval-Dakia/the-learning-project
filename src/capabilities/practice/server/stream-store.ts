@@ -26,11 +26,11 @@ import {
   recordSelectionObservation,
 } from './selection-observations';
 import { sampleByWeight } from './selection-sampler';
+import { statisticalWeights } from './selection-weights';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
-  statisticalWeights,
 } from './softmax-selection';
 import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
 import { estimateStreamItemMinutes } from './stream-budget';
