@@ -58,6 +58,23 @@ interface ThetaApply {
   abilityGlobalByKnowledgeId: AbilityGlobalByKnowledgeId;
 }
 
+/**
+ * YUK-439 (ADR-0043 Amendment A4) — 联合标定证据的封存输入。theta abstain（partial /
+ * mixed bits）不排除证据：连续分数照样进标定账本（A4 部分得分条款）。null = 本次
+ * 结算不产生标定证据（manual/self_report/assisted 被 D15/D16 排除，或分数未知
+ * unsupported/partial_unknown，或锚不可解析）。sealed 在 plan 上（replay 稳定）。
+ */
+export interface CalibrationEvidencePlan {
+  /** 被标定题（锚推导的 anchor question id，同 theta.anchorQuestionId 的推导）。 */
+  questionId: string;
+  /** 锚题 1-5 难度（provenance 备档）。 */
+  difficulty: number;
+  /** 锚题 primary KC（thetaBefore 读取键；无 KC 的题 null → θ̂ 快照按冷启 0）。 */
+  primaryKnowledgeId: string | null;
+  /** issuance 容器 ref（来源解析：paper/placement/probe/ingestion/worksheet）。 */
+  containerRef: string | null;
+}
+
 export interface SettlementPlan {
   kind: 'plan';
   groupId: string;
@@ -85,6 +102,8 @@ export interface SettlementPlan {
   /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
   difficultyLabelStreamItemId: string | null;
+  /** YUK-439 — 联合标定证据输入（null = 本次不产生证据，见 CalibrationEvidencePlan）。 */
+  calibration: CalibrationEvidencePlan | null;
   forgettingInput?: SealedCandidateInput;
   forgettingEngine?: 'fsrs' | 'forgetting_candidate';
   forgettingSuppressed?: boolean;
