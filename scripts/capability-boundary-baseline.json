@@ -910,6 +910,24 @@
       "to": 1610,
       "issue": "YUK-439",
       "responsibilityReason": "Settlement writes the sealed calibration evidence row from the verdict already used for grading (theta abstain does not exclude evidence), captures the PRE-attempt theta snapshot, and deletes evidence on revert with a same-transaction posterior-to-prior repair when the last row is removed. Grading and FSRS bodies are unchanged."
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-21",
+      "baseBlob": "7a55e6c9c79bc5d0e3a63bfc5f12c3c66e5a402d",
+      "from": 1298,
+      "to": 1321,
+      "issue": "YUK-1568",
+      "responsibilityReason": "saveDraftEdit 主体原地提升为可信事务内核 saveDraftEditInTx，新增签名不变的 Db wrapper（TxAbort 只在事务外转换）与回执 task_run_id envelope——同一 save 语义的共享化接线，不新增职责；判定与子行投影在 submit-decision.ts/typed-group.ts。"
+    },
+    {
+      "path": "src/server/questions/shared-submit.ts",
+      "date": "2026-10-21",
+      "baseBlob": null,
+      "from": null,
+      "to": 1078,
+      "issue": "YUK-1568",
+      "responsibilityReason": "共享 save/submit 事务内核的单一完整职责：request 认领/回执重放、CAS、契约屏障、来源 URL claim 与 exact/near 去重、根行+typed 父子投影、唯一 publish seam、草稿终态、verify outbox、原子链入口与 abort 哨兵。事务体为连续原子叙事，判定层与 typed 投影已拆至 submit-decision.ts/typed-group.ts。"
     }
   ],
   "compatShims": [

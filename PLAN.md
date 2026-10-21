@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **题库供给 / 共享 save-submit 事务内核（YUK-1568 S3 子片）**：隔离树 `t3-12b32ff3` / `feat/yuk-1568-shared-submit-intx-20261021`（base 214ecb0ef），子任务 `delegate-task:stage1-yuk1568-shared-submit-intx-swe2-max-214-20261021`，协调登记 YUK-1568#4528709。交付：`saveDraftEditInTx` 内核 + `shared-submit.ts`（submit InTx 内核、producer 可信投影、`persistDeclaredQuestionGroup` 声明组原子链）+ `submit-decision.ts`/`typed-group.ts`；4 个交集文件父串行接。typecheck/lint/build/schema/capability-boundaries/draft-status 经 heavy.sh 全 exit0；本机测试与真实 DB 重放 NOT_RUN。[实施记录](docs/planning/2026-10-21-yuk1568-shared-submit-intx.md)。
+
 - **第一天能用 / 录入助手启动额度（YUK-1522）**：PR1891 从6c82接手，永久reservation独立于grant，OCR/model pending、历史归属未证与跨周unknown持续保留，所有kind同key锁内先查原agent绑定。52548修复，70d8普通整合main518c；生成/typecheck/lint/build/8审计全exit0（179warnings），基线/限流保留main，无测试差量。真实DB/并发/TTL/跨周/provider均NOT_RUN，无第三审，待父定向。[证据与保守边界](docs/planning/2026-10-20-ingestion-budget-history.md)。
 
 - **帮助靠谱 / 夜间摘要统计（YUK-1621、YUK-1632）**：`el/yuk-1621` 的 PR #1858 普通整合 main `210dfb2c1`。仅 PLAN/now 冲突，采用 main 最新记录并保留本 PR 交接；服务端分桶、有效判分统计与模型统计守卫源码未变。本轮 typecheck/lint/build 通过，178 个既有 warnings；新 head CI 单独等待，不复用旧 head 结果。
