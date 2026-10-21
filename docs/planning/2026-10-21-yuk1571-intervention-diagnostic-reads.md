@@ -214,3 +214,9 @@ merge冲突、原红/恢复后的tighten与AST事实在c46目录的
 原writer provider启动失败，父核terminal/null active、无遗留进程及clean后接管。普通合入main `ea000ff69ccc202b488923c74b4521a7bd5b391f`；受检源码 `6f951eda15523287099f47bbcc65703be54e5923`，heavy.sh全机2槽五门真实rc0。原R1不重开；全部产品非import正文与R1相同，main全部非owned mode/type/blob保留。baseline历史34条raw entry前缀保持，仅原生tighten登记本片真实变化。当前候选server=393、cross=36，不计已合main。测试、DB、provider/runtime、install均未执行。
 
 证据 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/6f951eda15523287099f47bbcc65703be54e5923/parent-main-ea-gates`（results.json、parent-proof.json、五门raw）。本提交仅追加文档，受检源码/baseline不变，旧seal不覆盖。父接续PR/exactCI及合后实际main审计。
+
+## #1923 合后组合复验（父执行）
+
+普通merge实际main `193a2cfa4568137b079a67f23eebdbdf5477b629`，唯一baseline冲突以main36条changes原始前缀为底，追加原3kernel边并原生tighten。本片五源码/catalog同唯一R1，main其余完整tree保留。新受检源码 `3e21a2fd9192037f8dd71368875430e9c7517f2a` 五门全部heavy.sh真实rc0；候选server389保持ERROR成果，cross37→36，SCC三成员/超长12保持，baseline1058行。原3edges日期仍2026-10-20，新的原生decrease日期按本次UTC2026-10-21。
+
+证据 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1571/3e21a2fd9192037f8dd71368875430e9c7517f2a/parent-main193-five-gates`（raw/argv/UTC/true rc、parent-integration-proof.json）。本次仅文档追加，不新增源码语义/审查/测试/安装。PR旧f732 CI不能覆盖此组合；新push后等exact CI与新等待窗，合后数字仍待actualmain实测。
