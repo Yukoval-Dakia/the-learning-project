@@ -1,6 +1,5 @@
-// YUK-567 slice-2 (教研团 Phase 0 / 备课台) — GET /api/prep-desk/probes 薄壳。
-// 读模型在 ../server/prep-desk-probes（≤3 served-but-unanswered mind_probe，
-// anti-guilt 无校准数字）。镜像 prep-desk-conjectures 的薄壳形状。
+// GET /api/prep-desk/probes route shell; the read model lives in
+// ../server/prep-desk-probes.
 
 import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
 import { db } from '@/db/client';

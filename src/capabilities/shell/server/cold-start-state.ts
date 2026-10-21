@@ -1,6 +1,6 @@
 /**
- * 冷启动不是「没有 active goal」的同义词，而是所有可继续学习的证据都不存在。
- * 这个纯函数是服务端 wire 的唯一判定点，避免 UI 再拼一套易漂移的条件。
+ * Cold start means no usable learning evidence exists, not merely no active goal.
+ * This is the single server-side decision point, so the UI does not build a drifting copy.
  */
 export interface ColdStartEvidence {
   active_goal: boolean;

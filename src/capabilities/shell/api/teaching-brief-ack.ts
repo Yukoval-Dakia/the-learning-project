@@ -1,11 +1,5 @@
-// YUK-708 (P0F/4) — thin route shell for the append-only teaching-brief outcome ack.
-//
-// POST /api/prep-desk/brief/ack — the "知道了" that retires a delivered outcome. The
-// heavy lifting (target validation, idempotency, single append) lives in the writer
-// (server/teaching-brief-ack.ts). REST status (mirrors proposal-decisions.ts): a fresh
-// ack → 201 Created; an idempotent re-ack → 200 OK. Honest failures: an unparseable/missing
-// body → 400; a non-result target → 404; not the current primary outcome → 409; a corrupt
-// ack payload → 500. The UI keeps the current brief and offers a retry (contract §7).
+// POST /api/prep-desk/brief/ack route shell. A fresh ack returns 201, an idempotent
+// re-ack 200; validation/ownership/idempotency live in server/teaching-brief-ack.ts.
 
 import { acknowledgeTeachingBriefOutcome } from '@/capabilities/shell/server/teaching-brief-ack';
 import { db } from '@/db/client';

@@ -1,34 +1,14 @@
-// YUK-127 / T-88 P4-A — pure block-tree apply pipeline for NotePatchOp.
-//
-// Lives in `core/` (no IO, cross-subject) so unit tests don't drag the DB
-// chain in. The DB-touching wrapper that persists the result + writes an
-// `experimental:note_refine_apply` event is in
-// `src/server/artifacts/note-refine-apply.ts`.
-//
-// Apply semantics (ADR-0020 §1, §2):
-//   - Ops execute left-to-right against doc-root children only (no recursion
-//     into nested block content; nested mutation is a future concern).
-//   - Anchors are `attrs.id` strings — stable per ADR-0020 §2 block_id rules.
-//   - insert_after  → splice after target
-//   - replace_block → overwrite target in place (schema enforces id stability)
-//   - delete_block  → remove target (annotations on the block are lost,
-//                     accepted tradeoff per ADR-0020 §2)
-//   - append_block  → push to doc-root tail
-//   - Missing targets throw NoteRefineApplyError(code='target_not_found');
-//     invalid input doc throws code='invalid_body_blocks'. Callers decide
-//     whether to retract the AI run or surface to the user.
+// Pure block-tree apply pipeline (no IO). Ops run left-to-right against doc-root
+// children only; anchors are stable `attrs.id` strings. Persistence and the
+// note_refine_apply event live in src/server/artifacts/note-refine-apply.ts.
 
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '../schema/business';
 import type { NotePatchOpT, NotePatchT } from '../schema/note-patch';
 import { isVerifiedBlock } from './is-verified-block';
 
 export class NoteRefineApplyError extends Error {
-  // C1a (YUK-358, ADR-0040 决定1): `user_verified_protected` is the hard
-  // boundary — a replace_block/delete_block op targeting a user-verified block
-  // is rejected so an AI mutator can never silently overwrite a block the human
-  // owns. The job-gate (note-refine.ts) is the primary diversion to propose;
-  // this throw is the cross-caller safety net for callers that bypass the gate
-  // (hub_auto_sync_nightly, presence-store apply).
+  // Hard boundary: an AI mutator must never silently overwrite a human-verified
+  // block. The job gate proposes instead; this throw is the cross-caller safety net.
   readonly code: 'target_not_found' | 'invalid_body_blocks' | 'user_verified_protected';
   constructor(
     code: 'target_not_found' | 'invalid_body_blocks' | 'user_verified_protected',
@@ -41,11 +21,8 @@ export class NoteRefineApplyError extends Error {
 }
 
 export interface ApplyNotePatchOptions {
-  // C1a (YUK-358): when true (default), replace_block/delete_block ops targeting
-  // a user-verified block throw `user_verified_protected`. The accept-path
-  // (acceptNoteUpdateProposal → persistNoteRefineApply actorRef
-  // 'note_refine_accept') sets this false: a HUMAN approved that exact patch
-  // through the inbox, so the AI-mutator guard must NOT kill it.
+  // A human-approved accept path disables the guard: the human approved that exact
+  // patch, so the AI-mutator protection must not reject it.
   enforceUserVerifiedGuard?: boolean;
 }
 
@@ -65,10 +42,6 @@ function blockIdOf(node: Record<string, unknown>): string | undefined {
   const id = (attrs as Record<string, unknown>).id;
   return typeof id === 'string' ? id : undefined;
 }
-
-// YUK-358 决定7 rider-1: isVerifiedBlock now lives in ./is-verified-block so the
-// apply guard and the job-gate (note-refine-policy.ts) share ONE口径. The inline
-// copy was extracted byte-equivalent — semantics here are unchanged.
 
 export function applyNotePatch(
   bodyBlocks: unknown,

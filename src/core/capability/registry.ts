@@ -4,7 +4,6 @@ import type { JudgeCapabilityRunner } from './types';
 
 export class CapabilityRegistry {
   private judges = new Map<string, JudgeCapabilityRunner>();
-  // T-QP (YUK-165, ADR-0014 §5) — scheduler half of the registry.
   private schedulers = new Map<string, SchedulerCapabilityRunner>();
 
   registerJudge(runner: JudgeCapabilityRunner): void {

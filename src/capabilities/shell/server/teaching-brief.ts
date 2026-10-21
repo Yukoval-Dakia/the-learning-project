@@ -1,5 +1,5 @@
-// YUK-706 (P0F/2) — one read-only TeachingBrief projected from the existing
-// conjecture proposal → mind-probe question → probe-result event chain.
+// Read-only TeachingBrief projected from the conjecture proposal → mind-probe
+// question → probe-result event chain.
 
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import {
@@ -42,19 +42,15 @@ export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Bounded recent-candidate window; keeps quiet reads constant-round-trip. */
 export const TEACHING_BRIEF_CANDIDATE_WINDOW = 50;
 /**
- * Per-conjecture terminal history inspected for permanent supersession. If this
- * ceiling is exhausted without a valid terminal, the reader fails closed instead
- * of resurrecting preliminary evidence from an incomplete scan.
+ * Fail closed on an exhausted scan rather than resurrect preliminary evidence
+ * from incomplete terminal history.
  */
 const TERMINAL_SCAN_PER_CONJECTURE = 8;
 
 /**
- * Every `current_outcome.summary_md` string, in one place (contract §2.2: short, factual
- * product copy — no probabilities, no internals, no verdicts about the person).
- *
- * The `*_REWRITTEN` variants are the YUK-785 guard: after an owner edit the served probe
- * still belongs to the PRE-EDIT claim, so the copy must name what was actually tested
- * instead of asserting support/exclusion for the rewrite the reader sees above it.
+ * Outcome copy: short, factual, no probabilities or verdicts about the person.
+ * The `*_REWRITTEN` variants name the pre-edit claim, because the served probe
+ * belongs to it, not to the rewrite the reader sees.
  */
 export const TEACHING_BRIEF_OUTCOME_COPY = {
   AWAITING_DECISION: '这仍是一条待检验的判断。',
@@ -83,17 +79,10 @@ export interface TeachingBriefFindingSection {
   knowledge_id: string;
   cause_category: CauseCategoryT;
   /**
-   * YUK-785 — the claim the SERVED PROBE actually tests, present ONLY when the owner
-   * rewrote the claim on accept (`corrected_by_owner`), and then always ≠ `claim_md`.
-   *
-   * `corrected_payload` is `.strict()` to `claim_md` (proposal.ts) and the accept serves
-   * the probe from `proposed_change.probe_md` / `probe_reference_md` in the SAME
-   * transaction, so an edited accept mints — and later grades against — the ORIGINAL
-   * claim's probe. `claim_md` keeps the owner's own words (YUK-567's approved inline
-   * edit must stay visible); this key is how the brief says, on the wire, that the
-   * probe evidence belongs to the pre-edit claim and not to the rewrite. Absent (NOT
-   * null, NOT an echo of claim_md) whenever nothing was rewritten — contract §2.1's
-   * "不适用的键必须缺席" discipline.
+   * The claim the served probe actually tests, present only when the owner rewrote
+   * the claim on accept and always different from `claim_md`. `claim_md` keeps the
+   * owner's words; this key says the probe evidence belongs to the pre-edit claim.
+   * Absent (not null) when nothing was rewritten.
    */
   tested_claim_md?: string;
 }
@@ -146,26 +135,15 @@ export interface ProbeReadyTeachingBrief extends TeachingBriefBase {
   };
 }
 
-/**
- * The outcome states' executable next step (YUK-708 / contract §2.1): acknowledge the
- * delivered result. P0F/2 shipped `{kind:'none'}`; P0F/4 upgrades the discriminated
- * union + strict Zod in lockstep so the UI may render a "知道了" that appends an ack.
- * `retired` outcomes keep this as their sole action (nothing more to prepare).
- */
+/** Acknowledge the delivered result; `retired` outcomes have no further action. */
 export interface OutcomeAcknowledgeAction {
   kind: 'acknowledge_outcome';
   probe_result_event_id: string;
 }
 
 /**
- * A `confirmed` outcome's executable next step (YUK-709 / contract §2.1 + §9): practise
- * the confirmed knowledge component on demand, reusing the existing KC-scoped practice
- * (YUK-535) via `/practice?kc=<knowledge_id>`. Contract §9: this is a user click-through,
- * NOT an auto-reordered daily stream and NOT YUK-505/506 — no practice state is written
- * until the user acts. `knowledge_id` mirrors `finding.knowledge_id` (the canonical
- * proposal KC) and `probe_result_event_id` mirrors `current_outcome` so the same "知道了"
- * ack still retires the brief. Contract §2.1 required the discriminated union + strict
- * Zod to be upgraded in lockstep before the UI may render this action.
+ * Practise the confirmed KC on demand via `/practice?kc=<knowledge_id>`. Nothing is
+ * written until the user acts; the result id lets the same ack retire the brief.
  */
 export interface OutcomePracticeAction {
   kind: 'practice_scoped';
@@ -223,23 +201,17 @@ export interface TeachingBriefResponse {
 type QuestionRow = typeof question.$inferSelect;
 type EventRow = typeof event.$inferSelect;
 type BriefStage = 'outcome' | 'probe' | 'finding';
-// A pooled connection OR an open transaction. The ack writer runs the outcome selection
-// inside its advisory-locked transaction (YUK-708 round-8), so these readers accept a Tx.
+// A pooled connection or an open transaction; the ack writer selects under its lock.
 type DbLike = Db | Tx;
 
 interface ConjectureFacts extends CompletedProbeProposal {
-  /**
-   * NORMALIZED (trimmed) proposal claim. Both proposal and correction schemas now trim,
-   * while the manual normalization here remains defense in depth for legacy persisted rows.
-   * Keeping it at the facts boundary gives display, rewrite comparison, and disclosure the
-   * same canonical value.
-   */
+  /** Trimmed here as defense in depth for legacy rows; display and comparison share it. */
   claimMd: string;
   causeCategory: CauseCategoryT;
   reasonMd: string;
   evidence: TeachingBriefEvidenceRef[];
   createdAt: Date;
-  /** Internal selector ranking only — never serialized into the wire (contract §5). */
+  /** Internal ranking only; never serialized. */
   salience: number;
 }
 
@@ -262,11 +234,11 @@ export function isCandidateError<T>(result: CandidateResult<T>): result is Candi
   return 'reason' in result;
 }
 
-/** The canonical facts a probe_result outcome event must carry to be projectable. */
+/** Facts a probe_result outcome must carry to be projectable. */
 export interface CanonicalProbeResultFacts {
   resolution: ProbeResolution;
   outcome: 0 | 1;
-  /** = the conjecture proposal id (brief_id); payload conjecture_event_id === caused_by. */
+  /** The conjecture proposal id (brief_id); equals payload conjecture_event_id. */
   conjectureEventId: string;
   probeQuestionId: string;
 }
@@ -280,9 +252,8 @@ function canonicalProbeResolutionOutcomeSql() {
 }
 
 /**
- * A gradable answer that matches neither authored signature is an intentional
- * terminal non-evidence disposition. It stays outside the displayable/acknowledgeable
- * matrix above, but is not corrupt and therefore must stay out of diagnostic warnings.
+ * A terminal non-evidence disposition is intentional, not corrupt, so it must not
+ * appear in diagnostic warnings.
  */
 function terminalNonEvidenceProbeResolutionOutcomeSql() {
   return sql`(${event.payload}->>'resolution' = ${PROBE_NON_EVIDENCE_RESOLUTION}
@@ -290,13 +261,9 @@ function terminalNonEvidenceProbeResolutionOutcomeSql() {
 }
 
 /**
- * Single source of truth for "is this a canonical, displayable/acknowledgeable probe
- * outcome". Validates the result EVENT itself: correct action, a question subject, a
- * legal resolution/outcome pair (evidence_for↔0 / confirmed↔0 / retired↔1), and self-consistent
- * conjecture provenance (payload.conjecture_event_id non-empty and === caused_by).
- * The reader (loadOutcomeBrief) and the ack writer (teaching-brief-ack.ts) both gate on
- * this so a corrupt result can never be projected OR acknowledged — the two paths' notion
- * of a canonical result cannot drift (YUK-708 review round-1, codex P2).
+ * Single gate for a canonical, displayable/acknowledgeable probe outcome: action,
+ * subject, resolution/outcome pair, and provenance must all agree. Reader and ack
+ * writer share it so their notion of a canonical result cannot drift.
  */
 export function validateCanonicalProbeResult(
   row: Pick<EventRow, 'action' | 'subject_kind' | 'subject_id' | 'caused_by_event_id' | 'payload'>,
@@ -531,15 +498,10 @@ async function loadRawConjectureFacts(
 }
 
 /**
- * The `finding` section of an ACCEPTED conjecture's brief (probe_ready / outcome states).
- *
- * `claim_md` prefers the accept rate event's non-empty `corrected_claim_md` (contract §2.1
- * + YUK-567: an owner's inline rewrite must stay visible), falling back to the proposal's
- * own claim. YUK-785 adds the second half of that story: when the owner DID rewrite, the
- * probe hanging off this brief was still minted from the proposal's `probe_md` and is
- * graded against the proposal's `probe_reference_md`, so `tested_claim_md` carries the
- * pre-edit claim and the caller degrades its outcome copy to match. `knowledge_id` and
- * `cause_category` are never editable, so the probe's KC target can never drift.
+ * The finding of an accepted conjecture. `claim_md` prefers the owner's inline rewrite and
+ * falls back to the proposal claim; after a rewrite the probe still belongs to the original
+ * claim, so `tested_claim_md` carries it and the caller adjusts the copy. KC and cause are
+ * never editable, so the probe target cannot drift.
  */
 async function loadAcceptedFinding(
   db: DbLike,
@@ -618,27 +580,11 @@ export interface AckableOutcomeFacts {
 }
 
 /**
- * Single source of truth for "is this result a delivered, ackable outcome" — the COMPLETE
- * set of deliverability dimensions loadOutcomeBrief uses, so the reader and the ack writer
- * (teaching-brief-ack.ts) can never diverge (YUK-708 review rounds 2–4, codex P2):
- *   1. canonical result event — action, question subject, legal resolution/outcome pair,
- *      self-consistent provenance (validateCanonicalProbeResult);
- *   2. time window — half-open (now − OUTCOME_TTL, now]; a future-dated result is not yet
- *      deliverable and an expired one no longer is. Uses the reader's TTL constant, not a
- *      copied literal, and mirrors loadOutcomeBrief's SQL prefilter exactly;
- *   3. the mind-probe question exists;
- *   4. its conjecture proposal is accepted — loadProposalFacts → getProposalInboxRow →
- *      deriveProposalStatus, which FOLDS corrections (retract/mark_wrong/supersede flip the
- *      status off 'accepted'), so proposal-correction exclusion is covered by this shared
- *      path with no extra predicate;
- *   5. Agency validates the completed issued provenance against the original
- *      proposal/revision and native assessment anchors. Unissued historical
- *      outcomes retain validateProbeQuestion's original row-based semantics.
- * The ONE reader dimension deliberately NOT re-gated here is the `NOT EXISTS ack` filter:
- * for the writer that is the idempotency check, so an already-acked result returns
- * idempotent:true (see acknowledgeTeachingBriefOutcome), not a 409. Reason codes stay stable
- * (canonical-result reasons + result_created_in_future / result_expired / probe_not_found /
- * proposal_not_accepted / probe_*) for both the reader's skip log and the writer's 409.
+ * Complete deliverability check shared by the reader and ack writer: canonical result,
+ * TTL window, probe existence, accepted proposal (with corrections folded), and issued
+ * provenance. The ack exclusion is intentionally not re-checked here: for the writer that
+ * is idempotency, so an existing ack returns idempotent instead of 409. Reason codes are
+ * shared by the reader's skip log and the writer's 409.
  */
 export async function validateAckableOutcome(
   db: DbLike,
@@ -653,26 +599,13 @@ export async function validateAckableOutcome(
     | 'payload'
   >,
   now: Date,
-  // The write path (ack) runs this inside its advisory-locked transaction, whose single
-  // connection cannot serve the two reads concurrently — it passes serial:true. The GET
-  // read path keeps the round-3 Promise.all micro-optimization (default).
+  // serial: the ack path runs inside a single-connection transaction, so the two reads
+  // cannot be concurrent; the GET path keeps Promise.all.
   //
-  // skipTimeWindow (YUK-710): the offline survival report reuses the STRUCTURAL deliverability
-  // dimensions (canonical body + complete accepted chain) but is a HISTORICAL WINDOW aggregate,
-  // so it deliberately does NOT apply the live-reader dimensions — the 7-day OUTCOME_TTL (a
-  // report over a past fortnight must still count outcomes that are now expired) nor the
-  // ack-exclusion (loadOutcomeBrief's SQL NOT-EXISTS, which the reader owns; a later-acked
-  // outcome still happened and must be counted). Default false keeps the reader/ack path exact.
-  //
-  // skipCurrentStatusFold (YUK-710 round-5): the report also must NOT fold the proposal's CURRENT
-  // correction status. A probe can only be minted from an accepted proposal and an answer only
-  // scores an active probe, so the probe_result's existence structurally implies the proposal WAS
-  // accepted when the outcome was delivered; a later retract/mark_wrong/supersede must not erase a
-  // delivery that already happened. When true, the proposal is loaded from its RAW event
-  // (factsFromRawProposalRow — verifies it is a canonical conjecture, no status fold) instead of
-  // loadProposalFacts(...'accepted'). Every non-status structural check still runs: canonical body
-  // + self-consistent provenance + probe exists (a deleted probe is real corruption → still skip) +
-  // the completed provenance is canonical. Default false → reader/ack exact.
+  // skipTimeWindow: the historical survival report counts the structural chain but must
+  // include now-expired and later-acked outcomes, so live-reader window/ack filters are off.
+  // skipCurrentStatusFold: a later retract must not erase a delivery that already happened;
+  // the proposal is read raw, while every non-status structural check still runs.
   {
     serial = false,
     skipTimeWindow = false,
@@ -695,11 +628,8 @@ export async function validateAckableOutcome(
     return { reason: 'result_evidence_inactive' };
   }
 
-  // Time window — identical to loadOutcomeBrief's SQL prefilter (shared TTL constant, no
-  // literal duplication). Half-open, eligible iff (now − OUTCOME_TTL) < created_at <= now:
-  // a future-dated result is not yet deliverable; an expired one is no longer. Runs before
-  // the DB chain queries so an out-of-window result short-circuits cheaply. Skipped for the
-  // historical report (see skipTimeWindow above), which bounds created_at by its own window.
+  // Half-open (now − TTL, now]: a future result is not yet deliverable, an expired one no
+  // longer is. Check before the DB chain so out-of-window results short-circuit.
   if (!skipTimeWindow) {
     const createdMs = result.created_at.getTime();
     if (createdMs > now.getTime()) return { reason: 'result_created_in_future' };
@@ -768,18 +698,12 @@ export async function validateAckableOutcome(
 }
 
 /**
- * The single primary outcome the reader would currently deliver (newest un-acked, in-window,
- * fully-canonical outcome), or null. Exported so the ack writer can require its target to be
- * exactly this — making the writer's ackable set identical to the reader's delivered set,
- * including the SELECTION dimension. An older non-terminal outcome hidden behind a newer
- * result is not ackable; once a later canonical terminal recurrence exists, its preliminary
- * `evidence_for` is permanently superseded and must not resurface after terminal ack.
+ * The single primary outcome currently deliverable, or null. The ack writer requires its
+ * target to be exactly this, so ackable and delivered sets match including selection. An
+ * older outcome hidden behind a terminal remains superseded.
  *
- * The ack writer runs this INSIDE its advisory-locked transaction so the primary verdict and
- * the ack append share one snapshot+lock — the TOCTOU window between an out-of-tx snapshot and
- * the in-lock append (a judge inserting a newer result, a proposal retract, TTL rolling) is
- * structurally closed (round-8, mirrors answerProbe's all-reads-in-tx precedent). Pass
- * serial:true on that single-connection tx path; the GET read path keeps the Promise.all.
+ * The writer calls this inside its advisory-locked transaction so verdict and append share
+ * one snapshot, closing the TOCTOU window; pass serial:true on that single connection.
  */
 export async function loadOutcomeBrief(
   db: DbLike,
@@ -826,10 +750,8 @@ export async function loadOutcomeBrief(
           ORDER BY correction.created_at DESC, correction.id DESC
           LIMIT 1
         ), '') NOT IN ('retract', 'mark_wrong', 'supersede')`,
-        // YUK-708 (contract §4.2): an acknowledged outcome loses eligibility immediately.
-        // Excluded pre-window (like the corrupt-pair filter) so a burst of acked results
-        // cannot evict an older un-acked valid outcome. Ack existence is binary — there
-        // is no "corrupt ack" — so this NOT EXISTS is authoritative on its own.
+        // An acknowledged outcome loses eligibility. Filter before the window cap so a
+        // burst of acks cannot evict an older valid outcome; ack existence is binary.
         sql`NOT EXISTS (
           SELECT 1 FROM ${event} AS ack
           WHERE ack.action = ${BRIEF_ACK_ACTION}
@@ -973,8 +895,7 @@ export async function loadOutcomeBrief(
     const { proposal, probe, resolution } = outcome.value;
 
     const finding = await loadAcceptedFinding(db, proposal);
-    // YUK-785 — the probe belongs to the pre-edit claim, so an owner rewrite must not be
-    // announced as the thing this outcome supports or excludes.
+    // The probe belongs to the pre-edit claim; never announce it as testing the rewrite.
     const rewritten = finding.tested_claim_md !== undefined;
     const evidence = dedupeEvidence([
       ...appendProbeEvidence(proposal, probe.id),
@@ -1014,10 +935,8 @@ export async function loadOutcomeBrief(
       return {
         ...common,
         state: 'outcome_confirmed',
-        // YUK-709 — a confirmed judgement's executable next step is KC-scoped practice
-        // (contract §9). knowledge_id is the canonical proposal KC (= finding.knowledge_id)
-        // for the /practice?kc navigation; probe_result_event_id keeps the "知道了" ack
-        // targeting this very result (mirrored in current_outcome for the wire).
+        // KC-scoped practice: knowledge_id is the canonical proposal KC; the result id
+        // keeps the same ack targeting this outcome.
         prepared_action: {
           kind: 'practice_scoped' as const,
           knowledge_id: proposal.knowledgeId,
@@ -1036,9 +955,8 @@ export async function loadOutcomeBrief(
     return {
       ...common,
       state: 'outcome_retired',
-      // YUK-708 — a retired judgement rules the finding out; its only step is to
-      // acknowledge and continue the original plan (contract §2.2). No extra practice
-      // is prepared (contract §9 scopes practice to confirmed outcomes only).
+      // A retired judgement rules the finding out; only acknowledge. Practice is scoped
+      // to confirmed outcomes.
       prepared_action: {
         kind: 'acknowledge_outcome' as const,
         probe_result_event_id: result.id,
@@ -1160,9 +1078,8 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       },
       current_outcome: {
         status: 'awaiting_answer',
-        // YUK-785/787 — validateProbeQuestion above proved the issued prompt equals
-        // the sequence-specific prompt authored with this proposal, so after a rewrite
-        // this prepared question demonstrably tests the pre-edit claim.
+        // The issued prompt matches the one authored with this proposal, so after a
+        // rewrite it demonstrably tests the pre-edit claim.
         summary_md:
           finding.tested_claim_md !== undefined
             ? TEACHING_BRIEF_OUTCOME_COPY.AWAITING_ANSWER_REWRITTEN
@@ -1175,8 +1092,8 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
 
 async function logAcceptedWithoutProbe(db: Db, now: Date): Promise<void> {
   const lowerBound = new Date(now.getTime() - TEACHING_BRIEF_FINDING_TTL_MS);
-  // Latest-rate status, canonical kind, TTL, and missing-probe detection all stay in
-  // one bounded SQL query. Corrections fold in one additional batch query below.
+  // Status, kind, TTL, and missing-probe detection share one bounded query; corrections
+  // fold in one more batch below.
   const rows = await db
     .select({ id: event.id })
     .from(event)
@@ -1302,13 +1219,9 @@ async function loadFindingBrief(db: Db, now: Date): Promise<TeachingBrief | null
           [...TERMINAL_PROPOSAL_RATINGS].map((rating) => sql`${rating}`),
           sql`, `,
         )})`,
-        // Corrected/retracted/superseded proposals are likewise excluded pre-window.
-        // Mirror getCorrectionStatuses' last-write-wins semantics: only the LATEST
-        // correction decides, so a corrected-then-restored proposal stays eligible.
-        // A latest supersede without replacement (malformed) is excluded here even
-        // though the in-memory pass would keep the prior state — fail-closed skip is
-        // the contract's stance on corrupt records, and getCorrectionStatuses below
-        // stays as the authoritative second gate.
+        // Only the latest correction decides (last-write-wins), so a corrected-then-
+        // restored proposal stays eligible. A malformed latest supersede fails closed;
+        // getCorrectionStatuses below remains the authoritative second gate.
         sql`COALESCE((
           SELECT correction.payload->>'correction_kind'
           FROM ${event} AS correction

@@ -12,22 +12,12 @@ export function createDefaultRegistry(): CapabilityRegistry {
   registry.registerJudge(exactJudgeCapability);
   registry.registerJudge(keywordJudgeCapability);
   registry.registerJudge(semanticJudgeCapability);
-  // steps@1 is registered for profile validation and route resolution. Server
-  // execution goes through JudgeInvoker, which supplies DB/runtime context to
-  // runStepsJudge instead of calling the core registry runner directly.
+  // Server-runtime judges are registered for validation and route resolution;
+  // execution goes through JudgeInvoker, not the core runner.
   registry.registerJudge(stepsV1Capability);
   registry.registerJudge(unitDimensionV1Capability);
-  // multimodal_direct (YUK-201) — like steps@1, registered for profile validation
-  // + route resolution. Server execution goes through JudgeInvoker, which supplies
-  // DB/runtime context to runMultimodalDirectJudge (DB + R2 image fetch) instead of
-  // calling the core registry runner directly.
   registry.registerJudge(multimodalDirectV1Capability);
-  // T-QP (YUK-165, ADR-0014 §5) — register the `fsrs` scheduling policy. Like
-  // steps@1, this is for profile validation + route resolution: the live
-  // review/due path schedules questions (and parts, which ARE questions) via
-  // `scheduleReview` directly. The capability declares fsrs serves both
-  // 'question' and 'question_part'. validateProfile asserts each profile's
-  // schedulingHints.default_policy resolves to a registered scheduler.
+  // Declaration only: the live review path schedules through scheduleReview.
   registry.registerScheduler(fsrsSchedulerCapability);
   return registry;
 }
