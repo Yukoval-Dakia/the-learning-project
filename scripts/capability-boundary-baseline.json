@@ -527,12 +527,20 @@
       "direction": "decrease"
     },
     {
-      "direction": "decrease",
       "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-21",
       "from": 13,
-      "to": 12
+      "to": 12,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-21",
+      "from": 51,
+      "to": 50,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1034,7 +1042,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 388,
+      "total": 387,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -1090,7 +1098,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 51,
+        "practice -> ai": 50,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
