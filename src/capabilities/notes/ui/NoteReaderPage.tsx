@@ -164,12 +164,14 @@ function sectionKindLabel(b: BodyBlock): string | null {
 export default function NoteReaderPage({
   id,
   navigate,
+  read = getNotePage,
 }: {
   id: string;
   navigate: (to: string) => void;
+  read?: typeof getNotePage;
 }) {
   const qc = useQueryClient();
-  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => getNotePage(id) });
+  const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
   const changesQ = useQuery({ queryKey: ['note-ai-changes', id], queryFn: () => getAiChanges(id) });
 
   const [mode, setMode] = useState<'read' | 'edit'>('read');

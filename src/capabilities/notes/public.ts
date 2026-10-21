@@ -1,6 +1,6 @@
 // Stable server contract for consumers outside the notes capability.
 
-export { NoteListQuerySchema, NoteListResponseSchema } from './api/contracts';
+export { NoteIdParamsSchema, NoteListQuerySchema, NoteListResponseSchema } from './api/contracts';
 export type {
   ArtifactCorrectionState,
   ArtifactCorrectionStatus,
@@ -36,6 +36,7 @@ export {
 } from './server/note-handoff';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
+export { loadNotePage } from './server/note-page';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
