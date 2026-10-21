@@ -1,16 +1,13 @@
 // ====================================================================
-// YUK-1055 — pgboss outstanding job 处置分类（零 import，unit-partition 可测）
+// pgboss outstanding job 处置分类（零 import，unit-partition 可测）
 // ====================================================================
 //
-// cutover 时 pgboss 存量任务（YUK-1042 盘点对象）的三类处置：
-//   'drain'     — 队列语义与判分/作答合同无关，或本身只产出触发；在任一
-//                 active epoch 下运行都是正确的（含 fenced 短停后恢复）。
-//   'translate' — payload 绑定旧合同（frozen question/profile/答案载体等），
-//                 不能按原语义执行；须由迁移/运维显式转换或按 runbook 处置，
-//                 绝不在 epoch 不匹配时运行。
-//   'fenced'    — 默认兜底（含全部未列出队列与 *_dlq 恢复队列）：在错误
-//                 epoch 下拒绝执行（ContractEpochFenceError → 重投预算耗尽
-//                 后按既有 retry policy 落 failed/DLQ，不静默吞掉）。
+// cutover 时 pgboss 存量任务的三类处置：
+//   'drain'     — 队列语义与判分/作答合同无关，或只产出触发；任一 active epoch 下运行都正确。
+//   'translate' — payload 绑定旧合同（frozen question/profile/答案载体等），不能按原语义执行；
+//                 须显式转换或按 runbook 处置。
+//   'fenced'    — 默认兜底（含全部未列出队列与 *_dlq 恢复队列）：错误 epoch 下拒绝执行，
+//                 由既有 retry policy 落到 failed/DLQ，不静默吞掉。
 //
 // 运行期裁决见 boss-fence.ts：'drain' 只要求 state='active'（不比较 epoch 名），
 // 'translate'/'fenced' 要求 marker.epoch === CODE_CONTRACT_EPOCH。
@@ -20,8 +17,8 @@ export type JobEpochDisposition = 'drain' | 'translate' | 'fenced';
 
 /**
  * 显式分类表。key = pgboss queue name（pgboss.job.name）。
- * 维护纪律：新队列不在此表即 'fenced'；把队列改成 'drain'/'translate' 需要
- * 在注释里给出「为何与评估合同无关 / 为何必须显式转换」的一句话依据。
+ * 新队列不在此表即 'fenced'；改成 'drain'/'translate' 要在注释里写清
+ * 「为何与评估合同无关 / 为何必须显式转换」的一句话依据。
  */
 export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>> = {
   // ── drain：合同无关的 housekeeping / 只产触发 / 纯元数据清扫 ──
@@ -34,16 +31,15 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   prune_orphan_placement_sessions: 'drain',
   promote_conversation_idle: 'drain',
   // 订阅分发驱动：delivery 行本身已含 stable idempotency；版本翻译由
-  // bootstrap 处理（runtime.ts），分发器只按寄存表跑当前版本。
+  // bootstrap 处理，分发器只按寄存表跑当前版本。
   event_subscription_dispatch: 'drain',
   // 编排器只enqueue成员 job；成员各自带 disposition 自查。
   nightly_orchestrator: 'drain',
   // 被卡死的 provider run 对账/剪枝：运维真相表，与判分合同无关。
   ai_task_run_reconcile_nightly: 'drain',
   copilot_run_reconcile: 'drain',
-  // mem0 管道：事件 outbox 摄取与简brief再生成是 epoch 无关的后台效应
-  // （迁移不重放、不删 fact；grounding §9 memory triggers 不重发约束由
-  // apply/replay lane 保证，不关队列态）。
+  // mem0 管道：事件 outbox 摄取与 brief 再生成是 epoch 无关的后台效应
+  // （迁移不重放、不删 fact；memory triggers 不重发由 apply/replay 保证）。
   memory_event_ingest: 'drain',
   memory_brief_regen: 'drain',
   memory_brief_sweep: 'drain',
@@ -63,7 +59,7 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   note_refine: 'drain',
 
   // ── translate：payload/效应绑定旧判分·题目合同，须显式转换 ──
-  // 判分执行链：frozen question/profile/body 属旧合同（grounding §4.2）。
+  // 判分执行链：frozen question/profile/body 属旧合同。
   judge_run: 'translate',
   judge_pending_reconcile: 'translate',
   rejudge: 'translate',
@@ -78,10 +74,10 @@ export const JOB_EPOCH_DISPOSITION: Readonly<Record<string, JobEpochDisposition>
   attribution_followup: 'translate',
   reference_answer_backfill: 'translate',
   answer_class_backfill: 'translate',
-  // 干预诊断冻结上下文与发题绑定（§1 矩阵 intervention diagnostic 行）。
+  // 干预诊断冻结上下文与发题绑定。
   prepare_intervention: 'translate',
   intervention_prepare_recovery: 'translate',
-  // 摄入管线会直接写 question/answer 面（auto_enroll 判分也在 §4.2 表内）。
+  // 摄入管线会直接写 question/answer 面（auto_enroll 判分同属旧合同）。
   ingestion_operation: 'translate',
   auto_enroll: 'translate',
   tencent_ocr_extract: 'translate',

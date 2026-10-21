@@ -1,4 +1,4 @@
-// YUK-1055 — contract-epoch 模块公共出口。
+// contract-epoch 模块公共出口。
 
 export type { OutstandingJobDisposition } from './boss-fence';
 export { fenceAwareJobHandler, reportOutstandingBossJobs } from './boss-fence';
