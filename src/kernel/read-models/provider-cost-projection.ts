@@ -14,9 +14,7 @@ export type ProviderCostAggregateRow = {
   readonly reported_cost: number;
   readonly estimated_cost: number;
   readonly legacy_cost: number;
-  // YUK-977 — basis-specific attempt counts mirror the truth columns so a
-  // known-zero amount can still show its source (amount alone can't: a zero
-  // reported_cost is indistinguishable from "no reported rows").
+  // Basis-specific attempt counts keep a known-zero amount distinguishable from "no rows".
   readonly reported_attempts: number;
   readonly estimated_attempts: number;
   readonly unknown_attempts: number;
@@ -104,14 +102,8 @@ export async function readProviderCostAggregates(
 
 /**
  * Shared authority/dedup seam. Link authority is intentionally not window-filtered.
- *
- * YUK-1522 — moved verbatim from observability/server into kernel/read-models so
- * the ingestion-agent weekly budget gate can compose the same canonical cost
- * truth (dedup, basis, currency-split) without a capability→capability import.
- * `ref`/`operation_id` are identity columns for scoped attribution filters:
- * ref = cost_ledger.task_run_id | provider_attempt.attempt_id; operation_id is
- * the provider attempt's durable operation id as text (NULL for ledger rows).
- * Existing aggregate consumers do not select them and are unaffected.
+ * ref and operation_id identify the attributed source for scoped filters; existing
+ * aggregate consumers do not select them.
  */
 export function providerCostProjectedCte(from: Date, to?: Date) {
   const fromIso = from.toISOString();

@@ -31,12 +31,10 @@ type ProposalAcceptDecision =
       decision?: 'accept';
       new_relation_type?: never;
       corrected_payload?: ProposalCorrectedPayload;
-      /**
-       * YUK-1404 — explicit learner confirmation for lossy accepts (today only
-       * `block_merge`, whose accept is irreversible). Forwarded verbatim from
-       * the canonical decision input; the capability applier owns enforcement
-       * and the runtime seam can never supply or override it.
-       */
+  /**
+   * Explicit learner confirmation for lossy accepts (currently block_merge). The
+   * capability applier enforces it; runtime seams cannot supply or override it.
+   */
       confirm_lossy?: boolean;
     }
   | {
@@ -70,8 +68,8 @@ export type ProposalAcceptApplier = (
   db: unknown,
   input: ProposalAcceptInput,
   /**
-   * Composition-only runtime seams (for example network/job fakes). This is
-   * never proposal data and never crosses into the kernel-owned input contract.
+   * Composition-only runtime seams (e.g. network/job fakes). Never proposal data,
+   * never part of the kernel input contract.
    */
   runtime?: unknown,
 ) => Promise<ProposalAcceptResult>;
@@ -80,9 +78,8 @@ export interface ProposalAcceptDecl {
   load: () => Promise<ProposalAcceptApplier>;
   correctedPayload?: true;
   /**
-   * YUK-1404 — the kind owns a lossy accept (destructive, irreversible) and
-   * therefore accepts the `confirm_lossy` input. Kinds without this flag
-   * reject a misplaced confirm at the shared dispatch boundary.
+   * The kind has a destructive, irreversible accept and therefore accepts
+   * confirm_lossy. Other kinds reject a misplaced confirm at the dispatch boundary.
    */
   confirmLossy?: true;
 }
