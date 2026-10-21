@@ -11,6 +11,17 @@ export type ToolResultJson =
   | ToolResultJson[]
   | { [key: string]: ToolResultJson };
 
+const ToolResultJsonSchema: z.ZodType<ToolResultJson> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(ToolResultJsonSchema),
+    z.record(z.string(), ToolResultJsonSchema),
+  ]),
+);
+
 export const ToolResultOmissionSchema = z
   .object({
     path: z.string().min(1).max(240),
@@ -25,7 +36,7 @@ export const CopilotToolResultSnapshotSchema = z.discriminatedUnion('state', [
     .object({
       version: z.literal(1),
       state: z.literal('available'),
-      value: z.json(),
+      value: ToolResultJsonSchema,
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       byte_length: z.number().int().nonnegative().max(TOOL_RESULT_VALUE_MAX_BYTES),
       completeness: z.enum(['complete', 'projected']),
