@@ -1,3 +1,4 @@
+export { TeachingBriefAckBodySchema } from './api/contracts';
 export type {
   WorkbenchHeatDay,
   WorkbenchSessionRow,
@@ -21,6 +22,7 @@ export {
   loadTeachingBrief,
   validateAckableOutcome,
 } from './server/teaching-brief';
+export { acknowledgeTeachingBriefOutcome } from './server/teaching-brief-ack';
 export type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,

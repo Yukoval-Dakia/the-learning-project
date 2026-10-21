@@ -5,6 +5,7 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 import {
   type StartAiChangeUndoRequest,
   type StartProposalDecisionRequest,
+  acknowledgeStartTeachingBrief,
   createStartProposalDecision,
   readStartActiveProbes,
   readStartAutoApplied,
@@ -53,6 +54,13 @@ export const getStartActiveProbes = createServerFn({ method: 'GET' }).handler(({
 export const getStartTeachingBrief = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartTeachingBrief),
 );
+export const acknowledgeStartTeachingBriefOutcome = createServerFn({ method: 'POST' })
+  .inputValidator((body: string) => body)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), () =>
+      acknowledgeStartTeachingBrief(data),
+    ),
+  );
 export const getStartRecentAiChanges = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartRecentAiChanges),
 );

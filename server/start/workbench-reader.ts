@@ -152,3 +152,25 @@ export const readStartTeachingBrief = () =>
     const { loadTeachingBrief } = await import('@/capabilities/shell/public');
     return loadTeachingBrief(db);
   });
+
+export const acknowledgeStartTeachingBrief = (body: string) =>
+  withStartDb(async (db) => {
+    const { TeachingBriefAckBodySchema, acknowledgeTeachingBriefOutcome } = await import(
+      '@/capabilities/shell/public'
+    );
+    let rawBody: unknown = null;
+    try {
+      rawBody = JSON.parse(body);
+    } catch {
+      // Match HTTP's malformed-JSON path through the shared strict body schema.
+    }
+    const parsed = TeachingBriefAckBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw new ApiError(
+        'validation_error',
+        parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+        400,
+      );
+    }
+    return acknowledgeTeachingBriefOutcome(db, parsed.data.probe_result_event_id);
+  });

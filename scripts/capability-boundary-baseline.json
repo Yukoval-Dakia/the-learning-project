@@ -1000,6 +1000,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-037efd6f-d678-43c3-960a-e2cc38e815c5",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "acknowledgeTeachingBriefOutcome",
+      "targetModule": "src/capabilities/shell/server/teaching-brief-ack.ts",
+      "targetSymbol": "acknowledgeTeachingBriefOutcome",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 158
+        }
+      ],
+      "evidence": "The authenticated Start command dynamically imports the complete canonical ack writer. The retained HTTP adapter directly invokes the same owner.",
+      "rationale": "Shell owns target validation, per-target advisory locking, prior-ack idempotency, primary-outcome selection and append-only event persistence. The existing UI consumes the canonical result and errors; the retained HTTP endpoint keeps its 201/200 and Location contract.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-917fc4aa-edcc-4272-917c-327a960047a9",
+      "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "TeachingBriefAckBodySchema",
+      "targetModule": "src/capabilities/shell/api/contracts.ts",
+      "targetSymbol": "TeachingBriefAckBodySchema",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 158
+        }
+      ],
+      "evidence": "The same authenticated Start command dynamically imports the strict schema already used by the retained HTTP ack adapter.",
+      "rationale": "Keep a single strict body contract for the probe-result target and preserve malformed-JSON validation errors without exposing actor, time or event identity inputs.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-917fc4aa-edcc-4272-917c-327a960047a9",
+      "date": "2026-10-21"
     }
   ],
   "edgeRecords": [
