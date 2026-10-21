@@ -37,6 +37,7 @@ import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
 import { presentNonDueQuestion } from './stream-item-presentation';
+import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
 import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
   type StreamScope,
@@ -1100,73 +1101,29 @@ export async function reRankAfterAnswer(
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
-    // A row that freshly classifies as recall stays in place (fail-closed); never drop it
-    // into a freed slot.
-    const freshRecallRefs = new Set(
-      signals.filter((s) => s.recallLocked === true).map((s) => s.refId),
-    );
-    // Candidates that are not recall-locked.
-    const samplable = signals.filter((s) => s.recallLocked !== true);
-
-    // Pending non-due rows that may be swapped out. Actual deletion is bounded by how many
-    // new refs really insert.
-    const replaceableRows = pendingNonDue
-      .filter((r) => !freshRecallRefs.has(r.ref_id))
-      .sort((a, b) => a.position - b.position);
-    if (replaceableRows.length === 0)
-      return { added: 0, observations: [] } satisfies ComposeOutcome;
-    const replaceableRefs = new Set(replaceableRows.map((r) => r.ref_id));
-
-    // Refs already in the stream and not being deleted must not be reinserted. Compute the
-    // base set before deciding deletions; kept refs are added back below.
-    const baseKeptRefs = new Set(
-      rows.filter((r) => !replaceableRefs.has(r.ref_id)).map((r) => r.ref_id),
-    );
+    const basis = prepareStreamReplacement(rows, pendingNonDue, signals);
+    if (basis === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Statistical sampler with fresh θ̂. targetCount is the replaceable slot count, not the
     // pool size, so sampling is real IPPS (π_i < 1).
-    const weighted = statisticalWeights(samplable);
+    const weighted = statisticalWeights(basis.samplable);
     const sampled =
       weighted.length === 0
         ? []
         : sampleByWeight(weighted, {
             temperature: DEFAULT_TEMPERATURE,
-            targetCount: replaceableRows.length,
+            targetCount: basis.targetCount,
             rng: opts.rng,
           });
 
-    // Sample sizes fluctuate around targetCount. Delete only slots that will actually be
-    // refilled: min(new refs, replaceable slots), lowest position first. Kept rows stay put,
-    // so the stream never shrinks or leaves holes. π_i stays the true inclusion probability
-    // (same targetCount, no top-up), and kept slots reuse their original observation.
-    const newRefPicks: string[] = [];
-    const seenNewRef = new Set<string>();
-    for (const s of sampled) {
-      if (baseKeptRefs.has(s.refId)) continue; // 已在流里且不删 → 不是「换进的新项」。
-      if (seenNewRef.has(s.refId)) continue; // 去重（同 ref 只占一个 slot）。
-      seenNewRef.add(s.refId);
-      newRefPicks.push(s.refId);
-    }
-    // Never delete more slots than can be refilled.
-    const deleteCount = Math.min(newRefPicks.length, replaceableRows.length);
-    const rowsToDelete = replaceableRows.slice(0, deleteCount); // 最低 position 的 deleteCount 个。
-    const deletedRefs = new Set(rowsToDelete.map((r) => r.ref_id));
-    const vacatedPositions = rowsToDelete.map((r) => r.position).sort((a, b) => a - b);
-
-    // Rows that survive this rerank cannot be reinserted.
-    const keptRefs = new Set(rows.filter((r) => !deletedRefs.has(r.ref_id)).map((r) => r.ref_id));
-
-    // Nothing to delete means nothing to insert.
-    if (rowsToDelete.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    const plan = planStreamReplacement(basis, sampled);
+    if (plan === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Delete only slots that will be refilled; frozen and kept rows stay untouched.
     await tx.delete(practice_stream_item).where(
       and(
         streamPartitionPredicate(date, sessionId),
-        inArray(
-          practice_stream_item.id,
-          rowsToDelete.map((r) => r.id),
-        ),
+        inArray(practice_stream_item.id, plan.deleteIds),
       ),
     );
 
@@ -1178,9 +1135,8 @@ export async function reRankAfterAnswer(
     const now = new Date();
     const observations: SelectionObservationInput[] = [];
     let added = 0;
-    for (const s of sampled) {
-      if (keptRefs.has(s.refId)) continue;
-      const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
+    for (const s of plan.insertCandidates) {
+      const pos = slot < plan.vacatedPositions.length ? plan.vacatedPositions[slot] : tailPos++;
       slot++;
       const signal = signalByRef.get(s.refId);
       const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
