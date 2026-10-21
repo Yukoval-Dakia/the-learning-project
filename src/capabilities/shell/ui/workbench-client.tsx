@@ -10,6 +10,7 @@ import {
 } from './inbox-api';
 import { getPrepDeskConjectures } from './prep-desk-api';
 import { getActiveProbes } from './probe-answer-api';
+import { getTeachingBrief } from './teaching-brief-api';
 import {
   getOvernightDigest,
   getRecentAiChanges,
@@ -29,6 +30,7 @@ export type WorkbenchClient = {
   getTree: typeof getTree;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
   getActiveProbes: typeof getActiveProbes;
+  getTeachingBrief: typeof getTeachingBrief;
   getRecentAiChanges: typeof getRecentAiChanges;
   undoAiChange: typeof undoAiChange;
 };
@@ -44,6 +46,7 @@ export const httpWorkbenchClient: WorkbenchClient = {
   getTree: (subject) => getTree(subject),
   getPrepDeskConjectures: () => getPrepDeskConjectures(),
   getActiveProbes: () => getActiveProbes(),
+  getTeachingBrief: () => getTeachingBrief(),
   getRecentAiChanges: () => getRecentAiChanges(),
   undoAiChange: (...args) => undoAiChange(...args),
 };

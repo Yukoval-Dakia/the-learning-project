@@ -146,3 +146,9 @@ export const readStartActiveProbes = () =>
     const { loadActiveProbes } = await import('@/capabilities/shell/public');
     return loadActiveProbes(db);
   });
+
+export const readStartTeachingBrief = () =>
+  withStartDb(async (db) => {
+    const { loadTeachingBrief } = await import('@/capabilities/shell/public');
+    return loadTeachingBrief(db);
+  });
