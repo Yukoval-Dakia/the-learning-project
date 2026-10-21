@@ -32,7 +32,12 @@ export async function readStreamSelectionCandidates(
       refKind: 'question' as const,
       refId: raw.questionId,
       // Variants use diagnostic scoring; new-check and frontier retain their own roles.
-      role: raw.role === 'variant' ? ('diagnostic' as const) : raw.role,
+      role:
+        raw.role === 'new_check'
+          ? ('new_check' as const)
+          : raw.role === 'frontier'
+            ? ('frontier' as const)
+            : ('diagnostic' as const),
       // Unknown/missing labels must reach the signal collector as undefined so it
       // recall-locks them. Preserve known labels, using the rotation owner's table.
       kind: kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined,
