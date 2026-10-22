@@ -8,6 +8,7 @@ import {
   type ScopeField,
   VIEW_SCOPE,
   isScoped,
+  readAddress,
 } from './library-url';
 import type { LibraryLookups } from './use-library';
 
@@ -44,11 +45,7 @@ export function ScopeLine({
   const timer = useRef<number | null>(null);
   if (scope.search !== seen) {
     setSeen(scope.search);
-    if (scope.search !== draft.trim()) {
-      if (timer.current !== null) window.clearTimeout(timer.current);
-      timer.current = null;
-      setDraft(scope.search);
-    }
+    if (scope.search !== draft.trim()) setDraft(scope.search);
   }
 
   // Cancel a pending search when the box leaves (e.g. the learner opened a question).
@@ -71,8 +68,12 @@ export function ScopeLine({
   const typed = (value: string) => {
     setDraft(value);
     if (timer.current !== null) window.clearTimeout(timer.current);
+    // The address search when typing started: if it moved before the timer fires (back/forward,
+    // clear), the box already took the new address and this pending search is dropped.
+    const base = readAddress(window.location.search).scope.search;
     timer.current = window.setTimeout(() => {
       timer.current = null;
+      if (readAddress(window.location.search).scope.search !== base) return;
       onPatch({ search: value.trim() });
     }, SEARCH_DELAY_MS);
   };
