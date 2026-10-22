@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
+import { createStartGoal } from './start/goal-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
@@ -71,6 +72,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readSubjects: readStartSubjects,
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
+    createGoal: createStartGoal,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };
