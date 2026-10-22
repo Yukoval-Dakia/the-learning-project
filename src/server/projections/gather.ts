@@ -9,12 +9,10 @@ import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { foldArtifact } from '@/core/projections/artifact';
-import type { FoldEvent } from '@/core/projections/fold-event';
 import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
-import { foldLearningItem } from '@/core/projections/learning_item';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
 import { foldQuestionBlock } from '@/core/projections/question_block';
 import type {
@@ -23,34 +21,19 @@ import type {
   ItemCalibrationRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
-  LearningItemRowSnapshotT,
   MistakeVariantRowSnapshotT,
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
+import { rowToFoldEvent } from '@/kernel/records/projection-events';
 import { getAnchorEventId } from './materialized-id-index';
+
+export { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
-
-// Map one `event` row to the flat FoldEvent envelope the reducers consume. Missing
-// nullable columns become null.
-export function rowToFoldEvent(row: EventRow): FoldEvent {
-  return {
-    id: row.id,
-    created_at: row.created_at,
-    actor_kind: row.actor_kind,
-    actor_ref: row.actor_ref,
-    action: row.action,
-    subject_kind: row.subject_kind,
-    subject_id: row.subject_id,
-    outcome: row.outcome ?? null,
-    payload: (row.payload ?? {}) as Record<string, unknown>,
-    caused_by_event_id: row.caused_by_event_id ?? null,
-  };
-}
 
 // Map a live edge row to the snapshot shape the fold produces. Both the mesh and the
 // accept-time parity assert use this one mapper, so their shapes cannot drift.
@@ -266,53 +249,6 @@ export async function gatherAndFoldMistakeVariant(
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldMistakeVariant(mvId, foldEvents);
-}
-
-/**
- * Prefetch the item-independent merge events and their accept rates. A full-table audit
- * folds many items, so fetching this once avoids rerunning the same scans per item.
- */
-export async function prefetchLearningItemMergeEvents(db: DbLike): Promise<EventRow[]> {
-  // Q3: every knowledge merge, because merges chain (A→B then B→C). The reducer applies
-  // only the merges intersecting the item, in timestamp order.
-  const merges = await db
-    .select()
-    .from(event)
-    .where(eq(event.action, 'experimental:knowledge_merge'));
-  if (merges.length === 0) return [];
-  // accept rates chained to the merge propose events (the reducer gates the rewrite on acceptance).
-  const mergeIds = merges.map((r) => r.id);
-  const rates = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.action, 'rate'), inArray(event.caused_by_event_id, mergeIds)));
-  return [...merges, ...rates];
-}
-
-/**
- * Gather the events affecting `itemId` and run the pure learning_item fold. Besides the
- * subject-keyed events, it gathers every accepted knowledge merge because a merge can
- * rewrite this item's knowledge_ids through a chain whose earlier ids are gone. Returns
- * the projected row or null.
- */
-export async function gatherAndFoldLearningItem(
-  db: DbLike,
-  itemId: string,
-  prefetchedMergeEvents?: EventRow[],
-): Promise<LearningItemRowSnapshotT | null> {
-  const q1 = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'learning_item'), eq(event.subject_id, itemId)));
-
-  // Merge events are item-independent; a full-table caller prefetches them once.
-  const mergeEvents = prefetchedMergeEvents ?? (await prefetchLearningItemMergeEvents(db));
-
-  const byId = new Map<string, EventRow>();
-  for (const r of [...q1, ...mergeEvents]) byId.set(r.id, r);
-
-  const foldEvents = [...byId.values()].map(rowToFoldEvent);
-  return foldLearningItem(itemId, foldEvents);
 }
 
 /**

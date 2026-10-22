@@ -18,16 +18,18 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import {
   gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
+
+export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
 
@@ -517,71 +519,6 @@ export async function assertMistakeVariantParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('mistake_variant', mvId, diff);
-}
-
-// ── learning_item genesis-anchor helpers ──────────────────────────────────────────────────────
-//
-// An item is event-sourced when it has a genesis seed or an index anchor. Status/archive
-// events mutate an existing row and are not anchors on their own.
-
-const LEARNING_ITEM_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
-
-/** Whether an item has a genesis anchor the fold can reproduce. */
-export async function hasLearningItemGenesisAnchor(db: DbLike, itemId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        eq(event.subject_id, itemId),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, itemId),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function learningItemsWithGenesisAnchor(
-  db: DbLike,
-  itemIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (itemIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        inArray(event.subject_id, itemIds),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, itemIds),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
 }
 
 // ── learning_item parity assert ────────────────────────────────────────────────────────────────

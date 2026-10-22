@@ -1,5 +1,5 @@
 import type { Tx } from '@/db/client';
-import { upsertMaterializedIdIndex } from './materialized-id-index';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 
 export { projectMistakeVariant, projectMistakeVariantGuarded } from './mistake_variant';
 export { hasMistakeVariantGenesisAnchor } from './parity';

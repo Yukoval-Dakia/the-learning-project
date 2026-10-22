@@ -78,10 +78,9 @@ import {
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
+import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
@@ -1059,41 +1058,12 @@ export async function runSourceVerify(
           .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
           .where(eq(question.id, questionId));
 
-        // FSRS enroll-if-absent per knowledge point (identical convention to
-        // quiz_verify): materialize an initial card only for knowledge points with no
-        // existing projection; never reset an existing schedule.
-        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
-        if (fsrsSubjectIds.length > 0) {
-          for (const knowledgeId of fsrsSubjectIds) {
-            // a synthetic subject root ('seed:<subj>:root', the
-            // plan-executor coarse-fallback binding) is a structural anchor,
-            // never a content KC: skip FSRS enrollment so the question can't
-            // mint a due card for an id the subject read axis already excludes
-            // (resolveSubjectKnowledgeIds). The raw-ids branch condition is
-            // deliberate: a roots-only label set is NOT "unlabeled", so it
-            // enrolls ZERO cards — the question-level fallback below stays
-            // reserved for a genuinely unlabeled legacy row.
-            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-            if (existing) continue;
-            await upsertFsrsState(tx, {
-              subject_kind: 'knowledge',
-              subject_id: knowledgeId,
-              ...initialSchedulingState(knowledgeId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        } else {
-          const existing = await getFsrsState(tx, 'question', questionId);
-          if (!existing) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: questionId,
-              ...initialSchedulingState(questionId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        }
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId,
+          knowledgeIds: current.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
 
         // 统一发布链：verified promote 同事务重发组 revision。
         // 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
@@ -1122,32 +1092,12 @@ export async function runSourceVerify(
               })
             : [];
         for (const part of promotedPartRows) {
-          // FSRS enroll-if-absent 与根同款约定（quiz_verify/owner-override
-          // 级联同款）：不重置既有排程；无 KC 绑定时走 question 级 fallback。
-          const partKnowledgeIds = Array.from(new Set(part.knowledgeIds));
-          if (partKnowledgeIds.length > 0) {
-            for (const knowledgeId of partKnowledgeIds) {
-              if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-              const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-              if (existing) continue;
-              await upsertFsrsState(tx, {
-                subject_kind: 'knowledge',
-                subject_id: knowledgeId,
-                ...initialSchedulingState(knowledgeId, now),
-                last_review_event_id: verifyEventId,
-              });
-            }
-          } else {
-            const existing = await getFsrsState(tx, 'question', part.id);
-            if (!existing) {
-              await upsertFsrsState(tx, {
-                subject_kind: 'question',
-                subject_id: part.id,
-                ...initialSchedulingState(part.id, now),
-                last_review_event_id: verifyEventId,
-              });
-            }
-          }
+          await enrollPromotedQuestionScheduling(tx, {
+            questionId: part.id,
+            knowledgeIds: part.knowledgeIds,
+            evidenceEventId: verifyEventId,
+            now,
+          });
         }
         {
           const [lifecycle] = await tx

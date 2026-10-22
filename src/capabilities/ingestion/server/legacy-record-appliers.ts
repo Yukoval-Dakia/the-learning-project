@@ -22,11 +22,8 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import { updateLearningRecord } from '@/kernel/records/queries';
-// Even legacy record promotion creates an event-native item: genesis, index,
-// then the single structural projection writer.
-import { projectLearningItem } from '@/server/projections/learning_item';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -408,50 +405,20 @@ export async function acceptRecordPromotionProposal(
         now,
       });
     } else if (target === 'learning_item') {
-      // The full initial row is the genesis base; learning_item has no fold-blind
-      // field, so per-id genesis seeds the row. Version stays at the column default.
-      const liRow = {
-        id: materializedId,
-        source: 'ai_dream',
-        source_ref: proposalId,
-        title,
-        content,
-        knowledge_ids: knowledgeIds,
-        primary_artifact_id: null,
-        parent_learning_item_id: null,
-        status: 'pending',
-        user_pinned: false,
-        completed_at: null,
-        dismissed_at: null,
-        archived_at: null,
-        archived_reason: null,
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      };
-      // 1. ALWAYS write the per-id genesis BASE event FIRST (subject_id=materializedId) so the fold
-      //    (when the flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out.
-      const genesisEventId = newId();
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: 'genesis-backfill',
-        action: 'experimental:genesis',
-        subject_kind: 'learning_item',
-        subject_id: materializedId,
-        outcome: 'success',
-        payload: { row: liRow },
-        created_at: now,
-        ingest_at: now,
-      });
-      // 2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag.
-      await upsertMaterializedIdIndex(tx, {
-        materialized_id: materializedId,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'learning_item',
-      });
-      // Materialize canonical structural state from the events in this transaction.
-      await projectLearningItem(tx, materializedId);
+      await createPendingLearningItem(
+        tx,
+        {
+          id: materializedId,
+          source: 'ai_dream',
+          source_ref: proposalId,
+          title,
+          content,
+          knowledge_ids: knowledgeIds,
+          primary_artifact_id: null,
+          parent_learning_item_id: null,
+        },
+        now,
+      );
     } else {
       // Insert and return the full row, then emit artifact_create in the same tx from
       // the materialized row so every strict snapshot column has a real value. The

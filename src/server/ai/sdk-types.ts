@@ -338,22 +338,3 @@ export type SDKMessage =
   | SDKTaskNotificationMessage
   | SDKToolArgsCoercedMessage
   | SDKToolArgsContractFailedMessage;
-
-// ---------------------------------------------------------------------------
-// Nested-agent declarations (callers keep authoring these).
-// ---------------------------------------------------------------------------
-
-/** Depth-reduced nested-agent spec — the caller-declared subagent definition. */
-export interface AgentDefinition {
-  description: string;
-  prompt: string;
-  /** Wire-name allowlist (`mcp__<server>__<tool>` or local tool names). */
-  tools?: string[];
-  disallowedTools?: string[];
-  /** Pi catalog model id or 'inherit'; SDK alias names fail closed. */
-  model?: string;
-  /** Per-child assistant-turn ceiling. */
-  maxTurns?: number;
-  /** Kept for declared-surface parity — pi runs children synchronously. */
-  background?: boolean;
-}
