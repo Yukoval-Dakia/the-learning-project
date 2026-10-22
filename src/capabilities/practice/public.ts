@@ -315,3 +315,10 @@ export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly
 export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
   async (...args) =>
     (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
+
+export { UpdatePlacementSessionBodySchema } from './api/placement-contracts';
+export const transitionPlacementSession: typeof import('./server/session-operations/placement-session').transitionPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).transitionPlacementSession(
+      ...args,
+    );

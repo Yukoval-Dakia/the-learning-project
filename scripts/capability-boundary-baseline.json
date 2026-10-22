@@ -1060,6 +1060,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6d09a9fe-60af-418a-9de1-42cef84f4e91",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "UpdatePlacementSessionBodySchema",
+      "targetModule": "src/capabilities/practice/api/placement-contracts.ts",
+      "targetSymbol": "UpdatePlacementSessionBodySchema",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-session-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host-bound Start operation dynamically imports the same body schema used by the retained HTTP PATCH adapter. The original z.object status validation and extra-field stripping are unchanged.",
+      "rationale": "Practice owns the placement transition input contract. Reusing its schema keeps malformed JSON and invalid status errors aligned without adding actor, event or time controls; ordinary Start calls and keepalive HTTP share the canonical transition and response projection.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-27e96cdf-28df-427b-ad29-7d9661996a21",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
