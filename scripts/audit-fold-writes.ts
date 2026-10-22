@@ -171,7 +171,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- goal (canonical, YUK-973) ----
   {
     table: 'goal',
-    file: 'src/server/projections/goal.ts',
+    file: 'src/kernel/records/goal-history.ts',
     marker: '.insert(goal)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',

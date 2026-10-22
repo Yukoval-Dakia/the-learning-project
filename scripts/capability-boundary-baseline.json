@@ -2019,6 +2019,14 @@
       "issue": "YUK-1473",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1473#comment-4147d4be-d0cf-4a41-a803-0096118d534d",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-22",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3027,6 +3035,16 @@
       "issue": "YUK-1473",
       "owns": "Notes owns the note page read. Copilot only renders an interactive artifact inline from it; this edge moves from the deleted copilot/ui/CopilotHeroCard.tsx with the companion rebuild, so the copilot -> notes pair total does not change.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/kernel/records/goal-history.ts",
+      "kind": "value",
+      "symbols": ["hasGoalGenesisAnchor", "projectGoal", "projectGoalGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -3694,18 +3712,56 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldGoal",
+      "targetModule": "src/kernel/records/goal-history.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/parity.ts",
+          "line": 22
+        },
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 13
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and only the corresponding entity mock binding, migrate these pins to gatherAndFoldGoal in the canonical kernel owner and remove this old export. Move only the Goal parity gather binding with those test pins; preserve other mixed imports/mock members and real responsibilities. The deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "goalLiveRowToSnapshot",
+      "targetModule": "src/kernel/records/goal-history.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 19
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and only the corresponding entity mock binding, migrate these pins to goalRowToSnapshot in the canonical kernel owner and remove this old export. preserve other mixed imports/mock members and real responsibilities. The deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 337,
+      "total": 335,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
         "agency -> learning-items": 1,
-        "agency -> projections": 5,
+        "agency -> projections": 3,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
