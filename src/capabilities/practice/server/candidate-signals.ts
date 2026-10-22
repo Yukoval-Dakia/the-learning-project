@@ -14,7 +14,7 @@
 // 严守只读契约（item-更新半边锁死 G4）：本模块**永不写** item_calibration / mastery_state。
 // b 锚只读 track='hard'（软轨 b 永不进 p(L)/调度，ADR-0035）。
 
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import {
   EARLY_KLP_ENABLED,
@@ -24,21 +24,19 @@ import {
   klpScore,
   mfiScore,
 } from '@/core/selection-signals';
-import { difficultyToLogitB } from '@/core/theta';
 import { THETA_GRID_ENABLED, type ThetaGridPosterior, klpScoreFromGrid } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, item_family_calibration, mistake_variant, question } from '@/db/schema';
+import { mistake_variant, question } from '@/db/schema';
 import {
   type MasteryStateRow,
   effectiveThetaForKcBatch,
   getMasteryStates,
 } from '@/kernel/read-models/mastery-state';
-import { batchResolveFamilyKeys } from '@/server/mastery/family-key';
 import {
-  type FamilyCalibrationRow,
-  effectiveFamilyB,
-} from '@/server/mastery/personalized-difficulty';
-import { effectiveB } from '@/server/mastery/recalibration';
+  type BSource,
+  type CandidateDifficultyRead,
+  prepareCandidateDifficultyRead,
+} from '@/kernel/read-models/question-difficulty';
 import { MISCONCEPTION_RECURRENCE_ENABLED } from './selection-constants';
 import { rotationClassForKind } from './variant-rotation';
 
@@ -75,7 +73,7 @@ export interface CandidateInput {
  *   - 'difficulty_proxy'：来自 difficultyToLogitB(difficulty)（弱锚，Step C 降权）。
  *   - 'none'：既无标定也无 difficulty → b 留 undefined（无难度信息）。
  */
-export type BSource = 'item_calibration' | 'difficulty_proxy' | 'none';
+export type { BSource } from '@/kernel/read-models/question-difficulty';
 
 /**
  * 收集层返回类型：core 信号 + b 来源旁路标注 + 选题评分快照。
@@ -180,45 +178,6 @@ function aggregateWeakestKc(
     gridPosterior: weakestGrid,
     thetaGlobal: weakestThetaGlobal,
   };
-}
-
-/**
- * 读 b 锚：item_calibration（question_id=refId AND track='hard'）的 effectiveB =
- * b_calib ?? b_anchor ?? b（YUK-361 Phase 6 read-compat，Task 11 step 5）。有非 NULL 值
- * → 真锚（标 'item_calibration'）。否则 difficulty 在场 → difficultyToLogitB 弱锚
- * （'difficulty_proxy'）。两者皆无 → 'none'。
- *
- * **NO-OP today**：b_calib 攒够标签前 NULL，b_anchor 由 migration 0038 从既有 b 回填，故
- * effectiveB 当前等于原 b（接线安全，零行为变更）。重标定首次 firm-up b_calib 后，选题层
- * 自动用去偏 b——无需再改本处。家族 delta 组合（effectiveFamilyB）是 Phase 5 的独立接缝，
- * 本处只解析列层 b（见 recalibration.ts effectiveB 文档的家族组合说明）。
- *
- * 三列皆 nullable（冷启行可能有 row 但全 NULL）——effectiveB 返回 null 时照样落兜底链。
- * 读模式对齐 state.ts updateThetaForAttempt（track='hard' only）。
- */
-async function resolveBAnchor(
-  db: DbLike,
-  refId: string,
-  difficulty: number | undefined,
-): Promise<{ b?: number; bSource: BSource }> {
-  const calRows = await db
-    .select({
-      b: item_calibration.b,
-      b_anchor: item_calibration.b_anchor,
-      b_calib: item_calibration.b_calib,
-      b_post: item_calibration.b_post,
-    })
-    .from(item_calibration)
-    .where(and(eq(item_calibration.question_id, refId), eq(item_calibration.track, 'hard')))
-    .limit(1);
-  const calB = effectiveB(calRows[0]);
-  if (calB !== null) {
-    return { b: calB, bSource: 'item_calibration' };
-  }
-  if (difficulty !== undefined) {
-    return { b: difficultyToLogitB(difficulty), bSource: 'difficulty_proxy' };
-  }
-  return { b: undefined, bSource: 'none' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,28 +334,18 @@ export async function batchAggregateMisconceptionRecurrence(
   return inputKeys.map((key) => scoreBySet.get(key));
 }
 
-/**
- * 收集一条题候选的信号。
- *
- * YUK-372 L3：`familyRow` 是 collectCandidateSignals 批量解析好的家族校准行（或 null）。在
- * resolveBAnchor 后、mfiScore/diagnosticScore 前叠加 effectiveFamilyB(b, familyRow)。
- * G4 NO-OP-safe：familyRow=null 或 b_delta=0 → effectiveFamilyB 原样返回 b → mfiScore bit-identical。
- * recall-locked / b-absent（bSource='none'）候选：b===undefined 时不叠家族 delta（无 b 可叠）。
- */
+/** Collect one question after the early family snapshot and other signal reads. */
 async function collectQuestionSignal(
-  db: DbLike,
   cand: CandidateInput,
   masteryByKc: Map<string, MasteryStateRow>,
   effectiveThetaByKc: Map<string, number>,
-  familyRow: FamilyCalibrationRow | null = null,
+  difficultyRead: CandidateDifficultyRead,
   misconceptionRecurrence?: number,
 ): Promise<CollectedSignal> {
   const knowledgeIds = cand.knowledgeIds ?? [];
   const { thetaHat, thetaPrecision, evidenceCount, gridPosterior, thetaGlobal } =
     aggregateWeakestKc(knowledgeIds, masteryByKc, effectiveThetaByKc);
-  const { b: columnarB, bSource } = await resolveBAnchor(db, cand.refId, cand.difficulty);
-  // 家族 delta 叠加（G4 NO-OP-safe）。b===undefined（bSource='none'）→ 无 b 可叠，保持 undefined。
-  const b = columnarB !== undefined ? effectiveFamilyB(columnarB, familyRow) : undefined;
+  const { b, bSource } = await difficultyRead.read(cand.refId, cand.difficulty);
 
   // recall-eligibility（ADR-0030 by-kind 路由 → recall/application）。
   //   recall（fill_blank/translation）：原题重背，FSRS 测的就是这道 recall item。recall
@@ -513,14 +462,11 @@ export async function collectCandidateSignals(
   db: DbLike,
   candidates: CandidateInput[],
 ): Promise<CollectedSignal[]> {
-  // YUK-372 L3 — 批量解析所有题候选的 family_key（kind + knowledgeIds[0] + source），subject
-  // 派生单遍内存 walk（NOT per-candidate 32-climb），再一次 IN 查 item_family_calibration →
-  // family_key → row Map。G3：这是 **Map sidecar**——绝不 reorder candidates（输出顺序严格
-  // 对齐输入），绝不写 item b。
+  // Preserve the early family snapshot; hard anchors remain sequential per-question reads.
   const questionCands = candidates.filter(
     (c): c is CandidateInput & { kind: QuestionKindT } => c.refKind === 'question',
   );
-  const familyKeyByRefId = await batchResolveFamilyKeys(
+  const difficultyRead = await prepareCandidateDifficultyRead(
     db,
     questionCands.map((c) => ({
       questionId: c.refId,
@@ -529,30 +475,11 @@ export async function collectCandidateSignals(
       source: c.source,
     })),
   );
-  // 去重 family_key（多题共享一个 family）→ 一次 IN 查所有家族行。
-  const distinctKeys = Array.from(
-    new Set(Array.from(familyKeyByRefId.values()).filter((k): k is string => k !== null)),
-  );
-  const familyRowByKey = new Map<string, FamilyCalibrationRow>();
-  if (distinctKeys.length > 0) {
-    const rows = await db
-      .select({
-        family_key: item_family_calibration.family_key,
-        b_delta: item_family_calibration.b_delta,
-        evidence_count: item_family_calibration.evidence_count,
-        confidence: item_family_calibration.confidence,
-        calibrated_n: item_family_calibration.calibrated_n,
-      })
-      .from(item_family_calibration)
-      .where(inArray(item_family_calibration.family_key, distinctKeys));
-    for (const r of rows) familyRowByKey.set(r.family_key, r);
-  }
-
   // YUK-716 — bulk-prefetch the per-KC mastery reads that were the aggregateWeakestKc N×M N+1.
   // ONE getMasteryStates over the union of all question candidates' KCs + ONE
   // effectiveThetaForKcBatch (θ_global folded in when HIERARCHICAL_ELO_ENABLED, else a no-read
   // pass-through). The per-KC θ̂_min selection stays in aggregateWeakestKc as pure in-memory
-  // computation over these two maps (byte-identical picks). resolveBAnchor stays per-candidate:
+  // computation over these two maps (byte-identical picks). Hard b stays per-candidate:
   // it is a per-refId (not per-KC) read outside the θ̂ aggregation's N×M hot path.
   const unionKcIds = Array.from(new Set(questionCands.flatMap((c) => c.knowledgeIds ?? [])));
   const masteryByKc = await getMasteryStates(db, unionKcIds, 'knowledge');
@@ -581,15 +508,12 @@ export async function collectCandidateSignals(
     if (cand.refKind === 'paper') {
       out.push(collectPaperSignal(cand));
     } else {
-      const fk = familyKeyByRefId.get(cand.refId) ?? null;
-      const familyRow = fk !== null ? (familyRowByKey.get(fk) ?? null) : null;
       out.push(
         await collectQuestionSignal(
-          db,
           cand,
           masteryByKc,
           effectiveThetaByKc,
-          familyRow,
+          difficultyRead,
           recurrenceByQuestion[questionIndex],
         ),
       );
