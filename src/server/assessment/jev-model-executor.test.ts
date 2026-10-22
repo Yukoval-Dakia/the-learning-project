@@ -17,6 +17,9 @@ vi.mock('@/server/ai/log', () => ({
   writeAiTaskRunStarted: logMocks.started,
   writeAiTaskAttemptFinished: logMocks.terminal,
   writeAiTaskRunRetried: logMocks.retried,
+}));
+
+vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: logMocks.tool,
 }));
 

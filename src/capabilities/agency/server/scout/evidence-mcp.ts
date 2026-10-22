@@ -21,7 +21,7 @@ import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { notesForKnowledge } from '@/kernel/read-models/notes-read';
-import { writeToolCallLog } from '@/server/ai/log';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { piCustomTool } from '@/server/ai/tools/pi-tools';
 import { getEffectiveProbeResultStatuses } from '../../public';
 import { readAgentNotes } from '../notes';
