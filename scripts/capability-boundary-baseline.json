@@ -1120,6 +1120,70 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-100d7a81-b1f3-4925-b56d-3fac936f9672",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-22",
+      "from": 8,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> projections",
+      "date": "2026-10-22",
+      "from": 8,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-22",
+      "from": 13,
+      "to": 11,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/proposals/owner-runtime.ts",
+      "siteKind": "site",
+      "symbol": "hasLearningItemGenesisAnchor",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "targetSymbol": "hasLearningItemGenesisAnchor",
+      "owner": "kernel/records/learning-items",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Agency imports the runtime namespace at line 11, supplies it to lifecycle at line 30, and retract-learning-item uses the anchor and guarded projection at lines 36/54. Knowledge proposal-appliers also imports the namespace at line 19 but does not call these two members.",
+      "rationale": "The kernel owns complete learning-item materialization and genesis-anchor facts; the existing proposal lifecycle keeps its transaction, decision lock and recovery orchestration. Preserve the existing local-export contract without a second implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/proposals/owner-runtime.ts",
+      "siteKind": "site",
+      "symbol": "projectLearningItemGuarded",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "targetSymbol": "projectLearningItemGuarded",
+      "owner": "kernel/records/learning-items",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Agency imports the runtime namespace at line 11, supplies it to lifecycle at line 30, and retract-learning-item uses the anchor and guarded projection at lines 36/54. Knowledge proposal-appliers also imports the namespace at line 19 but does not call these two members.",
+      "rationale": "The kernel owns complete learning-item materialization and genesis-anchor facts; the existing proposal lifecycle keeps its transaction, decision lock and recovery orchestration. Preserve the existing local-export contract without a second implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -1683,6 +1747,76 @@
       "issue": "YUK-1572",
       "owns": "Kernel projects whole-artifact and block correction state; Notes uses those facts to decide visible backlinks without duplicating correction history.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/learning-intent.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["createPendingLearningItem"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-appliers.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["hasLearningItemGenesisAnchor", "projectLearningItemGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
+      "module": "src/server/projections/learning_item.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "The existing server repair owner retains its caller-held-lock precondition and causal event clock. Agency consumes that complete repair operation directly after retirement of its forwarding port.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["createPendingLearningItem"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -2030,18 +2164,85 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
       "date": "2026-10-20",
       "deadline": "2026-11-03"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldLearningItem",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/learning_item.db.test.ts",
+          "line": 25
+        },
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 13
+        },
+        {
+          "file": "src/capabilities/knowledge/jobs/merge_attribution_sweep.db.test.ts",
+          "line": 20
+        },
+        {
+          "file": "src/capabilities/practice/server/merge-attribution.db.test.ts",
+          "line": 4
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/materialized-id-index.ts",
+      "kind": "site",
+      "symbol": "upsertMaterializedIdIndex",
+      "targetModule": "src/kernel/records/materialized-id-index.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/materialized-id-index.db.test.ts",
+          "line": 7
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "hasLearningItemGenesisAnchor",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 21
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 377,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
         "agency -> learning-items": 1,
-        "agency -> projections": 8,
+        "agency -> projections": 5,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
@@ -2062,7 +2263,7 @@
         "ingestion -> ai": 15,
         "ingestion -> boss": 6,
         "ingestion -> events": 6,
-        "ingestion -> projections": 8,
+        "ingestion -> projections": 6,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 11,
         "ingestion -> r2": 13,
@@ -2076,7 +2277,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 13,
+        "knowledge -> projections": 11,
         "knowledge -> proposals": 3,
         "notes -> ai": 8,
         "notes -> artifacts": 2,
