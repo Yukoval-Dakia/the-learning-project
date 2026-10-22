@@ -4,9 +4,8 @@ import postgres from 'postgres';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db as httpDb } from '@/db/client';
 import * as schema from '@/db/schema';
-import * as hydration from '@/server/subjects/hydrate';
+import * as hydration from '@/kernel/read-models/subject-hydration';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
-import { thinCreateSubject } from '@/server/subjects/thin-create';
 import { BUILTIN_TRAIT_SEEDS, seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { SubjectRegistry } from '@/subjects/profile';
 import { CharterTraitSchema, JudgePolicyTraitSchema } from '@/subjects/trait-schemas';
@@ -29,6 +28,7 @@ import {
   resetTraitToSeed,
   rollbackTrait,
 } from '../public';
+import { thinCreateSubject } from './subject-create';
 
 const isolated = vi.hoisted(() => ({ getRegistry: vi.fn() }));
 vi.mock('@/subjects/profile', async (original) => ({

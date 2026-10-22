@@ -140,7 +140,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge (LIVE) ----
   {
     table: 'knowledge',
-    file: 'src/server/projections/knowledge.ts',
+    file: 'src/kernel/records/knowledge-node-materialization.ts',
     marker: '.insert(knowledge)',
     role: 'throat',
     note: 'projection write-through shell — the fold row writer for knowledge (ADR-0044 W1, LIVE).',

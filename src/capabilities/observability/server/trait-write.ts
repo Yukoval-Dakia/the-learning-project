@@ -19,7 +19,7 @@ import {
   subject_trait_binding,
   subject_trait_journal,
 } from '@/db/schema';
-import { acquireControlPlaneLockSql } from '@/server/subjects/control-plane-lock';
+import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   BUILTIN_TRAIT_SEEDS,

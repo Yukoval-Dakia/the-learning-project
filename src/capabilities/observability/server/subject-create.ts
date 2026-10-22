@@ -10,6 +10,7 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
+import { ensureSubjectRoot, subjectRootId } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 import {
   subject,
@@ -17,13 +18,12 @@ import {
   subject_name_claim,
   subject_trait_binding,
 } from '@/db/schema';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
+import { isGeneralFallbackFor } from '@/kernel/read-models/subject-trait-resolutions';
+import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { acquireControlPlaneLockSql } from './control-plane-lock';
-import { ensureSubjectRoot, subjectRootId } from './ensure-subject-root';
-import { hydrateSubjectRegistryFromDb } from './hydrate';
-import { isGeneralFallbackFor } from './resolution-cache';
 
 export interface ThinCreatePayload {
   id: string;

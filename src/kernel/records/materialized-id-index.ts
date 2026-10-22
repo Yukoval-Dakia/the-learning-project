@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { materialized_id_index } from '@/db/schema';
 
@@ -36,4 +37,14 @@ export async function upsertMaterializedIdIndex(
       subject_kind: entry.subject_kind,
     })
     .onConflictDoNothing({ target: materialized_id_index.materialized_id });
+}
+
+/** Return the anchor event id for a minted id, or null when it is not indexed. */
+export async function getAnchorEventId(db: DbLike, materializedId: string): Promise<string | null> {
+  const rows = await db
+    .select({ anchor_event_id: materialized_id_index.anchor_event_id })
+    .from(materialized_id_index)
+    .where(eq(materialized_id_index.materialized_id, materializedId))
+    .limit(1);
+  return rows[0]?.anchor_event_id ?? null;
 }

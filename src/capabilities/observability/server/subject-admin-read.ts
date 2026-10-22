@@ -15,7 +15,7 @@ import {
   type TraitDegradation,
   getSubjectTraitResolutions,
   isGeneralFallbackFor,
-} from '@/server/subjects/resolution-cache';
+} from '@/kernel/read-models/subject-trait-resolutions';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import type { TraitVersionComponent } from '@/subjects/trait-compose';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';

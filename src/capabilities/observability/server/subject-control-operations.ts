@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
+import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+import {
+  AdminSubjectCasBodySchema,
+  AdminSubjectControlParamsSchema,
+  RenameAdminSubjectBodySchema,
+} from '../api/subject-control-contracts';
 import {
   type ControlWriteResult,
   type ValidateSubjectResult,
@@ -9,13 +15,7 @@ import {
   restoreSubject,
   retireSubject,
   validateSubject,
-} from '@/server/subjects/subject-control-write';
-import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import {
-  AdminSubjectCasBodySchema,
-  AdminSubjectControlParamsSchema,
-  RenameAdminSubjectBodySchema,
-} from '../api/subject-control-contracts';
+} from './subject-control-write';
 
 export { AdminSubjectCasBodySchema, AdminSubjectControlParamsSchema, RenameAdminSubjectBodySchema };
 

@@ -5,8 +5,8 @@
 // forbidden and invalid are 422, with fan-out issues when present. Stale builds its
 // response by hand because ApiError cannot carry the extra revision field.
 
-import type { ControlWriteResult } from '@/server/subjects/subject-control-write';
-import type { TraitWriteResult } from '@/server/subjects/trait-write';
+import type { ControlWriteResult } from '../server/subject-control-write';
+import type { TraitWriteResult } from '../server/trait-write';
 
 export function traitResultResponse(result: TraitWriteResult): Response {
   switch (result.kind) {

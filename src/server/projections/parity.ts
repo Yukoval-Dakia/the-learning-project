@@ -29,6 +29,7 @@ import {
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
+export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
@@ -71,111 +72,6 @@ function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: stri
   throw new Error(
     `[projection-parity] ${subjectKind} ${id}: fold(events) != live row — ${diffText}`,
   );
-}
-
-/**
- * Pick the snapshot fields from a live row without Zod parsing: a parse throw could abort
- * a live accept, and a plain pick cannot throw.
- */
-export function knowledgeLiveRowToSnapshot(row: {
-  id: string;
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  merged_from: string[];
-  archived_at: Date | null;
-  proposed_by_ai: boolean;
-  approval_status: 'pending' | 'approved' | 'rejected';
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-/**
- * Whether a node is event-sourced: a genesis/auto-tag event or an index anchor.
- * Pre-event rows fold to null, so callers gate the assert on this to avoid false mismatches.
- */
-export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string): Promise<boolean> {
-  const genesisOrAutoTag = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        eq(event.subject_id, nodeId),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    )
-    .limit(1);
-  if (genesisOrAutoTag.length > 0) return true;
-
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, nodeId),
-        // genesis anchor for a NODE — materialized_id_index also carries edge anchors, so
-        // constrain by subject_kind to never read an edge anchor as a node's genesis anchor.
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/**
- * Batch form of hasKnowledgeNodeGenesisAnchor; one query per source.
- */
-export async function knowledgeNodesWithGenesisAnchor(
-  db: DbLike,
-  nodeIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (nodeIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        inArray(event.subject_id, nodeIds),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, nodeIds),
-        // NODE anchors only — see hasKnowledgeNodeGenesisAnchor (edge anchors share the table).
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
 }
 
 // The only edge actions that can seed a row: generate create/archive and the genesis

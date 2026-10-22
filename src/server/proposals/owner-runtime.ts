@@ -4,6 +4,7 @@ export { archiveProposalArtifacts } from '@/capabilities/notes/public';
 
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
+import { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
@@ -12,7 +13,6 @@ import { projectMistakeVariantGuarded } from '@/server/projections/mistake_varia
 import {
   assertKnowledgeNodeParity,
   hasMistakeVariantGenesisAnchor,
-  knowledgeLiveRowToSnapshot,
 } from '@/server/projections/parity';
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
