@@ -9,6 +9,7 @@ import { GAP_WORDS, materialWords, receiptWords, warningWords, whenWords } from 
 import { useStartState } from './record-start';
 import { useRecording } from './recording-read';
 import { recordingTitle } from './recording-title';
+import { reviewOffered } from './review-check';
 import { StartTrouble } from './StartTrouble';
 import { statusWords } from './status-words';
 
@@ -136,6 +137,7 @@ export function RecordingSheet({
           photos={facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper'}
           onHoverPage={setLitPage}
           navigate={navigate}
+          reviewable={reviewOffered(rec)}
         />
       )}
 

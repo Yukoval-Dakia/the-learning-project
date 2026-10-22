@@ -26,6 +26,7 @@ export function BlockLine({
   rescuable,
   onRead,
   onHoverPage,
+  check,
 }: {
   sessionId: string;
   block: Block;
@@ -39,6 +40,8 @@ export function BlockLine({
   rescuable: boolean;
   onRead: () => void;
   onHoverPage: (page: number | null) => void;
+  /** The learner's own「看过了」mark, while a partly read recording is being checked. */
+  check?: { marked: boolean; disabled: boolean; onToggle: () => void };
 }) {
   const [editing, setEditing] = useState(false);
   const first = block.page_spans?.[0];
@@ -58,16 +61,29 @@ export function BlockLine({
             ? { text: '还没收', tone: 'neutral' }
             : { text: '没收', tone: 'neutral' };
     return (
-      <li className="rc-line" {...hover}>
+      <li className="rc-line" data-checked={check?.marked} {...hover}>
         <span className="rc-line-no un-num">{no}</span>
         <div className="rc-line-main">
           <p className="rc-line-text">{promptOf(block) || '（没认出文字）'}</p>
-          {block.status === 'auto_enrolled' && (
-            <RevertButton sessionId={sessionId} blockId={block.id} />
-          )}
-          {block.status === 'draft' && rescuable && (
-            <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
-          )}
+          <div className="rc-line-tools">
+            {check && (
+              <label className="rc-switch rc-switch-sm">
+                <input
+                  type="checkbox"
+                  checked={check.marked}
+                  disabled={check.disabled}
+                  onChange={check.onToggle}
+                />
+                <span>看过了</span>
+              </label>
+            )}
+            {block.status === 'auto_enrolled' && (
+              <RevertButton sessionId={sessionId} blockId={block.id} />
+            )}
+            {block.status === 'draft' && rescuable && (
+              <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
+            )}
+          </div>
         </div>
         <span className="rc-state rc-line-state" data-tone={done.tone}>
           {done.text}
