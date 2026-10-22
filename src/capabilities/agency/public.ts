@@ -28,6 +28,7 @@ export type {
   InduceConjectureResult,
 } from './server/conjecture/induce';
 export { induceConjecture } from './server/conjecture/induce';
+export { submitConjectureProbeAnswer } from './server/conjecture/probe-answer-operation';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 // Shared probe lifecycle exercised by shell integration consumers.

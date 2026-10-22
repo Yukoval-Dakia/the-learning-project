@@ -74,21 +74,24 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
+      'src/capabilities/agency/server/conjecture/probe-answer-operation.ts',
     ],
     symbols: [
       'authorInterventionPackage',
       'materializeInterventionDiagnostics',
       'resolveDailyReviewPlanInputs',
       'retireInterventionDiagnosticQuestion',
+      'previewFormalAttempt',
     ],
-    dto: 'intervention authoring + diagnostic materialization commands; due/budget/question-pace reads for the daily plan',
+    dto: 'intervention authoring + diagnostic materialization commands; due/budget/question-pace reads for the daily plan; paid probe submission/evaluation command (YUK-1358)',
     justification:
-      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring. YUK-1622: coach_daily reads the practice due queue + budget + measured question pace so the TodayPlan numbers have one deterministic owner.',
+      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring. YUK-1622: coach_daily reads the practice due queue + budget + measured question pace so the TodayPlan numbers have one deterministic owner. YUK-1358: probe orchestration directly calls the Practice-owned formal preview, which saves submission then evaluates and may execute a provider; this is a paid command, not a read.',
     reviewIssue: 'YUK-885',
     commandFiles: [
       'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
+      'src/capabilities/agency/server/conjecture/probe-answer-operation.ts',
     ],
   },
   {

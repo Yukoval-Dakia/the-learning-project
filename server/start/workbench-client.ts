@@ -6,6 +6,7 @@ import {
 import { ProposalDecisionResource } from '@/core/schema/proposal';
 import { ApiError } from '@/ui/lib/api';
 import { authenticatedStartFetch } from './authenticated-fetch';
+import { startProbeAnswerClient } from './probe-answer-client';
 import {
   acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
@@ -69,6 +70,7 @@ export const startWorkbenchClient: WorkbenchClient = {
     getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
   getActiveProbes: () => getStartActiveProbes(transport),
+  submitProbeAnswer: startProbeAnswerClient,
   getTeachingBrief: () => getStartTeachingBrief(transport),
   ackTeachingBriefOutcome: (probeResultEventId) =>
     acknowledgeStartTeachingBriefOutcome({
