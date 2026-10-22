@@ -15,7 +15,7 @@ import { db } from '@/db/client';
 import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Placement } from '@/server/session';
-import { recordPlacementNoItem } from '../placement-advance';
+import { recordPlacementNoItem, unresolvedField } from '../placement-advance';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
@@ -277,10 +277,10 @@ export async function readPlacementSession(sessionId: string) {
         throw new ApiError('not_found', `placement session ${sessionId} not found`, 404);
       }
       return {
-        session,
+        ...session,
         starterSupply: await readPlacementStarterOutcomes(tx, sessionId),
-        // L1 — issued items with no verdict at read time.
-        unresolvedItems: await readPlacementUnresolvedItems(tx, sessionId),
+        // Preserve the HTTP projection, including omission when nothing is unresolved.
+        ...unresolvedField(await readPlacementUnresolvedItems(tx, sessionId)),
       };
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
