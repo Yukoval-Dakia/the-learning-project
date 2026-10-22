@@ -1142,6 +1142,26 @@
       "date": "2026-10-22"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readPaperList",
+      "targetModule": "src/capabilities/practice/server/papers-list.ts",
+      "targetSymbol": "readPaperList",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/papers-list-reader.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "The authenticated host-bound Start reader imports readPaperList at line 7. The retained HTTP papers-list adapter directly imports and calls the same operation; those direct calls are not public consumers. Original pagination validation and collection projection are shared, while practice-read aggregation remains unchanged.",
+      "rationale": "Practice owns the complete paper-list request and response contract. HTTP and Start reuse its limit validation, cursor handling and collection envelope without duplicating aggregation, visibility, ordering or counts. The live shelf changes only its transport and preserves its existing cache and display behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ffd3a960-01e5-46f8-ac27-e815442f7297",
+      "date": "2026-10-22"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "agency -> ai",
       "date": "2026-10-22",
@@ -1736,6 +1756,16 @@
       "symbols": ["ImmutableAssetError", "persistImmutableCustomCodeAsset"],
       "issue": "YUK-1513",
       "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/papers-list.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "collectionPayload"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error and collection envelopes; Practice owns paper-list validation and response assembly. The original API retains ApiError for POST, so this adds a physical error-port reference while its collectionPayload import moves to the shared operation.",
       "date": "2026-10-22"
     },
     {

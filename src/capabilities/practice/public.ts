@@ -324,3 +324,5 @@ export const transitionPlacementSession: typeof import('./server/session-operati
     );
 
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
+
+export { readPaperList } from './server/papers-list';
