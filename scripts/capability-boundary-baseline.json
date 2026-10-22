@@ -1160,6 +1160,210 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ffd3a960-01e5-46f8-ac27-e815442f7297",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "ensureSubjectRoot",
+      "targetModule": "src/capabilities/knowledge/server/node-creation.ts",
+      "targetSymbol": "ensureSubjectRoot",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/goals/commands.ts",
+          "line": 2
+        },
+        {
+          "file": "src/capabilities/observability/server/subject-create.ts",
+          "line": 13
+        },
+        {
+          "file": "src/capabilities/knowledge/server/seed.db.test.ts",
+          "line": 2
+        }
+      ],
+      "evidence": "Agency goal creation and controlled subject creation use the same idempotent root birth; the existing seed test pins this exact public operation.",
+      "rationale": "Knowledge owns root identity, event genesis, existing-root/history checks and materialization. Callers retain their transaction and control authorization; this is a command, not a read.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "subjectRootId",
+      "targetModule": "src/capabilities/knowledge/server/node-creation.ts",
+      "targetSymbol": "subjectRootId",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/server/subject-create.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Controlled create and replay receipts use the same deterministic root identifier as root creation.",
+      "rationale": "The root identity belongs to Knowledge; this keeps creation and receipt identity consistent without transferring control policy.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "updateSubjectRootNameFromControl",
+      "targetModule": "src/capabilities/knowledge/server/node-creation.ts",
+      "targetSymbol": "updateSubjectRootNameFromControl",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/server/subject-control-write.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Subject rename and reset call the complete root update in their original transaction after control authorization and CAS.",
+      "rationale": "Knowledge owns root locking, history validation, post-lock timestamp, versioned event and projection; Observability retains subject policy, journal and commit/hydration.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "auditProfilesFromDb",
+      "targetModule": "src/capabilities/observability/server/subject-profile-audit.ts",
+      "targetSymbol": "auditProfilesFromDb",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "scripts/audit-profile.ts",
+          "line": 130
+        }
+      ],
+      "evidence": "The existing --db CLI dynamically imports this operation after load-env and the Db module, preserving original await order.",
+      "rationale": "Observability owns the complete report-only profile audit and its output. This does not authorize mutation or change runtime model/profile rules.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "formatDbProfileAuditReport",
+      "targetModule": "src/capabilities/observability/server/subject-profile-audit.ts",
+      "targetSymbol": "formatDbProfileAuditReport",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "scripts/audit-profile.ts",
+          "line": 130
+        }
+      ],
+      "evidence": "The existing --db CLI dynamically imports this operation after load-env and the Db module, preserving original await order.",
+      "rationale": "Observability owns the complete report-only profile audit and its output. This does not authorize mutation or change runtime model/profile rules.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "getAdminSubjectTraits",
+      "targetModule": "src/capabilities/observability/server/subject-admin-read.ts",
+      "targetSymbol": "getAdminSubjectTraits",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/api/admin-subject-traits.ts",
+          "line": 7
+        },
+        {
+          "file": "server/start/admin-control-reader.ts",
+          "line": 79
+        }
+      ],
+      "evidence": "The retained HTTP adapter imports this exact operation; the existing Start namespace reader calls the same member.",
+      "rationale": "Observability owns complete administrative query, binding/journal projection and existing failure semantics; both transports consume the same operation without reassembling storage facts.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "getTraitJournalPage",
+      "targetModule": "src/capabilities/observability/server/subject-admin-read.ts",
+      "targetSymbol": "getTraitJournalPage",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/api/admin-trait-journal.ts",
+          "line": 7
+        },
+        {
+          "file": "server/start/admin-control-reader.ts",
+          "line": 79
+        }
+      ],
+      "evidence": "The retained HTTP adapter imports this exact operation; the existing Start namespace reader calls the same member.",
+      "rationale": "Observability owns complete administrative query, binding/journal projection and existing failure semantics; both transports consume the same operation without reassembling storage facts.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "listAdminSubjects",
+      "targetModule": "src/capabilities/observability/server/subject-admin-read.ts",
+      "targetSymbol": "listAdminSubjects",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/api/admin-subjects.ts",
+          "line": 7
+        },
+        {
+          "file": "server/start/admin-control-reader.ts",
+          "line": 79
+        }
+      ],
+      "evidence": "The retained HTTP adapter imports this exact operation; the existing Start namespace reader calls the same member.",
+      "rationale": "Observability owns complete administrative query, binding/journal projection and existing failure semantics; both transports consume the same operation without reassembling storage facts.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "listAdminTraits",
+      "targetModule": "src/capabilities/observability/server/subject-admin-read.ts",
+      "targetSymbol": "listAdminTraits",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/api/admin-traits.ts",
+          "line": 7
+        },
+        {
+          "file": "server/start/admin-control-reader.ts",
+          "line": 79
+        }
+      ],
+      "evidence": "The retained HTTP adapter imports this exact operation; the existing Start namespace reader calls the same member.",
+      "rationale": "Observability owns complete administrative query, binding/journal projection and existing failure semantics; both transports consume the same operation without reassembling storage facts.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
