@@ -1947,6 +1947,116 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic API error and collection envelopes; Practice owns paper-list validation and response assembly. The original API retains ApiError for POST, so this adds a physical error-port reference while its collectionPayload import moves to the shared operation.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-admin-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": [
+        "ApiError"
+      ],
+      "issue": "YUK-1570",
+      "owns": "HTTP error identity and status semantics shared by existing administrative readers.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-admin-read.ts",
+      "module": "src/kernel/read-models/subject-trait-resolutions.ts",
+      "kind": "value",
+      "symbols": [
+        "TraitDegradation",
+        "getSubjectTraitResolutions",
+        "isGeneralFallbackFor"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-operations.ts",
+      "module": "src/kernel/read-models/subject-hydration.ts",
+      "kind": "value",
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/kernel/records/subject-control-lock.ts",
+      "kind": "value",
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
+      "issue": "YUK-1570",
+      "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/kernel/read-models/subject-hydration.ts",
+      "kind": "value",
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/kernel/read-models/subject-trait-resolutions.ts",
+      "kind": "value",
+      "symbols": [
+        "isGeneralFallbackFor"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/kernel/records/subject-control-lock.ts",
+      "kind": "value",
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
+      "issue": "YUK-1570",
+      "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/trait-control-operations.ts",
+      "module": "src/kernel/read-models/subject-hydration.ts",
+      "kind": "value",
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/trait-write.ts",
+      "module": "src/kernel/records/subject-control-lock.ts",
+      "kind": "value",
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
+      "issue": "YUK-1570",
+      "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
