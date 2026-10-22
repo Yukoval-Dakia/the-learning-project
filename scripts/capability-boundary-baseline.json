@@ -1985,6 +1985,15 @@
       "to": 1404,
       "issue": "YUK-1358",
       "responsibilityReason": "Inject the existing draft-save and judge-status transports through the Practice client context, including the necessary saveResponseDraft callback dependency and existing poller readStatus argument. The two net lines add no business responsibility: autosave epochs, conflicts, lifecycle, submission and presentation behavior stay unchanged; no lines are compressed to evade the size gate."
+    },
+    {
+      "path": "src/server/questions/shared-submit.ts",
+      "date": "2026-10-22",
+      "baseBlob": "c98ea374fe27e93918bfa186041c17174c183bdd",
+      "from": 1162,
+      "to": 1164,
+      "issue": "YUK-1513",
+      "responsibilityReason": "Inject the existing R2 storage-key byte reader into the single existing publish seam so an immutable custom code asset can reach pending admission. Exactly one import and one reader property; locks, CAS, request receipts, paid identity and the kernel asset barrier are unchanged. Preview implementation remains in the private practice operation; this is measured source growth, not a size-limit exemption."
     }
   ],
   "compatShims": [
