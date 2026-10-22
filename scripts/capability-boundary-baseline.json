@@ -1140,6 +1140,66 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0bae01-0c81-4ed2-93a4-7a955a039105",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/mastery/personalized-difficulty.ts",
+      "siteKind": "site",
+      "symbol": "effectiveFamilyB",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "targetSymbol": "effectiveFamilyB",
+      "owner": "kernel/read-models/question-difficulty",
+      "consumers": [
+        {
+          "file": "scripts/audit-calibration.ts",
+          "line": 94
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 64
+        }
+      ],
+      "evidence": "The existing offline calibration/replay scripts and named test pins consume this exact shared read rule. Preserve script environment loading and separate dynamic import await order.",
+      "rationale": "The kernel owns complete hard-anchor and family difficulty facts while the old real modules retain their calibration writes. This exact existing reader contract uses the canonical implementation without duplicating the policy or moving write/lock authority.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/mastery/recalibration.ts",
+      "siteKind": "site",
+      "symbol": "effectiveB",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "targetSymbol": "effectiveB",
+      "owner": "kernel/read-models/question-difficulty",
+      "consumers": [
+        {
+          "file": "scripts/audit-calibration.ts",
+          "line": 93
+        },
+        {
+          "file": "scripts/replay-urnings-lite.ts",
+          "line": 55
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 65
+        }
+      ],
+      "evidence": "The existing offline calibration/replay scripts and named test pins consume this exact shared read rule. Preserve script environment loading and separate dynamic import await order.",
+      "rationale": "The kernel owns complete hard-anchor and family difficulty facts while the old real modules retain their calibration writes. This exact existing reader contract uses the canonical implementation without duplicating the policy or moving write/lock authority.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-22",
+      "from": 9,
+      "to": 5,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1713,6 +1773,26 @@
       "issue": "YUK-1513",
       "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/candidate-signals.ts",
+      "module": "src/kernel/read-models/question-difficulty.ts",
+      "kind": "value",
+      "symbols": ["BSource", "CandidateDifficultyRead", "prepareCandidateDifficultyRead"],
+      "issue": "YUK-1570",
+      "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "module": "src/kernel/read-models/question-difficulty.ts",
+      "kind": "value",
+      "symbols": ["readHardCalibrationBs"],
+      "issue": "YUK-1570",
+      "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -2060,11 +2140,49 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
       "date": "2026-10-20",
       "deadline": "2026-11-03"
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "kind": "alias",
+      "symbol": "familyKey",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "consumers": [
+        {
+          "file": "src/server/mastery/personalized-difficulty.db.test.ts",
+          "line": 16
+        }
+      ],
+      "exitCondition": "Only after Owner separately approves the exact named test imports, repoint them to the canonical kernel implementation and delete this old export; retain the original module’s real calibration writer responsibilities. This record grants no test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "kind": "site",
+      "symbol": "getFamilyCalibration",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "consumers": [
+        {
+          "file": "src/server/mastery/personalized-difficulty.db.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 64
+        }
+      ],
+      "exitCondition": "Only after Owner separately approves the exact named test imports, repoint them to the canonical kernel implementation and delete this old export; retain the original module’s real calibration writer responsibilities. This record grants no test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 380,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -2128,7 +2246,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 6,
         "practice -> http": 3,
-        "practice -> mastery": 9,
+        "practice -> mastery": 5,
         "practice -> memory": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
