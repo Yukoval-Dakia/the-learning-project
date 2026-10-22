@@ -1,9 +1,19 @@
 import { createFileRoute, useRouter, useRouterState } from '@tanstack/react-router';
 import { Suspense, lazy, useCallback } from 'react';
-import { loadPracticeFacePage } from '@/capabilities/practice/ui-public';
+import {
+  type PracticeClient,
+  PracticeClientProvider,
+  loadPracticeFacePage,
+} from '@/capabilities/practice/ui-public';
+import { startJudgeRunStatusClient } from '../judge-status-client';
+import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
+const practiceClient: PracticeClient = {
+  saveResponseDraft: startResponseDraftClient,
+  readJudgeRunStatus: startJudgeRunStatusClient,
+};
 function PracticePage() {
   const router = useRouter();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
@@ -40,16 +50,18 @@ function PracticePage() {
   );
   return (
     <StartWorkbenchShell pathname="/practice">
-      <Suspense>
-        <Page
-          navigate={startNavigate}
-          getQuery={getQuery}
-          setQuery={setQuery}
-          itemParam={itemParam}
-          writeItemParam={writeItemParam}
-          historyBack={historyBack}
-        />
-      </Suspense>
+      <PracticeClientProvider value={practiceClient}>
+        <Suspense>
+          <Page
+            navigate={startNavigate}
+            getQuery={getQuery}
+            setQuery={setQuery}
+            itemParam={itemParam}
+            writeItemParam={writeItemParam}
+            historyBack={historyBack}
+          />
+        </Suspense>
+      </PracticeClientProvider>
     </StartWorkbenchShell>
   );
 }

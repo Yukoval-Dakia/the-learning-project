@@ -42,9 +42,9 @@ import {
   getQuestionFull,
   isSubmitPending,
   issueAssessment,
-  saveResponseDraft,
   submitReview,
 } from './practice-api';
+import { usePracticeClient } from './practice-client';
 
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
@@ -416,6 +416,7 @@ export function usePracticeSubmit({
   addToast,
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
+  const { saveResponseDraft, readJudgeRunStatus } = usePracticeClient();
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
@@ -645,7 +646,7 @@ export function usePracticeSubmit({
       // ACKs of an in-flight and a chained save can arrive in either order; keep the newest.
       ackedEpoch.current = Math.max(ackedEpoch.current ?? 0, ack.save_epoch);
     },
-    [issuanceId, draftGroupRef, restoredEpoch],
+    [issuanceId, draftGroupRef, restoredEpoch, saveResponseDraft],
   );
   // YUK-1489 — on a conflict autosave stops and the server's current version is read, so the
   // learner can compare and choose (panel below). Each read is tagged; only the newest lands.
@@ -1037,6 +1038,7 @@ export function usePracticeSubmit({
   const pendingPoll = useJudgeRunPolling({
     runId: pendingRun?.runId ?? null,
     pollUrl: pendingRun?.pollUrl ?? null,
+    readStatus: readJudgeRunStatus,
     onSettled: onPendingSettled,
   });
 
