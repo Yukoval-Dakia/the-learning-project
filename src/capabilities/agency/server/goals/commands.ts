@@ -8,10 +8,13 @@ import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
+import {
+  hasGoalGenesisAnchor,
+  projectGoal,
+  projectGoalGuarded,
+} from '@/kernel/records/goal-history';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { nextProjectionEventTime } from '@/server/projections/event-clock';
-import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
-import { hasGoalGenesisAnchor } from '@/server/projections/parity';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
 type GoalDb = Db | Tx;

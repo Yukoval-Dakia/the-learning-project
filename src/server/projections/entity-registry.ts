@@ -20,6 +20,12 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
+import {
+  gatherAndFoldGoal,
+  goalRowToSnapshot as goalLiveRowToSnapshot,
+  goalsWithGenesisAnchor,
+  projectGoalGuarded,
+} from '@/kernel/records/goal-history';
 import { projectKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
 import {
   gatherAndFoldKnowledgeNode,
@@ -39,19 +45,15 @@ import { projectArtifactGuarded } from './artifact';
 import {
   edgeRowToSnapshot,
   gatherAndFoldArtifact,
-  gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
-import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
 import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
   artifactsWithGenesisAnchor,
-  goalLiveRowToSnapshot,
-  goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,

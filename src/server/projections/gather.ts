@@ -8,12 +8,10 @@
 import { and, eq, inArray, or } from 'drizzle-orm';
 
 import { foldArtifact } from '@/core/projections/artifact';
-import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
 import type {
   ArtifactRowSnapshotT,
-  GoalRowSnapshotT,
   ItemCalibrationRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
@@ -21,6 +19,7 @@ import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { rowToFoldEvent } from '@/kernel/records/projection-events';
 
+export { gatherAndFoldGoal } from '@/kernel/records/goal-history';
 export {
   edgeRowToSnapshot,
   gatherAndFoldKnowledgeEdge,
@@ -31,42 +30,6 @@ export { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
-
-/**
- * Gather the events affecting `goalId` and run the pure goal fold. Goal ids are never
- * minted into a rate, so the gather is the subject-keyed events plus the chained
- * accept/retract events. Returns the projected row or null.
- */
-export async function gatherAndFoldGoal(
-  db: DbLike,
-  goalId: string,
-): Promise<GoalRowSnapshotT | null> {
-  // Q1: subject-keyed events (genesis, the goal_scope proposal, status/scope updates).
-  const q1 = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'goal'), eq(event.subject_id, goalId)));
-
-  // The accept rate and retract correct target the proposal event, not the goal row.
-  const gatheredIds = q1.map((r) => r.id);
-  const byId = new Map<string, EventRow>();
-  for (const r of q1) byId.set(r.id, r);
-  if (gatheredIds.length > 0) {
-    const chained = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          inArray(event.action, ['rate', 'correct']),
-          inArray(event.caused_by_event_id, gatheredIds),
-        ),
-      );
-    for (const r of chained) byId.set(r.id, r);
-  }
-
-  const foldEvents = [...byId.values()].map(rowToFoldEvent);
-  return foldGoal(goalId, foldEvents);
-}
 
 /**
  * Gather the events affecting `mvId` and run the pure mistake_variant fold. The base

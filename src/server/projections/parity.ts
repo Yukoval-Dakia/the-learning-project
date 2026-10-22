@@ -29,6 +29,7 @@ import {
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
+export { goalRowToSnapshot as goalLiveRowToSnapshot } from '@/kernel/records/goal-history';
 export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
 
@@ -114,69 +115,6 @@ export async function knowledgeEdgesWithGenesisAnchor(
   return out;
 }
 
-// ── goal genesis-anchor helpers ────────────────────────────────────────────────────────────────
-//
-// A goal is event-sourced when it has a genesis seed, a goal_scope proposal, or an index
-// anchor. Status/scope updates are deliberately not anchors: the fold applies them only to
-// an existing row, so counting them would let the guarded writer delete a live goal and the
-// backfill skip it.
-const GOAL_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:proposal'] as const;
-
-/** Whether a goal has an anchor the fold can reproduce. */
-export async function hasGoalGenesisAnchor(db: DbLike, goalId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'goal'),
-        eq(event.subject_id, goalId),
-        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, goalId),
-        eq(materialized_id_index.subject_kind, 'goal'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function goalsWithGenesisAnchor(db: DbLike, goalIds: string[]): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (goalIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'goal'),
-        inArray(event.subject_id, goalIds),
-        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, goalIds),
-        eq(materialized_id_index.subject_kind, 'goal'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
 /**
  * Assert that the node fold reproduces the live row. The gather is wrapped so a reducer
  * throw follows the same dev-throw/prod-log path as a mismatch instead of aborting a live
@@ -238,41 +176,6 @@ export async function assertKnowledgeEdgeParity(
 //
 // Write-time fold==row guard for the goal sites, mirroring the node assert. Callers must
 // only assert event-sourced goals; a pre-event goal folds to null and would false-mismatch.
-
-/** Pick snapshot fields from a live goal row without Zod parsing. */
-export function goalLiveRowToSnapshot(row: {
-  id: string;
-  title: string;
-  subject_id: string | null;
-  scope_knowledge_ids: string[] | null;
-  scope_mode: 'explicit' | 'subject_live';
-  sequence_hint: number;
-  declared_stage: 'middle_school' | 'high_school' | 'university' | 'custom' | null;
-  status: 'active' | 'dormant' | 'done';
-  source: string;
-  source_ref: string | null;
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): GoalRowSnapshotT {
-  return {
-    id: row.id,
-    title: row.title,
-    subject_id: row.subject_id,
-    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // NOT NULL with a default; the fold materializes the same value for legacy payloads.
-    scope_mode: row.scope_mode,
-    sequence_hint: row.sequence_hint,
-    // Nullable; the fold materializes NULL for legacy payloads too, so surface it verbatim.
-    declared_stage: row.declared_stage,
-    status: row.status,
-    source: row.source,
-    source_ref: row.source_ref,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
 
 /** Assert that the goal fold reproduces the live row; see the node assert for throw handling. */
 export async function assertGoalParity(
