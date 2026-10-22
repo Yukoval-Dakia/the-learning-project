@@ -3249,6 +3249,31 @@
       "issue": "YUK-1570",
       "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/reconciliation-execution.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["WriteEventInput", "writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Persist the deterministic research-meeting execution checkpoint after validating replay state and recovering prior probe-anchor counts; event writer retains the canonical event persistence protocol.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/agency/server/conjecture/reconciliation-execution.ts",
+      "module": "src/server/conjectures/reconcile.ts",
+      "kind": "value",
+      "symbols": [
+        "PREDICTION_SCORE_ACTION",
+        "PROBE_RESULT_PROJECTED_ACTION",
+        "ReconcileResult",
+        "reconcileConjecturePredictions"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Reconcile effective probe outcomes into typed state and deterministic score/projection anchors. The Agency execution owner recovers and persists checkpoint aggregates around this unchanged complete core operation.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
