@@ -5,46 +5,32 @@
 //
 // These functions only SELECT and fold; they never write.
 
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 
 import { foldArtifact } from '@/core/projections/artifact';
 import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
-import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   ItemCalibrationRowSnapshotT,
-  KnowledgeEdgeRowSnapshotT,
   MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge_edge } from '@/db/schema';
+import { event } from '@/db/schema';
 import { rowToFoldEvent } from '@/kernel/records/projection-events';
 
+export {
+  edgeRowToSnapshot,
+  gatherAndFoldKnowledgeEdge,
+  gatherAndFoldKnowledgeEdgeWithMesh,
+} from '@/kernel/records/knowledge-edge-facts';
 export { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 export { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
-type EdgeRow = typeof knowledge_edge.$inferSelect;
-
-// Map a live edge row to the snapshot shape the fold produces. Both the mesh and the
-// accept-time parity assert use this one mapper, so their shapes cannot drift.
-export function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
-  return {
-    id: row.id,
-    from_knowledge_id: row.from_knowledge_id,
-    to_knowledge_id: row.to_knowledge_id,
-    relation_type: row.relation_type,
-    weight: row.weight,
-    created_by: row.created_by as Record<string, unknown>,
-    reasoning: row.reasoning ?? null,
-    created_at: row.created_at,
-    archived_at: row.archived_at ?? null,
-  };
-}
 
 /**
  * Gather the events affecting `goalId` and run the pure goal fold. Goal ids are never
@@ -163,35 +149,4 @@ export async function gatherAndFoldItemCalibration(
     .where(and(eq(event.subject_kind, 'item_calibration'), eq(event.subject_id, rowId)));
   const foldEvents = rows.map(rowToFoldEvent);
   return foldItemCalibration(rowId, foldEvents);
-}
-
-/**
- * Gather the events for `edgeId` and run the pure edge fold against a caller-supplied
- * live mesh. A batch caller fetches the mesh once, avoiding an O(E²) rescan. The mesh
- * includes the edge itself when live, which the topology check treats as already present.
- */
-export async function gatherAndFoldKnowledgeEdgeWithMesh(
-  db: DbLike,
-  edgeId: string,
-  liveMesh: KnowledgeEdgeRowSnapshotT[],
-): Promise<KnowledgeEdgeRowSnapshotT | null> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)));
-  const foldEvents = rows.map(rowToFoldEvent);
-  return foldKnowledgeEdge(edgeId, foldEvents, liveMesh);
-}
-
-/**
- * Single-edge form: fetch the live mesh, then delegate. A topology reject propagates so
- * the caller decides whether to abort.
- */
-export async function gatherAndFoldKnowledgeEdge(
-  db: DbLike,
-  edgeId: string,
-): Promise<KnowledgeEdgeRowSnapshotT | null> {
-  const liveRows = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
-  const liveMesh = liveRows.map(edgeRowToSnapshot);
-  return gatherAndFoldKnowledgeEdgeWithMesh(db, edgeId, liveMesh);
 }

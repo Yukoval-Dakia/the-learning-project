@@ -11,7 +11,8 @@ import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
+
+export { runEdgeTopologyGate } from '@/kernel/records/knowledge-edge-facts';
 
 /**
  * Endpoints must be live and must not repeat a direct tree pair. One definition serves
@@ -77,44 +78,6 @@ export async function acquireEdgeEndpointLocks(
     .for('update', { noWait: true });
   await acquireSortedAdvisoryLocks(tx, 'knowledge_edge', [fromId, toId]);
   await assertEdgeEndpointsValid(tx, fromId, toId, endpointIds);
-}
-
-/**
- * Translate the fold's topology reject into a 409. Match the inner message, because the
- * parity assert may re-wrap it. Any other error returns null and is rethrown unchanged.
- */
-function foldRejectToApiError(err: unknown): ApiError | null {
-  if (err instanceof ApiError) return null;
-  const message = err instanceof Error ? err.message : String(err);
-  const match = /ADR-0034 topology reject on edge \S+ \(gate=([a-z_]+)\): ([\s\S]*)/.exec(message);
-  if (!match) return null;
-  const gate = match[1];
-  const reason = match[2].trim();
-  return new ApiError(
-    gate,
-    `knowledge_edge write rejected by ADR-0034 topology gate (${gate}): ${reason}`,
-    409,
-  );
-}
-
-/**
- * Materialize the accepted event and enforce topology in the same transaction. A reject
- * always aborts; `translateReject` maps it to a clean ApiError for direct routes.
- */
-export async function runEdgeTopologyGate(
-  tx: Tx,
-  edgeId: string,
-  opts?: { translateReject?: boolean },
-): Promise<void> {
-  try {
-    await projectKnowledgeEdgeGuarded(tx, edgeId);
-  } catch (err) {
-    if (opts?.translateReject) {
-      const apiErr = foldRejectToApiError(err);
-      if (apiErr) throw apiErr;
-    }
-    throw err;
-  }
 }
 
 const MAX_LOCK_ATTEMPTS = 6;
