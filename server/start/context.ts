@@ -3,6 +3,7 @@ import type { MistakeListQuery, MistakeListResponse } from '@/capabilities/inges
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
   PlacementProfileResponse,
+  readJudgeRunStatus,
   readPlacementSession,
   transitionPlacementSession,
 } from '@/capabilities/practice/public';
@@ -12,6 +13,9 @@ export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
   readPlacementSession: typeof readPlacementSession;
+  readJudgeRunStatus: (
+    runId: string,
+  ) => Promise<Extract<Awaited<ReturnType<typeof readJudgeRunStatus>>, { kind: 'found' }>['value']>;
   transitionPlacementSession: (input: {
     sessionId: string;
     body: string;
