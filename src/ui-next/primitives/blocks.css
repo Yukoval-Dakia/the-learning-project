@@ -1,0 +1,47 @@
+/* Card, skeleton, retry (YUK-1473). Loaded by the three primitives that use these classes.
+   Cards are paper with a hairline and no shadow (T3); skeletons sit where the content will land
+   and a failed area says so with a retry (M14). */
+[data-ui-next] {
+  & .un-card {
+    border-radius: var(--un-r-2);
+    padding: var(--un-sp-4) var(--un-sp-5);
+  }
+
+  & .un-card-raised {
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .un-card-sunk {
+    background: var(--un-bg-sunk);
+  }
+
+  & .un-skeleton {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-2) 0;
+  }
+
+  & .un-skeleton-line {
+    height: 12px;
+    border-radius: 6px;
+    background: var(--un-bg-hover);
+  }
+
+  & .un-skeleton-line:last-child:not(:first-child) {
+    width: 62%;
+  }
+
+  & .un-retry {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-retry-btn {
+    color: var(--un-accent-strong);
+    font-weight: var(--un-fw-medium);
+  }
+}

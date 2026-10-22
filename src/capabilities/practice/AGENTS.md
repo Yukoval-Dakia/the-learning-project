@@ -11,7 +11,7 @@
 | `server/` | 判分路由、FSRS 投影、paper/流编排、stream-store、placement、mastery 交互 |
 | `jobs/` | `attribution_followup` → `variant_gen` durable 链及其它 Practice 后台任务 |
 | `tasks/` / `tools/` | Practice-owned AI TaskSpecs 与 Failure Learning DomainTool 适配层 |
-| `ui/` | PracticeFacePage、DraftReviewPage、QuestionsPage、QuestionDetailPage |
+| `ui/` | PracticeFacePage；`ui/library/` 题目库（全部 / 做错过 / 待审核 / 暂不出题）与单题页 |
 
 ## CONVENTIONS
 - 判分走 `JudgeResultV2`：coarse_outcome × score_meaning，历史判分不可变（rejudge = 新 event）。

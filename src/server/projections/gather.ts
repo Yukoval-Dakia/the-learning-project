@@ -7,11 +7,9 @@
 
 import { and, eq, inArray, or } from 'drizzle-orm';
 
-import { foldArtifact } from '@/core/projections/artifact';
 import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
 import type {
-  ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   ItemCalibrationRowSnapshotT,
 } from '@/core/schema/event/genesis';
@@ -68,22 +66,7 @@ export async function gatherAndFoldGoal(
   return foldGoal(goalId, foldEvents);
 }
 
-/**
- * Gather the events affecting `artifactId` and run the pure artifact fold. Every artifact
- * event keys on the artifact id, so this is a single subject-keyed query. Returns the
- * projected row or null.
- */
-export async function gatherAndFoldArtifact(
-  db: DbLike,
-  artifactId: string,
-): Promise<ArtifactRowSnapshotT | null> {
-  const rows = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'artifact'), eq(event.subject_id, artifactId)));
-  const foldEvents = rows.map(rowToFoldEvent);
-  return foldArtifact(artifactId, foldEvents);
-}
+export { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 
 export { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 

@@ -20,6 +20,12 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
+import {
+  artifactRowToSnapshot,
+  artifactsWithGenesisAnchor,
+  gatherAndFoldArtifact,
+  projectArtifactGuarded,
+} from '@/kernel/records/artifact-history';
 import { projectKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
 import {
   gatherAndFoldKnowledgeNode,
@@ -41,10 +47,8 @@ import {
   mistakeVariantsWithGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import { projectArtifactGuarded } from './artifact';
 import {
   edgeRowToSnapshot,
-  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
@@ -53,7 +57,6 @@ import {
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
 import {
-  artifactsWithGenesisAnchor,
   goalLiveRowToSnapshot,
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
@@ -63,11 +66,7 @@ import {
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
 import { projectQuestionBlockGuarded } from './question_block';
-import {
-  artifactRowToSnapshot,
-  itemCalibrationRowToSnapshot,
-  questionBlockRowToSnapshot,
-} from './snapshot-mappers';
+import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 import type { ProjectionEntity } from './sot-flag';
 
 type DbLike = Db | Tx;
