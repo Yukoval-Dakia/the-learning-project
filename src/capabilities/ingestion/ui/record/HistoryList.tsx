@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAssetUrl } from '@/ui/lib/assets';
-import { RetryLine, SectionHead, SkeletonLines } from '@/ui-next/public';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SectionHead } from '@/ui-next/primitives/SectionHead';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { type SessionRow, getSession } from './record-api';
 import { materialWords, whenWords } from './record-copy';
 import { recordKeys, useRecordingList } from './recording-read';
@@ -35,7 +37,9 @@ function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: n
       <button type="button" className="rc-row un-hit" onClick={onOpen}>
         <Thumb assetId={row.source_asset_ids[0]} />
         <span className="rc-row-main">
-          <span className="rc-row-title">{[when, row.title].filter(Boolean).join(' · ')}</span>
+          <span className="rc-row-title rc-row-clip">
+            {[when, row.title].filter(Boolean).join(' · ')}
+          </span>
           <span className="rc-quiet">
             {materialWords(row.entrypoint, row.source_asset_ids.length)}
             {row.path === 'agent' && ' · 录入助手整理'}

@@ -216,7 +216,7 @@
     font-weight: var(--un-fw-medium);
   }
 
-  & .rc-row .rc-row-title {
+  & .rc-row-clip {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

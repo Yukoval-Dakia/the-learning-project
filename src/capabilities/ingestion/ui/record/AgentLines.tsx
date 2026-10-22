@@ -108,7 +108,7 @@ export function AgentLines({
                 <AskReply key={ask.id} sessionId={sessionId} ask={ask} />
               ))}
             </div>
-            <span className="rc-state" data-tone={tone}>
+            <span className="rc-state rc-line-state" data-tone={tone}>
               {label}
             </span>
           </li>

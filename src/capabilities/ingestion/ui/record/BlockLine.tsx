@@ -79,7 +79,7 @@ export function BlockLine({
             <RevertButton sessionId={sessionId} blockId={block.id} />
           )}
         </div>
-        <span className="rc-state" data-tone={done.tone}>
+        <span className="rc-state rc-line-state" data-tone={done.tone}>
           {done.text}
         </span>
       </li>
@@ -155,7 +155,7 @@ export function BlockLine({
           </label>
         )}
       </div>
-      <span className="rc-state" data-tone={ready.tone}>
+      <span className="rc-state rc-line-state" data-tone={ready.tone}>
         {ready.text}
       </span>
     </li>

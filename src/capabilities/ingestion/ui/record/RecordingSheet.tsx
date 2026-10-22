@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { RetryLine, SkeletonLines } from '@/ui-next/public';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { AgentLines } from './AgentLines';
 import { BlockLines } from './BlockLines';
 import { PageStrip } from './PageStrip';

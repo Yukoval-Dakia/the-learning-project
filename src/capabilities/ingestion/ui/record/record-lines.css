@@ -284,15 +284,15 @@
       row-gap: var(--un-sp-1);
     }
 
-    & .rc-line > .rc-line-no {
+    & .rc-line-no {
       grid-area: no;
     }
 
-    & .rc-line > .rc-state {
+    & .rc-line-state {
       grid-area: state;
     }
 
-    & .rc-line > .rc-line-main {
+    & .rc-line-main {
       grid-area: main;
     }
   }
