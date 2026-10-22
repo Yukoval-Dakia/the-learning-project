@@ -17,7 +17,6 @@ export {
   listAdminSubjects,
   listAdminTraits,
 } from '@/server/subjects/admin-read';
-export { type ThinCreatePayload, thinCreateSubject } from '@/server/subjects/thin-create';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
 export {

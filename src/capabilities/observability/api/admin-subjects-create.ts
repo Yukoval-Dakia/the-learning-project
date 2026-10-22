@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse, resourceResponse } from '@/kernel/http';
-import { thinCreateSubject } from '../public';
+import { thinCreateSubject } from '@/server/subjects/thin-create';
 
 const Body = z.object({ displayName: z.string() });
 

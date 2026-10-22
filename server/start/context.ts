@@ -1,6 +1,6 @@
 import type { Hono } from 'hono';
 import type { MistakeListQuery, MistakeListResponse } from '@/capabilities/ingestion/public';
-import type { ThinCreatePayload } from '@/capabilities/observability/public';
+import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
   PlacementProfileResponse,
@@ -40,7 +40,9 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
   readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
-  createSubject: (displayName: string) => Promise<ThinCreatePayload>;
+  createSubject: (
+    displayName: string,
+  ) => Promise<Extract<Awaited<ReturnType<typeof thinCreateSubject>>, { kind: 'created' | 'replayed' }>['payload']>;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
   readMistakes: (input: MistakeListQuery) => Promise<MistakeListResponse>;
   legacySpa: Hono;
