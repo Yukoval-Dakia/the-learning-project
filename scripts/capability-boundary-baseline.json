@@ -1120,6 +1120,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-100d7a81-b1f3-4925-b56d-3fac936f9672",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> fsrs",
+      "date": "2026-10-22",
+      "from": 6,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1683,6 +1691,23 @@
       "issue": "YUK-1572",
       "owns": "Kernel projects whole-artifact and block correction state; Notes uses those facts to decide visible backlinks without duplicating correction history.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
+      "module": "src/server/fsrs/state.ts",
+      "kind": "value",
+      "symbols": [
+        "FsrsSubjectKind",
+        "UpsertFsrsStateInput",
+        "enrollFsrsStateIfAbsent",
+        "getFsrsState",
+        "initialSchedulingState",
+        "upsertFsrsState"
+      ],
+      "issue": "YUK-1570",
+      "owns": "FSRS state retains canonical scheduling initialization and the single projection writer. Practice owns promoted-question target selection and added-attribution enrollment, preserving read/parse and CAS insertion as distinct operations. Five caller references become this one dependency.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -2034,7 +2059,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 380,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -2096,7 +2121,7 @@
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
-        "practice -> fsrs": 6,
+        "practice -> fsrs": 2,
         "practice -> http": 3,
         "practice -> mastery": 9,
         "practice -> memory": 1,
