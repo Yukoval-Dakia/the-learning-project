@@ -1979,6 +1979,14 @@
       "from": 8,
       "to": 5,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-22",
+      "from": 18,
+      "to": 15,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -2967,26 +2975,6 @@
       "issue": "YUK-1570",
       "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
       "date": "2026-10-22"
-    },
-    {
-      "debt": "capabilityToServer",
-      "file": "src/capabilities/practice/server/worksheet/submission.ts",
-      "module": "src/server/boss/client.ts",
-      "kind": "value",
-      "symbols": ["getStartedBoss"],
-      "issue": "YUK-1572",
-      "owns": "Existing process-local pg-boss lifecycle; Worksheet submission owns its post-commit scheduling and unchanged best-effort failure policy.",
-      "date": "2026-10-22"
-    },
-    {
-      "debt": "capabilityToServer",
-      "file": "src/capabilities/practice/server/worksheet/submission.ts",
-      "module": "src/server/boss/queue-names.ts",
-      "kind": "value",
-      "symbols": ["WORKSHEET_RENDER_QUEUE"],
-      "issue": "YUK-1572",
-      "owns": "The single queue identity shared by worksheet submission and the existing render worker registration.",
-      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -3658,7 +3646,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 337,
+      "total": 334,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3714,7 +3702,7 @@
         "practice -> advisory-locks": 5,
         "practice -> ai": 48,
         "practice -> assessment": 1,
-        "practice -> boss": 18,
+        "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,

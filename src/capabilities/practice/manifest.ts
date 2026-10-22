@@ -8,7 +8,6 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -126,6 +125,7 @@ import {
   JudgeDurablePendingResponseSchema,
   JudgeRunStatusResponseSchema,
 } from './server/judge-run-status';
+import { WORKSHEET_RENDER_QUEUE } from './worksheet-render-queue';
 
 export const practiceCapability = defineCapability({
   name: 'practice',

@@ -1,6 +1,5 @@
 import type { Db } from '@/db/client';
-import { getStartedBoss } from '@/server/boss/client';
-import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
+import { enqueueWorksheetRender } from '../queue-runtime';
 import {
   type CreateWorksheetExportRequest,
   type CreateWorksheetExportResult,
@@ -28,8 +27,7 @@ export async function submitWorksheetExport(
     // 同图同 digest 走 existing，这也是失败渲染的显式重试入口）。
     // 入队失败不让已提交的导出 500：同一 idempotency_key 重 POST 会重放并再入队。
     try {
-      const boss = await getStartedBoss();
-      await boss.send(WORKSHEET_RENDER_QUEUE, { export_token: out.state.export_token });
+      await enqueueWorksheetRender(out.state.export_token);
     } catch (enqueueError) {
       console.warn(
         `[worksheet-exports] render enqueue failed for '${out.state.export_token}'`,
