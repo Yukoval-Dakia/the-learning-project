@@ -1384,6 +1384,52 @@
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-b13a980e-3c43-4e7e-97f9-5cf4af06c786",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-22",
+      "from": 4,
+      "to": 5,
+      "direction": "increase",
+      "reason": "Replace server-mediated knowledge-root operations with the real Knowledge owner while retaining the existing control transaction, locks, history, publication and hydration semantics.",
+      "exitCondition": "Remove only when the actual consumer no longer needs this Knowledge root command or an approved ownership redesign eliminates the operation; do not hide it behind a server relay.",
+      "justification": {
+        "kind": "owner_approval",
+        "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-93ac79f4-3107-44bb-9987-16c8327c9f95",
+        "quote": "批准这三条精确增长及36→39"
+      }
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> knowledge",
+      "date": "2026-10-22",
+      "from": 0,
+      "to": 2,
+      "direction": "increase",
+      "reason": "Replace server-mediated knowledge-root operations with the real Knowledge owner while retaining the existing control transaction, locks, history, publication and hydration semantics.",
+      "exitCondition": "Remove only when the actual consumer no longer needs this Knowledge root command or an approved ownership redesign eliminates the operation; do not hide it behind a server relay.",
+      "justification": {
+        "kind": "owner_approval",
+        "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-93ac79f4-3107-44bb-9987-16c8327c9f95",
+        "quote": "批准这三条精确增长及36→39"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> subjects",
+      "date": "2026-10-22",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> subjects",
+      "date": "2026-10-22",
+      "from": 9,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1973,9 +2019,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "HTTP error identity and status semantics shared by existing administrative readers.",
       "date": "2026-10-22"
@@ -1985,11 +2029,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "TraitDegradation",
-        "getSubjectTraitResolutions",
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["TraitDegradation", "getSubjectTraitResolutions", "isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -1999,9 +2039,7 @@
       "file": "src/capabilities/observability/server/subject-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2011,9 +2049,7 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2023,9 +2059,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2035,9 +2069,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -2047,9 +2079,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2059,9 +2089,7 @@
       "file": "src/capabilities/observability/server/trait-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2071,11 +2099,39 @@
       "file": "src/capabilities/observability/server/trait-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/capabilities/knowledge/public.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot"],
+      "issue": "YUK-1570",
+      "owns": "Knowledge owns complete idempotent subject-root event creation and materialization; Agency retains its goal transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/capabilities/knowledge/public.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot", "subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "Knowledge owns root identity and complete idempotent creation; Observability retains subject control, canonical claim, bindings and post-commit hydration.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/capabilities/knowledge/public.ts",
+      "kind": "value",
+      "symbols": ["updateSubjectRootNameFromControl"],
+      "issue": "YUK-1570",
+      "owns": "Knowledge owns locked root history validation, versioned name event and projection inside the caller control transaction.",
       "date": "2026-10-22"
     }
   ],
@@ -2428,7 +2484,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 374,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -2439,7 +2495,6 @@
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
         "copilot -> ai": 17,
         "copilot -> boss": 6,
@@ -2482,7 +2537,6 @@
         "observability -> events": 2,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
         "practice -> ai": 49,
         "practice -> assessment": 1,
@@ -2512,9 +2566,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 36,
+      "total": 39,
       "byOwnerPair": {
-        "agency -> knowledge": 4,
+        "observability -> knowledge": 2,
+        "agency -> knowledge": 5,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,
