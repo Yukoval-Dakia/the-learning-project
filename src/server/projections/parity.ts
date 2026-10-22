@@ -553,52 +553,10 @@ export async function artifactsWithGenesisAnchor(
   return out;
 }
 
-// ── question_block genesis-anchor helpers ─────────────────────────────────────────────────────
-//
-// A block is event-sourced when it has a create/genesis event. It has no index anchor: the
-// row id is always the subject id, so the event leg is complete.
-
-const QUESTION_BLOCK_ANCHOR_ACTIONS = [
-  'experimental:genesis',
-  'experimental:question_block_create',
-] as const;
-
-/** Whether a block has an anchor the fold can reproduce. */
-export async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        eq(event.subject_id, blockId),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  return ev.length > 0;
-}
-
-/** Batch form (event leg only); also serves as the idempotency pre-scan. */
-export async function questionBlocksWithGenesisAnchor(
-  db: DbLike,
-  blockIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (blockIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        inArray(event.subject_id, blockIds),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  return out;
-}
+export {
+  hasQuestionBlockGenesisAnchor,
+  questionBlocksWithGenesisAnchor,
+} from '@/kernel/records/question-block-projection';
 
 // ── item_calibration genesis-anchor helpers ───────────────────────────────────────────────────
 //

@@ -5,21 +5,19 @@
 //
 // These functions only SELECT and fold; they never write.
 
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 
 import { foldArtifact } from '@/core/projections/artifact';
 import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { foldMistakeVariant } from '@/core/projections/mistake_variant';
-import { foldQuestionBlock } from '@/core/projections/question_block';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
   ItemCalibrationRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   MistakeVariantRowSnapshotT,
-  QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
@@ -149,41 +147,7 @@ export async function gatherAndFoldArtifact(
   return foldArtifact(artifactId, foldEvents);
 }
 
-/**
- * Gather the events affecting `blockId` and run the pure question_block fold. Besides the
- * subject-keyed events, it finds edit events that name this block as an absorbed
- * merged_source; that payload containment form is the one the GIN index accelerates.
- * Returns the projected row or null.
- */
-export async function gatherAndFoldQuestionBlock(
-  db: DbLike,
-  blockId: string,
-): Promise<QuestionBlockRowSnapshotT | null> {
-  // Q1: events whose subject_id is blockId.
-  const q1 = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.subject_kind, 'question_block'), eq(event.subject_id, blockId)));
-
-  // Q2: edits keyed on another primary block that absorbed this block as a merged_source.
-  const q2 = await db
-    .select()
-    .from(event)
-    .where(
-      and(
-        eq(event.action, 'experimental:edit_question_block_structured'),
-        sql`${event.payload} @> ${JSON.stringify({ affected_blocks: [{ block_id: blockId }] })}::jsonb`,
-      ),
-    );
-
-  // Dedup by event id (Q1/Q2 overlap when blockId is the primary of one edit and a merged_source of
-  // another).
-  const byId = new Map<string, EventRow>();
-  for (const r of [...q1, ...q2]) byId.set(r.id, r);
-
-  const foldEvents = [...byId.values()].map(rowToFoldEvent);
-  return foldQuestionBlock(blockId, foldEvents);
-}
+export { gatherAndFoldQuestionBlock } from '@/kernel/records/question-block-projection';
 
 /**
  * Gather the events affecting a calibration row and run the pure item_calibration fold.
