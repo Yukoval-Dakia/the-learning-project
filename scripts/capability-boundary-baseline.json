@@ -3255,7 +3255,7 @@
       "file": "src/capabilities/agency/server/conjecture/reconciliation-execution.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": ["writeEvent"],
+      "symbols": ["WriteEventInput", "writeEvent"],
       "issue": "YUK-1570",
       "owns": "Persist the deterministic research-meeting execution checkpoint after validating replay state and recovering prior probe-anchor counts; event writer retains the canonical event persistence protocol.",
       "date": "2026-10-22"
@@ -3268,6 +3268,7 @@
       "symbols": [
         "PREDICTION_SCORE_ACTION",
         "PROBE_RESULT_PROJECTED_ACTION",
+        "ReconcileResult",
         "reconcileConjecturePredictions"
       ],
       "issue": "YUK-1570",
