@@ -180,7 +180,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- mistake_variant (canonical, YUK-973) ----
   {
     table: 'mistake_variant',
-    file: 'src/server/projections/mistake_variant.ts',
+    file: 'src/kernel/records/mistake-variant-facts.ts',
     marker: '.insert(mistake_variant)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',

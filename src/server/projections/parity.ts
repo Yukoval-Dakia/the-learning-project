@@ -20,17 +20,19 @@ import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
 import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
+import { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
 import {
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-  gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
 
 export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
+// Canonical implementation; retained for the retract-clock DB consumer.
+export { mistakeVariantLiveRowToSnapshot } from '@/kernel/records/mistake-variant-facts';
 
 type DbLike = Db | Tx;
 
@@ -296,104 +298,10 @@ export async function assertGoalParity(
   if (diff.length > 0) onParityMismatch('goal', goalId, diff);
 }
 
-// ── mistake_variant genesis-anchor helpers ────────────────────────────────────────────────────
-//
-// A variant is event-sourced when it has a create/genesis base event or an index anchor.
-// Lifecycle events mutate an existing row and are not anchors on their own.
-
-const MISTAKE_VARIANT_ANCHOR_ACTIONS = [
-  'experimental:mistake_variant_create',
-  'experimental:genesis',
-] as const;
-
-/** Whether a variant has a base anchor the fold can reproduce. */
-export async function hasMistakeVariantGenesisAnchor(db: DbLike, mvId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'mistake_variant'),
-        eq(event.subject_id, mvId),
-        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, mvId),
-        eq(materialized_id_index.subject_kind, 'mistake_variant'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function mistakeVariantsWithGenesisAnchor(
-  db: DbLike,
-  mvIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (mvIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'mistake_variant'),
-        inArray(event.subject_id, mvIds),
-        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, mvIds),
-        eq(materialized_id_index.subject_kind, 'mistake_variant'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
 // ── mistake_variant parity assert ─────────────────────────────────────────────────────────────
 //
 // Write-time fold==row guard for the variant sites, especially the fold-blind
 // cause_category, which must be on the base event. Callers only assert anchored variants.
-
-/** Pick snapshot fields from a live variant row without Zod parsing. */
-export function mistakeVariantLiveRowToSnapshot(row: {
-  id: string;
-  parent_question_id: string;
-  variant_question_id: string | null;
-  proposal_event_id: string | null;
-  status: string;
-  failure_reasons: string[] | null;
-  cause_category: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): MistakeVariantRowSnapshotT {
-  return {
-    id: row.id,
-    parent_question_id: row.parent_question_id,
-    variant_question_id: row.variant_question_id,
-    proposal_event_id: row.proposal_event_id,
-    // status is free text; the wired writers only set the snapshot enum values.
-    status: row.status as MistakeVariantRowSnapshotT['status'],
-    failure_reasons: row.failure_reasons ?? [],
-    cause_category: row.cause_category,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
 
 /** Assert that the variant fold reproduces the live row; see the node assert for throw handling. */
 export async function assertMistakeVariantParity(

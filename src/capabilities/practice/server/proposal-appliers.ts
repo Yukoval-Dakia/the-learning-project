@@ -41,14 +41,14 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-} from '@/server/projections/mistake-variant-runtime';
+} from '@/kernel/records/mistake-variant-facts';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type ProposalInboxRow,
   acquireProposalDecisionLock,

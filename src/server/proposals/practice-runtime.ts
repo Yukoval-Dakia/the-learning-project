@@ -22,8 +22,4 @@ export {
   findExistingRateEvent,
   requiredString,
 } from './applier-helpers';
-export {
-  hasMistakeVariantGenesisAnchor,
-  projectMistakeVariantGuarded,
-  writeProposalRateEvent,
-} from './owner-runtime';
+export { writeProposalRateEvent } from './owner-runtime';

@@ -42,24 +42,26 @@ import {
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
 import {
+  gatherAndFoldMistakeVariant,
+  mistakeVariantLiveRowToSnapshot,
+  mistakeVariantsWithGenesisAnchor,
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
+import {
   edgeRowToSnapshot,
   gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
-  gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
   goalLiveRowToSnapshot,
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
-  mistakeVariantLiveRowToSnapshot,
-  mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';

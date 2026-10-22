@@ -9,11 +9,7 @@ import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
-import {
-  assertKnowledgeNodeParity,
-  hasMistakeVariantGenesisAnchor,
-} from '@/server/projections/parity';
+import { assertKnowledgeNodeParity } from '@/server/projections/parity';
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 export {
@@ -29,12 +25,7 @@ export {
   requiredString,
   writeProposalRateEvent,
 } from './applier-helpers';
-export {
-  hasLearningItemGenesisAnchor,
-  hasMistakeVariantGenesisAnchor,
-  projectLearningItemGuarded,
-  projectMistakeVariantGuarded,
-};
+export { hasLearningItemGenesisAnchor, projectLearningItemGuarded };
 
 export async function assertCurrentKnowledgeNodeParity(tx: Tx, nodeId: string): Promise<void> {
   const [row] = await tx.select().from(knowledge).where(eq(knowledge.id, nodeId));
