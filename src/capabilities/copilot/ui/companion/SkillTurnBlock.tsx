@@ -2,7 +2,7 @@
 // records a teaching event (not a chat turn), and the close-out line when the teaching round ends.
 
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
-import { ChipButton } from '@/ui-next/public';
+import { ChipButton } from '@/ui-next/primitives/Chip';
 import type { ChatMessage } from '../message-projection';
 
 export interface SkillTurnBlockProps {

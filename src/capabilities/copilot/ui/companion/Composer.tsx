@@ -6,7 +6,8 @@
 import { ArrowUp, X } from 'lucide-react';
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { useCompanionFocus } from '@/ui/lib/use-copilot-dwell';
-import { ChipButton, IconButton, Segmented } from '@/ui-next/public';
+import { ChipButton } from '@/ui-next/primitives/Chip';
+import { IconButton, Segmented } from '@/ui-next/public';
 import type { CompanionController } from './companion-controller';
 import { conversationReady, policySupport } from './companion-state';
 import { focusChips } from './focus-chips';

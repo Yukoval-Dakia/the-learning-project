@@ -1,7 +1,7 @@
 export type { ButtonProps, ButtonSize, ButtonVariant } from './Button';
 export { Button } from './Button';
-export type { ChipButtonProps, ChipToggleProps, ChipTone } from './Chip';
-export { Chip, ChipButton, ChipToggle } from './Chip';
+export type { ChipToggleProps, ChipTone } from './Chip';
+export { Chip, ChipToggle } from './Chip';
 export type { ExpandProps } from './Expand';
 export { Expand } from './Expand';
 export type { IconButtonProps } from './IconButton';

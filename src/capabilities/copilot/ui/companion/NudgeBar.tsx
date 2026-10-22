@@ -3,7 +3,8 @@
 
 import { Sparkles, X } from 'lucide-react';
 import { openCopilotForNudge } from '@/ui/lib/use-copilot-dwell';
-import { ChipButton, IconButton } from '@/ui-next/public';
+import { ChipButton } from '@/ui-next/primitives/Chip';
+import { IconButton } from '@/ui-next/public';
 import type { UseCopilotNudgesResult } from '../useCopilotNudges';
 
 export function NudgeBar({ nudges }: { nudges: UseCopilotNudgesResult }) {
