@@ -42,7 +42,12 @@ export type FrontdoorContext = {
   readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
   createSubject: (
     displayName: string,
-  ) => Promise<Extract<Awaited<ReturnType<typeof thinCreateSubject>>, { kind: 'created' | 'replayed' }>['payload']>;
+  ) => Promise<
+    Extract<
+      Awaited<ReturnType<typeof thinCreateSubject>>,
+      { kind: 'created' | 'replayed' }
+    >['payload']
+  >;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
   readMistakes: (input: MistakeListQuery) => Promise<MistakeListResponse>;
   legacySpa: Hono;
