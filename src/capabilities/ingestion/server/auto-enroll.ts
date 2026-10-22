@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   type BlockAssemblyRunTaskFn,
   runBlockAssemblyForSession,
@@ -59,8 +59,8 @@ import { writeEvent } from '@/kernel/events';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
@@ -551,32 +551,16 @@ export async function runAutoEnrollForSession(
         generatedBy: 'workflow_judge',
       });
 
-      const [{ version: blockVersion }] = await tx
-        .update(question_block)
-        .set({
-          imported_question_id: questionId,
-          imported_attempt_event_id: enroll.attemptEventId,
-          // Distinct from human 'imported' so auto-enrollment stays revertible..
-          status: 'auto_enrolled',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, block.id))
-        .returning({ version: question_block.version });
-
-      // Fold-visible additive double-write in the same tx; carries everything
-      // foldQuestionBlock needs to reproduce the row.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: block.id,
-        op: 'set_status',
-        status: 'auto_enrolled',
-        importedQuestionId: questionId,
-        importedAttemptEventId: enroll.attemptEventId,
-        nextVersion: blockVersion,
-        actorKind: 'agent',
-        actorRef: 'workflow_judge',
+      await applyQuestionBlockTransition(
+        tx,
+        {
+          kind: 'auto_enroll',
+          blockId: block.id,
+          questionId,
+          attemptEventId: enroll.attemptEventId,
+        },
         now,
-      });
+      );
 
       return {
         block_id: block.id,

@@ -22,8 +22,8 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
@@ -428,30 +428,16 @@ export async function completeIngestionImport(
       recordIds.push(enroll.recordId);
 
       // Link the block to the question/attempt and mark it imported.
-      const [{ version: importedBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          imported_question_id: questionId,
-          imported_attempt_event_id: enroll.attemptEventId,
-          status: 'imported',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, importedBlockId))
-        .returning({ version: question_block.version });
-
-      // Fold-visible additive double-write carrying status, imports, and version.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: importedBlockId,
-        op: 'set_status',
-        status: 'imported',
-        importedQuestionId: questionId,
-        importedAttemptEventId: enroll.attemptEventId,
-        nextVersion: importedBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
+      await applyQuestionBlockTransition(
+        tx,
+        {
+          kind: 'complete_import',
+          blockId: importedBlockId,
+          questionId,
+          attemptEventId: enroll.attemptEventId,
+        },
         now,
-      });
+      );
     }
 
     // Mark draft blocks the user dropped as ignored.
@@ -469,27 +455,7 @@ export async function completeIngestionImport(
 
     // Mark source blocks ignored.
     for (const sid of toIgnore) {
-      const [{ version: ignoredBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          status: 'ignored',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, sid))
-        .returning({ version: question_block.version });
-
-      // Fold-visible ignore. Only status and version are carried, so the fold leaves
-      // imported_* unchanged.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: sid,
-        op: 'set_status',
-        status: 'ignored',
-        nextVersion: ignoredBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
-        now,
-      });
+      await applyQuestionBlockTransition(tx, { kind: 'ignore_source', blockId: sid }, now);
     }
 
     // Terminal transition extracted | reviewed → imported, re-asserted under the lock.
