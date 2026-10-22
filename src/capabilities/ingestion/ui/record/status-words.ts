@@ -3,6 +3,7 @@
 import { STAGE_WORDS } from './record-copy';
 import type { StartState } from './record-start';
 import type { Recording } from './recording-model';
+import { reviewOffered } from './review-check';
 
 export type Tone = 'neutral' | 'working' | 'positive' | 'caution' | 'critical';
 
@@ -81,11 +82,19 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     return {
       text: `认出 ${drafts} 道题，有的没认全`,
       tone: 'caution',
-      detail:
-        '这次只认出了一部分，这次录入收不进题库。「再认一次」能让题目读得更准，但不能让它收进去。',
+      detail: reviewOffered(rec)
+        ? '这次只认出了一部分。逐道看过、点「都看过了」之后，就能收进题库。「再认一次」能让题目读得更准。'
+        : '这次只认出了一部分，这次录入收不进题库。「再认一次」能让题目读得更准，但不能让它收进去。',
     };
   }
-  if (drafts > 0 && (rec.status === 'extracted' || rec.status === 'reviewed')) {
+  if (drafts > 0 && rec.status === 'reviewed') {
+    return {
+      text: `都看过了，还有 ${drafts} 道没收进题库`,
+      tone: 'caution',
+      detail: '看过只是记下你核对过，题还没进题库。补好每道题缺的，再点「收进题库」。',
+    };
+  }
+  if (drafts > 0 && rec.status === 'extracted') {
     return { text: `认出 ${drafts} 道题，看一眼就能收进题库`, tone: 'caution' };
   }
   if (inBank.length > 0) return { text: `${inBank.length} 道题已进题库`, tone: 'positive' };
