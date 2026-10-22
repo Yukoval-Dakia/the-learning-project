@@ -40,7 +40,6 @@ import {
   getAdvice,
   getQuestionFull,
   isSubmitPending,
-  issueAssessment,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
 
@@ -414,7 +413,7 @@ export function usePracticeSubmit({
   addToast,
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
-  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus, submitReview } =
+  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus, submitReview, issueAssessment } =
     usePracticeClient();
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
@@ -545,7 +544,7 @@ export function usePracticeSubmit({
         detached = true;
       };
     },
-    [q, issuanceId, issuanceMode, getIssuanceState],
+    [q, issuanceId, issuanceMode, getIssuanceState, issueAssessment],
   );
   // The command's settled result for the current mode; null while it is in flight.
   const issued = issuance?.mode === issuanceMode ? issuance : null;
