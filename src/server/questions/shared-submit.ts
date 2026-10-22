@@ -94,6 +94,7 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
+import { getR2 } from '@/server/r2';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -780,6 +781,7 @@ export async function submitDraftQuestionInTx(
   // The single publish seam.
   const publishResult = await publishQuestionGroup(tx, {
     group_id: groupId,
+    readAssetBytes: (storageKey) => getR2().get(storageKey),
     contract: {
       structure: contract.structure,
       response_spec: contract.response_spec,
