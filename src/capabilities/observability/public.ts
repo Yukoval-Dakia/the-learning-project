@@ -4,19 +4,6 @@
  */
 
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
-export {
-  type AdminSubjectListRow,
-  type AdminSubjectTraits,
-  type AdminTraitBindingRow,
-  type AdminTraitCatalogRow,
-  type TraitJournalPage,
-  type TraitJournalPageOptions,
-  type TraitJournalRow,
-  getAdminSubjectTraits,
-  getTraitJournalPage,
-  listAdminSubjects,
-  listAdminTraits,
-} from '@/server/subjects/admin-read';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
 export {
@@ -119,6 +106,19 @@ export {
 } from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
 export {
+  type AdminSubjectListRow,
+  type AdminSubjectTraits,
+  type AdminTraitBindingRow,
+  type AdminTraitCatalogRow,
+  type TraitJournalPage,
+  type TraitJournalPageOptions,
+  type TraitJournalRow,
+  getAdminSubjectTraits,
+  getTraitJournalPage,
+  listAdminSubjects,
+  listAdminTraits,
+} from './server/subject-admin-read';
+export {
   AdminSubjectCasBodySchema,
   type AdminSubjectCasInput,
   AdminSubjectControlParamsSchema,
@@ -134,6 +134,10 @@ export {
   retireAdminSubject,
   validateAdminSubject,
 } from './server/subject-control-operations';
+export {
+  auditProfilesFromDb,
+  formatDbProfileAuditReport,
+} from './server/subject-profile-audit';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
 export {
   AdminSubjectTraitParamsSchema,

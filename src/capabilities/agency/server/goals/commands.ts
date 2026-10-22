@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { ensureSubjectRoot } from '@/capabilities/knowledge/public';
 
 import { newId } from '@/core/ids';
 import type { DeclaredStageT } from '@/core/schema/business';
@@ -11,7 +12,6 @@ import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { hasGoalGenesisAnchor } from '@/server/projections/parity';
-import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
 type GoalDb = Db | Tx;

@@ -21,6 +21,7 @@ import {
   subject_trait_binding,
   subject_trait_journal,
 } from '@/db/schema';
+import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   BUILTIN_TRAIT_SEEDS,
@@ -29,7 +30,6 @@ import {
 } from '@/subjects/builtin-trait-seeds';
 import { BUILTIN_SUBJECT_ALIASES, normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { acquireControlPlaneLockSql } from './control-plane-lock';
 
 // drizzle 事务句柄（tx 没有 $client）。
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];

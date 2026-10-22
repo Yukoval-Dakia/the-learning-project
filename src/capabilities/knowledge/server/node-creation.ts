@@ -6,7 +6,10 @@ import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
+import {
+  projectKnowledgeNodeGuarded,
+  requireKnowledgeHistory,
+} from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 
@@ -77,4 +80,81 @@ export async function createKnowledgeNodeFromEvents(
   });
   await projectKnowledgeNodeGuarded(tx, row.id);
   return true;
+}
+
+export function subjectRootId(subjectId: string): string {
+  return `seed:${subjectId}:root`;
+}
+
+/** Idempotent subject root birth. Existing roots are never rewritten or given replacement history. */
+export async function ensureSubjectRoot(
+  tx: Tx,
+  subjectId: string,
+  displayName: string,
+): Promise<{ created: boolean; rootId: string }> {
+  const rootId = subjectRootId(subjectId);
+  const created = await createKnowledgeNodeFromEvents(
+    tx,
+    {
+      id: rootId,
+      name: displayName,
+      domain: subjectId,
+      parent_id: null,
+      proposed_by_ai: false,
+      created_at: new Date(),
+    },
+    { actorRef: 'subject-root-create' },
+    'skip',
+  );
+  return { created, rootId };
+}
+
+/** Caller owns control authorization and CAS; the root mutation shares its transaction. */
+export async function updateSubjectRootNameFromControl(
+  tx: Tx,
+  args: {
+    subjectId: string;
+    nextName: string;
+    controlAction: 'rename' | 'reset';
+  },
+): Promise<void> {
+  const rootId = subjectRootId(args.subjectId);
+  const [root] = await tx
+    .select()
+    .from(knowledge)
+    .where(eq(knowledge.id, rootId))
+    .limit(1)
+    .for('update');
+  // Legacy/test rows can exist without a root. With no knowledge row there is no
+  // mutation to fold; a later ensureSubjectRoot writes the genesis with displayName.
+  if (!root) return;
+  await requireKnowledgeHistory(tx, root);
+
+  // Stamp the materialization after the root row lock. A knowledge proposal can
+  // mutate this root without the control-plane lock; reusing an earlier timestamp
+  // would let replay order this rename before the mutation we just observed.
+  const materializedAt = new Date();
+  const nextVersion = root.version + 1;
+
+  await writeEvent(tx, {
+    id: newId(),
+    actor_kind: 'user',
+    actor_ref: 'owner',
+    action: 'experimental:subject_root_name_update',
+    subject_kind: 'knowledge',
+    subject_id: rootId,
+    outcome: 'success',
+    payload: {
+      control_action: args.controlAction,
+      subject_id: args.subjectId,
+      previous_name: root.name,
+      next_name: args.nextName,
+      previous_version: root.version,
+      next_version: nextVersion,
+    },
+    created_at: materializedAt,
+    // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
+    ingest_at: materializedAt,
+  });
+  await projectKnowledgeNodeGuarded(tx, rootId);
 }

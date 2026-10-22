@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
-import * as writers from '@/server/subjects/trait-write';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import type { SubjectTraitKind } from '@/subjects/trait-schemas';
 import {
   AdminSubjectTraitParamsSchema,
@@ -11,6 +10,7 @@ import {
   ResetAdminTraitBodySchema,
   RollbackAdminTraitBodySchema,
 } from '../api/trait-write-contracts';
+import * as writers from './trait-write';
 
 export {
   AdminSubjectTraitParamsSchema,
@@ -41,7 +41,7 @@ export type RebindSubjectTraitInput = SubjectTraitInput &
 export type EditSharedTraitInput = { traitId: string } & z.infer<typeof EditSharedTraitInputSchema>;
 export type RollbackTraitInput = { traitId: string } & z.infer<typeof RollbackAdminTraitBodySchema>;
 export type ResetTraitToSeedInput = { traitId: string } & z.infer<typeof ResetAdminTraitBodySchema>;
-export type { FanoutIssue, TraitWriteResult } from '@/server/subjects/trait-write';
+export type { FanoutIssue, TraitWriteResult } from './trait-write';
 
 async function hydrateCommittedResult(
   db: Db,

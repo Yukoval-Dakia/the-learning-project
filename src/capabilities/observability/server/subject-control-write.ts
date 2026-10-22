@@ -6,24 +6,17 @@
 // subject/revision/journal 与 root 事件及投影同事务，未知历史整体回滚。
 
 import { and, eq, isNull, ne } from 'drizzle-orm';
+import { updateSubjectRootNameFromControl } from '@/capabilities/knowledge/public';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
-import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import {
-  knowledge,
   subject,
   subject_control_journal,
   subject_trait,
   subject_trait_binding,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import {
-  projectKnowledgeNodeGuarded,
-  requireKnowledgeHistory,
-} from '@/server/projections/knowledge';
-import { acquireControlPlaneLockSql } from '@/server/subjects/control-plane-lock';
-import { subjectRootId } from '@/server/subjects/ensure-subject-root';
+import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   type BuiltinSubjectId,
@@ -68,55 +61,6 @@ async function normCollides(tx: Tx, subjectId: string, norm: string): Promise<bo
   return rows.length > 0;
 }
 
-async function updateSubjectRootName(
-  tx: Tx,
-  args: {
-    subjectId: string;
-    nextName: string;
-    controlAction: 'rename' | 'reset';
-  },
-): Promise<void> {
-  const rootId = subjectRootId(args.subjectId);
-  const [root] = await tx
-    .select()
-    .from(knowledge)
-    .where(eq(knowledge.id, rootId))
-    .limit(1)
-    .for('update');
-  // Legacy/test rows can exist without a root. With no knowledge row there is no
-  // mutation to fold; a later ensureSubjectRoot writes the genesis with displayName.
-  if (!root) return;
-  await requireKnowledgeHistory(tx, root);
-
-  // Stamp the materialization after the root row lock. A knowledge proposal can
-  // mutate this root without the control-plane lock; reusing an earlier timestamp
-  // would let replay order this rename before the mutation we just observed.
-  const materializedAt = new Date();
-  const nextVersion = root.version + 1;
-
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'owner',
-    action: 'experimental:subject_root_name_update',
-    subject_kind: 'knowledge',
-    subject_id: rootId,
-    outcome: 'success',
-    payload: {
-      control_action: args.controlAction,
-      subject_id: args.subjectId,
-      previous_name: root.name,
-      next_name: args.nextName,
-      previous_version: root.version,
-      next_version: nextVersion,
-    },
-    created_at: materializedAt,
-    // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
-    ingest_at: materializedAt,
-  });
-  await projectKnowledgeNodeGuarded(tx, rootId);
-}
-
 export async function renameSubject(
   db: Db,
   args: { subjectId: string; expectedRevision: number; displayName: string },
@@ -148,7 +92,7 @@ export async function renameSubject(
         updated_at: now,
       })
       .where(eq(subject.id, args.subjectId));
-    await updateSubjectRootName(tx, {
+    await updateSubjectRootNameFromControl(tx, {
       subjectId: args.subjectId,
       nextName: displayName,
       controlAction: 'rename',
@@ -324,7 +268,7 @@ export async function resetSubject(
       })
       .where(eq(subject.id, args.subjectId));
     if (nameChanges) {
-      await updateSubjectRootName(tx, {
+      await updateSubjectRootNameFromControl(tx, {
         subjectId: args.subjectId,
         nextName: seedDisplayName,
         controlAction: 'reset',
