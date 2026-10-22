@@ -4,7 +4,10 @@ import {
   IngestionOperationRequest,
   type IngestionOperationRequestParsed,
 } from '@/capabilities/ingestion/api/operation-schema';
-import { completeIngestionImportOperation } from '@/capabilities/ingestion/server/import-completion';
+import {
+  completeIngestionImportOperation,
+  completeIngestionReviewOperation,
+} from '@/capabilities/ingestion/server/import-completion';
 import {
   isTerminalIngestionOperation,
   readIngestionOperation,
@@ -29,7 +32,10 @@ function jsonRequest(path: string, body: unknown): Request {
 async function executeLegacyOperation(
   sessionId: string,
   // 'agent' is dispatched in the POST handler and never reaches this adapter.
-  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' | 'agent' }>,
+  request: Exclude<
+    IngestionOperationRequestParsed,
+    { kind: 'extract' | 'import' | 'review' | 'agent' }
+  >,
 ): Promise<Response> {
   switch (request.kind) {
     case 'make_paper': {
@@ -57,7 +63,7 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
 }
 
 /**
- * Import calls its transactional business owner directly. Make-paper/rescue retain
+ * Import/review call their transactional business owner directly. Make-paper/rescue retain
  * their legacy adapters until their distinct lifecycle owners are migrated.
  */
 export function buildIngestionOperationHandler(
@@ -70,6 +76,15 @@ export function buildIngestionOperationHandler(
       const operationId = job.data?.operationId;
       const sessionId = job.data?.sessionId;
       const parsed = IngestionOperationRequest.safeParse(job.data?.request);
+      const reserved = operationId ? await readIngestionOperation(db, operationId) : null;
+      if (reserved?.operation_kind === 'review') {
+        if (isTerminalIngestionOperation(reserved)) continue;
+        if (!sessionId || !parsed.success || parsed.data.kind !== 'review') {
+          // Do not send a review handle through a legacy/paid adapter, or replace
+          // its receipt because a malformed/foreign delivery reused the id.
+          throw new Error('Review delivery must carry its accepted review request');
+        }
+      }
       if (!operationId || !sessionId || !parsed.success || parsed.data.kind === 'extract') {
         if (operationId) {
           await writeIngestionOperationEvent(db, {
@@ -84,6 +99,15 @@ export function buildIngestionOperationHandler(
             },
           });
         }
+        continue;
+      }
+
+      if (parsed.data.kind === 'review') {
+        await completeIngestionReviewOperation(db, {
+          operationId,
+          sessionId,
+          body: parsed.data.input,
+        });
         continue;
       }
 
