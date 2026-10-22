@@ -59,7 +59,9 @@ review 不经 legacy HTTP adapter；没有新 URL、queue、registry 或工具�
 
 completeIngestionReviewOperation 隐藏以下顺序：
 
-1. 开外层事务，取 operation 级 advisory xact lock。
+1. 开外层真实业务事务，取与现役 dispatcher 完全相同的双参数 advisory xact lock：
+   `hashtext('ingestion-operation-dispatch'), hashtext(operationId)`。在读原资源之前
+   取锁，持续到 review 业务与 receipt commit；不另开连接包装业务事务。
 2. 读原资源；不存在或终态直接返回，终态不重做复核。
 3. 重新解析/归一化 delivery input，核原资源 kind/session，并用最初 accepted
    event 的 session/kind/input_hash 绑定实际请求。错误 delivery 抛出，不给真实
@@ -77,10 +79,21 @@ completeIngestionReviewOperation 隐藏以下顺序：
    该完整 seam；其行为与原有状态转移保持一致。
 8. 业务成功后写 operation.completed，和 session/event 同一外层 commit。
 
-锁序为 operation → session → sorted blocks。不同 review operation 同 session
+锁序为 dispatch 共用的 operation 锁 → session → sorted blocks。不同 review operation 同 session
 由 session 锁串行；只有第一笔能通过原状态守卫。相同 operation 重复 delivery
 由 op 锁串行，后续读取终态而不修改业务。classic review 不调用 import guard，
 不绕过或放宽 import 的 extracted/reviewed 限制。
+
+发送结果不明时，dispatcher（D）与 review worker（W）也按同一 operation 锁串行：
+
+- D 先获锁：即使 boss.send 已独立提交 job 后丢失响应，W 仍须等待。D 在锁内写
+  failed 或 queued 并释放后，W 才读取已提交资源；若为 failed，直接返回，不做 review；
+  若为 queued，才继续原身份、classic/agent、完整集合/version 和状态守卫。
+- W 已获锁并成功提交：reviewed、ingestion.reviewed 和 completed 一起提交后才释锁。
+  后到 D 获取同一锁并读取 completed，终态短路，不再排队或写 failed。
+
+这是源码锁域与顺序推导，未做故障注入或真实并发运行；不据此声称故障发生频率或运行通过。
+API dispatch、TerminalOnce 通用语义及未变的 import/agent 锁保持原样。
 
 业务 ApiError（4xx）先回滚 savepoint，再写原 operation.failed。基础设施错误、
 5xx 或失败 receipt 写入错误退出外层事务，由 pg-boss 重试。DONE 写在业务 catch
@@ -94,7 +107,7 @@ completeIngestionReviewOperation 隐藏以下顺序：
 内部 schema/history 调用。无新 capability→server、跨 capability 值边或 kernel
 反向边。markReviewedInTx 有真实 review consumer，不以 pass-through/re-export
 凑抵消。本片文件均小于 1000 行；生成物按原生成器排除规则处理。
-实测 capability→server/server→capability-deep/cross-capability-value 为 327/0/39，
+初版 08e4f194 实测 capability→server/server→capability-deep/cross-capability-value 为 327/0/39，
 新增依赖边 0、pass-through 新增 0、>1500 行文件 9→9，未修改 baseline。
 本片最大产品文件 ingestion.ts 为 863 行；import-completion 520→618 行、
 operation-store 435→469 行；没有触发需要登记的 size 增长门。
@@ -111,11 +124,12 @@ operation-store 435→469 行；没有触发需要登记的 size 增长门。
 
 本片不实现 UI consumer，不宣称现有页面已经接入。
 
-## 验证与验收边界
+## 初版 08e4f194 验证与验收边界
 
 依赖安装、typecheck/lint/build、生成器及本片相关静态 audits 全部经外部
 heavy.sh 串行执行，复用全机两槽且本线最多一项重活；不覆盖 NODE_OPTIONS。
-以下实际执行均 exit 0。日志名统一前缀 `yuk1522-classic-review-`，交付后封存于
+以下为初版 08e4f194 的实际执行，均 exit 0；不覆盖后述修复组合。日志名统一前缀
+`yuk1522-classic-review-`，封存于
 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1522/<交付HEAD>/`，
 实施回执给出完整目录。首次及最终 typecheck/lint/build 的原日志均保留。
 
@@ -146,3 +160,41 @@ GitHub connector fetch_commit 另一次调用出现 transport HTTP request faile
 付费、重放、部署均 NOT_RUN。静态编译/审计不证明真实 PG 锁、故障回滚、API/worker
 运行或 UI 已接通。父线程负责 Linear capture、独立 R1 和 exact-head CI；
 本子任务不 watch/poll/review/resolve/merge/清树。
+
+## 独立初审 F1 修复与 main 组合
+
+原 R1 固定 `b7cb235e…08e4f1940f1d3761a743b3559b6017a6b27570df`，
+Standards/Spec 为同一去重 P1（F1）：独立的 review 锁不能阻止 dispatch 在
+completed 尚未提交时追加更大 id 的 failed。原结论 CHANGES_REQUESTED 保留，报告位于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-classic-review-20261023/review-r1-08e4f194.md`。
+本轮只替换新 review 事务的锁 namespace/key，并记录上述两个顺序；accepted 身份、
+session→sorted blocks、savepoint、DONE 回滚及 classic/agent 分类正文未改。
+
+正常 fetch exit 0 后，实际 main 为 `4f8dde24ef33b8f2b990018fac81dae277910a42`；
+相对旧 base 只有 source_verify、source-grounding-verify 和 baseline 三个文件变化，
+与本轮产品 hunk 无交集。正常 merge 保留 upstream baseline 原文，不新增例外或抽象。
+整合 commit 为 `7d955200f2295ef15870e7b706a23ea5d99d7c8e`；复用已就绪依赖，
+不重新安装。修复后 import-completion 为 620 行，新增两行是共锁承重说明。
+
+本组合以下各门实际 exit 0；全部经外部 heavy.sh 串行执行，不覆盖 NODE_OPTIONS。
+日志前缀 `yuk1522-classic-review-f1-`，本轮按交付 HEAD 封存在仓库外
+`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1522/<修复交付HEAD>/`。
+
+| 命令 | exit | 日志后缀 |
+| --- | --- | --- |
+| pnpm typecheck | 0 | typecheck.log |
+| pnpm lint（164 warnings，0 errors） | 0 | lint.log |
+| pnpm build | 0 | build.log |
+| pnpm audit:capability-boundaries --base 4f8dde24… | 0 | capability-boundaries.log |
+| pnpm audit:architecture-deepening --base 4f8dde24… | 0 | architecture-deepening.log |
+| pnpm audit:api-contracts（165/165 declared） | 0 | api-contracts.log |
+| pnpm audit:api-client（重生成无差量） | 0 | api-client.log |
+| pnpm audit:api-client-usage | 0 | api-client-usage.log |
+
+机器实测债务仍为 327/0/39，新增依赖边 0、pass-through 新增 0，>1500 行文件 9→9。
+相对实际 main 的 upstream baseline 和另外两个上游产品文件均无本线差量。
+本轮没有测试、fixture、断言脚本、hash/seal 或运行操作；真实并发/响应丢失故障仍 NOT_RUN。
+
+旧 08e4f194 的 GitHub CI `39859497373` 全 18 success（Gate `120107825879`）与
+Circle 全绿是父线程交付的旧 head 事实，不代表本轮修复已获 CI 或运行验收。
+仅父线程另开唯一 R2；本 writer 不 resolve R1、不启动新审、不合 PR、不取运行证据。

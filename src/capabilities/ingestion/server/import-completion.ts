@@ -531,8 +531,10 @@ export async function completeIngestionReviewOperation(
   input: { operationId: string; sessionId: string; body: ReviewBodyParsed },
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    // Share dispatch's exact per-operation lock through business + receipt commit:
+    // an ambiguous send must finish its terminal write before review re-reads it.
     await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('ingestion-review-settlement'), hashtext(${input.operationId}))`,
+      sql`SELECT pg_advisory_xact_lock(hashtext(${'ingestion-operation-dispatch'}), hashtext(${input.operationId}))`,
     );
     const operation = await readIngestionOperation(tx, input.operationId);
     if (!operation || isTerminalIngestionOperation(operation)) return;
