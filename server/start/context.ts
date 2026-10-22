@@ -5,6 +5,7 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   getIssuanceState,
+  projectReviewAnswerResponse,
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
@@ -39,6 +40,10 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  submitPlacementAnswer: (
+    body: string,
+    signal: AbortSignal,
+  ) => Promise<ReturnType<typeof projectReviewAnswerResponse>['body']>;
   readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
   createSubject: (
     displayName: string,

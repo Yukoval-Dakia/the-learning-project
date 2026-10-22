@@ -247,6 +247,7 @@ export {
   assembleScanInput,
   scanCoverageGaps,
 } from './server/question-supply/target-discovery';
+export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
