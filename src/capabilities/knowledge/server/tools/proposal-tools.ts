@@ -39,7 +39,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 // P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
-import { writeToolCallLog } from '@/server/ai/log';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { sanitizeProposedNodeDomain } from '@/subjects/profile';
 import type { DomainTool, ToolContext } from './types';
 

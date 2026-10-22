@@ -140,7 +140,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge (LIVE) ----
   {
     table: 'knowledge',
-    file: 'src/server/projections/knowledge.ts',
+    file: 'src/kernel/records/knowledge-node-materialization.ts',
     marker: '.insert(knowledge)',
     role: 'throat',
     note: 'projection write-through shell — the fold row writer for knowledge (ADR-0044 W1, LIVE).',
@@ -189,7 +189,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- learning_item (canonical, YUK-973) ----
   {
     table: 'learning_item',
-    file: 'src/server/projections/learning_item.ts',
+    file: 'src/kernel/records/learning-items.ts',
     marker: '.insert(learning_item)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',

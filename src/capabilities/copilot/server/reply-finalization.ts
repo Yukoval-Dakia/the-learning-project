@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
+import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/core/tool-call-contract';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/server/ai/pi-hooks';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
 

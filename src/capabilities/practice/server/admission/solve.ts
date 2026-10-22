@@ -36,6 +36,7 @@ import type {
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   QuestionAdmissionSolveInput,
@@ -48,9 +49,9 @@ import {
   type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
+// Provider/TaskTextResult 经 verify-framework（既有
 // server/ai 边持有者）取；输入 hash 直接使用 core 的完整规范化算法。
-import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
+import type { Provider, TaskTextResult } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 

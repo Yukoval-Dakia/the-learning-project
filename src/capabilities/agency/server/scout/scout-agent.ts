@@ -9,7 +9,7 @@
 //     belt-and-suspenders.
 //   - `maxTurns` caps the scout sub-session.
 
-import type { AgentDefinition } from '@/server/ai/sdk-types';
+import type { AgentDefinition } from '@/core/subagent-contract';
 import {
   DIRECTOR_WRITE_TOOL_NAMES,
   EVIDENCE_READ_TOOL_NAMES,

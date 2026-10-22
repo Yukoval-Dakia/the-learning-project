@@ -4,13 +4,11 @@ import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import {
-  projectKnowledgeNodeGuarded,
-  requireKnowledgeHistory,
-} from '@/server/projections/knowledge';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { requireKnowledgeHistory } from '@/server/projections/knowledge';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 
 type InitialKnowledge = Pick<
