@@ -14,6 +14,7 @@ import { recordKeys } from './recording-read';
 import './record.css';
 import './record-lines.css';
 import './record-parts.css';
+import './record-history.css';
 
 export interface RecordPageProps {
   navigate: (to: string) => void;

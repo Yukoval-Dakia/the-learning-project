@@ -1,253 +1,243 @@
-// One recording as the page shows it (YUK-1473), derived from today's reads: the session facts,
-// the replayed session event stream and the recognised blocks. Pure; recording-read.ts feeds it.
-// When the backend's history read model lands, only this file and recording-read.ts change.
+// One recording as the page shows it (YUK-1473). Pure; recording-read.ts feeds it.
 //
-// Event payloads follow src/capabilities/ingestion/server/agent/contract.ts (ingestion_agent.*)
-// and the ingestion.* lifecycle events on the same stream.
+// A finished recording is read from GET /api/ingestion-sessions/{id}/history: each question shows
+// what it was when the run finished (state_at_finish, frozen preview), and today's state rides
+// along separately as `now`. The event stream (recording-live.ts) only fills in a run that is still
+// going. Missing evidence is carried as `gaps` so nothing unknown ever reads as "none".
 
-import type { SSEEvent } from '@/ui/lib/sse';
-import type { Block, SessionDetail } from './record-api';
+import type {
+  Block,
+  HistoryAsk,
+  HistoryItem,
+  HistoryPriorRun,
+  SessionDetail,
+  SessionHistory,
+} from './record-api';
+import type { LiveFold } from './recording-live';
 
-export type ItemStatus =
-  | 'queued'
-  | 'structuring'
-  | 'solving'
-  | 'calibrating'
-  | 'admitted'
-  | 'withheld'
-  | 'failed';
+export type ItemState = HistoryItem['state_at_finish'];
+export type RunState = 'in_progress' | 'waiting' | 'done' | 'failed' | 'lost';
+
+/** Today's serving state of a question that came in. Never replaces the at-finish state. */
+export interface Now {
+  servable: boolean;
+  holdReason: string | null;
+}
 
 export interface AgentItem {
   id: string;
   no: string | null;
   page: number | null;
   preview: string | null;
-  status: ItemStatus;
+  truncated: boolean;
+  status: ItemState;
   reason: string | null;
   problem: string | null;
+  now: Now | null;
 }
 
-export type AskAnswer =
-  | { kind: 'choice'; option_id: string }
-  | { kind: 'text'; text: string; via_option?: 'none_of_these' }
-  | { kind: 'skipped'; by: 'learner' | 'timeout' };
+export type AskAnswer = NonNullable<HistoryAsk['resolved']>['answer'];
 
 export interface Ask {
   id: string;
-  itemId: string;
-  no: string;
+  itemId: string | null;
+  no: string | null;
   prompt: string;
   kind: 'choice' | 'short';
   options: { id: string; label: string }[];
   placeholder: string;
   expiresAt: string | null;
   answer: AskAnswer | null;
+  answeredAt: string | null;
   /** Still waiting for the learner right now. */
   open: boolean;
 }
+
+export interface PriorRun {
+  ref: string | null;
+  state: RunState;
+  at: string;
+  items: AgentItem[];
+  asks: Ask[];
+}
+
+/** Evidence the server says it cannot prove — each one gets its own plain sentence. */
+export type Gap =
+  | 'unparsed'
+  | 'expired'
+  | 'errors_cut'
+  | 'items_unknown'
+  | 'asks_unknown'
+  | 'nothing_kept';
 
 export type Phase = 'not_started' | 'working' | 'finished' | 'failed';
 
 export interface Recording {
   id: string;
-  /** Session status as the server reports it. */
   status: string;
   phase: Phase;
   lane: 'agent' | 'extract' | 'unknown';
-  /** 'expired' = the process record was pruned; only the questions that came in remain. */
-  history: 'full' | 'expired' | 'loading';
+  /** 'loading' until the run's own record is read; 'unreadable' when that read failed. */
+  read: 'live' | 'history' | 'loading' | 'unreadable';
+  runState: RunState | null;
   stage: string | null;
   pages: { done: number; total: number } | null;
   items: AgentItem[];
   asks: Ask[];
   stop: { code: string; retryable: boolean } | null;
+  priorRuns: PriorRun[];
+  gaps: Gap[];
   blocks: Block[];
   createdAt: number | null;
 }
 
-const ITEM: ReadonlySet<string> = new Set([
-  'queued',
-  'structuring',
-  'solving',
-  'calibrating',
-  'admitted',
-  'withheld',
-  'failed',
-]);
-const DAY = 86_400_000;
-const text = (v: unknown) => (typeof v === 'string' && v !== '' ? v : null);
-const int = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-
-function answerOf(v: unknown): AskAnswer | null {
-  const o = (v ?? {}) as Record<string, unknown>;
-  if (o.kind === 'choice' && typeof o.option_id === 'string') {
-    return { kind: 'choice', option_id: o.option_id };
-  }
-  if (o.kind === 'text' && typeof o.text === 'string') {
-    return o.via_option === 'none_of_these'
-      ? { kind: 'text', text: o.text, via_option: 'none_of_these' }
-      : { kind: 'text', text: o.text };
-  }
-  if (o.kind === 'skipped' && (o.by === 'learner' || o.by === 'timeout')) {
-    return { kind: 'skipped', by: o.by };
-  }
-  return null;
-}
-
-interface Fold {
-  agent: boolean;
-  stage: string | null;
-  pages: Recording['pages'];
-  items: Map<string, AgentItem>;
-  asks: Map<string, Omit<Ask, 'open'>>;
-  stop: Recording['stop'];
-  ended: boolean;
-}
-
-function fold(events: readonly SSEEvent[]): Fold {
-  const f: Fold = {
-    agent: false,
-    stage: null,
-    pages: null,
-    items: new Map(),
-    asks: new Map(),
-    stop: null,
-    ended: false,
-  };
-  for (const { event_type: type, payload: p } of events) {
-    if (type === 'ingestion.queued') {
-      // A new run (first start or a retry) clears the previous run's stop.
-      f.agent = p.lane === 'agent';
-      f.stop = null;
-      f.ended = false;
-    }
-    if (type === 'ingestion.agent_run_completed') f.ended = true;
-    if (type === 'ingestion.extraction_progress') {
-      const done = int(p.done);
-      const total = int(p.total);
-      if (done !== null && total !== null) f.pages = { done, total };
-    }
-    if (!type.startsWith('ingestion_agent.')) continue;
-    f.agent = true;
-    if (type === 'ingestion_agent.stage') {
-      f.stage = text(p.stage) ?? f.stage;
-      if (f.stage === 'done') f.ended = true;
-      const pg = (p.pages ?? null) as Record<string, unknown> | null;
-      const done = int(pg?.done);
-      const total = int(pg?.total);
-      if (done !== null && total !== null) f.pages = { done, total };
-    } else if (type === 'ingestion_agent.item') {
-      const id = text(p.item_id);
-      const status = text(p.status);
-      if (!id || !status || !ITEM.has(status)) continue;
-      const prev = f.items.get(id);
-      f.items.set(id, {
-        id,
-        no: text(p.question_no) ?? prev?.no ?? null,
-        page: int(p.page) ?? prev?.page ?? null,
-        preview: text(p.preview_md) ?? prev?.preview ?? null,
-        status: status as ItemStatus,
-        reason: text(p.reason),
-        problem: status === 'failed' ? (prev?.problem ?? null) : null,
-      });
-    } else if (type === 'ingestion_agent.error') {
-      const code = text(p.code) ?? 'unknown';
-      const id = text(p.item_id);
-      if (p.scope === 'item' && id) {
-        const prev = f.items.get(id);
-        f.items.set(id, {
-          id,
-          no: prev?.no ?? null,
-          page: prev?.page ?? null,
-          preview: prev?.preview ?? null,
-          status: 'failed',
-          reason: null,
-          problem: code,
-        });
-      } else if (p.scope === 'session') {
-        f.stop = { code, retryable: p.retryable === true };
-      }
-    } else if (type === 'ingestion_agent.ask') {
-      const id = text(p.ask_id);
-      const itemId = text(p.item_id);
-      const prompt = text(p.prompt_md);
-      if (!id || !itemId || !prompt) continue;
-      const options = (Array.isArray(p.options) ? p.options : []).flatMap((o) => {
-        const r = (o ?? {}) as Record<string, unknown>;
-        const oid = text(r.id);
-        const label = text(r.label_md);
-        return oid && label ? [{ id: oid, label }] : [];
-      });
-      f.asks.set(id, {
-        id,
-        itemId,
-        no: text(p.question_no) ?? '',
-        prompt,
-        kind: p.answer_kind === 'choice' ? 'choice' : 'short',
-        options,
-        placeholder: text(p.placeholder) ?? '',
-        expiresAt: text(p.expires_at),
-        answer: f.asks.get(id)?.answer ?? null,
-      });
-    } else if (type === 'ingestion_agent.ask_resolved') {
-      const prev = f.asks.get(text(p.ask_id) ?? '');
-      if (prev) f.asks.set(prev.id, { ...prev, answer: answerOf(p.answer) });
-    }
-  }
-  return f;
-}
-
 const WORKING = new Set(['queued', 'extracting']);
 const FINISHED = new Set(['extracted', 'partial', 'reviewed', 'imported']);
+const DAY = 86_400_000;
+
+function nowOf(c: HistoryItem['current']): Now | null {
+  return c ? { servable: c.servable, holdReason: c.hold_reason } : null;
+}
+
+function historyAsk(a: HistoryAsk): Ask {
+  return {
+    id: a.ask_id,
+    itemId: a.item_id,
+    no: a.question_no,
+    prompt: a.prompt_md,
+    kind: a.answer_kind,
+    options: (a.options ?? []).map((o) => ({ id: o.id, label: o.label_md })),
+    placeholder: a.placeholder,
+    expiresAt: a.expires_at,
+    // A timeout is a resolution of its own; unresolved and expired-unresolved stay null (未回答).
+    answer: a.resolved
+      ? a.resolved.via === 'timeout'
+        ? { kind: 'skipped', by: 'timeout' }
+        : a.resolved.answer
+      : null,
+    answeredAt: a.resolved?.at ?? null,
+    open: a.unresolved && !a.expired_unresolved,
+  };
+}
+
+function historyItem(i: HistoryItem, problems: Map<string, string>): AgentItem {
+  return {
+    id: i.item_id,
+    no: i.question_no,
+    page: i.page,
+    preview: i.preview_md,
+    truncated: i.preview_truncated,
+    status: i.state_at_finish,
+    reason: i.reason,
+    problem: problems.get(i.item_id) ?? null,
+    now: nowOf(i.current),
+  };
+}
+
+function priorRun(r: HistoryPriorRun): PriorRun {
+  const problems = new Map(
+    r.errors.flatMap((e) => (e.item_id ? [[e.item_id, e.code] as const] : [])),
+  );
+  return {
+    ref: r.run_ref,
+    state: r.run_state,
+    at: r.captured_at,
+    items: r.items.map((i) => ({
+      id: i.item_id,
+      no: i.question_no,
+      page: i.page,
+      preview: i.preview_md,
+      truncated: false,
+      status: i.status,
+      reason: i.reason,
+      problem: problems.get(i.item_id) ?? null,
+      now: null,
+    })),
+    asks: r.asks.map((a) => ({ ...historyAsk(a), open: false })),
+  };
+}
+
+function gapsOf(h: SessionHistory, settled: boolean): Gap[] {
+  const missing = new Set(h.evidence.missing);
+  const gaps: Gap[] = [];
+  if (missing.has('unparsed_history')) gaps.push('unparsed');
+  if (h.session.path === null) {
+    if (settled) gaps.push('nothing_kept');
+    return gaps;
+  }
+  if (h.session.path !== 'agent') return gaps;
+  // No run record and nothing left of the event window: the process aged out, the questions stay.
+  const aged = missing.has('run') && !h.evidence.snapshot && !h.evidence.live_events;
+  if (aged) gaps.push('expired');
+  if (missing.has('errors')) gaps.push('errors_cut');
+  if (missing.has('items')) gaps.push('items_unknown');
+  if (missing.has('asks') && !aged) gaps.push('asks_unknown');
+  return gaps;
+}
 
 export function deriveRecording(input: {
   id: string;
   detail: SessionDetail | undefined;
-  events: readonly SSEEvent[];
-  replayed: boolean;
+  history: SessionHistory | undefined;
+  historyFailed: boolean;
+  live: LiveFold | null;
   blocks: Block[];
   now: number;
 }): Recording {
-  const { detail, events, blocks, now } = input;
-  const f = fold(events);
-  const status = detail?.session.status ?? 'queued';
-  const created = detail?.session.created_at ? Date.parse(detail.session.created_at) : null;
-  const createdAt = created !== null && Number.isFinite(created) ? created : null;
-  const age = createdAt === null ? 0 : now - createdAt;
+  const { detail, history: h, live, blocks, now } = input;
+  const status = detail?.session.status ?? h?.session.status ?? 'queued';
+  const created = Date.parse(detail?.session.created_at ?? h?.session.started_at ?? '');
+  const createdAt = Number.isFinite(created) ? created : null;
+  const runState = h?.run?.run_state ?? null;
 
   let phase: Phase = 'working';
   if (status === 'uploaded') phase = 'not_started';
-  else if (status === 'failed' || (f.stop && !WORKING.has(status))) phase = 'failed';
-  else if (FINISHED.has(status) || (f.ended && !WORKING.has(status))) phase = 'finished';
-
-  const lane = f.agent ? 'agent' : blocks.length > 0 || events.length > 0 ? 'extract' : 'unknown';
+  else if (status === 'failed' || runState === 'failed' || runState === 'lost') phase = 'failed';
+  else if (live?.stop && !WORKING.has(status)) phase = 'failed';
+  else if (FINISHED.has(status) || runState === 'done') phase = 'finished';
+  else if (live?.ended && !WORKING.has(status)) phase = 'finished';
   const settled = phase === 'finished' || phase === 'failed';
-  // Asks wait at most 7 days (the sweep window); after that, or once the run stopped, an
-  // unanswered ask stays unanswered.
-  const asks = [...f.asks.values()].map((a) => ({
-    ...a,
-    open:
-      a.answer === null &&
-      !settled &&
-      age < 7 * DAY &&
-      (a.expiresAt === null || Date.parse(a.expiresAt) > now),
-  }));
 
-  let history: Recording['history'] = 'full';
-  if (!detail || !input.replayed) history = 'loading';
-  else if (settled && events.length === 0 && age > 30 * DAY) history = 'expired';
+  const problems = new Map(
+    (h?.run?.errors ?? []).flatMap((e) => (e.item_id ? [[e.item_id, e.code] as const] : [])),
+  );
+  const items = new Map((h?.items ?? []).map((i) => [i.item_id, historyItem(i, problems)]));
+  const asks = new Map((h?.asks ?? []).map((a) => [a.ask_id, historyAsk(a)]));
+  // A run still going: the stream's view of this run overlays the stored one, row by row.
+  if (live && !settled) {
+    for (const [id, item] of live.items)
+      items.set(id, { ...item, now: items.get(id)?.now ?? null });
+    const young = createdAt === null || now - createdAt < 7 * DAY;
+    for (const [id, a] of live.asks) {
+      const expired = a.expiresAt !== null && Date.parse(a.expiresAt) <= now;
+      asks.set(id, { ...a, open: a.answer === null && young && !expired });
+    }
+  } else {
+    for (const a of asks.values()) a.open = false;
+  }
+
+  const stopCode = h?.run?.errors.find((e) => e.scope === 'session');
+  const lane =
+    h?.session.path ?? (live?.agent ? 'agent' : blocks.length > 0 || live ? 'extract' : 'unknown');
+  const read: Recording['read'] =
+    live && !settled ? 'live' : h ? 'history' : input.historyFailed ? 'unreadable' : 'loading';
 
   return {
     id: input.id,
     status,
     phase,
     lane,
-    history,
-    stage: f.stage,
-    pages: f.pages,
-    items: [...f.items.values()],
-    asks,
-    stop: f.stop,
+    read,
+    runState,
+    stage: live?.stage ?? h?.run?.stage ?? null,
+    pages: live?.pages ?? null,
+    items: [...items.values()],
+    asks: [...asks.values()],
+    stop:
+      (live && !settled ? live.stop : null) ??
+      (stopCode ? { code: stopCode.code, retryable: stopCode.retryable } : (live?.stop ?? null)),
+    priorRuns: (h?.prior_runs ?? []).map(priorRun),
+    gaps: h ? gapsOf(h, settled) : [],
     blocks,
     createdAt,
   };
@@ -268,10 +258,11 @@ export function shortTitle(text: string | null | undefined): string | null {
 }
 
 /**
- * The automatic title of a recording: its first question's opening words. Null while nothing is
- * read yet; NO_TEXT_TITLE once the recording settled without any question text.
+ * The sheet's title after the time: the server's title when it has one, else the first question's
+ * frozen opening words. Null while unknown — an unreadable record never reads as "no text".
  */
-export function firstQuestionTitle(rec: Recording): string | null {
+export function recordingTitle(rec: Recording, serverTitle: string | null): string | null {
+  if (serverTitle) return serverTitle;
   const byNo = [...rec.items].sort(
     (a, b) => (Number.parseInt(a.no ?? '', 10) || 0) - (Number.parseInt(b.no ?? '', 10) || 0),
   );
@@ -279,7 +270,8 @@ export function firstQuestionTitle(rec: Recording): string | null {
     shortTitle(byNo.find((i) => i.preview)?.preview) ??
     shortTitle(rec.blocks[0]?.extracted_prompt_md);
   if (text) return text;
-  return rec.phase === 'finished' || rec.phase === 'failed' || rec.history === 'expired'
+  const known = rec.read === 'history' && rec.gaps.length === 0;
+  return known && rec.phase === 'finished' && (rec.items.length > 0 || rec.blocks.length > 0)
     ? NO_TEXT_TITLE
     : null;
 }

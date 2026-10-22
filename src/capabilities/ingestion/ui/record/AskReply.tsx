@@ -4,7 +4,7 @@ import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { Button } from '@/ui-next/public';
 import { type AskAnswerBody, answerAsk } from './record-api';
-import { answerRejectWords } from './record-copy';
+import { answerRejectWords, whenWords } from './record-copy';
 import type { Ask } from './recording-model';
 
 const TEXT_MAX = 500;
@@ -14,7 +14,12 @@ function answeredWords(ask: Ask): string {
   if (!a) return '未回答';
   if (a.kind === 'choice') return ask.options.find((o) => o.id === a.option_id)?.label ?? '已选择';
   if (a.kind === 'text') return a.via_option === 'none_of_these' ? `都不是：${a.text}` : a.text;
-  return a.by === 'learner' ? '你跳过了这一问' : '没等到回答，未回答';
+  return a.by === 'learner' ? '你跳过了这一问' : '没等到回答，超时跳过了';
+}
+
+function answeredAt(ask: Ask): string | null {
+  const ms = ask.answeredAt ? Date.parse(ask.answeredAt) : Number.NaN;
+  return Number.isFinite(ms) ? whenWords(ms, Date.now()) : null;
 }
 
 /**
@@ -44,6 +49,7 @@ export function AskReply({ sessionId, ask }: { sessionId: string; ask: Ask }) {
           data-unanswered={ask.answer === null || ask.answer.kind === 'skipped'}
         >
           {answeredWords(ask)}
+          {answeredAt(ask) && <span className="rc-quiet"> · {answeredAt(ask)}</span>}
         </p>
       </div>
     );

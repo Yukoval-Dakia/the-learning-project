@@ -3,7 +3,7 @@ import { useAssetUrl } from '@/ui/lib/assets';
 import { RetryLine, SectionHead, SkeletonLines } from '@/ui-next/public';
 import { type SessionRow, getSession } from './record-api';
 import { materialWords, whenWords } from './record-copy';
-import { recordKeys, useRecordingList, useRowTitle } from './recording-read';
+import { recordKeys, useRecordingList } from './recording-read';
 
 const STATUS_WORDS: Record<string, { text: string; tone: string }> = {
   uploaded: { text: '还没开始', tone: 'neutral' },
@@ -27,17 +27,18 @@ function Thumb({ assetId }: { assetId: string | undefined }) {
 
 function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: number }) {
   const state = STATUS_WORDS[row.status] ?? { text: '', tone: 'neutral' };
-  const count = row.block_count ?? 0;
-  const title = useRowTitle(row.id, row.status);
-  const when = whenWords(row.created_at ? row.created_at * 1000 : null, now);
+  const count = row.item_count ?? row.block_count ?? 0;
+  const at = row.started_at ?? row.created_at;
+  const when = whenWords(at ? at * 1000 : null, now);
   return (
     <li>
       <button type="button" className="rc-row un-hit" onClick={onOpen}>
         <Thumb assetId={row.source_asset_ids[0]} />
         <span className="rc-row-main">
-          <span className="rc-row-title">{[when, title].filter(Boolean).join(' · ')}</span>
+          <span className="rc-row-title">{[when, row.title].filter(Boolean).join(' · ')}</span>
           <span className="rc-quiet">
             {materialWords(row.entrypoint, row.source_asset_ids.length)}
+            {row.path === 'agent' && ' · 录入助手整理'}
             {count > 0 && ` · ${count} 道题`}
           </span>
         </span>
@@ -49,13 +50,19 @@ function Row({ row, onOpen, now }: { row: SessionRow; onOpen: () => void; now: n
   );
 }
 
-/** A recording from this visit that the server list does not carry yet: read from its own facts. */
+/**
+ * A recording from this visit that the list leaves out: the list only carries sessions with
+ * durable evidence, so one that has not started (or stopped before producing anything) is read
+ * from its own facts until it does.
+ */
 function VisitRow({ id, onOpen, now }: { id: string; onOpen: () => void; now: number }) {
   const q = useQuery({ queryKey: recordKeys.session(id), queryFn: () => getSession(id) });
   const s = q.data?.session;
   if (!s) return null;
   const created = s.created_at ? Date.parse(s.created_at) / 1000 : undefined;
-  return <Row row={{ ...s, created_at: created }} now={now} onOpen={onOpen} />;
+  return (
+    <Row row={{ ...s, path: null, title: null, created_at: created }} now={now} onOpen={onOpen} />
+  );
 }
 
 /** Earlier recordings. Opening one puts it back on top exactly as it was shown then. */

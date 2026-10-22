@@ -3,16 +3,18 @@ import { RetryLine, SkeletonLines } from '@/ui-next/public';
 import { AgentLines } from './AgentLines';
 import { BlockLines } from './BlockLines';
 import { PageStrip } from './PageStrip';
-import { materialWords, receiptWords, whenWords } from './record-copy';
+import { PriorRuns } from './PriorRuns';
+import { GAP_WORDS, materialWords, receiptWords, whenWords } from './record-copy';
 import { useStartState } from './record-start';
-import { firstQuestionTitle } from './recording-model';
+import { recordingTitle } from './recording-model';
 import { useRecording } from './recording-read';
 import { StartTrouble } from './StartTrouble';
 import { statusWords } from './status-words';
 
 /**
- * One recording. The same sheet serves the live run and a recording reopened from the list: it
- * is rebuilt from the session's own reads every time, so reopening shows what was shown then.
+ * One recording. The same sheet serves the live run and a recording reopened from the list. A
+ * finished one is rebuilt from its stored history: each question as it was when the run finished,
+ * today's state as its own line, and plain words for whatever the record could not keep.
  */
 export function RecordingSheet({
   sessionId,
@@ -23,7 +25,13 @@ export function RecordingSheet({
   onClose: () => void;
   navigate: (to: string) => void;
 }) {
-  const { recording: rec, detail, failedToLoad, retry } = useRecording(sessionId);
+  const {
+    recording: rec,
+    detail,
+    title: serverTitle,
+    failedToLoad,
+    retry,
+  } = useRecording(sessionId);
   const start = useStartState(sessionId);
   const [litPage, setLitPage] = useState<number | null>(null);
 
@@ -42,10 +50,10 @@ export function RecordingSheet({
   const facts = detail.session;
   const now = Date.now();
   const status = statusWords(rec, start);
-  const title = firstQuestionTitle(rec);
+  const title = recordingTitle(rec, serverTitle);
   const receipt = detail.usage_receipt;
   const inBank =
-    rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted') ||
+    rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted' || i.now !== null) ||
     rec.blocks.some((b) => b.status === 'imported' || b.status === 'auto_enrolled');
   const working = rec.phase === 'working';
   const meter =
@@ -85,7 +93,17 @@ export function RecordingSheet({
 
       <StartTrouble rec={rec} start={start} paper={facts.entrypoint === 'vision_paper'} />
 
-      {rec.history === 'loading' && <SkeletonLines rows={3} label="正在找回这次的过程" />}
+      {rec.read === 'loading' && <SkeletonLines rows={3} label="正在找回这次的过程" />}
+      {rec.read === 'unreadable' && (
+        <RetryLine message="这次录入的过程暂时读不出来。" onRetry={retry} />
+      )}
+      {rec.gaps.length > 0 && (
+        <ul className="rc-gaps">
+          {rec.gaps.map((g) => (
+            <li key={g}>{GAP_WORDS[g]}</li>
+          ))}
+        </ul>
+      )}
 
       {rec.lane === 'agent' && (
         <AgentLines sessionId={rec.id} items={rec.items} asks={rec.asks} onHoverPage={setLitPage} />
@@ -100,6 +118,8 @@ export function RecordingSheet({
         />
       )}
 
+      <PriorRuns sessionId={rec.id} runs={rec.priorRuns} onHoverPage={setLitPage} />
+
       <footer className="rc-sheet-foot">
         {receipt && (
           <p className="rc-quiet">
@@ -110,7 +130,7 @@ export function RecordingSheet({
             })}
           </p>
         )}
-        {(inBank || rec.history === 'expired') && (
+        {(inBank || rec.gaps.includes('expired')) && (
           <button type="button" className="rc-link" onClick={() => navigate('/questions')}>
             去题目库看这些题
           </button>

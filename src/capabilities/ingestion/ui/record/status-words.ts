@@ -14,15 +14,25 @@ export interface StatusWords {
 }
 
 export function statusWords(rec: Recording, start: StartState | null): StatusWords {
-  if (rec.history === 'expired') {
-    return { text: '这次录入的过程记录已经过期，只剩下收进来的题目', tone: 'neutral' };
+  if (rec.gaps.includes('expired')) {
+    const n = rec.items.length;
+    return {
+      text: n > 0 ? `收进来 ${n} 道题，整理的过程记录已经过期` : '这次录入的过程记录已经过期',
+      tone: 'neutral',
+    };
   }
   if (rec.phase === 'not_started') {
     if (start?.status === 'starting') return { text: '正在开始整理…', tone: 'working' };
     if (start?.status === 'failed') return { text: '还没开始整理', tone: 'caution' };
     return { text: '还没开始整理', tone: 'neutral' };
   }
-  if (rec.phase === 'failed') return { text: '没整理完', tone: 'critical' };
+  if (rec.phase === 'failed') {
+    return { text: rec.runState === 'lost' ? '整理到一半断开了' : '没整理完', tone: 'critical' };
+  }
+
+  if (rec.gaps.includes('nothing_kept')) {
+    return { text: '这次录入读不出留下了什么', tone: 'neutral' };
+  }
 
   const openAsks = rec.asks.filter((a) => a.open).length;
   const pages =
@@ -38,10 +48,23 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     return { text: `正在认题${pages}`, tone: 'working' };
   }
 
+  if (rec.read === 'loading') return { text: '正在找回这次录入…', tone: 'neutral' };
+  if (rec.read === 'unreadable') return { text: '这次录入的过程暂时读不出来', tone: 'caution' };
+
   if (rec.lane === 'agent') {
+    if (rec.items.length === 0 && rec.gaps.length > 0) {
+      return { text: '整理完了，但找到的题没有留下记录', tone: 'neutral' };
+    }
     const inBank = rec.items.filter((i) => i.status === 'withheld' || i.status === 'admitted');
     const failed = rec.items.filter((i) => i.status === 'failed').length;
-    const tail = failed > 0 ? `，${failed} 道没整理好` : '';
+    const unknown = rec.items.filter((i) => i.status === 'unknown').length;
+    const tail = [
+      failed > 0 ? `${failed} 道没整理好` : '',
+      unknown > 0 ? `${unknown} 道当时的状态没记下` : '',
+    ]
+      .filter(Boolean)
+      .map((t) => `，${t}`)
+      .join('');
     return {
       text: `整理完了：${inBank.length} 道进了题库${tail}`,
       tone: 'positive',

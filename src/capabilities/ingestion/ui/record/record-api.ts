@@ -1,23 +1,32 @@
 // Record page transport (YUK-1473). Thin calls over the ingestion routes in
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
-import { apiFetch, apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiFetch, apiJson, apiOperationJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { runIngestionOperation } from '@/ui/lib/ingestion-operations';
 
 export type Entrypoint = 'vision_single' | 'vision_paper' | 'docx';
 export type UsePolicy = 'allow' | 'answer_only';
 
-export interface SessionRow {
-  id: string;
-  entrypoint: string | null;
-  status: string;
-  source_asset_ids: string[];
+type ListedRow = ApiOperationJsonResponse<'listIngestionSessions'>['data'][number];
+
+/** A list row. path / title / item_count / started_at come from the list contract (YUK-1522). */
+export type SessionRow = Pick<
+  ListedRow,
+  'id' | 'entrypoint' | 'status' | 'source_asset_ids' | 'path' | 'title' | 'item_count'
+> & {
   block_count?: number;
-  auto_enrolled_count?: number;
+  /** Unix seconds. */
+  started_at?: number;
   /** Unix seconds. */
   created_at?: number;
-}
+};
+
+/** GET /api/ingestion-sessions/{id}/history — what a finished recording was, and what it is now. */
+export type SessionHistory = ApiOperationJsonResponse<'getIngestionSessionHistory'>;
+export type HistoryItem = SessionHistory['items'][number];
+export type HistoryAsk = SessionHistory['asks'][number];
+export type HistoryPriorRun = SessionHistory['prior_runs'][number];
 
 export interface SessionFacts {
   id: string;
@@ -92,11 +101,19 @@ export type AskAnswerBody =
 const enc = encodeURIComponent;
 
 export async function listSessions(): Promise<SessionRow[]> {
-  const body = await apiJson<{ data?: SessionRow[]; rows?: SessionRow[] }>(
-    '/api/ingestion-sessions?limit=30',
-  );
-  return body.data ?? body.rows ?? [];
+  const body = await apiOperationJson('listIngestionSessions', {
+    url: '/api/ingestion-sessions?limit=30',
+    method: 'GET',
+  });
+  return body.data as SessionRow[];
 }
+
+export const getHistory = (id: string) =>
+  apiOperationJson('getIngestionSessionHistory', {
+    url: `/api/ingestion-sessions/${enc(id)}/history`,
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
 
 export const getSession = (id: string) =>
   apiJson<SessionDetail>(`/api/ingestion-sessions/${enc(id)}`, { cache: 'no-store' });

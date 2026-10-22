@@ -21,7 +21,51 @@ export const ITEM_WORDS: Record<string, string> = {
   admitted: '已进题库',
   withheld: '进了题库，等核对',
   failed: '没整理好',
+  draft: '没收进题库',
+  imported: '已进题库',
+  ignored: '没收',
+  auto_enrolled: '已自动进题库',
+  unknown: '当时的状态没记下',
 };
+
+/** Missing evidence, in the server's own terms (history evidence.missing), as plain sentences. */
+export const GAP_WORDS: Record<string, string> = {
+  unparsed: '这次录入有一部分过程记录读不出来，下面只列出读得出的部分。',
+  expired: '过程记录已经过期，只剩下收进来的题目。',
+  errors_cut: '中途出过的问题没有全部记下来。',
+  items_unknown: '这次找到了哪些题，没有留下记录。',
+  asks_unknown: '录入助手问过你什么，没有留下记录。',
+  nothing_kept: '这次录入没有留下能读出的题目和过程记录。',
+};
+
+export const RUN_WORDS: Record<string, string> = {
+  done: '整理完了',
+  failed: '没整理完',
+  lost: '中途断开了',
+  in_progress: '没跑完',
+  waiting: '停在等你回答',
+};
+
+const IN_BANK = new Set(['admitted', 'imported', 'auto_enrolled']);
+
+/**
+ * Today's state of a question, as its own line under what it was at the finish. Null when today
+ * says nothing new (still in the library and served, or still waiting for the usual check).
+ */
+export function nowWords(
+  now: { servable: boolean; holdReason: string | null } | null,
+  atFinish: string,
+): string | null {
+  if (!now) return null;
+  if (now.servable) return IN_BANK.has(atFinish) ? null : '现在：可以练了';
+  const code = now.holdReason;
+  if (code === 'awaiting_admission' || code === 'unverified_rules') {
+    return atFinish === 'withheld' ? null : '现在：在题库里，等核对答案';
+  }
+  if (code === 'withdrawn') return '现在：已经撤回了';
+  if (code === 'retraction_hold') return '现在：先不出，正在撤回';
+  return `现在：${holdWords(code) ?? '还没出给你练。'}`;
+}
 
 const STOP_WORDS: Record<string, string> = {
   page_unreadable: '有一页看不清，换一张更清楚的照片会更好。',

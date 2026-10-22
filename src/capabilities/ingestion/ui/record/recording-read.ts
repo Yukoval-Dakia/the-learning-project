@@ -1,12 +1,16 @@
-// The one read module behind a recording (YUK-1473). Live and reopened recordings go through the
-// same reads: session facts (polled until settled), the replayed event stream, and the blocks.
-// The backend's extended history fields will replace these reads here, nowhere else.
+// The one read module behind a recording (YUK-1473). A recording is read from:
+// - the session facts (status, usage receipt), polled until the session settles;
+// - GET /history (what each question was at the finish, what it is now, asks, earlier runs,
+//   missing evidence), re-read whenever the status moves;
+// - the event stream, only while a run is still going;
+// - the extract lane's blocks, the action surface for putting recognised questions in.
 
 import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
-import { getSession, listBlocks, listKnowledge, listSessions } from './record-api';
+import { getHistory, getSession, listBlocks, listKnowledge, listSessions } from './record-api';
 import { useStartState } from './record-start';
-import { NO_TEXT_TITLE, type Recording, deriveRecording, shortTitle } from './recording-model';
+import { foldLive } from './recording-live';
+import { type Recording, deriveRecording } from './recording-model';
 
 const SETTLED = new Set(['extracted', 'partial', 'reviewed', 'imported', 'failed']);
 const HAS_BLOCKS = new Set(['extracted', 'partial', 'reviewed', 'imported']);
@@ -15,18 +19,20 @@ export const recordKeys = {
   list: ['record', 'sessions'] as const,
   knowledge: ['record', 'knowledge'] as const,
   session: (id: string) => ['record', 'session', id] as const,
+  history: (id: string) => ['record', 'history', id] as const,
   blocks: (id: string) => ['record', 'blocks', id] as const,
 };
 
 export interface RecordingRead {
   recording: Recording;
   detail: Awaited<ReturnType<typeof getSession>> | undefined;
+  /** The server's title for this recording; null today for most material. */
+  title: string | null;
   failedToLoad: boolean;
   retry: () => void;
 }
 
 export function useRecording(id: string): RecordingRead {
-  const stream = useIngestionSSE(id);
   const start = useStartState(id);
   const detailQ = useQuery({
     queryKey: recordKeys.session(id),
@@ -39,25 +45,43 @@ export function useRecording(id: string): RecordingRead {
         : false,
   });
   const status = detailQ.data?.session.status ?? '';
+  const historyQ = useQuery({
+    // The status is part of the key: every move (finished, imported, failed) re-reads the record.
+    queryKey: [...recordKeys.history(id), status],
+    queryFn: () => getHistory(id),
+    enabled: status !== '',
+    placeholderData: (prev) => prev,
+  });
+  const runState = historyQ.data?.run?.run_state ?? null;
+  const going =
+    (status !== '' && status !== 'uploaded' && !SETTLED.has(status)) ||
+    runState === 'in_progress' ||
+    runState === 'waiting';
+  const stream = useIngestionSSE(going ? id : null);
+  const lane = historyQ.data?.session.path ?? null;
   const blocksQ = useQuery({
     queryKey: recordKeys.blocks(id),
     queryFn: () => listBlocks(id),
-    enabled: HAS_BLOCKS.has(status),
+    enabled: lane !== 'agent' && HAS_BLOCKS.has(status),
   });
+  const replayed = stream.status !== 'connecting' && stream.status !== 'idle';
   const recording = deriveRecording({
     id,
     detail: detailQ.data,
-    events: stream.events,
-    replayed: stream.status !== 'connecting' && stream.status !== 'idle',
+    history: historyQ.data,
+    historyFailed: historyQ.isError,
+    live: going && replayed ? foldLive(stream.events) : null,
     blocks: blocksQ.data ?? [],
     now: Date.now(),
   });
   return {
     recording,
     detail: detailQ.data,
+    title: historyQ.data?.session.title ?? null,
     failedToLoad: detailQ.isError,
     retry: () => {
       void detailQ.refetch();
+      void historyQ.refetch();
       void blocksQ.refetch();
     },
   };
@@ -69,21 +93,4 @@ export function useRecordingList() {
 
 export function useKnowledgeList() {
   return useQuery({ queryKey: recordKeys.knowledge, queryFn: listKnowledge, staleTime: 60_000 });
-}
-
-/**
- * A list row's automatic title. The session list carries no question text yet, so the row reads
- * the session's blocks (the same cache the open sheet uses). Recordings the helper made have no
- * blocks on today's reads; they show the time only until the backend list carries a title.
- */
-export function useRowTitle(id: string, status: string): string | null {
-  const q = useQuery({
-    queryKey: recordKeys.blocks(id),
-    queryFn: () => listBlocks(id),
-    enabled: HAS_BLOCKS.has(status),
-    staleTime: 60_000,
-  });
-  if (!q.data) return null;
-  if (q.data.length === 0) return status === 'failed' ? NO_TEXT_TITLE : null;
-  return shortTitle(q.data[0].extracted_prompt_md) ?? NO_TEXT_TITLE;
 }
