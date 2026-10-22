@@ -1,5 +1,5 @@
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
+import { newId as createId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { cost_ledger, tool_call_log } from '@/db/schema';
 
