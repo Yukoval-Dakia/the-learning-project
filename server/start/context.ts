@@ -5,6 +5,7 @@ import type {
   PlacementProfileResponse,
   readJudgeRunStatus,
   readPlacementSession,
+  saveResponseDraft,
   transitionPlacementSession,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
@@ -13,6 +14,10 @@ export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
   readPlacementSession: typeof readPlacementSession;
+  saveResponseDraft: (input: {
+    issuanceId: string;
+    body: string;
+  }) => Promise<Extract<Awaited<ReturnType<typeof saveResponseDraft>>, { status: 'saved' }>>;
   readJudgeRunStatus: (
     runId: string,
   ) => Promise<Extract<Awaited<ReturnType<typeof readJudgeRunStatus>>, { kind: 'found' }>['value']>;

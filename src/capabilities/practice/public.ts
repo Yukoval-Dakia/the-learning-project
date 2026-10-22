@@ -322,3 +322,5 @@ export const transitionPlacementSession: typeof import('./server/session-operati
     (await import('./server/session-operations/placement-session')).transitionPlacementSession(
       ...args,
     );
+
+export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
