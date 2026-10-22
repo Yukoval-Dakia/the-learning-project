@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
+import { createStartGoal } from './start/goal-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
@@ -11,6 +12,7 @@ import { releaseStartHeldPlacement } from './start/placement-held-release-operat
 import { selectStartPlacementQuestion } from './start/placement-next-operation';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
 import { readStartPlacementSession } from './start/placement-session-reader';
+import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
@@ -59,6 +61,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readIssuanceState: readStartIssuanceState,
     readJudgeRunStatus: readStartJudgeRunStatus,
     saveResponseDraft: saveStartResponseDraft,
+    startPlacement: createStartPlacement,
     readPlacementSession: readStartPlacementSession,
     selectNextPlacementQuestion: selectStartPlacementQuestion,
     releaseHeldPlacement: releaseStartHeldPlacement,
@@ -67,6 +70,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readSubjects: readStartSubjects,
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
+    createGoal: createStartGoal,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };

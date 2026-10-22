@@ -162,7 +162,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge_edge (canonical) ----
   {
     table: 'knowledge_edge',
-    file: 'src/server/projections/knowledge_edge.ts',
+    file: 'src/kernel/records/knowledge-edge-facts.ts',
     marker: '.insert(knowledge_edge)',
     role: 'throat',
     note: 'Sole structural edge writer; create/archive/reactivate consumers emit events then project.',

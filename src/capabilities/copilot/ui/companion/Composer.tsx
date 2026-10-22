@@ -72,6 +72,7 @@ export function Composer({
         <textarea
           className="un-cp-textarea"
           rows={2}
+          maxLength={4000}
           value={draft}
           placeholder={ready ? '问学习伙伴…' : '对话准备好后就能输入'}
           aria-label="给学习伙伴的消息"

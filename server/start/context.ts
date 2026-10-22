@@ -1,4 +1,5 @@
 import type { Hono } from 'hono';
+import type { createGoal } from '@/capabilities/agency/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
@@ -12,6 +13,7 @@ import type {
   releaseHeldPlacement,
   saveResponseDraft,
   selectNextPlacementQuestion,
+  startPlacementProbe,
   transitionPlacementSession,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
@@ -19,6 +21,8 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  createGoal: (body: string) => Promise<Awaited<ReturnType<typeof createGoal>>>;
+  startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;
   selectNextPlacementQuestion: (
     sessionId: string,

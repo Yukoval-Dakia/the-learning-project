@@ -147,19 +147,29 @@ export interface CompanionFocus {
   title: string;
 }
 
-const useCompanionFocusStore = create<{ focus: CompanionFocus | null }>(() => ({ focus: null }));
+// The focus belongs to the page that published it: it is recorded with that page's path and read
+// back only while the learner is still on that path, so leaving the page drops it.
+const useCompanionFocusStore = create<{ focus: CompanionFocus | null; path: string | null }>(
+  () => ({ focus: null, path: null }),
+);
+
+function currentPath(): string | null {
+  return typeof window === 'undefined' ? null : window.location.pathname;
+}
 
 /** Publish (or clear with null) what the learner is looking at. Call from event handlers. */
 export function setCompanionFocus(focus: CompanionFocus | null): void {
-  useCompanionFocusStore.setState({ focus });
+  useCompanionFocusStore.setState({ focus, path: focus ? currentPath() : null });
 }
 
 /** Send-time read for the companion's commands. */
 export function readCompanionFocus(): CompanionFocus | null {
-  return useCompanionFocusStore.getState().focus;
+  const { focus, path } = useCompanionFocusStore.getState();
+  return focus && path === currentPath() ? focus : null;
 }
 
 /** Render-time read (useSyncExternalStore through zustand). */
 export function useCompanionFocus(): CompanionFocus | null {
-  return useCompanionFocusStore((state) => state.focus);
+  const state = useCompanionFocusStore();
+  return state.focus && state.path === currentPath() ? state.focus : null;
 }
