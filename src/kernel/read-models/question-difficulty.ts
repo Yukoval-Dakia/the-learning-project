@@ -200,7 +200,10 @@ export async function readAttemptDifficulty(
 export type BSource = 'item_calibration' | 'difficulty_proxy' | 'none';
 
 export interface CandidateDifficultyRead {
-  read(questionId: string, difficulty: number | undefined): Promise<{ b?: number; bSource: BSource }>;
+  read(
+    questionId: string,
+    difficulty: number | undefined,
+  ): Promise<{ b?: number; bSource: BSource }>;
 }
 
 /**
@@ -268,6 +271,8 @@ export async function readHardCalibrationBs(
       b_post: item_calibration.b_post,
     })
     .from(item_calibration)
-    .where(and(inArray(item_calibration.question_id, questionIds), eq(item_calibration.track, 'hard')));
+    .where(
+      and(inArray(item_calibration.question_id, questionIds), eq(item_calibration.track, 'hard')),
+    );
   return new Map(rows.map((row) => [row.question_id, effectiveB(row)]));
 }
