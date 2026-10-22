@@ -3,7 +3,10 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { getAnchorEventId, upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
+import {
+  getAnchorEventId,
+  upsertMaterializedIdIndex,
+} from '@/kernel/records/materialized-id-index';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 describe('materialized_id_index helpers', () => {

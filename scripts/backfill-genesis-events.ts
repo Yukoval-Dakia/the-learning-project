@@ -53,8 +53,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import {
-  knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
+  knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
 } from '@/kernel/records/knowledge-node-history';
 import { learningItemsWithGenesisAnchor } from '@/kernel/records/learning-items';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
