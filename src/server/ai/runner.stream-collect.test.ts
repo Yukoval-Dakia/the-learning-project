@@ -334,6 +334,8 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect(JSON.stringify(finished)).not.toContain('hidden reasoning');
   });
 
+  // @invariant security: raw assistant reasoning stays out of task observers and persisted tool-call evidence
+  // @fails-if runner forwards raw assistant reasoning into task events or tool-call log inputs instead of typed metadata
   it('runTask exposes only typed task events and records the SDK-emitted Agent tool_use without raw reasoning', async () => {
     // Agent-enabled product roots override inherited CLI feature flags so an
     // operator or parent shell cannot re-enable SDK background execution.
