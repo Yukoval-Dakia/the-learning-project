@@ -9,10 +9,7 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 
 import { foldGoal } from '@/core/projections/goal';
 import { foldItemCalibration } from '@/core/projections/item_calibration';
-import type {
-  GoalRowSnapshotT,
-  ItemCalibrationRowSnapshotT,
-} from '@/core/schema/event/genesis';
+import type { GoalRowSnapshotT, ItemCalibrationRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { rowToFoldEvent } from '@/kernel/records/projection-events';

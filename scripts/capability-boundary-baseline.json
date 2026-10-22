@@ -2075,6 +2075,14 @@
       "from": 2,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> projections",
+      "date": "2026-10-22",
+      "from": 4,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3103,6 +3111,46 @@
       "issue": "YUK-1570",
       "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/variant_verify.ts",
+      "module": "src/kernel/records/mistake-variant-facts.ts",
+      "kind": "value",
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/records/mistake-variant-facts.ts",
+      "kind": "value",
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/records/mistake-variant-facts.ts",
+      "kind": "value",
+      "symbols": ["createMistakeVariantDraft"],
+      "issue": "YUK-1570",
+      "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-accept-applier.ts",
+      "module": "src/kernel/records/mistake-variant-facts.ts",
+      "kind": "value",
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -3812,11 +3860,45 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldMistakeVariant",
+      "targetModule": "src/kernel/records/mistake-variant-facts.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 13
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and corresponding MistakeVariant mock binding, migrate the existing test pin to the same-named canonical kernel export and remove this old export. Preserve other mixed imports/mock members and real responsibilities; the deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f83ac25d-1663-483a-9d18-a45d55c23bc5",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "mistakeVariantLiveRowToSnapshot",
+      "targetModule": "src/kernel/records/mistake-variant-facts.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 19
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and corresponding MistakeVariant mock binding, migrate the existing test pin to the same-named canonical kernel export and remove this old export. Preserve other mixed imports/mock members and real responsibilities; the deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f83ac25d-1663-483a-9d18-a45d55c23bc5",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 332,
+      "total": 329,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3879,7 +3961,7 @@
         "practice -> http": 3,
         "practice -> mastery": 5,
         "practice -> memory": 1,
-        "practice -> projections": 4,
+        "practice -> projections": 1,
         "practice -> proposals": 5,
         "practice -> questions": 12,
         "practice -> r2": 6,
