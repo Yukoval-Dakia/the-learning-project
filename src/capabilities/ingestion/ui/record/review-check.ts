@@ -44,7 +44,11 @@ interface Attempt {
 }
 
 /** No reply, a lost poll, a timeout or a server-side hiccup before any resource: outcome unknown. */
+/** The operation finished but the session did not become reviewed: a definite answer. */
+class NotReviewed extends Error {}
+
 function outcomeUnknown(err: unknown): boolean {
+  if (err instanceof NotReviewed) return false;
   if (!(err instanceof ApiError)) return true;
   if (err.code === 'operation_timeout') return true;
   return err.status >= 500 && !('operation_id' in err.details);
@@ -70,7 +74,7 @@ export function useReviewCheck(sessionId: string, blocks: Block[]) {
   const send = useMutation({
     mutationFn: async (a: Attempt) => {
       const result = await reviewBlocks(sessionId, a.body, a.key);
-      if (result?.status !== 'reviewed') throw new Error('review finished without reviewed');
+      if (result?.status !== 'reviewed') throw new NotReviewed();
     },
     onSuccess: () => {
       setAttempt(null);
@@ -91,7 +95,9 @@ export function useReviewCheck(sessionId: string, blocks: Block[]) {
         reread();
         return;
       }
+      // A definite answer: read again so the line reflects where the recording stands now.
       setProblem('refused');
+      reread();
     },
   });
 

@@ -215,7 +215,7 @@ export function reviewLine(r: {
   if (r.problem === 'unknown')
     return '没收到结果，不知道记下没有。按「查一下结果」查回刚才那次，不会重复记。';
   if (r.problem === 'changed') return '有题刚刚变了，已经重新读出来，请再逐道看一遍。';
-  if (r.problem === 'refused') return '这次录入现在不能记成看过了。';
+  if (r.problem === 'refused') return '这次没能记成看过了。可以再试一次；还是不行，刷新页面看看。';
   const left = r.total - r.marked;
   return left > 0
     ? `逐道看过后点「看过了」，还剩 ${left} 道。没收的、已自动进题库的也算。`

@@ -78,7 +78,7 @@ export function BlockLine({
               </label>
             )}
             {block.status === 'auto_enrolled' && (
-              <RevertButton sessionId={sessionId} blockId={block.id} />
+              <RevertButton sessionId={sessionId} blockId={block.id} disabled={locked} />
             )}
             {block.status === 'draft' && rescuable && (
               <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
