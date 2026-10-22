@@ -15,7 +15,12 @@ import { db } from '@/db/client';
 import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Placement } from '@/server/session';
-import { recordPlacementNoItem, unresolvedField } from '../placement-advance';
+import {
+  noItemField,
+  placementNoItem,
+  recordPlacementNoItem,
+  unresolvedField,
+} from '../placement-advance';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
@@ -43,6 +48,9 @@ export interface PlacementProbeStart {
   knowledgeIds: string[];
   question: Awaited<ReturnType<typeof ensurePlacementAssessment>>;
   starterSupply: Awaited<ReturnType<typeof readPlacementStarterOutcomes>>;
+  answeredCount: 0;
+  sourcingNeeded: boolean;
+  no_item?: ReturnType<typeof placementNoItem>;
 }
 
 export async function startPlacementProbe(
@@ -230,7 +238,16 @@ export async function startPlacementProbe(
     isolationLevel: 'repeatable read',
     accessMode: 'read only',
   });
-  return { sessionId, knowledgeIds, question, starterSupply };
+  // Keep sourcingNeeded for compatibility; fresh sessions omit unresolved_items.
+  return {
+    sessionId,
+    knowledgeIds,
+    question,
+    answeredCount: 0,
+    sourcingNeeded: question === null,
+    starterSupply,
+    ...noItemField(question === null ? placementNoItem(starterSupply) : null),
+  };
 }
 
 // ---------- end probe (POST /api/placement/[id]/end) ----------

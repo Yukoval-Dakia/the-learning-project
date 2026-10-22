@@ -12,6 +12,7 @@ import { releaseStartHeldPlacement } from './start/placement-held-release-operat
 import { selectStartPlacementQuestion } from './start/placement-next-operation';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
 import { readStartPlacementSession } from './start/placement-session-reader';
+import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
@@ -61,6 +62,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readIssuanceState: readStartIssuanceState,
     readJudgeRunStatus: readStartJudgeRunStatus,
     saveResponseDraft: saveStartResponseDraft,
+    startPlacement: createStartPlacement,
     readPlacementSession: readStartPlacementSession,
     selectNextPlacementQuestion: selectStartPlacementQuestion,
     releaseHeldPlacement: releaseStartHeldPlacement,
