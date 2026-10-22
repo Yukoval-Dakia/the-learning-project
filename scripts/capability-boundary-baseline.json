@@ -1163,6 +1163,226 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "releaseHeldPlacement",
+      "targetModule": "src/capabilities/practice/server/session-operations/placement-held-release.ts",
+      "targetSymbol": "releaseHeldPlacement",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-held-release-operation.ts",
+          "line": 18
+        }
+      ],
+      "evidence": "The authenticated host-bound Start adapter imports releaseHeldPlacement at line 18. The retained HTTP handler directly consumes the same operation, not through public. Original schema validation, locked advance, post-commit starter supply snapshot and response projection are shared.",
+      "rationale": "Practice owns the complete stateful held-release operation. Both transports preserve non-strict stripping, deterministic replay, unresolved semantics, late settlement and the independent read-only supply transaction after advance commits. The live placement client replaces only this method without exposing actor, time, event or selection controls.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0d97c4-f2a1-425a-a1c4-59488f147b9d",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "selectNextPlacementQuestion",
+      "targetModule": "src/capabilities/practice/server/session-operations/placement-next.ts",
+      "targetSymbol": "selectNextPlacementQuestion",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-next-operation.ts",
+          "line": 12
+        }
+      ],
+      "evidence": "The authenticated host-bound Start adapter imports selectNextPlacementQuestion at line 12 and calls it with the live client empty body. The retained HTTP next adapter directly consumes the same operation. The original locked advance core is unchanged; next and held-release share the post-commit supply snapshot and selection projection.",
+      "rationale": "Practice owns input validation and the complete advance-plus-projection sequence. HTTP retains its existing optional policy inputs and deprecated adapter, while Start exposes only sessionId. Shared projection preserves the independent read-only supply transaction after the stateful advance commits, without adding retry or policy controls.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3d59274f-0ac4-4879-a8e1-476e1ccd60d6",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/proposals/owner-runtime.ts",
+      "siteKind": "site",
+      "symbol": "hasLearningItemGenesisAnchor",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "targetSymbol": "hasLearningItemGenesisAnchor",
+      "owner": "kernel/records/learning-items",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Agency imports the runtime namespace at line 11, supplies it to lifecycle at line 30, and retract-learning-item uses the anchor and guarded projection at lines 36/54. Knowledge proposal-appliers also imports the namespace at line 19 but does not call these two members.",
+      "rationale": "The kernel owns complete learning-item materialization and genesis-anchor facts; the existing proposal lifecycle keeps its transaction, decision lock and recovery orchestration. Preserve the existing local-export contract without a second implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/proposals/owner-runtime.ts",
+      "siteKind": "site",
+      "symbol": "projectLearningItemGuarded",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "targetSymbol": "projectLearningItemGuarded",
+      "owner": "kernel/records/learning-items",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Agency imports the runtime namespace at line 11, supplies it to lifecycle at line 30, and retract-learning-item uses the anchor and guarded projection at lines 36/54. Knowledge proposal-appliers also imports the namespace at line 19 but does not call these two members.",
+      "rationale": "The kernel owns complete learning-item materialization and genesis-anchor facts; the existing proposal lifecycle keeps its transaction, decision lock and recovery orchestration. Preserve the existing local-export contract without a second implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/mastery/personalized-difficulty.ts",
+      "siteKind": "site",
+      "symbol": "effectiveFamilyB",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "targetSymbol": "effectiveFamilyB",
+      "owner": "kernel/read-models/question-difficulty",
+      "consumers": [
+        {
+          "file": "scripts/audit-calibration.ts",
+          "line": 94
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 64
+        }
+      ],
+      "evidence": "The existing offline calibration/replay scripts and named test pins consume this exact shared read rule. Preserve script environment loading and separate dynamic import await order.",
+      "rationale": "The kernel owns complete hard-anchor and family difficulty facts while the old real modules retain their calibration writes. This exact existing reader contract uses the canonical implementation without duplicating the policy or moving write/lock authority.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/mastery/recalibration.ts",
+      "siteKind": "site",
+      "symbol": "effectiveB",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "targetSymbol": "effectiveB",
+      "owner": "kernel/read-models/question-difficulty",
+      "consumers": [
+        {
+          "file": "scripts/audit-calibration.ts",
+          "line": 93
+        },
+        {
+          "file": "scripts/replay-urnings-lite.ts",
+          "line": 55
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 65
+        }
+      ],
+      "evidence": "The existing offline calibration/replay scripts and named test pins consume this exact shared read rule. Preserve script environment loading and separate dynamic import await order.",
+      "rationale": "The kernel owns complete hard-anchor and family difficulty facts while the old real modules retain their calibration writes. This exact existing reader contract uses the canonical implementation without duplicating the policy or moving write/lock authority.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-22",
+      "from": 24,
+      "to": 20,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-22",
+      "from": 8,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> ai",
+      "date": "2026-10-22",
+      "from": 17,
+      "to": 12,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-22",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> projections",
+      "date": "2026-10-22",
+      "from": 8,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-22",
+      "from": 10,
+      "to": 9,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-22",
+      "from": 13,
+      "to": 11,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> events",
+      "date": "2026-10-22",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-22",
+      "from": 49,
+      "to": 48,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> fsrs",
+      "date": "2026-10-22",
+      "from": 6,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-22",
+      "from": 9,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/knowledge/public.ts",
       "siteKind": "module",
       "symbol": "ensureSubjectRoot",
@@ -1414,22 +1634,6 @@
         "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-93ac79f4-3107-44bb-9987-16c8327c9f95",
         "quote": "批准这三条精确增长及36→39"
       }
-    },
-    {
-      "debt": "capabilityToServer",
-      "pair": "agency -> subjects",
-      "date": "2026-10-22",
-      "from": 1,
-      "to": 0,
-      "direction": "decrease"
-    },
-    {
-      "debt": "capabilityToServer",
-      "pair": "observability -> subjects",
-      "date": "2026-10-22",
-      "from": 9,
-      "to": 0,
-      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -2016,10 +2220,169 @@
     },
     {
       "debt": "capabilityToKernel",
-      "file": "src/capabilities/observability/server/subject-admin-read.ts",
+      "file": "src/capabilities/practice/server/session-operations/placement-held-release.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
       "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error envelope; Practice owns held-release validation and complete operation sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this is an additional physical reference, not a net-zero move.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-operations/placement-next.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error envelope; Practice owns next-question validation and complete advance/projection sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this adds a physical reference rather than a net-zero move.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
+      "module": "src/server/fsrs/state.ts",
+      "kind": "value",
+      "symbols": [
+        "FsrsSubjectKind",
+        "UpsertFsrsStateInput",
+        "enrollFsrsStateIfAbsent",
+        "getFsrsState",
+        "initialSchedulingState",
+        "upsertFsrsState"
+      ],
+      "issue": "YUK-1570",
+      "owns": "FSRS state retains canonical scheduling initialization and the single projection writer. Practice owns promoted-question target selection and added-attribution enrollment, preserving read/parse and CAS insertion as distinct operations. Five caller references become this one dependency.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/learning-intent.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["createPendingLearningItem"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-appliers.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["hasLearningItemGenesisAnchor", "projectLearningItemGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
+      "module": "src/server/projections/learning_item.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "The existing server repair owner retains its caller-held-lock precondition and causal event clock. Agency consumes that complete repair operation directly after retirement of its forwarding port.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["createPendingLearningItem"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/materialized-id-index.ts",
+      "kind": "value",
+      "symbols": ["upsertMaterializedIdIndex"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/candidate-signals.ts",
+      "module": "src/kernel/read-models/question-difficulty.ts",
+      "kind": "value",
+      "symbols": ["BSource", "CandidateDifficultyRead", "prepareCandidateDifficultyRead"],
+      "issue": "YUK-1570",
+      "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "module": "src/kernel/read-models/question-difficulty.ts",
+      "kind": "value",
+      "symbols": ["readHardCalibrationBs"],
+      "issue": "YUK-1570",
+      "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/scout/evidence-mcp.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/tools/proposal-tools.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/admission/solve.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-admin-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": [
+        "ApiError"
+      ],
       "issue": "YUK-1570",
       "owns": "HTTP error identity and status semantics shared by existing administrative readers.",
       "date": "2026-10-22"
@@ -2029,7 +2392,11 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": ["TraitDegradation", "getSubjectTraitResolutions", "isGeneralFallbackFor"],
+      "symbols": [
+        "TraitDegradation",
+        "getSubjectTraitResolutions",
+        "isGeneralFallbackFor"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -2039,7 +2406,9 @@
       "file": "src/capabilities/observability/server/subject-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": ["hydrateSubjectRegistryFromDb"],
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2049,7 +2418,9 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": ["acquireControlPlaneLockSql"],
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2059,7 +2430,9 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": ["hydrateSubjectRegistryFromDb"],
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2069,7 +2442,9 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": ["isGeneralFallbackFor"],
+      "symbols": [
+        "isGeneralFallbackFor"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -2079,7 +2454,9 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": ["acquireControlPlaneLockSql"],
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2089,7 +2466,9 @@
       "file": "src/capabilities/observability/server/trait-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": ["hydrateSubjectRegistryFromDb"],
+      "symbols": [
+        "hydrateSubjectRegistryFromDb"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2099,7 +2478,9 @@
       "file": "src/capabilities/observability/server/trait-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": ["acquireControlPlaneLockSql"],
+      "symbols": [
+        "acquireControlPlaneLockSql"
+      ],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2109,7 +2490,9 @@
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": ["ensureSubjectRoot"],
+      "symbols": [
+        "ensureSubjectRoot"
+      ],
       "issue": "YUK-1570",
       "owns": "Knowledge owns complete idempotent subject-root event creation and materialization; Agency retains its goal transaction.",
       "date": "2026-10-22"
@@ -2119,7 +2502,10 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": ["ensureSubjectRoot", "subjectRootId"],
+      "symbols": [
+        "ensureSubjectRoot",
+        "subjectRootId"
+      ],
       "issue": "YUK-1570",
       "owns": "Knowledge owns root identity and complete idempotent creation; Observability retains subject control, canonical claim, bindings and post-commit hydration.",
       "date": "2026-10-22"
@@ -2129,7 +2515,9 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": ["updateSubjectRootNameFromControl"],
+      "symbols": [
+        "updateSubjectRootNameFromControl"
+      ],
       "issue": "YUK-1570",
       "owns": "Knowledge owns locked root history validation, versioned name event and projection inside the caller control transaction.",
       "date": "2026-10-22"
@@ -2315,6 +2703,15 @@
       "to": 1404,
       "issue": "YUK-1358",
       "responsibilityReason": "Inject the existing draft-save and judge-status transports through the Practice client context, including the necessary saveResponseDraft callback dependency and existing poller readStatus argument. The two net lines add no business responsibility: autosave epochs, conflicts, lifecycle, submission and presentation behavior stay unchanged; no lines are compressed to evade the size gate."
+    },
+    {
+      "path": "src/capabilities/practice/server/admission/solve.ts",
+      "date": "2026-10-22",
+      "baseBlob": "d9bca1631d6838aa769f065c0b6e458ea7340bd7",
+      "from": 1044,
+      "to": 1045,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One direct import replaces the same binding in a mixed verify-framework import. The complete tool-call evidence owner replaces the retired forwarding export; no solve business body or responsibility grows."
     }
   ],
   "compatShims": [
@@ -2480,23 +2877,129 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1571#comment-03dae10a-ad31-4219-800f-2e79b948937a",
       "date": "2026-10-20",
       "deadline": "2026-11-03"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldLearningItem",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/learning_item.db.test.ts",
+          "line": 25
+        },
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 13
+        },
+        {
+          "file": "src/capabilities/knowledge/jobs/merge_attribution_sweep.db.test.ts",
+          "line": 20
+        },
+        {
+          "file": "src/capabilities/practice/server/merge-attribution.db.test.ts",
+          "line": 4
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/materialized-id-index.ts",
+      "kind": "site",
+      "symbol": "upsertMaterializedIdIndex",
+      "targetModule": "src/kernel/records/materialized-id-index.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/materialized-id-index.db.test.ts",
+          "line": 7
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "hasLearningItemGenesisAnchor",
+      "targetModule": "src/kernel/records/learning-items.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 21
+        }
+      ],
+      "exitCondition": "After Owner explicitly approves the precise mechanical named test imports to the canonical kernel owner, move those imports and delete this old export; keep this module’s other real responsibilities. This record does not authorize test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-3b1ef36e-5938-4af1-b966-e4b536bc14c8",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "kind": "alias",
+      "symbol": "familyKey",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "consumers": [
+        {
+          "file": "src/server/mastery/personalized-difficulty.db.test.ts",
+          "line": 16
+        }
+      ],
+      "exitCondition": "Only after Owner separately approves the exact named test imports, repoint them to the canonical kernel implementation and delete this old export; retain the original module’s real calibration writer responsibilities. This record grants no test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/mastery/personalized-difficulty.ts",
+      "kind": "site",
+      "symbol": "getFamilyCalibration",
+      "targetModule": "src/kernel/read-models/question-difficulty.ts",
+      "consumers": [
+        {
+          "file": "src/server/mastery/personalized-difficulty.db.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/calibration/replay.fixture.db.test.ts",
+          "line": 64
+        }
+      ],
+      "exitCondition": "Only after Owner separately approves the exact named test imports, repoint them to the canonical kernel implementation and delete this old export; retain the original module’s real calibration writer responsibilities. This record grants no test changes.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 374,
+      "total": 356,
       "byOwnerPair": {
-        "agency -> ai": 24,
+        "agency -> ai": 20,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
         "agency -> learning-items": 1,
-        "agency -> projections": 8,
+        "agency -> projections": 5,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
+        "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
-        "copilot -> ai": 17,
+        "copilot -> ai": 12,
         "copilot -> boss": 6,
         "copilot -> events": 5,
         "copilot -> http": 1,
@@ -2510,22 +3013,22 @@
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 15,
         "ingestion -> boss": 6,
-        "ingestion -> events": 6,
-        "ingestion -> projections": 8,
+        "ingestion -> events": 5,
+        "ingestion -> projections": 6,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 11,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 8,
         "knowledge -> advisory-locks": 5,
-        "knowledge -> ai": 10,
+        "knowledge -> ai": 9,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 13,
+        "knowledge -> projections": 11,
         "knowledge -> proposals": 3,
         "notes -> ai": 8,
         "notes -> artifacts": 2,
@@ -2534,19 +3037,20 @@
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,
-        "observability -> events": 2,
+        "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
+        "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 49,
+        "practice -> ai": 48,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
-        "practice -> fsrs": 6,
+        "practice -> fsrs": 2,
         "practice -> http": 3,
-        "practice -> mastery": 9,
+        "practice -> mastery": 5,
         "practice -> memory": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,

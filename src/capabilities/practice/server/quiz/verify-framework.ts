@@ -30,10 +30,6 @@ import {
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 
-// practice is the only capability caller of this run-logging seam
-// (structured-submit failure evidence); re-exported through the existing
-// server/ai edge holder so consumers add no new boundary edge.
-export { writeToolCallLog } from '@/server/ai/log';
 // admission lane 经本模块（既有 server/ai 边持有者）复导出
 // Provider/TaskTextResult，不新增 capability→ai 依赖边。
 export type { TaskTextResult } from '@/server/ai/provenance';

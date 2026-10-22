@@ -1,4 +1,25 @@
-import type { AgentDefinition } from './sdk-types';
+// Pure nested-agent declarations, depth-one reduction and spawn permission contract.
+// Callers own their role prompts, tool allowlists and operational switches. The
+// factory owns the memoized decider, spec projection and authoritative gate;
+// model catalog validation, nested execution, abort lineage and paid evidence
+// remain with the runtime. Permission observations are not an execution/cost ledger.
+
+import type { PiBeforeToolCall } from './tool-call-contract';
+
+/** Depth-reduced nested-agent spec — the caller-declared subagent definition. */
+export interface AgentDefinition {
+  description: string;
+  prompt: string;
+  /** Wire-name allowlist (`mcp__<server>__<tool>` or local tool names). */
+  tools?: string[];
+  disallowedTools?: string[];
+  /** Pi catalog model id or 'inherit'; SDK alias names fail closed. */
+  model?: string;
+  /** Per-child assistant-turn ceiling. */
+  maxTurns?: number;
+  /** Kept for declared-surface parity — pi runs children synchronously. */
+  background?: boolean;
+}
 
 /** The wire name of the pi-mounted spawn tool. */
 export const SPAWN_TOOL_NAME = 'Task';
@@ -71,7 +92,13 @@ function makeDepthOneAgent(definition: AgentDefinition): AgentDefinition {
   };
 }
 
-function makeDepthOneAgents(
+/**
+ * Depth-one reduction applied by the shared contract — strips spawn tools from
+ * `tools`, adds them to `disallowedTools`, pins `background:false`. The pi
+ * subagent host consumes the reduced definitions when it builds the
+ * Task/Agent AgentTool.
+ */
+function toDepthOneAgents(
   agents: Record<string, AgentDefinition>,
 ): Record<string, AgentDefinition> {
   return Object.fromEntries(
@@ -80,20 +107,8 @@ function makeDepthOneAgents(
 }
 
 /**
- * Depth-one reduction applied by the shared contract — strips spawn tools from
- * `tools`, adds them to `disallowedTools`, pins `background:false`. The pi
- * subagent host consumes the reduced definitions when it builds the
- * Task/Agent AgentTool.
- */
-export function toDepthOneAgents(
-  agents: Record<string, AgentDefinition>,
-): Record<string, AgentDefinition> {
-  return makeDepthOneAgents(agents);
-}
-
-/**
  * The engine-neutral half of the spawn contract (YUK-1022): memoized
- * per-toolUseId decisions plus the report-only budget ledger. The pi
+ * per-toolUseId decisions plus the report-only permission observations. The pi
  * beforeToolCall gate consults this decider so duplicate consultations cannot
  * double-count or disagree.
  */
@@ -102,7 +117,7 @@ export interface SpawnDecider {
   readBudgetReport(): SpawnBudgetReport;
 }
 
-export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDecider {
+function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDecider {
   const decisions = new Map<string, { decision: SpawnBudgetDecision; message?: string }>();
   const disabledReason = options.disabledReason ?? DEFAULT_DISABLED_REASON;
   const allowedAgentNames = new Set(Object.keys(options.agents));
@@ -181,5 +196,90 @@ export function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDe
         toolUseIds: entries.map(([toolUseId]) => toolUseId),
       };
     },
+  };
+}
+
+/**
+ * Engine-neutral nested-agent spec — the subset of AgentDefinition the pi
+ * lane can serve. `tools`/`disallowedTools` carry the same wire names
+ * (`mcp__<server>__<tool>` or local names) the SDK def declares; the adapter
+ * filters its mounted AgentTools by them.
+ */
+export interface PiSubagentSpec {
+  description: string;
+  prompt: string;
+  /** Allowlist of parent-mounted wire names; omitted ⇒ inherit the full set. */
+  tools?: readonly string[];
+  /** Additional exclusions applied on top of the allowlist. */
+  disallowedTools?: readonly string[];
+  /** Per-child assistant-turn ceiling (def.maxTurns); unbounded when absent. */
+  maxTurns?: number;
+  /**
+   * Pi catalog model id or 'inherit'/undefined ⇒ parent model. SDK alias names
+   * ('sonnet', 'opus', …) have no pi meaning — declaring one fails closed.
+   */
+  model?: string;
+}
+
+/** Reduce one AgentDefinition to the pi spec (model alias rejection lives
+ *  in the adapter, which owns the catalog). */
+function toPiSubagentSpec(definition: AgentDefinition): PiSubagentSpec {
+  return {
+    description: definition.description,
+    prompt: definition.prompt,
+    ...(definition.tools !== undefined ? { tools: definition.tools } : {}),
+    ...(definition.disallowedTools !== undefined
+      ? { disallowedTools: definition.disallowedTools }
+      : {}),
+    ...(typeof definition.maxTurns === 'number' ? { maxTurns: definition.maxTurns } : {}),
+    ...(typeof definition.model === 'string' ? { model: definition.model } : {}),
+  };
+}
+
+/** Apply the shared depth-one reduction then map to pi specs. */
+function toPiSubagentSpecs(
+  agents: Record<string, AgentDefinition>,
+): Record<string, PiSubagentSpec> {
+  return Object.fromEntries(
+    Object.entries(toDepthOneAgents(agents)).map(([name, def]) => [name, toPiSubagentSpec(def)]),
+  );
+}
+
+/**
+ * The pi spawn contract: the shared memoized decider exposed as a
+ * PiHookBridge beforeToolCall entry, plus the depth-one specs the adapter
+ * turns into the Task/Agent tool. `readBudgetReport` surfaces the decider's
+ * permission observations for the caller's spawn evidence.
+ */
+export interface PiSpawnContract {
+  /** Depth-one specs for the adapter's Task/Agent tool (mount via piAgents). */
+  piAgents: Record<string, PiSubagentSpec>;
+  /** Gate entry for `piHooks.beforeToolCall` — the spawn permission surface. */
+  gate: PiBeforeToolCall;
+  readBudgetReport(): SpawnBudgetReport;
+  /** Memoized permission decisions shared with the gate. */
+  decider: SpawnDecider;
+}
+
+export function createPiSpawnContract(options: CreateSpawnContractOptions): PiSpawnContract {
+  const decider = createSpawnDecider(options);
+  const gate: PiBeforeToolCall = async (call, args) => {
+    if (!isSpawnToolName(call.name)) return undefined;
+    const decision = decider.decide(call.id, args);
+    if (decision.decision === 'allow') {
+      // A defined non-blocking result, not undefined: once the shared decider
+      // answers 'allow' the gate is authoritative — no later chain entry may
+      // rewrite the call. The pi loop itself treats `block:false` exactly like
+      // an absent result.
+      return { block: false };
+    }
+    // Deny = error tool result (retryable, memoized) — never a hard stop.
+    return { block: true, reason: decision.message ?? 'spawn denied by contract' };
+  };
+  return {
+    piAgents: toPiSubagentSpecs(options.agents),
+    gate,
+    readBudgetReport: () => decider.readBudgetReport(),
+    decider,
   };
 }

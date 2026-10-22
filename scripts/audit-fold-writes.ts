@@ -189,7 +189,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- learning_item (canonical, YUK-973) ----
   {
     table: 'learning_item',
-    file: 'src/server/projections/learning_item.ts',
+    file: 'src/kernel/records/learning-items.ts',
     marker: '.insert(learning_item)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',

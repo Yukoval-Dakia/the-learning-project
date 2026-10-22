@@ -20,7 +20,7 @@ import {
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/embed';
 // Projection parity assert: throws in dev/test, warns in prod.
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { prepareProposedKnowledgeId } from './proposals';

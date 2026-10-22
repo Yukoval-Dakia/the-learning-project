@@ -8,9 +8,9 @@ import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { hasGoalGenesisAnchor } from '@/server/projections/parity';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 

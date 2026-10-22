@@ -21,6 +21,12 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+// Completion/relearn record subject-keyed actions, then materialize through the
+// single structural writer. Approval and row locking stay in this owner transaction.
+import {
+  hasLearningItemGenesisAnchor,
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
 import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import {
   asPlainRecord,
@@ -34,12 +40,6 @@ import {
   type LearningIntentMaterializeResult,
   acceptLearningIntent,
 } from './learning-intent';
-// Completion/relearn record subject-keyed actions, then materialize through the
-// single structural writer. Approval and row locking stay in this owner transaction.
-import {
-  hasLearningItemGenesisAnchor,
-  projectLearningItemGuarded,
-} from './learning-item-projection-port';
 import type { ProposalInboxRow } from './proposal-lifecycle';
 
 export interface AgencyApplierOpts {

@@ -1,9 +1,4 @@
-// Read/write helpers for `materialized_id_index`, which maps a minted node/edge id to
-// the event that created it. The fold needs this for ids that are not event subjects:
-// propose_new/split record the minted id in the accepting rate's materialized_ids.
-
 import { eq } from 'drizzle-orm';
-
 import type { Db, Tx } from '@/db/client';
 import { materialized_id_index } from '@/db/schema';
 
