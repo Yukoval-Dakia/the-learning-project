@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { setPresentation } from '@/capabilities/ingestion/server/block-structured-edit';
 import { capturedQuestionShape } from '@/capabilities/ingestion/server/captured-question-shape';
+import { writeCustomCodeAsset } from '@/capabilities/ingestion/server/custom-code-assets';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import {
   Presentation,
@@ -47,6 +48,10 @@ import type { DomainTool, ToolContext } from './types';
 
 const ComposePresentationInputSchema = z
   .object({
+    /** 独立惰性代码资产写入；省略 action 保持既有 presentation 模式。 */
+    action: z.literal('write_custom_code').optional(),
+    /** 仅代码模式；asset_id/digest/mime/归属全部由服务端生成。 */
+    code: z.string().min(1).optional(),
     /** DRAFT question_block id（validate；save=true 时写回 structured.presentation）。 */
     block_id: z.string().min(1).optional(),
     /** edit_question 返回的版本化草稿身份；v2 save 必须携带版本。 */
@@ -57,9 +62,34 @@ const ComposePresentationInputSchema = z
     /** 已发布 revision id（只校验 —— revision 不可变，不接受 save）。 */
     revision_id: z.string().min(1).optional(),
     /** presentation 文档（blocks-v1）；先过形状门，再过绑定校验。 */
-    presentation: OpaqueJsonInput,
+    presentation: OpaqueJsonInput.optional(),
     /** 缺省 false = 只校验；true 需要 block_id（revision 引用拒绝 save）。 */
     save: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.action === 'write_custom_code') {
+      if (
+        input.code == null ||
+        input.draft_ref == null ||
+        input.block_id != null ||
+        input.revision_id != null ||
+        input.expected_draft_version != null ||
+        input.request_id != null ||
+        input.presentation !== undefined ||
+        input.save !== undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'write_custom_code accepts only action, current draft_ref and code',
+        });
+      }
+    } else if (input.code !== undefined || input.presentation === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'presentation mode requires presentation and never accepts code',
+      });
+    }
   })
   .refine(
     (input) =>
@@ -87,6 +117,7 @@ const ComposePresentationOutputSchema = z.object({
     'unresolvable_contract',
     'unsupported_contract',
     'conflict',
+    'custom_code_saved',
   ]),
   block_id: z.string().optional(),
   revision_id: z.string().optional(),
@@ -101,6 +132,14 @@ const ComposePresentationOutputSchema = z.object({
   reason: z.string().optional(),
   current_draft_ref: z.string().optional(),
   current_draft_version: z.number().int().min(0).optional(),
+  /** Only write_custom_code returns these server-verified immutable asset fields. */
+  asset_id: z.string().optional(),
+  digest: z.string().optional(),
+  byte_size: z.number().int().min(1).optional(),
+  mime: z.literal('text/javascript').optional(),
+  reused: z.boolean().optional(),
+  preview: z.literal('not_run').optional(),
+  serving: z.literal('withheld').optional(),
 });
 type ComposePresentationOutput = z.infer<typeof ComposePresentationOutputSchema>;
 
@@ -162,7 +201,7 @@ export const composePresentationTool: DomainTool<
 > = {
   name: 'compose_presentation',
   description:
-    "Validate (and optionally save) a blocks-v1 presentation for a draft (draft_ref from edit_question, or legacy block_id) or frozen revision (revision_id, validate only). Supply presentation, not prose. v2 drafts use submit's contract conversion and binding validators; malformed/unsupported declarations fail explicitly. For v2 save=true, provide draft_ref (or block_id + expected_draft_version) and request_id. Save changes only presentation through canonical edit events, returns the new draft_ref/draft_version for subsequent edit_question/submit_question. Reuse the same request_id and input only to replay the original receipt; conflicts must be resolved explicitly. Presentation validity grants no admission.",
+    "With no action, validate (and optionally save) a blocks-v1 presentation for a draft (draft_ref from edit_question, or legacy block_id) or frozen revision (revision_id, validate only). Supply presentation, not prose. v2 drafts use submit's contract conversion and binding validators; malformed/unsupported declarations fail explicitly. For v2 save=true, provide draft_ref (or block_id + expected_draft_version) and request_id. Save changes only presentation through canonical edit events, returns the new draft_ref/draft_version for subsequent edit_question/submit_question. Reuse the same request_id and input only to replay the original receipt; conflicts must be resolved explicitly. Separately, action=write_custom_code accepts only the current own R8 draft_ref and code (1..256 KiB UTF-8, no script-closing/comment/NUL sequences). It stores inert immutable bytes and returns server-derived asset_id/digest/byte_size/mime; reuse those exact refs in a subsequent presentation compose. It never changes the draft version. No code execution or preview occurs; custom blocks remain withheld. Neither saved code nor presentation validity grants admission.",
   effect: 'write',
   inputSchema: ComposePresentationInputSchema,
   outputSchema: ComposePresentationOutputSchema,
@@ -171,6 +210,26 @@ export const composePresentationTool: DomainTool<
     ctx: ToolContext,
     input: ComposePresentationInput,
   ): Promise<ComposePresentationOutput> {
+    const parsedInput = ComposePresentationInputSchema.safeParse(input);
+    if (!parsedInput.success) {
+      return {
+        status: 'rejected_input',
+        issues: parsedInput.error.issues.slice(0, 10).map((issue) => ({
+          code: 'invalid_compose_input',
+          detail: `${issue.path.join('.')}: ${issue.message}`,
+        })),
+      };
+    }
+    input = parsedInput.data;
+    if (input.action === 'write_custom_code') {
+      if (input.draft_ref == null || input.code == null) {
+        return {
+          status: 'rejected_input',
+          issues: [{ code: 'missing_code_input', detail: 'requires draft_ref and code' }],
+        };
+      }
+      return writeCustomCodeAsset(ctx, { draftRef: input.draft_ref, code: input.code });
+    }
     const shaped = Presentation.safeParse(input.presentation);
     if (!shaped.success) {
       return {

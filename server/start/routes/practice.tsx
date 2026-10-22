@@ -5,12 +5,16 @@ import {
   PracticeClientProvider,
   loadPracticeFacePage,
 } from '@/capabilities/practice/ui-public';
+import { startIssuanceStateClient } from '../issuance-state-client';
 import { startJudgeRunStatusClient } from '../judge-status-client';
+import { startPaperListClient } from '../papers-list-client';
 import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
 const practiceClient: PracticeClient = {
+  getPapers: startPaperListClient,
+  getIssuanceState: startIssuanceStateClient,
   saveResponseDraft: startResponseDraftClient,
   readJudgeRunStatus: startJudgeRunStatusClient,
 };

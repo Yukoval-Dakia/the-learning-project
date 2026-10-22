@@ -4,10 +4,13 @@ import {
   NoSuchKey,
   PutObjectCommand,
   S3Client,
+  S3ServiceException,
 } from '@aws-sdk/client-s3';
 
 export interface R2Client {
   put(key: string, body: Uint8Array, contentType?: string): Promise<void>;
+  /** Optional for existing adapters; immutable writers must fail closed without it. */
+  putIfAbsent?(key: string, body: Uint8Array, contentType?: string): Promise<'created' | 'exists'>;
   get(key: string): Promise<Uint8Array | null>;
   delete(key: string): Promise<void>;
 }
@@ -18,6 +21,27 @@ export function createR2Client(client: S3Client, bucket: string): R2Client {
       await client.send(
         new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
       );
+    },
+    async putIfAbsent(key, body, contentType) {
+      try {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: body,
+            ContentType: contentType,
+            IfNoneMatch: '*',
+          }),
+        );
+        return 'created';
+      } catch (err) {
+        // 412 means an object already exists, not that it has the right bytes.
+        // The immutable asset owner must read and verify it before issuing a ref.
+        if (err instanceof S3ServiceException && err.$metadata.httpStatusCode === 412) {
+          return 'exists';
+        }
+        throw err;
+      }
     },
     async get(key) {
       try {
