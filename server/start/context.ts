@@ -4,6 +4,7 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   readPlacementSession,
+  transitionPlacementSession,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
@@ -11,6 +12,10 @@ export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
   readPlacementSession: typeof readPlacementSession;
+  transitionPlacementSession: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
   readSubjects: () => Promise<{ subjects: LearnerSubjectRow[] }>;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
   readMistakes: (input: MistakeListQuery) => Promise<MistakeListResponse>;

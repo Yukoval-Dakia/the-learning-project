@@ -6,13 +6,14 @@ import {
   httpPlacementClient,
   loadPlacementPage,
 } from '@/capabilities/onboarding/ui-public';
-import { startPlacementSessionClient } from '../placement-session-client';
+import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPlacementPage().then((defaultPage) => ({ default: defaultPage })));
 const placementClient: PlacementClient = {
   ...httpPlacementClient,
   getPlacementSession: startPlacementSessionClient,
+  placementEnd: startPlacementEndClient,
 };
 export const Route = createFileRoute('/placement')({
   ssr: false,
