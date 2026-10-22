@@ -1,5 +1,6 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
+import type { loadMisconceptionsForKc } from '@/capabilities/knowledge/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
@@ -21,6 +22,9 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  readKnowledgeMisconceptions: (id: string) => Promise<{
+    rows: Awaited<ReturnType<typeof loadMisconceptionsForKc>>;
+  }>;
   createGoal: (body: string) => Promise<Awaited<ReturnType<typeof createGoal>>>;
   startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;

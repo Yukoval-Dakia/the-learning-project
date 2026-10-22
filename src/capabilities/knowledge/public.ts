@@ -33,7 +33,7 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-export { KnowledgeTreeQuerySchema } from './api/contracts';
+export { KnowledgeIdParamsSchema, KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
@@ -72,6 +72,7 @@ export {
   archiveMisconceptionEdge,
   createMisconceptionEdge,
 } from './server/misconception-edges';
+export { loadMisconceptionsForKc } from './server/misconception-read';
 export {
   createKnowledgeNodeFromEvents,
   ensureSubjectRoot,
@@ -95,5 +96,4 @@ export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export { loadTreeSnapshot } from './server/tree';
-
 export { knowledgeTaskSpecs } from './task-public';

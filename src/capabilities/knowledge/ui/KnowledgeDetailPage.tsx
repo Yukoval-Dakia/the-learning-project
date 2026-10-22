@@ -18,12 +18,8 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 
 import { BandChip } from './BandChip';
 import { humanizeActivity } from './humanize-activity';
-import {
-  type KnowledgeNodePage,
-  type NoteSummary,
-  getMisconceptions,
-  vetoMisconception,
-} from './knowledge-api';
+import { type KnowledgeNodePage, type NoteSummary, vetoMisconception } from './knowledge-api';
+import { useKnowledgeClient } from './knowledge-client';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
 import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
@@ -148,6 +144,7 @@ export default function KnowledgeDetailPage({
   navigate: (to: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { getMisconceptions } = useKnowledgeClient();
   // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
   // navigating here after any cross-surface mutation still performs the existing refetch.
   const pageQ = useQuery(knowledgeNodeQueryOptions(id));
