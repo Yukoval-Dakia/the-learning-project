@@ -6,6 +6,7 @@ import {
   httpPlacementClient,
   loadPlacementPage,
 } from '@/capabilities/onboarding/ui-public';
+import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
@@ -14,6 +15,7 @@ const placementClient: PlacementClient = {
   ...httpPlacementClient,
   getPlacementSession: startPlacementSessionClient,
   placementEnd: startPlacementEndClient,
+  readJudgeRunStatus: startJudgeRunStatusClient,
 };
 export const Route = createFileRoute('/placement')({
   ssr: false,
