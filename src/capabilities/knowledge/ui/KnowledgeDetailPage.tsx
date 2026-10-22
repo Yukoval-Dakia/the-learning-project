@@ -8,7 +8,7 @@
 // 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -233,7 +233,11 @@ export default function KnowledgeDetailPage({
             <Btn
               variant="secondary"
               icon="review"
-              onClick={() => openCopilot(knowledgeReviewRequest(node.name))}
+              onClick={() => {
+                // The companion shows 「正在看：知识点 · <name>」 and scopes its quiz chip to it.
+                setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
+                openCopilot(knowledgeReviewRequest(node.name));
+              }}
             >
               复习此点
             </Btn>
