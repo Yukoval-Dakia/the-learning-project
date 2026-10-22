@@ -43,7 +43,6 @@ import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/respon
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import {
   Button,
@@ -75,7 +74,7 @@ import {
 } from '../use-practice-submit';
 import { DraftConflictPanel } from './DraftConflictPanel';
 import { FigureLightbox } from './FigureLightbox';
-import { QuoteBubble, clipQuote, useQuotableSelection } from './QuoteSelection';
+import { QuoteBubble, clipQuote, quoteToCompanion, useQuotableSelection } from './QuoteSelection';
 import { SoloCoach } from './SoloCoach';
 import './practice-solo.css';
 
@@ -204,9 +203,9 @@ function startAtTop(node: HTMLElement | null) {
   if (node) window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
-/** The Copilot drawer's composer, once it is laid out (the drawer may still be sliding in). */
+/** The companion's composer, once it is laid out (the panel may still be sliding in). */
 function copilotComposer(): HTMLElement | null {
-  const el = document.querySelector<HTMLElement>('[data-testid="copilot-composer-input"]');
+  const el = document.querySelector<HTMLElement>('[data-companion-composer]');
   if (!el) return null;
   const r = el.getBoundingClientRect();
   return r.width > 0 && r.height > 0 ? el : null;
@@ -355,7 +354,7 @@ export function PracticeSolo({
     // M3: a new quote takes over; the one in the air fades where it is.
     flight.current?.();
     flight.current = null;
-    openCopilot(`「${clipped}」\n`, { send: false });
+    quoteToCompanion(item, clipped);
     const scope = pageRoot.current?.closest('[data-ui-next]');
     // Reduced motion: the quote is simply in the composer.
     if (!scope || !from || prefersReducedMotion()) return;

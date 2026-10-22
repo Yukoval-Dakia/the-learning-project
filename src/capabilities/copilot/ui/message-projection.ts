@@ -123,7 +123,7 @@ export function projectPendingCopilotMessagePair(
   const ai: ChatMessage = {
     id: pending.aiMessageId,
     role: 'ai',
-    text: pending.dispatching === false ? '受理状态暂时无法确认。' : '正在确认这次请求是否已受理。',
+    text: pending.dispatching === false ? '还不能确认这条是否已送达。' : '正在发送…',
     streaming: pending.dispatching !== false,
     session_id: pending.sessionId,
     idempotency_key: pending.idempotencyKey,

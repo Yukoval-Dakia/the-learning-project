@@ -28,7 +28,7 @@ export interface AppSidebarProps {
   mobileOpen: boolean;
   /** 当前是否处在移动端布局；关闭的离屏 rail 必须退出读屏与 Tab 顺序。 */
   mobileLayout: boolean;
-  /** 打开 Copilot dock（RootShell 接到 CopilotDock 的隐藏 trigger）。 */
+  /** 打开学习伙伴（RootShell 直接改开合）。 */
   onOpenCopilot: () => void;
   /** 当前主题（'light' | 'dark'）；驱动 sun/moon 图标。 */
   theme: 'light' | 'dark';

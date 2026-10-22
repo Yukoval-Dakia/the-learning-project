@@ -2001,12 +2001,33 @@
       "date": "2026-10-22"
     },
     {
+<<<<<<< HEAD
       "debt": "capabilityToServer",
       "pair": "practice -> boss",
       "date": "2026-10-22",
       "from": 18,
       "to": 15,
       "direction": "decrease"
+=======
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/ui-public.ts",
+      "siteKind": "module",
+      "symbol": "CompanionMount",
+      "targetModule": "src/capabilities/copilot/ui/companion/CompanionMount.tsx",
+      "targetSymbol": "CompanionMount",
+      "owner": "copilot",
+      "consumers": [
+        {
+          "file": "web/src/RootShell.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "RootShell imports the mount at line 3 and renders it at line 278 with open, layout and onOpenChange. CompanionMount.tsx:23 owns the single companion instance: claiming open requests, attaching/detaching run streams (close only detaches) and the panel. It replaces the deleted CopilotDock export of the same ui-public file.",
+      "rationale": "The browser shell can reach copilot only through ui-public; the mount is the one public entry for the companion, the same role CopilotDock held at base. Not a temporary hand-off.",
+      "issue": "YUK-1473",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1473#comment-4147d4be-d0cf-4a41-a803-0096118d534d",
+      "date": "2026-10-22"
+>>>>>>> origin/main
     }
   ],
   "edgeRecords": [
@@ -3004,6 +3025,16 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns only the generic error/status/details envelope; Agency owns complete scope and alias policy, the canonical creation call and DTO. The original HTTP adapter still uses ApiError, so this additional physical reference is not a net-zero move.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/copilot/ui/companion/HeroBlock.tsx",
+      "module": "src/capabilities/notes/ui-public.ts",
+      "kind": "value",
+      "symbols": ["getNotePage"],
+      "issue": "YUK-1473",
+      "owns": "Notes owns the note page read. Copilot only renders an interactive artifact inline from it; this edge moves from the deleted copilot/ui/CopilotHeroCard.tsx with the companion rebuild, so the copilot -> notes pair total does not change.",
       "date": "2026-10-22"
     }
   ],
