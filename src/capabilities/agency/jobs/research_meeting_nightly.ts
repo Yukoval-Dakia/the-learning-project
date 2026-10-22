@@ -76,8 +76,6 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
-export { RESEARCH_MEETING_ACTOR };
-
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
 /** N self-consistency samples per conjecture (Opus agreement tally). */
