@@ -1122,6 +1122,26 @@
       "date": "2026-10-22"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "getIssuanceState",
+      "targetModule": "src/capabilities/practice/server/assessment/submit.ts",
+      "targetSymbol": "getIssuanceState",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/issuance-state-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host-bound Start reader imports getIssuanceState at line 11. The retained HTTP getIssuance adapter directly calls the same owner at assessment-route.ts:133; that direct call is not a public consumer. The complete issuance, serving decision, live draft and submission projection remains unchanged.",
+      "rationale": "Practice owns the complete issuance state read. The existing practice client seam replaces only recovery and conflict reads; host binding retains the current config and task registry graph, and the original not-found mapping preserves the UI branch that permits issuance only after an ApiError 404.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0bae01-0c81-4ed2-93a4-7a955a039105",
+      "date": "2026-10-22"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "practice -> fsrs",
       "date": "2026-10-22",

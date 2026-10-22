@@ -15,7 +15,7 @@ export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
-export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
+export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
 
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
