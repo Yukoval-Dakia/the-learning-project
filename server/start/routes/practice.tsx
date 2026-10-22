@@ -8,6 +8,7 @@ import {
 import { startIssuanceStateClient } from '../issuance-state-client';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPaperListClient } from '../papers-list-client';
+import { startPracticeSubmitClient } from '../practice-submit-client';
 import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
@@ -16,6 +17,7 @@ const practiceClient: PracticeClient = {
   getPapers: startPaperListClient,
   getIssuanceState: startIssuanceStateClient,
   saveResponseDraft: startResponseDraftClient,
+  submitReview: startPracticeSubmitClient,
   readJudgeRunStatus: startJudgeRunStatusClient,
 };
 function PracticePage() {

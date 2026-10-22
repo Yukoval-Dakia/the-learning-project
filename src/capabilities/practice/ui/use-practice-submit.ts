@@ -41,7 +41,6 @@ import {
   getQuestionFull,
   isSubmitPending,
   issueAssessment,
-  submitReview,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
 
@@ -415,7 +414,8 @@ export function usePracticeSubmit({
   addToast,
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
-  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus } = usePracticeClient();
+  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus, submitReview } =
+    usePracticeClient();
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
