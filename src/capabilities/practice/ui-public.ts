@@ -10,11 +10,11 @@ export { type PracticeClient, PracticeClientProvider } from './ui/practice-clien
 
 export const loadPracticeFacePage = () =>
   import('./ui/PracticeFacePage').then((module) => module.default);
-export const loadDraftReviewPage = () =>
-  import('./ui/DraftReviewPage').then((module) => module.default);
-export const loadQuestionsPage = () =>
-  import('./ui/QuestionsPage').then((module) => module.default);
-export const loadQuestionDetailPage = () =>
-  import('./ui/QuestionDetailPage').then((module) => module.default);
+// YUK-1473 — 题目: one library (all / mistakes / review / held) and one question page.
+export type { LibraryPageProps } from './ui/library/LibraryPage';
+export const loadQuestionLibraryPage = () =>
+  import('./ui/library/LibraryPage').then((module) => module.default);
+export const loadQuestionPage = () =>
+  import('./ui/library/QuestionPage').then((module) => module.default);
 export const loadWorksheetPrintPage = () =>
   import('./ui/worksheet/WorksheetPrintPage').then((module) => module.default);

@@ -1,6 +1,5 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
-import type { MistakeListQuery, MistakeListResponse } from '@/capabilities/ingestion/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
@@ -60,7 +59,6 @@ export type FrontdoorContext = {
     >['payload']
   >;
   readPlacementProfile: (goalId: string) => Promise<PlacementProfileResponse>;
-  readMistakes: (input: MistakeListQuery) => Promise<MistakeListResponse>;
   legacySpa: Hono;
   startAssets: Hono;
 };
