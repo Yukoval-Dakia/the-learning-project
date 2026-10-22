@@ -181,18 +181,16 @@ export async function projectGoalGuarded(db: DbLike, goalId: string): Promise<vo
 
 // Upsert the full goal row; there are no derived or excluded columns.
 async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Promise<void> {
-  const { id, ...fields } = pickGoalStructure({
+  const values = pickGoalStructure({
     ...projected,
     // Legacy payloads default to 'explicit'; the ?? only satisfies the optional snapshot type.
     scope_mode: projected.scope_mode ?? 'explicit',
     // Legacy snapshots carry no declared_stage; the fold materializes NULL.
     declared_stage: projected.declared_stage ?? null,
   });
-  await db
-    .insert(goal)
-    .values({ id, ...fields })
-    .onConflictDoUpdate({
-      target: goal.id,
-      set: fields,
-    });
+  const { id: _id, ...fields } = values;
+  await db.insert(goal).values(values).onConflictDoUpdate({
+    target: goal.id,
+    set: fields,
+  });
 }
