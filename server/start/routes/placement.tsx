@@ -10,6 +10,7 @@ import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPlacementHeldReleaseClient } from '../placement-held-release-client';
 import { startPlacementNextClient } from '../placement-next-client';
 import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
+import { startPlacementSubmitClient } from '../placement-submit-client';
 import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
@@ -22,6 +23,7 @@ const placementClient: PlacementClient = {
   placementEnd: startPlacementEndClient,
   readJudgeRunStatus: startJudgeRunStatusClient,
   saveResponseDraft: startResponseDraftClient,
+  submitProbeAnswer: startPlacementSubmitClient,
 };
 export const Route = createFileRoute('/placement')({
   ssr: false,
