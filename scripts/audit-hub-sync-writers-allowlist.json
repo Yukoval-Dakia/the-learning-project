@@ -47,7 +47,7 @@
       "reason": "Learning-intent KC materialization inserts knowledge; trigger fan-out covers it."
     },
     {
-      "path": "src/server/projections/knowledge.ts",
+      "path": "src/kernel/records/knowledge-node-materialization.ts",
       "tables": ["knowledge"],
       "reason": "Event-fold projection applier for knowledge nodes (upsert/delete on replay); trigger fan-out covers each applied write."
     },
