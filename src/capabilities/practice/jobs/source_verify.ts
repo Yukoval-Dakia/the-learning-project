@@ -147,11 +147,13 @@ export type SourceVerifyPerQuestionStatus =
 export interface RunSourceVerifyParams {
   db: Db;
   questionId: string;
+  /** Executes solve/semantic checks and the default source-grounding task. */
   runTaskFn: RunTaskFn;
   imageFetchFn?: SolveCheckImageFetchFn;
   // source-grounding re-check seam (single_source_grounding rows only). DB tests
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
-  // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
+  // An explicit override receives only SourceGroundingParams and takes precedence.
+  // Otherwise runSourceGroundingVerify uses the same runTaskFn for SourceGroundingVerifyTask.
   sourceGroundingFn?: SourceGroundingFn;
   /**
    * owner recheck command id. When set, the terminal-event guard
@@ -818,16 +820,19 @@ export async function runSourceVerify(
       checks.push({ check: 'source_grounding', verdict: 'fail', reason: groundingSummary });
     }
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
-      const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
+      const groundingFn = params.sourceGroundingFn;
       let outcome: SourceGroundingVerifyResult;
       try {
-        outcome = await groundingFn({
+        const groundingParams: SourceGroundingParams = {
           db,
           prompt_md: verifyInput.prompt_md,
           reference_md: verifyInput.reference_md,
           sourceAssetId: groundingSourceAssetId,
           subjectProfile,
-        });
+        };
+        outcome = groundingFn
+          ? await groundingFn(groundingParams)
+          : await runSourceGroundingVerify({ ...groundingParams, runTaskFn });
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.

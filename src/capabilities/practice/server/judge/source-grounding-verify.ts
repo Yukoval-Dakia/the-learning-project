@@ -38,7 +38,7 @@ import { defaultImageFetch } from './steps-judge';
 export type SourceGroundingRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> },
-  ctx: unknown,
+  ctx: Parameters<typeof defaultStructuredRunTaskFn>[2],
 ) => Promise<StructuredTaskResult>;
 
 export type SourceGroundingImageFetchFn = (
