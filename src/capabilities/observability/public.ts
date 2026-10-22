@@ -134,6 +134,7 @@ export {
   retireAdminSubject,
   validateAdminSubject,
 } from './server/subject-control-operations';
+export { thinCreateSubject } from './server/subject-create';
 export {
   auditProfilesFromDb,
   formatDbProfileAuditReport,
