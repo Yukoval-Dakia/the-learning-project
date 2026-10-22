@@ -233,8 +233,8 @@ const eventDetailRoute = createRoute({
 });
 
 // M1-T6 (YUK-314) — 录入面。query 读写直接走 window.location + history.replace：
-// getQuery 只在 VisionTab 的 mount-only 恢复 effect 里读一次（不需要 reactive
-// 订阅）；setQuery 是 replace 语义（?ingest= 进行中会话的持久化/清除）。
+// getQuery 只在页面首次渲染时读一次 ?ingest=（打开的那次录入，不需要 reactive
+// 订阅）；setQuery 是 replace 语义（打开/收起一次录入时写入或清除）。
 const RecordRoute = lazyRouteComponent(async () => {
   const RecordPage = await loadRecordPage();
 

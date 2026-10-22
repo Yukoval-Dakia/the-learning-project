@@ -1,0 +1,221 @@
+/* 录入 (YUK-1473): page, input box, recording sheet, pages, bars.
+   Design language: docs/design/2026-10-07-ui-visual-direction.md (T1 semantic tokens, T3 glass
+   only on floating layers, M1 motion only on change, M3 interruptible, A2 hit areas, M14 states). */
+
+[data-ui-next].rc-page {
+  & .rc-main {
+    display: grid;
+    gap: var(--un-sp-5);
+    width: min(780px, 100%);
+    margin: 0 auto;
+    padding: var(--un-sp-7) var(--un-sp-6) var(--un-sp-8);
+    scroll-margin-top: var(--un-sp-4);
+  }
+
+  & .rc-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-5);
+    margin-bottom: var(--un-sp-2);
+  }
+
+  & .rc-head-text {
+    display: grid;
+    flex: 1;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .rc-title {
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-5);
+    font-weight: var(--un-fw-regular);
+    letter-spacing: var(--un-ls-tight);
+    line-height: var(--un-lh-tight);
+    color: var(--un-text-1);
+  }
+
+  & .rc-sub {
+    max-width: 34em;
+    color: var(--un-text-3);
+    text-wrap: pretty;
+  }
+
+  & .rc-mascot {
+    width: 112px;
+  }
+
+  /* ── The input box ── */
+  & .rc-composer {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    transition:
+      box-shadow var(--un-t-small) var(--un-ease-glide),
+      background-color var(--un-t-small) var(--un-ease-glide);
+  }
+
+  & .rc-composer:focus-within {
+    box-shadow: inset 0 0 0 calc(var(--un-hairline) * 1.5) var(--un-accent-strong);
+  }
+
+  & .rc-composer[data-over="true"] {
+    background: var(--un-accent-soft);
+    box-shadow: inset 0 0 0 calc(var(--un-hairline) * 1.5) var(--un-accent);
+  }
+
+  & .rc-area {
+    width: 100%;
+    min-width: 0;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+    color: var(--un-text-1);
+    font: inherit;
+    line-height: var(--un-lh-ui);
+    resize: vertical;
+  }
+
+  & .rc-composer-text {
+    padding: var(--un-sp-1) 0;
+    background: transparent;
+    box-shadow: none;
+    font-size: var(--un-fs-3);
+    resize: none;
+  }
+
+  & .rc-composer-text:focus {
+    outline: none;
+  }
+
+  & .rc-area::placeholder,
+  & .rc-input::placeholder {
+    color: var(--un-text-4);
+  }
+
+  & .rc-input {
+    flex: 1;
+    min-width: 0;
+    height: var(--un-h-control);
+    padding: 0 var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-1);
+  }
+
+  & .rc-hand {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding-top: var(--un-sp-3);
+    box-shadow: inset 0 var(--un-hairline) 0 var(--un-line);
+  }
+
+  & .rc-field {
+    display: grid;
+    gap: var(--un-sp-1);
+  }
+
+  & .rc-field-label {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .rc-options {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .rc-switch {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    cursor: pointer;
+  }
+
+  & .rc-switch input {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    translate: 0 3px;
+    accent-color: var(--un-accent-strong);
+  }
+
+  & .rc-switch[data-off="true"] {
+    color: var(--un-text-4);
+  }
+
+  & .rc-quiet {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-problem {
+    color: var(--un-critical);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-link {
+    position: relative;
+    color: var(--un-accent-strong);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .rc-link:hover:not(:disabled) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  & .rc-link:disabled {
+    color: var(--un-text-disabled);
+  }
+
+  & .rc-saved {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+    color: var(--un-positive);
+    font-size: var(--un-fs-1);
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next].rc-page {
+    & .rc-main {
+      gap: var(--un-sp-4);
+      padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-6);
+    }
+
+    & .rc-title {
+      font-size: var(--un-fs-4);
+    }
+
+    & .rc-mascot {
+      width: var(--un-mascot-read-phone);
+    }
+
+    & .rc-bar > .un-btn {
+      flex: 1 0 auto;
+    }
+  }
+}
