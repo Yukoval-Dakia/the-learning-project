@@ -1120,6 +1120,22 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-100d7a81-b1f3-4925-b56d-3fac936f9672",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-22",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> events",
+      "date": "2026-10-22",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -2034,7 +2050,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 382,
       "byOwnerPair": {
         "agency -> ai": 24,
         "agency -> boss": 10,
@@ -2061,7 +2077,7 @@
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 15,
         "ingestion -> boss": 6,
-        "ingestion -> events": 6,
+        "ingestion -> events": 5,
         "ingestion -> projections": 8,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 11,
@@ -2085,7 +2101,7 @@
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,
-        "observability -> events": 2,
+        "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
         "observability -> subjects": 9,

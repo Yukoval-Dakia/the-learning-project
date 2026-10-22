@@ -57,9 +57,9 @@ export function broadcast(payload: SSEPayload): void {
 }
 
 /** SSE comment cadence: below the client's transport-idle watchdog. */
-export const JOB_EVENT_HEARTBEAT_MS = 15_000;
+const JOB_EVENT_HEARTBEAT_MS = 15_000;
 /** Durable cursor catch-up: NOTIFY is a wake-up hint, never the only delivery path. */
-export const JOB_EVENT_CATCHUP_MS = 10_000;
+const JOB_EVENT_CATCHUP_MS = 10_000;
 
 /**
  * Own replay, live delivery and response cleanup for the two existing protocols.

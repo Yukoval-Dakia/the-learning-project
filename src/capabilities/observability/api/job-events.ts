@@ -2,9 +2,6 @@ import { db } from '@/db/client';
 import { jobEventStreamResponse } from '@/server/events/sse_router';
 import { JOB_EVENT_KIND_SET } from './event-contracts';
 
-// Preserve the route's existing cadence exports; the stream owner runs the timers.
-export { JOB_EVENT_CATCHUP_MS, JOB_EVENT_HEARTBEAT_MS } from '@/server/events/sse_router';
-
 // Generic SSE tracker for job_events, keyed by business kind and id. The stream
 // owner replays Last-Event-ID, serializes live and durable catch-up, and sends
 // heartbeat comments. Business terminal events do not close the stream; the client
