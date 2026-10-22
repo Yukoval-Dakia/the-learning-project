@@ -1803,6 +1803,46 @@
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "IssueAssessmentBodySchema",
+      "targetModule": "src/capabilities/practice/api/assessment-contracts.ts",
+      "targetSymbol": "IssueAssessmentBodySchema",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/issuance-create-operation.ts",
+          "line": 12
+        }
+      ],
+      "evidence": "The authenticated host operation imports this public value at AST line 12 (path line 13) and consumes it at line 15. HTTP consumes the internal module directly; context references are type-only.",
+      "rationale": "Practice owns the existing issuance input contract, including object strip, default mode and nullable fields. HTTP and authenticated Start share it without changing canonical issuance or admission policy.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-fad1aa31-5358-4e38-aa94-f872de5a888d",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "projectIssuanceResult",
+      "targetModule": "src/capabilities/practice/server/assessment/issue-response.ts",
+      "targetSymbol": "projectIssuanceResult",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/issuance-create-operation.ts",
+          "line": 12
+        }
+      ],
+      "evidence": "The authenticated host operation imports this public value at AST line 12 (path line 13) and consumes it at line 35. HTTP consumes the internal module directly; context references are type-only.",
+      "rationale": "Practice owns the complete issued/replayed result and domain-error mapping, including serving_reason details. HTTP retains 201/200 and Location; RPC shares the body and errors. The kernel issuance owner, locks, admission, claims and replay remain unchanged.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-fad1aa31-5358-4e38-aa94-f872de5a888d",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -2752,6 +2792,16 @@
       "symbols": ["applyQuestionBlockTransition"],
       "issue": "YUK-1570",
       "owns": "Complete accepted question-block status/link/version and lifecycle-event persistence in the caller transaction; eligibility, locking and surrounding enrollment/revert orchestration remain with the caller.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/assessment/issue-response.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns only the generic error/status/details envelope; Practice owns the complete issuance domain-result mapping. The original HTTP adapter still needs ApiError, so this is an additional physical reference, not a net-zero move.",
       "date": "2026-10-22"
     },
     {
