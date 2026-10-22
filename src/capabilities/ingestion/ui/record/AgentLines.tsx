@@ -17,6 +17,8 @@ const TONE: Record<AgentItem['status'], string> = {
   unknown: 'neutral',
 };
 
+const MIDWAY = new Set(['queued', 'structuring', 'solving', 'calibrating']);
+
 function byNumber(a: AgentItem, b: AgentItem) {
   const na = Number.parseInt(a.no ?? '', 10);
   const nb = Number.parseInt(b.no ?? '', 10);
@@ -40,14 +42,20 @@ export function AgentLines({
   items,
   asks,
   onHoverPage,
+  stopped = false,
 }: {
   sessionId: string;
   items: AgentItem[];
   asks: Ask[];
   onHoverPage: (page: number | null) => void;
+  /** The run is over: a question left mid-way reads as not finished, not as still working. */
+  stopped?: boolean;
 }) {
   if (items.length === 0 && asks.length === 0) return null;
   const known = new Set(items.map((i) => i.id));
+  // When no line kept its at-finish state, the sheet says so once; each line only says it came in
+  // (a durable link exists), instead of repeating "state not recorded" on every line.
+  const allUnknown = items.every((i) => i.status === 'unknown');
   // Asks whose question is not among the lines (or about the whole material) still show, last.
   const loose = asks.filter((a) => a.itemId === null || !known.has(a.itemId));
   // Questions the helper is waiting on come first, so an answer is never buried in a long list.
@@ -60,9 +68,20 @@ export function AgentLines({
       {ordered.map((item) => {
         const note = noteOf(item);
         const today = nowWords(item.now, item.status);
+        const cut = stopped && MIDWAY.has(item.status);
         const held = item.status === 'withheld' && note !== null;
         const itemAsks = asks.filter((a) => a.itemId === item.id);
         const asking = itemAsks.some((a) => a.open);
+        const label = asking
+          ? '等你回答'
+          : held
+            ? '先不出'
+            : cut
+              ? '没做完'
+              : allUnknown
+                ? '收进来了'
+                : ITEM_WORDS[item.status];
+        const tone = asking || held ? 'caution' : cut ? 'neutral' : TONE[item.status];
         return (
           <li
             key={item.id}
@@ -89,8 +108,8 @@ export function AgentLines({
                 <AskReply key={ask.id} sessionId={sessionId} ask={ask} />
               ))}
             </div>
-            <span className="rc-state" data-tone={asking || held ? 'caution' : TONE[item.status]}>
-              {asking ? '等你回答' : held ? '先不出' : ITEM_WORDS[item.status]}
+            <span className="rc-state" data-tone={tone}>
+              {label}
             </span>
           </li>
         );

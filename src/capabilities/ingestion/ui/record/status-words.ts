@@ -17,7 +17,7 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
   if (rec.gaps.includes('expired')) {
     const n = rec.items.length;
     return {
-      text: n > 0 ? `收进来 ${n} 道题，整理的过程记录已经过期` : '这次录入的过程记录已经过期',
+      text: n > 0 ? `收进来 ${n} 道题` : '这次录入的过程记录已经过期',
       tone: 'neutral',
     };
   }

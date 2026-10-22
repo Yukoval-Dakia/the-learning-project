@@ -38,6 +38,7 @@ export function PriorRuns({
               items={run.items}
               asks={run.asks}
               onHoverPage={onHoverPage}
+              stopped
             />
           </li>
         ))}

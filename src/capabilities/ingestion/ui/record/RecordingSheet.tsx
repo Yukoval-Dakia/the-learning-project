@@ -106,7 +106,13 @@ export function RecordingSheet({
       )}
 
       {rec.lane === 'agent' && (
-        <AgentLines sessionId={rec.id} items={rec.items} asks={rec.asks} onHoverPage={setLitPage} />
+        <AgentLines
+          sessionId={rec.id}
+          items={rec.items}
+          asks={rec.asks}
+          onHoverPage={setLitPage}
+          stopped={rec.phase === 'failed' || rec.phase === 'finished'}
+        />
       )}
       {rec.lane !== 'agent' && (
         <BlockLines
