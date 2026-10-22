@@ -38,7 +38,10 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import {
+  type PublishQuestionGroupInput,
+  publishQuestionGroup,
+} from '@/kernel/records/assessment-publication';
 import { runQuestionAdmissionChecks } from './checks';
 import { ADMISSION_FAMILY, lockAdmissionGroup } from './enqueue';
 import { AdmissionResultReceipt, FrozenAdmissionInput } from './receipt';
@@ -444,6 +447,7 @@ export async function evaluateResolvedRepair(
 export interface RepairApplyOptions {
   operatorReason: string;
   now: Date;
+  readAssetBytes?: PublishQuestionGroupInput['readAssetBytes'];
 }
 
 export type RepairOutcome =
@@ -509,7 +513,10 @@ export async function applyResolvedRepair(
   });
   if (built.kind === 'blocked')
     return { status: 'blocked', group_id: entry.group_id, reason: built.reason };
-  const persisted = await publishQuestionGroup(tx, built.publish);
+  const persisted = await publishQuestionGroup(tx, {
+    ...built.publish,
+    readAssetBytes: opts.readAssetBytes,
+  });
   if (persisted.status === 'conflict')
     return { status: 'conflict', group_id: entry.group_id, reason: persisted.reason };
   if (persisted.status !== 'published')
