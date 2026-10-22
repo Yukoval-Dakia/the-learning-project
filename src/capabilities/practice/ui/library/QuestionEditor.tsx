@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
-import { Button, Segmented, showToast } from '@/ui-next/public';
+import { showToast } from '@/ui-next/feedback/toast-store';
+import { Button, Segmented } from '@/ui-next/public';
 import type { QuestionPatchBody } from '../practice-api';
 import type { QuestionFullDetail } from './library-api';
 import { DIFFICULTY_WORDS } from './library-copy';

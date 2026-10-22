@@ -13,7 +13,7 @@
 //   "later answered it right on my own" is not shown until the backend provides it;
 // - a missing cause is 'unknown' (「原因还不确定」), never an in-progress state, never guessed.
 
-import type { MistakeProjection } from '@/capabilities/ingestion/ui-public';
+import type { MistakeRow } from './library-api';
 
 /** What the correction chain says about one record. */
 export type RecordStanding =
@@ -26,7 +26,7 @@ export type RecordStanding =
   /** The chain could not be resolved. */
   | 'unknown';
 
-export function recordStanding(row: MistakeProjection): RecordStanding {
+export function recordStanding(row: MistakeRow): RecordStanding {
   switch (row.correction_state.terminal_state) {
     case 'active':
       return 'stands';
@@ -77,7 +77,7 @@ export interface MistakeQuestion {
   latestRecordAtSec: number;
 }
 
-function toRecord(row: MistakeProjection): MistakeRecord {
+function toRecord(row: MistakeRow): MistakeRecord {
   return {
     id: row.id,
     createdAtSec: row.created_at,
@@ -109,9 +109,9 @@ function summarise(questionId: string, records: readonly MistakeRecord[]): Mista
 }
 
 /** Group loaded mistake rows (any number of pages, in API order) by question_id. */
-export function groupMistakes(rows: readonly MistakeProjection[]): MistakeQuestion[] {
+export function groupMistakes(rows: readonly MistakeRow[]): MistakeQuestion[] {
   const seen = new Set<string>();
-  const byQuestion = new Map<string, { rows: MistakeProjection[] }>();
+  const byQuestion = new Map<string, { rows: MistakeRow[] }>();
   for (const row of rows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);

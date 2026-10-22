@@ -6,7 +6,6 @@ import type { FrontdoorContext } from './start/context';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
-import { readStartMistakes } from './start/mistakes-reader';
 import { readStartPapers } from './start/papers-list-reader';
 import { releaseStartHeldPlacement } from './start/placement-held-release-operation';
 import { selectStartPlacementQuestion } from './start/placement-next-operation';
@@ -55,7 +54,6 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   const context: FrontdoorContext = {
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
-    readMistakes: readStartMistakes,
     readPapers: readStartPapers,
     createIssuance: createStartIssuance,
     readIssuanceState: readStartIssuanceState,

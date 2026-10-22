@@ -1,0 +1,61 @@
+/* Toasts (M15): glass, bottom right; on phones above the old shell's bottom tab bar
+   (60px + safe area, web/src/globals.css .mobile-tabbar), never covering it. */
+[data-ui-next].un-toasts {
+  position: fixed;
+  right: var(--un-sp-5);
+  bottom: var(--un-sp-5);
+  z-index: var(--un-z-toast);
+  display: grid;
+  gap: var(--un-sp-2);
+  justify-items: end;
+  pointer-events: none;
+
+  & .un-toast {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: 44px;
+    max-width: min(420px, calc(100vw - 2 * var(--un-sp-4)));
+    padding: 0 var(--un-sp-1) 0 var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    color: var(--un-text-1);
+    font-size: var(--un-fs-1);
+    pointer-events: auto;
+  }
+
+  & .un-toast-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  & .un-toast-action {
+    flex: none;
+    min-height: 44px;
+    padding: 0 var(--un-sp-2);
+    color: var(--un-accent-strong);
+    font-weight: var(--un-fw-medium);
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next].un-toasts {
+    right: var(--un-sp-3);
+    left: var(--un-sp-3);
+    bottom: calc(60px + env(safe-area-inset-bottom) + var(--un-sp-3));
+    justify-items: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next].un-toasts .un-toast {
+    animation: un-toast-in var(--un-t-ui) var(--un-ease-spring-soft) both;
+  }
+}
+
+@keyframes un-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}

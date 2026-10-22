@@ -1,6 +1,7 @@
 // YUK-1473 — the 题目 library's address. Everything the learner chooses (view and scope) lives
-// in the query string so refresh, back and shared links keep it. The sidebar's filter links are
-// `?view=mistakes` and `?status=draft`; this module is the only place that knows the keys.
+// in the query string so refresh, back and shared links keep it. The sidebar's 做错过的题 and
+// 待审核的题 entries (/mistakes, /drafts) redirect to `?view=mistakes` and `?status=draft`; this
+// module is the only place that reads and writes the keys.
 
 export type LibraryView = 'all' | 'mistakes' | 'review' | 'held';
 

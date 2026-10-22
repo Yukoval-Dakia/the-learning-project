@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Button, Expand, showToast } from '@/ui-next/public';
-import { type QuestionFullDetail, getDraftDetail, isDeleted, isDraft } from './library-api';
+import { showToast } from '@/ui-next/feedback/toast-store';
+import { Button, Expand } from '@/ui-next/public';
+import { getDraftDetail } from '../practice-api';
+import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
 import { VERIFY_WORDS, holdWords } from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';

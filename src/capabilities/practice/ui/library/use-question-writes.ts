@@ -3,19 +3,16 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/ui/lib/api';
-import { randomId } from '@/ui/lib/random-id';
-import { showToast } from '@/ui-next/public';
-import type { QuestionPatchBody } from '../practice-api';
+import { showToast } from '@/ui-next/feedback/toast-store';
 import {
-  type ServingAction,
+  type QuestionPatchBody,
   deleteQuestion,
   enableDraft,
   forceEnableDraft,
   getQuestionFull,
   patchQuestion,
-  restoreQuestion,
-  runServingAction,
-} from './library-api';
+} from '../practice-api';
+import { type ServingAction, restoreQuestion, runServingAction } from './library-api';
 import { LIBRARY_KEY } from './use-library';
 
 export const questionKey = (id: string) => [LIBRARY_KEY, 'question', id] as const;
@@ -57,8 +54,6 @@ export function useServingAction() {
     },
   });
 }
-
-export const newActionKey = () => randomId();
 
 /** 核验并启用: the server runs the check and turns the draft on only if it passes. */
 export function useVerifyDraft() {

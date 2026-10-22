@@ -2,6 +2,7 @@
 // 待审核 / 暂不出题). Mistakes and drafts are states of a question, not pages of their own.
 // The view and scope live in the address (library-url.ts); data comes from use-library.ts.
 
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
 import { Segmented, UiNextRoot } from '@/ui-next/public';
 import { AllView } from './AllView';
 import { HeldView } from './HeldView';
@@ -95,6 +96,7 @@ export default function LibraryPage({ navigate, searchStr, replace }: LibraryPag
           {view === 'held' && <HeldView key="held" {...common} />}
         </section>
       </main>
+      <ToastHost />
     </UiNextRoot>
   );
 }

@@ -1,7 +1,8 @@
+import { randomId } from '@/ui/lib/random-id';
 import { Button } from '@/ui-next/public';
 import type { QuestionFullDetail } from './library-api';
 import { SERVING_COMMAND_WORDS } from './library-copy';
-import { newActionKey, useServingAction } from './use-question-writes';
+import { useServingAction } from './use-question-writes';
 
 type Serving = QuestionFullDetail['serving'];
 
@@ -27,7 +28,7 @@ export function ServingButton({
       size="sm"
       variant={variant}
       disabled={run.isPending}
-      onClick={() => run.mutate({ action, key: newActionKey() })}
+      onClick={() => run.mutate({ action, key: randomId() })}
     >
       {run.isPending ? '正在提交…' : (SERVING_COMMAND_WORDS[action.command] ?? '处理')}
     </Button>

@@ -178,7 +178,7 @@
     & .ql-main,
     & .qd-main {
       gap: var(--un-sp-5);
-      padding: var(--un-sp-5) var(--un-sp-4) calc(var(--un-sp-8) + var(--un-shell-tabbar));
+      padding: var(--un-sp-5) var(--un-sp-4) var(--un-sp-8);
     }
 
     & .ql-title,
@@ -217,7 +217,8 @@
     }
 
     & .ql-bar {
-      bottom: calc(var(--un-shell-tabbar) + var(--un-sp-3));
+      /* Above the old shell's phone tab bar (60px + safe area, globals.css .mobile-tabbar). */
+      bottom: calc(60px + env(safe-area-inset-bottom) + var(--un-sp-3));
       padding: var(--un-sp-3);
     }
   }

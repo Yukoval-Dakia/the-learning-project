@@ -4,10 +4,10 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices, subjectIdentityKey } from '@/ui/lib/subject';
+import { getQuestionKnowledgeOptions } from '../practice-api';
 import {
   countDrafts,
   countQuestions,
-  getQuestionKnowledgeOptions,
   listDraftPage,
   listMistakePage,
   listQuestionPage,

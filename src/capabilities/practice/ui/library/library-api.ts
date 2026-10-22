@@ -1,20 +1,10 @@
 // YUK-1473 — the 题目 library's reads and writes. Thin wrappers over the existing routes; pages
 // call these through React Query and never build URLs themselves.
 
-import { listMistakes } from '@/capabilities/ingestion/ui-public';
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
 import { type QBankQuestion, type QuestionFullDetail, getQuestionsList } from '../practice-api';
 import type { LibraryScope } from './library-url';
 
-export {
-  deleteQuestion,
-  enableDraft,
-  forceEnableDraft,
-  getDraftDetail,
-  getQuestionFull,
-  getQuestionKnowledgeOptions,
-  patchQuestion,
-} from '../practice-api';
 export type { QBankQuestion, QuestionFullDetail };
 
 export const LIBRARY_PAGE = 30;
@@ -95,16 +85,25 @@ export async function countDrafts(): Promise<number> {
 
 export const MISTAKE_PAGE = 50;
 
+type MistakeList = ApiOperationJsonResponse<'listMistakes'>;
+/** One mistake record as /api/mistakes sends it. */
+export type MistakeRow = MistakeList['rows'][number];
+
+function listMistakes(query: URLSearchParams): Promise<MistakeList> {
+  return apiOperationJson('listMistakes', { url: `/api/mistakes?${query}`, method: 'GET' });
+}
+
 export function listMistakePage(scope: LibraryScope, cursor: string | null) {
-  return listMistakes({
-    limit: MISTAKE_PAGE,
-    subject: scope.subject ?? undefined,
-    cursor: cursor ?? undefined,
-  });
+  const sp = new URLSearchParams({ limit: String(MISTAKE_PAGE) });
+  if (scope.subject) sp.set('subject', scope.subject);
+  if (cursor) sp.set('cursor', cursor);
+  return listMistakes(sp);
 }
 
 export function listQuestionMistakes(questionId: string) {
-  return listMistakes({ limit: MISTAKE_PAGE, questionId });
+  return listMistakes(
+    new URLSearchParams({ limit: String(MISTAKE_PAGE), question_id: questionId }),
+  );
 }
 
 export type ServingAction = NonNullable<QuestionFullDetail['serving']['next_action']>;

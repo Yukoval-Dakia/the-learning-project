@@ -6,14 +6,13 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
-import { Button, Card, RetryLine, SkeletonLines, UiNextRoot } from '@/ui-next/public';
-import {
-  type QuestionFullDetail,
-  focusTitle,
-  getQuestionFull,
-  isDeleted,
-  isDraft,
-} from './library-api';
+import { ToastHost } from '@/ui-next/feedback/ToastHost';
+import { Card } from '@/ui-next/primitives/Card';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button, UiNextRoot } from '@/ui-next/public';
+import { getQuestionFull } from '../practice-api';
+import { type QuestionFullDetail, focusTitle, isDeleted, isDraft } from './library-api';
 import { MyHistory } from './MyHistory';
 import { NextSteps } from './NextSteps';
 import { QuestionBanner } from './QuestionBanner';
@@ -104,6 +103,7 @@ export default function QuestionPage({
           )}
         </main>
       )}
+      <ToastHost />
     </UiNextRoot>
   );
 }

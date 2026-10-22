@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { MouseEvent } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
-import { RetryLine, SkeletonLines } from '@/ui-next/public';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { type QuestionFullDetail, listQuestionMistakes } from './library-api';
 import { outcomeWord } from './library-copy';
 import {

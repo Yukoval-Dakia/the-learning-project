@@ -1,4 +1,7 @@
-import { Button, Card, RetryLine, SkeletonLines } from '@/ui-next/public';
+import { Card } from '@/ui-next/primitives/Card';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
 import type { QBankQuestion } from './library-api';
 import { HOLD_WORDS, holdWords, kindWord } from './library-copy';
 import type { LibraryScope } from './library-url';

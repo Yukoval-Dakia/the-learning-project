@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
-import { Button, Card, RetryLine, SkeletonLines } from '@/ui-next/public';
+import { Card } from '@/ui-next/primitives/Card';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
 import type { LibraryScope } from './library-url';
 import { type MistakeQuestion, RECORD_WORDS, causeWords, splitByEffect } from './mistake-read';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';

@@ -1,4 +1,7 @@
-import { Button, Card, RetryLine, SkeletonLines } from '@/ui-next/public';
+import { Card } from '@/ui-next/primitives/Card';
+import { RetryLine } from '@/ui-next/primitives/RetryLine';
+import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
+import { Button } from '@/ui-next/public';
 import { difficultyWord, holdWords, kindWord, sourceWord } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
