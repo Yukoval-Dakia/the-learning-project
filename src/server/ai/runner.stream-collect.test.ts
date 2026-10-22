@@ -113,6 +113,9 @@ vi.mock('@/server/ai/log', () => ({
       return true;
     },
   ),
+}));
+
+vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 
@@ -412,7 +415,7 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
     expect('forwardSubagentText' in capturedArgs.options).toBe(false);
     expect('env' in capturedArgs.options).toBe(false);
 
-    const { writeToolCallLog } = await import('@/server/ai/log');
+    const { writeToolCallLog } = await import('@/kernel/tools/call-evidence');
     expect(writeToolCallLog).toHaveBeenCalledTimes(1);
     expect(writeToolCallLog).toHaveBeenCalledWith(
       fakeDb,

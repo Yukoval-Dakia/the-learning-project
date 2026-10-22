@@ -16,7 +16,7 @@ const captured = vi.hoisted(() => ({
   mirroredLinks: [] as Array<{ tcl_id: string; event_id: string }>,
   events: [] as Array<Record<string, unknown>>,
 }));
-vi.mock('@/server/ai/log', () => ({
+vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: vi.fn(async (_db: unknown, entry: Record<string, unknown>) => {
     captured.toolCallLogs.push(entry);
     return 'mock_tcl_id';
