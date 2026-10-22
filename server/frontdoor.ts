@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
+import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
 import { readStartMistakes } from './start/mistakes-reader';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
@@ -49,6 +50,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readMistakes: readStartMistakes,
+    readIssuanceState: readStartIssuanceState,
     readJudgeRunStatus: readStartJudgeRunStatus,
     saveResponseDraft: saveStartResponseDraft,
     readPlacementSession: readStartPlacementSession,
