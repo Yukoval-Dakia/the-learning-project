@@ -18,9 +18,9 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
 import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import {
-  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
@@ -490,68 +490,7 @@ export async function assertLearningItemParity(
 
 // ── artifact genesis-anchor helpers ───────────────────────────────────────────────────────────
 //
-// An artifact is event-sourced when it has a create/genesis base event or an index anchor.
-// Both base events are subject-keyed, so the event leg is complete.
-
-const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
-
-/** Whether an artifact has an anchor the fold can reproduce. */
-export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'artifact'),
-        eq(event.subject_id, artifactId),
-        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, artifactId),
-        eq(materialized_id_index.subject_kind, 'artifact'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function artifactsWithGenesisAnchor(
-  db: DbLike,
-  artifactIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (artifactIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'artifact'),
-        inArray(event.subject_id, artifactIds),
-        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, artifactIds),
-        eq(materialized_id_index.subject_kind, 'artifact'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
+export { artifactsWithGenesisAnchor } from '@/kernel/records/artifact-history';
 
 export {
   hasQuestionBlockGenesisAnchor,
@@ -607,9 +546,9 @@ export async function itemCalibrationsWithGenesisAnchor(
 // Write-time fold==row guard for the artifact sites. Callers assert only anchored artifacts;
 // an edit against a pre-event artifact is skipped.
 
-// The shared mapper lives in snapshot-mappers so audit, backfill, and parity cannot drift.
+// The shared mapper lives in artifact-history so audit, backfill, and parity cannot drift.
 // Re-exported under the name existing callers import.
-export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from './snapshot-mappers';
+export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from '@/kernel/records/artifact-history';
 
 /** Assert that the artifact fold reproduces the live row; see the node assert for throw handling. */
 export async function assertArtifactParity(

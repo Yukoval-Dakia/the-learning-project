@@ -11,11 +11,10 @@
 // the backfill — that barrier is intentional there, not here.)
 
 import type {
-  ArtifactRowSnapshotT,
   ItemCalibrationRowSnapshotT,
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
-import type { artifact, item_calibration, question_block } from '@/db/schema';
+import type { item_calibration, question_block } from '@/db/schema';
 
 /**
  * Map a live `knowledge` row to its structural snapshot. The embed_* columns are derived search-index
@@ -25,41 +24,7 @@ import type { artifact, item_calibration, question_block } from '@/db/schema';
  */
 export { knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 
-/**
- * Map a live `artifact` DB row to ArtifactRowSnapshotT. artifact has NO derived/embed columns
- * (design §5.1), so the FULL 22-column row IS the snapshot — every column is carried verbatim. The
- * jsonb columns (body_blocks / attrs / tool_state / verification_summary / generated_by / verified_by /
- * history) pass through untouched (the snapshot REUSES the canonical business schemas, so the backfill's
- * writeEvent parseEvent barrier validates them as ground truth). Dates stay Date (GenesisExperimental's
- * z.coerce.date() accepts both Date and the jsonb ISO string). The array columns default to [] at the
- * table, so they are always present.
- */
-export function artifactRowToSnapshot(row: typeof artifact.$inferSelect): ArtifactRowSnapshotT {
-  return {
-    id: row.id,
-    type: row.type,
-    title: row.title,
-    parent_artifact_id: row.parent_artifact_id,
-    knowledge_ids: row.knowledge_ids ?? [],
-    intent_source: row.intent_source,
-    source: row.source,
-    source_ref: row.source_ref,
-    body_blocks: row.body_blocks,
-    attrs: row.attrs ?? {},
-    tool_kind: row.tool_kind,
-    tool_state: row.tool_state,
-    generation_status: row.generation_status,
-    verification_status: row.verification_status,
-    verification_summary: row.verification_summary,
-    generated_by: row.generated_by,
-    verified_by: row.verified_by,
-    history: row.history ?? [],
-    archived_at: row.archived_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
+export { artifactRowToSnapshot } from '@/kernel/records/artifact-history';
 
 /**
  * Map a live `question_block` DB row to QuestionBlockRowSnapshotT, EXCLUDING the LEGACY
