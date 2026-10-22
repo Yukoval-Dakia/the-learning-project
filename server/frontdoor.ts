@@ -8,6 +8,7 @@ import { readStartJudgeRunStatus } from './start/judge-status-reader';
 import { readStartMistakes } from './start/mistakes-reader';
 import { readStartPapers } from './start/papers-list-reader';
 import { releaseStartHeldPlacement } from './start/placement-held-release-operation';
+import { selectStartPlacementQuestion } from './start/placement-next-operation';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { readStartPlacementProfile } from './start/profile-reader';
@@ -57,6 +58,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readJudgeRunStatus: readStartJudgeRunStatus,
     saveResponseDraft: saveStartResponseDraft,
     readPlacementSession: readStartPlacementSession,
+    selectNextPlacementQuestion: selectStartPlacementQuestion,
     releaseHeldPlacement: releaseStartHeldPlacement,
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
