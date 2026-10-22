@@ -1,8 +1,11 @@
-import { type SubjectClient, httpSubjectClient } from '@/ui/hooks/subject-client';
+import type { SubjectClient } from '@/ui/hooks/subject-client';
 import { authenticatedStartFetch } from './authenticated-fetch';
-import { getStartSubjects } from './subject-function';
+import { createStartSubjectFunction, getStartSubjects } from './subject-function';
 
 export const startSubjectClient: SubjectClient = {
   listSubjects: () => getStartSubjects({ fetch: authenticatedStartFetch }),
-  createSubject: httpSubjectClient.createSubject,
+  createSubject: async (displayName) =>
+    JSON.parse(
+      await createStartSubjectFunction({ fetch: authenticatedStartFetch, data: displayName }),
+    ),
 };
