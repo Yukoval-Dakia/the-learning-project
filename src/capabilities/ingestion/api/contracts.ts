@@ -90,13 +90,35 @@ export const IngestionSessionDetailResponseSchema = z.object({
   usage_receipt: IngestionUsageReceiptSchema.nullable(),
 });
 
-export const IngestionOperationSchema = z
+const IngestionOperationBaseSchema = z
   .object({
     id: z.string(),
+    kind: z.literal('ingestion_operation'),
+    operation_kind: z.enum(['extract', 'agent', 'review', 'import', 'make_paper', 'rescue']),
     session_id: z.string(),
-    status: z.string(),
+    status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+    result: z.unknown().optional(),
+    error: z.object({ code: z.string(), message: z.string(), status: z.number().int() }).optional(),
+    created_at: z.string().datetime(),
+    updated_at: z.string().datetime(),
+    events_url: z.string(),
   })
   .passthrough();
+
+export const IngestionOperationSchema = z.union([
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.enum(['extract', 'agent', 'import', 'make_paper', 'rescue']),
+  }),
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.literal('review'),
+    status: z.enum(['queued', 'running', 'failed']),
+  }),
+  IngestionOperationBaseSchema.extend({
+    operation_kind: z.literal('review'),
+    status: z.literal('succeeded'),
+    result: z.object({ status: z.literal('reviewed') }),
+  }),
+]);
 
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
@@ -276,6 +298,7 @@ const AutoEnrollObservationSchema = z.object({
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
+    version: z.number().int().nonnegative(),
     ingestion_session_id: z.string(),
     source_asset_ids: z.array(z.string()),
     page_spans: z.array(PageSpan),

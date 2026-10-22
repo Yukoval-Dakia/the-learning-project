@@ -3465,6 +3465,15 @@
       "to": 2125,
       "issue": "YUK-1413",
       "responsibilityReason": "Bind the original root invocation's actual fetch Response to that stream's failed assistant and then the identical final root assistant, emitting only optional literal HTTP400 metadata. The existing stream/fetch/terminal closure owns this association; no new collector, publisher, file, tracing system, send, payload, retry, timeout or paid responsibility. Splitting it would lose the per-invocation and object-identity boundary; query snapshots only reject ambiguity."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-10-22",
+      "baseBlob": "3d3e29c1db2110c7d4458397956ee340fe2f9f2a",
+      "from": 1522,
+      "to": 1527,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Owner-approved execution dependency contract: the default grounding branch now receives the same runTaskFn as source verification, while the explicit whole-grounding override receives only its original business parameters. The five added lines document this deliberate scope change and branch at the existing grounding call; image acquisition, vision routing, paid/retry/lock/publication policies remain in their existing owners. No new dependency, factory or public operation."
     }
   ],
   "compatShims": [

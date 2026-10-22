@@ -1,9 +1,7 @@
-import { createHash } from 'node:crypto';
-
 import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
-import { type Tx, db } from '@/db/client';
+import { type Db, type Tx, db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
@@ -20,6 +18,7 @@ import {
 } from '../server/agent/budget-state';
 import {
   hasQueuedIngestionOperationEvent,
+  ingestionOperationInputHash,
   isTerminalIngestionOperation,
   readIngestionOperation,
   reserveIngestionOperation,
@@ -38,10 +37,6 @@ const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 
 function resourcePath(operationId: string): string {
   return `/api/ingestion-operations/${encodeURIComponent(operationId)}`;
-}
-
-function inputHash(request: IngestionOperationRequestParsed): string {
-  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
 function operationError(err: unknown): { code: string; message: string; status: number } {
@@ -82,6 +77,7 @@ async function validateSessionState(
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
     agent: ['uploaded', 'failed'],
+    review: ['extracted', 'partial'],
     import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
@@ -96,12 +92,76 @@ async function validateSessionState(
   }
 }
 
-async function readReservedResource(operationId: string) {
-  const resource = await readIngestionOperation(db, operationId);
+async function readReservedResource(operationId: string, reader: Db | Tx = db) {
+  const resource = await readIngestionOperation(reader, operationId);
   if (!resource) {
     throw new ApiError('internal_error', `operation ${operationId} could not be read`, 500);
   }
   return resource;
+}
+
+/** Own review dispatch, its connection lifetime and commit-before-HTTP failure order. */
+async function ensureReviewOperationDispatched(
+  operationId: string,
+  sessionId: string,
+  request: Extract<IngestionOperationRequestParsed, { kind: 'review' }>,
+  freshReservation: boolean,
+) {
+  const outcome = await withIngestionOperationDispatchLock(
+    db,
+    operationId,
+    async (tx, lifetime) => {
+      lifetime.throwIfAborted();
+      const current = await readReservedResource(operationId, tx);
+      lifetime.throwIfAborted();
+      if (isTerminalIngestionOperation(current) || current.status === 'running') {
+        return { kind: 'resource' as const, resource: current };
+      }
+      const queued = await hasQueuedIngestionOperationEvent(tx, operationId);
+      lifetime.throwIfAborted();
+      if (queued) return { kind: 'resource' as const, resource: current };
+
+      let dispatched = false;
+      try {
+        const boss = await getStartedBoss();
+        lifetime.throwIfAborted();
+        const jobId = await boss.send(
+          OPERATION_QUEUE,
+          { operationId, sessionId, request },
+          { singletonKey: operationId, singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS },
+        );
+        // A closed transaction's Tx may outlive its physical connection. Stop the
+        // late send continuation before any receipt/readback, even on reconnection.
+        lifetime.throwIfAborted();
+        dispatched = true;
+        await writeIngestionOperationEvent(tx, {
+          operationId,
+          eventType: 'operation.queued',
+          payload: jobId ? { job_id: jobId } : { dispatch_deduplicated: true },
+        });
+        lifetime.throwIfAborted();
+        const resource = await readReservedResource(operationId, tx);
+        lifetime.throwIfAborted();
+        return { kind: 'resource' as const, resource };
+      } catch (error) {
+        // Outer transaction rejection does not cancel boss.send's callback. Never
+        // let that stale callback enter a failed receipt via the old Tx or global db.
+        lifetime.throwIfAborted();
+        if (!dispatched && freshReservation) {
+          await writeIngestionOperationTerminalOnce(tx, {
+            operationId,
+            eventType: 'operation.failed',
+            payload: { error: operationError(error) },
+          });
+          lifetime.throwIfAborted();
+        }
+        // Returning permits the failure receipt to commit; throwing here rolls it back.
+        return { kind: 'error' as const, error };
+      }
+    },
+  );
+  if (outcome.kind === 'error') throw outcome.error;
+  return outcome.resource;
 }
 
 async function ensureOperationDispatched(
@@ -110,6 +170,9 @@ async function ensureOperationDispatched(
   request: IngestionOperationRequestParsed,
   freshReservation: boolean,
 ) {
+  if (request.kind === 'review') {
+    return ensureReviewOperationDispatched(operationId, sessionId, request, freshReservation);
+  }
   return withIngestionOperationDispatchLock(db, operationId, async () => {
     const current = await readReservedResource(operationId);
     if (
@@ -297,7 +360,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const request = parsed.data;
-    const hash = inputHash(request);
+    const hash = ingestionOperationInputHash(request);
 
     // Replay, session validation and reservation share the real key lock.
     const operationId = `ingop_${newId()}`;

@@ -14322,13 +14322,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Malformed request */
@@ -15371,6 +15434,15 @@ export interface operations {
                     kind: "agent";
                 } | {
                     input: {
+                        checked_blocks: {
+                            block_id: string;
+                            version: number;
+                        }[];
+                    };
+                    /** @enum {string} */
+                    kind: "review";
+                } | {
+                    input: {
                         blocks: {
                             block_id?: string;
                             cause: {
@@ -15433,13 +15505,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Successful response */
@@ -15448,13 +15583,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Malformed request */
@@ -15837,6 +16035,7 @@ export interface operations {
                                 student_answer_present?: boolean;
                                 sub_questions?: unknown[];
                             } | null;
+                            version: number;
                             wrong_answer_md: string | null;
                         } & {
                             [key: string]: unknown;
