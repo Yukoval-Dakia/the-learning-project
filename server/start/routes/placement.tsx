@@ -8,6 +8,7 @@ import {
 } from '@/capabilities/onboarding/ui-public';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
+import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPlacementPage().then((defaultPage) => ({ default: defaultPage })));
@@ -16,6 +17,7 @@ const placementClient: PlacementClient = {
   getPlacementSession: startPlacementSessionClient,
   placementEnd: startPlacementEndClient,
   readJudgeRunStatus: startJudgeRunStatusClient,
+  saveResponseDraft: startResponseDraftClient,
 };
 export const Route = createFileRoute('/placement')({
   ssr: false,

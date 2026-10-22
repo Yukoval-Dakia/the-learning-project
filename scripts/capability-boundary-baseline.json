@@ -1080,6 +1080,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-27e96cdf-28df-427b-ad29-7d9661996a21",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "SaveResponseDraftBodySchema",
+      "targetModule": "src/capabilities/practice/api/assessment-contracts.ts",
+      "targetSymbol": "SaveResponseDraftBodySchema",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/response-draft-operation.ts",
+          "line": 10
+        }
+      ],
+      "evidence": "The authenticated host-bound Start draft adapter dynamically imports the same schema consumed by the retained HTTP saveDraft handler. The original z.object stripping, group_evidence default and learner response restrictions remain unchanged.",
+      "rationale": "Practice owns the draft input contract and canonical writer. The live placement client uses Start only for ordinary saves while delegating keepalive to the original HTTP helper; shared parsing preserves epoch, group identity and validation errors without exposing time or actor controls.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-96e2663d-a1d6-4bbe-b215-341ead04b8ea",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [

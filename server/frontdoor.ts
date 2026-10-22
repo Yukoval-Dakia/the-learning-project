@@ -8,6 +8,7 @@ import { readStartMistakes } from './start/mistakes-reader';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { readStartPlacementProfile } from './start/profile-reader';
+import { saveStartResponseDraft } from './start/response-draft-operation';
 import { readStartSubjects } from './start/subject-reader';
 
 export function buildLegacySpa(root: string): Hono {
@@ -49,6 +50,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readMistakes: readStartMistakes,
     readJudgeRunStatus: readStartJudgeRunStatus,
+    saveResponseDraft: saveStartResponseDraft,
     readPlacementSession: readStartPlacementSession,
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
