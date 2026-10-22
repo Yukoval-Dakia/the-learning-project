@@ -332,7 +332,7 @@ export async function writeIngestionOperationTerminalOnce(
 }
 
 export async function hasQueuedIngestionOperationEvent(
-  db: Db,
+  db: Db | Tx,
   operationId: string,
 ): Promise<boolean> {
   const rows = await db
@@ -353,14 +353,21 @@ export async function hasQueuedIngestionOperationEvent(
 export async function withIngestionOperationDispatchLock<T>(
   db: Db,
   operationId: string,
-  run: () => Promise<T>,
+  run: (tx: Tx, lifetime: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${'ingestion-operation-dispatch'}), hashtext(${operationId}))`,
-    );
-    return run();
-  });
+  const lifetime = new AbortController();
+  return db
+    .transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${'ingestion-operation-dispatch'}), hashtext(${operationId}))`,
+      );
+      return run(tx, lifetime.signal);
+    })
+    .finally(() => {
+      // postgres-js can reject the transaction while its callback still awaits
+      // independent I/O. Invalidate that continuation before exposing rejection.
+      lifetime.abort();
+    });
 }
 
 /** Projects the pollable operation resource from append-only job_events. */

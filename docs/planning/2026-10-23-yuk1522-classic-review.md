@@ -84,7 +84,7 @@ completeIngestionReviewOperation 隐藏以下顺序：
 由 op 锁串行，后续读取终态而不修改业务。classic review 不调用 import guard，
 不绕过或放宽 import 的 extracted/reviewed 限制。
 
-发送结果不明时，dispatcher（D）与 review worker（W）也按同一 operation 锁串行：
+发送结果不明且 D 的持锁连接仍存活时，dispatcher（D）与 review worker（W）按同一 operation 锁串行：
 
 - D 先获锁：即使 boss.send 已独立提交 job 后丢失响应，W 仍须等待。D 在锁内写
   failed 或 queued 并释放后，W 才读取已提交资源；若为 failed，直接返回，不做 review；
@@ -94,6 +94,9 @@ completeIngestionReviewOperation 隐藏以下顺序：
 
 这是源码锁域与顺序推导，未做故障注入或真实并发运行；不据此声称故障发生频率或运行通过。
 API dispatch、TerminalOnce 通用语义及未变的 import/agent 锁保持原样。
+
+上述共享锁只描述持锁连接存活的情况；R2 确认的连接关闭残余及当前 review dispatch
+连接寿命修复见文末。不能从相同 namespace/key 推出 callback 会随事务拒绝自动取消。
 
 业务 ApiError（4xx）先回滚 savepoint，再写原 operation.failed。基础设施错误、
 5xx 或失败 receipt 写入错误退出外层事务，由 pg-boss 重试。DONE 写在业务 catch
@@ -198,3 +201,82 @@ session→sorted blocks、savepoint、DONE 回滚及 classic/agent 分类正文�
 旧 08e4f194 的 GitHub CI `39859497373` 全 18 success（Gate `120107825879`）与
 Circle 全绿是父线程交付的旧 head 事实，不代表本轮修复已获 CI 或运行验收。
 仅父线程另开唯一 R2；本 writer 不 resolve R1、不启动新审、不合 PR、不取运行证据。
+
+## R2 残余：review dispatch 的连接寿命与提交顺序
+
+原 R2 固定 `4f8dde24…a0c925e452a9aab95843ba628a53873491307913`，
+Standards/Spec 同一 F1 仍 OPEN、CHANGES_REQUESTED；原报告保留：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-classic-review-20261023/review-r2-a0c925e4.md`。
+正常 D/W 共享锁的两个顺序已关闭；残余有不同前提：D 的持锁连接关闭，外层事务已拒绝，
+仍在等待独立 boss.send 的 callback 没有被取消，随后可从 global db 写 failed。
+
+实际已安装 postgres 3.4.9 的 `begin` 使用 Promise.race，scope callback 不会因为
+onclose 获胜而停止；onclose 清除 reserved 并可能重连/复用 connection 对象，scope
+handler 仍直接 c.execute。因此旧 Tx 的类型或对象存在本身不能证明还持有原事务锁。
+
+本轮沿用现役 dispatch-lock 原语，仅透传 tx 与显式的 AbortSignal 生命周期。
+原语直接在持锁事务 promise 的 finally 中使 signal 永久失效，然后才向调用方暴露
+成功或拒绝。signal 不依赖 driver 的 connection 对象，重连/复用不会使它重新有效。
+既有 caller 实际只有 operations；新 review 分支使用 tx/signal，其他 kind 原 callback
+正文保持原样并忽略新增参数。没有修改通用 TerminalOnce、driver、worker 的 review 事务，
+没有增加跨 capability/server 值边、registry 或独立框架。
+
+review 的私有完整 dispatch 入口隐藏以下分支：
+
+1. 在持锁 tx 上读取原 operation，检查终态、running 和 queued receipt；终态/running/
+   已 queued 返回原资源。资源 reader 显式接收 tx，旧 kind 仍使用原来的默认 db。
+2. 保持共锁并调用既有 boss.send，其 job 提交仍是独立 pg-boss 连接。getStartedBoss
+   和 send 的 await 之后都检查生命周期；不能因网络 await 完成便推断锁仍然有效。
+3. send 成功且 signal 仍有效：同一 tx 写 queued，再同一 tx 读回资源；每个后续阶段
+   前后检查 signal。返回 resource tag，等实际事务 commit 成功后再生成 HTTP 200/202。
+4. send 拒绝且 signal 仍有效：首次 reservation 在同一 tx 调 TerminalOnce，写 failed；
+   返回 error tag 让事务 commit，外层 await 完成后才抛原 error，由 POST 转成 HTTP 错误。
+   重放的非首次 reservation 保持原来不追加 failed 的语义。send 已 resolve 后的 queued/
+   readback 错误不变成假 failed；没有抛错导致已写 failed 随同一事务回滚的问题。
+5. 事务本身拒绝或 commit 失败：直接向 HTTP 拒绝，没有外层 fallback/global-db 写入。
+   若 callback 当时仍停在 send，之后 send resolve 会在 queued 前被 signal 拦下；
+   之后 send reject 会在 catch 的第一步被 signal 拦下，不能进入 TerminalOnce/failed。
+   即使 driver 复用原 connection 对象，也不能让这个过期 continuation 使用旧 Tx 继续
+   receipt/readback。这里终止业务 callback 的后续，不宣称修改或验证了 driver 的清理机制。
+
+锁连接存活与关闭的因果边界分别为：
+
+- 存活：read→send→queued 或 failed→commit→HTTP，D 全程持有共锁，W 随后重读终态。
+- 关闭且外层已拒绝：signal 已失效，W 可获得释放的锁；D 的晚到 send 完成/失败仅终止
+  过期 callback，不进入 queued/failed/readback，因此没有 global-db 迟到终态覆盖 W。
+
+accepted 身份、classic/agent 分轴、full set/version、session→sorted blocks、savepoint、
+DONE 回滚及原 import/admission/paid/预算保持不变。以上是源码与依赖源码推导；未做连接
+关闭、连接复用、send 响应丢失、故障注入或真实 API/worker 并发运行，发生频率 unknown。
+
+本轮起点 a0c925e4，正常只读 fetch exit 0 后 actual main 仍为
+`4f8dde24ef33b8f2b990018fac81dae277910a42`，无新交集；按 owner 指令不 merge main、
+不 push，只固定本地候选交父线程核因果。复用依赖，不 install；不新增或修改测试/fixture/
+断言脚本，不运行 tests、DB/TEST、Docker、browser、provider、paid、runtime、重放、部署、
+资源、daemon、config 或 hash/seal。不新审、不 resolve、不 watch/poll、不做 Linear 写入。
+
+父线程专项许可的 a0 单次 db7 重跑记录与本候选分开：run39860706525 attempt2 success；
+实际新执行 db7 job120115825858（22:05:24–22:07:03Z）success，自动 Gate120116563308
+（22:07:07–22:07:11Z）success；其余 16 项是 API roll-forward 的首轮记录，不能称
+18 项重执行。原 08006 与 root cause UNKNOWN 保留；没有再次 POST，也不能用 a0 绿
+证明本候选。原 R1/R2 报告与 CHANGES_REQUESTED 不变，没有第三审结论。
+
+本轮本地候选的真实静态门如下，均通过外部 heavy.sh 串行、各执行一次；未覆盖
+NODE_OPTIONS，未重装依赖。日志前缀 `yuk1522-classic-review-lifetime-`，候选 commit
+后复制到仓库外 `tlp-audit-artifacts/yuk1522/<本地候选HEAD>/`，完整路径见实施回执。
+
+| 命令 | exit | 日志后缀 |
+| --- | --- | --- |
+| pnpm typecheck | 0 | typecheck.log |
+| pnpm lint（164 warnings，0 errors） | 0 | lint.log |
+| pnpm build | 0 | build.log |
+| pnpm audit:capability-boundaries --base 4f8dde24… | 0 | capability-boundaries.log |
+| pnpm audit:architecture-deepening --base 4f8dde24… | 0 | architecture-deepening.log |
+| pnpm audit:api-contracts（165/165 declared） | 0 | api-contracts.log |
+| pnpm audit:api-client（重生成无差量） | 0 | api-client.log |
+| pnpm audit:api-client-usage | 0 | api-client-usage.log |
+
+机器实测新增依赖边 0、债务 327/0/39、pass-through 新增 0、>1500 行文件 9→9；
+未改 baseline。operations.ts 为 415 行、operation-store.ts 为 476 行，无新增产品文件。
+只修改这两个 owned 文件和本正式 doc；import-completion 的正确 W 事务完全未改。
+静态门不构成连接关闭/复用故障验收；本地候选尚未 push，CI 未迁移、未触发或查询。
