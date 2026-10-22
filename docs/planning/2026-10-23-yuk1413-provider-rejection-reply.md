@@ -6,6 +6,7 @@
 
 - worktree：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-45189280`；初始 `t3/45189280@ee4b92bea329dde7d88609469e217dd2bb473c1d` clean。
 - 正常 fetch 后旧 HEAD 落后 origin/main 272 commits；新分支 `feat/yuk-1413-provider-rejection-reply-20261023` 从实际 main `122121f697ddfa8e7887886edcdd39832e421ee2` 创建，旧 T3 ref 保留。父 stage1-lead 与 PR2017 树没有写入。
+- 后续普通 merge 纳入 main `38e1521e48174327950f4b2ced2474ba103a54b6`，上游 worksheet 源码及 baseline 的依赖债收紧完整保留；PR 相对该 main 仍只有本片 8 个 owned 文件。
 - fresh 开放 PR 四面交集只有 `#1964@fd50e76ae40ef04db05b7d8640dc456d7f05a139` 的 runner 注释 patch。父又核该 PR 的 adapter/sdk-types 相交为注释。本片不取外线 branch，不代表其 writer 已释放，保留其删除历史/承重理由意图。
 - 原批准四产品面之外的 adapter/sdk-types 及 runner 接收点由协调精确补批，原票 comment `1674791a-89c3-4f08-a70a-8460685ee7de`。settlement 正文优先透传由父随后明确批准，包含合法空串；仅改该原函数的选择表达式和相应说明。
 - 原故障事实只采信父已封存结论；未读 DB/日志、未重放原 unknown-cost run。被拒的具体参数仍 UNKNOWN，费用不声明为零。
@@ -38,7 +39,7 @@
 
 - 依赖：本树一次 frozen install exit 0，1050 包缓存复用、下载 0，lockfile 未改。经 host heavy.sh，Node old-space 3072，本 lane 串行。
 - 准备阶段 typecheck 首轮 exit 2（本地 StreamResult Pick 漏新字段），修复后 exit 0；初轮 lint exit 1（新文案格式），仅格式修正。一次额外 lint 参数调用错误保留在日志，不能作为产品通过证据。
-- 最终 typecheck / lint / build / 必要静态 audit：执行结果随后登记；日志在本树 `.cache/yuk1413/`。这些仅是静态/构建证据。
+- 整合 main 后的 typecheck、lint、build、audit:capability-boundaries、audit:architecture-deepening、audit:provider-lanes 均 exit 0。lint 为 180 warnings；build 完成 web/Start/server/worker/migrate。边界审计新增依赖边 0、债 334/0/39 精确匹配、>1500 行文件数 10→10。日志依次为 `.cache/yuk1413/{typecheck-integrated,lint-integrated,build-integrated,audit-capability-boundaries,audit-architecture-deepening,audit-provider-lanes}.log`；这些仅是静态/构建证据。静态门执行时为整合提交 `71932deb27a8183ff71c204c61c168fd404a40d9`，随后只补说明文档，不改变受检源码/baseline 字节。
 - tests/断言脚本、DB、provider、新请求、原 run 重放、浏览器、容器、配置、重启、部署及 paid：NOT_RUN。
 - 首次独立 R1 / exact-head CI / Linear capture 由父负责；本线不自开新 child/review、不 watch/poll/resolve/merge。
 
