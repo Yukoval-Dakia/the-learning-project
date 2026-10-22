@@ -2151,6 +2151,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3b04ae86-4f19-4819-91a0-750256b27e7a",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadKnowledgeNodePage",
+      "targetModule": "src/capabilities/knowledge/server/node-page.ts",
+      "targetSymbol": "loadKnowledgeNodePage",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-node-reader.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "The authenticated host reader imports the original schema and complete node aggregate at AST line 6 (public path line 7), then calls loadKnowledgeNodePage at line 20. HTTP consumes the internal loader directly; context imports are type-only.",
+      "rationale": "Knowledge owns the complete node aggregate and its original query order, projection, nulls and dates. The same schema, visibility rule, host Db and existing FSRS history-rebuild path are retained. Detail and drawer share the existing query key while preserving their distinct freshness and enabled conditions; this is not a second SQL or business owner.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-16d8db94-67ee-4271-9872-f7d434e4908b",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
