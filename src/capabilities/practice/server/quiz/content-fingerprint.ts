@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { enrollFsrsStateIfAbsent, initialSchedulingState } from '@/server/fsrs/state';
+import { enrollAddedKnowledgeScheduling } from '../question-scheduling-enrollment';
 
 // Bumping this version rewrites the canonical string, so every persisted
 // `canonical_content_hash` computed under the old version becomes stale and
@@ -430,24 +429,14 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   }
 
   const eventId = createId();
-  const enrolledKnowledgeIds: string[] = [];
-  if (row.draftStatus !== 'draft') {
-    for (const knowledgeId of addedKnowledgeIds) {
-      // same anchor-not-content exclusion as the verify-time enroll
-      // loops: a merged-in synthetic subject root ('seed:<subj>:root') still
-      // updates the binding (addedKnowledgeIds / knowledge_ids stay faithful to
-      // the duplicate's attribution) but must never mint a knowledge-level FSRS
-      // card — the subject read axis already excludes it.
-      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-      const enrolled = await enrollFsrsStateIfAbsent(tx, {
-        subject_kind: 'knowledge',
-        subject_id: knowledgeId,
-        ...initialSchedulingState(knowledgeId, params.now),
-        last_review_event_id: eventId,
-      });
-      if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
-    }
-  }
+  const enrolledKnowledgeIds =
+    row.draftStatus !== 'draft'
+      ? await enrollAddedKnowledgeScheduling(tx, {
+          knowledgeIds: addedKnowledgeIds,
+          evidenceEventId: eventId,
+          now: params.now,
+        })
+      : [];
   await writeEvent(tx, {
     id: eventId,
     session_id: null,
@@ -541,19 +530,14 @@ export async function mergeKnowledgeForSourceDuplicate(
     .where(eq(question.id, row.id));
 
   const eventId = createId();
-  const enrolledKnowledgeIds: string[] = [];
-  if (row.draftStatus !== 'draft') {
-    for (const knowledgeId of addedKnowledgeIds) {
-      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-      const enrolled = await enrollFsrsStateIfAbsent(tx, {
-        subject_kind: 'knowledge',
-        subject_id: knowledgeId,
-        ...initialSchedulingState(knowledgeId, params.now),
-        last_review_event_id: eventId,
-      });
-      if (enrolled) enrolledKnowledgeIds.push(knowledgeId);
-    }
-  }
+  const enrolledKnowledgeIds =
+    row.draftStatus !== 'draft'
+      ? await enrollAddedKnowledgeScheduling(tx, {
+          knowledgeIds: addedKnowledgeIds,
+          evidenceEventId: eventId,
+          now: params.now,
+        })
+      : [];
   await writeEvent(tx, {
     id: eventId,
     session_id: null,

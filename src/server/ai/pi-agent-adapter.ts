@@ -59,6 +59,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
+import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -90,7 +91,6 @@ import {
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
-import { isSpawnToolName } from './spawn-contract';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -105,11 +105,7 @@ import {
   isToolParamContractRejection,
   repairToolArguments,
 } from './tool-param-contract';
-import {
-  type PiSubagentHost,
-  type PiSubagentSpec,
-  buildPiSpawnAgentTools,
-} from './tools/pi-subagent';
+import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
 import {
   type PiRemoteMcpMountHandle,
   type PiToolMount,

@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
+import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
-import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
 import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';

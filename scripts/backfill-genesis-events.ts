@@ -52,7 +52,8 @@ import {
   question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { learningItemsWithGenesisAnchor } from '@/kernel/records/learning-items';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 // Reuse the SAME genesis-anchor checks the accept-time parity assert uses, so "event-sourced"
 // means exactly the same thing on both sides. Edges are the exception: they have no index
 // anchor, only a generate / genesis event (edgesWithOriginatingEvent below).
@@ -61,7 +62,6 @@ import {
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeNodesWithGenesisAnchor,
-  learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
