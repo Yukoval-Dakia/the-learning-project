@@ -12,7 +12,11 @@ import {
   contractIntegrityDigest,
   publishedContractSeal,
 } from './assessment-normalization';
-import { type PublishAdmission, publishQuestionGroup } from './assessment-publication';
+import {
+  type PublishAdmission,
+  type PublishQuestionGroupInput,
+  publishQuestionGroup,
+} from './assessment-publication';
 
 export interface ContractLayers {
   structure: unknown;
@@ -287,7 +291,7 @@ export interface ResealReport {
 
 export async function resealAdmissionDigests(
   db: Db,
-  options: { apply: boolean },
+  options: { apply: boolean; readAssetBytes?: PublishQuestionGroupInput['readAssetBytes'] },
 ): Promise<ResealReport> {
   const rows = await db
     .select({
@@ -343,7 +347,12 @@ export async function resealAdmissionDigests(
     });
     if (!options.apply) continue;
     try {
-      const appended = await appendCanonicalRevision(db, row, decision.canonical);
+      const appended = await appendCanonicalRevision(
+        db,
+        row,
+        decision.canonical,
+        options.readAssetBytes,
+      );
       if (appended.revision_id == null) {
         report.conflicts.push({
           group_id: row.group_id,
@@ -397,10 +406,12 @@ async function appendCanonicalRevision(
     scoring_admission_generation: number;
   },
   canonical: string,
+  readAssetBytes: PublishQuestionGroupInput['readAssetBytes'],
 ): Promise<{ revision_id: string | null; reason: string }> {
   const seal = publishedContractSeal(layersOfStoredRevision(row));
   const published = await publishQuestionGroup(db, {
     group_id: row.group_id,
+    readAssetBytes,
     contract: {
       structure: seal.parsed.structure,
       response_spec: seal.parsed.response_spec,

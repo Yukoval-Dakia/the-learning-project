@@ -74,7 +74,11 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { appendAdmissionVerificationRecord } from '@/kernel/records/assessment-publication';
+import {
+  appendAdmissionVerificationRecord,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type TaskTextResult,
@@ -84,7 +88,6 @@ import {
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
@@ -1334,6 +1337,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             }
             const cleared = await publishQuestionGroup(tx, {
               group_id: groupRootId,
+              readAssetBytes: async (storageKey) => {
+                const { getR2 } = await import('@/server/r2');
+                return getR2().get(storageKey);
+              },
               contract: {
                 structure: currentRevision.structure,
                 response_spec: currentRevision.response_spec,
