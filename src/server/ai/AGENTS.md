@@ -9,8 +9,10 @@
 | `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + `ModelBinding` per-run 绑定 + `resolveExecutionAdapter` 决议 + 测试 seam `__setPiAdapterForTests`（P4 起 `ExecutionAdapterId` 只有 `'pi'`）|
 | `pi-agent-adapter.ts` | YUK-921/YUK-1025 唯一执行引擎：`@earendil-works/pi-agent-core` `agentLoop` 同进程执行 + 事件→SDK-frame 归一（`PiRunnerMessage`，`source:'pi'`）+ `x-opencode-session` header 注入 + `pi:` 会话 id、durable 回放种子、`transformContext` 压缩、嵌套 agentLoop、`piHooks`/`piQueues` 转发 |
 | `pi-models.ts` | 从运行时 ModelProfile 投影执行模型；Pi builtins 只提供协议/compat/auth。`pi-provider-catalog.ts` 提供同源同步读面；订阅复用 anthropic，Token Plan 保留独立 endpoint/auth |
-| `pi-hooks.ts` | YUK-1022 hook 面（P4 起唯一的 tool-call 拦截面）：引擎中立 `PiHookBridge`（有序 `beforeToolCall` 闸 + 失败日志吞掉的 `afterToolCall` 观测器，isError 覆盖 failure 语义）|
-| `tools/pi-subagent.ts` | YUK-1022 嵌套子代理：`PiSpawnContract`（`createSpawnDecider` 包成 beforeToolCall 闸）+ `PiSubagentHost`（子 loop 宿主、abort 血统、task_* 帧、usage 归并）+ `Task`/`Agent` AgentTool 构造 |
+| `../../core/tool-call-contract.ts` | 共享 hook 契约真身：`PiHookBridge`、before/after 回调与调用/结果观测类型；不持执行体 |
+| `pi-hooks.ts` | YUK-1022 hook 执行体（P4 起唯一的 tool-call 拦截面）：有序 `beforeToolCall` 闸第一 defined 即停，`afterToolCall` 失败日志吞掉、后项 defined 字段覆盖；消费 core 契约 |
+| `../../core/subagent-contract.ts` | 子代理声明与纯构造真身：`AgentDefinition`、depth-one spec、内部 memoized decider、`createPiSpawnContract` 权限 gate 与 report-only 观察；不执行子 loop、不记付费结算 |
+| `tools/pi-subagent.ts` | YUK-1022 嵌套子代理执行器：`PiSubagentHost` 契约 + `Task`/`Agent` AgentTool 构造；真实子 loop、模型目录校验、主模型继承、abort 血统、task_* 帧与 usage 归并仍由 adapter 拥有 |
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
 | `providers.ts` | provider 认证、任务选模与 execution policy；`task.<kind>.reasoning` 按运行时目录的模型自有值校验，`task.<kind>.override_global_pin` 优先级不变 |

@@ -35,6 +35,8 @@ import {
   resolveTaskBudget,
   tasks,
 } from '@/capabilities/task-registry';
+import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
+import type { PiHookBridge } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
@@ -51,7 +53,6 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import type { NoteGeneratePhaseTimings } from './log';
 import { logMissingToolMountsWarning } from './log';
-import type { PiHookBridge } from './pi-hooks';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ProviderTransportCollector } from './provider-transport';
@@ -75,9 +76,7 @@ import type {
   SDKTaskUpdatedMessage,
   SDKUserMessage,
 } from './sdk-types';
-import { isSpawnToolName } from './spawn-contract';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
-import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
 // The runner is loaded before capability execution. Keep the shared observation
