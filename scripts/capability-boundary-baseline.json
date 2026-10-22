@@ -1863,6 +1863,122 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e89adebb-7c57-46c4-8889-a5cbb402efcf",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/server/edges.ts",
+      "siteKind": "site",
+      "symbol": "createKnowledgeEdge",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "targetSymbol": "createKnowledgeEdge",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/api/edges.ts",
+          "line": 12
+        },
+        {
+          "file": "src/capabilities/knowledge/server/edges.db.test.ts",
+          "line": 8
+        },
+        {
+          "file": "src/capabilities/knowledge/server/proposals.ts",
+          "line": 46
+        },
+        {
+          "file": "src/capabilities/knowledge/server/propose_edge.ts",
+          "line": 41
+        },
+        {
+          "file": "src/server/proposals/edge-decide-advisory-lock.db.test.ts",
+          "line": 28
+        }
+      ],
+      "evidence": "Fixed ff2ed4e9 consumers retain the existing complete command or topology-gate operation; import declaration starts are recorded.",
+      "rationale": "The kernel owns the complete edge fact command, chronology and materialization. Knowledge retains readers, endpoint locking/retry and proposal/B orchestration; these existing modules retain real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/server/edges.ts",
+      "siteKind": "site",
+      "symbol": "archiveKnowledgeEdgeFromEvents",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "targetSymbol": "archiveKnowledgeEdgeFromEvents",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+          "line": 22
+        },
+        {
+          "file": "src/capabilities/knowledge/server/edges.db.test.ts",
+          "line": 8
+        },
+        {
+          "file": "src/capabilities/knowledge/server/proposals.ts",
+          "line": 46
+        },
+        {
+          "file": "src/capabilities/knowledge/server/propose_edge.ts",
+          "line": 41
+        }
+      ],
+      "evidence": "Fixed ff2ed4e9 consumers retain the existing complete command or topology-gate operation; import declaration starts are recorded. Knowledge public.ts:45 is an existing re-export consumed by cascade-revert; it is evidence, not a direct value-import consumer.",
+      "rationale": "The kernel owns the complete edge fact command, chronology and materialization. Knowledge retains readers, endpoint locking/retry and proposal/B orchestration; these existing modules retain real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/server/edges.ts",
+      "siteKind": "site",
+      "symbol": "reactivateKnowledgeEdge",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "targetSymbol": "reactivateKnowledgeEdge",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/proposals.ts",
+          "line": 46
+        }
+      ],
+      "evidence": "Fixed ff2ed4e9 consumers retain the existing complete command or topology-gate operation; import declaration starts are recorded.",
+      "rationale": "The kernel owns the complete edge fact command, chronology and materialization. Knowledge retains readers, endpoint locking/retry and proposal/B orchestration; these existing modules retain real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "siteKind": "site",
+      "symbol": "runEdgeTopologyGate",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "targetSymbol": "runEdgeTopologyGate",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/edge-proposal-accept.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "Fixed ff2ed4e9 consumers retain the existing complete command or topology-gate operation; import declaration starts are recorded.",
+      "rationale": "The kernel owns the complete edge fact command, chronology and materialization. Knowledge retains readers, endpoint locking/retry and proposal/B orchestration; these existing modules retain real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-22",
+      "from": 8,
+      "to": 5,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -2825,6 +2941,34 @@
       "date": "2026-10-22"
     },
     {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/edges.ts",
+      "module": "src/kernel/records/knowledge-edge-facts.ts",
+      "kind": "value",
+      "symbols": [
+        "ArchiveKnowledgeEdgeResult",
+        "CreateKnowledgeEdgeInput",
+        "EdgeArchiveProvenance",
+        "ReactivateKnowledgeEdgeInput",
+        "archiveKnowledgeEdgeFromEvents",
+        "createKnowledgeEdge",
+        "reactivateKnowledgeEdge"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/edge-topology-write.ts",
+      "module": "src/kernel/records/knowledge-edge-facts.ts",
+      "kind": "value",
+      "symbols": ["runEdgeTopologyGate"],
+      "issue": "YUK-1570",
+      "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
+      "date": "2026-10-22"
+    },
+    {
       "debt": "capabilityToServer",
       "file": "src/capabilities/practice/server/worksheet/submission.ts",
       "module": "src/server/boss/client.ts",
@@ -3427,11 +3571,94 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "edgeRowToSnapshot",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "consumers": [
+        {
+          "file": "scripts/normalize-edge-created-by.ts",
+          "line": 22
+        },
+        {
+          "file": "src/capabilities/knowledge/server/proposals.db.test.ts",
+          "line": 24
+        },
+        {
+          "file": "src/server/projections/entity-registry.ts",
+          "line": 39
+        },
+        {
+          "file": "src/server/projections/normalize-edge-created-by.db.test.ts",
+          "line": 12
+        }
+      ],
+      "exitCondition": "After Owner separately approves exact named test imports and only the edge mock binding, move these production/script and test bindings to the canonical owner, then remove this old export. Preserve other mixed gather imports/mock members and script loadEnv/await order and one-mesh batch behavior. The deadline does not authorize deleting an in-use export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldKnowledgeEdge",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/proposals.db.test.ts",
+          "line": 24
+        },
+        {
+          "file": "src/server/projections/normalize-edge-created-by.db.test.ts",
+          "line": 12
+        },
+        {
+          "file": "src/server/projections/parity.ts",
+          "line": 22
+        },
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/revert/cascade-revert.db.test.ts",
+          "line": 35
+        }
+      ],
+      "exitCondition": "After Owner separately approves exact named test imports and only the edge mock binding, move these production/script and test bindings to the canonical owner, then remove this old export. Preserve other mixed gather imports/mock members and script loadEnv/await order and one-mesh batch behavior. The deadline does not authorize deleting an in-use export. parity.unit.test.ts:10 declares the old-module mock and line14 its edge property: this is mock evidence, not a value-import consumer; only that property may migrate under separate Owner approval.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldKnowledgeEdgeWithMesh",
+      "targetModule": "src/kernel/records/knowledge-edge-facts.ts",
+      "consumers": [
+        {
+          "file": "scripts/normalize-edge-created-by.ts",
+          "line": 22
+        },
+        {
+          "file": "src/server/projections/entity-registry.ts",
+          "line": 39
+        }
+      ],
+      "exitCondition": "After Owner separately approves exact named test imports and only the edge mock binding, move these production/script and test bindings to the canonical owner, then remove this old export. Preserve other mixed gather imports/mock members and script loadEnv/await order and one-mesh batch behavior. The deadline does not authorize deleting an in-use export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 340,
+      "total": 337,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3472,7 +3699,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 8,
+        "knowledge -> projections": 5,
         "knowledge -> proposals": 3,
         "notes -> ai": 8,
         "notes -> artifacts": 2,

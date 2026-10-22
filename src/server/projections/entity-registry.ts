@@ -20,6 +20,7 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
+import { projectKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
 import {
   gatherAndFoldKnowledgeNode,
   knowledgeLiveRowToSnapshot,
@@ -46,7 +47,6 @@ import {
 } from './gather';
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectKnowledgeEdge } from './knowledge_edge';
 import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
   artifactsWithGenesisAnchor,
