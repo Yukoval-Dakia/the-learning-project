@@ -2803,6 +2803,16 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns only the generic error/status/details envelope; Practice owns the complete issuance domain-result mapping. The original HTTP adapter still needs ApiError, so this is an additional physical reference, not a net-zero move.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/learner-state.ts",
+      "module": "src/kernel/read-models/learner-judgment.ts",
+      "kind": "value",
+      "symbols": ["readLearnerJudgments"],
+      "issue": "YUK-1431",
+      "owns": "Approved first slice: batch v0-incumbent read-only adaptation owns the shared snapshot, incumbent mastery and retention reads, provenance and explicit unknowns. Copilot replaces its direct mastery value dependency with this complete read; no new capability-to-server or cross-capability edge, stable-contract ruling or compat shim.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
