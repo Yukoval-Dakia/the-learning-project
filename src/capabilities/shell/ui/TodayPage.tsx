@@ -36,7 +36,6 @@ import { WeekHeat } from './blocks/WeekHeat';
 import { OvernightCostSummary } from './OvernightCostSummary';
 import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { ProbeAnswers } from './ProbeAnswers';
-import { getActiveProbes } from './probe-answer-api';
 import { TeachingBriefBand } from './TeachingBrief';
 import type { OvernightDigest, WorkbenchSummary } from './workbench-api';
 import { useWorkbenchClient } from './workbench-client';
@@ -309,6 +308,7 @@ function DegradedKindsFlags() {
 // Exported for the probe-queue independence regression test (YUK-707 round-2 [major]):
 // the 待你试做 queue must stay reachable while the overnight-digest query is loading/errored.
 export function OvernightDigestBand({ navigate }: { navigate: (to: string) => void }) {
+  const { getActiveProbes } = useWorkbenchClient();
   // YUK-567 — the 备课猜想 chip toggles an inline 备课台 conjecture panel (pull, not
   // push): the team's prepared conjectures surface only when the owner opens them.
   const [conjOpen, setConjOpen] = useState(false);

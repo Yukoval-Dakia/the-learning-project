@@ -1,34 +1,19 @@
 /* SIZE_OK: the audit is one scan + one allowlist check; splitting it would scatter the contract. */
 /**
- * YUK-1559 (C1-10) — single source of truth for model selection.
+ * Single source of truth for model selection.
  *
- * Model-id string literals may live ONLY at their default-declaration sites:
- *   1. `defaultModel:` initializers in task definitions
- *      (src/capabilities/<owner>/tasks/**)
- *   2. the provider catalog / pricing files in PROVIDER_CATALOG_FILES below
- *      (those files ARE the catalog)
- *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in
- *      src/core/config/registry.ts (the system_config per-task override layer)
+ * Model-id literals may live only at their default-declaration sites:
+ *   1. `defaultModel:` initializers in task definitions under src/capabilities/<owner>/tasks/**;
+ *   2. the provider catalog / pricing files (those files ARE the catalog);
+ *   3. `codeDefault:` initializers of `*_MODEL` / `*.model` keys in the config registry.
  *
- * Scripts, jobs, preflights and evals must read the resolved task config
- * (resolveTaskBinding / resolveTaskProvider / getConfig) instead of pinning a
- * model literal. Remaining exceptions require an entry in
- * scripts/audit-model-source-allowlist.json with reason + resolves_when.
+ * Everything else reads the resolved task config. Remaining exceptions need an allowlist entry with
+ * reason + resolves_when.
  *
- * The model set is DERIVED — this file keeps no model list of its own:
- *   - every model id in the native pi provider catalog snapshot
- *   - every model id in the curated models.dev catalog snapshot
- *   - every model id declared in the provider catalog / pricing files
- *     (binding `models:` keys, `*MODEL*`/`*PRICE*` declarations) — this covers
- *     direct-provider lanes (embedding, GLM-OCR, legacy GLM) that are absent
- *     from the chat snapshots
- *   - every `defaultModel:` literal under src/capabilities/<owner>/tasks/**
- *   - every `*_MODEL` key's `codeDefault` in src/core/config/registry.ts
- *
- * A literal is flagged when it CONTAINS a derived model id at a non-
- * alphanumeric boundary (e.g. a composite cost_ref like
- * `unpriced:xiaomi/mimo-v2.5` still embeds the id, while `jo3i` does not match
- * the short id 'o3').
+ * The model set is derived from the catalog snapshots, catalog declarations, task defaults, and
+ * registry code defaults — this file keeps no model list of its own. A literal is flagged when it
+ * contains a derived id on a non-alphanumeric boundary, so a composite cost_ref still matches while
+ * `jo3i` does not match 'o3'.
  */
 
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
@@ -55,11 +40,12 @@ const EXCLUDED_DIRS = new Set([
   '.claude',
 ]);
 
-// Allowed location (2): provider catalog / pricing surface. Model ids in these
-// files are the catalog itself — anything elsewhere must resolve config.
+// Allowed location (2): provider catalog / pricing surface. Model ids in these files are the
+// catalog itself; everything elsewhere must resolve config.
 const PROVIDER_CATALOG_FILES = new Set([
   'src/server/ai/providers.ts',
   'src/server/ai/pricing.ts',
+  'src/server/ai/model-catalog-overrides.ts',
   'src/server/ai/model-profiles.ts',
   'src/server/ai/pi-models.ts',
   'src/server/ai/pi-provider-catalog.ts',
@@ -67,8 +53,8 @@ const PROVIDER_CATALOG_FILES = new Set([
   'src/server/ai/xiaomi-token-plan.ts',
 ]);
 
-// Allowed location (3): the system_config keyspace (registry codeDefaults are
-// the config layer's defaults — per-task/lane overrides live in DB rows).
+// Allowed location (3): the system_config keyspace (registry defaults; per-task/lane overrides
+// live in DB rows).
 const CONFIG_REGISTRY_FILE = 'src/core/config/registry.ts';
 
 const RESOLVE_KINDS = ['pr', 'phase', 'manual'] as const;
@@ -156,9 +142,8 @@ function catalogModelIds(): Set<string> {
         return;
       }
       if (!isRecord(node)) return;
-      // Model object shapes: models.dev snapshot → { id, cost, … }; native pi
-      // catalog snapshot → { api, input, baseUrl, … }. A provider object keys
-      // model entries by id in both shapes.
+      // Both snapshots key model entries by id: models.dev uses { id, cost }, native pi uses
+      // { api, input, baseUrl }. Treat either shape as a model object.
       const looksLikeModel = (value: Record<string, unknown>): boolean =>
         (typeof value.id === 'string' && (isRecord(value.cost) || isRecord(value.capabilities))) ||
         (typeof value.api === 'string' && Array.isArray(value.input));
@@ -174,11 +159,9 @@ function catalogModelIds(): Set<string> {
 }
 
 /**
- * Declared model ids inside the provider catalog / pricing files: `models:`
- * binding-map keys and the initializers / property names of `*MODEL*` /
- * `*PRICE*` declarations. Direct-provider lanes (embeddings, OCR, legacy GLM)
- * declare their model ids here — without this source the gate cannot see a
- * re-hard-pinned copy elsewhere.
+ * Declared model ids inside the provider catalog / pricing files: `models:` binding-map keys and
+ * initializers/property names of `*MODEL*` / `*PRICE*` declarations. This is how direct-provider
+ * lanes (embeddings, OCR, legacy GLM) are seen.
  */
 function catalogDeclaredModelIds(): Set<string> {
   const ids = new Set<string>();
@@ -263,7 +246,7 @@ function registryModelCodeDefaults(): Set<string> {
     ts.ScriptKind.TS,
   );
   const visit = (node: ts.Node): void => {
-    // `KEY: { …, codeDefault: '…', … }` where KEY ends in _MODEL.
+    // `KEY: { ..., codeDefault: '...', ... }` where KEY ends in _MODEL.
     if (
       ts.isPropertyAssignment(node) &&
       ts.isIdentifier(node.name) &&
@@ -324,11 +307,9 @@ function loadAllowlist(): { entries: Record<string, AllowlistEntry>; problems: s
 }
 
 /**
- * Site-level legality — a directory or registry file being "allowed" does NOT
- * license every literal inside it. Only the default-declaration positions pass:
- *   - catalog files: the whole file IS the provider catalog / pricing table;
- *   - registry.ts: a `codeDefault:` initializer under a `*_MODEL` / `*.model` key;
- *   - tasks/**: a `defaultModel:` initializer.
+ * Site-level legality: an allowed file does not license every literal in it. Catalog files are
+ * wholly catalogs; registry.ts only allows `codeDefault:` under a *_MODEL / *.model key; tasks/**
+ * only allows `defaultModel:`.
  */
 function isAllowedSite(path: string, node: ts.StringLiteralLike): boolean {
   if (PROVIDER_CATALOG_FILES.has(path)) return true;

@@ -1,33 +1,37 @@
 import type { Provider } from '@/ai/registry';
-import { OPENCODE_GO_OPENAI_BASE_URL, isOpenCodeGoOpenAiApi } from './opencode-go';
+import {
+  customProviderDefinition,
+  looksLikeCustomProviderId,
+} from '@/core/config/custom-providers';
+import { catalogModelIds } from './model-catalog';
+import {
+  type ModelCapabilityTriState,
+  type ModelProfileReasoning,
+  resolveModelProfile,
+} from './model-profiles';
 import snapshot from './pi-provider-catalog.snapshot.json' with { type: 'json' };
-import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 export interface PiModelMetadata {
   api: string;
-  baseUrl: string;
+  baseUrl?: string;
   input: string[];
-  reasoning: boolean;
-  contextWindow: number;
-  maxTokens: number;
-  /**
-   * pi 原生 thinkingLevelMap（level → 模型自己的 wire 值；null = 该 level 不支持）。
-   * 非 null 的值集 = 该模型自己声明的合法 wire 值 —— providers.ts 的
-   * task.<kind>.reasoning 校验读的就是它（模型自有值，非统一档位枚举）。
-   */
+  reasoning: ModelCapabilityTriState;
+  contextWindow?: number;
+  maxInputTokens?: number;
+  maxTokens?: number;
+  catalogReasoning: ModelProfileReasoning;
   thinkingLevelMap?: Record<string, string | null>;
-  /**
-   * 模型 compat.thinkingFormat（deepseek/zai/qwen/…）——决定 reasoning_effort
-   * 旁的原生开关形状（deepseek → thinking:{type:'enabled'}），providers.ts
-   * resolveTaskNativeReasoningParams 按它派生 wire 参数集。
-   */
   thinkingFormat?: string;
 }
 
-const catalog: Record<string, Record<string, PiModelMetadata>> = snapshot;
+const protocols: Record<
+  string,
+  Record<string, { api: string; thinkingFormat?: string }>
+> = snapshot;
 
-/** OAuth is a credential lane, not a second protocol/model catalog. */
+/** OAuth changes the credential, not the protocol. Custom providers are their own pi identity. */
 export function piProviderId(provider: Provider): string {
+  if (looksLikeCustomProviderId(provider)) return provider;
   if (provider === 'anthropic-sub') return 'anthropic';
   if (provider === 'zhipuai-coding-plan') return 'zai-coding-cn';
   return provider;
@@ -37,28 +41,81 @@ export function nativePiModels(
   provider: Provider,
   env: Record<string, string | undefined> = process.env,
 ): Record<string, PiModelMetadata> {
-  if (provider === 'xiaomi-token-plan') {
-    const baseUrl = xiaomiTokenPlanBaseUrl(env);
+  // A custom provider's model ids come from its synthetic runtime catalog
+  // bucket (its own /models listing ∩ catalog facts); the protocol is its
+  // configured one, not a snapshot template.
+  if (looksLikeCustomProviderId(provider)) {
+    const definition = customProviderDefinition(provider);
+    if (!definition) return {};
+    const fallbackApi =
+      definition.protocol === 'anthropic-messages' ? 'anthropic-messages' : 'openai-completions';
     return Object.fromEntries(
-      Object.entries(catalog.xiaomi ?? {}).map(([id, model]) => [id, { ...model, baseUrl }]),
+      catalogModelIds(provider).flatMap((id) => {
+        const profile = resolveModelProfile(provider, id, env);
+        if (!profile.baseUrl) return [];
+        return [
+          [
+            id,
+            {
+              api: profile.api ?? fallbackApi,
+              baseUrl: profile.baseUrl,
+              input:
+                profile.inputModalities === 'unknown' ? ['unknown'] : [...profile.inputModalities],
+              reasoning: profile.capabilities.reasoning,
+              contextWindow: profile.limits.contextWindowTokens,
+              maxInputTokens: profile.limits.maxInputTokens,
+              maxTokens: profile.limits.maxOutputTokens,
+              catalogReasoning: profile.reasoning,
+              thinkingLevelMap:
+                profile.reasoning.mode === 'effort'
+                  ? Object.fromEntries(
+                      profile.reasoning.supportedEfforts.map((effort) => [effort, effort]),
+                    )
+                  : undefined,
+            },
+          ],
+        ];
+      }),
     );
   }
-  // YUK-1547 — the committed snapshot records pi's builtin (legacy /zen/go/v1)
-  // baseUrls; the loom-effective endpoint lives once in opencode-go.ts and is
-  // re-bound here so every synchronous reader (capability gate, config
-  // resolution, reopen preflight) sees the same baseUrl the runtime models
-  // carry (pi-models.ts performs the identical rebind).
-  if (provider === 'opencode-go') {
-    return Object.fromEntries(
-      Object.entries(catalog['opencode-go'] ?? {}).map(([id, model]) => [
-        id,
-        isOpenCodeGoOpenAiApi(model.api)
-          ? { ...model, baseUrl: OPENCODE_GO_OPENAI_BASE_URL }
-          : model,
-      ]),
-    );
-  }
-  return catalog[piProviderId(provider)] ?? {};
+  const protocolProvider = provider === 'xiaomi-token-plan' ? 'xiaomi' : piProviderId(provider);
+  return Object.fromEntries(
+    Object.entries(protocols[protocolProvider] ?? {}).flatMap(([id, protocol]) => {
+      const profile = resolveModelProfile(provider, id, env);
+      const api = profile.api ?? protocol.api;
+      if (provider === 'opencode-go' && profile.baseUrl) {
+        const path = new URL(profile.baseUrl).pathname;
+        if (
+          (path.includes('/anthropic/') && api !== 'anthropic-messages') ||
+          (path.includes('/openai/') && api === 'anthropic-messages')
+        )
+          return [];
+      }
+      return [
+        [
+          id,
+          {
+            api,
+            baseUrl: profile.baseUrl,
+            input:
+              profile.inputModalities === 'unknown' ? ['unknown'] : [...profile.inputModalities],
+            reasoning: profile.capabilities.reasoning,
+            contextWindow: profile.limits.contextWindowTokens,
+            maxInputTokens: profile.limits.maxInputTokens,
+            maxTokens: profile.limits.maxOutputTokens,
+            catalogReasoning: profile.reasoning,
+            thinkingLevelMap:
+              profile.reasoning.mode === 'effort'
+                ? Object.fromEntries(
+                    profile.reasoning.supportedEfforts.map((effort) => [effort, effort]),
+                  )
+                : undefined,
+            thinkingFormat: protocol.thinkingFormat,
+          },
+        ],
+      ];
+    }),
+  );
 }
 
 export function nativePiModel(

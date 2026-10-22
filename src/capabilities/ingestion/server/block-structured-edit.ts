@@ -1,38 +1,27 @@
-// YUK-195 — single-owner service for agent-callable question structure edits.
+// Single owner for agent-callable question structure edits.
 //
-// Design note: docs/superpowers/specs/2026-06-01-question-edit-domaintools-design.md
-// Refs: YUK-164 (T-OC), ADR-0002 §"Agent 修改约束", P3.7.
-//
-// All six structure-edit mutations live here; the six DomainTools in
-// `server/tools/question-block-*-edits.ts` modules are thin wrappers.
-//
-// Cross-cutting mechanics (§3):
-//   - Operates on the pre-import correction layer: draft `question_block`
-//     `.structured` tree + `.figures`. Status guard: `status === 'draft'` →
-//     soft `skipped:not_draft` (NOT a throw).
-//   - Provenance: every touched structured node gets `source='agent_edit'` +
-//     `last_modified_by=<actorRef>`.
-//   - Concurrency: `block.version` bump on every write; `SELECT ... FOR UPDATE`
-//     inside the tx serialises concurrent edits to the same block.
-//   - SSE trail: `writeJobEvent(tx, { event_type: 'block.structured_edited' |
-//     'figure.reassigned', ... })` so the ingestion SSE timeline live-updates.
-//   - Soft failures return a discriminated result with a `status: 'skipped:*'`
-//     code; callers decide how to surface it (tool → Output; route → 4xx).
-//     Hard/unexpected conditions throw.
+// Edits target the pre-import draft question_block tree and figures; non-draft blocks
+// are a soft skip rather than a throw. Every write stamps agent_edit provenance, bumps
+// the version under SELECT ... FOR UPDATE, and writes both the SSE job event and the
+// canonical edit event. Callers surface soft skip results; unexpected faults throw.
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
+import { encodeDraftRef } from '@/core/question-draft-ref';
+import type { PresentationT } from '@/core/schema/assessment';
 import type { QuestionKind } from '@/core/schema/business';
+import type { QuestionBlockStructuredT } from '@/core/schema/question-draft';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { question_block } from '@/db/schema';
+import { event, question_block } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import { writeJobEvent } from '@/server/events/writer';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -48,9 +37,8 @@ export function idHasMatch(node: StructuredQuestionT, target: string): boolean {
 }
 
 /**
- * Return a deep-cloned tree with `mutate` applied in place to the node whose
- * id matches `target`, and `null` if no node matched. The mutation runs on the
- * cloned node so callers never alias the persisted jsonb.
+ * Applies `mutate` to a cloned node whose id matches `target`. Mutating the clone keeps
+ * callers from aliasing the persisted jsonb.
  */
 function mapNodeById(
   node: StructuredQuestionT,
@@ -106,24 +94,21 @@ export interface BaseEditParams {
   /** `callerActor.ref` of the tool caller, stamped as `last_modified_by`. */
   actorRef: string;
   /**
-   * Provenance for the canonical `experimental:edit_question_block_structured` event (YUK-471 W3-C1δ).
-   * These structured-edit primitives are agent-callable DomainTools (default 'agent'); the proposal
-   * accept path (`acceptBlockMergeProposal`) is user-driven and passes 'user'. NOT a fold input — the
-   * question_block fold does not read actor_kind — so this is pure provenance, never parity-affecting.
+   * Provenance for the canonical edit event. Agent tools default to 'agent'; the
+   * user-driven proposal accept path passes 'user'. The fold does not read it.
    */
   actorKind?: 'agent' | 'user';
 }
 
-// The 4 single-block structured-rewrite ops (merge_questions is multi-row, handled inline). The
-// canonical edit event's `op` enum (question-block-events.ts) gates fold cardinality.
+// Single-block ops; merge_questions is multi-row and handled inline. The canonical
+// event's op enum gates fold cardinality.
 type SingleBlockEditOp =
   | 'update_prompt'
   | 'add_option'
   | 'set_question_type'
   | 'split_stem'
-  // YUK-1497 — compose_presentation's structured.presentation write (single-block;
-  // the AFTER tree carries the presentation inside `structured`, so the fold
-  // reproduces the row exactly — a raw tx.update here would be erased on rebuild).
+  // The AFTER tree carries the presentation, so the fold reproduces it; a raw update
+  // would be erased on rebuild.
   | 'set_presentation';
 
 // ---------------------------------------------------------------------------
@@ -143,28 +128,25 @@ async function loadBlockForUpdate(tx: Tx, blockId: string): Promise<BlockRow | u
 
 interface PersistStructuredParams {
   blockId: string;
-  /** The AFTER full structured tree (non-null — single-block edits always rewrite the tree). */
-  structured: StructuredQuestionT;
+  /** The AFTER tree; single-block edits always rewrite it. */
+  structured: QuestionBlockStructuredT;
   op: SingleBlockEditOp;
-  /** Legacy `job_events` SSE transport payload ({ op, node_id, … }) — UNCHANGED (orthogonal). */
+  /** Orthogonal SSE transport payload. */
   jobPayload: Record<string, unknown>;
   actorRef: string;
   actorKind: 'agent' | 'user';
   /**
-   * The block's CURRENT (unchanged) status. persistStructured writes structured/figures/version/
-   * updated_at but NEVER status, so the canonical edit snapshot MUST carry the existing status or
-   * the fold (which reads status off the primary snapshot) would diverge from the row (B2 review).
+   * The block's unchanged status. persistStructured never writes status, so the snapshot
+   * must carry it or the fold diverges from the row.
    */
   currentStatus: string;
   /**
-   * The block's CURRENT version (read inside the same FOR-UPDATE-locked tx). The next version is
-   * `currentVersion + 1`; with the row lock held no concurrent tx can bump it, so this equals the
-   * old SQL-side `version + 1`. Threaded in (YUK-471 W3-C3) so the ON-path projection write-through
-   * can stamp the version WITHOUT the imperative UPDATE's `.returning()`.
+   * The current version read under the row lock. The next version is this + 1, shared
+   * by the canonical event and the projection write-through.
    */
   currentVersion: number;
-  /** Present ONLY when the op also re-points figures (splitStem nested-stem reattach); else the fold
-   *  falls back to row.figures (design §5.2), so the snapshot omits figures too. */
+  /** Only when this op also re-points figures; otherwise the snapshot omits them and
+   *  the fold falls back to row.figures. */
   figures?: FigureRefT[];
 }
 
@@ -174,14 +156,11 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
       'canonical question block edit requires complete history; run deployment migration',
     );
   }
-  // SINGLE clock — the row's updated_at MUST equal the canonical event's created_at so the fold's
-  // `updated_at = event.created_at` reproduces the row byte-for-byte (design §3 single-clock model).
+  // One clock: the row's updated_at must equal the event's created_at for byte-exact folds.
   const now = new Date();
-  // FOR-UPDATE-locked (loadBlockForUpdate) → no concurrent bump, so currentVersion + 1 equals the old
-  // SQL-side `version + 1`. Computed here so the canonical event + the ON-path projection share it.
   const version = params.currentVersion + 1;
 
-  // Legacy SSE/transport row — UNCHANGED (the `job_events` channel is orthogonal to the canonical log).
+  // SSE transport row, orthogonal to the canonical event log.
   await writeJobEvent(tx, {
     business_table: 'question_block',
     business_id: params.blockId,
@@ -189,11 +168,9 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
     payload: params.jobPayload,
   });
 
-  // YUK-471 W3-C1δ — canonical edit event (FIRST, before the row write, so the projection / parity
-  // assert reads it). A single-block op carries EXACTLY the primary (role='primary') with the AFTER
-  // tree + new version + the block's CURRENT status (B2). figures ride ONLY when re-pointed; else
-  // omitted so the fold falls back to row.figures (§5.2). A malformed payload throws at parseEvent →
-  // rolls back this tx.
+  // Canonical event goes first so the projection/parity assert can read it. It carries
+  // the primary block with the AFTER tree, new version, and current status; figures only
+  // when re-pointed. A malformed payload throws at parseEvent and rolls back the tx.
   await writeEvent(tx, {
     id: newId(),
     actor_kind: params.actorKind,
@@ -223,10 +200,6 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
 
   return version;
 }
-
-// ---------------------------------------------------------------------------
-// §4.1 updatePrompt
-// ---------------------------------------------------------------------------
 
 export interface UpdatePromptParams extends BaseEditParams {
   blockId: string;
@@ -261,10 +234,6 @@ export async function updatePrompt(db: Db, params: UpdatePromptParams): Promise<
   });
 }
 
-// ---------------------------------------------------------------------------
-// §4.2 addOption
-// ---------------------------------------------------------------------------
-
 export interface AddOptionParams extends BaseEditParams {
   blockId: string;
   nodeId: string;
@@ -297,10 +266,6 @@ export async function addOption(db: Db, params: AddOptionParams): Promise<EditRe
     return { status: 'written', version };
   });
 }
-
-// ---------------------------------------------------------------------------
-// §4.3 setQuestionType — advisory `kind` hint (jsonb-internal, no DDL).
-// ---------------------------------------------------------------------------
 
 export interface SetQuestionTypeParams extends BaseEditParams {
   blockId: string;
@@ -335,19 +300,12 @@ export async function setQuestionType(db: Db, params: SetQuestionTypeParams): Pr
   });
 }
 
-// ---------------------------------------------------------------------------
-// §4.4 splitStem — un-group a stem's sub_questions into standalone siblings.
-// ---------------------------------------------------------------------------
-
 export interface SplitStemParams extends BaseEditParams {
   blockId: string;
   nodeId: string;
 }
 
-/**
- * Promote a stem's sub_questions to `role='standalone'` (order preserved,
- * provenance stamped on each). Returns the promoted nodes.
- */
+/** Promotes sub_questions to standalone nodes, preserving order and stamping provenance. */
 function promoteSubsToStandalone(
   stem: StructuredQuestionT,
   actorRef: string,
@@ -364,25 +322,12 @@ function isSplittableStem(node: StructuredQuestionT): boolean {
 }
 
 /**
- * Un-group the `target` stem. Two cases, both within-block (no new block):
+ * Un-groups the target stem within its block. A root stem keeps an empty shell
+ * holding the promoted children, because a single-root tree cannot hold sibling roots.
+ * A nested stem is spliced out and replaced by its promoted children.
  *
- *   - Root stem is the target: the block's single-root jsonb can't hold N
- *     sibling roots, so we keep a stem shell (empty passage) whose
- *     `sub_questions` are the former subs promoted to `role='standalone'`. The
- *     derived markdown drops the now-empty passage, yielding the un-grouped
- *     view. (A stem may legally hold standalone children; only non-stems are
- *     barred from having sub_questions by the schema refine.)
- *   - Nested stem is the target: splice the stem out of its parent's
- *     `sub_questions` and insert its promoted standalone children in its place,
- *     preserving order.
- *
- * Returns `{ tree, outcome, reattachFrom?, reattachTo? }` where outcome is
- * `split | not_found | not_splittable`. On the NESTED-stem split branch the
- * stem node is spliced out and its id disappears, so any figure that was
- * `attached_to_index === <stem id>` would dangle. We surface `reattachFrom`
- * (the vanished stem id) + `reattachTo` (the first promoted child id) so the
- * caller can re-point those figures (root-stem split keeps the id via the shell,
- * so it returns no reattach).
+ * Splitting a nested stem removes its id, so figures attached to it would dangle;
+ * reattachFrom/reattachTo let the caller re-point them. Root-stem splits keep the id.
  */
 function splitStemInTree(
   node: StructuredQuestionT,
@@ -404,7 +349,7 @@ function splitStemInTree(
       last_modified_by: actorRef,
       sub_questions: promoteSubsToStandalone(node, actorRef),
     };
-    // Root-stem keeps its id via the shell — no figure reattachment needed.
+    // The root stem keeps its id via the shell, so nothing dangles.
     return { tree: shell, outcome: 'split' };
   }
 
@@ -421,8 +366,7 @@ function splitStemInTree(
         const promoted = promoteSubsToStandalone(sub, actorRef);
         nextSubs.push(...promoted);
         outcome = 'split';
-        // Nested stem id vanishes on splice; re-point its figures to the first
-        // promoted child so they don't dangle.
+        // The stem id vanishes on splice; re-point its figures to the first promoted child.
         reattachFrom = sub.id;
         reattachTo = promoted[0]?.id;
       }
@@ -460,9 +404,7 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
     if (result.outcome === 'not_found') return { status: 'skipped:node_not_found' };
     if (result.outcome === 'not_splittable') return { status: 'skipped:not_splittable' };
 
-    // Nested-stem split removes the stem id from the tree; re-point any figure
-    // that was attached to it onto the first promoted child so it doesn't
-    // dangle. Root-stem split keeps the id (shell), so reattachFrom is unset.
+    // Re-point figures off the removed stem id; the root-stem case leaves this unset.
     let nextFigures: FigureRefT[] | undefined;
     if (result.reattachFrom && result.reattachTo) {
       const from = result.reattachFrom;
@@ -487,18 +429,35 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
   });
 }
 
-// ---------------------------------------------------------------------------
-// §4.7 setPresentation — compose_presentation's canonical save path (YUK-1497).
-// ---------------------------------------------------------------------------
-
-export interface SetPresentationParams extends BaseEditParams {
-  blockId: string;
-  /** The AFTER full structured tree (presentation already merged into `structured`). */
-  structured: StructuredQuestionT;
+export interface SetPresentationValidation {
+  status: 'valid' | 'invalid' | 'rejected_input' | 'unresolvable_contract' | 'unsupported_contract';
+  issues: { code: string; detail: string }[];
 }
+
+interface SetPresentationOptions extends BaseEditParams {
+  blockId: string;
+  expectedVersion?: number;
+  requestId?: string;
+  /** Defaults to save for existing callers. Validation runs under the same row lock. */
+  save?: boolean;
+  validate?: (tx: Tx, block: BlockRow) => Promise<SetPresentationValidation>;
+}
+
+export type SetPresentationParams = SetPresentationOptions &
+  (
+    | { presentation: PresentationT; structured?: never }
+    // Legacy callers: consume only presentation, never their supplied AFTER tree.
+    | { structured: StructuredQuestionT; presentation?: never }
+  );
 
 export type SetPresentationStatus =
   | 'written'
+  | 'validated'
+  | 'conflict'
+  | 'invalid'
+  | 'rejected_input'
+  | 'unresolvable_contract'
+  | 'unsupported_contract'
   | 'skipped:not_draft'
   | 'skipped:block_not_found'
   | 'skipped:null_structured';
@@ -507,28 +466,91 @@ export interface SetPresentationResult {
   status: SetPresentationStatus;
   /** Set on `written`; the post-save block version. */
   version?: number;
+  draft_ref?: string;
+  request_id?: string;
+  replayed?: boolean;
+  reason?: string;
+  current_draft_ref?: string;
+  current_draft_version?: number;
+  issues?: { code: string; detail: string }[];
 }
 
 /**
- * Save a validated presentation into `question_block.structured.presentation` via
- * the SAME canonical channel as the other single-block edits (`persistStructured` →
- * `experimental:edit_question_block_structured` + job event + genesis-anchor check +
- * projection write-through). Callers own presentation validation (shape + binding)
- * BEFORE invoking; this primitive only persists the merged AFTER tree.
+ * Persists a validated presentation through the standard single-block edit channel.
+ * Owns request lock → replay → row lock → CAS → validation → canonical save/receipt.
+ * The validator reads the locked version; only presentation is merged into that row.
  */
 export async function setPresentation(
   db: Db | Tx,
   params: SetPresentationParams,
 ): Promise<SetPresentationResult> {
   return db.transaction(async (tx) => {
+    const save = params.save !== false;
+    const presentation = params.presentation ?? params.structured?.presentation;
+    // Same request lock and receipt action as edit_question. The tool/actor-bound
+    // fingerprint keeps a reused edit/compose key from replaying another operation.
+    const fingerprint = `sha256:${sha256CanonicalJson({
+      tool: 'compose_presentation',
+      block_id: params.blockId,
+      expected_version: params.expectedVersion ?? null,
+      presentation,
+      actor_ref: params.actorRef,
+      actor_kind: params.actorKind ?? 'agent',
+    })}`;
+    if (save && params.requestId != null) {
+      // Always before the row lock, matching edit/submit's lock order.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${params.requestId}))`);
+      const [existing] = await tx
+        .select({ payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:question_draft_save'),
+            sql`${event.payload} ->> 'request_id' = ${params.requestId}`,
+          ),
+        )
+        .orderBy(desc(event.created_at))
+        .limit(1);
+      if (existing != null) {
+        const payload = existing.payload as {
+          fingerprint: string;
+          receipt: SetPresentationResult;
+        };
+        if (payload.fingerprint !== fingerprint) {
+          return { status: 'conflict', reason: 'request_id_reused', request_id: params.requestId };
+        }
+        return { ...payload.receipt, replayed: true };
+      }
+    }
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:null_structured' };
+    if (params.expectedVersion != null && params.expectedVersion !== block.version) {
+      return {
+        status: 'conflict',
+        reason: 'draft_version_cas',
+        current_draft_ref: encodeDraftRef(block.id, block.version),
+        current_draft_version: block.version,
+      };
+    }
+    if (params.validate != null) {
+      const validation = await params.validate(tx, block);
+      if (validation.status !== 'valid') {
+        return { status: validation.status, issues: validation.issues };
+      }
+    }
+    if (!save) {
+      return {
+        status: 'validated',
+        version: block.version,
+        draft_ref: encodeDraftRef(block.id, block.version),
+      };
+    }
 
     const version = await persistStructured(tx, {
       blockId: params.blockId,
-      structured: params.structured,
+      structured: { ...block.structured, presentation },
       op: 'set_presentation',
       jobPayload: { op: 'set_presentation' },
       actorRef: params.actorRef,
@@ -536,25 +558,38 @@ export async function setPresentation(
       currentStatus: block.status,
       currentVersion: block.version,
     });
-    return { status: 'written', version };
+    const receipt: SetPresentationResult = {
+      status: 'written',
+      version,
+      draft_ref: encodeDraftRef(block.id, version),
+      ...(params.requestId != null ? { request_id: params.requestId } : {}),
+    };
+    if (params.requestId != null) {
+      // Existing draft-save receipt, atomic with the canonical edit and projection.
+      // Replays return this original version/ref even if later edits have advanced it.
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: params.actorKind ?? 'agent',
+        actor_ref: params.actorRef,
+        action: 'experimental:question_draft_save',
+        subject_kind: 'question_block',
+        subject_id: block.id,
+        outcome: 'success',
+        payload: { request_id: params.requestId, fingerprint, receipt },
+        ingest_at: new Date(),
+      });
+    }
+    return receipt;
   });
 }
-
-// ---------------------------------------------------------------------------
-// §4.5 mergeQuestions — absorb sibling draft blocks into a primary block.
-// ---------------------------------------------------------------------------
 
 export interface MergeQuestionsParams extends BaseEditParams {
   primaryBlockId: string;
   mergeBlockIds: string[];
   /**
-   * YUK-1404 — optional admission gate evaluated inside THIS transaction,
-   * AFTER the FOR UPDATE row locks + the primitive's own guards and BEFORE
-   * any write. The proposal-accept path uses it to re-bind its learner
-   * admission proof to the exact rows being merged (closing the check-then-act
-   * gap between the inbox read and this self-tx). Throwing rolls back with
-   * zero mutation. Callers that omit it keep the pre-existing behavior (the
-   * merge_questions DomainTool — a separate, non-proposal path — passes none).
+   * Optional admission gate run inside this transaction, after the row locks and
+   * guards but before any write. The proposal-accept path re-binds its admission proof
+   * to the locked rows; throwing rolls back with no mutation.
    */
   admission?: (ctx: { tx: Tx; primary: BlockRow; mergeBlocks: BlockRow[] }) => Promise<void> | void;
 }
@@ -562,8 +597,7 @@ export interface MergeQuestionsParams extends BaseEditParams {
 /** Top-level structured nodes of a block, normalised to an array. */
 function topLevelNodes(structured: StructuredQuestionT | null): StructuredQuestionT[] {
   if (!structured) return [];
-  // A block's structured jsonb is a single tree; its top-level node is the one
-  // we absorb. (Sub-questions ride along inside it.)
+  // A block holds one root tree; absorb that root, sub-questions included.
   return [structured];
 }
 
@@ -573,8 +607,7 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     if (!primary) return { status: 'skipped:block_not_found' };
     if (primary.status !== 'draft') return { status: 'skipped:not_draft' };
 
-    // Dedupe + drop the primary itself: a caller passing [m1, m1] or the primary
-    // id must not inflate merged_from_block_ids or trip the length check below.
+    // Dedupe and drop the primary so merged_from_block_ids is not inflated.
     const mergeIds = [...new Set(params.mergeBlockIds)].filter(
       (id) => id !== params.primaryBlockId,
     );
@@ -593,38 +626,27 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     if (mergeBlocks.some((b) => b.ingestion_session_id !== primary.ingestion_session_id)) {
       return { status: 'skipped:cross_session' };
     }
-    // A null-structured block carries only legacy extracted_prompt_md, which has
-    // no top-level node to absorb. Merging it would silently drop that content
-    // while still marking the block ignored — refuse instead of losing it.
+    // A null-structured block has no node to absorb; merging it would silently drop
+    // its legacy prompt while marking the block ignored.
     if (!primary.structured) return { status: 'skipped:null_structured' };
     if (mergeBlocks.some((b) => b.structured === null)) {
       return { status: 'skipped:null_structured' };
     }
 
-    // YUK-1404 — caller-supplied admission gate: sees the FOR-UPDATE-locked
-    // rows inside this tx, before the merge tree is built and before any
-    // write. A throw rolls everything back (no mutation, no events).
+    // The admission gate sees the locked rows before any write; a throw rolls back all.
     await params.admission?.({ tx, primary, mergeBlocks });
 
-    // Absorb each merge block's top-level structured nodes into the primary as
-    // appended sub_questions. The primary becomes a stem container holding all
-    // nodes (its own + absorbed), preserving order. Provenance on the primary.
+    // Append each merged block's root as a sub_question of the primary, in order.
     const primaryNodes = topLevelNodes(primary.structured);
-    // Iterate in caller-supplied `mergeIds` order (not the unordered `inArray`
-    // SELECT result) so absorbed sub-question order is deterministic — §4.5
-    // "appended ... preserving order".
+    // Use mergeIds order, not the unordered SELECT result, for deterministic output.
     const blocksById = new Map(mergeBlocks.map((b) => [b.id, b]));
     const absorbed: StructuredQuestionT[] = [];
     for (const id of mergeIds) {
       const mb = blocksById.get(id);
       if (!mb) continue; // unreachable: length check above guarantees presence
       for (const node of topLevelNodes(mb.structured)) {
-        // A merged block whose root is a stem (with sub_questions) must stay a
-        // nested stem: forcing role='sub' onto a node that still carries
-        // sub_questions produces an ILLEGAL StructuredQuestion (the refine bars
-        // non-stems from holding subs) and structuredToPromptMarkdown would
-        // render it as a leaf, silently dropping the sub-questions. Nested stems
-        // are schema-legal; keep the whole subtree intact via structuredClone.
+        // Keep a stem root a nested stem: forcing role='sub' on a node with
+        // sub_questions is schema-illegal and markdown would drop the children.
         const isStem = node.role === 'stem' && (node.sub_questions?.length ?? 0) > 0;
         const clone: StructuredQuestionT = isStem
           ? structuredClone(node)
@@ -647,22 +669,17 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       sub_questions: [...existingSubs, ...absorbed],
     };
 
-    // Carry the merged blocks' figures onto the primary (union, in mergeIds
-    // order). Absorbed subtrees keep every node id, so each figure's
-    // attached_to_index still resolves inside the merged tree. Dedup by
-    // asset_id (keep first): the same cropped asset could be attached to both
-    // the primary and a merge block; reassignFigure resolves a figure by first
-    // asset_id match, so a duplicate would shadow later updates
-    // and double-render in the review UI.
+    // Union figures in mergeIds order. Node ids survive the merge, so attachments
+    // still resolve. Dedupe by asset_id: reassignFigure matches the first asset_id,
+    // so a duplicate would shadow updates and double-render in review.
     const seenAssetIds = new Set<string>();
     const mergedFigures: FigureRefT[] = [
       ...(primary.figures ?? []),
       ...mergeIds.flatMap((id) => blocksById.get(id)?.figures ?? []),
     ].filter((f) => !seenAssetIds.has(f.asset_id) && seenAssetIds.add(f.asset_id));
 
-    // F3 (YUK-471 W3 §3) — SINGLE clock for the primary UPDATE, the merged-blocks UPDATE, AND the
-    // canonical event, so the fold's single-clock holds (the absorbed blocks + the primary all stamp
-    // updated_at = event.created_at). Historically this used TWO independent `new Date()` (~:506/:513).
+    // One clock for both updates and the canonical event so the fold reproduces every
+    // updated_at exactly.
     const now = new Date();
     for (const id of [params.primaryBlockId, ...mergeIds]) {
       if (!(await hasQuestionBlockGenesisAnchor(tx, id))) {
@@ -688,12 +705,10 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       });
     }
 
-    // YUK-471 W3-C1δ — ONE canonical edit event collapses the 1+N `job_events` transport rows (solves
-    // C4). The primary (role='primary') carries the merged AFTER tree + figures + bumped version + its
-    // CURRENT (unchanged) status; each absorbed block rides as role='merged_source' with status
-    // 'ignored' and its UNCHANGED version (the live writer does NOT bump it) + its before-tree (undo).
-    // subject_id = primary (the SoT anchor). The merged_source order = mergeIds order, so the fold
-    // appends EXACTLY the live writer's merged_from_block_ids ([...primary.merged_from, ...mergeIds]).
+    // One canonical event replaces the 1+N transport rows. The primary carries the AFTER
+    // tree, figures, bumped version, and unchanged status; each absorbed block carries
+    // status 'ignored', its unchanged version, and its before-tree for undo. Ordering
+    // matches the live writer so the fold appends the same merged_from_block_ids.
     const mergedSourceEntries = mergeIds.map((id) => {
       const mb = blocksById.get(id);
       if (!mb) {
@@ -741,10 +756,6 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
   });
 }
 
-// ---------------------------------------------------------------------------
-// §4.6 reassignFigure — mutation behind the agent tool.
-// ---------------------------------------------------------------------------
-
 export interface ReassignFigureParams extends BaseEditParams {
   blockId: string;
   assetId: string;
@@ -765,11 +776,8 @@ export interface ReassignFigureResult {
 }
 
 /**
- * Core figure-reassignment mutation behind the `reassign_figure` DomainTool
- * (design note §4.6).
- *
- * The agent tool enforces the draft-status guard with `enforceDraft: true` and
- * maps the discriminated result to soft `skipped:*` Output.
+ * Figure reassignment behind the `reassign_figure` tool. The tool enables the draft
+ * guard and maps skipped results to its Output.
  */
 export async function reassignFigure(
   db: Db,
@@ -791,10 +799,8 @@ export async function reassignFigure(
       return { status: 'skipped:target_not_found' };
     }
 
-    // SINGLE clock (YUK-471 W3-D §3): one `now` stamps the figure's last_reassigned_at, the row's
-    // updated_at, AND the canonical lifecycle event's created_at — so the carried figures array (which
-    // embeds last_reassigned_at) matches between row and event, and the fold's updated_at = the event
-    // time equals the row's updated_at (byte-exact parity).
+    // One clock stamps the figure, the row, and the event, so the figures array and
+    // updated_at match byte-for-byte in the fold.
     const now = new Date();
     const updatedFigures: FigureRefT[] = figures.map((f, i) =>
       i === idx
@@ -821,9 +827,8 @@ export async function reassignFigure(
       payload: { asset_id: params.assetId, attached_to_index: params.attachedToIndex },
     });
 
-    // YUK-471 W3-D — make the figure re-point fold-visible: ONE canonical lifecycle event carries the
-    // FULL re-pointed figures array + bumped version (additive double-write; `writeJobEvent` above is
-    // the orthogonal SSE transport, left untouched). subject_id = the block (the SoT anchor).
+    // Canonical lifecycle event carries the full figures array and bumped version so the
+    // re-point is fold-visible; the job event above remains the SSE transport.
     await writeQuestionBlockLifecycleEvent(tx, {
       blockId: params.blockId,
       op: 'reassign_figures',

@@ -14,15 +14,13 @@ export const CopilotChatHeadersSchema = z.object({
   'Idempotency-Key': z.string().min(1).max(200),
 });
 
-// YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
-// (no_checkpoint) / 409 (truncated / irreversible / legacy_snapshot / conflict). Declared as
-// its own schema so the manifest can map it onto those statuses instead of the bare
-// {error,message} the API_ERROR_RESPONSES spread implied for a body that is NOT an API error.
+// The cascade-revert refusal envelope emitted at 404 (no_checkpoint) / 409
+// (truncated / irreversible / legacy_snapshot / conflict). It is not an API
+// error body, so it gets its own schema.
 export const CopilotCheckpointRevertRefusalSchema = z.object({
   ok: z.literal(false),
   refusal: z.enum(['truncated', 'no_checkpoint', 'irreversible', 'legacy_snapshot', 'conflict']),
   reason: z.string(),
-  // snake_case wire fields (this envelope is new in YUK-497 — align to house style now).
   irreversible_event_ids: z.array(z.string()).optional(),
   ref: z.object({ kind: z.literal('theta'), kc_id: z.string() }).optional(),
   conflict_ref: z
@@ -34,7 +32,7 @@ export const CopilotCheckpointRevertRefusalSchema = z.object({
     .optional(),
 });
 
-// TchmV — the revert handler builds its refusal body against THIS shape (not a loose
+// The revert handler builds its refusal body against THIS shape (not a loose
 // Record<string, unknown>) so a wire-field typo or shape drift fails to compile.
 export type CopilotCheckpointRevertRefusalT = z.infer<typeof CopilotCheckpointRevertRefusalSchema>;
 
@@ -46,13 +44,10 @@ export const CopilotCheckpointRevertErrorSchema = z.union([
   CopilotCheckpointRevertRefusalSchema,
 ]);
 
-// Success-only body for the 200 response. The handler NEVER returns an ok:false refusal at 200 —
-// refusals are 404 (no_checkpoint) or 409 (all others) via CopilotCheckpointRevertErrorSchema — so
-// the 200 schema must not advertise a refusal shape to OpenAPI consumers (YUK-497 wave-2).
-// E3 (TeA-6) — discriminated on `status` so the shape is structurally exact: a fresh 'reverted'
-// REQUIRES the `reverted` counters; an idempotent 'already_reverted' has NO counters (nothing was
-// compensated this call). The old flat `reverted?.optional()` let a 'reverted' body omit the counters
-// and an 'already_reverted' body carry them — both nonsense the handler never emits.
+// Success-only body for the 200 response. The handler NEVER returns an ok:false refusal at 200,
+// so the 200 schema must not advertise a refusal shape to OpenAPI consumers. Discriminated on
+// `status` so the shape is structurally exact: a fresh 'reverted' REQUIRES the counters, while
+// an idempotent 'already_reverted' has none (nothing was compensated this call).
 const CopilotRevertCountersSchema = z.object({
   snapshots_restored: z.number().int().nonnegative(),
   structural_rows_archived: z.number().int().nonnegative(),

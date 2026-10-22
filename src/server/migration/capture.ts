@@ -293,6 +293,9 @@ async function readRawFacts(tx: Tx): Promise<MigrationCapture['rawFacts']> {
       b_calib: item_calibration.b_calib,
       calibration_n: item_calibration.calibration_n,
       calibration_weight: item_calibration.calibration_weight,
+      b_post: item_calibration.b_post,
+      posterior_variance: item_calibration.posterior_variance,
+      calibration_source: item_calibration.calibration_source,
     })
     .from(item_calibration)
     .orderBy(item_calibration.id);
@@ -303,6 +306,9 @@ async function readRawFacts(tx: Tx): Promise<MigrationCapture['rawFacts']> {
     b_anchor: r.b_anchor ?? null,
     b_calib: r.b_calib ?? null,
     calibration_weight: r.calibration_weight ?? null,
+    b_post: r.b_post ?? null,
+    posterior_variance: r.posterior_variance ?? null,
+    calibration_source: r.calibration_source ?? null,
   }));
 
   const familyRows = await tx

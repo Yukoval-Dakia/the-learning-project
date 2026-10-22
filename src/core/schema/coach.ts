@@ -1,11 +1,15 @@
-// Wave 5 / T-D6 — Global Coach Orchestrator (Phase 3) result schema.
+// Global Coach Orchestrator result schema.
 //
-// `CoachTask` produces a `TodayPlan` JSON object that the `coach_daily` and
-// `coach_weekly` pg-boss handlers translate into proposal-only mutations via
-// the COACH allowlist surface. The shape is shared with the `/today` drawer
-// summary endpoint so Coach output renders directly in the first-paint slot.
+// `CoachTask` produces a `CoachPlanDraft` (prose + proposals + attention tags).
+// `coach_daily` composes the `TodayPlan` persisted in the `coach_scan` event:
+// count / minutes / time box / subject mix come from the due queue + daily
+// budget, never from the model. The shape is shared with the
+// `/today` drawer summary endpoint so Coach output renders directly in the
+// first-paint slot.
 
 import { z } from 'zod';
+import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
+import type { ReviewPlanNumbers } from '@/core/daily-review-plan';
 
 export const PlanAdjustmentKind = z.enum(['defer', 'split', 'relearn', 'archive']);
 export type PlanAdjustmentKindT = z.infer<typeof PlanAdjustmentKind>;
@@ -17,17 +21,18 @@ export const PlanAdjustment = z.object({
 });
 export type PlanAdjustmentT = z.infer<typeof PlanAdjustment>;
 
-// YUK-203 U4 / D5 — strategic review brief. Coach grows the flat
-// {count, estimated_minutes} proposal into the single attention prior handed
-// down to ReviewPlanTask (CO §6:621-622, no new artifact type). ALL new fields
-// are optional/defaulted so plans emitted before U4 (and re-parsed by
-// parseCoachOutputSafely) still parse unchanged. `count` / `estimated_minutes`
-// stay required as today.
+// Strategic review brief: the single attention prior handed down to
+// ReviewPlanTask (CO §6:621-622, no new artifact type). The brief fields are
+// optional/defaulted so plans emitted before they existed (and re-parsed by
+// parseTodayPlan) still parse unchanged.
+//
+// `count` / `estimated_minutes` / `time_box_minutes` / `subject_mix`
+// are written by `composeTodayPlan` from the due queue + daily budget, never by
+// the model. The model-facing shape is `CoachPlanDraft` below.
 //
 //   - knowledge_focus  — ranked knowledge_ids to prioritise (from due/weak +
-//     active-item attention pressure, D11①). Empty = no prior; ReviewPlanTask
-//     degrades to pure due-pressure.
-//   - subject_mix      — relative attention weight per subject for the session.
+//     active-item attention pressure). Empty = no prior.
+//   - subject_mix      — planned question count per subject for the session.
 //   - time_box_minutes — soft cap on the session length the plan should target.
 //   - intent_tags      — free-form session intent labels (e.g. 'weak_recovery',
 //     'goal_push') the planner can honour.
@@ -43,6 +48,13 @@ export const ReviewSessionProposal = z.object({
 });
 export type ReviewSessionProposalT = z.infer<typeof ReviewSessionProposal>;
 
+/** Model-owned half of the review brief: attention tags only, no arithmetic. */
+export const CoachReviewBriefDraft = z.object({
+  knowledge_focus: z.array(z.string().min(1)).default([]),
+  intent_tags: z.array(z.string().min(1)).default([]),
+});
+export type CoachReviewBriefDraftT = z.infer<typeof CoachReviewBriefDraft>;
+
 export const AtMostOneNewItem = z.object({
   learning_item_id: z.string().min(1),
   title: z.string().min(1),
@@ -55,7 +67,7 @@ export const MaintenanceProposal = z.object({
 });
 export type MaintenanceProposalT = z.infer<typeof MaintenanceProposal>;
 
-// YUK-143 / ADR-0025 — North-Star goal strand. One item = "today's goal-oriented
+// ADR-0025 — North-Star goal strand. One item = "today's goal-oriented
 // action toward goal X, touching these knowledge nodes". This strand is PURELY
 // ADDITIVE to the plan (ND-5): it never suppresses FSRS-due reviews or other
 // capture tasks, never preempts daily quota, never changes due times. It only
@@ -66,7 +78,7 @@ export type MaintenanceProposalT = z.infer<typeof MaintenanceProposal>;
 export const GoalStrandItem = z.object({
   // which active goal this action serves (← direction-sense provenance tag).
   serves_goal_id: z.string().min(1),
-  // knowledge nodes this action touches (closes the no-knowledge_ids gap).
+  // knowledge nodes this action touches.
   knowledge_ids: z.array(z.string().min(1)).default([]),
   // one-line description of the goal-oriented action for the day.
   focus: z.string().min(1).max(280),
@@ -83,7 +95,7 @@ export const TodayPlan = z.object({
   weekly_reflection: z.string().min(1).max(1200).optional(),
   plan_adjustments: z.array(PlanAdjustment).max(8),
   maintenance_proposals: z.array(MaintenanceProposal).max(8),
-  // YUK-143 / ADR-0025 — active goals this plan addresses + the goal-oriented
+  // ADR-0025 — active goals this plan addresses + the goal-oriented
   // strand. Both optional + default-empty so plans produced before North-Star
   // (or by a model that emits no goal strand) parse unchanged. ND-5: these are
   // additive direction tags only — the review backbone above is untouched.
@@ -92,8 +104,37 @@ export const TodayPlan = z.object({
 });
 export type TodayPlanT = z.infer<typeof TodayPlan>;
 
+/**
+ * The model's TodayPlan contribution: prose, attention tags, and
+ * proposals. The review arithmetic stays out of this shape so a model-emitted
+ * count can never be mistaken for plan truth.
+ */
+export const CoachPlanDraft = TodayPlan.omit({ review_session_proposal: true }).extend({
+  review_session_proposal: CoachReviewBriefDraft.default({
+    knowledge_focus: [],
+    intent_tags: [],
+  }),
+});
+export type CoachPlanDraftT = z.infer<typeof CoachPlanDraft>;
+
 export const COACH_MAX_PLAN_ADJUSTMENTS = 8;
 export const COACH_MAX_MAINTENANCE_PROPOSALS = 8;
+
+/** Attach the code-computed review numbers to the model's draft. */
+export function composeTodayPlan(draft: CoachPlanDraftT, numbers: ReviewPlanNumbers): TodayPlanT {
+  return TodayPlan.parse({
+    ...draft,
+    // The model's prose must not restate plan arithmetic.
+    daily_focus: guardDailyFocusClaims(draft.daily_focus),
+    review_session_proposal: {
+      ...draft.review_session_proposal,
+      count: numbers.count,
+      estimated_minutes: numbers.estimated_minutes,
+      subject_mix: numbers.subject_mix,
+      time_box_minutes: numbers.time_box_minutes,
+    },
+  });
+}
 
 /**
  * Parse a `TodayPlan` JSON value. Returns the parsed plan on success or

@@ -6,8 +6,7 @@ export {
   ColdStartBridgeError,
   runColdStartBridge,
 } from './server/cold-start-bridge';
-// YUK-1007 — ingestion 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
-// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+// Ingestion-owned config keys expose consumer-effective facts to the admin config seam.
 export { ingestionConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   ImageCandidateAcceptDeps,
@@ -20,15 +19,8 @@ export type {
 export type { MistakeListQuery } from './server/mistakes-read';
 export { readMistakes } from './server/mistakes-read';
 export type { SourceAssetRow } from './server/persist-image-asset';
-export {
-  lockImageStorageKey,
-  persistImageAsset,
-  sha256Hex,
-} from './server/persist-image-asset';
-// YUK-1408 — the docx TEXT-line session owner (src/server/session/
-// docx-ingestion.ts) writes the same usage receipt the OCR job writes; export
-// the writer + its field vocabulary through the public port so no server
-// module deep-imports capability internals.
+// The DOCX text-line session owner writes the same usage receipt as the OCR job;
+// exporting the writer and vocabulary avoids deep imports of capability internals.
 export type {
   IngestionRedactionField,
   IngestionUsageReceipt,
@@ -41,11 +33,11 @@ export {
   knowledgeContext,
 } from './server/tools/record-tool-support';
 
-// YUK-885 — public port repointed from a central deep import.
+// Public port, replacing a central deep import.
 export {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from './server/workflow-judge-config';
 
-// YUK-1062 — task composition uses the narrow task-public entry directly.
+// Task composition uses the narrow task-public entry directly.
 export { ingestionTaskSpecs } from './task-public';

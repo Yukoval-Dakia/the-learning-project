@@ -1,40 +1,15 @@
 /**
- * audit:structured-judge — YUK-591 §7 enforcement (owner-locked 2026-07-23).
+ * audit:structured-judge — judge tasks must declare a structured-output contract.
  *
- * Every JUDGE TASK in the AI task registry (`src/ai/registry.ts`) MUST declare a
- * `structuredOutputSchema` — the judge's declared output contract, consumed at
- * the call site by the `structured_output`-or-text-parse dispatch — OR be listed in
- * `scripts/audit-structured-judge-allowlist.json` with a `reason` +
- * `resolves_when{kind,ref,expected_by}` (same allowlist shape as
- * audit:fold-writes / audit:schema).
+ * Every judge task in the AI task registry must declare a `structuredOutputSchema`, consumed at
+ * the call site by the structured-output-or-text-parse dispatch, or carry an allowlist entry with
+ * a reason and resolves_when. Free-text JSON fishing turns malformed output into silent
+ * `unsupported` waste; this audit stops a new judge task from regressing to it without a dated
+ * waiver.
  *
- * ── WHY ──────────────────────────────────────────────────────────────────────
- * The two vision judges (StepsJudgeTask / MultimodalDirectJudgeTask) used to fish
- * a JSON object out of free-text model output (`extractJsonObject` →
- * `Schema.parse`); malformed output became silent `unsupported` waste. YUK-591
- * gave them a declared `structuredOutputSchema` consumed by the call site's
- * three-state dispatch (structured_output present → parse it; absent →
- * char-scan text parse — see multimodal-direct-judge.ts). Post-YUK-1025 the
- * wire-level `outputFormat` option is gone with the SDK; the schema remains the
- * judge's declared contract. This audit is the machine-checkable guard that a
- * NEW judge task cannot regress to free-text JSON-fishing without an explicit,
- * dated waiver.
- *
- * ── JUDGE-TASK DETECTION (documented limitation) ─────────────────────────────
- * The judge-task set = registry kinds ending in `JudgeTask`. All three of today's
- * LLM judge tasks (SemanticJudgeTask / StepsJudgeTask / MultimodalDirectJudgeTask)
- * follow this convention. A future judge task that does NOT end in `JudgeTask`
- * would escape the sweep — the self-test pins the current set so a rename that
- * drops the suffix (or a new judge task under a different name) surfaces in review.
- *
- * ── HARD GATE ────────────────────────────────────────────────────────────────
- * Unlike the report-only siblings (audit:fold-writes / audit:relations), this runs
- * in the `pnpm test` chain and exits non-zero on ANY violation, stale allowlist,
- * or redundant allowlist entry. §7 is an automated CI audit, not docs.
- *
- * 用法:
- *   pnpm audit:structured-judge          # human report; exit 1 on any problem
- *   pnpm audit:structured-judge --json   # JSON output
+ * Judge detection is suffix-based (`*JudgeTask`) plus a small explicit extras list, so a
+ * differently named judge can escape the sweep. This is a hard gate: it runs in the test chain and
+ * fails on any violation, stale allowlist, or redundant entry.
  */
 
 import { readFileSync } from 'node:fs';
@@ -51,11 +26,8 @@ export const JUDGE_TASK_SUFFIX = 'JudgeTask';
 /** Minimal registry shape this audit reads (decoupled from the full TaskDef). */
 export type TaskDefLike = { structuredOutputSchema?: unknown };
 
-// Judge-shaped tasks that do NOT carry the `JudgeTask` suffix. The suffix sweep alone
-// misses them (PR #1042 codex P2: UnitDimensionFallback is the Judge v2 physics fallback
-// parsing free-text model output into a verdict). Keep this list in lockstep with the
-// self-test's pinned kind set — a new judge-shaped kind belongs either on the suffix
-// convention or in here.
+// Judge-shaped tasks without the suffix. Keep this in lockstep with the self-test's pinned kind
+// set; a new judge-shaped kind belongs here or on the suffix convention.
 export const EXTRA_JUDGE_KINDS: ReadonlySet<string> = new Set(['UnitDimensionFallback']);
 
 export type JudgeTaskDecl = {
@@ -65,17 +37,15 @@ export type JudgeTaskDecl = {
 };
 
 /**
- * Collect the judge tasks from a registry-like map: kinds ending in `JudgeTask`,
- * each flagged for whether it declares a structured-output schema. Pure + sorted
- * for a stable report. Exported for the self-test.
+ * Collect judge tasks from a registry-like map and flag whether each declares a structured-output
+ * schema. Pure and sorted for a stable report.
  */
 export function collectJudgeTasks(taskDefs: Record<string, TaskDefLike>): JudgeTaskDecl[] {
   return Object.entries(taskDefs)
     .filter(([kind]) => kind.endsWith(JUDGE_TASK_SUFFIX) || EXTRA_JUDGE_KINDS.has(kind))
     .map(([kind, def]) => ({
       kind,
-      // Only a real schema counts: a Zod-like object exposing safeParse. Guards against
-      // structuredOutputSchema: null/false/'' accidentally reading as compliant (PR #1042 OCR).
+      // Only a real Zod-like schema counts. Guards against null/false/'' reading as compliant.
       hasStructuredOutput:
         typeof (def.structuredOutputSchema as { safeParse?: unknown } | undefined)?.safeParse ===
         'function',
@@ -83,7 +53,7 @@ export function collectJudgeTasks(taskDefs: Record<string, TaskDefLike>): JudgeT
     .sort((a, b) => a.kind.localeCompare(b.kind));
 }
 
-// ── allowlist contract (mirrors audit:fold-writes / audit:schema resolves_when) ──
+// ── allowlist contract (same resolves_when shape as audit:fold-writes / audit:schema) ──
 
 export type ResolvesWhen = { kind: 'pr' | 'phase' | 'manual'; ref: string; expected_by: string };
 export type AllowlistEntry = { reason: string; resolves_when: ResolvesWhen };
@@ -135,24 +105,22 @@ export function validateAllowlistEntry(
 
 export type StructuredJudgeAuditResult = {
   judgeTasks: JudgeTaskDecl[];
-  /** judge tasks with NO structuredOutputSchema and NOT allowlisted. */
+  /** judge tasks with no structuredOutputSchema and not allowlisted. */
   violations: string[];
-  /** judge tasks with NO structuredOutputSchema but explicitly allowlisted. */
+  /** judge tasks with no structuredOutputSchema but explicitly allowlisted. */
   allowlisted: string[];
   allowlistProblems: AllowlistProblem[];
   /**
-   * allowlist keys that do not correspond to a missing-schema judge task — either
-   * not a judge task at all, or a judge task that already declares a schema. Dead
-   * config → drift (matches the audit:fold-writes redundant-allowlist reverse-check).
+   * Allowlist keys that do not match a missing-schema judge task: dead config, same drift check
+   * as audit:fold-writes.
    */
   redundantAllowlist: string[];
   ok: boolean;
 };
 
 /**
- * Core audit. Pure, exported for the self-test. A judge task is COMPLIANT iff it
- * declares a schema; otherwise it must be allowlisted (with a valid entry). An
- * allowlist key that matches no missing-schema judge task is dead config.
+ * A judge task is compliant iff it declares a schema; otherwise it must carry a valid allowlist
+ * entry. Pure.
  */
 export function computeStructuredJudgeAudit(
   judgeTasks: JudgeTaskDecl[],
@@ -277,8 +245,7 @@ function main(): void {
   if (!result.ok) process.exit(1);
 }
 
-// CLI-gate (mirrors audit-fold-writes.ts): only run + exit when invoked as a CLI so
-// the self-test can import the pure functions without the top-level audit firing.
+// CLI-gate: only run when invoked directly, so importing the pure functions has no side effects.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

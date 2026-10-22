@@ -3,7 +3,19 @@ import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
+import { readStartIssuanceState } from './start/issuance-state-reader';
+import { readStartJudgeRunStatus } from './start/judge-status-reader';
 import { readStartMistakes } from './start/mistakes-reader';
+import { readStartPapers } from './start/papers-list-reader';
+import { releaseStartHeldPlacement } from './start/placement-held-release-operation';
+import { selectStartPlacementQuestion } from './start/placement-next-operation';
+import { transitionStartPlacementSession } from './start/placement-session-operation';
+import { readStartPlacementSession } from './start/placement-session-reader';
+import { submitStartPlacementAnswer } from './start/placement-submit-operation';
+import { readStartPlacementProfile } from './start/profile-reader';
+import { saveStartResponseDraft } from './start/response-draft-operation';
+import { createStartSubject } from './start/subject-create-operation';
+import { readStartSubjects } from './start/subject-reader';
 
 export function buildLegacySpa(root: string): Hono {
   const spa = new Hono();
@@ -43,6 +55,18 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readMistakes: readStartMistakes,
+    readPapers: readStartPapers,
+    readIssuanceState: readStartIssuanceState,
+    readJudgeRunStatus: readStartJudgeRunStatus,
+    saveResponseDraft: saveStartResponseDraft,
+    readPlacementSession: readStartPlacementSession,
+    selectNextPlacementQuestion: selectStartPlacementQuestion,
+    releaseHeldPlacement: releaseStartHeldPlacement,
+    transitionPlacementSession: transitionStartPlacementSession,
+    readPlacementProfile: readStartPlacementProfile,
+    readSubjects: readStartSubjects,
+    submitPlacementAnswer: submitStartPlacementAnswer,
+    createSubject: createStartSubject,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };

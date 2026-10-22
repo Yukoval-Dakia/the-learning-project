@@ -1,5 +1,7 @@
 # Backup and restore runbook
 
+> 现行 compose 服务、发布顺序与访问约束见 [operations.md](./operations.md)；本文件只保留备份与恢复契约。
+
 This runbook covers two different recovery layers in the current self-hosted stack:
 
 - The application archive API (`GET /api/_/export` and `POST /api/_/import`) exports the

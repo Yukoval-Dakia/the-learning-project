@@ -1,19 +1,11 @@
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 
-// DUAL-ENGINE (YUK-253): GLM-OCR is the default extraction engine; this
-// Tencent error model is RETAINED PERMANENTLY as the `EXTRACT_OCR_ENGINE='tencent'`
-// switchable engine — owner decision 2026-06-07: 腾讯支持长期保留，不删。
-// No removal planned. Dual engines also enable same-page A/B quality
-// comparison and per-scenario switching (规范试卷场景可切回腾讯切题/解析).
+// Tencent error classification, retained with the selectable tencent engine.
 
 /**
- * Tencent Cloud SDK 异常分类 —— 决定 pg-boss 是否 retry。
- *
- * 见 Sub 0c spec § 1.6 + plan Step 6.3。错误码源自 Tencent OCR API 公开文档：
- *   https://cloud.tencent.com/document/api/866/35225#6.-.E9.94.99.E8.AF.AF.E7.A0.81
- *
- * Retryable: 临时性失败（限速 / 服务侧暂时不可用 / 网络抖动）
- * Permanent: 配置 / 数据问题（参数非法 / 认证错 / 账号欠费），重试也不会改观
+ * Maps Tencent OCR SDK errors to retry decisions. Transient failures (rate limits,
+ * temporary outages, network) retry; configuration or data errors (bad params,
+ * auth, arrears) are permanent.
  */
 export type TencentSdkException = {
   code?: string;

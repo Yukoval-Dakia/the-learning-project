@@ -1,19 +1,14 @@
-// Phase 1d — pg-boss handler for SessionSummaryTask.
+// pg-boss handler for SessionSummaryTask.
 //
-// Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end` alias
-// transitions to completed. Picks the job up async so the LLM call doesn't
+// Enqueued by canonical `PATCH /api/review-sessions/[id]` and its legacy `/end`
+// alias when the transition reaches completed. Runs async so the LLM call doesn't
 // block the close request (and survives the page being closed mid-flight).
-//
-// YUK-870 (F3.5b) — moved from src/server/boss/handlers/session_summary.ts into
-// the practice capability; the manifest jobs entry now owns the registration
-// (LLM tier queue + 2s/1 worker options, equivalence with the retired central
-// line). Implementation unchanged.
 
 import type { Job } from 'pg-boss';
 
+import { type RunTaskFn, runSessionSummary } from '@/capabilities/practice/server/session-summary';
+import { makePracticeTaskTextRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
-import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { type RunTaskFn, runSessionSummary } from '@/server/session/summary';
 
 export interface SessionSummaryJobData {
   session_id: string;
@@ -27,7 +22,7 @@ export function buildSessionSummaryHandler(
   db: Db,
   deps: DepsOverride = {},
 ): (jobs: Job<SessionSummaryJobData>[]) => Promise<void> {
-  const runTaskFn = deps.runTaskFn ?? makeRunTaskTextFn(db);
+  const runTaskFn = deps.runTaskFn ?? makePracticeTaskTextRunFn(db);
   return async (jobs) => {
     for (const job of jobs) {
       const sessionId = job.data?.session_id;

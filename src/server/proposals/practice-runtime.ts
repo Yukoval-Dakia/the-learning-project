@@ -1,8 +1,6 @@
 /**
- * Stable proposal-service surface for the practice capability.
- *
- * It keeps inbox storage, decision locking and signal bookkeeping private to
- * the proposal service while exposing the product operations practice owns.
+ * Stable proposal-service surface for the practice capability: the operations
+ * practice owns, without exposing the proposal module's internals.
  */
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';

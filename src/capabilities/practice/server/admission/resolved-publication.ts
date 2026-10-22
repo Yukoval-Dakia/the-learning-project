@@ -1,34 +1,30 @@
-// YUK-1547 — publish the PAID resolved contract, never the frozen base input.
-//
+// publish the PAID resolved contract, never the frozen base input.
 // The admission job froze the pre-solve contract as batch input and then
 // published THAT document on an admitted verdict — dropping the paid
 // dual-solve/calibration `resolved` contract (typed select_key/set_compare
 // criteria, deterministic executors). 'admitted' lifecycle landed on a still
 // human_review revision, so the serving gate refused to issue.
-//
 // This module is the single seam that turns an applied admission receipt into
 // a publish input, shared by the job application path and the free repair lane
 // (same evidence, same contract rules — repair only adds provenance):
-//
-//   paid_effect identity → receipt (canonicalHash) → resolved contract
-//     (receipt-declared digest recorded verbatim) → canonical published seal
-//     (question_revision.integrity_digest / verification.revision_digest)
-//
+// paid_effect identity → receipt (canonicalHash) → resolved contract
+// (receipt-declared digest recorded verbatim) → canonical published seal
+// (question_revision.integrity_digest / verification.revision_digest)
 // Presentation: `resolved` carries no display layer of its own. Order:
-//   1. resolved's own presentation — verbatim, validated against the RESOLVED
-//      layers (a bad explicit layout blocks, never silently replaced);
-//   2. the frozen input's presentation — carried verbatim, same validation;
-//   3. only when NEITHER exists, `defaultPresentation` — the same deterministic
-//      constructor the submit path uses — but PRE-GATED to this lane's
-//      approved shapes only: answerable slots must be blank or plain select
-//      (no coordinates / gap_after_codepoint). matching_columns / ordering /
-//      break_tap / custom shapes the constructor could express are explicitly
-//      out of scope and block with the offending slot named. A serving gate
-//      refuses published select/blank slots with no input block as
-//      no_input_renderer — a contract it cannot render is not a lawful
-//      admitted publication.
-//   Documents whose slot set never needs an input block (no select/blank)
-//   keep 'none' — the pre-fix behavior for natively-rendered kinds.
+// 1. resolved's own presentation — verbatim, validated against the RESOLVED
+// layers (a bad explicit layout blocks, never silently replaced);
+// 2. the frozen input's presentation — carried verbatim, same validation;
+// 3. only when NEITHER exists, `defaultPresentation` — the same deterministic
+// constructor the submit path uses — but PRE-GATED to this lane's
+// approved shapes only: answerable slots must be blank or plain select
+// (no coordinates / gap_after_codepoint). matching_columns / ordering /
+// break_tap / custom shapes the constructor could express are explicitly
+// out of scope and block with the offending slot named. A serving gate
+// refuses published select/blank slots with no input block as
+// no_input_renderer — a contract it cannot render is not a lawful
+// admitted publication.
+// Documents whose slot set never needs an input block (no select/blank)
+// keep 'none' — the pre-fix behavior for natively-rendered kinds.
 // The composition is re-sealed canonically — the published digest always
 // covers the presentation that ships.
 
@@ -78,7 +74,7 @@ export interface PaidReceiptBinding {
   /** Receipt-declared resolved digest (recorded verbatim; key-order fragile). */
   resolved_contract_digest?: string;
   /** Canonical seal over the actually-published layers — equals the stored
-   *  revision integrity_digest. Distinct from the declared resolved digest. */
+   * revision integrity_digest. Distinct from the declared resolved digest. */
   published_contract_digest?: string;
   presentation_source?: 'resolved' | 'carried_from_base' | 'deterministic_default' | 'none';
 }

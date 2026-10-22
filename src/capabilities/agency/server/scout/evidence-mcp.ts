@@ -1,22 +1,17 @@
-// YUK-572 / YUK-560 §2 — shared read-only evidence MCP factory (shared scout primitive).
+// Shared read-only evidence tool factory.
 //
-// A hand-rolled in-process pi tool collection wired under the 'research_evidence'
-// server name (NOT the DomainTool registry — reusing it would leak copilot's
-// propose face to the read agents, violating the minimal tool surface). Registers
-// the 6 read-only evidence tools (scout spec §2) + a get_traces YUK-562
-// placeholder + report_findings (the scout's single-writer capture seam). Both
-// the director and the scout SHARE this server (the read face); which tools each
-// can call is decided by their own allowlist.
+// A bespoke in-process pi tool collection under the 'research_evidence' server name
+// (NOT the DomainTool registry, which would leak copilot's propose face to read agents).
+// Registers the 6 read-only evidence tools + a get_traces placeholder + report_findings
+// (the scout's single-writer capture seam). Director and scout share this server; each
+// allowlists its own subset.
 //
-// Three cross-cutting disciplines every read tool applies:
-//   1. Hard-coded row/char UPPER BOUNDS so one tool can't blow up the agent context.
-//   2. <untrusted_learner_text> delimiting on learner-authored free text (injection
-//      backstop — the text is DATA, never instruction).
-//   3. Ordered in-memory toolTrace (readToolTrace()) so the investigation path is
-//      recoverable (evidence-first). The tool_call_log persistence — which needs the
-//      run's task_run_id, minted INSIDE runTask and unavailable at handler time — is
-//      done by the orchestration layer after the run via persistToolTrace(); a
-//      per-handler write can't correlate to the ai_task_runs row (scout spec §2 (b)).
+// Cross-cutting disciplines:
+//   1. Hard row/char upper bounds so one tool can't blow up the agent context.
+//   2. <untrusted_learner_text> delimiting on learner-authored free text (it is DATA,
+//      never instruction).
+//   3. Ordered in-memory trace persisted by the orchestration layer after the run,
+//      because the task_run_id is minted inside runTask and unavailable to handlers.
 
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
@@ -26,7 +21,7 @@ import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import { notesForKnowledge } from '@/kernel/read-models/notes-read';
-import { writeToolCallLog } from '@/server/ai/log';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { piCustomTool } from '@/server/ai/tools/pi-tools';
 import { getEffectiveProbeResultStatuses } from '../../public';
 import { readAgentNotes } from '../notes';
@@ -45,7 +40,7 @@ import {
   wrapUntrustedLearnerText,
 } from './untrusted-text';
 
-// Hard-coded per-tool upper bounds (scout spec §2). Exported for the db test pins.
+// Hard-coded per-tool upper bounds. Exported for the db test pins.
 export const EVIDENCE_LIMITS = {
   /** answer_md / user_notes char cap in get_attempt_details. */
   attemptTextChars: UNTRUSTED_TEXT_CHAR_CAP,
@@ -53,26 +48,20 @@ export const EVIDENCE_LIMITS = {
   questionTextChars: UNTRUSTED_TEXT_CHAR_CAP,
   /** get_probe_history row cap (newest-first). */
   probeHistoryRows: 20,
-  /** get_typed_state row cap. */
   typedStateRows: 5,
-  /** get_notes summary cap. */
   noteSummaries: 10,
-  /** get_agent_notes row cap. */
   agentNotes: 20,
-  /** char cap per agent-note summary_md — LLM-generated, can be arbitrarily long
-   *  (OCR PR #713: every other tool truncates its free text; same discipline). */
+  /** char cap per agent-note summary_md — LLM-generated, can be arbitrarily long. */
   agentNoteSummaryChars: 800,
 } as const;
 
-// get_probe_history event actions. The two actions are KEYED DIFFERENTLY (review F1):
+// get_probe_history event actions are KEYED DIFFERENTLY:
 //   - `experimental:prediction_score` carries payload.knowledge_id directly;
-//   - `experimental:probe_result` does NOT — its payload is {conjecture_event_id,
-//     outcome, resolution, retrievability_at_judge, answer_md} keyed by
-//     subject_id = the probe QUESTION id (probe-lifecycle.ts writer). It resolves to
-//     a KC via question.knowledge_ids jsonb containment. A payload-knowledge_id
-//     filter alone returns ZERO probe_result rows — hiding the learner's raw probe
-//     answer_md (the scout's most valuable first-hand evidence) for the entire
-//     pre-reconcile window.
+//   - `experimental:probe_result` carries no knowledge_id — its payload is
+//     {conjecture_event_id, outcome, resolution, retrievability_at_judge, answer_md}
+//     keyed by subject_id = the probe QUESTION id. It resolves to a KC via
+//     question.knowledge_ids jsonb containment. A payload-knowledge_id filter alone
+//     returns ZERO probe_result rows, hiding the learner's raw answer_md.
 const PREDICTION_SCORE_ACTION = 'experimental:prediction_score';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
 const PROBE_HISTORY_SCAN_CEILING = EVIDENCE_LIMITS.probeHistoryRows * 10;
@@ -91,7 +80,7 @@ function correctionTargetId(row: ProbeHistoryRow): string | null {
   return typeof probeResultEventId === 'string' ? probeResultEventId : null;
 }
 
-/** The knowledge-channel these agent-notes are addressed to (spec §1). */
+/** The knowledge-channel these agent-notes are addressed to. */
 const AGENT_NOTES_CHANNEL = 'research_meeting' as const;
 
 export interface ToolTraceEntry {
@@ -107,7 +96,7 @@ export interface BuildEvidenceServerOpts {
   /**
    * source_task_kind of the CURRENT lane's own agent_notes — excluded from
    * get_agent_notes so the agent never reads its own prior notes as fresh evidence
-   * (self-reinforcement guard, §7).
+   * (self-reinforcement guard).
    */
   selfSourceKind: string;
   /** report_findings single-writer capture (scout fills; orchestration reads). */
@@ -115,7 +104,7 @@ export interface BuildEvidenceServerOpts {
 }
 
 export interface EvidenceServer {
-  /** Pi AgentTools mounted via a `custom` PiToolMount (post-P4 surface). */
+  /** Pi AgentTools mounted via a `custom` PiToolMount. */
   tools: AgentTool[];
   /** Ordered, in-memory investigation trace (append-order = call order). */
   readToolTrace(): ToolTraceEntry[];
@@ -133,10 +122,10 @@ const tool = (
   handler: (args: Record<string, unknown>) => Promise<ReturnType<typeof textResult>>,
 ): AgentTool => piCustomTool(EVIDENCE_SERVER_NAME, name, description, schema, handler);
 
-// probe_result payloads carry both learner free text and a conjecture-survival
-// resolution. Delimit the answer as before, and add an explicit evidence-strength
-// label so a downstream model cannot mistake `evidence_for` (one observation) for
-// recurrence-gated confirmation. Existing persisted resolution is never rewritten.
+// probe_result payloads carry learner free text and a conjecture-survival resolution.
+// Delimit the answer and add an explicit evidence-strength label so a downstream model
+// cannot mistake `evidence_for` (one observation) for recurrence-gated confirmation.
+// Persisted resolution is never rewritten.
 function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown {
   if (action !== PROBE_RESULT_ACTION || payload === null || typeof payload !== 'object') {
     return payload;
@@ -177,8 +166,7 @@ function sanitizeProbeHistoryPayload(action: string, payload: unknown): unknown 
 }
 
 /**
- * Build the shared read-only evidence tool set. Returns the AgentTool list
- * (mounted via a `custom` piToolMounts entry) + a readToolTrace() accessor.
+ * Build the shared read-only evidence tool set plus a readToolTrace() accessor.
  */
 export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServer {
   const { db, now, selfSourceKind, capture } = opts;
@@ -288,11 +276,9 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
       { knowledge_id: z.string() },
       async (args) => {
         const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
-        // probe_result rows are keyed by subject_id = the probe question id, so
-        // resolve them via the KC's question-id set (question.knowledge_ids @>
-        // [knowledgeId] jsonb containment — same predicate pool-fetch /
-        // target-discovery use). Uncorrelated subquery: one round-trip, and both
-        // action branches share ONE ORDER BY + row cap.
+        // probe_result rows are keyed by subject_id = the probe question id, so resolve
+        // them via question.knowledge_ids jsonb containment. Uncorrelated subquery: one
+        // round-trip, and both action branches share ONE ORDER BY + row cap.
         const probeQuestionIds = db
           .select({ id: question.id })
           .from(question)
@@ -355,30 +341,19 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
     ),
     tool(
       getTypedStateName,
-      // Honest tool description (ADR-0050 §(a)/(b1), YUK-790): do NOT promise the director a
-      // classification the system does not yet produce. This string is RUNTIME INPUT to the
-      // research director, so a wrong causal promise lands straight in the model's reasoning.
-      //
-      // TWO INDEPENDENT rails are unwired — do NOT collapse them into one (an earlier version
-      // of this description wrongly put both behind YUK-794):
-      //   - `confused-with-X`: blocked on the INDUCTION side naming a confused-with KC
-      //     (reconcile hardcodes confused_with_kc_id=null; the §修正-4 gate in nextTypedState
-      //     demands a named KC). Pending YUK-794 / ADR-0050 §(a).
-      //   - `mastered`: FLIP-only. Per the kc_typed_state column comment in schema.ts it is
-      //     "reserved for the post-Rust-scorer claim-survival FLIP (ADR-0046) and is NOT
-      //     written in this MVP". YUK-795 owns prediction_score/hard-confirm consumers, not
-      //     this writer. Landing YUK-794 does NOT make `mastered` start appearing.
-      //
-      // Distinguish a missing projection (no row) from the persisted `no-evidence` soft state:
-      // reconcile can write `no-evidence` together with provenance when evidence exists but
-      // does not satisfy a terminal-state gate.
+      // Do NOT promise the director a classification the system does not produce; this
+      // string is runtime input to its reasoning. `confused-with-X` is blocked on
+      // induction naming a confused-with KC; `mastered` is FLIP-only. They are
+      // independent rails, so landing one does not unblock the other. Distinguish a
+      // missing projection (no row) from a persisted `no-evidence` soft state written
+      // with provenance when evidence existed but did not satisfy a terminal-state gate.
       'Read this knowledge point typed classification state and its lifecycle. Read-only projection. NOTE: the only classification value reachable today is `no-evidence`. `confused-with-X` and `mastered` are not currently produced; they depend on two separate pending rails, and landing one does NOT unblock the other. Interpret an empty result as a missing projection, never as evidence that the learner is un-confused or not mastered. A returned `no-evidence` row is different: inspect its evidence_event_ids, last_evidence_at, and lifecycle as provenance showing that evidence was processed but did not satisfy a terminal-state gate.',
       { knowledge_id: z.string() },
       async (args) => {
         const knowledgeId = (args as { knowledge_id: string }).knowledge_id;
         // subject_kind pinned to 'knowledge' (kc_typed_state is keyed on
         // subject_kind × subject_id — a same-id row of another kind must not leak),
-        // and ORDER BY makes the row cap deterministic (review F3).
+        // and ORDER BY makes the row cap deterministic.
         const rows = await db
           .select()
           .from(kc_typed_state)
@@ -428,7 +403,7 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
           notes: notes.map((n) => ({
             id: n.id,
             type: n.type,
-            // Note titles can be learner-authored — same delimit discipline (review F2).
+            // Note titles can be learner-authored — same delimit discipline.
             title: wrapUntrustedLearnerText(n.title),
             knowledge_ids: n.knowledge_ids,
             generation_status: n.generation_status,
@@ -469,9 +444,9 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
         });
       },
     ),
-    // get_traces — YUK-562 placeholder. Registered so the +562 landing only swaps the
-    // handler, never the scout contract. The prompt tells agents not to call it; it is
-    // also absent from the scout allowlist (belt-and-suspenders).
+    // get_traces placeholder. Registered so landing it only swaps the handler, never the
+    // scout contract. The prompt tells agents not to call it; it is also absent from the
+    // scout allowlist (belt-and-suspenders).
     tool(
       GET_TRACES_LOCAL_NAME,
       'NOT YET AVAILABLE — the traces reader lands with YUK-562. Do not call.',
@@ -510,11 +485,9 @@ export function buildEvidenceServer(opts: BuildEvidenceServerOpts): EvidenceServ
 }
 
 /**
- * Persist an evidence toolTrace to tool_call_log (one row per read call, effect
- * 'read', cost 0) — reusing writeToolCallLog (log.ts). Called by the orchestration
- * layer AFTER the run with the real scoutResult.task_run_id, since that id is minted
- * inside runTask and is not available while the tool handlers execute (scout spec §2).
- * Best-effort: a write failure is logged and swallowed (observability, never the run).
+ * Persist an evidence tool trace to tool_call_log (one read-only row per call) after
+ * the run, when the real task_run_id exists. Best-effort: a write failure is logged
+ * and swallowed.
  */
 export async function persistToolTrace(
   db: Db,

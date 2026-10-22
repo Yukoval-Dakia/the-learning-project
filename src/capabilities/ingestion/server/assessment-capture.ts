@@ -27,16 +27,14 @@ import { figuresForQuestion } from './figure_attach';
 
 type Block = typeof question_block.$inferSelect;
 
-// ---------- YUK-1445 (G8) — 逐小问/逐空捕获 ----------
+// Per-unit/per-blank capture from a photographed answer sheet.
 //
-// 拍照/作答卷上的作答按 scoring unit 读入 batch-A 响应信封：select 圈选 →
-// 稳定 item_id；blank 识别文本 → 单槽 text；free → 原始图片证据。读不出的
-// 一律 state:'unknown'（显式 pending，绝不伪零分）。红笔按学习者偏好归类：
-// post_correction 不计入作答（判不出原始作答 → unknown）；learner_work /
-// teacher_mark 照算。旧 flat 路径（wrong_answer_md 单槽回退）保持不变。
+// select resolves stable item ids, blank yields one text slot, free keeps image
+// evidence, and unreadable input is explicitly unknown (never a fake zero). Red ink
+// is classified by learner preference; post-correction never masquerades as an
+// original answer. The flat single-slot fallback is unchanged.
 
-/** 红笔归类（学习者偏好，若声明）；缺省保守按 post_correction —— 订正
- *  内容绝不能冒充原始作答。 */
+/** Red-ink classification; defaults to post_correction, which never counts as an answer. */
 export type RedInkClassification = 'post_correction' | 'learner_work' | 'teacher_mark';
 
 /** 一个 scoring unit（或其主槽）的拍照作答读取结果。 */
@@ -64,11 +62,7 @@ interface CaptureInput {
   canEnroll: boolean;
   pageRefs: string[];
   now: Date;
-  /**
-   * YUK-1408 / R1 P2-3 — session-level document usage resolved once by the
-   * caller (auto-enroll runs this per-block inside a session batch; the
-   * fallback inside enrollCapturedBlock is a per-call lookup).
-   */
+  /** Session-level usage resolved once by the caller; the fallback costs a lookup. */
   docUsage?: DocumentUsage;
   /** G8：逐单元读取结果；缺省 = 旧 flat 路径（wrong_answer_md 单槽）。 */
   unit_captures?: CapturedUnitAnswer[];

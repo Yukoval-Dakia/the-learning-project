@@ -1,45 +1,22 @@
-// YUK-1043 — 统一发布链 · publisher（grounding §3.1/§3.3、§4.3 Interface）。
+// 统一发布 seam：工作副本编辑 → 原子发布。一次事务内写新 question_revision、
+// lifecycle 指针/维度、发布事件 + identity diff；任一步失败整体回滚。
 //
-// 单一 seam：工作副本编辑 → 原子发布。一次事务内完成：
-//   1. 新 question_revision（不可变；唯一键 (group_id, revision_ordinal)）；
-//   2. question_group_lifecycle current pointer + §3.3 维度（availability /
-//      scoring admission + generation / claim policy / suspension / withdrawal）；
-//   3. experimental:assessment_publish 发布事件（ADR-0006 v2 explore 命名空间，
-//      payload 松守；稳定后 promote）+ 跨版本 identity diff（P1-4 映射轨迹）。
-// 任一步失败 ⇒ 整体回滚（db.transaction；传 Tx 时退化为 SAVEPOINT，外层
-// 回滚仍整体丢弃 —— publisher 永不跨事务）。
+// group：单题 = 1-part 组（group_id = question.id）；composite part 的组 = 父 id。
+// legacy question 行是工作副本，publisher 不重写其内容列。
 //
-// group 约定（§3.1「physical question 行保留现有 ID」）：单题 = 1-part 组，
-// group_id = 该 question.id；composite part（parent_question_id 非空）的组 =
-// 父 question.id。legacy `question` 行是工作副本 + 读投影 —— publisher 不重写
-// 其内容列（编辑方已写）；dual existence 直到 cutover（YUK-1059）。
+// CAS 双令牌：expectedCurrentRevision 与 expectedAdmissionGeneration，禁止省略当
+// 无条件覆盖。锁序 question 根 → lifecycle，组快照读在锁后。
 //
-// CAS（复审 P1-1/P1-5）：双令牌 —— expectedCurrentRevision（null-or-id）与
-// expectedAdmissionGeneration（null-or-number，更新既有 lifecycle 的 admission
-// 维度时必须匹配当前 generation）。禁止省略当无条件覆盖；并发发布/编辑用
-// 组根 question 行 + lifecycle 行的 SELECT ... FOR UPDATE 串行化（锁序：
-// question 根 → lifecycle，所有 group 写口一致；publishQuestionGroupFromRow
-// 在任何组快照读【之前】先锁组根 —— 复审 P1-1 的 snapshot-then-lock 竞态）。
+// claim 与 lifecycle 分离：去重 claim 走 legacy canonical_content_hash 部分唯一
+// 索引；lifecycle 只承载政策与挂起/撤回维度。
 //
-// Claim/lifecycle 分离（§3.2）：live 去重 claim = legacy
-// canonical_content_hash 部分唯一索引（archive 置 NULL 释放、restore 原子重取
-// —— 见 archiveGroupLifecycle/restoreGroupLifecycle）；lifecycle 只承载政策与
-// 挂起/撤回维度，不持有去重键 —— 两者独立版本化。
-//
-// Admission（§3.3 / D1；复审 P1-5）：
-//   - admitted 必须带 evidence + decided_at（DB CHECK），且 evidence 自身必须
-//     是【通过的】核验（structural_check_passed=true；independent_verification
-//     若存在必须 passed=true）—— 失败核验不得作为准入证据；
-//   - 内容变更（digest 变化）产生新 scoring basis ⇒ 旧 admission evidence 不
-//     再适用：FromRow 的 preserve 在内容变更时折叠为 withheld（沿用既有
-//     withheld 原因），fresh admission 须由 promote/accept 路径显式给出；
-//   - 维度更新（admission_updated）受 expectedAdmissionGeneration CAS 保护
-//     —— 过期的准入/挂起请求不能覆盖更新的决定。
+// admitted 必须带通过的 evidence；内容变更使旧 evidence 失效（折叠为 withheld）；
+// 维度更新受 generation CAS 保护。
 
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type {
   AdmissionEvidenceT,
@@ -57,9 +34,6 @@ import {
   DECLARED_BLANK_COMPARE_VERSION,
   Presentation,
   declaredBlankGradeReadiness,
-  describeAnswerShape,
-  findAnswerShapeDeclarations,
-  findBlankOrderDeclarations,
   findCustomCodeForbiddenSequence,
   validateExecutionPlan,
   validatePresentation,
@@ -68,6 +42,7 @@ import {
   validateStructure,
 } from '@/core/schema/assessment';
 import {
+  LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
@@ -81,11 +56,11 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveGroupContract } from './assessment-group-contract';
 import {
   type NormalizedContract,
   type PartRow,
   type PublishedContractSeal,
-  normalizeQuestionGroupToContract,
   publishedContractSeal,
   publishedSealAccepts,
 } from './assessment-normalization';
@@ -101,14 +76,13 @@ export type WithheldReason =
 
 export interface PublishAdmission {
   state: 'admitted' | 'withheld';
-  /** admitted 必填（D1 双门证据；核验必须是通过的 —— assertAdmissionShape）。 */
+  /** admitted 必填，且必须是通过的核验。 */
   evidence?: AdmissionEvidenceT | null;
   /** withheld 必填。 */
   reason?: WithheldReason;
 }
 
-/** §3.3 suspension 维度（与 lifecycle CHECK 枚举一致）。verify 挂起
- * 'verify_hold'；retraction_hold 预留（生命周期层不参与本票接线）。 */
+/** suspension 维度；retraction_hold 不由 verify 路径清除。 */
 export type SuspensionReason = 'verify_hold' | 'retraction_hold';
 
 export interface SuspensionUpdate {
@@ -117,16 +91,13 @@ export interface SuspensionUpdate {
   reason?: SuspensionReason;
 }
 
-/** 新式 verify 记录（§3.3「新verify保存 (revision_id,digest,policy,
- * generation)」）—— publisher 在同一发布事务内追加
- * question_admission_verification（append-only）。 */
+/** 发布事务内追加的 append-only 核验记录。 */
 export interface AdmissionVerificationWrite {
-  /** 核验 policy 标识（调用方命名空间，如 'quiz_verify@1'）。 */
+  /** 调用方命名空间的 policy 标识。 */
   policy_id: string;
-  /** passed=核验通过；suspended=挂起（含 needs_review / transient hold）；
-   * failed=失败复核（记录证据，不改变 admission 决定）。 */
+  /** failed 只记录证据，不改变 admission 决定。 */
   outcome: 'passed' | 'suspended' | 'failed';
-  /** 核验摘要证据（verdict/checks 投影），如实记录。 */
+  /** 核验摘要证据。 */
   evidence?: Record<string, unknown>;
 }
 
@@ -138,44 +109,27 @@ export interface PublishQuestionGroupInput {
     response_spec: ResponseSpecT;
     scoring_basis: ScoringBasisT;
     execution_plan: ExecutionPlanT;
-    /**
-     * YUK-1497 — 冻结公开展示层（可选）。含此层时：① 必须过 zod 形状门 +
-     * validatePresentation（与其他契约校验同一道 barrier，不合格即拒发）；
-     * ② 计入 integrity_digest（缺省不计 —— 旧 digest 不变）。
-     */
+    /** 冻结展示层；过同一 barrier 并计入 digest，缺省时旧 digest 不变。 */
     presentation?: PresentationT;
     integrity_digest: string;
   };
   /** REQUIRED null-or-id CAS：null = 期望尚无发布；id = 期望替换的当前版本。 */
   expectedCurrentRevision: string | null;
-  /**
-   * REQUIRED null-or-number CAS（P1-5）：更新【既有】lifecycle 的 admission
-   * 维度（含随新 revision 的 admission 写入）时必须匹配当前 generation；
-   * null = 期望 lifecycle 尚不存在（首版发布）。
-   */
+  /** REQUIRED generation CAS；null = 期望 lifecycle 尚不存在。 */
   expectedAdmissionGeneration: number | null;
   availability: 'general_pool' | 'container_only';
   admission: PublishAdmission;
   actorRef: string;
   claimPolicy?: 'one_time' | 'unbounded';
-  /** YUK-1045 — suspension 维度更新（§3.3 verify 挂起）。缺省 = 不改变当前
-   *  suspension；{suspended:true, reason} 挂起；{suspended:false} 解除 —— 仅
-   *  清除 verify_hold（retraction_hold 不属本票接线，恒被保留，不由 verify
-   *  promote 顺手清空）。suspension 是独立版本化维度：只在维度变化时
-   *  翻 generation+1（与 admission 同事件）。 */
+  /** 缺省不变；解除只清 verify_hold。独立版本化维度，变化时 generation+1。 */
   suspension?: SuspensionUpdate;
-  /** YUK-1045 — 本发布随附的新式 verify 记录（§3.3）。publish/admission_update/
-   *  noop 路径只要有 verify 输入即追加一行（revision_id 取结果 current/新
-   *  revision；digest 取该 revision 的 integrity_digest；generation 取写入后
-   *  admission generation）。conflict/withdrawn 不写（无 revision 提交语义）。 */
+  /** 随发布追加的 verify 记录；conflict/withdrawn 不写。 */
   verification?: AdmissionVerificationWrite;
   /** 发布者 provenance（jsonb published_by；缺省 NULL）。 */
   publishedBy?: unknown;
   /**
-   * YUK-1497 §1.3 v2 — 资产字节读取（禁序扫描 + 字节实测 sha256 用）。
-   * 传 R2 读函数（如 `(key) => getR2().get(key)`）；kernel 不直接依赖
-   * @/server/r2，组合方在能触达存储的层注入。presentation 含 custom 块时
-   * 必供 —— 缺省 fail-closed 拒发（代码无法核验就不许发布）。
+   * 自定义块字节核验的读取器；kernel 不依赖存储层，由组合方注入。含 custom
+   * 块时必供，缺省 fail-closed。
    */
   readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   now: Date;
@@ -193,8 +147,7 @@ export type PublishQuestionGroupResult =
       revision_digest: string;
     }
   | {
-      /** 内容未变但 §3.3 维度变了（promote/挂起等）：只更新 lifecycle 维度
-       * （generation+1）+ 事件，不铸新 revision —— admission 与内容各自独立版本化。 */
+      /** 内容未变但维度变了：只更新 lifecycle（generation+1）+ 事件。 */
       status: 'admission_updated';
       group_id: string;
       current_revision_id: string;
@@ -204,8 +157,7 @@ export type PublishQuestionGroupResult =
       event_id: string;
     }
   | {
-      /** 组无可发布成员（全部子 part tombstone）：不铸空组 revision，只落
-       * 撤回维度（P2 组语义）。 */
+      /** 全部子 part tombstone：不铸空 revision，只落撤回维度。 */
       status: 'withdrawn';
       group_id: string;
     }
@@ -231,7 +183,7 @@ function assertAdmissionShape(admission: PublishAdmission): void {
     if (evidence == null) {
       throw new Error('publishQuestionGroup: admitted requires evidence (D1 dual-gate)');
     }
-    // P1-5 —— 失败的核验不是准入证据。
+    // 失败的核验不是准入证据。
     if (evidence.verification.structural_check_passed !== true) {
       throw new Error(
         'publishQuestionGroup: admitted evidence must have structural_check_passed=true',
@@ -265,12 +217,8 @@ function collectCustomBlocks(block: PresentationBlockT): CustomBlockT[] {
 }
 
 /**
- * YUK-1497 §1.3 —— 自定义块资产的 DB 核验（纯层无 IO，只能在这查）：
- * source_asset 行存在、sha256 与 sandbox digest 相符（'sha256:' + 裸 hex）、
- * mime 是 JS、byte_size ≤ 256 KiB；v2 追加字节级核验 —— 实测 sha256 与
- * 资产行一致（id ↔ 字节绑定不可变），并扫描禁序（</script / <!--）。
- * 任一失败 fail-closed 抛错拒发 —— 与 figure 材料的 unverified digest
- * 拒绝同口径（自定义代码没有理由更宽）。
+ * 自定义块资产核验：行存在、digest/mime/size 合规、实测字节 sha256 与行一致、
+ * 无禁序；任一失败拒发。
  */
 async function assertCustomBlockAssets(
   tx: Tx,
@@ -320,16 +268,14 @@ async function assertCustomBlockAssets(
         `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' byte_size ${asset.byte_size} exceeds the ${CUSTOM_ASSET_MAX_BYTES}-byte (256 KiB) limit`,
       );
     }
-    // v2：字节级核验 —— 读存储字节（既有 R2 client 经注入的 reader），
-    // 实测 sha256 与资产行一致，再扫禁序。
+    // 字节级核验：实测 sha256 与资产行一致，再扫禁序。
     const bytes = await readAssetBytes(asset.storage_key);
     if (bytes == null) {
       throw new Error(
         `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' bytes missing from storage (key '${asset.storage_key}')`,
       );
     }
-    // R1 加固：存储对象的实际长度必须等于资产行登记的 byte_size（上面的
-    // 256 KiB 上限按 byte_size 判，长度不符说明行与对象不一致）。
+    // 实际长度必须等于登记的 byte_size；上限也按登记值判断。
     if (bytes.byteLength !== asset.byte_size) {
       throw new Error(
         `publishQuestionGroup: custom block '${block.block_id}' source_asset '${asset_id}' stored object is ${bytes.byteLength} bytes, not the recorded byte_size ${asset.byte_size}`,
@@ -350,16 +296,10 @@ async function assertCustomBlockAssets(
   }
 }
 
-/** 解析 suspension 维度更新 → lifecycle 列值。
- * 返回 null = 该输入对【当前】lifecycle 无效果（缺省输入；或
- * suspended=false 面对非 verify_hold 的既有挂起 —— verify promote 不许顺手
- * 清 retraction_hold，下同）。suspended=true 总是有效（覆盖既有原因），但
- * 【verify_hold 不得遮蔽并存 retraction_hold】：suspension_reason 单列只能
- * 留一个原因，且 clear 只会解除 verify_hold（置 suspended=false）——若先让
- * verify_hold 覆写 retraction_hold，之后的复核通过会把整个挂起（含尚有效
- * 的撤回保持）一并清掉。verify_hold 落在已有 retraction_hold 上是 no-op
- * （仍是 suspended=true, reason=retraction_hold），核验证据只进
- * verification 行，维度意图如实表达为『verify 无权改判 retraction』。 */
+/**
+ * suspension 更新 → lifecycle 列值；null 表示对当前 lifecycle 无效果。
+ * verify_hold 不得遮蔽 retraction_hold，解除也只清 verify_hold。
+ */
 function suspensionValuesFor(
   lifecycle: typeof question_group_lifecycle.$inferSelect | undefined,
   suspension: SuspensionUpdate | undefined,
@@ -376,14 +316,12 @@ function suspensionValuesFor(
     }
     return { suspended: true, suspension_reason: reason };
   }
-  // suspended=false：只清 verify_hold；retraction_hold 及其它持有原因恒保留
-  //（verify 复核无权解除非 verify 挂起）。
+  // 只清 verify_hold；retraction_hold 恒保留。
   if (lifecycle?.suspension_reason !== 'verify_hold') return null;
   return { suspended: false, suspension_reason: null };
 }
 
-/** 递归按 key 排序的确定性序列化 —— jsonb 读回不保留 key 顺序，维度比对
- *（evidence 深比较）必须与顺序无关，否则幂等重发会被误判为维度变化。 */
+/** 确定性序列化：jsonb 键序不稳定，维度比对必须与顺序无关。 */
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -401,7 +339,7 @@ function lifecycleDimensionsMatch(
   if (!lifecycle) return false;
   if (input.availability !== lifecycle.availability) return false;
   if (input.claimPolicy != null && input.claimPolicy !== lifecycle.claim_policy) return false;
-  // suspension 维度：解析后的目标值必须与现状一致才算 noop。
+
   const nextSuspension = suspensionValuesFor(lifecycle, input.suspension);
   if (nextSuspension != null) {
     if (
@@ -440,11 +378,8 @@ function admissionValuesFor(admission: PublishAdmission, now: Date) {
       };
 }
 
-/** 跨版本 identity diff（P1-3/P1-4 —— 映射轨迹随发布事件原子持久化）。
- * 语义裁决（复审第二轮）：part id 相同 ≠ 语义连续 —— 判分相关内容
- *（题面/选项文本集/答案键/规则文本）实质变化 ⇒ 【replaced】+ 显式
- * old→new fingerprint 映射；内容等价才 retained。保守规则：无法判定
- *（旧版形状缺失等）⇒ replaced，绝不静默记 retained。 */
+/** 语义 identity diff：part id 相同不代表语义连续；内容变化记 replaced 并保留
+ * old→new fingerprint，无法判定也记 replaced。 */
 export interface PartChange {
   part_id: string;
   status: 'retained' | 'replaced' | 'added' | 'removed';
@@ -460,13 +395,11 @@ export interface IdentityDiff {
   part_changes: PartChange[];
   /** slot 级 option 增删（option 文本变 ⇒ 新身份 = 语义替换；label 不参与身份）。 */
   option_changes: { slot_id: string; added_option_ids: string[]; removed_option_ids: string[] }[];
-  /** replaced part 的 old→new 判分内容 fingerprint 映射（§3.1 身份映射 seam）。 */
+  /** replaced part 的 old→new 判分内容 fingerprint。 */
   replacement_mappings: ReplacementMapping[];
 }
 
-/** part 的判分相关内容 fingerprint：题面 + 材料 + 选项文本集 + criterion。
- * 变化 ⇒ 语义替换（无论行/node id 是否保留）。stable 序列化（jsonb 读回
- * key 顺序无关）。 */
+/** 题面 + 材料 + 选项文本 + criterion；变化即语义替换。 */
 function partFingerprint(
   partId: string,
   structure: QuestionGroupStructureT,
@@ -491,7 +424,7 @@ function partFingerprint(
   return `fp_${createHash('sha256').update(canonical).digest('hex').slice(0, 24)}`;
 }
 
-/** 与被替换版本比对，产出【语义】identity diff（P1-3 裁决）。 */
+/** 与被替换版本比对，产出语义 identity diff。 */
 function computeIdentityDiff(
   previous: {
     structure: QuestionGroupStructureT;
@@ -556,7 +489,7 @@ function computeIdentityDiff(
       previous.scoring_basis,
     );
     const nextFp = partFingerprint(partId, next.structure, next.response_spec, next.scoring_basis);
-    // 保守裁决：fingerprint 不可得（形状异常）或内容实质变化 ⇒ replaced。
+    // fingerprint 不可得或内容变化 ⇒ replaced。
     if (prevFp != null && nextFp != null && prevFp === nextFp) {
       partChanges.push({ part_id: partId, status: 'retained' });
     } else {
@@ -591,8 +524,8 @@ function sameSealedDocument(
   suppliedDigest: string,
   suppliedAccepted: boolean,
 ): boolean {
-  // 同一摘要原样送回（夹具再发布、准入回写）时，jsonb 读出的键序经常重算不出
-  // 当初那份摘要。字符串相同且它确实封住了传入层，仍是同一份文档。
+  // A digest sent back verbatim may not recompute from jsonb key order; the same
+  // string that still seals the incoming layers is the same document.
   if (suppliedDigest === stored.digest && suppliedAccepted) return true;
   let storedSeal: PublishedContractSeal;
   try {
@@ -658,16 +591,9 @@ async function publishedLayersChanged(
 }
 
 /**
- * 统一发布 seam。db 可传事务句柄（推荐 —— 与调用方的编辑写同事务）或独立
- * Db（publisher 自开顶层事务）。契约校验失败抛错（fail-closed）；CAS 不匹配
- * 返回 'conflict'；digest 与当前版一致且 §3.3 维度也一致返回 'noop'（不产生
- * 版本 churn）；digest 一致但维度变化返回 'admission_updated'（只更新 lifecycle
- * 维度 + generation，不铸新 revision）。
- *
- * P2：integrity_digest 必须是这份契约的规范封存，或旧的 schema 序 / 调用方序封存。
- * 接受之后新 revision 写规范封印，不把调用方键序原样留下。
- * 同一摘要原样送回不铸新版。摘要不同则只在规范形式相同、且库内摘要仍是该层的
- * 某种封存时不铸新版。structure.group_id 必须与目标 group 一致。
+ * 统一发布 seam。Db 自开事务，Tx 用 SAVEPOINT。契约校验 fail-closed；CAS 冲突
+ * 返回 conflict；内容与维度都一致返回 noop；仅维度变化返回 admission_updated。
+ * 新 revision 写规范封印；旧摘要只在仍能封住同一层时被接受。
  */
 export async function publishQuestionGroup(
   db: Db | Tx,
@@ -676,12 +602,8 @@ export async function publishQuestionGroup(
   assertAdmissionShape(input.admission);
   if (input.suspension != null) assertSuspensionShape(input.suspension);
 
-  // YUK-1568（第 2 片）：声明了 answer_shape 的 blank 由共享比较核心判定
-  // 判分就绪 —— admitted 发布要求每个已声明槽被支持、被 blank_key unit
-  // 读取且私有键可按声明完整编译（未实现 notation、键冲突、单位缺项均拒
-  // 绝）。直接 typed 调用方、verify promote、校准回写都绕不过这道闸；声明
-  // 题只能以 withheld/暂扣发布，绝不回退普通 exact 自动判分。只拦
-  // answer_shape：blank_order 是展示语义，不触及判分。
+  // 声明了 answer_shape 的 blank 必须通过共享判分就绪检查；只能以 withheld 发布，
+  // 绝不回退普通 exact。blank_order 是展示语义，不拦。
   const declaredShapeSlot = input.contract.response_spec.slots.find(
     (slot) => slot.kind === 'blank' && slot.answer_shape != null,
   );
@@ -701,8 +623,7 @@ export async function publishQuestionGroup(
     }
   }
 
-  // Db → 顶层事务；Tx → SAVEPOINT（drizzle 嵌套事务）。两种情况下任一步
-  // 失败都整体回滚本次发布的全部写入。
+  // Db → 顶层事务；Tx → SAVEPOINT；任一步失败都回滚本次发布的全部写入。
   return db.transaction(async (tx) => {
     const { contract, group_id: groupId } = input;
 
@@ -712,7 +633,6 @@ export async function publishQuestionGroup(
       );
     }
 
-    // 契约确定性校验 fail-closed（referential integrity / 恰好一次覆盖）。
     const structureIssues = validateStructure(contract.structure);
     if (structureIssues.length > 0) {
       throw new Error(
@@ -747,11 +667,7 @@ export async function publishQuestionGroup(
         `publishQuestionGroup: execution_plan invalid: ${planIssues.map((i) => i.code).join(',')}`,
       );
     }
-    // YUK-1497 —— 展示层绑定校验：与其他契约校验同一道 barrier（spec §3.7：
-    // 不合格就不能发布）。先过 zod 形状门（防信任类型直穿），再校验绑定。
-    // review R1：入库与 digest 都落在【解析后的同一对象】（shaped.data）——
-    // 绝不存原始 contract.presentation；digest 对含展示层的契约重算比对，
-    // 不一致即拒发（调用方的 digest 没把展示层算进去 ⇒ fail-loud）。
+    // 展示层走同一 barrier；入库与 digest 都用解析后的对象，digest 不符即拒发。
     let shapedPresentation: PresentationT | null = null;
     if (contract.presentation != null) {
       const shaped = Presentation.safeParse(contract.presentation);
@@ -777,9 +693,7 @@ export async function publishQuestionGroup(
         );
       }
       shapedPresentation = shaped.data;
-      // YUK-1497 §1.3 v2 —— 自定义块资产 DB + 字节核验（同 barrier、同事务）：
-      // 资产不存在 / digest 不符 / mime 不是 JS / 超 256 KiB / 字节缺失或
-      // 实测 sha256 不符 / 含禁序 ⇒ 整组不能发布。
+      // 自定义块资产核验同 barrier、同事务；任一失败整组不能发布。
       await assertCustomBlockAssets(tx, shaped.data, input.readAssetBytes);
     }
 
@@ -802,7 +716,7 @@ export async function publishQuestionGroup(
     }
     const integrityDigest = seal.canonical;
 
-    // 组级串行化：锁根 question 行（发布与编辑同一锁序 question → lifecycle）。
+    // 发布与编辑共用 question → lifecycle 锁序。
     const [root] = await tx
       .select({ id: question.id })
       .from(question)
@@ -848,10 +762,7 @@ export async function publishQuestionGroup(
       digest: string;
     } | null = null;
 
-    // Digest 去重 + §3.3 维度分离：内容与当前版一致时不铸新版本（identity/churn
-    // 纪律）；但 admission/availability/claimPolicy 是独立版本化的生命周期维度 ——
-    // 不一致时只更新维度（admission generation+1）+ 事件（promote 即此路径：
-    // 草稿首版 withheld/unverified_rules → 核验通过后 admitted，内容未变）。
+    // 内容一致不铸新版本；维度独立版本化，变化时只更新 lifecycle + 事件。
     let nextOrdinal = 1;
     if (currentRevisionId == null && !suppliedAccepted) {
       throw new Error(
@@ -938,8 +849,7 @@ export async function publishQuestionGroup(
             availability: input.availability,
             admission: input.admission.state,
             admission_generation: admissionGeneration,
-            // suspension 是本路径可变的第二维度（verify 挂起/解除）；
-            // 如实记录目标值（输入缺省 ⇒ 未变，不投影）。
+            // 输入缺省 ⇒ 未变，不投影。
             ...(input.suspension != null
               ? {
                   suspended: suspensionValues?.suspended ?? lifecycle.suspended,
@@ -949,8 +859,7 @@ export async function publishQuestionGroup(
                       : (lifecycle.suspension_reason ?? null),
                 }
               : {}),
-            // 同 tx 内 append-only 核验记录的指针投影（policy/outcome；证据本体在
-            // question_admission_verification 行 —— 事件 payload 不重复携带）。
+            // 事件只带指针，证据本体在 verification 行。
             ...(input.verification != null
               ? {
                   verification: {
@@ -991,9 +900,7 @@ export async function publishQuestionGroup(
       response_spec: contract.response_spec,
       scoring_basis: contract.scoring_basis,
       execution_plan: contract.execution_plan,
-      // YUK-1497 —— 冻结展示层随 revision 版本化（缺省 NULL）。review R1：
-      // 入库的是 zod 解析后的 shaped.data（与校验、digest 同一对象），
-      // 绝不存未经解析的原始 contract.presentation。
+
       presentation: shapedPresentation ?? null,
       supersedes_revision_id: currentRevisionId,
       availability: input.availability,
@@ -1026,7 +933,7 @@ export async function publishQuestionGroup(
         ...admissionValues,
         scoring_admission_generation: admissionGeneration,
         claim_policy: input.claimPolicy ?? 'unbounded',
-        // 首版发布可携带 verify 挂起（未发布即挂起的题 —— suspend 输入透传）。
+        // 首版发布也可携带 suspension。
         ...(suspensionValues ?? { suspended: false, suspension_reason: null }),
         withdrawn: false,
         withdrawn_at: null,
@@ -1035,7 +942,7 @@ export async function publishQuestionGroup(
       });
     }
 
-    // 发布事件（同事务）+ identity diff（P1-4 映射轨迹）。
+    // 同事务发布事件 + identity diff。
     const identityDiff = computeIdentityDiff(previousContract, contract);
     const eventId = createId();
     await writeEvent(tx, {
@@ -1065,7 +972,7 @@ export async function publishQuestionGroup(
                   : (lifecycle?.suspension_reason ?? null),
             }
           : {}),
-        // 同 tx 内 append-only 核验记录的指针投影（policy/outcome）。
+        // 事件只带指针，证据本体在 verification 行。
         ...(input.verification != null
           ? {
               verification: {
@@ -1093,8 +1000,6 @@ export async function publishQuestionGroup(
   });
 }
 
-// ─── 组契约快照（组根行 + live parts → row-normalized 契约的唯一加载口） ─────
-
 export interface QuestionGroupContractSnapshot {
   rootId: string;
   root: typeof question.$inferSelect;
@@ -1102,25 +1007,14 @@ export interface QuestionGroupContractSnapshot {
   partRows: PartRow[];
   /** 排除 archived/dismissed 的可服务 part（契约成员）。 */
   liveParts: PartRow[];
-  /**
-   * YUK-1568（第 1 片）：当前 revision 已携带答案声明（answer_shape /
-   * blank_order）时非空 —— 此时 contract 是【冻结四层】（typed 权威），
-   * 不再从 flat 行重建；publishQuestionGroupFromRow 对这类组显式冲突。
-   */
+  /** 当前 revision 携带答案声明时非空；contract 是冻结四层，不能从 flat 行重建。 */
   declaredRevisionId: string | null;
   contract: NormalizedContract;
 }
 
 /**
- * 组根行 + 物理 parts + figure 资产 digest → row-normalized 契约的【唯一】加载口。
- * publishQuestionGroupFromRow、YUK-1507 的 C1 独立准入守卫（source_verify）与
- * question_admission_run.loadDefinition 必须看到 byte-identical 的
- * integrity_digest —— base_contract_digest 的可比性前提；三处只允许经本口（或经
- * 逐字段对照确认等价的既有实现）构建，不得再各自拷贝装配逻辑。
- *
- * lockRoot（缺省 true，publisher 的 P1-1 惯例）：先 FOR UPDATE 锁组根行，再做组
- * 快照读；调用方已持有根行锁（source_verify 守卫）或把漂移交给后续 drift check
- * （admission job）时传 false。
+ * 组根 + parts + figure digest → 契约的唯一加载口；所有准入/发布读者必须看到同一
+ * digest。lockRoot 缺省 true；已持锁或接受后续 drift check 时传 false。
  */
 export async function loadQuestionGroupContractSnapshot(
   db: Db | Tx,
@@ -1134,8 +1028,7 @@ export async function loadQuestionGroupContractSnapshot(
   if (!root) {
     throw new Error(`loadQuestionGroupContractSnapshot: group root question '${rootId}' not found`);
   }
-  // tombstoned part（archived/dismissed）不是可服务组员 —— 组契约排除之
-  //（child archive ⇒ 组内容变化 ⇒ 新 revision，P2 组语义）。
+  // Tombstoned parts are not group members; their archive changes group content.
   const partRows = await db
     .select({
       id: question.id,
@@ -1157,150 +1050,38 @@ export async function loadQuestionGroupContractSnapshot(
     return meta?.archived_at == null && meta?.dismissed_at == null;
   });
 
-  // ---- YUK-1568（第 1 片）中央保护：已声明 revision 以冻结四层为权威 ----
-  //
-  // 当前 revision 携带 answer_shape / blank_order 时，读取不再从 flat
-  // question / legacy structured 重建（那会掉声明再铸新 revision），而是
-  // 原样返回冻结契约 —— source_verify C1 守卫与 admission loadDefinition
-  // 因此看到与库内一致的 integrity_digest。未支持/坏声明（未知版本、未知
-  // 字段）在这里 fail-loud：拒绝读取，绝不 strip 后回退旧解释。
-  //
-  // 注：这里对 lifecycle 的读不加锁（快照语义）；publisher 调用方随后会
-  // FOR UPDATE 重读并做 CAS —— 声明态若被并发发布改变，CAS 冲突 fail-closed。
-  const [declaredLifecycle] = await db
-    .select({ revisionId: question_group_lifecycle.current_revision_id })
-    .from(question_group_lifecycle)
-    .where(eq(question_group_lifecycle.group_id, root.id))
-    .limit(1);
-  let declaredRevisionId: string | null = null;
-  let frozenContract: NormalizedContract | null = null;
-  if (declaredLifecycle?.revisionId != null) {
-    const [current] = await db
-      .select({
-        revision_id: question_revision.revision_id,
-        integrity_digest: question_revision.integrity_digest,
-        structure: question_revision.structure,
-        response_spec: question_revision.response_spec,
-        scoring_basis: question_revision.scoring_basis,
-        execution_plan: question_revision.execution_plan,
-        presentation: question_revision.presentation,
-      })
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, declaredLifecycle.revisionId))
-      .limit(1);
-    if (current != null) {
-      const shapeDeclarations = findAnswerShapeDeclarations(current.response_spec);
-      const orderDeclarations = findBlankOrderDeclarations(current.structure);
-      if (shapeDeclarations.length > 0 || orderDeclarations.length > 0) {
-        let seal: PublishedContractSeal;
-        try {
-          seal = publishedContractSeal({
-            structure: current.structure,
-            response_spec: current.response_spec,
-            scoring_basis: current.scoring_basis,
-            execution_plan: current.execution_plan,
-            ...(current.presentation != null ? { presentation: current.presentation } : {}),
-          });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `loadQuestionGroupContractSnapshot: revision '${current.revision_id}' of group '${root.id}' carries answer declarations this reader cannot parse (${
-              shapeDeclarations
-                .map((d) => `${d.slot_id}:${describeAnswerShape(d.answer_shape)}`)
-                .join(', ') ||
-              `blank_order on ${orderDeclarations.map((d) => d.part_id).join(', ')}`
-            }) — ${detail} — refusing to fall back to the legacy row interpreter`,
-          );
-        }
-        declaredRevisionId = current.revision_id;
-        frozenContract = {
-          structure: seal.parsed.structure,
-          response_spec: seal.parsed.response_spec,
-          scoring_basis: seal.parsed.scoring_basis,
-          execution_plan: seal.parsed.execution_plan,
-          ...(seal.parsed.presentation != null ? { presentation: seal.parsed.presentation } : {}),
-          integrity_digest: current.integrity_digest,
-          group_id: root.id,
-          conversion_issues: [],
-          rule_statement_origins: {},
-        };
-      }
-    }
-  }
-  if (frozenContract != null) {
-    return {
-      rootId: root.id,
-      root,
-      partRows,
-      liveParts,
-      declaredRevisionId,
-      contract: frozenContract,
-    };
-  }
-
-  // figure 实内容 digest 核验（root + parts 全部 figure 资产）：来自 asset
-  // store 元数据（source_asset.sha256，裸 hex）。无核验值 ⇒ normalizer 如实
-  // 标 unverified + conversion issue（不伪造 digest）。
-  const figureAssetIds = new Set<string>();
-  for (const f of root.figures ?? []) figureAssetIds.add(f.asset_id);
-  for (const p of liveParts) for (const f of p.figures ?? []) figureAssetIds.add(f.asset_id);
-  const figureDigests: Record<string, string> = {};
-  if (figureAssetIds.size > 0) {
-    const assetRows = await db
-      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-      .from(source_asset)
-      .where(inArray(source_asset.id, [...figureAssetIds]));
-    for (const assetRow of assetRows) figureDigests[assetRow.assetId] = assetRow.sha256;
-  }
-
-  const contract = normalizeQuestionGroupToContract(
-    { ...(root as Parameters<typeof normalizeQuestionGroupToContract>[0]), figureDigests },
-    liveParts,
-  );
-  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId: null, contract };
+  const { declaredRevisionId, contract } = await resolveGroupContract(db, root, liveParts);
+  return { rootId: root.id, root, partRows, liveParts, declaredRevisionId, contract };
 }
-
-// ─── 从 legacy 行发布（加载 + 归一 + 发布 的便捷 seam） ─────
 
 export interface PublishFromRowInput {
   /** 组根 question id（单题 = 自身；part 编辑时传父 id）。 */
   rootId: string;
-  /** 缺省 preserve：内容未变时沿用当前 admission；内容变更 ⇒ 折叠 withheld
-   *（P1-5 —— 新 scoring basis 使旧 evidence 不再适用）。 */
+  /** 缺省 preserve：内容未变沿用当前 admission，内容变更折叠为 withheld。 */
   admission?: PublishAdmission | { state: 'preserve' };
   availability?: 'general_pool' | 'container_only';
-  /** YUK-1045 — suspension 维度（§3.3 verify 挂起/同版复核解除）；缺省不改变。 */
+  /** suspension 维度；缺省不改变。 */
   suspension?: SuspensionUpdate;
-  /** YUK-1045 — 随发布事务追加的新式 verify 记录（§3.3）。 */
+  /** 随发布事务追加的 verify 记录。 */
   verification?: AdmissionVerificationWrite;
   /** 缺省不改；首次发布时 'unbounded'。 */
   claimPolicy?: 'one_time' | 'unbounded';
-  /** YUK-1497 §1.3 v2 — 资产字节读取（透传给 publishQuestionGroup；含 custom 块时必供）。 */
+  /** 透传给 publishQuestionGroup；含 custom 块时必供。 */
   readAssetBytes?: (storageKey: string) => Promise<Uint8Array | null>;
   actorRef: string;
   now: Date;
 }
 
 /**
- * 加载组根 + 物理 parts → 归一 → 发布。
- *
- * P1-1：先锁组根行，再做任何组快照读（root/parts/lifecycle）—— 并发兄弟
- * 编辑即使持子行锁，也必须先过组根锁才能提交发布；快照因此总是锁后一致
- * 状态。CAS 令牌（revision + admission generation）都取自锁后读取，本 seam
- * 内不会错版；direct publishQuestionGroup 的 conflict 语义保留给显式调用方。
- * conflict 在此 fail-closed 抛错（外层事务回滚）—— 调用方不允许静默丢弃发布。
- *
- * P1-5：normalizer 报告的未决转换（missing reference 等）⇒ admission 强制
- * withheld（保留调用方更严的决定，绝不放宽）。
+ * 加载 → 归一 → 发布。先锁组根再读快照，CAS 取自锁后值；conflict 直接抛错回滚。
+ * 未决转换强制 withheld，绝不放宽调用方更严的决定。
  */
 export async function publishQuestionGroupFromRow(
   db: Db | Tx,
   input: PublishFromRowInput,
 ): Promise<PublishQuestionGroupResult> {
   return db.transaction(async (tx) => {
-    // P1-1（第二轮复审）—— 锁序修复：先用【非锁定】读解析真实组根（传入行
-    // 可能是子 part），然后只对组根取 FOR UPDATE —— 绝不先锁子行再找父
-    //（旧实现 lock(child)→lock(parent) 与已修正的 root→child 写口互为死锁序）。
+    // Resolve the real root before locking: never lock a child then its parent.
     const supplied = (
       await tx
         .select({ id: question.id, parentId: question.parent_question_id })
@@ -1312,24 +1093,19 @@ export async function publishQuestionGroupFromRow(
       throw new Error(`publishQuestionGroupFromRow: root question '${input.rootId}' not found`);
     }
     const effectiveRootId = supplied.parentId ?? supplied.id;
-    // P1-1 锁序（root FOR UPDATE → 快照读）与本 seam 的契约构建都收在
-    // loadQuestionGroupContractSnapshot（唯一加载口）。
+
     const snapshot = await loadQuestionGroupContractSnapshot(tx, effectiveRootId);
     const { rootId, root, partRows, liveParts, contract } = snapshot;
 
-    // YUK-1568（第 1 片）：当前 revision 已携带答案声明 —— 旧行发布路径没有
-    // typed 变更上下文，从 flat 行重建会掉声明。这里显式冲突并令同事务回滚
-    //（调用方在同事务里先写的行修改一并丢弃，不先写行再吞发布失败）；下一
-    // 步是 edit_question + submit_question。28 处调用方的逐分支迁移（纯状态
-    // 分类经 typed publisher 保契约）属第 3 片，迁移前统一冲突，不放行。
+    // 声明题不能从 flat 行重建（会掉声明）：显式冲突并回滚同事务，调用方改走
+    // typed 编辑/发布。
     if (snapshot.declaredRevisionId != null) {
       throw new Error(
         `publishQuestionGroupFromRow: group '${rootId}' current revision '${snapshot.declaredRevisionId}' carries YUK-1568 answer declarations (answer_shape/blank_order) — republishing from legacy rows would drop them; edit via edit_question + submit_question instead (row-path migration tracked in YUK-1568 slice 3)`,
       );
     }
 
-    // 全部子 part 已 tombstone ⇒ 组无可发布成员：不铸空组 revision，只落
-    // lifecycle 撤回维度（P2 组语义；历史 revision/摘要保留）。
+    // 全部子 part tombstone：不铸空 revision，只落撤回维度。
     if (partRows.length > 0 && liveParts.length === 0) {
       await archiveGroupLifecycle(tx, rootId, input.now);
       return { status: 'withdrawn', group_id: rootId } satisfies PublishQuestionGroupResult;
@@ -1349,11 +1125,8 @@ export async function publishQuestionGroupFromRow(
       lifecycle == null ||
       (await publishedLayersChanged(tx, expectedRevision, contract));
 
-    // admission 解析（P1-5）：
-    //   - preserve + 内容变更 ⇒ withheld（沿用既有 withheld 原因，没有则
-    //     unverified_rules）—— 旧 evidence 不越代适用；
-    //   - preserve + 内容未变 ⇒ 沿用当前维度（维度一致时上游自然 noop）；
-    //   - 未决转换 ⇒ 强制 withheld（不放宽调用方更严的决定）。
+    // preserve + 内容变更 ⇒ withheld（旧 evidence 不越代）；内容未变沿用当前
+    // 维度；未决转换强制 withheld。
     let admission: PublishAdmission;
     if (input.admission != null && input.admission.state !== 'preserve') {
       admission = input.admission;
@@ -1403,8 +1176,7 @@ export async function publishQuestionGroupFromRow(
     });
 
     if (result.status === 'conflict') {
-      // 锁后读取 ⇒ 组内不该发生；出现即外部路径越过 seam 写 lifecycle ——
-      // fail-closed 回滚整个调用方事务（P1-1：不允许静默丢弃发布）。
+      // 锁后读取不应冲突；出现即外部越过 seam，回滚。
       throw new Error(
         `publishQuestionGroupFromRow: unexpected ${result.reason} conflict for group '${rootId}' (lifecycle written outside the seam?)`,
       );
@@ -1413,11 +1185,43 @@ export async function publishQuestionGroupFromRow(
   });
 }
 
-// ─── lifecycle 维度操作（archive/restore 的 claim 分离语义，§3.2/§3.3） ─────
+/**
+ * Append a verify record without touching lifecycle dimensions; generation stays
+ * current. The caller must already hold the lifecycle row lock.
+ */
+export async function appendAdmissionVerificationRecord(
+  tx: Tx,
+  input: {
+    groupId: string;
+    expectedRevisionId: string;
+    expectedGeneration: number;
+    verification: AdmissionVerificationWrite;
+    now: Date;
+  },
+): Promise<void> {
+  const [revision] = await tx
+    .select({ integrity_digest: question_revision.integrity_digest })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, input.expectedRevisionId))
+    .limit(1);
+  if (!revision) {
+    throw new Error(
+      `appendAdmissionVerificationRecord: revision '${input.expectedRevisionId}' missing for group '${input.groupId}'`,
+    );
+  }
+  await tx.insert(question_admission_verification).values({
+    id: createId(),
+    revision_id: input.expectedRevisionId,
+    revision_digest: revision.integrity_digest,
+    policy_id: input.verification.policy_id,
+    generation: input.expectedGeneration,
+    outcome: input.verification.outcome,
+    evidence: input.verification.evidence ?? {},
+    recorded_at: input.now,
+  });
+}
 
-/** §3.3「新verify保存 (revision_id,digest,policy,generation)」—— 发布事务内
- * 追加 question_admission_verification（append-only，0105 trigger）。仅当调用方
- * 带 verification 输入时写入；generation = 本次写入后的 admission generation。 */
+/** 发布事务内追加核验记录；generation 为写入后的 admission generation。 */
 async function insertAdmissionVerification(
   tx: Tx,
   input: PublishQuestionGroupInput,
@@ -1443,7 +1247,7 @@ export interface ArchiveGroupLifecycleResult {
   status: 'archived' | 'not_found';
 }
 
-/** archive 维度：withdrawn=true（claim 释放由 legacy hash 置 NULL 承担，§3.2）。 */
+/** withdrawn=true；claim 释放由 legacy hash 置 NULL 承担。 */
 export async function archiveGroupLifecycle(
   tx: Tx,
   groupId: string,
@@ -1465,13 +1269,8 @@ export interface RestoreGroupLifecycleResult {
 }
 
 /**
- * restore 维度：withdrawn=false + 原子重取 live 去重 claim（§3.2「恢复要原子
- * 重新取得claim并处理冲突」）。claim = legacy canonical_content_hash —— 重取
- * 即在根行上条件写入 hash；占用者存在 ⇒ claim_conflict（fail-closed，不静默
- * 改判）。verify 挂起不自动释放 claim（本 seam 不触及 suspension）。
- *
- * 锁序（P2）：question 根行 FOR UPDATE → lifecycle FOR UPDATE，与发布/编辑
- * 一致（此前先锁 lifecycle 与声明锁序相反）。
+ * withdrawn=false + 原子重取 live claim；占用者存在即 claim_conflict。锁序
+ * question 根 → lifecycle。verify 挂起不自动释放 claim。
  */
 export async function restoreGroupLifecycle(
   tx: Tx,
@@ -1496,7 +1295,7 @@ export async function restoreGroupLifecycle(
   if (!lifecycle) return { status: 'not_found' };
 
   if (canonicalContentHash != null) {
-    // 先探测占用者（唯一索引冲突时 PG 不告诉你是谁）。
+    // 先探测占用者：唯一索引冲突不会告诉你是谁。
     const [holder] = await tx
       .select({ id: question.id })
       .from(question)
@@ -1518,4 +1317,77 @@ export async function restoreGroupLifecycle(
     .set({ withdrawn: false, withdrawn_at: null, updated_at: now })
     .where(eq(question_group_lifecycle.group_id, groupId));
   return { status: 'restored' };
+}
+
+// ─── YUK-1568 S3 R1-F2 — 组拥有的声明子行晋升 ───
+
+/**
+ * 组根来源核验成功后，同一事务把【当前已核验 revision 冻结 structure 声明
+ * 的真实 part 行】从 draft 翻 ACTIVE，并在 metadata 写继承证据（回指父级
+ * verify 事件）。
+ *
+ * 适用对象是 typed 声明组的 question_part 子行（行 id = 绑定 part_id =
+ * 契约 part_id）：它们不首发 active、不经独立 paid verify、不走 owner
+ * override —— 组根的 source_verify 成功是唯一晋升通道。对旧式组（part
+ * 行 id 与契约 part_id 不重合）与单 part 组恒 no-op —— 晋升集合是
+ * `parent_question_id = rootId` ∩ `id ∈ revision.structure.parts[].part_id`
+ * 的交集，不是「全部子行」。
+ *
+ * 纪律：调用方必须已锁组根行（FOR UPDATE，锁序 root→child）；只晋升
+ * non-tombstone 的 draft 行（归档/驳回不复活）；revision 缺失或不属于该
+ * 组 ⇒ fail-loud（核验维度的漂移不该静默放行）。返回被晋升子行供调用方
+ * 沿用根同款 FSRS enroll-if-absent 纪律。
+ */
+export async function promoteVerifiedGroupPartRows(
+  tx: Tx,
+  input: {
+    /** 组根 question id（调用方须已 FOR UPDATE 锁定）。 */
+    rootId: string;
+    /** 核验时钉住的当前 revision id —— part 集合取其冻结 structure.parts。 */
+    revisionId: string;
+    /** 根的来源核验成功事件 id —— 子行继承证据回指它。 */
+    verifyEventId: string;
+    now: Date;
+  },
+): Promise<{ id: string; knowledgeIds: string[] }[]> {
+  const [revision] = await tx
+    .select({
+      groupId: question_revision.group_id,
+      structure: question_revision.structure,
+    })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, input.revisionId))
+    .limit(1);
+  if (revision == null || revision.groupId !== input.rootId) {
+    throw new Error(
+      `promoteVerifiedGroupPartRows: revision '${input.revisionId}' missing or not bound to group '${input.rootId}'`,
+    );
+  }
+  const partIds = revision.structure.parts
+    .map((part) => part.part_id)
+    .filter((partId) => partId !== input.rootId);
+  if (partIds.length === 0) return [];
+
+  return tx
+    .update(question)
+    .set({
+      draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
+      updated_at: input.now,
+      metadata: sql`coalesce(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
+        source_verify_inherited: {
+          event_id: input.verifyEventId,
+          root_question_id: input.rootId,
+        },
+      })}::jsonb`,
+    })
+    .where(
+      and(
+        eq(question.parent_question_id, input.rootId),
+        inArray(question.id, partIds),
+        eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
+        sql`${question.metadata}->>'archived_at' IS NULL`,
+        sql`${question.metadata}->>'dismissed_at' IS NULL`,
+      ),
+    )
+    .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
 }

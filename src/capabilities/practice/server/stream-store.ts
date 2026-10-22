@@ -1,8 +1,6 @@
-// M2 (YUK-316) — 流编排器的 IO 壳：StreamPlan 物化 + 读取/推进编排。
-// 纯函数核心在 stream-composer.ts；候选输入收集在 stream-inputs.ts（YUK-1572 拆出）；
-// 读取投影在 stream-view.ts（YUK-1572 拆出）；本文件只做 DB/handler 编排。
-//
-// opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
+// Daily stream IO shell: materialize StreamPlan and orchestrate reads/advances.
+// Pure selection lives in stream-composer.ts; candidate inputs in stream-inputs.ts;
+// projections in stream-view.ts.
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { getConfig } from '@/core/config/store';
@@ -13,13 +11,10 @@ import { event, knowledge, learning_session, practice_stream_item, question } fr
 import { ApiError } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { Review } from '@/server/session';
-import {
-  type CandidateInput,
-  type CollectedSignal,
-  collectCandidateSignals,
-} from './candidate-signals';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
-// YUK-474 — 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
+import { readQuestionPace } from './question-pace';
+// 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
 import { type RefillDeps, refillActiveLearningPools } from './question-supply/refill';
 import {
   DEFAULT_SELECTION_POLICY,
@@ -31,29 +26,30 @@ import {
   recordSelectionObservation,
 } from './selection-observations';
 import { sampleByWeight } from './selection-sampler';
+import { statisticalWeights } from './selection-weights';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
-  newCheckReasoning,
-  statisticalWeights,
-  variantReasoning,
 } from './softmax-selection';
-import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
+import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
+import { presentNonDueQuestion } from './stream-item-presentation';
+import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
+import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
   type StreamScope,
   type StreamView,
   buildStreamView,
   filterProspectiveStreamQuestions,
 } from './stream-view';
-import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
-// YUK-1572 — 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
-//   stream-view.ts；以下 reexport 保持本模块既有导出面不变（既有消费者与测试的
-//   import 路径不动）。
+// 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
+// stream-view.ts；以下 reexport 保持本模块既有导出面不变（既有消费者与测试的
+// import 路径不动）。
 export {
   VARIANT_INPUT_LIMIT,
   collectComposerInputs,
@@ -70,8 +66,8 @@ type DbLike = Db | Tx;
 
 /**
  * `practice_stream_item` now has two physical partitions in one table:
- *   - session_id IS NULL: the existing whole-profile daily stream;
- *   - session_id = <review session>: an independent KC-scoped on-demand stream.
+ * - session_id IS NULL: the existing whole-profile daily stream;
+ * - session_id = <review session>: an independent KC-scoped on-demand stream.
  *
  * Every date-only daily query must use this predicate. A bare `date = …` would leak scoped
  * progress into the daily stream and could make lazy-compose falsely think the day is ready.
@@ -90,39 +86,29 @@ async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void>
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date)}))`);
 }
 
-/** materializeStream 的结果：新增行数 + **本轮真正新插入**的 ref 集合（CLUSTER A 用）。 */
+/** Rows inserted by this call plus the refs that were actually newly inserted. */
 export interface MaterializeResult {
-  /** 本轮 INSERT 真正落库的新行数（= freshRefs.size）。 */
+  /** Number of rows inserted by this call (= freshRefs.size). */
   added: number;
   /**
-   * 本轮**新插入**的 ref 集合（DB 里此前不存在的）。调用方据此只对新落的项记 π_i：
-   * 已物化（recompose 中存活）的 ref 保留其原始观测，不重复写（CLUSTER A 修复——
-   * recompose 时存活的 done/in_progress 行会被 collectComposerInputs 重新收集 → 再次进
-   * sampledInclusion，但它们并非「本轮新发生的选题」，不该再记一条 π_i 观测）。
+   * Refs that did not exist in the stream before this call. Only these should get a new
+   * π_i observation: surviving rows were already observed when first materialized, even
+   * though collectComposerInputs samples them again.
    */
   freshRefs: Set<string>;
 }
 
 /**
- * 物化 StreamPlan，position **取 plan 的意图序**（CLUSTER B 修复）——不再「append-after-max」。
+ * Materialize a StreamPlan in plan order.
  *
- * 位置模型（保证 getStream 的 ORDER BY position 永远吐 plan 序，与完成/recompose 历史无关）：
- *   1. plan.items 已是 due-L1 序（due_at ASC）→ 非到期 → 卷的最终意图序。
- *   2. plan 内的 ref（无论新插还是存活）→ position = 在 plan 里的 index+1。
- *   3. plan **外**的存活行（已不在今日 plan，如已不到期的旧到期项 / 已结束的卷）→
- *      追加在 plan.items.length 之后，按其当前 position 保序，避免与 plan 段冲突。
- *   4. 全量 UPDATE 当日所有行的 position（存活行改位、保 status），新行 INSERT 到目标位。
- * 这样 due 子序列在 DB 里恒等于 L1 序——recompose 删-再加早到期项也不会被排到存活晚到期项之后。
+ * Positions: refs in the plan get plan index + 1; surviving rows outside the plan are
+ * appended after the plan in their existing order. All rows are renumbered so
+ * ORDER BY position always yields the plan order, making the due subsequence equal to
+ * due_at ASC.
  *
- * **NO 重复 position**：最终每行一个唯一 position（1..M 连续，M = plan + plan外存活）。
- * date+ref 唯一索引仍兜底「同 ref 不重复行」。
- *
- * ⚠️ **隐含依赖：`(date, position)` 必须保持 NON-UNIQUE**（schema.ts 只有 `(date, ref_id)`
- * 唯一）。本函数顺序 renumber 存活行时会有**瞬态**同 position（两行换位的中间态），最终态
- * 才唯一。若将来给 `(date, position)` 加 uniqueIndex，reorder-survivor 会在 compose tx 里
- * mid-loop 抛 23505——加唯一索引前必须先改成「先腾位再落位」或临时偏移。
- *
- * @returns MaterializeResult（added + freshRefs）。
+ * `(date, position)` must stay NON-UNIQUE: renumbering temporarily gives two rows the
+ * same position. Adding a unique index would fail mid-loop with 23505; free the slots
+ * before assigning them first.
  */
 export async function materializeStream(
   db: DbLike,
@@ -181,7 +167,7 @@ export async function materializeStream(
             status: 'pending' as const,
             reasoning: it.reasoning,
             added_by: addedBy,
-            // YUK-361 Phase 1：选题信号快照，缺省 {}（零行为变更）。
+            // 选题信号快照，缺省 {}（零行为变更）。
             signals: it.signals ?? {},
             created_at: now,
             updated_at: now,
@@ -197,7 +183,7 @@ export async function materializeStream(
   }
 
   // 2) renumber 存活行到目标 position（plan 内取 plan 位，plan 外追加在 plan 段之后）。
-  //    新插入的 fresh 行已落在正确 position，不在此重排。
+  // 新插入的 fresh 行已落在正确 position，不在此重排。
   const planLen = plan.items.length;
   const planPosByRef = new Map(plan.items.map((it, i) => [it.ref_id, i + 1]));
   for (const r of existing) {
@@ -216,13 +202,11 @@ export async function materializeStream(
 }
 
 /**
- * 解析当次选题策略。默认 `DEFAULT_SELECTION_POLICY`（'softmax_mfi'，owner default-ON）；
- * 环境变量 `SELECTION_POLICY=legacy` 强制走确定性 composeDailyStream——测试 + 紧急关闭
- * 开关（impl plan Step C「env override 强制 legacy」）。未识别值落默认（不 fail-fast，
- * 选题不能因配置 typo 挂）。
+ * Resolve the selection policy: env `SELECTION_POLICY=legacy` forces the deterministic
+ * composer; unknown values fall back to the default rather than failing the stream.
  */
 export function resolveSelectionPolicy(): SelectionPolicyConfig {
-  // YUK-1007：DB > env > code-default('softmax_mfi')；未识别 env 值落默认（不
+  // DB > env > code-default('softmax_mfi')；未识别 env 值落默认（不
   // fail-fast——选题不能因配置 typo 挂）。
   const raw = getConfig('SELECTION_POLICY');
   if (raw === 'legacy') return { policy: 'legacy' };
@@ -231,16 +215,13 @@ export function resolveSelectionPolicy(): SelectionPolicyConfig {
 }
 
 /**
- * 最终 materialization 事务的结果：新增行数 + **待写的选题观测元组**（FINDING B）。
- *
- * 观测**不**在事务内写——最终短事务只把 (streamItemId, refId, π_i, signals) 元组
- * **收集**起来，由调用方在
- * **事务提交后**（锁外，best-effort）落库，使遥测写失败永不回滚已物化的流。
+ * Materialized rows plus observations that must be written after the short transaction
+ * commits, so telemetry failure can never roll back the stream.
  */
 interface ComposeOutcome {
-  /** 新增行数（与旧 materializeStream 契约一致）。 */
+  /** Added rows; matches materializeStream's contract. */
   added: number;
-  /** 待写选题观测（事务提交后落库；softmax_mfi 路径才非空，legacy 恒空）。 */
+  /** Written after commit; empty on the legacy path. */
   observations: SelectionObservationInput[];
 }
 
@@ -251,7 +232,8 @@ interface PreparedCompose {
 }
 
 /**
- * 按 policy 准备不可变计划。Mem0 与 runTask 发生在最终 materialization 短事务之前。
+ * Prepare an immutable plan. Mem0 and runTask happen before the short materialization
+ * transaction, so preparation never reads a stale stream snapshot.
  */
 async function prepareCompose(
   db: Db,
@@ -265,9 +247,8 @@ async function prepareCompose(
   // probe and finalize under streamPartitionLockKey, the ordering boundary also used by
   // reRankAfterAnswer and intervention materialization.
   const inputs = await collectComposerInputs(db, date);
-  // 容量注入（DI，测试用——production 不传，走 composeSoftmaxStream 的 DEFAULT_WARN/MAX）。
-  //   收紧 max 可让 targetCount < 候选数，使 π_i 真正 < 1（区分不同权重的候选），并行
-  //   测 capacityGuard 的 slice 路径（G2/G3/G4）。
+  // Injected for tests; production uses composeSoftmaxStream's defaults. Tightening max
+  // makes targetCount smaller than the candidate count, so π_i is genuinely below 1.
   if (capacity) inputs.capacity = capacity;
 
   if (policy.policy === 'legacy') {
@@ -278,7 +259,7 @@ async function prepareCompose(
     };
   }
 
-  // softmax_mfi：永不 throw（两级 fallback 兜底）。
+  // softmax_mfi never throws; it has two fallback levels.
   const result: ComposeSoftmaxResult = await composeSoftmaxStream(db, inputs, policy, deps);
   return {
     plan: result.plan,
@@ -295,14 +276,9 @@ async function materializePreparedCollect(
 ): Promise<ComposeOutcome> {
   const { added, freshRefs } = await materializeStream(db, prepared.plan, addedBy);
 
-  // π_i 收集：只对**本轮新物化**的被抽中非到期项（CLUSTER A 修复）。
-  //   result.sampledInclusion 含本轮被抽中的所有非到期 ref，但 recompose 时存活的
-  //   done/in_progress 行会被 collectComposerInputs 重新收集 → 重新抽中 → 落进
-  //   sampledInclusion；它们**不是本轮新发生的选题**（materializeStream 的 onConflict 没
-  //   重插它们），故不在 freshRefs 里——绝不能再对那条**陈旧的存活行 id**写一条幻影/重复
-  //   观测（会污染 π_i 慢热资产）。只收集 freshRefs ∩ sampledInclusion。
-  //
-  //   需要物化行 id：重读当日流按 ref_id 取（截断后被砍的项已从 inclusion map 移除）。
+  // Collect π_i only for rows newly inserted this round. Surviving rows were sampled
+  // again by collectComposerInputs but were already observed when first materialized;
+  // observing them again would pollute the π_i asset. Re-read rows to get their ids.
   const observations: SelectionObservationInput[] = [];
   if (prepared.sampledInclusion.size > 0 && freshRefs.size > 0) {
     const rows = await db
@@ -311,7 +287,7 @@ async function materializePreparedCollect(
       .where(streamPartitionPredicate(date));
     const idByRef = new Map(rows.map((r) => [r.ref_id, r.id]));
     for (const [refId, pi] of prepared.sampledInclusion) {
-      // 只收集本轮新插入的项——存活行的观测在它首次物化那轮已写过。
+      // Surviving rows were observed when first materialized.
       if (!freshRefs.has(refId)) continue;
       const signal = prepared.signalByRef.get(refId);
       observations.push({
@@ -331,12 +307,9 @@ async function materializePreparedCollect(
 }
 
 /**
- * FINDING B：在 final materialization 短事务提交且 session lock 释放后 best-effort 落选题观测。
- *
- * 用顶层 `db`（**非** tx）逐条写——这样一条观测写失败只丢那一条遥测，既不影响已提交的
- * 物化流，也不影响其余观测（每条独立 try/catch）。遥测是 telemetry-only：失败记日志继续，
- * 永不 throw 出去、永不回滚选题。π_i 慢热资产因此可能漏极少数条（已记日志可补），但选题
- * 路径的可用性绝不被遥测拖垮——这正是「遥测失败不得破坏选题」契约的落地。
+ * Write selection observations after the short transaction commits, using the top-level
+ * `db` and independent try/catch per row. Telemetry is best-effort: a failure is logged
+ * and must never roll back or fail the stream.
  */
 async function writeObservationsBestEffort(
   db: Db,
@@ -356,23 +329,16 @@ async function writeObservationsBestEffort(
 }
 
 /**
- * Single-flight compose（CLUSTER C 修复）——reserved connection 持有独立的 paid-work
- * `pg_advisory_lock(hashtext('stream:compose-paid:<date>'))`，但 prepare/Mem0/runTask 不在事务内。
- * 拿到 paid lock 后在原 `stream:compose:<date>` xact writer 边界内短暂 probe；若已非空说明
- * 竞态的赢家已 compose 过，本调用 no-op 返回（不再二次调 LLM / 不再插重复 position /
- * 不再写重复 π_i 观测）。最终短事务重新取得原 xact key、重读并 materialize；paid session
- * lock 串行昂贵工作，但不占用 reRank/intervention 等原-key writer 的等待连接。
+ * Single-flight compose. A reserved connection holds the paid-work advisory lock while
+ * prepare/Mem0/runTask run outside a transaction; a short probe under the
+ * `stream:compose:<date>` writer lock returns early when another request already composed.
+ * The final short transaction takes the same writer key and materializes. This keeps
+ * expensive work serialized without blocking reRank/intervention writers.
  *
- * 为什么需要：getStream 的 lazy-compose 与 recompose 都「读行→（空则）compose→materialize」，
- * 之前无锁——两个并发请求都看到空、都调 LLM、都 materialize，导致双倍 LLM 调用 + 重复
- * position + 重复观测。advisory 锁把这段串行化成单飞。
+ * Observations are collected in the transaction but written after commit (see
+ * writeObservationsBestEffort), so telemetry cannot abort the stream.
  *
- * FINDING B：选题观测（π_i）**不在事务内写**——最终短事务只 materialize 并**带出**待写
- * 观测元组，提交后由 writeObservationsBestEffort 在**锁外** best-effort 落库。遥测写失败因此
- * 永不回滚已物化的流（事务内 INSERT 抛错会 abort 整笔事务，try/catch 也救不回）。
- *
- * @returns 新增行数（compose 真正发生时 = materializePreparedCollect 的 added；竞态输家
- *          no-op 时 = 0）。
+ * @returns Added rows; 0 when this call lost the race and no-ops.
  */
 async function singleFlightCompose(
   db: Db,
@@ -380,9 +346,9 @@ async function singleFlightCompose(
   policy: SelectionPolicyConfig,
   deps: ComposeSoftmaxDeps,
   capacity?: ComposerInputs['capacity'],
-  // Task 9：物化来源标注。lazy-compose / recompose 传 'composer_live'（缺省）；
-  //   夜间预产 job 经 composeNightly 传 'composer_nightly'。双重检查 + 单飞锁不变，
-  //   只 addedBy 透传到 materializePreparedCollect。
+  // 物化来源标注。lazy-compose / recompose 传 'composer_live'（缺省）；
+  // 夜间预产 job 经 composeNightly 传 'composer_nightly'。双重检查 + 单飞锁不变，
+  // 只 addedBy 透传到 materializePreparedCollect。
   addedBy: StreamItemRow['added_by'] = 'composer_live',
 ): Promise<number> {
   const lockDeadlineAt =
@@ -421,23 +387,17 @@ async function singleFlightCompose(
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流（FINDING B）。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测；失败只丢遥测，绝不回滚流。
   await writeObservationsBestEffort(db, observations);
   return added;
 }
 
 /**
- * Task 9 夜间预产入口——夜链 job（practice_stream_compose_nightly）调用本函数为「今天」
- * 预产流。与用户首读的 lazy-compose **共用 singleFlightCompose 的同一把单飞锁 + 双重检查**
- * （DRY：不分叉 compose 逻辑），唯一区别是物化行 `added_by='composer_nightly'`。
+ * Nightly pre-compose entry. Shares singleFlightCompose's lock and double-check with the
+ * user's first read; the only difference is `added_by='composer_nightly'`. Already
+ * materialized streams are left untouched, so repeated runs and lazy first reads no-op.
  *
- * 幂等（双重检查 under lock）：若今天的流已物化（夜间已跑过、或用户已首读懒产），
- * singleFlightCompose 的双重检查命中 count>0 → no-op 返回 0，不二次 compose。故
- *   - 夜间 job 跑两次：第二次 no-op。
- *   - 夜间 job 跑完用户首读：lazy-compose 命中双重检查 no-op（不 double-compose）。
- *   - 用户先首读再夜间 job：夜间 job 命中双重检查 no-op（不覆盖已产流）。
- *
- * @returns 新增行数（真正预产时 = materializePreparedCollect 的 added；已物化时 = 0）。
+ * @returns Added rows; 0 when the stream already exists.
  */
 export async function composeNightly(
   db: Db,
@@ -538,7 +498,7 @@ async function materializeKnowledgeScopedSession(
           and(
             sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
             notDraftPredicate(question.draft_status),
-            // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作 scoped 填空。
+            // 契约准入门：suspended/withdrawn 组不作 scoped 填空。
             questionSuspendedPredicate(question),
           ),
         )
@@ -622,12 +582,15 @@ async function getKnowledgeScopedStream(
       : [];
   }
 
-  const dailyBudget = await resolveDailyPracticeBudget(db);
+  const [dailyBudget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
   const budget = {
     pace: dailyBudget.pace,
     minutes: Math.min(
       dailyBudget.minutes,
-      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question'),
+      SCOPED_QUESTION_LIMIT * estimateStreamItemMinutes('question', questionPace.minutes),
     ),
   };
   const scope: StreamScope = {
@@ -643,6 +606,7 @@ async function getKnowledgeScopedStream(
     rows,
     budget,
     scope,
+    questionMinutes: questionPace.minutes,
     openingLine:
       rows.length === 0
         ? `「${knowledgeRow.name}」暂时没有可练的已发布题目。`
@@ -654,6 +618,7 @@ async function trimStoredPendingItemsToBudget(
   db: Db,
   date: string,
   budgetMinutes: number,
+  questionMinutes: number,
 ): Promise<StreamItemRow[]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
@@ -664,36 +629,12 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
-    // Recovery rows (unsupported pinned contract + accepted submission) are not
-    // prospective work: they stay visible as the settlement/recovery entry point
-    // but sit outside the budget economy entirely — never a trimmable tail, and
-    // never consuming the minutes that decide other rows' fate.
-    const frozen = eligible.filter(
-      (row) => row.status !== 'pending' && !recoveryRowIds.has(row.id),
-    );
-    const frozenMinutes = frozen.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
-      0,
-    );
-    const pending = eligible.filter(
-      (row) => row.status === 'pending' && !recoveryRowIds.has(row.id),
-    );
-    // An intervention row is the learner-visible delivery of approved material,
-    // not an ordinary recommendation tail. Never trim it merely because it was
-    // appended after the day's budget was composed; instead budget the remaining
-    // pending rows around this protected delivery.
-    const protectedPending = pending.filter((row) => row.source === 'intervention');
-    const budgetablePending = pending.filter((row) => row.source !== 'intervention');
-    const protectedMinutes = protectedPending.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind),
-      0,
-    );
-    const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
-    const keptBudgetable =
-      remaining === 0 ? [] : fitStreamToTimeBudget(budgetablePending, remaining).kept;
-    const keptPending = [...protectedPending, ...keptBudgetable];
-    const keptIds = new Set(keptPending.map((row) => row.id));
-    const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
+    const deleteIds = planStoredStreamBudgetTrim({
+      rows: eligible,
+      recoveryRowIds,
+      budgetMinutes,
+      questionMinutes,
+    });
     if (deleteIds.length > 0) {
       await tx.delete(practice_stream_item).where(inArray(practice_stream_item.id, deleteIds));
     }
@@ -709,7 +650,7 @@ async function trimStoredPendingItemsToBudget(
 /**
  * 读当日流；为空且 composeIfEmpty 时 lazy compose（首次打开练习面的默认路径）。
  *
- * 选题路径由 `opts.policy`（缺省 `resolveSelectionPolicy()`，读 env / 默认 softmax_mfi）
+ * 选题路径由 `opts.policy`（缺省 `resolveSelectionPolicy`，读 env / 默认 softmax_mfi）
  * 裁定：legacy 走确定性 composeDailyStream；softmax_mfi 走档2 LLM-strong 路径（含两级
  * fallback + π_i 持久化）。`opts.composeDeps` 仅 DI（测试 mock runTask/rng），production 省略。
  */
@@ -722,12 +663,12 @@ export async function getStream(
     composeDeps?: ComposeSoftmaxDeps;
     /** 容量注入（DI，仅测试用——收紧 max 测 π_i<1 / capacityGuard slice）。production 省略。 */
     capacity?: ComposerInputs['capacity'];
-    /** YUK-622：收敛修复前已物化的超预算 pending 尾；today 读路径随 composeIfEmpty 自动启用。 */
+    /** 收敛修复前已物化的超预算 pending 尾；today 读路径随 composeIfEmpty 自动启用。 */
     enforceBudget?: boolean;
-    /** YUK-474 — refill DI（测试注 fake dispatch 捕获、不打真 pg-boss）。production 省略 →
-     *  refillActiveLearningPools 走默认 demandToSupplyTarget + dispatchSupplyTarget。 */
+    /**refill DI（测试注 fake dispatch 捕获、不打真 pg-boss）。production 省略 →
+     * refillActiveLearningPools 走默认 demandToSupplyTarget + dispatchSupplyTarget。 */
     refillDeps?: RefillDeps;
-    /** YUK-535 — server-resolved independent on-demand review session for this KC. */
+    /** server-resolved independent on-demand review session for this KC. */
     knowledgeId?: string;
     /** Materialize a scoped session/items. Historical scoped reads remain read-only. */
     materializeScoped?: boolean;
@@ -744,7 +685,7 @@ export async function getStream(
     .orderBy(asc(practice_stream_item.position));
 
   if (rows.length === 0 && opts.composeIfEmpty) {
-    // CLUSTER C：single-flight（advisory 锁 + 双重检查）——并发 lazy-compose 不双发 LLM。
+    // single-flight（advisory 锁 + 双重检查）——并发 lazy-compose 不双发 LLM。
     await singleFlightCompose(
       db,
       date,
@@ -753,12 +694,12 @@ export async function getStream(
       opts.capacity,
     );
 
-    // YUK-474 — 取题瞬间 refill（compose 事务**提交后**、top-level `db`、best-effort）。检查活跃
-    //   学习 KC 的活跃池，见底（< REFILL_POOL_THRESHOLD）则复用既有 dispatcher 补题。**flag-off
-    //   （QUESTION_SUPPLY_REFILL_ENABLED 默认 false）→ refillActiveLearningPools 入口即短路返 []
-    //   （零 DB 零 dispatch）→ getStream 行为 byte-identical 现状**。这是「每用户每天首次打开练习
-    //   流一次」的 on-demand 补充（非 per-question / 非每次读），不在 day-one 关键路径。refill 失败
-    //   绝不破坏取题（try/catch best-effort，mirror writeObservationsBestEffort 纪律）。
+    // 取题瞬间 refill（compose 事务**提交后**、top-level `db`、best-effort）。检查活跃
+    // 学习 KC 的活跃池，见底（< REFILL_POOL_THRESHOLD）则复用既有 dispatcher 补题。**flag-off
+    // （QUESTION_SUPPLY_REFILL_ENABLED 默认 false）→ refillActiveLearningPools 入口即短路返 []
+    // （零 DB 零 dispatch）→ getStream 行为 byte-identical 现状**。这是「每用户每天首次打开练习
+    // 流一次」的 on-demand 补充（非 per-question / 非每次读），不在 day-one 关键路径。refill 失败
+    // 绝不破坏取题（try/catch best-effort，mirror writeObservationsBestEffort 纪律）。
     try {
       await refillActiveLearningPools(db, opts.refillDeps);
     } catch (err) {
@@ -775,16 +716,20 @@ export async function getStream(
       .orderBy(asc(practice_stream_item.position));
   }
 
-  const budget = await resolveDailyPracticeBudget(db);
+  const [budget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
-  // Recovery rows are visible but not prospective: their minutes must neither
-  // trigger the trim nor decide other rows' fate (same carve-out as the trim).
-  const storedMinutes = rows
-    .filter((row) => !gated.recoveryRowIds.has(row.id))
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind), 0);
-  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
-    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes);
+  const exceedsBudget = storedStreamExceedsBudget({
+    rows,
+    recoveryRowIds: gated.recoveryRowIds,
+    budgetMinutes: budget.minutes,
+    questionMinutes: questionPace.minutes,
+  });
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
+    rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
   }
 
   rows = (await filterProspectiveStreamQuestions(db, rows)).rows;
@@ -793,8 +738,9 @@ export async function getStream(
     date,
     rows,
     budget,
+    questionMinutes: questionPace.minutes,
     scope: null,
-    // M2 模板开场白；M4 由 composer_nightly 写 AI 开场白（随流持久化）。
+    // Templated opening; composer_nightly may replace it with AI text.
     openingLine:
       rows.length === 0
         ? '今天流里还没有东西——录几道题，或向我点播一份卷。'
@@ -837,29 +783,20 @@ async function completeScopedSessionIfDone(db: Db, row: StreamItemRow): Promise<
 }
 
 /**
- * 推进 item 状态（作答事实由 submit 路由写 event；这里只动日程行）。
+ * Advance an item's schedule row. Answer facts are written by the submit route; this
+ * only moves the daily-stream row.
  *
- * Task 9（hybrid 运行时）：题项推进到 `done` 后触发**有界增量重排**（reRankAfterAnswer）
- * ——作答更新了该题 knowledge_ids 的 θ̂（submit 路由的 updateThetaForAttempt），触及这些 KC
- * 的**待做非到期诊断项**的 MFI 权重随之变化，需据更新后 θ̂ 重排它们（only 它们）。
- * **仅 softmax_mfi policy 触发**（FINDING 3）：SELECTION_POLICY=legacy 紧急关闭开关下整体
- * 跳过随机重排（legacy 走确定性 composeDailyStream，不容随机 IPPS 扰动）。
- *
- * 同步 vs 异步 / 重排触发的设计抉择（task 9 deliverable 2）：
- *   - 选 **best-effort 同步**（状态 UPDATE 提交后、本函数返回前 inline 调），**包在 try/catch
- *     里永不 throw**——与 writeObservationsBestEffort 的 post-commit 遥测同纪律。理由：
- *     ① 重排走**纯统计 sampler**（不重跑 LLM，见 reRankAfterAnswer），廉价；② 它在自己的
- *     单飞锁事务里跑（与作答 UPDATE 解耦），重排失败/抛错绝不回滚已落库的状态推进、也不让
- *     PATCH 路由 500；③ 不引新 pg-boss 队列（scope discipline）。代价：PATCH 响应多等一个
- *     轻量统计重排（无 LLM 网络往返）——可接受。
- *   - 未选异步 fire-and-forget（boss.send 新队列）：增量重排无 LLM、毫秒级，独立队列的运维
- *     成本 + 新 schema 面不划算；best-effort 同步已满足「不破坏/不显著拖慢作答写」。
+ * After a question item reaches `done`, rerank pending non-due items touching its KCs with
+ * the updated θ̂. Rerank is best-effort and synchronous: it uses only the statistical
+ * sampler (no LLM) and is wrapped in try/catch so a failure cannot roll back the committed
+ * transition or turn the PATCH into a 500. It is skipped under the legacy policy, whose
+ * deterministic compose must not be perturbed.
  */
 export async function advanceStreamItem(
   db: Db,
   id: string,
   next: StreamItemStatus,
-  // 重排 DI（测试注入 rng 确定化 Poisson 抽样）。production 省略 → 默认 Math.random。
+  // Injected rng for deterministic Poisson sampling in tests.
   rerankDeps: { rng?: () => number } = {},
 ): Promise<StreamItemRow | null> {
   const [row] = await db
@@ -914,13 +851,8 @@ export async function advanceStreamItem(
 
   await completeScopedSessionIfDone(db, updated);
 
-  // Task 9：作答推进到 done 的**题项**触发有界增量重排（best-effort，post-commit）。
-  //   只 question 项（paper 内部题不在流层重排）；只 done（in_progress/skipped/pending 不触发）。
-  //
-  // FINDING 3（Codex）：尊重 SELECTION_POLICY=legacy 紧急关闭开关。legacy 路径走确定性
-  //   composeDailyStream（无随机 softmax / 无 IPPS 重排）——增量重排（reRankAfterAnswer）是
-  //   softmax_mfi 专属的随机重抽样层，legacy 下**必须整体跳过**，否则确定性 compose 出来的流
-  //   会被 softmax 重排偷偷扰动（违背 legacy「关掉所有随机选题」的语义）。
+  // Rerank only completed question items, and only under the softmax policy: the legacy
+  // path must stay deterministic, so its stream must not be randomly reshuffled.
   const policyForRerank = resolveSelectionPolicy().policy;
   if (
     policyForRerank === 'softmax_mfi' &&
@@ -935,7 +867,7 @@ export async function advanceStreamItem(
         rng: rerankDeps.rng,
       });
     } catch (err) {
-      // 重排是 hybrid 运行时的便利层，失败绝不破坏已提交的状态推进（best-effort 契约）。
+      // Rerank is a convenience layer; failure must not undo the committed transition.
       console.error('[stream-store] reRankAfterAnswer failed (post-commit, best-effort)', {
         streamItemId: updated.id,
         refId: updated.ref_id,
@@ -947,16 +879,11 @@ export async function advanceStreamItem(
 }
 
 /**
- * 手动重排：保留 done/in_progress/skipped，删 pending 后按当前信号重新编排追加。
- * 选题路径同 getStream（policy 缺省 resolveSelectionPolicy）；softmax_mfi 路径记 π_i。
- *
- * CLUSTER C：与 lazy-compose 共用独立的 `stream:compose-paid:<date>` session lock。先在原
- * `stream:compose:<date>` xact writer 边界内捕获待删 pending id；prepare/Mem0/runTask 在事务外
- * 完成；最终短事务重取原 key，只删除仍 pending 的捕获行再物化。prepare 期间新到的 intervention
- * 因而保留。recompose 是显式用户动作，故每次调用仍执行一次 prepare。
- *
- * FINDING B：与 singleFlightCompose 同款——选题观测在事务**提交后**锁外 best-effort 写，
- * 遥测失败永不回滚已重排物化的流。
+ * Manual recompose: keep done/in_progress/skipped rows, delete pending rows, then compose
+ * again from current signals. Uses the same paid-work lock as lazy compose; captures
+ * pending ids under the writer lock, prepares outside the transaction, and deletes only
+ * rows that are still pending, so interventions arriving during prepare survive.
+ * Observations are written after commit, best-effort.
  */
 export async function recomposeStream(
   db: Db,
@@ -1015,100 +942,41 @@ export async function recomposeStream(
     },
   );
 
-  // 事务已提交（流已稳）——锁外 best-effort 写观测（FINDING B）。
+  // 事务已提交（流已稳）——锁外 best-effort 写观测。
   await writeObservationsBestEffort(db, observations);
   return added;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Task 9（hybrid 运行时核心）：作答后有界增量重排。
+// Post-answer incremental rerank (softmax_mfi only).
 // ═══════════════════════════════════════════════════════════════════════════
-//
-// 作答把答对题的 knowledge_ids 的 θ̂ 推动了（submit 路由 updateThetaForAttempt）。触及这些
-// KC 的**待做非到期诊断项**（frontier/diagnostic/new_check）的 MFI 权重 = p(1−p)、p=σ(θ̂−b)
-// 随之改变——需据**更新后** θ̂ 重排它们。这就是 ADR-0042 §4 hybrid（夜间预产骨架 + 作答后
-// 增量重排）的「增量重排」半边：只重跑**受影响 KC** 的 L1 信号（重读 mastery_state → 新 θ̂）
-// + 薄统计 sampler，**不整流、不重跑 LLM**（ADR-0042 §4 amendment「增量重排走纯统计 sampler，
-// 若不重跑 LLM 则用上次 LLM 权重 + 新信号，便宜」——本实现取「新信号纯统计 sampler」档：
-// LLM 权重未逐项持久化，最便宜且正确的是用更新后 θ̂ 重算 mfiScore 当统计权重重抽样）。
-//
-// ─── 候选池重设计（YUK-361 Phase 4 HIGH 缺陷修复）────────────────────────────────
-//   **以前的 bug**：候选池只取「受影响的既有流行」（candidateInputs = affectedRows.map），
-//   且 targetCount = affectedRows.length。pool 数 N === targetCount → inclusionProbabilities
-//   命中退化档（targetCount ≥ N → 全 π_i=1）→ sampler 原样重选同一集合 → delete+reinsert
-//   同 ref（churn + 新行 id），**一道都没真重排**，还往 IPW 资产灌 π=1 脏行。deliverable(2)
-//   「按更新后 θ̂ 重排待做非到期项」沦为 no-op。
-//
-//   **修复**：把候选池**拓宽**成「当日完整 eligible 非到期池」——复用 collectComposerInputs 的
-//   variant + new_check 源（与 Phase 3 选题同源），再**排除所有 FROZEN/ineligible ref**：
-//     - 到期行（source='decay'）、recall-locked 行、done/in_progress/skipped 行（任意 source）、
-//       今日已物化且已完成的 ref——都不进池（它们冻结，position/status 不动）。
-//   这个 broad pool 的大小 N **大于** targetCount（= 当前待做非到期空位数），故 sampleByWeight
-//   走**真** IPPS（π_i < 1，真重排：可换进一道现在更诊断的题、换掉一道现在更不诊断的）。新鲜
-//   θ̂（collectCandidateSignals 读当前 mastery_state）这下真的改变结果。
-//
-//   targetCount = **当前待做非到期空位数**（待回填的诊断尾长），**不是** pool 大小。
-//
-// ─── 不变量保全（与 Phase 3 选题路径 review 同款铁律②③④ + positivity）────────────
-//   ② 到期 presence + intra-day 序：到期行（source='decay'）**冻结**——既不删也不动 position，
-//      故其 presence + L1 相对序原样保全（本函数从不碰到期行；它们也被排出候选池）。
-//   ③ recall 同题重背：snapshot recall-locked 待做行（signals.recallLocked===true）**冻结**；
-//      且**EDGE 2**——某行 snapshot 不是 recall 但**新鲜 compute** 重判为 recall（question.kind
-//      词表外标签 → resolveRotatableKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
-//      （不删进空位、不重抽样），presence 守住（never drop-into-a-gap）。
-//   ④ 容量 + draft 排除 + dedup：targetCount = 可替换待做非到期 slot 数（不胀容量）；broad pool
-//      抽样经 in-memory seen（排除冻结 ref）+ date+ref 唯一索引兜重复。
-//   positivity（ADR-0043 §7）：复用 sampleByWeight（含 ε-greedy 下限）——每个进池候选 π_i>0；
-//      **EDGE 3**——只对 INSERT **真落库**的行（onConflictDoNothing 没吞掉的）记真 π_i
-//      （post-commit best-effort，policy='softmax_mfi'），绝不记幻影 π_i（mirror materializeStream
-//      的 freshRefs 纪律）。
-//   done/in_progress/skipped 行（任意 source）**冻结**——既不删也不动 position+status。
-//
-// ─── FINDING 2（Codex）：重排作用域**收窄到答完题的 KC**────────────────────────────
-//   只重排「题触及 affectedKnowledgeIds（= 答完那题的 knowledge_ids）」的待做非到期行。答 KC-A
-//   绝不去删一个 KC-B 的待做项换成 KC-A 候选（churn 无关 slot）——**不触及答完 KC 的待做非到期
-//   行整体冻结**（进 frozenRefs，不删、不动 position、不进候选池）。θ̂ 只为相关 KC 的候选移动，
-//   故只有它们该被重排。
-//
-// ─── FINDING 1（Codex，DATA LOSS）：欠采绝不丢题（只 SWAP 不 SHRINK）──────────────
-//   sampleByWeight 是 **Poisson/Bernoulli IPPS**——realized `sampled.length` 在 targetCount 附近
-//   **随机波动**，不保证 == 可替换 slot 数。旧实现「先删全部可替换行、再只插 sampled 条」在欠采
-//   （sampled < replaceable）时**永久丢掉**待做非到期项（流缩短 + position 空洞）。修复 = Option(a)
-//   **只删将被真正回填的 slot**（"don't delete a row you won't refill"）：删除数 = min(本轮真换进
-//   的新 ref 数, 可替换 slot 数)，删**最低 position** 的那几个，其余可替换行**原地保留**（不删、不动
-//   position）。π_i 含义：每条**真插入**项的 π_i 仍是 sampleByWeight 的**真** Poisson 入选概率
-//   （targetCount 不变、不 top-up、不扰动权重）→ 喂 Phase 6 IPW 无偏；保留下来的原 slot 沿用首次
-//   物化那轮已记的 π_i（不重写）。
-//
-// ─── 单飞锁 + 串行化 ───────────────────────────────────────────────────────────
-//   复用**同一把** `pg_advisory_xact_lock('stream:compose:<date>')`——与 lazy-compose /
-//   recompose / 夜间预产互斥，故重排与任何 compose 路径不会并发改同一天的流（不双写
-//   position、不写重复观测）。
-//
-// ─── policy gate（FINDING 3，advanceStreamItem 侧）─────────────────────────────────
-//   advanceStreamItem 只在 resolveSelectionPolicy().policy === 'softmax_mfi' 时调本函数；
-//   SELECTION_POLICY=legacy 紧急关闭开关下整体跳过随机重排（legacy 走确定性 composeDailyStream）。
-//
-// ─── position 模型（done/skipped 行绝不移位的硬约束 ⇒ 不能整流 renumber）──────────
-//   只删**真正被回填的**待做非到期行（被 EDGE 2 冻结保留的、KC 无关的、欠采下不回填的都不删），
-//   腾出 position「空位」；抽中的新项**优先填这些空位**（按抽样序），多出的追加在 `max(position)+1…`。
-//   冻结行 + 保留 slot 的 position 全部**逐字不动**——满足「done/due/recall/in_progress/skipped 保
-//   position」+「无重复 position」（空位本就空闲；tail 位超 max 不撞冻结位；空位由删除行让出，不撞
-//   冻结位）。这与 materializeStream 的整流 renumber **有意不同**：那条路径会移到期/done 行 position
-//   （recompose 语义下可接受）；增量重排契约更严（done 必须钉死），故走专用定位。presence 硬约束：
-//   每行重排前存在的，要么 frozen-kept、要么被替换重落，**绝不掉进空位被丢**（欠采下不回填的 slot
-//   不删 → 也守住 presence）。
+// Answering moves θ̂ for the question's knowledge_ids, which changes the MFI weight
+// p(1−p), p=σ(θ̂−b), of pending non-due diagnostic items. Rerank those items with the
+// fresh θ̂ using the statistical sampler only: no whole-stream rebuild and no LLM call
+// (LLM item weights are not persisted, so recomputing mfiScore is the cheapest correct
+// weight).
+// Scope and shape:
+// - The candidate pool is the full eligible non-due pool (same variant/new_check sources
+// as compose), excluding frozen refs. targetCount is the number of replaceable pending
+// slots, not the pool size, so sampling is real IPPS (π_i < 1).
+// - Only items touching the answered question's KCs are reranked. Unrelated pending
+// items, due rows, paper rows, recall-locked rows, and done/in_progress/skipped rows
+// stay frozen: not deleted, not moved, not re-sampled.
+// - A row whose snapshot is not recall-locked but whose fresh classification is recall
+// stays in place (fail-closed); never drop it into a freed slot.
+// - Sample sizes fluctuate. Delete only slots that will actually be refilled
+// (min(new refs, replaceable slots), lowest position first) and keep the rest, so the
+// stream never shrinks or leaves position holes.
+// - Record π_i only for rows that really inserted (post-commit, best-effort); kept slots
+// reuse their original observation.
+// - Reuse the `stream:compose:<date>` advisory lock, so rerank never races compose.
+// - Frozen and kept rows keep their exact positions; new items fill freed slots first,
+// then append after max(position). This deliberately differs from materializeStream's
+// full renumber, which recompose semantics allow.
 
-/** 从 practice_stream_item.signals 快照读 recallLocked（Phase 3 物化的 CollectedSignal）。 */
+/** 从 practice_stream_item.signals 快照读 recallLocked。 */
 function rowIsRecallLocked(signals: unknown): boolean {
   return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
-}
-
-/** 把 DB question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成可旋转分类的标签或
- * undefined（同 softmax 侧 FINDING 4）。YUK-386：边界从「enum 成员」改为
- * 「rotationClassForKind 可分类」——同一张 KNOWN 标签表，行为不变。 */
-function resolveRotatableKind(kind: string | null | undefined): string | undefined {
-  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
 
 /**
@@ -1140,7 +1008,7 @@ export async function reRankAfterAnswer(
   if (affectedKnowledgeIds.size === 0) return 0;
 
   const { added, observations } = await db.transaction(async (tx) => {
-    // 单飞锁（与所有 compose 路径共用键）——重排与 lazy/recompose/nightly 互斥。
+    // Same key as every compose path, so rerank cannot race lazy/recompose/nightly.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${streamPartitionLockKey(date, sessionId)}))`,
     );
@@ -1152,14 +1020,11 @@ export async function reRankAfterAnswer(
       .orderBy(asc(practice_stream_item.position));
     if (rows.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── 待做非到期诊断行（重排作用域的全集）= 当前 pending + question + source(variant/
-    //    new_check) + snapshot 非 recall-locked。到期行(decay)/卷/snapshot recall-locked/任何
-    //    done|in_progress|skipped 行 = 冻结，它们既不进作用域、也不进候选池、position/status 逐字不动。
-    // 设计决策（YUK-551 spec §Q7）:frontier item 进初始 softmax sampler 池（softmax-selection
-    // sourceForRole 可产出 source:'frontier'）,但**排除**在作答后 reRank 之外——filter 只含
-    // variant/new_check。placed frontier item 在 θ̂ 移动下冻结、不换。刻意如此:frontier 是
-    // **结构可达性**信号（前置全掌握）,非 θ̂-诊断 slot;reRank 只 churn θ̂-诊断项（variant/
-    // new_check）。改一侧前先读此注释,勿「修好一边破了不变量」。
+    // Rerank scope: pending question items from variant/new_check whose snapshot is not
+    // recall-locked. Due rows, paper rows, recall-locked rows, and completed/in-progress/
+    // skipped rows are frozen. Frontier items are sampled at compose time but excluded
+    // here: frontier signals structural reachability, not θ̂ diagnostics, so answering must
+    // not churn them. Changing either side must preserve that split.
     const allPendingNonDue = rows.filter(
       (r) =>
         r.status === 'pending' &&
@@ -1171,10 +1036,8 @@ export async function reRankAfterAnswer(
     if (allPendingNonDue.length === 0)
       return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── FINDING 2（Codex）：把重排作用域**收窄**到「题触及答完题 KC（affectedKnowledgeIds）」的
-    //    待做非到期行。答 KC-A 不该把无关的 KC-B 待做项删掉换成 KC-A 候选（churn 无关 slot）——
-    //    只有 KC 受 θ̂ 移动影响的待做项才该被重排。**不触及答完 KC 的待做非到期行整体冻结**
-    //    （既不进 targetCount、不删、不动 position）。需逐行查 question.knowledge_ids 判定。
+    // Narrow scope to rows touching the answered question's KCs. Answering KC-A must not
+    // churn an unrelated KC-B slot; untouched pending rows stay frozen.
     const pendingNonDueQids = [...new Set(allPendingNonDue.map((r) => r.ref_id))];
     const pendingQRows =
       pendingNonDueQids.length === 0
@@ -1190,9 +1053,8 @@ export async function reRankAfterAnswer(
     // 答完题的 KC 不触及任何待做非到期行 → 无可重排的 slot → no-op（不 churn 无关 slot）。
     if (pendingNonDue.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── HIGH 修复：候选池**拓宽**成「当日完整 eligible 非到期池」（不再只取受影响既有流行）。
-    //    复用 collectComposerInputs 的 variant + new_check 源（与 Phase 3 选题同源）；到期项
-    //    与卷不进重排候选池（它们冻结/旁路）。
+    // Candidate pool is the full eligible non-due pool from compose; due and paper rows
+    // stay frozen.
     const composerInputs = await collectComposerInputs(tx, date);
     const poolRaws = [
       ...composerInputs.variantItems.map((v) => ({
@@ -1207,17 +1069,14 @@ export async function reRankAfterAnswer(
       })),
     ];
 
-    // ── 冻结/ineligible ref 集合：必须从候选池**排除**（它们 position 不动，不得被重抽样
-    //    复制成新行 → 撞 date+ref 唯一索引 / 破坏冻结行的 presence）。
-    //    = 到期行(decay) + snapshot recall-locked 行 + done|in_progress|skipped 行（任意 source）
-    //      + 卷 + **FINDING 2 下「不触及答完 KC」的待做非到期行**（它们也冻结，不进作用域）。
-    //    只有 KC-scoped 的 pendingNonDue 的 ref **不在**冻结集（它们正是要被替换的尾，可重新入选）。
+    // Everything outside the affected pending non-due scope is frozen: excluded from the
+    // pool and never moved or re-sampled.
     const pendingNonDueRefs = new Set(pendingNonDue.map((r) => r.ref_id));
     const frozenRefs = new Set(
       rows.filter((r) => !pendingNonDueRefs.has(r.ref_id)).map((r) => r.ref_id),
     );
 
-    // 候选池 raws：排除冻结 ref + in-memory dedup（铁律④；唯一索引兜底）。
+    // Exclude frozen refs and dedup in memory; the unique index is the backstop.
     const seenPool = new Set<string>();
     const eligibleRaws = poolRaws.filter(
       (r) =>
@@ -1225,152 +1084,64 @@ export async function reRankAfterAnswer(
     );
     if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── 富化候选（kind/knowledge_ids/difficulty）——一次性批量点查 question 表。
-    const poolQids = eligibleRaws.map((r) => r.questionId);
-    const candQRows = await tx
-      .select({
-        id: question.id,
-        kind: question.kind,
-        knowledge_ids: question.knowledge_ids,
-        difficulty: question.difficulty,
-        // YUK-372 L3 — question.source for family_key resolution (distinct from the slot
-        // `source` in eligibleRaws, which is the stream-slot origin 'decay'/'new_check').
-        source: question.source,
-      })
-      .from(question)
-      .where(inArray(question.id, poolQids));
-    const candQById = new Map(candQRows.map((q) => [q.id, q]));
+    const candidateInputs = await readStreamSelectionCandidates(
+      tx,
+      eligibleRaws.map((r) => ({ questionId: r.questionId, role: r.source })),
+    );
 
-    // ── bounded gate（铁律④ + deliverable 5）：只在答完题的 KC 与 eligible 池的 KC 相交时
-    //    才重排（θ̂ 真为相关候选移动了）。零相交 → no-op（不 churn、不写观测）。
-    const poolTouchesAffected = eligibleRaws.some((r) => {
-      const kids = candQById.get(r.questionId)?.knowledge_ids ?? [];
-      return kids.some((k) => affectedKnowledgeIds.has(k));
-    });
+    // Rerank only when the eligible pool touches an affected KC.
+    const poolTouchesAffected = candidateInputs.some((candidate) =>
+      (candidate.knowledgeIds ?? []).some((k) => affectedKnowledgeIds.has(k)),
+    );
     if (!poolTouchesAffected) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── 收集候选信号（**新鲜 θ̂**：collectCandidateSignals 读当前 mastery_state）。
+    // Fresh θ̂: collectCandidateSignals reads current mastery_state.
     const sourceByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.source]));
     const labelByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.knowledgeLabel]));
-    const candidateInputs: CandidateInput[] = eligibleRaws.map((r) => {
-      const q = candQById.get(r.questionId);
-      return {
-        refKind: 'question' as const,
-        refId: r.questionId,
-        role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-        kind: resolveRotatableKind(q?.kind),
-        knowledgeIds: q?.knowledge_ids,
-        difficulty: q?.difficulty,
-        // YUK-372 L3 — question.source (not the slot source) for family_key resolution.
-        source: q?.source,
-      };
-    });
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
-    // ── EDGE 2（铁律③ + presence）：某 pendingNonDue 行 snapshot 不是 recall，但**新鲜 compute**
-    //    重判为 recall（question.kind 不在 KNOWN 词表 → resolveRotatableKind undefined → fail-closed
-    //    recallLocked=true）。这种行**不删进空位、不重抽样**——freeze 保留（position/status 不动），
-    //    presence 守住（never drop-into-a-gap）。
-    const freshRecallRefs = new Set(
-      signals.filter((s) => s.recallLocked === true).map((s) => s.refId),
-    );
-    // samplable = 非 recall-locked 候选（snapshot 已过滤 + fresh recall 此处剔除）。
-    const samplable = signals.filter((s) => s.recallLocked !== true);
+    const basis = prepareStreamReplacement(rows, pendingNonDue, signals);
+    if (basis === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // ── 可被替换的待做非到期行（作用域内、EDGE 2 冻结的 fresh-recall 行排除——保留不删）。
-    //    它们是「可换出的 slot」上界；**实际删多少由真正落库的新抽中项数决定**（FINDING 1）。
-    const replaceableRows = pendingNonDue
-      .filter((r) => !freshRecallRefs.has(r.ref_id))
-      .sort((a, b) => a.position - b.position);
-    if (replaceableRows.length === 0)
-      return { added: 0, observations: [] } satisfies ComposeOutcome;
-    const replaceableRefs = new Set(replaceableRows.map((r) => r.ref_id));
-
-    // ── dedup 真相源（铁律④）：抽中项不得撞已在流里且**不会被删**的 ref（frozen + fresh-recall-kept
-    //    + 未被替换保留下来的 replaceable 行）。被真正删掉的 replaceable ref 才可重新入选。
-    //    keptRefs 在删除决策**之后**重算（见下）；此处先备 baseKeptRefs = 所有非 replaceable ref
-    //    （恒不删）。
-    const baseKeptRefs = new Set(
-      rows.filter((r) => !replaceableRefs.has(r.ref_id)).map((r) => r.ref_id),
-    );
-
-    // ── 纯统计 sampler（不跑 LLM，ADR-0042 §4）：用新鲜 θ̂ 的 mfiScore 当权重。
-    //    targetCount = 可替换的待做非到期 slot 数（NOT pool 大小）——broad pool N > targetCount，
-    //    故 sampleByWeight 走**真** IPPS（π_i<1，真重排）。
-    const weighted = statisticalWeights(samplable);
+    // Statistical sampler with fresh θ̂. targetCount is the replaceable slot count, not the
+    // pool size, so sampling is real IPPS (π_i < 1).
+    const weighted = statisticalWeights(basis.samplable);
     const sampled =
       weighted.length === 0
         ? []
         : sampleByWeight(weighted, {
             temperature: DEFAULT_TEMPERATURE,
-            targetCount: replaceableRows.length,
+            targetCount: basis.targetCount,
             rng: opts.rng,
           });
 
-    // ── FINDING 1（Codex，DATA LOSS）：sampleByWeight 是 **Poisson/Bernoulli IPPS**——realized
-    //    `sampled.length` 在期望值 targetCount 附近**随机波动**，**不保证** == replaceableRows.length。
-    //    旧实现「先删全部 replaceableRows，再只插 sampled 条」在 sampled < replaceable 欠采时
-    //    会**永久丢掉**待做非到期项（流缩短 + position 空洞）——选定 Option (a)「只 SWAP，绝不
-    //    SHRINK」：**只删将被真正回填的那几个 slot**（"don't delete a row you won't refill"）。
-    //    步骤：
-    //      1. 先算出本轮**真正会换进的新 ref**（sampled 里 ref ∉ baseKeptRefs、去重）。这是
-    //         「能填的新项数」上界。
-    //      2. 删除数 = min(新 ref 数, replaceableRows 数)；删**最低 position** 的那几个 slot
-    //         （腾出确定的 position 空位回填），其余 replaceable 行**原地保留**（不删、不动 position）。
-    //      3. 多出的新 ref（> 删除数）追加在 tail（流可增长，pre-existing 行为，非 shrink）。
-    //    π_i 含义：每条**真插入**项记录的 π_i 仍是 sampleByWeight 算出的**真** Poisson 入选概率
-    //    （targetCount=replaceableRows.length 不变）——本修复不 top-up、不扰动权重，只是**不删
-    //    无回填的 slot**，故 π_i 仍是 realized selection 的真实边际入选概率（喂 Phase 6 IPW 无偏）。
-    //    保留下来的原 slot 沿用其首次物化那轮已记的 π_i（不重写）。
-    const newRefPicks: string[] = [];
-    const seenNewRef = new Set<string>();
-    for (const s of sampled) {
-      if (baseKeptRefs.has(s.refId)) continue; // 已在流里且不删 → 不是「换进的新项」。
-      if (seenNewRef.has(s.refId)) continue; // 去重（同 ref 只占一个 slot）。
-      seenNewRef.add(s.refId);
-      newRefPicks.push(s.refId);
-    }
-    // 实际删除的 slot 数 = min(能填的新 ref 数, 可替换 slot 数)——绝不删超过能回填的数量。
-    const deleteCount = Math.min(newRefPicks.length, replaceableRows.length);
-    const rowsToDelete = replaceableRows.slice(0, deleteCount); // 最低 position 的 deleteCount 个。
-    const deletedRefs = new Set(rowsToDelete.map((r) => r.ref_id));
-    const vacatedPositions = rowsToDelete.map((r) => r.position).sort((a, b) => a - b);
+    const plan = planStreamReplacement(basis, sampled);
+    if (plan === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // keptRefs = baseKeptRefs ∪ 未被删的 replaceable ref（它们原地保留 → 抽中也不得重插撞唯一索引）。
-    const keptRefs = new Set(rows.filter((r) => !deletedRefs.has(r.ref_id)).map((r) => r.ref_id));
-
-    // 无可删 slot（deleteCount==0：欠采到 0 新 ref，或全被 baseKeptRefs 吸收）→ 不删不插，no-op。
-    if (rowsToDelete.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
-
-    // ── 只删**将被回填**的 replaceable 行（腾位）。其余 replaceable 行 + 冻结行 + EDGE2 保留行
-    //    原封不动——FINDING 1：绝不删一个不会回填的 slot（无 shrink、无 position 空洞）。
-    await tx.delete(practice_stream_item).where(
-      and(
-        streamPartitionPredicate(date, sessionId),
-        inArray(
-          practice_stream_item.id,
-          rowsToDelete.map((r) => r.id),
+    // Delete only slots that will be refilled; frozen and kept rows stay untouched.
+    await tx
+      .delete(practice_stream_item)
+      .where(
+        and(
+          streamPartitionPredicate(date, sessionId),
+          inArray(practice_stream_item.id, plan.deleteIds),
         ),
-      ),
-    );
+      );
 
-    // ── 落新抽中项：优先填腾出的空位，多出的追加在 max(position)+1…（冻结行 + 保留 slot position 不动）。
-    //    dedup：跳过已在 keptRefs 的 ref（避免撞 date+ref 唯一索引）。
-    //    EDGE 3：observation + added **仅对 INSERT 真落库的行**（onConflictDoNothing 没吞掉的）
-    //    ——mirror materializeStream 的 freshRefs 纪律，绝不记幻影 π_i（streamItemId 必须有真行）。
+    // Fill vacated positions first, then append after max(position). Skip refs kept in the
+    // stream, and record π_i only for rows that actually insert.
     const maxPosition = rows.reduce((m, r) => Math.max(m, r.position), 0);
     let tailPos = maxPosition + 1;
     let slot = 0;
     const now = new Date();
     const observations: SelectionObservationInput[] = [];
     let added = 0;
-    for (const s of sampled) {
-      if (keptRefs.has(s.refId)) continue;
-      const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
+    for (const s of plan.insertCandidates) {
+      const pos = slot < plan.vacatedPositions.length ? plan.vacatedPositions[slot] : tailPos++;
       slot++;
       const signal = signalByRef.get(s.refId);
-      const source = sourceByRef.get(s.refId) ?? 'variant';
+      const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
       const newRowId = newId();
       const inserted = await tx
         .insert(practice_stream_item)
@@ -1381,22 +1152,19 @@ export async function reRankAfterAnswer(
           position: pos,
           item_kind: 'question' as const,
           ref_id: s.refId,
-          source,
+          source: presentation.source,
           status: 'pending' as const,
-          // 重排不改文案（保留 reasoning 模板——增量重排是排序调整，非新叙事）。
-          reasoning:
-            source === 'new_check'
-              ? newCheckReasoning(labelByRef.get(s.refId))
-              : variantReasoning(labelByRef.get(s.refId)),
+          // Rerank changes order only; keep the original reasoning template.
+          reasoning: presentation.reasoning,
           added_by: 'composer_live' as const,
           signals: toSignalsJson(signal),
           created_at: now,
           updated_at: now,
         })
-        // EDGE 3：onConflictDoNothing 吞掉的行**不**回报 → returning() 空 → 不记 added/π_i。
+        // Swallowed inserts report nothing, so they are neither counted nor observed.
         .onConflictDoNothing()
         .returning({ id: practice_stream_item.id });
-      // 行真被吞（并发/残留唯一索引冲突）→ inserted 为空 → 跳过 added + 观测（无幻影 π_i）。
+      // A swallowed row did not occupy the slot; let the next pick use it.
       if (inserted.length === 0) {
         slot--; // 没真占用空位，让回 slot 游标（下一个抽中项可填这个 position）。
         continue;
@@ -1417,7 +1185,7 @@ export async function reRankAfterAnswer(
     return { added, observations };
   });
 
-  // 事务已提交——锁外 best-effort 写 π_i 观测（FINDING B：遥测失败不回滚重排）。
+  // Best-effort observations after commit.
   await writeObservationsBestEffort(db, observations);
   return added;
 }

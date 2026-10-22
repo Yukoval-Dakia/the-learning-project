@@ -1,4 +1,4 @@
-// YUK-986 (Supply-Agent/1) — jyeoo_staged_asset_reap：未提交候选的 staged 图片资产回收。
+// jyeoo_staged_asset_reap：未提交候选的 staged 图片资产回收。
 //
 // jyeoo_fetch_candidates 把存活候选的图片即期持久化（source_asset provenance
 // origin='jyeoo_staged'），候选若最终未被 store_sourced_question 提交（agent 跳过 /
@@ -14,11 +14,8 @@ import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
-import {
-  type JyeooR2Client,
-  lockImageStorageKey,
-  resolveJyeooR2,
-} from '../server/question-supply/jyeoo-candidates';
+import { lockImageStorageKey } from '@/kernel/records/asset-store';
+import { type JyeooR2Client, resolveJyeooR2 } from '../server/question-supply/jyeoo-candidates';
 
 export const JYEOO_STAGED_ASSET_GRACE_HOURS = 24;
 
@@ -58,7 +55,7 @@ export async function runJyeooStagedAssetReap(
 
   const orphanIds: string[] = [];
   for (const asset of staged) {
-    // 引用探测（YUK-1226/SCF-143）：question.image_refs / figures[].asset_id 任一命中即保留，
+    // 引用探测：question.image_refs / figures[].asset_id 任一命中即保留，
     // 另加 reference_md 与 structured（含 structured.answers 参考答案）里的内部资产 URL。
     // candidate 阶段只有 prompt/choices 图进 image_refs/figures；参考答案图只被改写进
     // reference_md（与 structured.answers），只看那两列会把已提交题的 solution-only 资产误删。

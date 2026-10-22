@@ -26,10 +26,8 @@ type WriteEventFn = (db: Db | Tx, input: WriteEventInput) => Promise<string>;
 
 const CHIP_TRIGGER_EVENT_ACTION = 'experimental:copilot_chip_trigger';
 const USER_ASK_EVENT_ACTION = 'experimental:copilot_user_ask';
-// AF S3a / YUK-203 U3 — Copilot reply留痕. New experimental action (NOT in
-// RESERVED_EXPERIMENTAL_ACTIONS), so it parses via the generic ExperimentalEvent
-// escape hatch — zero schema change. Payload is free-form per ExperimentalEvent
-// (z.record). See L-copilot pre-flight缺口表.
+// Experimental action parsed by the generic ExperimentalEvent escape hatch, so
+// no schema change is needed; its payload is free-form per that event.
 const REPLY_EVENT_ACTION = 'experimental:copilot_reply';
 
 /** Persist the accepted ask/chip identity used by FIFO, replay and causal tool mirrors. */
@@ -48,8 +46,8 @@ export async function writeCopilotInputEvent(
     writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
-  // YUK-1398：crisis 与 answer_only 同为受限回合——都不携带 review_answer 接纳。
-  // 未传策略即 allow（fixture / 旧调用方），不能被当成受限回合拒掉。
+  // crisis 与 answer_only 同为受限回合，都不接纳 review_answer。未传策略即
+  // allow（fixture / 旧调用方），不能被当成受限回合拒掉。
   const policy = params.derivationPolicy ?? 'allow';
   if (params.reviewAnswer && policy !== 'allow') {
     throw new ApiError(
@@ -95,7 +93,7 @@ async function persistCopilotInputEvent(
       derivation_policy: readDerivationPolicy({ derivation_policy: params.derivationPolicy }),
       ...(reviewAnswer ? { review_answer: reviewAnswer } : {}),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
-      // AF S3a — redundant portable copy of the conversation envelope id.
+      // Redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,
     },
     created_at: params.now,
@@ -103,12 +101,11 @@ async function persistCopilotInputEvent(
   return userAskEventId;
 }
 
-/** The commit owner seals product-state disclosure and stores one causal reply. */
+/** Seals product-state disclosure and stores one causal reply. */
 export interface WriteCopilotReplyResult {
   replyEventId: string;
   /** 剥掉 legacy primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
   cleanedReply: string;
-  /** 模型 nominate 的 hero（无则 undefined）。 */
   primaryView?: CopilotPrimaryView;
 }
 
@@ -130,8 +127,8 @@ export async function writeCopilotReply(
     /** 模型终稿；遗留 primary_view marker 只会被剥除，不再授予展示权限。 */
     replyText: string;
     /**
-     * A reply already normalized by root finalization. When present,
-     * its digest is checked before the commit owner seals product-state disclosure.
+     * A reply already normalized by root finalization. When present, its digest
+     * is checked before the commit owner seals product-state disclosure.
      */
     preparedReply?: PreparedCopilotReply;
     /** Actor identity resolved by the execution owner. */
@@ -140,15 +137,14 @@ export async function writeCopilotReply(
     taskRunId: string;
     /** Sealed FULL-validator run linkage; contains no model prose or reasoning. */
     evidenceValidation?: CopilotEvidenceValidationRef;
-    /** Compact root-owned structural finalization receipt for new Copilot replies. */
+    /** Compact root-owned structural finalization receipt. */
     replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Product mode state persisted with the reply; never included in model input. */
     modeState?: CopilotModeState;
     /**
-     * Optional terminal outcome for durable recovery. Historical callers may
-     * omit it, preserving legacy null outcomes. A durable success
-     * marker lets a pg-boss redelivery repair missing job terminal events
-     * without running the paid model/tools a second time.
+     * Optional terminal outcome for durable recovery. A durable success marker
+     * lets a pg-boss redelivery repair missing job terminal events without
+     * running the paid model/tools a second time; historical callers may omit it.
      */
     outcome?: 'success' | 'failure' | 'partial';
     /** Durable success metadata needed to rebuild the DONE projection. */
@@ -186,8 +182,8 @@ export async function writeCopilotReply(
   const cleanedReply = sealed.preparedReply.text;
   const primaryView = prepared.primaryView;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
-  // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
-  // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序。
+  // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到
+  // 自己的 ask 之前。
   const derivationPolicy = params.userAskEventId
     ? await readEventDerivationPolicy(db, params.userAskEventId)
     : 'allow';
@@ -221,10 +217,9 @@ export async function writeCopilotReply(
           }
         : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
-      // YUK-307 (S3a additive) — persist hero nomination so Dock replay can restore
-      // it. Reply METADATA only（assembleConversationHistory 的 {role,text} strip 把
-      // 它结构性挡在每条未来 prompt 外，YUK-267 红线）。conditional spread — 无 nomination
-      // 时 payload 与 pre-YUK-307 byte-identical。
+      // Reply METADATA only, persisted so replay can restore it. The {role,text}
+      // history projection keeps it structurally out of every future prompt;
+      // conditional spread keeps absent-nomination payloads byte-identical.
       ...(primaryView ? { primary_view: primaryView } : {}),
     },
     caused_by_event_id: params.userAskEventId ?? null,

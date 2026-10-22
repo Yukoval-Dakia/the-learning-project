@@ -2,44 +2,27 @@ import { z } from 'zod';
 import { Rubric } from '@/core/schema/business';
 import fixtureData from './data.json' with { type: 'json' };
 
-// P5.8 (2026-05-31, YUK-182): yuwen eval fixture — the FIRST subject fixture
-// to gate the SEMANTIC judge route (translation / reading), the
-// next validation frontier after exact/keyword (math) and unit_dimension
-// (physics). Fixture schema is subject-local — does NOT touch framework schema
-// (src/core/schema/*), same boundary the physics fixture documents
-// (physics/fixtures/index.ts:4-8). No new production schema / migration / UI /
-// judge / profile change; the yuwen profile + all three routes (exact /
-// keyword / semantic) already exist.
+// Yuwen evaluation fixture. The schema is subject-local: it never touches the
+// framework schema, migration, judge, or profile.
 
 export const YuwenFixtureItemSchema = z
   .object({
     ref: z.string().min(1),
-    // KNOWN kind labels only (fixture authoring contract, NOT a persisted-kind
-    // gate — YUK-386 made question.kind free-form): seed-synthetic persists
-    // item.kind verbatim, so fixtures deliberately stick to the conventional
-    // label vocabulary; profile-vocab strings (single_choice /
-    // reading_comprehension) are rejected here to keep fixture data on KNOWN
-    // labels. Routing per label (the profile-vs-canonical contract, F-1/F-2):
-    //   choice               → exact   (structural choices short-circuit)
-    //   translation          → semantic (KNOWN label → deriveAnswerClass)
-    //   reading              → semantic (KNOWN label)
-    //   fill_blank+keywords  → keyword
+    // Fixtures stay on the known label vocabulary because seed-synthetic persists
+    // kind verbatim; routing then follows the label:
+    //   choice → exact, translation/reading → semantic, fill_blank+keywords → keyword.
     kind: z.enum(['choice', 'translation', 'reading', 'short_answer', 'fill_blank']),
     prompt_md: z.string().min(1),
-    choices_md: z.array(z.string().min(1)).optional(), // F-1: present for choice
+    choices_md: z.array(z.string().min(1)).optional(),
     reference_md: z.string().min(1),
-    // F-3: semantic items carry required_points (the scoring points the stubbed
-    // judge matches against); fill_blank carries keywords for the keyword route.
-    // Rubric REQUIRES a `criteria` array (business.ts:172-184), so each item's
-    // rubric_json must be { criteria: [], required_points?: [...] / keywords?: [...] }.
+    // Semantic items need required_points; fill_blank needs keywords. Rubric
+    // requires a criteria array, so rubric_json is { criteria: [], ... }.
     rubric_json: Rubric.optional(),
     difficulty: z.number().int().min(1).max(5),
-    knowledge_hint: z.string().min(1), // maps to curriculum.json seed name (F-6)
+    knowledge_hint: z.string().min(1), // Matches a curriculum.json seed name.
   })
-  // PR #228 review (CodeRabbit, Major): choices_md / rubric_json are structurally
-  // optional, so the kind→field invariants below would otherwise rest only on the
-  // index.test.ts assertions. Move them into the schema so an invalid fixture
-  // fails at parse/load time (invariant-in-schema, matching the audit philosophy).
+  // Kind-to-field invariants live in the schema so a bad fixture fails at load,
+  // not only in test assertions.
   .superRefine((item, ctx) => {
     if (item.kind === 'choice' && (item.choices_md?.length ?? 0) < 2) {
       ctx.addIssue({

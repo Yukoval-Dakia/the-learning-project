@@ -1,12 +1,5 @@
-// YUK-599 (YUK-597 v3 trait 合同 §2.1/§2.2) — SubjectProfile ⇄ 六 trait payload
-// 的互逆纯映射 + 装配 version（jt: 身份组合串）。浏览器安全（零 db/server import）。
-//
-// 「消费点无感」的机械保证：装配（assemble）把六个 trait payload 拼回现有
-// SubjectProfile 聚合形状——charter 扁平节映回 languageStyle 顶层 + promptFragments
-// 六槽（+ methodology/rubricGuidance 两新字段）；服务端消费点继续拿同一形状。
-// 零行为变化基线（v3 §8-13）：assemble(decompose(p)) 与今日 4 个硬编码 profile
-// 逐字段 deep-equal，除 version（改 jt: 身份组合串，值语义变化已在 v3 §2.1 成文：
-// D6 章从 '1.0.0' 变为 judge 相关身份串）。
+// Inverse pure mapping between SubjectProfile and the six trait payloads, plus
+// the assembly version. Browser-safe.
 
 import type { SubjectProfile } from './profile-schema';
 import type { SubjectTraitPayloads } from './trait-schemas';
@@ -22,7 +15,7 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
       checkQuestionPolicy: profile.promptFragments.checkQuestionPolicy,
       learningIntentPolicy: profile.promptFragments.learningIntentPolicy,
       noteTemplate: { ...profile.noteTemplate },
-      // 旧对象可能缺两新节（validateProfile 丢弃 parse 产物，运行时对象是原字面量）。
+      // Runtime objects are raw literals and may predate these two sections.
       methodology: profile.promptFragments.methodology ?? '',
       rubricGuidance: profile.promptFragments.rubricGuidance ?? '',
     },
@@ -33,7 +26,6 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
         notes: [...profile.judgePolicy.notes],
       },
       judgeCapabilities: [...profile.judgeCapabilities],
-      // YUK-739 — rating semantics policy rides the judge-adjacent trait.
       ratingPolicy: structuredClone(profile.ratingPolicy),
     },
     cause_taxonomy: {
@@ -63,8 +55,7 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
 export function assembleSubjectProfile(args: {
   id: string;
   displayName: string;
-  // jt: 身份组合串（composeJudgeTraitVersion）；SubjectProfileSchema.version 是
-  // 必填 z.string().min(1)（validate-profile 硬校验），组合串满足。
+  // The composed judge identity string; the schema only requires a non-empty string.
   version: string;
   payloads: SubjectTraitPayloads;
 }): SubjectProfile {
@@ -98,8 +89,6 @@ export function assembleSubjectProfile(args: {
       rubricGuidance: charter.rubricGuidance,
     },
     causeCategories: cause_taxonomy.causeCategories.map((c) => ({ ...c })),
-    // YUK-739 — restored from the judge_policy trait (same section the rating
-    // semantics decomposed into above).
     ratingPolicy: structuredClone(judge_policy.ratingPolicy),
     renderConfig: { ...render_theme.renderConfig },
     schedulingHints: structuredClone(scheduling.schedulingHints),
@@ -111,11 +100,10 @@ export function assembleSubjectProfile(args: {
   };
 }
 
-// 装配 version = judge 相关四 trait 的身份组合串（v3 §2.1，装配时计算不落列）。
-// 组件 = trait_id@<effective 身份>：正常态 = 数字 live revision；降级链触发时 =
-// 实际被采用的身份——journal 回溯 rev（数字）或代码种子合成身份 `seed:<seedVersion>`
-// （v3 §2.1④ / owner R2-P1：D6 章永远指向真实生效的配置，不指向没人用过的坏行）。
-// render/scheduling 有意不入串（判分无关，免伪信号污染 append-only 证据史）。
+// Composed at assembly, never persisted. Each part is trait_id@identity, where
+// identity is the live revision or the seed identity actually used, so the string
+// always names the configuration in effect. Render and scheduling are excluded
+// because they cannot affect judging.
 export type TraitVersionComponent = { traitId: string; effective: number | `seed:${string}` };
 
 export function composeJudgeTraitVersion(components: {

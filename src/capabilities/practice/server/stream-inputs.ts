@@ -1,19 +1,18 @@
-// YUK-1572 — 练习流「候选输入收集」职责模块（自 stream-store.ts 拆出）。
+// 练习流「候选输入收集」职责模块（自 stream-store.ts 拆出）。
 // 把 FSRS 到期投影（含干预诊断并集）、错题变式、新学待检、当日待做卷、learnable
 // frontier 与日练习预算收拢成一次 collectComposerInputs —— lazy compose / nightly
 // 预产 / recompose / 作答后增量重排共用的候选池与信号来源。物化、锁与流推进编排
 // 留在 stream-store.ts；纯函数合流核心在 stream-composer.ts；本模块只做候选收集
 // 与查询组合。
-//
-// 输入信号来源（P2 spec §2.1「due-list 降级为输入信号」）：
-//   - dueItems：与 HTTP adapter 共用的 typed due 读取 queryReviewDue——FSRS 到期
-//     投影 + 跨学科 round-robin + goal 软偏置全部复用现行为；读取失败按既有
-//     契约降级为空候选（见 readComposerDueRows）。旧 /api/review/due 不删。
-//   - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
-//     attempt 的变体（变体轮换的「错题跟练」信号）。
-//   - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
-//     知识点（= 学了还没检验），各取一道未排入的题。
-//   - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
+// 输入信号来源（P2 「due-list 降级为输入信号」）：
+// - dueItems：与 HTTP adapter 共用的 typed due 读取 queryReviewDue——FSRS 到期
+// 投影 + 跨学科 round-robin + goal 软偏置全部复用现行为；读取失败按既有
+// 契约降级为空候选（见 readComposerDueRows）。旧 /api/review/due 不删。
+// - variantItems：mistake_variant(status='active') 中 parent 近 7 天有 failure
+// attempt 的变体（变体轮换的「错题跟练」信号）。
+// - newCheckItems：open learning_item（pending/in_progress）的 knowledge_ids 中尚无 FSRS 状态行的
+// 知识点（= 学了还没检验），各取一道未排入的题。
+// - pendingPapers：getPracticeList 的 ready 且未开始 session 的卷。
 
 import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { LearningItemOpenStatus } from '@/core/schema/business';
@@ -34,6 +33,7 @@ import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-l
 import { knowledgeLabels } from './knowledge-labels';
 import { FRONTIER_MAX_ITEMS, learnableFrontier } from './learnable-frontier';
 import { getPracticeList } from './practice-read';
+import { readQuestionPace } from './question-pace';
 import {
   type DailyPracticePace,
   dailyPracticeBudgetMinutes,
@@ -41,8 +41,8 @@ import {
 } from './stream-budget';
 import type { ComposerInputs } from './stream-composer';
 
-// YUK-1572 — knowledgeLabels 事实读取已归 ./knowledge-labels；此 reexport 保持
-//   本模块既有导出面不变（旧 import 路径兼容）。
+// knowledgeLabels 事实读取已归 ./knowledge-labels；此 reexport 保持
+// 本模块既有导出面不变（旧 import 路径兼容）。
 export { knowledgeLabels } from './knowledge-labels';
 
 /** 本模块的 DB 句柄：既可是顶层 `db`，也可是事务内 `tx`。 */
@@ -99,9 +99,9 @@ async function questionMixMetadata(
 }
 
 /**
- * YUK-1572 — composer 的 due 页读取与降级边界。直调 HTTP adapter 共用的
+ * composer 的 due 页读取与降级边界。直调 HTTP adapter 共用的
  * `queryReviewDue`，请求 due 页 FULL ceiling（REVIEW_DUE_LIMIT_MAX——与 adapter
- * 同一 clamp 事实；ADR-0037 H8：merge engine 可重排/降权但不得丢 due）。
+ * 同一 clamp 事实； H8：merge engine 可重排/降权但不得丢 due）。
  * due 读取失败经 canonical `errorResponse` 整形/记日志（Response 丢弃）后降级
  * 为 []，与旧 `rows ?? []` 等价；`errorResponse` 自身失败（如 ApiError details
  * 不可序列化）照旧向外抛。本函数之后的所有查询（intervention 并集、变式、
@@ -118,16 +118,19 @@ async function readComposerDueRows(db: DbLike): Promise<ReviewDueRow[]> {
 }
 
 export async function collectComposerInputs(db: DbLike, date: string): Promise<ComposerInputs> {
-  // 红线 4（draft 排除契约，YUK-350）：通用练习池的选题候选**必须排除** draft_status='draft'
-  //   （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
-  //   notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
+  // 红线 4（draft 排除契约，）：通用练习池的选题候选**必须排除** draft_status='draft'
+  // （NULL≡active / 'active' 留池，仅排字面 'draft'）。new_check + frontier 共用
+  // notDraftPredicate（@/db/predicates，三值逻辑安全的单一定义）。
 
-  const dailyBudget = await resolveDailyPracticeBudget(db);
+  const [dailyBudget, questionPace] = await Promise.all([
+    resolveDailyPracticeBudget(db),
+    readQuestionPace(db),
+  ]);
 
   // 1. FSRS 到期投影 — 与 HTTP adapter 共用的 typed due 读取。
   const cappedDueRows = await readComposerDueRows(db);
 
-  // YUK-792 — intervention diagnostics are an approved learner delivery, not an
+  // intervention diagnostics are an approved learner delivery, not an
   // optional member of the generic due page. The due page is capped at
   // REVIEW_DUE_LIMIT_MAX (200), so a diagnostic can otherwise disappear behind
   // an older ordinary backlog before the composer ever sees (and protects) its
@@ -239,7 +242,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             and(
               sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
               notDraftPredicate(question.draft_status),
-              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作新检选第题。
+              // 契约准入门：suspended/withdrawn 组不作新检选第题。
               questionSuspendedPredicate(question),
             ),
           );
@@ -269,10 +272,10 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             : ('paper' as const),
     }));
 
-  // 5. B3 learnable_frontier（YUK-349 #3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
-  //    一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
-  //    SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
-  //    defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
+  // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
+  // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
+  // SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
+  // defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
   const frontierKcs = await learnableFrontier(db);
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   for (const kc of frontierKcs) {
@@ -283,7 +286,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
           notDraftPredicate(question.draft_status),
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 frontier 选题。
+          // 契约准入门：suspended/withdrawn 组不进 frontier 选题。
           questionSuspendedPredicate(question),
         ),
       )
@@ -299,7 +302,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     if (frontierPairs.length === FRONTIER_MAX_ITEMS) break;
   }
 
-  // YUK-673 L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
+  // L3 fatigue/repetition needs stable KC + question-kind identities. Resolve every
   // question in one bounded batch; the post-filter remains pure and never performs IO itself.
   const mixMetadataByQuestion = await questionMixMetadata(db, [
     ...dueRows.map((row) => row.question_id),
@@ -318,6 +321,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   return {
     date,
     dailyBudgetMinutes: dailyBudget.minutes,
+    questionMinutes: questionPace.minutes,
     dueItems: dueRows.map((r) => {
       const metadata = mixMetadataByQuestion.get(r.question_id);
       return {

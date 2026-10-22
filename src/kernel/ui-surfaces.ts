@@ -1,8 +1,6 @@
-// YUK-329 — shipped SPA surface inventory。
-//
-// 这是 router / capability ui.pages / shell title+nav / command palette 的共同真相源。
-// 它只含静态声明与纯函数，保持 kernel 无 IO、无 React、无路由库依赖。TanStack 的
-// 动态段统一使用 `$id`；manifest 不再另写 `:id` 变体。
+// Shipped SPA surface inventory: shared truth for router, capability ui.pages,
+// shell title/nav and command palette. Static declarations + pure functions; no IO,
+// React or router dependency. TanStack dynamic segments use `$id` only.
 
 export type UiSurfaceOwner =
   | 'agency'
@@ -175,7 +173,7 @@ export const UI_SURFACES = [
     activeId: 'questions',
   },
   {
-    // YUK-1528 — 作答卷印刷页：无壳（RootShell 对 /print/ 走裸路径），供渲染任务出 PDF。
+    // Print page has no shell (RootShell treats /print/ as bare) and feeds PDF rendering.
     id: 'worksheet-print',
     route: '/print/worksheet/$token',
     owner: 'practice',
@@ -371,8 +369,8 @@ function duplicates(values: readonly string[]): string[] {
 }
 
 /**
- * 构建门禁的纯校验核。调用方从 router 源绑定和 capability manifests 取实值；任何
- * 漏路由、幽灵路由、漏/错归属声明、`:id`/`$id` 语法漂移都聚合为一个可读失败。
+ * Build gate: aggregate missing/ghost routes, ownership drift and :id/$id syntax
+ * mismatches into one readable failure.
  */
 export function auditUiSurfaceInventory(input: UiSurfaceAuditInput): void {
   const errors: string[] = [];

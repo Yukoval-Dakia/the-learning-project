@@ -1,33 +1,35 @@
 import { randomUUID } from 'node:crypto';
-import { initialSchedulingState } from '@/server/fsrs/state';
 // Search-grounded QuizGen (T-SQ) — Q5 + Q6 handler.
-//
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §3 / §5.
 //
 // Chained behind quiz_gen (Q3 enqueues `quiz_verify` { question_ids }, like
 // ingestion → attribution_followup). For each draft question this handler:
 //   1. idempotency guard — skip if a verify event already chains off the
 //      question (action='experimental:quiz_verify', subject_kind='question',
 //      subject_id) so pg-boss re-delivery is safe (mirrors variant_verify).
-//   2. runs the single-shot CLOSED-BOOK QuizVerifyTask (§1: trusts the agent's
+//   1b. DETERMINISTIC choice-surface pre-check (duplicate
+//      options / reference-not-in-options / insufficient options) BEFORE any
+//      paid call; a defect terminates as needs_review with zero model calls.
+//   2. runs the single-shot CLOSED-BOOK QuizVerifyTask (trusts the agent's
 //      self-reported source_refs; no own Tavily loop this wave) — three checks:
 //      fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit.
 //   3. computes a DETERMINISTIC normalized n-gram overlap(prompt_md, source_ref
-//      snippets) and folds it into the persisted copy_safety verdict.
+//      snippets — excluding a tier-3 question's own grounded material ref) and
+//      folds it into the persisted copy_safety verdict.
 //   4. in a single transaction writes metadata.quiz_gen.verification (two-axis)
 //      + writeEvent(action='experimental:quiz_verify', subject_kind='question').
 //
-// Gate = Option B (owner-confirmed §3):
-//   pass (LLM overall='pass' AND copy_safety != 'too_close')
+// Gate = Option B:
+//   pass (LLM overall='pass' AND copy_safety resolved-and-not-too_close)
 //     → promote draft_status 'draft'→'active' + Q6 FSRS enroll (materialize an
 //       initial material_fsrs_state via the existing single-owner enroll path so
 //       the question enters the review pool).
-//     YUK-1507 — promote 不再直接 admitted：发布为 withheld(unverified_rules) 待
+//     promote 不直接 admitted：发布为 withheld(unverified_rules) 待
 //       准入，由 assessment_publish outbox 订阅触发 C1 双解 + 标定后才 admitted
 //       （serving 读面要求 scoring_admission_state='admitted'，withheld 期间不入池）。
-//   needs_review / fail / too_close
+//   needs_review / fail / deterministic too_close / model-only too_close (→'unknown')
 //     → leave draft_status='draft' (never reaches the pool) with
-//       verification.status='needs_review'|'failed'.
+//       verification.status='needs_review'|'failed'; only the DETERMINISTIC
+//       n-gram hit persists 'too_close' (hard block retained).
 //
 // failure-bottom: catch → set verification.status='failed' (best-effort) → write
 // a failure event → re-throw so pg-boss retries.
@@ -71,6 +73,11 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  appendAdmissionVerificationRecord,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type TaskTextResult,
@@ -79,14 +86,12 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
-import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
+import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
+import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
   PlacementStarterStaleAuthorityError,
@@ -100,6 +105,12 @@ import {
 } from '../server/question-supply/placement-starter-attempts';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
 import { maxNgramOverlap } from '../server/question-supply/sourced-dedup';
+import {
+  type ChoiceSurfacePrecheckRecord,
+  type ChoiceSurfaceRuleCheck,
+  choiceSurfacePrecheckRecord,
+  evaluateChoiceSurface,
+} from '../server/quiz/choice-surface';
 import { resolveSolveOverrideFromEnv } from '../server/quiz/solve-lane';
 import {
   type SolveCheckQuestion,
@@ -138,7 +149,7 @@ function requirePlacementProviderTaskRunId(
     `placement ${label} paid invocation missing task_run_id`,
   );
 }
-// YUK-986 (Supply-Agent/1) — shingle 机制与 maxNgramOverlap 下沉到
+// shingle 机制与 maxNgramOverlap 下沉到
 // server/question-supply/sourced-dedup.ts（避免 question-supply → jobs 反向环）。
 // COPY_SAFETY_TOO_CLOSE_THRESHOLD 是本模块 copy_safety 判分的业务阈值，留在原地。
 // re-export 保 quiz_verify.test.ts 等既有 import 路径不变。
@@ -154,7 +165,7 @@ export type QuizVerifyPerQuestionStatus =
   | 'skipped:question_part'
   | 'skipped:already_verified';
 
-// YUK-350 (B5 increment C) — event-layer projection of WHY a verify did not promote,
+// event-layer projection of WHY a verify did not promote,
 // LIFTED UP into the shared core verify contract (`@/core/schema/verify-contract`,
 // imported above) now that all three promote-gated handlers project onto one shape.
 // Re-exported here for back-compat with the sibling handlers (source_verify /
@@ -174,7 +185,7 @@ export interface RunQuizVerifyParams {
 
 export interface RunQuizVerifyResult {
   status: QuizVerifyPerQuestionStatus;
-  // YUK-350 (RL1) — result-layer 4-value overall (pass|needs_review|fail|error).
+  // result-layer 4-value overall (pass|needs_review|fail|error).
   // The success path only ever sets the 3 model-verdict values; 'error' is reserved
   // for the catch-bottom system-error class (assigned via the verify event payload,
   // never returned on the success path because the catch re-throws).
@@ -312,36 +323,17 @@ async function promoteCompositeChildren(
       )
       .returning({ id: question.id });
     if (promotedChildren.length === 0) continue;
-    const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
-    if (childKnowledgeIds.length === 0) {
-      const childExisting = await getFsrsState(tx, 'question', child.id);
-      if (childExisting) continue;
-      await upsertFsrsState(tx, {
-        subject_kind: 'question',
-        subject_id: child.id,
-        ...initialSchedulingState(child.id, now),
-        last_review_event_id: verifyEventId,
-      });
-      continue;
-    }
-    for (const knowledgeId of childKnowledgeIds) {
-      // YUK-1037 — same anchor-not-content exclusion as the parent loop:
-      // an inherited 'seed:<subj>:root' binding must not mint a card.
-      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-      const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
-      if (childExisting) continue;
-      await upsertFsrsState(tx, {
-        subject_kind: 'knowledge',
-        subject_id: knowledgeId,
-        ...initialSchedulingState(knowledgeId, now),
-        last_review_event_id: verifyEventId,
-      });
-    }
+    await enrollPromotedQuestionScheduling(tx, {
+      questionId: child.id,
+      knowledgeIds: child.knowledgeIds ?? [],
+      evidenceEventId: verifyEventId,
+      now,
+    });
   }
 }
 
 /**
- * YUK-1507 — 同事务判定组是否已被 C1（question_admission_run）独立准入。
+ * 同事务判定组是否已被 C1（question_admission_run）独立准入。
  * 锁序 root question → lifecycle（与 publisher/C1 一致；调用方须已持根行锁）。
  * 命中条件（判据与 source_verify 的 pair-race guard 相同，外加 generation 下界）：
  *   0. lifecycle.scoring_admission_generation 严格大于 `newerThanGeneration`
@@ -353,7 +345,7 @@ async function promoteCompositeChildren(
  *   2.【当前 revision】上存在 policy question_admission@*、outcome='passed' 的
  *      question_admission_verification 行（不匹配历史其他 revision 的 passed 行）；
  *   3. 该行绑定当前已发布 revision 的 integrity_digest —— 权威绑定取 publisher
- *      写入的 revision_digest 列（YUK-1547 resolved 发布后
+ *      写入的 revision_digest 列（resolved 发布后
  *      evidence.base_contract_digest 是付费【输入】摘要，不再等于发布摘要）；
  *      旧证据字段仅作 base==published 行的兼容回退。
  * 命中 ⇒ 返回锁后 lifecycle 行与当前 revision id；未命中 ⇒ null。
@@ -415,6 +407,191 @@ async function readBoundIndependentAdmission(
 }
 
 /**
+ * shared concurrent-success predicate for verify terminal writes: a
+ * success event bound to the CURRENT admission generation proves a duplicate
+ * delivery is stale. See the main select for the full rationale.
+ */
+function promotedElsewhereEventExists(questionId: string) {
+  return sql<boolean>`EXISTS (
+    SELECT 1 FROM ${event}
+    WHERE ${event.action} = 'experimental:quiz_verify'
+      AND ${event.subject_kind} = 'question'
+      AND ${event.subject_id} = ${questionId}
+      AND ${event.outcome} = 'success'
+      AND (${event.payload}->>'admission_generation')::text = (
+        SELECT ${question_group_lifecycle.scoring_admission_generation}::text
+        FROM ${question_group_lifecycle}
+        WHERE ${question_group_lifecycle.group_id} = ${questionId}
+      )
+  )`;
+}
+
+/** the grounded material's own origin URL, when recorded. */
+function readMaterialUrl(
+  materialDoc: { provenance: Record<string, unknown> } | null,
+): string | null {
+  const url = materialDoc?.provenance.url;
+  return typeof url === 'string' && url.length > 0 ? url : null;
+}
+
+/**
+ * terminal write for a draft whose deterministic choice-surface
+ * pre-check rejected. Zero paid calls were spent, so there is no model verdict to
+ * record: the event honestly reports a rules-only needs_review and the draft is
+ * held for human review exactly like a model needs_review (verify_hold +
+ * unverified_rules; a rules defect is not promoted to a proven failure because
+ * the check could still mis-shape an unusual-but-valid item). The per-rule
+ * precheck record (name + verdict + reason) lands in the admission
+ * verification evidence — PM condition: every precheck outcome, reject or pass,
+ * is auditable on the admission record. Deliberately outside the main
+ * failure-bottom: this path has no minutes-long model window, so a rare throw
+ * (version race) simply falls back to pg-boss retry with no terminal event
+ * written for the idempotency guard to trip over.
+ */
+async function finalizeDeterministicPrecheckFailure(input: {
+  db: Db;
+  row: typeof question.$inferSelect;
+  metadataRaw: Record<string, unknown>;
+  meta: QuizGenMetadataT;
+  precheckChecks: ChoiceSurfaceRuleCheck[];
+  precheckRecord: ChoiceSurfacePrecheckRecord;
+  sourceTier: number;
+  admissionGenerationAtStart: number | undefined;
+  supplyTrace?: SupplyTraceV1T;
+  difficultyEvidence?: unknown;
+}): Promise<RunQuizVerifyResult> {
+  const { db, row, meta, metadataRaw, precheckChecks, precheckRecord } = input;
+  const questionId = row.id;
+  const now = new Date();
+  const verifyEventId = createId();
+  const rejectedRules = precheckChecks
+    .filter((check) => check.verdict === 'reject')
+    .map((check) => check.rule)
+    .join('、');
+  const summary = `quiz_verify 确定性预检未通过（${rejectedRules}）；未运行付费核验，留人工复核。`;
+  const verifiedBy = { by: 'system' as const, task_kind: 'quiz_verify' };
+  const verification: QuizGenVerificationT = {
+    status: 'needs_review',
+    summary,
+    verified_by: verifiedBy,
+  };
+  const newMetadata = {
+    ...metadataRaw,
+    quiz_gen: { ...meta, verification } satisfies QuizGenMetadataT,
+  };
+  const unified = toUnifiedVerifyResult({
+    source: 'quiz',
+    overall: 'needs_review',
+    promote: false,
+    summary_md: summary,
+    confidence: 1,
+    checks: [],
+  });
+
+  await db.transaction(async (tx) => {
+    await acquireLearningStateWriteLock(tx);
+    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    const [current] = await tx
+      .select({
+        version: question.version,
+        promotedElsewhere: promotedElsewhereEventExists(questionId),
+      })
+      .from(question)
+      .where(eq(question.id, questionId))
+      .limit(1)
+      .for('update');
+    if (!current || current.version !== row.version) {
+      throw new Error(
+        `quiz_verify pre-check question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
+      );
+    }
+    await tx
+      .update(question)
+      .set({ metadata: newMetadata as never, updated_at: now })
+      .where(eq(question.id, questionId));
+    if (!current.promotedElsewhere) {
+      // Same stale-admission semantics as the model needs_review branch: an
+      // independent C1 admission decided after this delivery started must not
+      // be folded back into verify_hold.
+      const staleAgainstAdmission = await readBoundIndependentAdmission(
+        tx,
+        row.parent_question_id ?? questionId,
+        input.admissionGenerationAtStart ?? null,
+      );
+      if (staleAgainstAdmission == null) {
+        await publishQuestionGroupFromRow(tx, {
+          rootId: row.parent_question_id ?? questionId,
+          admission: {
+            state: SCORING_ADMISSION_STATE.WITHHELD,
+            reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+          },
+          suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+          verification: {
+            policy_id: 'quiz_verify@1',
+            outcome: 'suspended',
+            evidence: {
+              overall: 'needs_review',
+              deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
+            },
+          },
+          actorRef: 'quiz_verify:suspend',
+          now,
+        });
+      }
+    }
+    await writeEvent(tx, {
+      id: verifyEventId,
+      session_id: null,
+      actor_kind: 'agent',
+      actor_ref: 'quiz_verify',
+      action: 'experimental:quiz_verify',
+      subject_kind: 'question',
+      subject_id: questionId,
+      outcome: 'partial',
+      payload: {
+        question_id: questionId,
+        ...unified,
+        deterministic_precheck: { ...precheckRecord, paid_calls_skipped: true },
+        copy_safety: {
+          llm_verdict: null,
+          persisted_verdict: meta.copy_safety.verdict,
+        },
+        source_tier: input.sourceTier,
+        promoted: false,
+        verification_status: 'needs_review',
+        verified_by: verifiedBy,
+        ...(input.difficultyEvidence ? { difficulty_evidence: input.difficultyEvidence } : {}),
+        ...(input.supplyTrace ? { supply_trace: input.supplyTrace } : {}),
+      },
+      caused_by_event_id: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+      created_at: now,
+    });
+  });
+
+  try {
+    await recordQuestionPoolGap(db, {
+      questionId,
+      knowledgeIds: row.knowledge_ids,
+      verificationStatus: 'needs_review',
+      confidence: 1,
+      taskRunId: null,
+      verificationEventId: verifyEventId,
+      observedAt: now,
+    });
+  } catch (noteErr) {
+    console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
+  }
+
+  return {
+    status: 'needs_review',
+    overall: 'needs_review',
+    copy_safety_verdict: meta.copy_safety.verdict,
+  };
+}
+
+/**
  * Verify a single quiz_gen draft question. Idempotent per (question_id) via the
  * chained verify event guard. Promotes draft→active + FSRS-enrolls on pass.
  */
@@ -428,7 +605,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const row = rows[0];
   if (!row) return { status: 'skipped:not_found' };
   if (row.source !== 'quiz_gen') return { status: 'skipped:not_quiz_gen' };
-  // YUK-1011 — a question_part is never an independent verify subject: the
+  // a question_part is never an independent verify subject: the
   // composite group is verified at the parent and this handler's promote branch
   // cascades to its draft children in the same tx. A stray dispatch (orphan
   // recovery, owner-UI enable on a part id, matcher lazy-verify) must NOT spend
@@ -457,7 +634,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     .limit(1);
   if (existingVerify.length > 0) return { status: 'skipped:already_verified' };
 
-  // YUK-1507 — 准入决定快照：在付费核验开工前记录当前 admission generation。
+  // 准入决定快照：在付费核验开工前记录当前 admission generation。
   // 失败分支的 stale 判定只认【晚于本快照】的准入决定（锁后证据绑当前
   // revision 且 generation 严格更大）—— verify 开始前已存在的 admitted 不
   // 证明本投递 stale（C1 只证判分、不证内容质检；首次真失败仍须真实挂起）。
@@ -490,7 +667,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const supplyTrace = supplyTraceResult.success ? supplyTraceResult.data : undefined;
   const difficultyEvidence = readDifficultyEvidenceFromMetadata(metadataRaw);
   const parsedMeta = QuizGenMetadata.safeParse(metadataRaw.quiz_gen);
-  // YUK-607（PR #750 review round）— 生成输出经 jsonrepair 级修复救回的批：语法救回但
+  // 生成输出经 jsonrepair 级修复救回的批：语法救回但
   // 内容完整性无法机证（启发式可能截断/重划字符串边界，且截断串能过非 strict Zod 门）。
   // 该批晋级封顶 needs_review，留 owner /drafts 人审。
   const parseRepaired = parsedMeta.success && parsedMeta.data.parse_repaired === true;
@@ -516,27 +693,65 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
   const knowledgeNode = knowledgeRows[0] ?? null;
   const subjectProfile = resolveSubjectProfile(knowledgeNode?.domain ?? null);
 
-  // YUK-224 (slice 3, tier 3) — derive the source tier from provenance so the verify
+  // derive the source tier from provenance so the verify
   // gate runs the tier-appropriate check set (verify-framework CHECK_SETS_BY_TIER).
   // tier 3 (material_grounded) adds the `material_grounding` check: load the persisted
   // source_document the questions are grounded in and feed its body to the verifier so
   // the grounding check can confirm the question actually probes THAT material (spec
-  // §6.1 row 3「原文持久化 + 题面强制引用」), rather than trusting the agent's snippet
+  // 「原文持久化 + 题面强制引用」), rather than trusting the agent's snippet
   // alone. The already-green tier-4 flow is unchanged — material is simply absent there.
   const tier = deriveSourceTier({ source: row.source, metadata: metadataRaw }).tier;
   const tierChecks = checksForTier(tier);
-  let materialDoc: { id: string; title: string | null; body_md: string | null } | null = null;
+  let materialDoc: {
+    id: string;
+    title: string | null;
+    body_md: string | null;
+    provenance: Record<string, unknown>;
+  } | null = null;
   if (tier === 3 && meta.material_source_document_id) {
     const docRows = await db
       .select({
         id: source_document.id,
         title: source_document.title,
         body_md: source_document.body_md,
+        provenance: source_document.provenance,
       })
       .from(source_document)
       .where(eq(source_document.id, meta.material_source_document_id))
       .limit(1);
     materialDoc = docRows[0] ?? null;
+  }
+
+  // deterministic choice-surface pre-check runs BEFORE any paid
+  // call. Duplicated options (post-normalization, case-preserving), a reference
+  // answer that resolves to no option, and an insufficient option count are
+  // rule-decidable; the model stays reserved for what rules cannot judge. The
+  // per-rule record is persisted on the admission record for BOTH outcomes
+  // (PM condition): rejects terminate here with zero model calls, passes ride
+  // along every downstream terminal write's verification evidence.
+  const precheckChecks = evaluateChoiceSurface({
+    kind: row.kind,
+    reference_md: row.reference_md,
+    choices_md: row.choices_md,
+    rubric_json: row.rubric_json,
+    // Composite (篇) parents keep flat choices null by design (quiz_gen.ts);
+    // their options live in structured sub-questions.
+    ...(row.structured != null ? { hasStructuredStem: true } : {}),
+  });
+  const precheckRecord = choiceSurfacePrecheckRecord(precheckChecks);
+  if (precheckRecord.outcome === 'reject') {
+    return finalizeDeterministicPrecheckFailure({
+      db,
+      row,
+      metadataRaw,
+      meta,
+      precheckChecks,
+      precheckRecord,
+      sourceTier: tier,
+      admissionGenerationAtStart,
+      ...(supplyTrace ? { supplyTrace } : {}),
+      ...(difficultyEvidence ? { difficultyEvidence } : {}),
+    });
   }
 
   const input = {
@@ -561,7 +776,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       : {}),
   };
 
-  // YUK-225 (S2 slice 4) — 验题出题同源: when the tier's check set includes
+  // 验题出题同源: when the tier's check set includes
   // kind_conformance (tier 3/4), load the SAME (subject, kind) quiz-gen规范包 the
   // generator used so the verifier judges「题型是否像真题」against the same standard
   // it was written to. 降级链: resolveQuizGenSkillDocs returns undefined when no pack
@@ -572,7 +787,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     : undefined;
 
   let taskResult: TaskTextResult | null = null;
-  // Primary QuizVerifyTask reservation bookkeeping (YUK-452 review): release on a
+  // Primary QuizVerifyTask reservation bookkeeping: release on a
   // reserved-but-unsettled throw so the reservation does not leak into known_cost.
   const primaryInvocationId = randomUUID();
   const primaryReservationKey = `${placementAuthority?.attempt_id}:${questionId}:quiz_verify:${primaryInvocationId}`;
@@ -618,27 +833,39 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const result = validationRun.task_result;
     const parsed = validationRun.output;
 
-    // §4 / §5 — deterministic n-gram overlap over the self-reported snippets,
-    // folded into the persisted copy_safety. The DETERMINISTIC computation is
-    // authoritative for max_overlap; the verdict is the stricter of (LLM verdict,
-    // deterministic-threshold verdict) — either one calling 'too_close' blocks
-    // promotion.
+    // deterministic n-gram overlap over the self-reported snippets,
+    // folded into the persisted copy_safety. The DETERMINISTIC
+    // gate alone owns the persisted 'too_close' verdict (hard block retained).
+    // A tier-3 question quotes its grounded material by design
+    // (embedMaterialInPrompt), so the ref pointing at the material's own URL is
+    // excluded from the comparison — overlap with the material is not
+    // plagiarism (false-positive root cause). Web refs still compare
+    // against the full prompt. A model-only too_close (n-gram missed) no longer
+    // brands the draft: the persisted verdict stays 'unknown' (unresolved →
+    // needs_review, the PM-approved review routing) and the raw model verdict
+    // survives in the event payload for the reviewer.
+    const materialUrl = readMaterialUrl(materialDoc);
     const snippets = meta.source_refs
+      .filter((ref) => materialUrl === null || ref.url !== materialUrl)
       .map((r) => r.snippet)
       .filter((s): s is string => typeof s === 'string' && s.length > 0);
     const maxOverlap = maxNgramOverlap(row.prompt_md, snippets);
     const deterministicTooClose = maxOverlap >= COPY_SAFETY_TOO_CLOSE_THRESHOLD;
-    const copySafetyVerdict: QuizGenMetadataT['copy_safety']['verdict'] =
-      parsed.copy_safety.verdict === 'too_close' || deterministicTooClose
-        ? 'too_close'
+    const modelTooClose = parsed.copy_safety.verdict === 'too_close';
+    const copySafetyVerdict: QuizGenMetadataT['copy_safety']['verdict'] = deterministicTooClose
+      ? 'too_close'
+      : modelTooClose
+        ? 'unknown'
         : parsed.copy_safety.verdict;
 
     // Option B gate: promote ONLY when EVERY structured axis agrees the draft is
     // good. overall='pass' is necessary but NOT sufficient — an inconsistent LLM
     // output (overall='pass' while grounding/knowledge_hit verdict is 'fail' or
     // 'unclear') must not enter the review pool with an unsupported fact or an
-    // off-topic question. Such inconsistency stays draft (needs_review). copy_safety
-    // 'too_close' (LLM verdict OR deterministic overlap) also blocks promotion.
+    // off-topic question. Such inconsistency stays draft (needs_review). A
+    // copy_safety 'too_close' persisted verdict is deterministic-gate-only and
+    // blocks promotion; a model-only too_close persists as 'unknown', so
+    // copySafetyResolved below routes it to needs_review without re-branding it.
     const isTooClose = copySafetyVerdict === 'too_close';
     // A passing overall verdict cannot promote while copy safety remains unresolved.
     // Keep the raw/persisted `unknown` judgment for review instead of treating it as
@@ -646,11 +873,11 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const copySafetyResolved = copySafetyVerdict !== 'unknown';
     const checksPass =
       parsed.grounding.verdict === 'pass' && parsed.knowledge_hit.verdict === 'pass';
-    // YUK-224 tier 3 — material_grounding gate (two parts).
+    // material_grounding gate (two parts).
     //   (a) STRUCTURAL: a material_grounded question whose grounded source_document
     //       went missing (deleted / never persisted) cannot have its "题确实考这份素材"
     //       claim verified, so it must NOT be promoted even if the LLM checks pass.
-    //   (b) F2 (PR #314 round-1) RELEVANCE: when the material IS present, the verifier
+    //   (b) RELEVANCE: when the material IS present, the verifier
     //       was fed the passage body and returns a `material_grounding` verdict — does
     //       the question actually PROBE this material, not just "is a doc attached".
     //       Without this, an irrelevant-but-present material could still promote (the
@@ -663,7 +890,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const materialGroundingOk =
       !tierChecks.includes('material_grounding') ||
       (materialPresent && parsed.material_grounding?.verdict !== 'fail');
-    // YUK-225 (S2 slice 4) — kind_conformance gate. Only blocks promotion on an
+    // kind_conformance gate. Only blocks promotion on an
     // explicit 'fail' from the verifier (题型规范不符 / 命中坏题反例). 'unclear' or an
     // absent verdict (no skill loaded for this kind, or older output) falls through —
     // don't harden a missing optional check into a hard fail (mirrors
@@ -671,7 +898,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // omits kind_conformance (tier 1/2).
     const kindConformanceOk =
       !tierChecks.includes('kind_conformance') || parsed.kind_conformance?.verdict !== 'fail';
-    // YUK-538 / YUK-554 (spec §Q1 + Lens B M3) — solve_check is the ONLY tier3/4 signal
+    // solve_check is the ONLY tier3/4 signal
     // that fires a second, INDEPENDENT LLM call (SolutionGenerateTask), distinct from the
     // single closed-book QuizVerifyTask above (which produces grounding/knowledge_hit/
     // material_grounding/kind_conformance in one JSON). Short-circuit: only spend the
@@ -689,9 +916,9 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       !isTooClose &&
       materialGroundingOk &&
       kindConformanceOk;
-    // freeChecksPass 的 gating 理由（YUK-538 / YUK-554 solve_check 短路 + 成本论证）见上方注释块。
+    // freeChecksPass 的 gating 理由（solve_check 短路 + 成本论证）见上方注释块。
     //
-    // YUK-578 (入池前审题闸) — teaching_quality is a SECOND independent LLM probe (TeachingQualityTask),
+    // teaching_quality is a SECOND independent LLM probe (TeachingQualityTask),
     // a PEER of solve_check: both are gated behind the SAME freeChecksPass condition (only spend the
     // extra call when every FREE self-review check already passed) and both are conjuncts of promote,
     // so this insertion leaves solve_check's behavior UNCHANGED. It reads only the question面 data and
@@ -708,7 +935,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // draft, giving the owner richer review context in one pass instead of two. Do not "fix" this into a
     // solveCheckOk && ... short-circuit without re-litigating that trade-off.
     //
-    // OCR (PR #716 round-2) — solve_check and teaching_quality are independent PEER probes with no
+    // solve_check and teaching_quality are independent PEER probes with no
     // data dependency on each other (each reads only the row + subjectProfile already in scope), so
     // fire both CONCURRENTLY via Promise.all instead of sequential awaits — wall-clock is
     // max(solve_time, teaching_time), not solve_time + teaching_time. Each keeps its own
@@ -717,7 +944,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // solveResult/teachingResult and every downstream veto/promote predicate are unchanged. Both
     // check functions internally catch their own runTaskFn/parse errors and resolve to an
     // 'unsupported' verdict for NON-placement failures. On the placement path they now REJECT with a
-    // PlacementStarter admission/stale error (budget/authority). YUK-452 review (codex P2): with
+    // PlacementStarter admission/stale error (budget/authority). With
     // Promise.all a reject from one leg would abandon the sibling promise, which keeps its paid call
     // settling OUT OF BAND (and could surface as an unhandled rejection). Use allSettled so BOTH legs
     // are fully awaited — each settles or releases its own reservation inside its own await — then
@@ -726,7 +953,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     if (placementAuthority && freeChecksPass) {
       await db.transaction(async (tx) => assertPlacementAuthority(tx, placementAuthority));
     }
-    // YUK-608 (异源 solve/verify) — the solve_check leg (solver + semantic judge) runs on a
+    // the solve_check leg (solver + semantic judge) runs on a
     // provider that MAY differ from the generator/verifier so a shared model blind spot can't
     // rubber-stamp itself. Scoped env, fail-open to the default lane (see solve-lane.ts). Resolved
     // once here; {} when the env is unset → no override keys → default-lane behavior unchanged.
@@ -782,7 +1009,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               choices_md: row.choices_md,
               rubric_json: row.rubric_json,
             } satisfies TeachingQualityQuestion,
-            // YUK-606 — db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
+            // db 必须进 opts：runner 观测写（ai_task_runs / cost_ledger）读 ctx.db。
             {
               runTaskFn,
               db,
@@ -802,7 +1029,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // Re-throw a placement blocking error from EITHER leg (solver first, deterministic). Both legs
     // were fully awaited above, so neither is still spending; a non-placement failure never rejects
     // (the legs internally decay it to 'unsupported'), so a rejection here is always a placement
-    // admission/stale error that must propagate to the failure-bottom / handler (YUK-452 review).
+    // admission/stale error that must propagate to the failure-bottom / handler.
     if (solveSettled.status === 'rejected') throw solveSettled.reason;
     if (teachingSettled.status === 'rejected') throw teachingSettled.reason;
     const solveResult = solveSettled.value;
@@ -821,7 +1048,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // 'draft', so no demote is needed — same m7 invariant as solve_check).
     const teachingQualityOk =
       teachingResult === undefined || !teachingQualityBlocks(teachingResult);
-    // YUK-350 (RL1 red-line invariant) — the promote gate MUST stay a POSITIVE
+    // the promote gate MUST stay a POSITIVE
     // whitelist anchored on `parsed.overall === 'pass'`. NEVER rewrite this as a
     // negative test (e.g. `parsed.overall !== 'fail'`): a negative test would let
     // any non-'fail' value (including a hypothetical leaked system 'error') promote.
@@ -830,16 +1057,16 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // throws before reaching here), this success-path code never sees 'error' — the
     // positive whitelist makes that structurally true rather than relying on it.
     //
-    // YUK-554 (review SIMP-1) — composed as freeChecksPass && solveCheckOk: freeChecksPass
+    // composed as freeChecksPass && solveCheckOk: freeChecksPass
     // IS the positive whitelist above (its first conjunct is `parsed.overall === 'pass'`),
     // and reusing it keeps this predicate byte-identical to the solve short-circuit gate —
     // a 6th check added to one but not the other can no longer drift. solveCheckOk is the
     // last conjunct (vacuously true when short-circuited, so the result is identical to
     // evaluating solve eagerly).
-    // YUK-578 — teachingQualityOk joins as a further conjunct (peer of solveCheckOk, gated on the
+    // teachingQualityOk joins as a further conjunct (peer of solveCheckOk, gated on the
     // same freeChecksPass). Vacuously true when short-circuited, so the promote result is identical
     // to evaluating it eagerly; a confident审题闸 fail flips promote to false → the else branch.
-    // YUK-607 review round — !parseRepaired 作第四合取：jsonrepair 级修复的行永不自动晋级
+    // !parseRepaired 作第四合取：jsonrepair 级修复的行永不自动晋级
     // （封顶 needs_review 落人审）。正白名单锚（parsed.overall==='pass' 经 freeChecksPass）
     // 不变，RL1 红线维持。
     const promote = freeChecksPass && solveCheckOk && teachingQualityOk && !parseRepaired;
@@ -857,7 +1084,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const verifyEventId = createId();
     const verifiedBy = aiAgentRef('QuizVerifyTask', result);
 
-    // YUK-350 (B5 increment C) — project this multi-axis verdict onto the unified
+    // project this multi-axis verdict onto the unified
     // verify contract shape. PROVABLY-EQUIVALENT: `promote` and `parsed.overall` are
     // passed IN (already decided above); the helper only PROJECTS them — it re-derives
     // no gate. The success-path verify event payload is then a SUPERSET: it spreads the
@@ -886,13 +1113,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         ...(parsed.kind_conformance
           ? [{ axis_name: 'kind_conformance' as const, verdict: parsed.kind_conformance.verdict }]
           : []),
-        // YUK-538 / YUK-554 — solve_check axis carries ONLY the verdict (VerifyAxis base
+        // solve_check axis carries ONLY the verdict (VerifyAxis base
         // shape); its reason/compared_by/solver_final_answer live in the payload block below
         // (avoids depending on note projection). Present only when solve actually ran.
         ...(solveResult
           ? [{ axis_name: 'solve_check' as const, verdict: solveResult.verdict }]
           : []),
-        // YUK-578 — teaching_quality axis carries ONLY the overall verdict; the per-axis
+        // teaching_quality axis carries ONLY the overall verdict; the per-axis
         // breakdown (clarity / unique_answer / distractor_power) rides in the payload block
         // below. Present only when the审题闸 actually ran (freeChecksPass short-circuit).
         ...(teachingResult
@@ -921,10 +1148,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     const newMetadata = { ...metadataRaw, quiz_gen: updatedMeta };
 
     await db.transaction(async (tx) => {
-      // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
+      // global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert).
       await acquireLearningStateWriteLock(tx);
-      // G→row lock order (YUK-452 review, codex P2): acquire the placement supply scope lock BEFORE
+      // G→row lock order: acquire the placement supply scope lock BEFORE
       // the question row lock, matching placement paid admission (which takes this advisory lock
       // then a plain SELECT) and proposal-appliers. The prior order (row lock, then supply lock only
       // inside the promote branch) let a concurrent /placement/start read the draft as still-cold
@@ -945,24 +1172,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         .select({
           version: question.version,
           knowledgeIds: question.knowledge_ids,
-          // YUK-1045 — 并发终验成功（重叠投递）：它已提交 ⇒ 本投递 stale，挂起
-          // 写须跳过（§3.3：旧验证不能改变较新 admission 决定）。
-          // YUK-1095 — 判据绑定【当前 admission generation】：成功事件在 promote
+          // 并发终验成功（重叠投递）：它已提交 ⇒ 本投递 stale，挂起
+          // 写须跳过（旧验证不能改变较新 admission 决定）。
+          // 判据绑定【当前 admission generation】：成功事件在 promote
           // 时盖上写入后的 generation，只有 generation == 当前值的 success 才算
           // 并发副本。历史上任意 success（无 generation 限定）会让一次真正失败的
           // 重验被旧记录跳过 —— 旧验证不得冒充较新 admission 决定的并发副本。
-          promotedElsewhere: sql<boolean>`EXISTS (
-            SELECT 1 FROM ${event}
-            WHERE ${event.action} = 'experimental:quiz_verify'
-              AND ${event.subject_kind} = 'question'
-              AND ${event.subject_id} = ${questionId}
-              AND ${event.outcome} = 'success'
-              AND (${event.payload}->>'admission_generation')::text = (
-                SELECT ${question_group_lifecycle.scoring_admission_generation}::text
-                FROM ${question_group_lifecycle}
-                WHERE ${question_group_lifecycle.group_id} = ${questionId}
-              )
-          )`,
+          promotedElsewhere: promotedElsewhereEventExists(questionId),
         })
         .from(question)
         .where(eq(question.id, questionId))
@@ -973,13 +1189,13 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           `quiz_verify question ${questionId} changed during verification (expected version ${row.version}, got ${current?.version ?? 'missing'})`,
         );
       }
-      // YUK-1095 — 本次 promote 写入后的 admission generation（成功事件盖上，供
+      // 本次 promote 写入后的 admission generation（成功事件盖上，供
       // 并发 promotedElsewhere 判据绑定）；非 promote 路径恒为 null，不落该字段。
-      // YUK-1507 — kept 路径（组已被 C1 独立准入）盖【当前】admission generation：
+      // kept 路径（组已被 C1 独立准入）盖【当前】admission generation：
       // 本成功与现行独立准入决定同代绑定，同代 stale 失败投递仍被 promotedElsewhere
       // 挡下；generation 再推进（新 revision 决定）后 shield 自动失效。
       let promotedAdmissionGeneration: number | null = null;
-      // YUK-1507 — C1 绑定准入命中时记录保留的 revision id（事件审计标记；
+      // C1 绑定准入命中时记录保留的 revision id（事件审计标记；
       // 成功分支不重发，失败分支仅在准入决定晚于本投递开工时不折叠/挂起）。
       // 见下方两处 publish gate。
       let keptIndependentAdmissionRevisionId: string | null = null;
@@ -995,52 +1211,14 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           })
           .where(eq(question.id, questionId));
 
-        // YUK-203 P3 — FSRS enroll is per knowledge point: materialize an
-        // initial "new" card for each knowledge id this verified question
-        // probes. The question itself remains the concrete item selected when
-        // that knowledge becomes due. Unlabeled legacy questions fall back to
-        // question-level FSRS so they are not silently dropped.
-        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
-        if (fsrsSubjectIds.length > 0) {
-          for (const knowledgeId of fsrsSubjectIds) {
-            // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
-            // structural anchor, never a content KC: skip FSRS enrollment (the
-            // subject read axis already excludes it — resolveSubjectKnowledgeIds).
-            // Branching on the RAW ids is deliberate: a roots-only label set is
-            // not "unlabeled", so it enrolls ZERO cards — the question-level
-            // fallback stays reserved for a genuinely unlabeled legacy row.
-            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-            // Codex (PR #295) — enroll-if-absent. A verified quiz binding to a
-            // knowledge point that ALREADY has an FSRS projection (e.g. a
-            // supplementary question for an already-studied node) must NOT reset
-            // that node's state/due_at/last_review_event_id back to a fresh card —
-            // that would discard the user's review history and pull a not-yet-due
-            // card back into the pool. Only enroll knowledge points with no
-            // existing projection; leave existing schedules untouched.
-            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-            if (existing) continue;
-            await upsertFsrsState(tx, {
-              subject_kind: 'knowledge',
-              subject_id: knowledgeId,
-              ...initialSchedulingState(knowledgeId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        } else {
-          // Unlabeled legacy questions enroll at question level. Same
-          // enroll-if-absent guard so a re-verify can't reset an existing card.
-          const existing = await getFsrsState(tx, 'question', questionId);
-          if (!existing) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: questionId,
-              ...initialSchedulingState(questionId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        }
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId,
+          knowledgeIds: current.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
 
-        // YUK-1011 — composite cascade: a verified composite parent (quiz_gen
+        // composite cascade: a verified composite parent (quiz_gen
         // 篇 output carries question_part children persisted as 'draft' with NO
         // independent verify intent) promotes its draft children in the SAME tx
         // so the group enters the pool atomically. Tombstoned children
@@ -1057,18 +1235,18 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           verifyEventId,
         });
 
-        // YUK-1043 — 统一发布链：verified promote 同事务重发组 revision（位于级联
+        // 统一发布链：verified promote 同事务重发组 revision（位于级联
         // 之后 ⇒ 组契约含最终子 part 状态）。composite 的组根 = 父行。
-        // YUK-1507 — 验证通过 ≠ 判分准入（ADR-0073 四源同门：每个计分单元要两次
+        // 验证通过 ≠ 判分准入（ADR-0073 四源同门：每个计分单元要两次
         // 独立解题一致 + 逐单元标定才 admitted）。本 job 的独立模型核验只是内容
         // 质检证据，故发布为 withheld(unverified_rules)＝待准入，保留
-        // quiz_verify@1 的 passed 核验记录；question_admission_run（YUK-1445 C1）
+        // quiz_verify@1 的 passed 核验记录；question_admission_run
         // 经 assessment_publish outbox 订阅自动入队，双解 + 标定通过后才
         // admitted。已发布过同内容的组在此只更新 admission 维度（generation+1）。
-        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
-        // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
+        // suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
+        // 「同版复核通过」行）；retraction_hold 不由本路径接线，publisher 恒保留。
         const groupRootId = row.parent_question_id ?? questionId;
-        // YUK-1507 pair-race guard（同 source_verify 判据，下界传 null 即不设
+        // pair-race guard（同 source_verify 判据，下界传 null 即不设
         // 代差要求）：【任何】绑定当前已发布 revision 的 C1 独立准入都不得被重
         // 发 —— 不把 admitted 降回 withheld，也不把行归一 base 重铸到 C1 的
         // resolved revision 上（重铸还会经 withheld 事件触发一次无收益的重复
@@ -1100,6 +1278,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             }
             const cleared = await publishQuestionGroup(tx, {
               group_id: groupRootId,
+              readAssetBytes: async (storageKey) => {
+                const { getR2 } = await import('@/server/r2');
+                return getR2().get(storageKey);
+              },
               contract: {
                 structure: currentRevision.structure,
                 response_spec: currentRevision.response_spec,
@@ -1125,6 +1307,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
                   admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:promote',
@@ -1140,6 +1323,26 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             if ('admission_generation' in cleared) {
               promotedAdmissionGeneration = cleared.admission_generation;
             }
+          } else {
+            // （PM 条件）——无 verify_hold 可清的 kept 分支也要给这次
+            // verify 结果落一条 append-only 记录：不改任何 lifecycle 维度、
+            // 不推进 generation（readBoundIndependentAdmission 已锁 lifecycle 行）。
+            await appendAdmissionVerificationRecord(tx, {
+              groupId: groupRootId,
+              expectedRevisionId: keptAdmission.revisionId,
+              expectedGeneration: keptAdmission.lifecycle.scoring_admission_generation,
+              verification: {
+                policy_id: 'quiz_verify@1',
+                outcome: 'passed',
+                evidence: {
+                  overall: parsed.overall,
+                  copy_safety: copySafetyVerdict,
+                  admission: 'kept_independent_admission',
+                  deterministic_precheck: precheckRecord,
+                },
+              },
+              now,
+            });
           }
         } else {
           const promotePublish = await publishQuestionGroupFromRow(tx, {
@@ -1155,6 +1358,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
               evidence: {
                 overall: parsed.overall,
                 copy_safety: copySafetyVerdict,
+                deterministic_precheck: precheckRecord,
               },
             },
             availability: QUESTION_AVAILABILITY.GENERAL_POOL,
@@ -1167,8 +1371,8 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
       } else {
         // needs_review / fail / too_close / solve_check veto — stay draft, never reaches
         // the pool.
-        // YUK-538 / YUK-554 (Lens B m7 invariant) — quiz_verify has NO demote branch (unlike
-        // source_verify.ts:456-481's YUK-479 active→draft demote) and that is SAFE: no path
+        // quiz_verify has NO demote branch (unlike
+        // source_verify.ts's active→draft demote) and that is SAFE: no path
         // pre-promotes a quiz_gen row to active before quiz_verify runs (cold-start
         // image-candidate-accept hardcodes web_sourced→source_verify;
         // verify-and-promote/proposal-appliers/legacy-record-appliers active-writers never
@@ -1183,20 +1387,20 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           })
           .where(eq(question.id, questionId));
 
-        // YUK-1045 — verify 挂起串行化（§3.3）：needs_review/fail/too_close 同事务
+        // verify 挂起串行化：needs_review/fail/too_close 同事务
         // 把 contract 维度翻 suspended（verify_hold）+ admission 折叠 withheld；
         // claim 不释放（挂起 ≠ 撤回）。draft 行从池读面消失由 draft_status 既覆盖；
         // 本写保证 contract 读面 + admission generation 串行化语义存在。组未发布
         // 时铸 suspended 首版；同版复核通过后 promote 分支（上方）解除挂起。
         // promotedElsewhere ⇒ 并发终验成功已提交 ⇒ 本投递 stale，不翻维度也不写
         // 核验记录（记录诚实归属本轮核验的 generation）。
-        // YUK-1507 — promotedElsewhere 的 generation 绑定盖不住一种新交错：先前
+        // promotedElsewhere 的 generation 绑定盖不住一种新交错：先前
         // 成功投递记的是它写的 withheld generation，C1 admitted 会把 generation
         // 再推进一代 ⇒ 迟到的失败投递看到「无当前代 success」而误判非 stale。
         // 故另查 live lifecycle，但 stale 判定是因果绑定，不是「当前有 C1
         // passed」：只有【绑定当前 revision 且 generation 严格晚于本投递开工
         // 快照（admissionGenerationAtStart）】的准入决定，才证明本投递的验证
-        // 相对较新 admission 决定 stale（§3.3 旧验证不改变较新决定）⇒ 不折叠
+        // 相对较新 admission 决定 stale（旧验证不改变较新决定）⇒ 不折叠
         // admitted 也不挂 verify_hold。verify 开工前已存在的 admitted 不提供
         // 该证明 —— C1 只证判分、不证内容质检（grounding/copy_safety/
         // knowledge_hit），本投递若是首次真实核验，其失败仍照常挂起。事件仍
@@ -1230,6 +1434,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 evidence: {
                   overall: parsed.overall,
                   copy_safety: copySafetyVerdict,
+                  deterministic_precheck: precheckRecord,
                 },
               },
               actorRef: 'quiz_verify:suspend',
@@ -1254,7 +1459,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         outcome: promote ? 'success' : parsed.overall === 'fail' ? 'failure' : 'partial',
         payload: {
           question_id: questionId,
-          // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+          // unified verify contract shape (axes + overall +
           // failure_class? + summary_md + confidence). SUPERSET: every handler-specific
           // key below stays unchanged. `unified.overall` === `parsed.overall` and
           // `unified.failure_class` (validation_failure when !promote) reproduce the
@@ -1268,7 +1473,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             max_overlap: maxOverlap,
             deterministic_too_close: deterministicTooClose,
           },
-          // YUK-224 — source tier + the tier-3 material_grounding outcome (audit trail).
+          // precheck per-rule record on every terminal event, pass or
+          // reject (mirrors the admission verification evidence above).
+          deterministic_precheck: precheckRecord,
+          // source tier + the tier-3 material_grounding outcome (audit trail).
           source_tier: tier,
           ...(tierChecks.includes('material_grounding')
             ? {
@@ -1281,7 +1489,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 },
               }
             : {}),
-          // YUK-225 — kind_conformance outcome (audit trail). Records whether the
+          // kind_conformance outcome (audit trail). Records whether the
           // (subject, kind) skill pack was loaded for the check and the verdict.
           ...(tierChecks.includes('kind_conformance')
             ? {
@@ -1291,7 +1499,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 },
               }
             : {}),
-          // YUK-538 / YUK-554 — solve_check authoritative audit block (verdict + which axis
+          // solve_check authoritative audit block (verdict + which axis
           // compared + the independent solver's answer + the human-readable reason). Keyed
           // on `solveResult` (undefined when short-circuited), NOT tierChecks.includes (which
           // is always true for this handler). additive JSONB, zero DDL. NOTE (Lens B m8): no
@@ -1306,7 +1514,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                   compared_by: solveResult.compared_by,
                   solver_final_answer: solveResult.solver_final_answer ?? null,
                   reason: solveResult.reason,
-                  // EFF-1 (YUK-554 review) — the solve legs' own spend (the event-level
+                  // the solve legs' own spend (the event-level
                   // cost_micro_usd column covers only the QuizVerifyTask call): run ids in
                   // call order + summed cost when the runner reported them.
                   task_run_ids: solveResult.task_run_ids ?? null,
@@ -1314,7 +1522,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
                 },
               }
             : {}),
-          // YUK-578 (入池前审题闸) — teaching_quality authoritative audit block: overall verdict +
+          // teaching_quality authoritative audit block: overall verdict +
           // the three per-axis verdicts/reasons (clarity / unique_answer / distractor_power; the
           // last is 'skipped' for non-choice) + the审题闸's own run-id/cost. Keyed on
           // `teachingResult` (undefined when short-circuited). additive JSONB, zero DDL — mirrors
@@ -1334,7 +1542,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             : {}),
           promoted: promote,
           verification_status: verificationStatus,
-          // YUK-1507 — C1 绑定准入命中：成功分支未重发/未降级 admitted（不把行
+          // C1 绑定准入命中：成功分支未重发/未降级 admitted（不把行
           // 归一 base 重铸到 resolved revision）；失败分支仅当准入决定确证晚于
           // 本投递开工（generation > 开工快照）才跳过折叠/挂起。只记保留的
           // revision id，不记任何原文内容。
@@ -1347,7 +1555,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           ...(promotedAdmissionGeneration != null
             ? { admission_generation: promotedAdmissionGeneration }
             : {}),
-          // YUK-350 — overall / failure_class / summary_md / confidence now come from
+          // overall / failure_class / summary_md / confidence now come from
           // `...unified` above (the unified verify contract shape). failure_class is keyed
           // there only when !promote (validation_failure), identical to the prior inline.
           verified_by: verifiedBy,
@@ -1386,7 +1594,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     };
   } catch (err) {
     // Release the primary QuizVerifyTask reservation if it reserved but never settled (the provider
-    // call threw). Idempotent / RETENTION-safe once settled (YUK-452 review).
+    // call threw). Idempotent / RETENTION-safe once settled.
     if (placementAuthority && !primaryPaidSettled) {
       try {
         await db.transaction(async (tx) =>
@@ -1406,7 +1614,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
     // A placement stale-authority OR admission failure is about the CLAIM's fence/budget, not the
     // question's quality — skip the failure-bottom (which would stamp a spurious verification.status
     // ='failed' on a possibly-good draft) and re-throw so the placement handler terminalizes the
-    // attempt (YUK-452 review).
+    // attempt.
     if (
       err instanceof PlacementStarterStaleAuthorityError ||
       err instanceof PlacementStarterAdmissionError
@@ -1446,7 +1654,7 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         outcome: 'error',
         payload: {
           question_id: questionId,
-          // YUK-350 (B5 increment C) — unified verify contract shape via the system_error
+          // unified verify contract shape via the system_error
           // projection: { axes:[], overall:'error', failure_class:'system_error',
           // summary_md, confidence:0 }. This is the ONLY place the result-layer 'error'
           // value is ever written: the model can never emit it (LLM parse enum is 3-value),

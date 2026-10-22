@@ -1,8 +1,10 @@
+import { AgentRunError } from '@/ai/agent-run-error';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
 } from '@/capabilities/agency/public';
 import { getLearnerLocale } from '@/capabilities/task-registry';
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
@@ -17,9 +19,9 @@ import {
   type InterventionPackageReviewModelOutputFullT,
   InterventionPackageReviewModelOutputV2,
   type InterventionPackageReviewModelOutputV2T,
-  type InterventionPackageReviewRequirementsT,
   InterventionPackageReviewStructuredOutput,
   type InterventionPackageReviewStructuredOutputT,
+  type InterventionPackageReviewTaskInputT,
   type InterventionPackageT,
   InterventionPreparationAttempt,
   type InterventionPreparationAttemptT,
@@ -36,8 +38,6 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
-import { AgentRunError } from '@/server/ai/agent-run-error';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -503,13 +503,17 @@ async function runInterventionQuestionContentValidations(input: {
 /** Join comparator judgments with the immutable blind-solve evidence. */
 export function bindInterventionPackageReviewDecision(
   value: unknown,
+  reviewTaskInput: InterventionPackageReviewTaskInputT,
   independentAudit: InterventionIndependentSolutionAuditT,
   questionContentValidationAudit: InterventionQuestionContentValidationAuditT,
-  requirements: InterventionPackageReviewRequirementsT,
   packageValue: InterventionPackageT,
 ): InterventionPackageReviewModelOutputFullT {
   const modelValue: InterventionPackageReviewStructuredOutputT =
     InterventionPackageReviewStructuredOutput.parse(value);
+  const {
+    review_requirements: requirements,
+    snapshot: { conjecture },
+  } = reviewTaskInput;
   const auditByKind = new Map(
     independentAudit.diagnostics.map((diagnostic) => [diagnostic.kind, diagnostic]),
   );
@@ -532,8 +536,23 @@ export function bindInterventionPackageReviewDecision(
     failure_codes: _providerFailureCodes,
     ...providerObservations
   } = modelValue;
+  // claim/target-error identity is a plain string equality between
+  // the frozen snapshot and the (already server-normalized) diagnostic fields.
+  // The comparator no longer votes on these two bits.
+  const testedClaimsMatch = INTERVENTION_DIAGNOSTIC_KINDS.every(
+    (kind) => packageValue.diagnostics[kind].tested_claim_md === conjecture.claim_md,
+  );
+  const targetErrorsMatch = INTERVENTION_DIAGNOSTIC_KINDS.every(
+    (kind) =>
+      packageValue.diagnostics[kind].target_error_rule_md === conjecture.target_error_rule_md,
+  );
   const bound = InterventionPackageReviewModelOutputV2.parse({
     ...providerObservations,
+    package_checks: {
+      ...modelValue.package_checks,
+      tested_claims_match: testedClaimsMatch,
+      target_errors_match: targetErrorsMatch,
+    },
     verdict: 'pass',
     failure_codes: [],
     diagnostic_checks: modelValue.diagnostic_checks.map((check) => {
@@ -798,9 +817,9 @@ async function runPackageReview(
         review = parseTaskOutput(result, 'intervention package review', (value) =>
           bindInterventionPackageReviewDecision(
             value,
+            reviewTaskInput,
             independentAudit,
             questionContentValidationAudit,
-            reviewTaskInput.review_requirements,
             packageValue,
           ),
         );

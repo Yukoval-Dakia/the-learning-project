@@ -1,5 +1,4 @@
-// YUK-1572 — knowledge id → 显示名批量读取（自 stream-inputs.ts 拆出）。
-//
+// knowledge id → 显示名批量读取（自 stream-inputs.ts 拆出）。
 // 这是一条完整的事实读取职责，不属于任何一侧编排：stream-inputs 用它给候选
 // 注 reasoning 标签，stream-view 用它投影 knowledge_name。两侧经本模块共用
 // 同一事实源，互不依赖对方的编排实现。

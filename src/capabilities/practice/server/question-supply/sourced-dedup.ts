@@ -1,17 +1,16 @@
-// YUK-986 (Supply-Agent/1) — 供给去重/白名单确定性原语下沉模块。
-//
+// (Supply-Agent/1) — 供给去重/白名单确定性原语下沉模块。
 // 这三个 helper 原本散在 jobs/quiz_verify.ts、jobs/source_verify.ts、jobs/sourcing.ts，
 // 而那三个 jobs 模块都 import server/question-supply/ —— supply-agent 的
 // candidates/commit 模块（同在 question-supply/ 与 server/tools/）若反向 import jobs/
 // 即成目录级 import 环。故纯函数下沉于此，jobs/* 改为经 re-export 透出（jobs→server
 // 是既有受准方向；quiz_verify.test.ts / sourcing.test.ts 的既有 import 路径不动）。
 // 全部逻辑逐字未改：
-//   - maxNgramOverlap（含 shingles / normalizeForOverlap / jaccard / COPY_SAFETY_NGRAM）：
-//     原 quiz_verify.ts §4/§5 确定性 word-shingle Jaccard（CJK-aware）。
-//   - DEDUP_OVERLAP_THRESHOLD：原 source_verify.ts 的近重阈值（0.7，保守起点）。
-//   - matchesWhitelist：原 sourcing.ts OF-2 的 host 后缀匹配。
+// - maxNgramOverlap（含 shingles / normalizeForOverlap / jaccard / COPY_SAFETY_NGRAM）：
+// 原 quiz_verify.ts/ 确定性 word-shingle Jaccard（CJK-aware）。
+// - DEDUP_OVERLAP_THRESHOLD：原 source_verify.ts 的近重阈值（0.7，保守起点）。
+// - matchesWhitelist：原 sourcing.ts OF-2 的 host 后缀匹配。
 
-// §4 / §5 — deterministic normalized n-gram overlap. Word-shingle Jaccard between
+// deterministic normalized n-gram overlap. Word-shingle Jaccard between
 // the prompt and each source snippet; we take the MAX over snippets (worst-case
 // closeness). Returns 0 when there are no usable snippets (nothing to copy from →
 // no deterministic signal; the LLM copy_safety verdict still applies). Tunable;

@@ -5,6 +5,14 @@ import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operat
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import { writeAgentBudgetPath } from './agent/budget-state';
+import {
+  findDurableAgentKey,
+  persistAgentReservation,
+  readDurableAgentOperation,
+  requireAgentKeyEvidence,
+  updateDurableAgentOperation,
+} from './operation-identity';
 
 export const INGESTION_OPERATION_TABLE = 'ingestion_operation';
 
@@ -40,6 +48,8 @@ interface ReserveInput {
   operationKind: IngestionOperationKind;
   inputHash: string;
   idempotencyKey?: string;
+  /** Only after replay/conflict has been decided inside the key lock. */
+  beforeReserve?: (tx: Tx) => Promise<void>;
 }
 
 export type ReserveResult =
@@ -59,7 +69,7 @@ function payloadString(payload: Record<string, unknown>, key: string): string | 
 }
 
 export async function findIdempotentIngestionOperation(
-  db: Db,
+  db: Db | Tx,
   input: { sessionId: string; idempotencyKey: string },
 ): Promise<IdempotentOperationMatch | null> {
   const rows = await db
@@ -86,8 +96,9 @@ export async function findIdempotentIngestionOperation(
 }
 
 /**
- * 原子保留 operation handle。Idempotency-Key 只在同一 session 的 operations
- * collection 内作用；相同 key + 相同规范化输入复用 handle，不同输入返回冲突。
+ * Atomically reserves an operation handle. The idempotency key scopes to one
+ * session's operation collection: the same key and normalized input reuse the
+ * handle, while different input conflicts.
  */
 export async function reserveIngestionOperation(
   db: Db,
@@ -97,6 +108,28 @@ export async function reserveIngestionOperation(
     if (input.idempotencyKey) {
       const scope = `ingestion-operation:${input.sessionId}:${input.idempotencyKey}`;
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scope}))`);
+
+      // Collection key scope includes *every* kind. Permanent agent identity
+      // takes precedence over later/TTL-limited events, inside this same lock.
+      const durable = await findDurableAgentKey(tx, {
+        sessionId: input.sessionId,
+        idempotencyKey: input.idempotencyKey,
+        inputHash: input.inputHash,
+      });
+      if (durable) {
+        if (durable.sameInput && input.operationKind === 'agent') {
+          await persistAgentReservation(tx, {
+            ...input,
+            operationId: durable.operationId,
+            restored: true,
+            resource: (await readIngestionOperation(tx, durable.operationId)) ?? undefined,
+          });
+        }
+        return {
+          outcome: durable.sameInput ? 'reused' : 'conflict',
+          operationId: durable.operationId,
+        };
+      }
 
       const existingRows = await tx
         .select({ businessId: job_events.business_id, payload: job_events.payload })
@@ -116,12 +149,24 @@ export async function reserveIngestionOperation(
         const sameInput =
           payloadString(existing.payload, 'operation_kind') === input.operationKind &&
           payloadString(existing.payload, 'input_hash') === input.inputHash;
+        if (sameInput && input.operationKind === 'agent') {
+          await persistAgentReservation(tx, {
+            ...input,
+            operationId: existing.businessId,
+            restored: true,
+            resource: (await readIngestionOperation(tx, existing.businessId)) ?? undefined,
+          });
+        }
         return {
           outcome: sameInput ? 'reused' : 'conflict',
           operationId: existing.businessId,
         };
       }
+      if (input.operationKind === 'agent') await requireAgentKeyEvidence(tx, input.sessionId);
     }
+
+    await input.beforeReserve?.(tx);
+    if (input.operationKind === 'agent') await persistAgentReservation(tx, input);
 
     await writeJobEvent(tx, {
       business_table: INGESTION_OPERATION_TABLE,
@@ -138,6 +183,65 @@ export async function reserveIngestionOperation(
   });
 }
 
+/** Preserve still-readable pre-durable accepted handles before a new start. */
+export async function retainUnprovenAgentReservations(tx: Tx): Promise<void> {
+  const rows = await tx.execute<{
+    operation_id: string;
+    session_id: string;
+    input_hash: string;
+    idempotency_key: string | null;
+  }>(sql`
+    SELECT DISTINCT ON (j.business_id) j.business_id AS operation_id,
+      s.id AS session_id, j.payload->>'input_hash' AS input_hash,
+      j.payload->>'idempotency_key' AS idempotency_key
+    FROM job_events j JOIN learning_session s ON s.id = j.payload->>'session_id'
+    WHERE s.type = 'ingestion' AND j.business_table = 'ingestion_operation'
+      AND j.event_type = 'operation.accepted' AND j.payload->>'operation_kind' = 'agent'
+      AND NOT (COALESCE(s.agent_budget->'operations', '{}'::jsonb) ? j.business_id)
+      AND NOT (COALESCE(s.agent_budget->'grants', '{}'::jsonb) ? j.business_id)
+    ORDER BY j.business_id, j.id
+  `);
+  for (const row of rows) {
+    if (!row.input_hash) {
+      await writeAgentBudgetPath(tx, row.session_id, ['unproven_dispatches', row.operation_id], {
+        reason: 'historical_input_identity_unavailable',
+        observed_at: new Date().toISOString(),
+      });
+      continue;
+    }
+    await persistAgentReservation(tx, {
+      operationId: row.operation_id,
+      sessionId: row.session_id,
+      inputHash: row.input_hash,
+      ...(row.idempotency_key ? { idempotencyKey: row.idempotency_key } : {}),
+      restored: true,
+      resource: (await readIngestionOperation(tx, row.operation_id)) ?? undefined,
+    });
+  }
+  // Pre-reservation agent dispatches have no operation id to restore. Retain
+  // the actual event identity rather than inventing a grant or guessing cost.
+  const legacy = await tx.execute<{ session_id: string; id: number }>(sql`
+    SELECT DISTINCT ON (s.id) s.id AS session_id, j.id
+    FROM learning_session s JOIN job_events j ON j.business_id = s.id
+    WHERE s.type = 'ingestion' AND j.business_table = 'ingestion_session'
+      AND j.event_type = 'ingestion.queued' AND j.payload->>'lane' = 'agent'
+      AND COALESCE(s.agent_budget->'grants', '{}'::jsonb) = '{}'::jsonb
+      AND COALESCE(s.agent_budget->'operations', '{}'::jsonb) = '{}'::jsonb
+      AND s.agent_budget->'execution_owner' IS NULL
+    ORDER BY s.id, j.id
+  `);
+  for (const row of legacy)
+    await writeAgentBudgetPath(
+      tx,
+      row.session_id,
+      ['unproven_dispatches', `legacy_event:${row.id}`],
+      {
+        reason: 'legacy_dispatch_ownership_unproven',
+        observed_at: new Date().toISOString(),
+      },
+    );
+}
+
 export async function writeIngestionOperationEvent(
   db: Db | Tx,
   input: {
@@ -151,6 +255,15 @@ export async function writeIngestionOperationEvent(
   },
 ): Promise<void> {
   await db.transaction(async (tx) => {
+    if (
+      !(await updateDurableAgentOperation(
+        tx,
+        input.operationId,
+        input.eventType,
+        input.payload ?? {},
+      ))
+    )
+      return;
     await writeJobEvent(tx, {
       business_table: INGESTION_OPERATION_TABLE,
       business_id: input.operationId,
@@ -158,6 +271,30 @@ export async function writeIngestionOperationEvent(
       payload: input.payload ?? {},
     });
   });
+}
+
+/**
+ * Append a terminal operation event only when the projection has no terminal
+ * event yet (idempotent — callers on settle/recovery paths may race).
+ */
+export async function writeIngestionOperationTerminalOnce(
+  db: Db | Tx,
+  input: {
+    operationId: string;
+    eventType: 'operation.completed' | 'operation.failed';
+    payload?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const existing = await db.execute<{ terminal: boolean }>(sql`
+    SELECT EXISTS(
+      SELECT 1 FROM job_events
+      WHERE business_table = ${INGESTION_OPERATION_TABLE}
+        AND business_id = ${input.operationId}
+        AND event_type IN ('operation.completed', 'operation.failed')
+    ) AS terminal
+  `);
+  if (existing[0]?.terminal === true) return;
+  await writeIngestionOperationEvent(db, input);
 }
 
 export async function hasQueuedIngestionOperationEvent(
@@ -178,7 +315,7 @@ export async function hasQueuedIngestionOperationEvent(
   return rows.length > 0;
 }
 
-/** 串行化 accepted→pg-boss→queued 缝隙上的首次投递与崩溃恢复。 */
+/** Serializes first dispatch and crash recovery across the accepted-to-queued gap. */
 export async function withIngestionOperationDispatchLock<T>(
   db: Db,
   operationId: string,
@@ -192,11 +329,13 @@ export async function withIngestionOperationDispatchLock<T>(
   });
 }
 
-/** 从 append-only job_events 投影可轮询的 operation 资源。 */
+/** Projects the pollable operation resource from append-only job_events. */
 export async function readIngestionOperation(
   db: Db | Tx,
   operationId: string,
 ): Promise<IngestionOperationResource | null> {
+  const durable = await readDurableAgentOperation(db, operationId);
+  if (durable) return durable;
   const events = await db
     .select({
       eventType: job_events.event_type,

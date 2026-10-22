@@ -145,12 +145,11 @@ function asErrorDetail(error: unknown): string {
 }
 
 /**
- * Read-only YUK-814 preparation path.
+ * Read-only grounding-gate preparation path.
  *
- * This deliberately reuses the production readers/folds/gates. The only policy
- * difference from the nightly writer is that every eligible cell is returned so
- * the blind set can be selected without a permanent top-3 cut. No proposal,
- * event, rate, or product projection is written here.
+ * Deliberately reuses the production readers/folds/gates. The only policy difference
+ * from the nightly writer is that every eligible cell is returned, so the blind set
+ * can be selected without a permanent top-3 cut. Nothing is written here.
  */
 export async function collectGroundingGateCandidates(
   db: Db,
@@ -198,9 +197,9 @@ export async function collectGroundingGateCandidates(
   let reproducibleCellCount = 0;
   for (let offset = 0; offset < rankedCells.length; offset += GROUNDING_GATE_ENRICH_BATCH_SIZE) {
     const batch = rankedCells.slice(offset, offset + GROUNDING_GATE_ENRICH_BATCH_SIZE);
-    // Enrichment DB failures are operational failures for the whole run. Silently
-    // dropping a batch would bias the sampled population, so only deterministic
-    // cell-local evidence/image defects become exclusions below.
+    // Enrichment DB failures fail the whole run. Silently dropping a batch would
+    // bias the sampled population, so only deterministic cell-local evidence/image
+    // defects become exclusions below.
     const enriched = await enrichEvidenceCells(db, {
       cells: batch,
       failures,

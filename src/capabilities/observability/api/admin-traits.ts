@@ -1,6 +1,5 @@
-// YUK-601 (v3.2 §3.5) — GET /api/admin/traits?kind=<kind>：跨科 trait 目录
-// （换绑选择器数据源——「化学借数学的 rubric」得先能列出候选）。kind 必填且
-// 必须是六 kind 之一（400）。业务在 src/server/subjects/admin-read.ts。
+// Cross-subject trait catalog, used as the rebind selector. `kind` is required and
+// must be one of the six trait kinds.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

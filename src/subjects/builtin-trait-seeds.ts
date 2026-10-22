@@ -1,15 +1,9 @@
-// YUK-599 (YUK-597 v3 trait 合同 §6) — 种子真相源 BUILTIN_TRAIT_SEEDS。
+// Seed source of truth. Payloads are decomposed from the code profiles at load
+// time, but a content change only reaches deployed rows when the matching
+// seedVersion is bumped: reconcileBuiltinTraits treats a semver mismatch as its
+// only upgrade signal and hard-skips equal rows (reruns stay side-effect free).
 //
-// payload 从现有 4 个代码 profile 在模块加载期分解生成（decompose 单一来源，
-// 代码 profile 改动自动进种子——但**传播到 DB 行必须 bump 对应格子的 seedVersion**：
-// migrate 的 reconcileBuiltinTraits 以「代码种子 semver ≠ 行 seed_version」为唯一
-// 升级触发信号，内容改了不 bump = 不传播（v3 §6，纯内容改动 bump 即传播，Zod 形状
-// 不变也能升级）。相等 → 整行硬跳过（重跑零副作用）。
-//
-// seedVersion per (subject, kind) 独立（bump charter 不虚触发其他 kind 的
-// reconcile）；初值各 '1.0.0'。种子 trait id = trt_seed_<subject>_<kind>
-// （migrate 幂等键）。charter 的 methodology/rubricGuidance 种子 = 空串
-// （profile 文件里显式写出）。
+// Versions are per (subject, kind); a charter bump must not churn other kinds.
 
 import { subjectProfiles } from './profile';
 import { decomposeProfileToTraitPayloads } from './trait-compose';
@@ -22,17 +16,14 @@ import {
 export const BUILTIN_SUBJECT_IDS = ['general', 'yuwen', 'math', 'physics'] as const;
 export type BuiltinSubjectId = (typeof BUILTIN_SUBJECT_IDS)[number];
 
-// bump 点：改了某科某 kind 的种子内容，就 bump 这里对应格子（例：yuwen charter
-// 教学风格改词 → yuwen.charter '1.0.0' → '1.1.0'，migrate 下次重跑即覆盖升级
-// 未被 owner 编辑的行 + journal 'reconcile'）。
 export const BUILTIN_TRAIT_SEED_VERSIONS: Record<
   BuiltinSubjectId,
   Record<SubjectTraitKind, string>
 > = {
   general: {
     charter: '1.0.0',
-    // YUK-739 — rating/cause semantics moved onto the profile (meta_cause_prior /
-    // rating_lean / variant_strategy on cause categories; ratingPolicy section).
+    // Rating/cause semantics moved onto the profile; bumped so existing rows
+    // reconcile to the new payload.
     judge_policy: '1.1.0',
     cause_taxonomy: '1.1.0',
     source_policy: '1.0.0',
@@ -41,7 +32,6 @@ export const BUILTIN_TRAIT_SEED_VERSIONS: Record<
   },
   yuwen: {
     charter: '1.0.0',
-    // YUK-739 — same bump rationale as general.
     judge_policy: '1.1.0',
     cause_taxonomy: '1.1.0',
     source_policy: '1.0.0',
@@ -50,19 +40,15 @@ export const BUILTIN_TRAIT_SEED_VERSIONS: Record<
   },
   math: {
     charter: '1.0.0',
-    // YUK-739 — same bump rationale as general.
     judge_policy: '1.1.0',
     cause_taxonomy: '1.1.0',
-    // YUK-986 — bumped from 1.1.0: math source_policy LOSES jyeooSupply（queue 形态退役，
-    // 供给改由 agent tool 链承载）。bump 让 reconcileBuiltinTraits 把已部署实例（含 1.1.0
-    // 的 jyeooSupply 字段）升级到无该字段的新 payload，旧声明不会残留成「躺着的配置」。
+    // 1.2.0 dropped the retired jyeooSupply field so deployed rows upgrade.
     source_policy: '1.2.0',
     render_theme: '1.0.0',
     scheduling: '1.0.0',
   },
   physics: {
     charter: '1.0.0',
-    // YUK-739 — same bump rationale as general.
     judge_policy: '1.1.0',
     cause_taxonomy: '1.1.0',
     source_policy: '1.0.0',
@@ -86,7 +72,7 @@ function buildSeeds(): Record<BuiltinSubjectId, Record<SubjectTraitKind, Builtin
   for (const subjectId of BUILTIN_SUBJECT_IDS) {
     const profile = subjectProfiles[subjectId];
     if (!profile) {
-      // 四 builtin 是编译期常量（registry 构造器注册）；缺席 = 构建配置坏，fail fast。
+      // Missing builtin is a broken build, not a runtime condition.
       throw new Error(`BUILTIN_TRAIT_SEEDS: builtin profile '${subjectId}' is not registered`);
     }
     const payloads = decomposeProfileToTraitPayloads(profile);

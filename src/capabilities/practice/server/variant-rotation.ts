@@ -1,22 +1,8 @@
-// YUK-282 / ADR-0030 — variant-rotation probe: by-kind selection routing.
-//
-// Replaces ADR-0028's single-question-avoidance seam in `pickQuestionForKnowledge`
-// (was: one ORDER BY pushing last-reviewed to the tail) with a by-kind router:
-//
-//   recall      (fill_blank | translation)            → original-question repeat
-//   application (short_answer | reading | choice + …)  → variant-family rotation
-//
-// "recall" repeats the SAME question the FSRS card is measuring — replacing it
-// would change the measured item and pollute the FSRS signal. "application"
-// rotates within the question's `root_question_id` variant family so repeated
-// reviews of one knowledge point exercise the SKILL instead of letting the user
-// memorise a single question's answer.
-//
-// Pure / deterministic: same input → same output, no LLM, no side effects beyond
-// mutating the caller-owned `usedQuestionIds` set. This is the "due = deterministic
-// fallback" channel (owner Q2: AI scheduler stays a separate paper channel,
-// ADR-0029). The seam stays a swappable pure function so a future AI scheduler can
-// replace ONLY this selection step — see ADR-0030 §5.
+// By-kind selection routing for variant rotation.
+// recall (fill_blank/translation) repeats the same question so the FSRS signal measures a
+// stable item; application (short_answer/reading/choice) rotates within the
+// root_question_id family so repeated reviews exercise the skill. Pure and deterministic;
+// only mutates the caller-owned usedQuestionIds set.
 
 import { and, inArray, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
@@ -24,23 +10,22 @@ import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/
 import { event, question } from '@/db/schema';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 
-// ADR-0030 §1 — by-kind routing class.
+// by-kind routing class.
 export type RotationClass = 'recall' | 'application';
 
-// ADR-0030 §1 routing table (owner 2026-06-07 拍板, YUK-203 评论 a7db1f40).
-//   recall:      fill_blank / translation — repeat the same question.
-//   application: short_answer / reading / choice — rotate the variant family.
+// routing table (owner 2026-06-07 拍板, 评论 a7db1f40).
+// recall: fill_blank / translation — repeat the same question.
+// application: short_answer / reading / choice — rotate the variant family.
 // Unadjudicated kinds (essay / computation / derivation / true_false) fall through
 // to the CONSERVATIVE application default: they are all open/solve-type where
 // "memorise the answer" is harmful, and a family of one degrades naturally to an
 // original-repeat (see pickProbeForKnowledge).
-//
-// YUK-386 — question.kind is a free-form label, so this is now a lookup over the
+// question.kind is a free-form label, so this is now a lookup over the
 // KNOWN label ids (the nine below), not an exhaustive enum map. A label outside
 // the table → undefined: the signal collectors (softmax/placement/stream-store)
 // fail CLOSED into the recall lock (never sampled as a normal application item),
 // while selectProbeFromPrefetch treats it as the application default — identical
-// to the pre-YUK-386 runtime path where a dirty value's map lookup returned
+// to the pre- runtime path where a dirty value's map lookup returned
 // undefined → `=== 'recall'` false → application.
 const ROTATION_CLASS_BY_KIND: Record<string, RotationClass> = {
   fill_blank: 'recall',
@@ -48,7 +33,7 @@ const ROTATION_CLASS_BY_KIND: Record<string, RotationClass> = {
   short_answer: 'application',
   reading: 'application',
   choice: 'application',
-  // Conservative default for kinds owner did not name (ADR-0030 §决定·1). If a
+  // Conservative default for kinds owner did not name (§决定·1). If a
   // future label is genuinely a recall type, it MUST be classified here — the
   // fail-closed default is recall-lock (undefined), not application.
   essay: 'application',
@@ -60,7 +45,7 @@ const ROTATION_CLASS_BY_KIND: Record<string, RotationClass> = {
 /**
  * Rotation class for a persisted kind label; `undefined` when the label is
  * missing or not a KNOWN kind id — signal collectors treat that as the
- * fail-closed recall lock (FINDING 4), exactly like the retired enum
+ * fail-closed recall lock , exactly like the retired enum
  * membership check; the probe selector falls through to application (the
  * pre-existing dirty-value path).
  */
@@ -69,10 +54,10 @@ export function rotationClassForKind(kind: string | null | undefined): RotationC
   return ROTATION_CLASS_BY_KIND[kind];
 }
 
-// Projection returned to due-list — identical field set to the pre-ADR-0030
+// Projection returned to due-list — identical field set to the pre-
 // `pickQuestionForKnowledge` return (question_id, prompt_md, reference_md,
 // knowledge_ids, created_at, source, metadata). `source`/`metadata` are kept so
-// downstream tier derivation (YUK-226) is unchanged.
+// downstream tier derivation is unchanged.
 export type SelectedProbe = {
   question_id: string;
   prompt_md: string;
@@ -134,7 +119,7 @@ function toProbe(row: QuestionRow): SelectedProbe {
   };
 }
 
-// Deterministic rotation order (ADR-0030 §3): variant_depth ASC, created_at ASC,
+// Deterministic rotation order : variant_depth ASC, created_at ASC,
 // id ASC. Stable ring; same input → same order.
 function sortFamily(rows: QuestionRow[]): QuestionRow[] {
   return [...rows].sort((a, b) => {
@@ -145,7 +130,7 @@ function sortFamily(rows: QuestionRow[]): QuestionRow[] {
   });
 }
 
-// YUK-716 — bulk-prefetched inputs for a whole page of due knowledge points, so the
+// bulk-prefetched inputs for a whole page of due knowledge points, so the
 // per-KC probe selection runs as pure in-memory computation instead of 2-3 serial
 // round-trips per KC (the /api/review/due N+1). Three batch reads back these maps.
 export interface ProbeSelectionPrefetch {
@@ -160,12 +145,12 @@ export interface ProbeSelectionPrefetch {
 }
 
 /**
- * YUK-716 — prefetch every DB input {@link selectProbeFromPrefetch} needs for a batch of due
+ * prefetch every DB input {@link selectProbeFromPrefetch} needs for a batch of due
  * knowledge points in THREE reads total (independent of KC count):
- *   1. last-review event → presented question id (one `inArray` over event ids);
- *   2. the last-reviewed question rows (one `inArray` over those question ids, no draft filter);
- *   3. every non-draft question containing ANY of the due KCs (one containment scan), bucketed
- *      per KC in (created_at, id) order.
+ * 1. last-review event → presented question id (one `inArray` over event ids);
+ * 2. the last-reviewed question rows (one `inArray` over those question ids, no draft filter);
+ * 3. every non-draft question containing ANY of the due KCs (one containment scan), bucketed
+ * per KC in (created_at, id) order.
  *
  * Bucket (3) is the superset for BOTH fallback paths: a family member must be tagged the due
  * KC (readFamily's `knowledgeContains(K)`), so it always appears in that KC's bucket — the
@@ -193,7 +178,7 @@ export async function prefetchProbeSelection(
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      // YUK-1045 — §3.3 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
+      // 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
       // 挂起的上一题不返 recall，回落到 K 内首个可用题（复审 P1：此前无门，
       // 挂起题仍被 recall 路径直送）。
       .where(
@@ -223,7 +208,7 @@ export async function prefetchProbeSelection(
         and(
           notDraftPredicate(question.draft_status),
           containment,
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进变式轮换池。
+          // 契约准入门：suspended/withdrawn 组不进变式轮换池。
           questionSuspendedPredicate(question),
         ),
       )
@@ -248,8 +233,7 @@ export async function prefetchProbeSelection(
 }
 
 // K 下首个未用 non-draft 题, created_at ASC, id ASC — the shared fallback序 used by
-// both branches (matches the pre-ADR-0030 fallback ordering exactly).
-//
+// both branches (matches the pre- fallback ordering exactly).
 // Pure over the prefetched (created_at, id)-sorted bucket: `.find(unused)` returns the first
 // AVAILABLE question directly, so a knowledge point whose leading questions are all already
 // used this page still surfaces one past that prefix (the CodeRabbit F1 invariant — the
@@ -279,17 +263,17 @@ function readFamilyPure(
 }
 
 /**
- * Pick the deterministic probe question for a due knowledge point (ADR-0030), PURE over a
- * {@link ProbeSelectionPrefetch}. Byte-identical selection to the pre-YUK-716 per-KC DB walk —
+ * Pick the deterministic probe question for a due knowledge point, PURE over a
+ * {@link ProbeSelectionPrefetch}. Byte-identical selection to the pre- per-KC DB walk —
  * it is a straight in-memory translation of the same routing/fallback branches.
  *
  * Routing key = the kind of the question presented at the knowledge point's LAST review.
  * NULL last review → application default (first probe).
  *
  * - recall: re-present the last question (FSRS measures THIS recall item). If it was deleted /
- *   demoted to draft / unlabelled K / already used → fall back to K's first non-draft question.
+ * demoted to draft / unlabelled K / already used → fall back to K's first non-draft question.
  * - application: rotate within the last question's root_question_id family, taking the next
- *   member after the last (wrapping the ring). A family of one degrades to an original-repeat.
+ * member after the last (wrapping the ring). A family of one degrades to an original-repeat.
  *
  * Mutates `usedQuestionIds` (adds the chosen id) so a question surfaces at most once per due
  * page (cross-knowledge dedup). Callers thread ONE shared set through the page in order — the
@@ -324,7 +308,7 @@ export function selectProbeFromPrefetch(
   }
 
   // Unknown/unclassifiable labels → undefined → the application branch below
-  // (family rotation) — identical to the pre-YUK-386 dirty-value runtime path
+  // (family rotation) — identical to the pre- dirty-value runtime path
   // (the enum map lookup returned undefined → `=== 'recall'` false).
   const cls = rotationClassForKind(lastQuestion.kind);
 
@@ -360,7 +344,7 @@ export function selectProbeFromPrefetch(
 }
 
 /**
- * Single-KC entry point (ADR-0030) — prefetch this one KC's inputs, then run the pure selection
+ * Single-KC entry point — prefetch this one KC's inputs, then run the pure selection
  * core. Preserved for direct callers/tests; the batch `/api/review/due` path calls
  * {@link prefetchProbeSelection} ONCE for the whole page and loops {@link selectProbeFromPrefetch}.
  */

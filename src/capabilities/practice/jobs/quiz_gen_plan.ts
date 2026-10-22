@@ -1,19 +1,18 @@
 // ADR-0038 决定#2 — plan-then-generate: Phase-1 plan artifact + machine gate.
 //
-// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定#2 first bullet:
 // quiz generation runs in TWO phases — first a question PLAN (which knowledge
 // point, what kind, and for objective kinds the standard-answer anchor) as a
 // machine-checkable artifact, then the question faces generated FROM the accepted
 // plan. This module is the deterministic half: it parses the plan LLM output into
 // the strict QuizGenPlan schema and validates it against the run's pins and the
 // REAL knowledge graph (the caller reads live node ids — this module stays pure
-// so the unit car can exercise it without a DB).
+// so the unit case can exercise it without a DB).
 //
 // A rejected plan regenerates (bounded, with the rejection reasons fed back) or
 // fails closed — it must never proceed to generation.
 
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { QUIZ_PLAN_OBJECTIVE_KINDS, QuizGenPlan, type QuizGenPlanT } from '@/core/schema/quiz_gen';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import { answerClassCompatible } from '@/subjects/question-kind';
 
 // Bounded regeneration budget for the plan phase (initial attempt + 1 retry).
@@ -29,7 +28,7 @@ export interface PlanGatePins {
   kindRequired?: boolean;
   objectiveOnly?: boolean;
   generationMethod?: 'material_grounded' | 'closed_book';
-  // YUK-1011 — the run's 篇 pin (QuizGenJobData.composite_parent_only →
+  // the run's 篇 pin (QuizGenJobData.composite_parent_only →
   // RunQuizGenParams.compositeParentOnly). Pinned ⇒ EVERY item must carry
   // composite:true; unpinned ⇒ NO item may (a composite demand can never be
   // silently downgraded to flat questions, and an unconstrained run must not
@@ -71,7 +70,7 @@ export function parsePlanOutput(text: string): PlanParseResult {
 // Deterministic pin conformance. Same answer-class comparison as the
 // persist-time checks (answerClassCompatible: 'calculation' pin ↔ 'computation'
 // plan, 'choice' pin ↔ 'fill_blank' plan, etc.), so the plan gate and the
-// persist gate can never disagree on what matches. YUK-386: conformance is by
+// persist gate can never disagree on what matches. Conformance is by
 // implied answer class, not label identity — the labels themselves are
 // free-form display text.
 export function checkPlanPins(plan: QuizGenPlanT, pins: PlanGatePins): string[] {
@@ -84,7 +83,7 @@ export function checkPlanPins(plan: QuizGenPlanT, pins: PlanGatePins): string[] 
         `quiz_plan item ${index + 1} plans kind '${item.kind}' whose answer class does not match ${constraint} kind '${pins.kind}'`,
       );
     }
-    // YUK-1011 — structural pin conformance, both directions (fail-closed).
+    // structural pin conformance, both directions (fail-closed).
     if (pins.compositeParentOnly && item.composite !== true) {
       reasons.push(
         `quiz_plan item ${index + 1} is missing composite:true but the run pins composite_parent_only`,

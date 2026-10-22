@@ -1,33 +1,11 @@
 /**
- * BlockAssemblyTask — YUK-202 / BlockAssembly path-B (design note
- * `docs/superpowers/specs/2026-06-02-blockassembly-pathb-design.md` §2 + §3).
+ * BlockAssembly producer: asks the model which adjacent draft blocks of one session
+ * are actually one split question, and writes a `block_merge` proposal per candidate.
+ * It only proposes; `mergeQuestions` runs on user accept.
  *
- * AI ONLY proposes cross-page / adjacent block merges; the user accepts in the
- * proposal inbox; acceptance reuses the YUK-195 `mergeQuestions` primitive (S2).
- * This module is the producer side: it looks at all draft blocks of one ingestion
- * session, asks the model which adjacent blocks are ONE logical question split
- * apart, and writes a `block_merge` proposal per candidate via
- * `writeBlockMergeProposal`. NO auto-merge — that is the hard safety boundary
- * (§5); `mergeQuestions` runs only on user accept.
- *
- * YUK-227 S3 Slice A (F4 owner decision — "本章立即消费"):
- * path-B is upgraded from SEMANTIC-ONLY to consume spatial signals when available.
- * `projectBlock` now includes `page_index` from `page_spans[0]` so the model can
- * use page continuity as a signal. Safe degradation rule: when ALL blocks in the
- * session have placeholder page_index=0 (Tencent fallback path), `page_index` is
- * omitted from the projected input — the model reverts to pure semantic reasoning,
- * producing zero regression on that path. Only sessions where VLM-path page_spans
- * carry real page_index values get the spatial upgrade.
- *
- * Adjacency = the natural session block array order (INSERT order); there is no
- * ordering column. bbox pixel-level detection remains deferred (ADR-0002: VLM
- * does not give pixel bbox). The task input gains a `page_index` field — no
- * rework needed on the output schema or proposal writer side.
- *
- * Mirrors `runStructureTask` (src/server/ingestion/structure.ts): an in-module
- * output schema, an injectable `runTaskFn` for testability, an extractJsonObject
- * helper, and a typed error. Model = the lightweight TaggingTask tier (input is
- * structured TEXT, not page images — NOT vision/multimodal).
+ * Adjacency is session block array order (INSERT order). Spatial signals are used
+ * only when a session has real page indices; all-placeholder sessions (Tencent
+ * fallback) stay semantic-only. The model works on text, not page images.
  */
 import {
   BlockAssemblyCandidate,
@@ -43,20 +21,8 @@ import { writeBlockMergeProposal } from '@/kernel/proposals/producers';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { redactIngestionText } from './privacy-guard';
 
-// ---------- BlockAssemblyOutput schema (the model's structured output) ----------
-//
-// Each candidate names one `primary_block_id` (keeps its structured tree) + the
-// `merge_block_ids` that fold into it (min 1), a 0..1 `confidence`, the
-// `continuity_signal` (semantic-only enum, §0), and a `reason_md` explaining the
-// continuity cue. `signal` mirrors the proposal's `continuity_signal` enum so the
-// candidate maps 1:1 onto `writeBlockMergeProposal`.
-
-/**
- * Thrown when the BlockAssemblyTask cannot produce a usable result (provider
- * down, unparseable output). The session pass (`runBlockAssemblyForSession`) and
- * its auto_enroll caller SWALLOW this — merge proposals are nice-to-have, never
- * the critical path; an outage must not abort enrollment (§3).
- */
+// Re-exported task schema and error. The session pass and its auto_enroll caller
+// swallow the error: merge proposals are best-effort and must not abort enrollment.
 export {
   BlockAssemblyCandidate,
   type BlockAssemblyCandidateT,
@@ -64,8 +30,6 @@ export {
   type BlockAssemblyOutputT,
   BlockAssemblyTaskError,
 };
-
-// ---------- runBlockAssemblyTask — the AI task wrapper ----------
 
 export type BlockAssemblyRunTaskFn = (
   kind: string,
@@ -82,18 +46,13 @@ export interface BlockAssemblyInputBlock {
   role: StructuredQuestionT['role'] | null;
   sub_question_count: number;
   layout_quality: string | null;
-  /**
-   * YUK-227 S3 Slice A (F4): page_index from page_spans[0]. Present only when
-   * the session has at least one block with a real (non-placeholder) page_index
-   * (i.e. VLM-path sessions). Absent on all-placeholder sessions so the model
-   * falls back to pure semantic reasoning (zero regression — Tencent path).
-   */
+  /** Present only on sessions with real page indices, not all-placeholder ones. */
   page_index?: number;
 }
 
 export interface BlockAssemblyInput {
   ingestion_session_id: string;
-  /** Draft blocks in session array order (INSERT order = adjacency, §0). */
+  /** Draft blocks in session array order; adjacency is INSERT order. */
   blocks: BlockAssemblyInputBlock[];
 }
 
@@ -108,9 +67,8 @@ export interface RunBlockAssemblyTaskParams {
 }
 
 /**
- * Runs the BlockAssemblyTask. Returns a validated `BlockAssemblyOutput`. Throws
- * `BlockAssemblyTaskError` on provider failure / unparseable output so the
- * session pass can swallow it (proposals are best-effort, §3).
+ * Runs the task and validates its output. Throws BlockAssemblyTaskError on provider
+ * failure or unparseable output so the session pass can swallow it.
  */
 export async function runBlockAssemblyTask(
   params: RunBlockAssemblyTaskParams,
@@ -120,11 +78,9 @@ export async function runBlockAssemblyTask(
       'runBlockAssemblyTask requires db when using the default runner',
     );
   }
-  // The session entry accepts Db | Tx for proposal writes. AI task audit writes require the
-  // root Db; production passes Db here, while transactional callers must inject runTaskFn.
+  // Audit writes need the root Db; transactional callers must inject runTaskFn.
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db as Db);
-  // YUK-1408 — prompt_head is extracted document text headed for the model;
-  // personal identifiers are redacted deterministically before the call.
+  // Redact identifiers before the extracted text reaches the model.
   const input: BlockAssemblyInput = {
     ...params.input,
     blocks: params.input.blocks.map((block) => ({
@@ -153,20 +109,12 @@ export async function runBlockAssemblyTask(
   return parsed;
 }
 
-// ---------- runBlockAssemblyForSession — the session-level pass ----------
-
-/** A draft block as loaded by the auto_enroll pass (subset we need to project). */
+/** A draft block as loaded by the auto_enroll pass. */
 export interface BlockAssemblySourceBlock {
   id: string;
   structured: StructuredQuestionT | null;
   layout_quality: string | null;
-  /**
-   * YUK-227 S3 Slice A (F4): page_spans as stored by the extraction handler.
-   * The first span's page_index is used for spatial matching when real values
-   * are available (VLM path). Placeholder page_index=0 (Tencent fallback) is
-   * detected at the session level and causes spatial projection to be skipped
-   * — zero regression on the Tencent fallback path.
-   */
+  /** The first span's page_index drives spatial matching; all-zero sessions skip it. */
   page_spans?: Array<{
     page_index: number;
     bbox: { x: number; y: number; width: number; height: number };
@@ -176,7 +124,7 @@ export interface BlockAssemblySourceBlock {
 
 export interface RunBlockAssemblyForSessionParams {
   sessionId: string;
-  /** Draft blocks of the session in array order (adjacency, §0). */
+  /** Draft blocks in session array order. */
   blocks: BlockAssemblySourceBlock[];
   /** Inject in tests; defaults to the production BlockAssemblyTask invoker. */
   runTaskFn?: BlockAssemblyRunTaskFn;
@@ -185,34 +133,20 @@ export interface RunBlockAssemblyForSessionParams {
 }
 
 export interface RunBlockAssemblyForSessionResult {
-  /** Number of `block_merge` proposals written (one per accepted candidate). */
   proposed: number;
-  /** Proposal event ids (evidence / logging). */
   proposal_ids: string[];
 }
 
-// Max chars of prompt text projected per block — enough to judge continuity for
-// v1's semantic-only signals. A fixed head can miss late "承接前题" cues in very
-// long stems; when spatial signals are available (VLM path), the model also gets
-// page_index which may resolve ambiguous cross-page splits more reliably. Tune
-// PROMPT_HEAD_CHARS here, not inline.
+// Prompt head per block; long stems can hide late continuity cues, which page_index
+// may resolve when available.
 const PROMPT_HEAD_CHARS = 400;
 
 const OPAQUE_BLOCK_REF_RE = /block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b/g;
 
-// YUK-1404 — defensive page-claim cleanup (deterministic post-processing; no
-// model calls). The prompt now teaches 1-based「第 N 页」citations, but leaked
-// field-anchored page_index values and unsupported page claims must never
-// reach learner prose:
-//   * A field-anchored `page_index ... <n>` span converts to「第 n+1 页」ONLY
-//     when the session carries real spatial data AND n is one of the session's
-//     actual first-span page indices — an out-of-range index would be a
-//     hallucinated mapping and degrades to「某页」.
-//   * All-placeholder sessions (Tencent path: page_index was never in the
-//     model input) suppress EVERY specific page claim — prose「第 N 页」 and
-//     enumerated forms degrade to the generic「页面」, field-anchored spans to
-//     「某页」— the model cannot know page numbers it was never shown.
-//   * Any remaining bare `page_index` token loses its internal field name.
+// Deterministic page-claim cleanup, no model calls. A field-anchored page_index
+// becomes 「第 n+1 页」 only when n is a real session page; otherwise it degrades to
+// 「某页」. All-placeholder sessions suppress every specific page claim because the
+// model never saw page numbers. Bare page_index tokens lose the internal field name.
 const PAGE_INDEX_FIELD_VALUE_RE = /page_index\s*(?:均为|都是|等于|是|为|[:：=])\s*(\d{1,4})/g;
 const ENUMERATED_PAGE_CLAIM_RE = /第\s*\d{1,4}(?:\s*[、,，到]\s*\d{1,4})+\s*页/g;
 const SINGLE_PAGE_CLAIM_RE = /第\s*\d{1,4}\s*页/g;
@@ -228,15 +162,9 @@ function readableBlockLabel(block: BlockAssemblySourceBlock, index: number): str
 }
 
 /**
- * YUK-337 — proposal reasons are learner-facing Inbox prose, not an audit surface.
- * Replace model-copied block ids with stable session positions (plus question_no
- * when available), then mask any hallucinated opaque id that was not in the
- * session. Typed ids remain available in proposed_change/evidence_refs.
- *
- * YUK-1404 — additionally degrade page claims the model could not ground (see
- * the regex block above): exact field-anchored page_index values convert to
- * 1-based learner wording only when the session's real page indices validate
- * them; all-placeholder sessions never assert a specific page.
+ * Proposal reasons are learner-facing prose, not an audit surface: replace block
+ * ids with session positions and mask unknown opaque ids, then drop page claims the
+ * session cannot ground. Typed ids stay in proposed_change/evidence_refs.
  */
 export function humanizeBlockMergeReason(
   reason: string,
@@ -264,9 +192,8 @@ export function humanizeBlockMergeReason(
     return '某页';
   });
   if (knownPageIndices.size === 0) {
-    // Placeholder session: page numbers were never in the model input — every
-    // specific page claim is unsupported. Degrade to the generic「页面」wording
-    // (enumerated form first, else SINGLE would leave a dangling「1、」).
+    // Page numbers were never in the model input. Replace the enumerated form
+    // first so a leftover single form cannot leave dangling punctuation.
     readable = readable.replace(ENUMERATED_PAGE_CLAIM_RE, '页面');
     readable = readable.replace(SINGLE_PAGE_CLAIM_RE, '页面');
   }
@@ -274,18 +201,9 @@ export function humanizeBlockMergeReason(
 }
 
 /**
- * YUK-227 S3 Slice A (F4): returns true when ALL blocks in the session carry
- * placeholder page_index=0 (i.e. the Tencent fallback path or sessions from
- * before slice A). When true, page_index is omitted from the projected input
- * so the model falls back to pure semantic reasoning — zero regression.
- *
- * A session is "all-placeholder" when every block's first page_span has
- * page_index === 0 (or page_spans is absent/empty). A single block with a
- * non-zero page_index is sufficient to enable spatial projection for the
- * whole session (the VLM path assigns real page indices starting from 0, so
- * page_index=0 is valid but ambiguous; we only skip when EVERY block is 0).
- *
- * Exported for unit testing; callers outside this module should not rely on it.
+ * True when every block has a placeholder first page_index of 0 (or no spans), so
+ * spatial projection is skipped and the model reasons semantically. A single real
+ * index enables spatial projection for the session.
  */
 export function isAllPlaceholderPageIndex(blocks: BlockAssemblySourceBlock[]): boolean {
   return blocks.every((b) => {
@@ -295,19 +213,8 @@ export function isAllPlaceholderPageIndex(blocks: BlockAssemblySourceBlock[]): b
 }
 
 /**
- * Project one draft block's structured tree to the compact text view the model
- * reasons over (§2 input projection).
- *
- * YUK-227 S3 Slice A (F4): when `includeSpatial` is true (VLM path with real
- * page_index values), page_index from the first page_span is included so the
- * model can use page continuity as a signal. When false (Tencent fallback /
- * all-placeholder), page_index is omitted → pure semantic reasoning (no change
- * from before, zero regression).
- */
-/**
- * YUK-227 S3 Slice A (P2-1 export): exported for direct unit testing so tests
- * exercise the real projection logic rather than reimplementing it.
- * Internal callers (runBlockAssemblyForSession) use this same function.
+ * Projects a draft block to the compact text view. With `includeSpatial`, the first
+ * page span adds page_index so the model can use page continuity.
  */
 export function projectBlock(
   block: BlockAssemblySourceBlock,
@@ -333,26 +240,19 @@ export function projectBlock(
 }
 
 /**
- * Runs the BlockAssembly pass for one ingestion session: projects each draft
- * block to a compact text view, calls `runBlockAssemblyTask`, and maps each
- * candidate → `writeBlockMergeProposal`. Returns the written proposal ids.
- *
- * AI failure is NOT caught here — the caller (`runAutoEnrollForSession`) swallows
- * `BlockAssemblyTaskError` so merge proposals never abort enrollment (§3). The
- * producer ONLY proposes; `mergeQuestions` runs on user accept (§5 hard boundary).
+ * Runs the pass for one session, projecting blocks and writing one proposal per
+ * candidate. Task errors are left to the caller, which swallows them; this only
+ * proposes and never merges.
  */
 export async function runBlockAssemblyForSession(
   db: Db | Tx,
   params: RunBlockAssemblyForSessionParams,
 ): Promise<RunBlockAssemblyForSessionResult> {
-  // A merge needs at least two blocks; a 0/1-block session has nothing to assemble.
   if (params.blocks.length < 2) {
     return { proposed: 0, proposal_ids: [] };
   }
 
-  // YUK-227 S3 Slice A (F4): enable spatial projection only when the session
-  // has at least one block with a real (non-placeholder) page_index. All-zero
-  // sessions (Tencent fallback path) skip spatial projection → semantic-only.
+  // All-placeholder sessions (Tencent fallback) stay semantic-only.
   const includeSpatial = !isAllPlaceholderPageIndex(params.blocks);
 
   const input: BlockAssemblyInput = {
@@ -367,11 +267,8 @@ export async function runBlockAssemblyForSession(
     ctx: params.ctx,
   });
 
-  // Drop candidates referencing block ids outside this session's draft set: a
-  // hallucinating model can emit a primary/merge id that does not exist (or
-  // belongs to another session). acceptBlockMergeProposal would later soft-reject
-  // these as stale via mergeQuestions' guards, but filtering them here keeps
-  // hallucinated proposals out of the inbox (and the accept-side stale path).
+  // Drop ids outside the session draft set so hallucinated proposals never reach
+  // the inbox; accept-side guards alone would only reject them later.
   const validBlockIds = new Set(params.blocks.map((b) => b.id));
 
   const proposalIds: string[] = [];

@@ -1,20 +1,10 @@
-// Phase 1c.1 Step 5 — generic state-machine guard helper (ADR-0005 single-owner
-// invariant, extended to all session types per ADR-0008).
-//
-// Lifted from src/server/ingestion/session.ts and generalised over the status
-// enum string union. Same conflict-throwing semantics; the type assertion narrows
-// the input to the allowed literal-union after the throw is skipped.
+// Generic learning_session state-machine guard (ADR-0005/0008).
 
 import { ApiError } from '@/kernel/http';
 
 /**
- * Asserts that `current` is one of the `allowed` states; throws ApiError('conflict', 409)
- * otherwise. Generic over the session-type-specific status enum.
- *
- * Usage from a transition fn:
- * ```
- * assertFromState(row.status, ['uploaded', 'failed'] as const, sessionId, 'enqueueExtraction');
- * ```
+ * Throw ApiError('conflict', 409) unless `current` is one of `allowed`; on
+ * return, the assertion narrows `current` to that literal union.
  */
 export function assertFromState<S extends string>(
   current: string,

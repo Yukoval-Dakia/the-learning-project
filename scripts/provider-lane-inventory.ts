@@ -224,7 +224,10 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary: 'same Token Plan /v1 endpoint as TEST app/worker',
-        source: { path: 'scripts/yuk1537-admission-reopen.ts', calls: ['xiaomiTokenPlanBaseUrl'] },
+        source: {
+          path: 'scripts/yuk1537-admission-reopen.ts',
+          calls: ['tokenPlanEndpointOverride'],
+        },
       },
       credential: {
         summary: 'Token Plan server credential, never printed',
@@ -518,12 +521,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -672,12 +674,11 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
+          'Runtime catalog supplies completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback remains explicit',
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
-          literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -1150,13 +1151,20 @@ export const PROVIDER_LANES = [
         ],
       },
     ],
-    directImporters: [{ path: 'src/server/ai/model-catalog.ts', kind: 'runtime' }],
+    directImporters: [
+      { path: 'src/server/ai/model-catalog.ts', kind: 'runtime' },
+      // YUK-1563 part 4 — the custom provider integration (server composition
+      // root) projects the stored check's auth label for the panel and reads
+      // nothing else. Read-only: it sends nothing.
+      { path: 'src/server/config/custom-providers-hydrate.ts', kind: 'runtime' },
+    ],
     roles: ['api', 'worker'],
-    provider: 'each implemented provider whose credential is present in this process',
+    provider:
+      'each implemented provider whose credential is present in this process, plus configured custom providers (their own endpoint, no probe)',
     model:
-      'one pinned probe model per provider; deepseek-v4.1-flash stays high effort and does not send tool_choice',
+      'one pinned probe model per known provider; deepseek-v4.1-flash stays high effort and does not send tool_choice; custom providers have no probe model',
     endpointClass:
-      'credentialed GET /models (paginated) plus one persisted 1-token POST on the product wire',
+      'credentialed GET /models (paginated) plus one persisted 1-token POST on the product wire; custom providers only send the GET /models',
     configuration: {
       endpoint: {
         summary: 'product wire root from providerModelsRoot; models.dev api fields are not used',

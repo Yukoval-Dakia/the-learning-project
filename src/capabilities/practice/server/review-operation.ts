@@ -225,7 +225,7 @@ export async function sessionAdmitsDurableDivert(
 /**
  * The session types whose clients are known to tolerate the 202-pending contract. W2 =
  * practice review only. W3 admits the remaining faces as each one's client learns to wait for
- * the backfill (design §4/§5, YUK-777).
+ * the backfill (design/,).
  */
 const DURABLE_DIVERT_SESSION_TYPES: ReadonlySet<string> = new Set(['review']);
 
@@ -234,7 +234,7 @@ export interface ReviewAnswerContext {
   now?: Date;
   /** Runtime dispatch policy only; session admission remains a domain decision. */
   durableEnabled?: boolean;
-  /** YUK-1355 owns the transport selection and recovery behind this existing port. */
+  /** owns the transport selection and recovery behind this existing port. */
   dispatchNativeAttempt?: NativeAttemptDispatchPort;
   /** Server capability check, serialized with revocation before dispatch or activation. */
   authorize?: (tx: Tx) => Promise<void>;

@@ -5,10 +5,6 @@ import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AutoAppliedProposalDigestSchema,
-  LegacyProposalDecisionBodySchema,
-  LegacyProposalDecisionResponseSchema,
-  LegacyProposalRetractBodySchema,
-  LegacyProposalRetractResponseSchema,
   OvernightDigestResponseSchema,
   PrepDeskConjecturesResponseSchema,
   PrepDeskProbesResponseSchema,
@@ -23,10 +19,7 @@ import {
   WorkbenchSummaryResponseSchema,
 } from './api/contracts';
 
-// M4-T5 (YUK-319/YUK-318)：shell 包——跨域工作台壳层。提议收件箱三路由源自
-// 旧 Next app/api/proposals/* 等价平移（accept+dismiss 合并为单 decide 端点，
-// kind query 是 YUK-318 收口增量）；workbench/summary 是 today 重生聚合
-// （新端点，不受搬迁红线约束）。
+// Cross-domain workbench shell: proposal inbox plus workbench aggregates.
 export const shellCapability = defineCapability({
   name: 'shell',
   description:
@@ -36,8 +29,6 @@ export const shellCapability = defineCapability({
     '与待审提议」的读模型）。',
   api: {
     routes: [
-      // YUK-598 — learner 面 selectable 科目视图（SPA useSubjects() 数据源；
-      // custom 科目经 YUK-599 水合后自动进列）。字段合同见 handler 头注释。
       {
         method: 'GET',
         path: '/api/subjects',
@@ -66,8 +57,6 @@ export const shellCapability = defineCapability({
         pagination: { kind: 'cursor', defaultLimit: 200, maxLimit: 500 },
         load: () => import('./api/proposals-list').then((m) => m.GET),
       },
-      // YUK-521 (A4 强度轴) — A 档 auto-applied 卡 + 当前裁决熔断快照只读读模型。
-      // 静态路径，与 /api/proposals/[id]/{decide,retract} 不冲突（不同段深）。
       {
         method: 'GET',
         path: '/api/proposals/auto-applied',
@@ -90,32 +79,6 @@ export const shellCapability = defineCapability({
         load: () => import('./api/proposal-decisions').then((m) => m.POST),
       },
       {
-        method: 'POST',
-        path: '/api/proposals/[id]/decide',
-        operationId: 'decideProposalLegacy',
-        request: { params: ApiIdParamsSchema, body: LegacyProposalDecisionBodySchema },
-        responses: { 200: LegacyProposalDecisionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: {
-          successor: '/api/proposals/[id]/decisions',
-          since: '@1783987200',
-        },
-        load: () => import('./api/proposal-decide').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/proposals/[id]/retract',
-        operationId: 'retractProposalLegacy',
-        request: { params: ApiIdParamsSchema, body: LegacyProposalRetractBodySchema },
-        responses: { 200: LegacyProposalRetractResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: {
-          successor: '/api/proposals/[id]/decisions',
-          since: '@1783987200',
-        },
-        load: () => import('./api/proposal-retract').then((m) => m.POST),
-      },
-      {
         method: 'GET',
         path: '/api/workbench/summary',
         operationId: 'getWorkbenchSummary',
@@ -123,8 +86,7 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/workbench-summary').then((m) => m.GET),
       },
-      // YUK-520 (A1 夜窗 digest) — 昨夜窗 digest 只读读模型（5 夜间事实源聚合 +
-      // has_overnight_activity 空夜显式信号）。供 /today 最小交班缕消费。
+      // Read-only digest; a quiet night is an explicit state, not a missing value.
       {
         method: 'GET',
         path: '/api/workbench/overnight-digest',
@@ -133,8 +95,6 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/overnight-digest').then((m) => m.GET),
       },
-      // YUK-406 / YUK-440 (教研团 Phase 0 / U4 备课台) — top ≤3 pending conjecture
-      // 读模型（salience 排序，confidence 永不过线）。
       {
         method: 'GET',
         path: '/api/prep-desk/conjectures',
@@ -143,8 +103,8 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/prep-desk-conjectures').then((m) => m.GET),
       },
-      // YUK-567 slice-2 — 备课台「待你试做」队列：≤3 served-but-unanswered mind_probe
-      // 读模型（anti-guilt 无校准数字）。作答走 /api/conjecture/probe/[id]/answer。
+      // Calibration numbers never cross this wire; answering goes through
+      // /api/conjecture/probe/[id]/answer.
       {
         method: 'GET',
         path: '/api/prep-desk/probes',
@@ -153,8 +113,8 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/prep-desk-probes').then((m) => m.GET),
       },
-      // YUK-706 (P0F/2) — unified, read-only TeachingBrief. Projects one globally
-      // preferred outcome > active probe > fresh finding; never exposes calibration.
+      // Projects one preferred outcome > active probe > fresh finding; never
+      // exposes calibration.
       {
         method: 'GET',
         path: '/api/prep-desk/brief',
@@ -163,10 +123,8 @@ export const shellCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/prep-desk-brief').then((m) => m.GET),
       },
-      // YUK-708 (P0F/4) — append-only, idempotent outcome acknowledgement ("知道了").
-      // Retires a delivered outcome from brief eligibility; writes NO derived status
-      // back onto proposal/question/result (contract §4.2). Deeper path segment than
-      // GET /api/prep-desk/brief, so the two do not collide.
+      // Retires a delivered outcome from brief eligibility; writes no derived
+      // status back onto proposal/question/result.
       {
         method: 'POST',
         path: '/api/prep-desk/brief/ack',
@@ -180,10 +138,8 @@ export const shellCapability = defineCapability({
         successStatus: [200, 201],
         load: () => import('./api/teaching-brief-ack').then((m) => m.POST),
       },
-      // YUK-710 (P0F/6) — append-only teaching-brief interaction ledger (brief_seen /
-      // primary_action_started). Powers the two-week survival report; writes NO derived
-      // status back onto proposal/question/result and opts out of mem0. Deeper path segment
-      // than GET /api/prep-desk/brief, so the two do not collide.
+      // Funnel signals for the survival report; no derived status is written back,
+      // and the rows opt out of mem0.
       {
         method: 'POST',
         path: '/api/prep-desk/brief/interaction',

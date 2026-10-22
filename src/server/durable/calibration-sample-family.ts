@@ -1,6 +1,6 @@
-// YUK-1355: unregistered, gate-only DBOS candidate. There is no durable
-// runtime admission yet, so this candidate has no paid execution port.
-// The separate store consumer is explicit-only; registration stays parent-owned.
+// Unregistered, gate-only DBOS candidate. There is no durable runtime admission,
+// so it has no paid execution port. The store consumer is explicit-only;
+// registration stays parent-owned.
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { z } from 'zod';
 
@@ -41,8 +41,8 @@ export type CalibrationSampleTickId = Omit<
   'kind'
 >;
 
-// Implemented structurally in the capability. No server-to-capability import,
-// mirrored config/count types, opaque dependencies or paid authorization hook.
+// Implemented structurally in the capability, so this module needs no
+// server-to-capability import, mirrored config types or paid authorization hook.
 export interface CalibrationSampleOperationPort {
   readGate(): Promise<{ kind: 'disabled'; flagEnv: string | undefined } | { kind: 'enabled' }>;
 }
@@ -84,10 +84,10 @@ export const CALIBRATION_SAMPLE_STEP_EPOCH_GATE = 'calibration-epoch-gate-v1';
 export const CALIBRATION_SAMPLE_STEP_ADMISSION_GATE = 'calibration-admission-gate-v1';
 
 /**
- * No caller registers this candidate. Completed steps return their saved value
- * on replay; workflow code must use that return value, never a step-local write.
- * retriesAllowed:false disables exception retries, not crash-step replay.
- * maxRecoveryAttempts:1 is not a paid safety guarantee. This workflow cannot pay.
+ * No caller registers this candidate, and it cannot pay. Replay returns each
+ * step's saved value, so workflow code must not substitute a step-local write.
+ * retriesAllowed:false only disables exception retries; maxRecoveryAttempts:1 is
+ * not a paid guarantee.
  */
 export function registerCalibrationSampleWorkflow(
   db: Db,

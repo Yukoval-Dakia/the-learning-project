@@ -1,8 +1,5 @@
-// YUK-48 — nightly KnowledgeReviewTask maintenance producer.
-//
-// Existing node/edge nightly jobs are cheap structured-output producers. This
-// queue runs the broader tool-calling KnowledgeReviewTask after them, so it can
-// propose tree maintenance mutations while still writing only inbox proposals.
+// Nightly maintenance producer. Unlike the cheap structured-output jobs, this runs
+// the broader tool-calling review task and still writes only inbox proposals.
 
 import type { Job } from 'pg-boss';
 import { streamReviewTask } from '@/capabilities/knowledge/server/review';
@@ -21,12 +18,8 @@ interface DepsOverride {
   streamReviewTaskFn?: StreamReviewTaskFn;
 }
 
-// YUK-68 (PR #117 codex P1): streamTask encodes failures in the stream body
-// (see src/server/ai/runner.ts ~L597 — `\n\n[streamTask] <msg>\n`). The
-// previous drainResponse only consumed bytes, so timeout / auth / network
-// failures returned `{ processed: 1 }` and pg-boss marked the run successful;
-// nightly maintenance silently stopped producing proposals. We now capture
-// the body and throw on the error marker so pg-boss retries / alerts.
+// Failures arrive as an in-band marker in the stream body. Throw on it, or a
+// timeout/auth failure would look like a successful run with zero proposals.
 async function drainResponseText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return '';

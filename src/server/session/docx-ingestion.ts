@@ -26,55 +26,46 @@ import { writeSessionEvent } from './events';
 
 // YUK-258 — DOCX text-line session lifecycle owner.
 //
-// The text line does NOT go through pg-boss / VLM extract: pandoc segments the
-// docx into structured question_blocks synchronously in the route (sub-second).
-// So this owner walks `uploaded → extracted` DIRECTLY — it does NOT reuse
-// Ingestion.applyExtractionResult, which hard-asserts assertFromState(['extracting'])
-// and would require an upstream queued→extracting transition that has no worker to
-// consume it (a永不消费的 pg-boss ghost job).
+// The text line skips pg-boss / VLM: pandoc segments the docx synchronously in
+// the route, so this owner walks uploaded → extracted directly. Reusing
+// Ingestion.applyExtractionResult would require a queued→extracting hop with no
+// worker to consume it (a pg-boss job that never runs).
 //
-// It DOES reuse the WRITE SHAPE of applyExtractionResult (block insert fields,
-// writeJobEvent / writeSessionEvent forms) so the SSE replay + domain-event audit
-// stay byte-consistent with the visual line. The single divergence is the state
-// machine: no extracting hop.
+// The write shape (block fields, job_events, domain events) mirrors
+// applyExtractionResult so SSE replay and the audit trail stay identical to the
+// visual line; only the state machine differs.
 //
-// **layout_quality='structured' (NOT 'text_only')** — pandoc-cut blocks carry
-// 题号/选项, they ARE structured. The既有不变式 (applyExtractionResult: structured →
-// extracted, text_only/partial → partial) requires structured here to stay
-// consistent with status='extracted'. See plan §5 P2.
+// layout_quality is 'structured' (not 'text_only') because pandoc blocks carry
+// 题号/选项, and the existing invariant maps structured → extracted.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 
 export interface DocxTextBlockInput {
   structured: StructuredQuestionT;
-  /** Embedded-image asset ids attached to this block (in-position归题). */
+  /** Embedded-image asset ids attached to this block. */
   imageRefs: string[];
 }
 
 export interface InitiateDocxTextUploadParams {
-  /** Evidence page-image asset ids (LibreOffice→PDF→PDFium). Pin on the session +
-   *  source_document + every block so the review UI can render整页. */
+  /** Evidence page-image asset ids (LibreOffice→PDF→PDFium), pinned on the
+   *  session, source_document, and every block so the UI can render the page. */
   evidenceAssetIds: string[];
   blocks: DocxTextBlockInput[];
   /**
-   * YUK-1476 — pass ONLY when the converter input was sanitized (external
-   * non-hyperlink relationships omitted from the copy pandoc/LibreOffice saw).
-   * Lands in source_document.provenance + session warnings as the honest
-   * omission audit; no new schema/table, and never the external Target URL.
+   * YUK-1476 — pass only when the converter input was sanitized (external
+   * non-hyperlink relationships omitted). Lands in source_document.provenance and
+   * session warnings; never carries the external Target URL.
    */
   externalRefOmission?: DocxExternalRefOmissionFacts;
   /**
-   * YUK-1408 — the learner's consented usage for this document. Same contract
-   * as Ingestion.initiateUpload: absent = legacy 'allow' default; an explicit
-   * value lands on source_document.provenance.usage_policy.
+   * YUK-1408 — consented usage; absent = legacy 'allow'. An explicit value lands
+   * on source_document.provenance.usage_policy.
    */
   derivationPolicy?: DerivationPolicyT | null;
   /**
-   * YUK-1408 (S1 follow-up) — the privacy-guard facts for the usage receipt.
-   * The route runs redactIngestionText over the pandoc markdown (the
-   * extraction text this run) and passes the fired categories + per-category
-   * span counts; this owner writes the receipt inside the same transaction as
-   * the block inserts, mirroring tencent_ocr_extract's apply-time write.
+   * YUK-1408 (S1 follow-up) — privacy-guard facts for the usage receipt. The
+   * route redacts the pandoc markdown and passes the fired categories; this owner
+   * writes the receipt in the block-insert transaction, mirroring the OCR path.
    */
   usageReceipt: {
     redactedFields: IngestionRedactionField[];
@@ -82,8 +73,7 @@ export interface InitiateDocxTextUploadParams {
   };
 }
 
-// Shared with the visual line (Ingestion.initiateUpload) via the zero-dependency
-// leaf './docx-omission' — re-exported here so existing type consumers are stable.
+// Re-exported so existing consumers of this module keep a stable type import.
 export type { DocxExternalRefOmissionFacts } from './docx-omission';
 
 export interface InitiateDocxTextUploadResult {
@@ -93,13 +83,13 @@ export interface InitiateDocxTextUploadResult {
 }
 
 /**
- * Create a text-line ingestion session in ONE transaction and land its blocks
- * directly in `extracted` state. Emits `ingestion.uploaded` then the SSE-terminal
- * `ingestion.extraction_completed`, plus a domain extract event — matching the
- * visual line's audit trail without the queued/extracting hops.
+ * Create a text-line ingestion session and land its blocks directly in
+ * `extracted` state, in one transaction. Emits the same audit trail as the
+ * visual line (uploaded → extraction_completed + domain extract event) without
+ * the queued/extracting hops.
  *
- * Caller MUST pass at least one block (the route rejects 0-block docx with a 400
- * before reaching here, so an empty `blocks` is a programmer error).
+ * Caller must pass at least one block; the route rejects empty docx first, so an
+ * empty `blocks` here is a programmer error.
  */
 export async function initiateDocxTextUpload(
   db: Db,
@@ -116,19 +106,15 @@ export async function initiateDocxTextUpload(
     const omission = params.externalRefOmission;
     const warnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
 
-    // Codex-1 — the import route validates every block.image_ref against the
-    // session's source_asset_ids (import/route.ts §3). Embedded-image asset ids
-    // live ONLY on the blocks (imageRefs), so the session/source_document MUST
-    // pin them too or any segmented question carrying an embedded image fails
-    // import with 'image_ref … not in session source_asset_ids'. Union the
-    // evidence page images with every block's embedded refs (deduped, evidence
-    // first so page_index 0 still maps to the first evidence asset).
+    // The import route checks every block.image_ref against the session's
+    // source_asset_ids, but embedded-image ids live only on the blocks. Pin them
+    // on the session too, or import fails with 'image_ref … not in session
+    // source_asset_ids'. Evidence first keeps page_index 0 on the first page.
     const embeddedRefs = Array.from(new Set(params.blocks.flatMap((b) => b.imageRefs)));
     const sessionAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...embeddedRefs]));
 
-    // 1. source_document — evidence page images + embedded refs as source_asset_ids.
-    //    YUK-1476 — provenance carries the honest omission audit: both digests +
-    //    the omitted facts (part/rId/type — never the external Target URL).
+    // YUK-1476 — provenance carries the omission audit (both digests and the
+    // omitted facts: part/rId/type, never the external Target URL).
     await tx.insert(source_document).values({
       id: sourceDocumentId,
       title: null,
@@ -161,7 +147,6 @@ export async function initiateDocxTextUpload(
       version: 0,
     });
 
-    // 2. learning_session — uploaded.
     await tx.insert(learning_session).values({
       id: sessionId,
       type: 'ingestion',
@@ -177,7 +162,7 @@ export async function initiateDocxTextUpload(
       version: 0,
     });
 
-    // 3. ingestion.uploaded — same job_events shape as initiateUpload.
+    // Same job_events shape as initiateUpload, so SSE replay is shared.
     await writeJobEvent(tx, {
       business_table: SESSION_TABLE,
       business_id: sessionId,
@@ -185,21 +170,15 @@ export async function initiateDocxTextUpload(
       payload: { asset_count: params.evidenceAssetIds.length, entrypoint: 'docx' },
     });
 
-    // ---- 直达, 不经 queued/extracting ----
-
-    // 4. N × question_block(status='draft', layout_quality='structured'). Blocks
-    //    pin the evidence page images as source_asset_ids; image_refs carry the
-    //    in-position embedded-image asset ids. page_spans uses the full-page
-    //    degradation (markdown carries no coordinates), mirroring VisionTab's
-    //    importMutation ensuredSpans先例.
+    // Blocks pin the evidence pages as source_asset_ids; image_refs carry the
+    // in-position embedded ids. page_spans degrades to the full page because
+    // markdown has no coordinates, mirroring VisionTab's importMutation.
     const insertedBlockIds: string[] = [];
     for (const [ordinal, blk] of params.blocks.entries()) {
       const blockId = createId();
       insertedBlockIds.push(blockId);
-      // Per-block source_asset_ids = evidence page images + THIS block's embedded
-      // refs (deduped). The import route copies image_refs straight through, and
-      // VisionTab falls back to source_asset_ids when image_refs is empty, so
-      // both must carry the embedded ids to pass the membership check.
+      // The import route copies image_refs through, and VisionTab falls back to
+      // source_asset_ids when they are empty, so both must carry the embedded ids.
       const blockAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...blk.imageRefs]));
       const [insertedRow] = await tx
         .insert(question_block)
@@ -214,11 +193,9 @@ export async function initiateDocxTextUpload(
           structured: blk.structured,
           figures: [],
           layout_quality: 'structured',
-          // Codex-2 — VisionTab seeds the editable prompt from extracted_prompt_md
-          // (?? ''); a null here opens every DOCX block with an empty prompt that
-          // fails import with '题面不能空'. Persist the derived prompt markdown
-          // (题号 + 题面 + 选项) from the structured node so the review form lands
-          // pre-filled. structured stays the source of truth; this is the rendered view.
+          // VisionTab seeds the editable prompt from extracted_prompt_md; a null
+          // opens every block empty and import fails with '题面不能空'. Derive the
+          // rendered view here; `structured` stays the source of truth.
           extracted_prompt_md: structuredToPromptMarkdown(blk.structured),
           reference_md: null,
           wrong_answer_md: null,
@@ -236,8 +213,8 @@ export async function initiateDocxTextUpload(
           version: 0,
         })
         .returning();
-      // YUK-471 W3-C1δ — canonical create event (origin='docx'). `extracted_prompt_md` is the legacy
-      // column the snapshot EXCLUDES, so the helper drops it before the strict parse barrier.
+      // Canonical create event (origin='docx'); the snapshot excludes the legacy
+      // extracted_prompt_md column, which the helper drops before strict parsing.
       await writeQuestionBlockCreateEvent(tx, {
         row: insertedRow,
         origin: 'docx',
@@ -247,14 +224,12 @@ export async function initiateDocxTextUpload(
       });
     }
 
-    // 5. learning_session → extracted.
     await tx
       .update(learning_session)
       .set({ status: 'extracted', updated_at: now })
       .where(eq(learning_session.id, sessionId));
 
-    // 6. ingestion.extraction_completed — SSE terminal. UI's SSE_TERMINAL listens
-    //    for this to leave the extracting spinner.
+    // SSE terminal: the UI leaves its extracting spinner on this event.
     await writeJobEvent(tx, {
       business_table: SESSION_TABLE,
       business_id: sessionId,
@@ -266,8 +241,7 @@ export async function initiateDocxTextUpload(
       },
     });
 
-    // 7. domain extract event — actor_ref='docx_text', outcome='success'
-    //    (structured → success, per applyExtractionResult eventOutcome semantics).
+    // Domain extract event; structured maps to success, as in applyExtractionResult.
     await writeSessionEvent(tx, {
       session_id: sessionId,
       action: 'extract',
@@ -284,13 +258,9 @@ export async function initiateDocxTextUpload(
       created_at: now,
     });
 
-    // 8. YUK-1408 — per-extraction usage receipt on the source document, the
-    //    text line's equivalent of the OCR job's receipt write (same tx as the
-    //    block writes, policy resolved live off the just-inserted session row).
-    //    No page image leaves for a model on this line — the rendered evidence
-    //    pages are review-UI only — so page_images is honestly 'none';
-    //    extracted text reaches models only through the shared
-    //    redactIngestionText call-site backstops.
+    // YUK-1408 — usage receipt, the text line's equivalent of the OCR write.
+    // No page image reaches a model here (evidence pages are review-UI only),
+    // so page_images is 'none'; text is redacted at the shared call sites.
     await writeIngestionUsageReceipt(tx, {
       sourceDocumentId,
       sessionId,
@@ -305,21 +275,16 @@ export async function initiateDocxTextUpload(
     return { sessionId, sourceDocumentId, blockCount: params.blocks.length };
   });
 
-  // Codex-3 / YUK-696 — fan out only when a paid mode is explicitly enabled,
-  // and only AFTER the transaction
-  // commits, mirroring tencent_ocr_extract's post-extract hook so the text DOCX
-  // line gets the same AI prefill / auto-enroll observe path as the visual/PDF/
-  // image entrypoints. Inline import + swallow-and-log: a failed enqueue must
-  // NOT fail an ingestion that already landed its blocks in 'extracted'.
-  // Enqueueing after commit guarantees the auto_enroll worker can see the rows.
+  // Codex-3 / YUK-696 — mirror tencent_ocr_extract's post-extract hook, only when
+  // a paid mode is enabled and only after commit so the worker can see the rows.
+  // A failed enqueue must not fail an ingestion that already landed its blocks.
   if (autoEnrollJobEnabled(process.env)) {
     try {
       const { getStartedBoss } = await import('@/server/boss/client');
       const boss = await getStartedBoss();
-      // YUK-486 — same enqueue dedup as the tencent path (parity): singletonKey + singletonSeconds
-      // collapses near-simultaneous duplicate sends for one session into a single job. The per-block
-      // FOR UPDATE claim in runAutoEnrollForSession is the producer-agnostic structural guarantee
-      // against double-INSERT; this key only reduces redundant job runs.
+      // YUK-486 — same dedup as the tencent path: the key only reduces redundant
+      // runs; the per-block FOR UPDATE claim is the structural guard against
+      // double-INSERT.
       await boss.send(
         'auto_enroll',
         { sessionId: result.sessionId },
@@ -330,9 +295,8 @@ export async function initiateDocxTextUpload(
     }
   }
 
-  // YUK-577 — fan out to the copilot proactive-nudge evaluator (post-commit, observe-only).
-  // Independent try/catch from auto_enroll so a nudge-enqueue failure never masks the auto_enroll
-  // hook (and vice versa); a failed enqueue must NOT fail an ingestion that already committed.
+  // YUK-577 — observe-only nudge evaluation. Its own try/catch so neither
+  // enqueue can mask the other, and neither fails an ingestion that committed.
   try {
     const { getStartedBoss } = await import('@/server/boss/client');
     const boss = await getStartedBoss();

@@ -1,16 +1,16 @@
-// YUK-350 (B5 increment C) — unified verify contract (Verifier Router shape).
+// Unified verify contract (Verifier Router shape).
 //
 // docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定 #1（三套
 // promote-gated 信任闸收敛到 QuizGen 多轴多信号模板：多轴 check + verdict + note →
 // rollup `overall`）+ 决定 #5（'error' 通道：transport/parse/DB 在产出 verdict 前炸了
 // 与「验了判失败」在 result 层分开）.
 //
-// SCOPE (increment C): the THREE promote-gated handlers —
+// SCOPE: the THREE promote-gated handlers —
 //   - quiz_verify   (multi-axis QuizVerificationResult.overall)
 //   - source_verify (tier-2 per-check array + promote bool, previously had NO overall)
 //   - variant_verify(single pass|fail verdict + cause_targeting)
 //
-// SCOPE (increment 2, YUK-350): note_verify joins as the 4th handler, completing
+// SCOPE: note_verify joins as the 4th handler, completing
 // ADR-0038 决定 #1 coverage. Note has DIFFERENT promote semantics — a note never
 // enrolls into the practice pool / FSRS; a note "promote" = upgrading to an
 // owner-readable ACTIVE artifact (verification_status='verified'). This module only
@@ -40,7 +40,7 @@ import { QuizVerificationResult } from './quiz_gen';
 
 // ---------- failure_class (LIFTED from quiz_verify.ts) ----------
 //
-// YUK-350 (L3, RL5) — event-layer projection of WHY a verify did not promote.
+// Event-layer projection of WHY a verify did not promote.
 // 'system_error' = the task/parse/DB blew up before a verdict (catch-bottom; the
 // event-layer twin of the result-layer overall='error'). 'validation_failure' = the
 // model/checks produced a verdict but the gate rejected promotion (a REAL fail /
@@ -52,7 +52,7 @@ export type VerifyFailureClass = z.infer<typeof VerifyFailureClass>;
 
 // ---------- result-layer 4-value overall (LIFTED from quiz_gen.ts) ----------
 //
-// YUK-350 (RL1) — the value space the verify-event payload carries: the 3-value model
+// The value space the verify-event payload carries: the 3-value model
 // verdict (pass|needs_review|fail) PLUS the system-error class 'error', assigned
 // EXCLUSIVELY by a catch-bottom when the task threw before producing a verdict.
 // Splitting it from the LLM-parse `QuizVerificationResult.overall` keeps the model
@@ -140,7 +140,7 @@ export interface VariantVerifyProjectionInput {
 }
 
 /**
- * note_verify input (YUK-350 increment 2): the 2-value note verdict
+ * note_verify input: the 2-value note verdict
  * (pass|needs_review, NO fail) + the note's issue list. Different promote semantics
  * from the other three — a note never enrolls into the practice pool / FSRS; its
  * "promote" is the active-artifact write (verification_status='verified'). The
@@ -252,7 +252,7 @@ export function toUnifiedVerifyResult(input: VerifyProjectionInput): UnifiedVeri
       };
     }
     case 'note': {
-      // YUK-350 increment 2 — the note 2-value verdict (pass|needs_review, NO fail).
+      // the note 2-value verdict (pass|needs_review, NO fail).
       // pass ⇒ overall pass + no failure_class; needs_review ⇒ overall needs_review +
       // validation_failure (symmetry with the other handlers: a verdict that did not
       // promote carries failure_class='validation_failure'). A note can NEVER project

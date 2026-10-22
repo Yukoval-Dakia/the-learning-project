@@ -2,7 +2,7 @@ import { getDefaultRegistry } from '@/core/capability/judges';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { AnswerInput, JudgeResult } from './exact';
 
-// YUK-374 — 'rubric' / 'ai_flexible' are union members with NO runner: they
+// 'rubric' / 'ai_flexible' are union members with NO runner: they
 // exist so a persisted judge_kind_override parses and fails loudly as
 // `unsupported` (judgeRouterV2 below + the invoker dispatch both fail closed)
 // instead of silently re-routing to a different judge. Runnable set =
@@ -87,11 +87,7 @@ export {
   suppliedUnverifiedExecutionProvenance,
 } from './execution-provenance-resolve';
 export { type JudgeInvokerOutput, createDefaultJudgeInvoker } from './invoker';
-export {
-  JUDGE_PROMPT_TEMPLATE_REVISION,
-  sha256Canonical,
-  taskInputHash,
-} from './judge-execution-provenance';
+export { JUDGE_PROMPT_TEMPLATE_REVISION } from './judge-execution-provenance';
 export { judgeKeyword } from './keyword';
 export {
   type MultimodalDirectImageFetchFn,

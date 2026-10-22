@@ -5,19 +5,10 @@ import { join } from 'node:path';
 import { getConfig } from '@/core/config/store';
 import { ApiError } from '@/kernel/http';
 
-// YUK-258 — DOCX converter seam. ALL external-process conversion is收口在此文件;
-// the rest of the docx pipeline is engine-agnostic. Three-state resolution:
-//
-//   1. 生产 (NAS 容器): the Dockerfile apt-installs pandoc + libreoffice into the
-//      runner image. `which pandoc` / `which soffice` hit → spawn the binary直接.
-//   2. 本地 dev: binary probe misses → `docker run` fallback (pandoc/core +
-//      linuxserver/libreoffice images, both pulled locally).
-//   3. 测试: inject a mock DocxConverter (returns pre-converted fixtures). NO real
-//      spawn / docker — enforced by convert.test.ts + route.test.ts seam mocks.
-//
-// This module is imported ONLY by the docx route + the docx session owner — NEVER
-// by the pg-boss worker bundle (same discipline as pdf-render.ts), so build:worker
-// stays untouched.
+// DOCX converter seam. All external-process conversion lives here; the rest of the
+// DOCX pipeline is engine-agnostic. It prefers installed binaries, falls back to
+// Docker in local dev, and uses an injected mock in tests. Only the DOCX route and
+// session owner import it, never the worker bundle.
 
 export interface DocxMedia {
   /** Relative media path as referenced from the markdown (e.g. "media/image1.png"). */
@@ -63,7 +54,7 @@ function onPath(bin: string): Promise<boolean> {
 // Test-only override: `DOCX_CONVERT_ENGINE=docker` forces the docker fallback in
 // dev even when binaries are on PATH (NOT an on/off feature gate — purely a seam
 // probe override). Unset → automatic binary→docker resolution.
-// YUK-1007：DB > env > code-default（DB 写 'docker' 同效）。
+// DB beats env beats the code default; a DB 'docker' value behaves the same as env.
 function forceDocker(): boolean {
   return getConfig('DOCX_CONVERT_ENGINE') === 'docker';
 }

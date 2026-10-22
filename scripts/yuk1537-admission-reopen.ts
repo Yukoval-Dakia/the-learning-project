@@ -20,9 +20,9 @@ import {
   QUESTION_ADMISSION_PAID_UNITS,
 } from '@/core/question-admission-policy';
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
+import { tokenPlanEndpointOverride } from '@/server/ai/model-catalog-overrides';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { nativePiModel } from '@/server/ai/pi-provider-catalog';
-import { xiaomiTokenPlanBaseUrl } from '@/server/ai/xiaomi-token-plan';
 
 const submit = 'mcp__structured_output__submit';
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -78,7 +78,7 @@ function routing() {
   return {
     provider: 'xiaomi-token-plan',
     model: 'mimo-v2.6-pro',
-    endpoint: xiaomiTokenPlanBaseUrl(),
+    endpoint: tokenPlanEndpointOverride(process.env),
     solver2Provider,
     solver2Model,
     policy: process.env.QUESTION_ADMISSION_POLICY_ID,

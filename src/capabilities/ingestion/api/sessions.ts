@@ -4,7 +4,14 @@ import {
   materializeSourcePackage,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
-import { event, learning_session, question_block, source_asset } from '@/db/schema';
+import {
+  event,
+  learning_session,
+  question,
+  question_block,
+  source_asset,
+  source_document,
+} from '@/db/schema';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -14,6 +21,7 @@ import {
 } from '@/kernel/http';
 import { Ingestion } from '@/server/session';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
+import { agentEvidenceSql } from '../server/agent/history';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -21,26 +29,15 @@ const MIN_LIMIT = 1;
 const MAX_LIMIT = 100;
 
 /**
- * GET /api/ingestion?limit=20 —— recent ingestion sessions for the OC-5 review
- * surface (YUK-164 #2). The AutoEnrolledPanel sits on /record with no session
- * context, so it needs a list to pick which past ingestion to inspect.
+ * Lists recent ingestion sessions for the review surface, newest first with a
+ * keyset cursor. Sessions qualify on durable evidence of either lane: at least
+ * one bound question_block row (extract lane — agent drafts live under the
+ * actor-scoped `draft:` key and count toward the draft leg) or any agent-lane
+ * record (agent_budget operations/grants/history or a surviving run row).
+ * Sessions with zero observations stay visible so observe-empty is not hidden.
  *
- * Returns newest-first (created_at desc, id desc), capped at `limit` (clamped
- * 1..100) with a stable keyset cursor. Filters to type='ingestion'
- * sessions that have ≥1 block (a freshly-extracted session with 0 observations is
- * still a valid pick — we do NOT filter on observation_count, only block_count>0,
- * so the observe-empty state stays visible).
- *
- * Per-session counts (one grouped query each; cheap, always returned — no query
- * param gate):
- *   - observation_count   = # auto_enroll_observed events on this session's blocks
- *                           (canonical query: event.action='experimental:auto_enroll_observed',
- *                            NOT generated_by — once the flag is ON the enroll events
- *                            also carry generated_by='workflow_judge').
- *   - auto_enrolled_count = # question_block rows status='auto_enrolled' (non-zero
- *                           only once WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED=ON; tells
- *                           the panel how many rows have an actionable revert).
- *   - block_count         = total blocks (context: "3 of 5 observed").
+ * Counts: observed events (by action, not generated_by), auto-enrolled blocks,
+ * total bound blocks, and `item_count` — durable produced items per lane.
  */
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -48,25 +45,32 @@ export async function GET(req: Request): Promise<Response> {
     const limit = clampLimit(url.searchParams.get('limit'));
     const cursor = decodeCursor(url.searchParams.get('cursor'));
 
-    // 1) latest ingestion sessions that have ≥1 block (newest first, capped at
-    //    limit). The "has a block" predicate is pushed into SQL as an EXISTS
-    //    subquery BEFORE orderBy+limit so block-less sessions never consume a
-    //    limit slot and crowd out an older-but-valid session (codex/CodeRabbit:
-    //    in-memory post-filter could drop valid rows). NB: no learning_session
-    //    .block_count column exists — the predicate is an EXISTS over question_block.
+    // The evidence predicate runs in SQL before orderBy+limit so evidence-free
+    // sessions never consume a limit slot and crowd out older valid ones.
     const sessions = await db
       .select({
         id: learning_session.id,
         entrypoint: learning_session.entrypoint,
         status: learning_session.status,
         source_asset_ids: learning_session.source_asset_ids,
+        started_at: learning_session.started_at,
+        ended_at: learning_session.ended_at,
         created_at: learning_session.created_at,
+        doc_title: source_document.title,
+        agent_lane: sql<boolean>`${agentEvidenceSql(learning_session.id)}`,
       })
       .from(learning_session)
+      .leftJoin(source_document, eq(learning_session.source_document_id, source_document.id))
       .where(
         and(
           eq(learning_session.type, 'ingestion'),
-          sql`exists (select 1 from ${question_block} where ${question_block.ingestion_session_id} = ${learning_session.id})`,
+          sql`(
+            exists (
+              select 1 from ${question_block} qb
+              where qb.ingestion_session_id = ${learning_session.id}
+            )
+            or ${agentEvidenceSql(learning_session.id)}
+          )`,
           cursor
             ? or(
                 lt(learning_session.created_at, cursor.createdAt),
@@ -96,7 +100,7 @@ export async function GET(req: Request): Promise<Response> {
       );
     }
 
-    // 2) blocks grouped by session: total count + auto_enrolled count.
+    // Blocks grouped by session: total and auto-enrolled counts.
     const blockAgg = await db
       .select({
         sid: question_block.ingestion_session_id,
@@ -107,11 +111,7 @@ export async function GET(req: Request): Promise<Response> {
       .where(inArray(question_block.ingestion_session_id, sessionIds))
       .groupBy(question_block.ingestion_session_id);
 
-    // 3) observation events grouped by session.
-    //    event.subject_id for observe events is the BLOCK id (auto-enroll.ts:295
-    //    subject_id: block.id), NOT the session id. The payload carries
-    //    ingestion_session_id, but joining on payload JSON is ugly — cleaner to
-    //    join observed events → their block → session.
+    // Observation events are keyed by block id, so join through the block.
     const obsAgg = await db
       .select({
         sid: question_block.ingestion_session_id,
@@ -131,23 +131,75 @@ export async function GET(req: Request): Promise<Response> {
     const blockBySid = new Map(blockAgg.map((b) => [b.sid, b]));
     const obsBySid = new Map(obsAgg.map((o) => [o.sid, o.obs]));
 
-    // The "has ≥1 block" filter is already applied in SQL (EXISTS in step 1), so
-    // every session here has blocks — no in-memory block_count>0 post-filter (which
-    // would drop valid older rows already squeezed out of the limit). We do NOT
-    // filter on observation_count: a freshly-extracted session with 0 observations
-    // is a valid pick whose observe-empty state we want to surface.
+    // Agent sessions on this page: durable items = draft blocks (actor-scoped
+    // `draft:` key) + submitted question roots not already counted via a draft.
+    const agentIds = pageSessions.filter((s) => s.agent_lane).map((s) => s.id);
+    const agentItemCount = new Map<string, number>();
+    if (agentIds.length > 0) {
+      const draftRows = await db
+        .select({ sid: question_block.ingestion_session_id, id: question_block.id })
+        .from(question_block)
+        .where(
+          inArray(
+            question_block.ingestion_session_id,
+            agentIds.map((id) => `draft:ingestion_agent:${id}`),
+          ),
+        );
+      const draftIdsBySession = new Map<string, Set<string>>();
+      for (const row of draftRows) {
+        const sessionId = row.sid.slice('draft:ingestion_agent:'.length);
+        const set = draftIdsBySession.get(sessionId) ?? new Set<string>();
+        set.add(row.id);
+        draftIdsBySession.set(sessionId, set);
+      }
+      const questionRows = await db
+        .select({ source_ref: question.source_ref, metadata: question.metadata })
+        .from(question)
+        .where(
+          and(
+            inArray(
+              question.source_ref,
+              agentIds.map((id) => `ingestion_agent:${id}`),
+            ),
+            sql`${question.parent_question_id} is null`,
+          ),
+        );
+      for (const sid of agentIds) {
+        const draftIds = draftIdsBySession.get(sid) ?? new Set<string>();
+        let roots = 0;
+        let linked = 0;
+        for (const q of questionRows) {
+          if (q.source_ref !== `ingestion_agent:${sid}`) continue;
+          roots += 1;
+          const draftBlockId = (q.metadata as Record<string, unknown> | null)?.draft_block_id;
+          if (typeof draftBlockId === 'string' && draftIds.has(draftBlockId)) linked += 1;
+        }
+        agentItemCount.set(sid, draftIds.size + (roots - linked));
+      }
+    }
+
+    // SQL already enforced at least one evidence leg. Do not post-filter, and
+    // keep zero-observation sessions visible.
     const rows = pageSessions.map((s) => {
       const agg = blockBySid.get(s.id);
+      const blockCount = Number(agg?.total ?? 0);
+      const itemCount = s.agent_lane ? (agentItemCount.get(s.id) ?? 0) : blockCount;
       return {
         id: s.id,
         entrypoint: s.entrypoint,
         status: s.status,
+        path: s.agent_lane ? ('agent' as const) : ('extract' as const),
+        title: s.doc_title ?? null,
+        title_source: s.doc_title != null ? ('source_document' as const) : null,
         source_asset_ids: s.source_asset_ids,
         observation_count: Number(obsBySid.get(s.id) ?? 0),
         auto_enrolled_count: Number(agg?.enrolled ?? 0),
-        block_count: Number(agg?.total ?? 0),
-        // unix sec — mirror blocks/route.ts:96 convention.
+        block_count: blockCount,
+        item_count: itemCount,
+        // Unix seconds, matching the blocks route.
         created_at: Math.floor(s.created_at.getTime() / 1000),
+        started_at: Math.floor(s.started_at.getTime() / 1000),
+        ended_at: s.ended_at == null ? null : Math.floor(s.ended_at.getTime() / 1000),
       };
     });
 
@@ -197,22 +249,11 @@ function clampLimit(raw: string | null): number {
   return Math.min(MAX_LIMIT, Math.max(MIN_LIMIT, parsed));
 }
 
-// asset_ids upper bound is the PDF page cap (single source of truth in
-// @/core/limits): a 15-page PDF expands to 15 image assets, so this must admit
-// exactly that many. Importing the const keeps the two caps provably equal
-// (YUK-250). The downstream pipeline is length-driven (tencent_ocr_extract loops
-// assetIds.length; page_index scales), so raising the ceiling is safe.
+// The asset cap is the PDF page cap, imported from the single source so the two
+// cannot drift. The pipeline is length-driven, so raising the ceiling is safe.
 /**
- * POST /api/ingestion —— 创建 ingestion session（status='uploaded'）。
- *
- * Sub 0c 把抽取从这里**剥离**：本 route 只创建会话；客户端拿 session.id 后调
- * POST /api/ingestion/[id]/extract 异步触发抽取，开 SSE 听进度。
- *
- * 旧 sync cascade 行为（Step 0 之前）已删除：
- *   - 不再调 runOCRCascade
- *   - 不再写 question_block 行
- *   - 不再返回 blocks
- *   - error_message 不再写 tier_log JSON（tier 信息现在通过 job_events + SSE 推）
+ * Creates an ingestion session in 'uploaded'; extraction is a separate async call
+ * observed over SSE. This route writes no blocks and returns no extraction output.
  */
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -227,11 +268,8 @@ export async function POST(req: Request): Promise<Response> {
     }
     const body = parsed.data;
 
-    // YUK-1404 — explicit optional upload subject, validated BEFORE any
-    // source_document / learning_session write. Omitted / null = unknown: no
-    // signal is persisted and the upload proceeds unchanged (no choose/confirm
-    // demand). A non-null value must resolve through the canonical selectable
-    // registry (aliases canonicalized); unknown / non-selectable / retired → 400.
+    // Optional subject, validated before any write. Null means unknown and is not
+    // persisted; a value must resolve through the selectable registry or 400.
     const requestedSubjectId = body.subject_id ?? null;
     const canonicalSubjectId =
       requestedSubjectId === null ? null : resolveSelectableSubjectId(requestedSubjectId);
@@ -243,7 +281,7 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    // Validate asset_ids exist
+    // Validate that asset ids exist.
     const foundRows = await db
       .select({ id: source_asset.id })
       .from(source_asset)
@@ -254,26 +292,21 @@ export async function POST(req: Request): Promise<Response> {
       throw new ApiError('validation_error', `unknown asset_ids: ${missing.join(', ')}`, 400);
     }
 
-    // Ingestion.initiateUpload — single owner for learning_session(type='ingestion') writes
+    // Single owner for ingestion session writes.
     const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
       assetIds: body.asset_ids,
       entrypoint: body.entrypoint,
-      // YUK-1404 — canonical learner-selected subject (already validated above);
-      // null = no explicit signal, persisted as provenance-key absence.
+      // Validated subject (null persists as absent) and consent (absent = allow).
       learnerSelectedSubjectId: canonicalSubjectId,
-      // YUK-1408 — explicit consent for derived usage; absent = 'allow'.
       derivationPolicy: body.derivation_policy ?? null,
     });
 
-    // YUK-1404 (B2/R1) — materialize the unified source package onto the
-    // session's source_document (body_md + provenance.source_package). PDF page
-    // assets carry per-page draft stamps; plain photos become an 'images'
-    // package. The response contract is unchanged — the package is read back
-    // through the session's source_document, not the wire body.
+    // Materialize the source package on the document. It is read back through the
+    // session, not the response body.
     try {
       await materializeSourcePackage(db, sourceDocumentId);
     } catch (err) {
-      // P2-8 — the session row exists: mark it failed, don't orphan it.
+      // The session row exists, so mark it failed rather than orphaning it.
       await markSessionPackageFailed(db, sessionId, err);
       throw err;
     }

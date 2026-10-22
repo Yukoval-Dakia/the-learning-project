@@ -1,26 +1,15 @@
 /**
- * POST /api/ingestion/[id]/import
+ * Completes an ingestion import: validates the client's blocks, materializes
+ * questions and attempts, and records the session's terminal state.
  *
- * Phase 1c.1 Step 9.G: legacy mistake row INSERTs removed. Each imported
- * failure block now produces only:
- *   - question row (canonical)
- *   - attempt event (outcome='failure') chained to the question
- *   - optional AI-attributed judge event (derived from the durable attempt stream)
- *
- * `mistake_id` on the wire equals the attempt event id (opaque to clients).
- *
- * **混合 schema 提示**（PR #30 review #7）：
- * post-Sub-0c 抽取写的 question_block 有 `structured` jsonb，`extracted_prompt_md` 为 null；
- * pre-Sub-0c 已存在的行反之。本 route 不读这两个字段（client 在 body 里直接传
- * `final_prompt_md`），所以兼容；但**未来 UI** 渲染 block 列表时要同时处理两种形态，
- * 或派生 `structuredToPromptMarkdown(structured)` 作为统一展示源。
+ * Imported failures produce a question, an attempt event, and optionally a judge
+ * event; `mistake_id` is the attempt event id. The route passes `final_prompt_md`
+ * directly, so both block shapes (structured jsonb or legacy prompt text) work here.
  */
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-// T-OC slice 1 (YUK-145, OC-3): generalized capture — outcome is a signal,
-// routed by enrollCapturedBlock instead of the old hardcoded
-// attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
+// Enrollment routes by outcome signal (ADR-0024), not a hardcoded failure shape.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import { canonicalHash } from '@/core/migration/canonical';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
@@ -33,8 +22,8 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
@@ -45,9 +34,8 @@ import {
   readIngestionOperation,
   writeIngestionOperationEvent,
 } from './operation-store';
-// YUK-234 (SEC-4): request-body schema (incl. per-array .max() bounds) lives in
-// ./schema so the bounds are unit-testable without the route's DB/R2/AI import
-// graph. The capture-outcome / cause / kind semantics are unchanged.
+// Request-body schema and array bounds live in ./schema so they can be tested
+// without the route's DB/R2/AI import graph.
 
 export async function completeIngestionImport(
   db: Db | Tx,
@@ -65,9 +53,8 @@ export async function completeIngestionImport(
     if (!session) {
       throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
     }
-    // type='ingestion' invariant — these fields are required for the import flow.
-    // The DB schema marks them nullable because learning_session is polymorphic;
-    // an ingestion-flavored session always has both set (initiateUpload enforces it).
+    // learning_session is polymorphic, so the schema allows null; ingestion sessions
+    // always set both fields at upload time.
     if (session.entrypoint === null) {
       throw new ApiError(
         'validation_error',
@@ -84,9 +71,7 @@ export async function completeIngestionImport(
       );
     }
     const sessionSourceDocumentId: string = session.source_document_id;
-    // YUK-1408 / R1 P2-3 — resolve the document's usage ONCE per session: the
-    // block loop below enrolls N captures, and the per-call resolver would pay
-    // an unindexed learning_session lookup per block.
+    // Resolve usage once per session instead of paying an unindexed lookup per block.
     const sessionDocUsage = await resolveDocumentUsage(tx, sessionSourceDocumentId);
 
     const sessionAssetIds = session.source_asset_ids as string[];
@@ -127,11 +112,8 @@ export async function completeIngestionImport(
           400,
         );
       }
-      // B1b (YUK-164 §2): a merge/split source must still be 'draft' — an
-      // already-auto_enrolled (or imported/ignored) source can't be consumed into
-      // a virtual card (would orphan its auto-enroll question/attempt without a
-      // retract). Revert it via OC-5 first. Every direct block is also in this
-      // source set; the session owner already holds all block locks until commit.
+      // Merge/split sources must still be draft; consuming a terminal source would
+      // orphan its question/attempt. The session lock holds all block locks to commit.
       if (row.status !== 'draft') {
         throw new ApiError(
           'conflict',
@@ -168,12 +150,8 @@ export async function completeIngestionImport(
       }
     }
 
-    // 4. Per-block knowledge_ids are client-supplied + authoritative (schema enforces ≥1).
-    //    /api/import carries no subject signal (the ingestion session has no subject column —
-    //    subject is a derived view), so the unified `tagKnowledge` cannot auto-attribute an
-    //    empty-ids block (it needs a subjectRootId for the PROPOSE parent + D1 filter). Imported
-    //    blocks therefore stay ids-required; auto-tagging import via tagKnowledge is a YUK-489
-    //    follow-up that needs a request-level subject signal first.
+    // 4. Client knowledge_ids are authoritative and required. Import carries no
+    //    subject signal, so tagKnowledge cannot resolve a PROPOSE root for empty ids.
     const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
 
     // Validate the batch's subject attribution before any materialization.
@@ -194,8 +172,8 @@ export async function completeIngestionImport(
     const blockSubjectProfiles = await Promise.all(
       effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(tx, ids)),
     );
-    // YUK-1016 — 校验词表 = 声明 ∪ overlay.active（按 profile.id 缓存去重，
-    // block 共享同一 subject 时不重复查 overlay 表）。
+    // Allowed causes are declaration ∪ active overlays; cache per profile id so
+    // blocks sharing a subject do not re-query overlays.
     const effectiveProfileCache = new Map<string, SubjectProfile>();
     for (const [index, block] of body.blocks.entries()) {
       const declared = blockSubjectProfiles[index];
@@ -220,10 +198,8 @@ export async function completeIngestionImport(
     const questionIds: string[] = [];
     const mistakeIds: string[] = [];
     const recordIds: string[] = [];
-    // YUK-725 — manual cards have no extraction source from which to inherit a position. Give
-    // them append semantics in the session's existing ordinal namespace instead of reusing the
-    // payload index (which can collide with extraction ordinals). The session row lock above
-    // serialises same-session imports, so this max+1 base is stable for the transaction.
+    // Manual cards have no source position, so append after the session max. The
+    // session lock makes this base stable for the transaction.
     let manualOrdinalBase = 0;
     if (hasManualBlocks) {
       const [ordinalRow] = await tx
@@ -236,11 +212,7 @@ export async function completeIngestionImport(
     const toIgnore = new Set<string>();
 
     for (const [blockIndex, block] of body.blocks.entries()) {
-      // P3 (YUK-489): the per-block attribution = the client-supplied knowledge_ids
-      // (schema enforces ≥1; import carries no subject signal, so there is no
-      // tagKnowledge call here — see the ids-required note where effectiveKnowledgeIds
-      // is built above). Used for the question.knowledge_ids column + the
-      // enrollCapturedBlock attribution below.
+      // Attribution is the client-supplied ids; import never calls tagKnowledge.
       const blockKnowledgeIds = effectiveKnowledgeIds[blockIndex];
       let importedBlockId: string;
       let importedVisualComplexity: string | null = null;
@@ -260,19 +232,10 @@ export async function completeIngestionImport(
             ? 'medium'
             : 'low';
         if (sourceRows.length > 0) importedVisualComplexity = visualComplexity;
-        // YUK-221 (#919 review) — extraction order is authoritative (ordinal = true
-        // reading position). This else-branch serves TWO block kinds, so the ordinal
-        // source differs by which one we're inserting:
-        //   - Virtual merge/split card (has ≥1 source_block_id): inserts back at the
-        //     position of its content source(s), so ordinal = MIN(source ordinals). This
-        //     keeps virtual and direct-imported blocks in ONE ordinal namespace (a
-        //     payload-index number would collide with extraction ordinals in the same
-        //     session). Multiple split cards off one source share that ordinal; the
-        //     (ordinal, id) sort key tiebreaks them (no re-chaining).
-        //   - Manual block (block_id undefined + source_block_ids empty, `isManual`
-        //     above): has NO source to derive from. YUK-725 gives it append semantics:
-        //     session max ordinal + 1 + blockIndex. The index preserves request order
-        //     between manual cards while keeping them outside the extraction namespace.
+        // Extraction order is the reading order. A virtual card takes the minimum
+        // source ordinal so it stays in the same namespace; split siblings share it
+        // and the (ordinal, id) sort tiebreaks. Manual cards append past the session
+        // max, with blockIndex preserving request order.
         const ordinal =
           sourceRows.length > 0
             ? Math.min(...sourceRows.map((r) => r.ordinal))
@@ -304,10 +267,8 @@ export async function completeIngestionImport(
             version: 0,
           })
           .returning();
-        // YUK-471 W3-C1δ — canonical create event (origin='import') for the virtual (merged/split)
-        // card. Built from `.returning()` so the snapshot reflects DB-applied defaults (structured/
-        // figures/layout_quality are NOT set above). The subsequent import-link UPDATE
-        // (imported_question_id / status bump below) is NOT event-sourced in this additive lane.
+        // Canonical create event for the virtual card, built from `.returning()` so
+        // DB defaults are captured. The later import-link UPDATE is not event-sourced.
         await writeQuestionBlockCreateEvent(tx, {
           row: insertedRow,
           origin: 'import',
@@ -333,27 +294,18 @@ export async function completeIngestionImport(
         ),
       ];
 
-      // INSERT question — M-1 (2026-05-21): write figures / image_refs / structured
-      // first-class. Derive from source question_block row(s):
-      // - direct import: read from sourceBlockRows[block_id]
-      // - virtual card (merged): concat figures from all source rows; structured
-      //   has no clean merge semantic so it's null (a merged card is a new question
-      //   created by the user, not an extraction tree)
-      // - manual block: nothing to derive from; both empty/null
-      // `metadata.prompt_image_refs` remains for legacy reader compat (M3+ removal).
+      // Derive figures/image_refs from the source block. A merged card concatenates
+      // figures and has no structured tree; a manual block has neither. The legacy
+      // metadata.prompt_image_refs field is still written for older readers.
       let importedFigures: typeof question_block.$inferSelect.figures = [];
       let importedStructured: typeof question_block.$inferSelect.structured = null;
       if (block.block_id !== undefined) {
         const sourceRow = sourceBlockRows.get(block.block_id);
         if (sourceRow) {
           importedFigures = sourceRow.figures;
-          // Carry `structured` only if `final_prompt_md` still matches what
-          // would be derived from `structured`. If the user edited the prompt
-          // pre-import, structured's prompt_text is stale and would violate
-          // ADR-0002 revision 2026-05-21 ("when structured is non-null,
-          // prompt_md MUST be regenerable from structured"). Drop structured
-          // in that case — a future structured edit must go through the
-          // domain tool path, not bulk import.
+          // Keep structured only when prompt_md still derives from it (ADR-0002).
+          // An edited prompt makes prompt_text stale, so drop it; later edits go
+          // through the domain tool path, not bulk import.
           if (sourceRow.structured) {
             const derived = structuredToPromptMarkdown(sourceRow.structured);
             importedStructured = derived === block.final_prompt_md ? sourceRow.structured : null;
@@ -409,8 +361,7 @@ export async function completeIngestionImport(
         ...(pendingCaptures.length > 0
           ? { captured_original_question_ids: pendingCaptures.map((row) => row.id) }
           : {}),
-        // deprecated (M-1 / 2026-05-21): new code reads question.image_refs (first-class).
-        // Kept for legacy reader compat; M3 后视使用情况移除。
+        // Legacy reader compat; new code reads question.image_refs.
         prompt_image_refs: block.image_refs,
         prompt_image_ref_kind: 'source_asset_id',
         source_document_id: sessionSourceDocumentId,
@@ -446,8 +397,8 @@ export async function completeIngestionImport(
           }),
         );
 
-        // YUK-1043（复审裁决：可行写口即刻收敛）—— 导入题 INSERT 同事务铸首版
-        // revision（withheld —— 未核验；导入块的判分输入可契约化，无需等 cutover）。
+        // Mint the first revision in the same transaction. It starts withheld: the
+        // import's scoring input is contractual but not yet verified.
         await publishQuestionGroupFromRow(tx, {
           rootId: questionId,
           actorRef: 'import-completion:question',
@@ -455,11 +406,9 @@ export async function completeIngestionImport(
         });
       }
 
-      // T-OC slice 1 (YUK-145, OC-3): generalized capture. The capture's
-      // `outcome` is a SIGNAL routed by enrollCapturedBlock — failure → attempt
-      // (failure)+mistake (existing attribution chain); success/partial →
-      // attempt(success|partial)+worked_example (mastery evidence, NO FSRS
-      // advance — ADR-0024); unanswered → open_question item (no attempt event).
+      // enrollCapturedBlock routes by outcome: failure creates a mistake, success
+      // and partial create mastery evidence without FSRS advance, and unanswered
+      // creates an open-question item (ADR-0024).
       const enroll = await enrollCapturedBlock(tx, {
         questionId,
         outcome: block.outcome,
@@ -473,43 +422,25 @@ export async function completeIngestionImport(
         now,
       });
 
-      // Back-compat `mistake_id` token: the attempt event id for
-      // failure/success/partial; the record id when unanswered has no attempt.
+      // Legacy mistake_id token: the attempt event id, or the record id for unanswered.
       const mistakeId = enroll.attemptEventId ?? enroll.recordId;
       mistakeIds.push(mistakeId);
       recordIds.push(enroll.recordId);
 
-      // UPDATE question_block: link to question + attempt event (null for
-      // unanswered captures), transition to 'imported'.
-      const [{ version: importedBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          imported_question_id: questionId,
-          imported_attempt_event_id: enroll.attemptEventId,
-          status: 'imported',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, importedBlockId))
-        .returning({ version: question_block.version });
-
-      // YUK-471 W3-D — make the import status/imports transition fold-visible (additive double-write;
-      // same `now`/tx). op='set_status' carries status='imported' + imported_* + bumped version so
-      // foldQuestionBlock reproduces this row. actor mirrors the create event ('user'/'block_import').
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: importedBlockId,
-        op: 'set_status',
-        status: 'imported',
-        importedQuestionId: questionId,
-        importedAttemptEventId: enroll.attemptEventId,
-        nextVersion: importedBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
+      // Link the block to the question/attempt and mark it imported.
+      await applyQuestionBlockTransition(
+        tx,
+        {
+          kind: 'complete_import',
+          blockId: importedBlockId,
+          questionId,
+          attemptEventId: enroll.attemptEventId,
+        },
         now,
-      });
+      );
     }
 
-    // Sweep: mark any draft blocks user dropped as 'ignored'
+    // Mark draft blocks the user dropped as ignored.
     const sessionDrafts = await tx
       .select({ id: question_block.id })
       .from(question_block)
@@ -522,40 +453,16 @@ export async function completeIngestionImport(
       }
     }
 
-    // UPDATE source blocks → status='ignored'
+    // Mark source blocks ignored.
     for (const sid of toIgnore) {
-      const [{ version: ignoredBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          status: 'ignored',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, sid))
-        .returning({ version: question_block.version });
-
-      // YUK-471 W3-D — make the ignore sweep fold-visible (additive double-write; same `now`/tx).
-      // op='set_status' carries ONLY status + bumped version (the sweep does NOT touch imported_*, so
-      // they are OMITTED → the fold leaves them unchanged). foldQuestionBlock reproduces this row.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: sid,
-        op: 'set_status',
-        status: 'ignored',
-        nextVersion: ignoredBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
-        now,
-      });
+      await applyQuestionBlockTransition(tx, { kind: 'ignore_source', blockId: sid }, now);
     }
 
-    // Terminal transition extracted | reviewed → imported. Re-asserts state
-    // under the same lock (no-op vs assertSessionAvailableForImport above
-    // unless something inside the txn mutated it, which is impossible).
+    // Terminal transition extracted | reviewed → imported, re-asserted under the lock.
     await Ingestion.commitImport(tx, sessionId);
 
-    // Failure-learning follow-up is derived from the committed attempt events
-    // by the practice-owned durable subscription. The ingestion route no longer
-    // knows queue names or performs a best-effort post-transaction handoff.
+    // Failure learning follows from the committed attempts via the practice-owned
+    // durable subscription; ingestion knows no queue names.
 
     return {
       question_ids: questionIds,

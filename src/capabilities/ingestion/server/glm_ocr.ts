@@ -8,23 +8,12 @@ import {
 } from './provider-attempts';
 
 /**
- * GLM-OCR layout_parsing client — YUK-253 OCR engine swap.
+ * Zhipu GLM-OCR layout_parsing client, the default text/layout source.
  *
- * Replaces the Tencent QuestionMarkAgent OCR provider with Zhipu GLM-OCR's
- * `layout_parsing` endpoint as the default character-level text OCR + layout
- * source. The layered semantics are unchanged (ADR-0002 / YUK-145 OC-1/OC-2):
- * GLM is the demoted text-hint + figure-bbox layer; the VLM `StructureTask`
- * still owns the structure tree, with a fallback to the OCR structure on VLM
- * outage. This module is the GLM analogue of `tencent_mark.ts`.
- *
- * Endpoint + auth (locked domain fact, YUK-253 issue):
- *   POST https://open.bigmodel.cn/api/paas/v4/layout_parsing
- *   Authorization: Bearer $ZHIPU_API_KEY
- *   body: { model: 'glm-ocr', file: 'data:image/png;base64,<...>' }
- *   JSON ONLY — multipart → content-type unsupported; bare base64 → error 1214.
- *   GLM layout_parsing is synchronous (single request, no submit+poll loop).
- *
- * Tests never hit the live API — `fetch` is mocked (see glm_ocr.test.ts).
+ * GLM supplies the demoted text hint and figure boxes; the VLM StructureTask still
+ * owns the tree, falling back to OCR structure on outage. The endpoint is
+ * synchronous and accepts JSON only: a data-URL image with a bearer key, not
+ * multipart or bare base64.
  */
 
 const GLM_LAYOUT_PARSING_URL = 'https://open.bigmodel.cn/api/paas/v4/layout_parsing';
@@ -79,11 +68,11 @@ export type GlmOcrParams = {
   timeoutMs?: number;
   /** Stable extraction-page operation context; omitted by parser/no-wire fakes. */
   providerAttempt?: OcrPageProviderContext;
+  /** Agent financial identity, persisted before this callback can send wire. */
+  beforeRequest?: (attemptId: string) => Promise<void>;
   /**
-   * YUK-1404 (B2/R5 P1-4) — when true the wire attempt runs under the
-   * operation-kind start fence (tool surface): a second call on the same
-   * operation anchor is fenced instead of re-dispatching an unknown-paid
-   * request. Pipeline callers leave it off.
+   * When true, the attempt runs under the operation-kind start fence: a second call
+   * on the same anchor is rejected instead of re-dispatching an unknown-paid request.
    */
   fencedAttempt?: boolean;
 };
@@ -162,9 +151,8 @@ function mapGlmHttpError(
 }
 
 /**
- * YUK-1404 (B2/R5) — same wire call, but the provider-attempt identity rides
- * along so tool callers can return an honest `run_ref`. `attemptId` is null on
- * the no-attempt path (parser fakes / raw calls).
+ * Same wire call, returning the attempt identity so tools can report an honest
+ * run_ref. attemptId is null when no attempt was created.
  */
 export async function runGlmLayoutParsingWithAttempt(
   params: GlmOcrParams,
@@ -182,6 +170,10 @@ export async function runGlmLayoutParsingWithAttempt(
   const executeRequest = async (
     attempt?: OcrPageProviderAttemptControl,
   ): Promise<GlmLayoutResponse> => {
+    if (params.beforeRequest) {
+      if (!attempt) throw new TypeError('financially tracked OCR requires an attempt identity');
+      await params.beforeRequest(attempt.attemptId);
+    }
     const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);

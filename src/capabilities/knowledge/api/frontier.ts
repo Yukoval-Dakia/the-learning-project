@@ -1,9 +1,5 @@
-// A5 S2 (YUK-354) — FrontierRail read endpoint.
-//
-// GET /api/knowledge/frontier
-//   → 200 { rows: FrontierRailItem[] } — the「下一步，你学得动这些」learnable-frontier
-//          banner: live prereq-gated KCs (propose=false) + cold-start proposed-prereq
-//          suggestions (propose=true, lowConf=true). Read-only; no write path.
+// Learnable-frontier banner: live gated KCs plus low-confidence cold-start
+// suggestions. Read-only.
 
 import { loadFrontierRail } from '@/capabilities/knowledge/server/frontier-read';
 import { db } from '@/db/client';

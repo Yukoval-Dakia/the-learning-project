@@ -1,24 +1,15 @@
-// YUK-599 (YUK-597 v3 trait 合同 §6) — reconcileBuiltinTraits：migrate init
-// container 专属的种子/升级单写者（app/worker boot 只 read-hydrate，避免竞写）。
+// migrate init 专属的 builtin 种子/升级单写者；app/worker boot 只 read-hydrate，
+// 避免竞写。
 //
-// per-trait 纪律（§6）：
-// - **触发信号 = 代码种子 semver ≠ 行 seed_version**；相等 → 整行硬跳过（不碰
-//   payload/updated_at/revision/journal——「重跑零副作用」由条件写成立，不是裸
-//   ON CONFLICT DO UPDATE 能给的）。
-// - 行不存在 → INSERT + journal rev-0（action='create'，actor='migrate'）。
-//   通则：一切 trait 创建路径必须写 rev-0 journal 行。
-// - 不等且未被 owner 编辑 → 覆盖升级 + seed_version 对齐 + journal 'reconcile'；
-//   被编辑过 → 保留 + WARN。
-// - **「被 owner 编辑」= journal 谓词**（不设列、不用 created_at）：∃ actor='owner'
-//   行，其 revision > max(revision WHERE action ∈ {create, reconcile,
-//   reset_to_seed})——reset-to-seed 后谓词翻回未编辑，种子升级恢复送达（append-only
-//   下「永久冻结」的解法；reset_to_seed 自身虽是 owner 行但同时就是新边界，严格
-//   大于号天然自排除）。
-// - **并发纪律（v3.2）**：事务开头取控制面 advisory lock，owner-journal 判定在
-//   锁内读——不与并发的 owner 写互踩。
+// 触发信号 = 代码种子 semver ≠ 行 seed_version：相等时整行硬跳过（不碰 payload/
+// updated_at/revision/journal），保证重跑零副作用。行缺失则 INSERT + rev-0 journal。
+// 版本不等时：未被 owner 编辑 → 覆盖升级 + 'reconcile'；编辑过 → 保留 + WARN。
+// 「被 owner 编辑」= ∃ actor='owner' 且 revision > 最近 create/reconcile/
+// reset_to_seed 边界——reset-to-seed 后升级恢复送达，append-only 下不会永久冻结。
+// 事务开头取控制面 advisory lock，owner-journal 判定在锁内读。
 //
-// 绑定 ×24 / subject 行 ×4 / claims 全部 insert-if-missing：owner 的换绑/rename
-// 不被 migrate 重跑覆写（reconcile 只治理 trait 内容血统，不治理控制行）。
+// 绑定/科目/claims 全部 insert-if-missing：owner 的换绑/rename 不被重跑覆写
+// （reconcile 只治理 trait 内容血统，不治理控制行）。
 
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
@@ -30,6 +21,7 @@ import {
   subject_trait_binding,
   subject_trait_journal,
 } from '@/db/schema';
+import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import {
   BUILTIN_SUBJECT_IDS,
   BUILTIN_TRAIT_SEEDS,
@@ -38,9 +30,8 @@ import {
 } from '@/subjects/builtin-trait-seeds';
 import { BUILTIN_SUBJECT_ALIASES, normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
-import { acquireControlPlaneLockSql } from './control-plane-lock';
 
-// drizzle 事务句柄类型（tx 不带 $client，不能用裸 Db）。
+// drizzle 事务句柄（tx 没有 $client）。
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export interface BuiltinTraitReconcileReport {
@@ -89,7 +80,7 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
       const profile = subjectProfiles[subjectId];
       if (!profile) throw new Error(`reconcileBuiltinTraits: builtin '${subjectId}' missing`);
 
-      // ① subject 控制行：insert-if-missing（rename/retire 是 owner 面，不覆写）。
+      // subject 控制行 insert-if-missing：rename/retire 是 owner 面，不覆写。
       const insertedSubject = await tx
         .insert(subject)
         .values({
@@ -97,7 +88,7 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
           display_name: profile.displayName,
           display_name_norm: normalizeSubjectKey(profile.displayName),
           origin: 'builtin',
-          is_selectable: subjectId !== 'general', // general 结构性排除（v2 §2.1）
+          is_selectable: subjectId !== 'general', // general 结构性排除
           retired_at: null,
           revision: 0,
           created_at: now,
@@ -121,7 +112,7 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
           .onConflictDoNothing();
       }
 
-      // ② claims：canonical + builtin 别名（insert-if-missing；PK 拦抢占）。
+      // claims：canonical + builtin 别名，insert-if-missing；PK 拦抢占。
       await tx
         .insert(subject_name_claim)
         .values({
@@ -143,7 +134,6 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
           .onConflictDoNothing();
       }
 
-      // ③ per-trait 种子/升级。
       for (const kind of SUBJECT_TRAIT_KINDS) {
         const seed = BUILTIN_TRAIT_SEEDS[subjectId as BuiltinSubjectId][kind];
         const traitId = seedTraitId(subjectId as BuiltinSubjectId, kind);
@@ -214,7 +204,7 @@ export async function reconcileBuiltinTraits(db: Db): Promise<BuiltinTraitReconc
         }
       }
 
-      // ④ 绑定 ×6：insert-if-missing（owner 换绑不被重跑覆写）。
+      // 绑定 ×6 insert-if-missing：owner 换绑不被重跑覆写。
       for (const kind of SUBJECT_TRAIT_KINDS) {
         await tx
           .insert(subject_trait_binding)

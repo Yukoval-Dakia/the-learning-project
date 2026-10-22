@@ -1,37 +1,26 @@
-// YUK-406 Phase 0 (关系脑 thin slice) — deterministic 取证 (NO LLM).
+// Deterministic conjecture evidence (NO LLM). Folds recent failure attempts into
+// (cause_category × knowledge_id) "cells" that are candidate conjectures. PURE: the
+// caller fetches FailureAttempt[] and mastery, so the recurrence/salience math stays
+// unit-testable without DB.
 //
-// Aggregates recent failure attempts into (cause_category × knowledge_id) "cells"
-// that are candidate CONJECTURES about how the owner thinks. PURE function: the
-// caller (research_meeting_nightly job) fetches FailureAttempt[] via
-// getFailureAttempts({ since }) and a per-knowledge mastery projection, then hands
-// them in. No DB import here so the recurrence/salience math stays unit-testable in
-// isolation (mirrors the DepsOverride injection pattern across the agency jobs).
-//
-// Two gates keep one-off noise out of the surface:
+// Two gates keep one-off noise out:
 //   - recurrence floor (>= 2 distinct attempts for a cell), and
-//   - dedup against already-raised conjecture keys (knownConjectureKeys — for the
-//     MVP these are the keys of currently-pending conjecture proposals, so the same
-//     cause × KC is not re-proposed while one is still open).
+//   - dedup against already-raised conjecture keys (knownConjectureKeys).
 //
-// A13 (YUK-440) accountability seam woven in: each cell snapshots `baseline_p` =
-// the learner's PFA mastery p(L) for the KC (getMasteryProjection.mastery). The job
-// stamps it onto the conjecture as `baseline_p_at_induction` — the number the
-// qualitative claim must later beat (scoring/flip is DEFERRED per ADR-0046; the cell
-// only carries the snapshot).
+// Each cell snapshots `baseline_p` = the learner's PFA mastery p(L) for the KC — the
+// number the qualitative claim must later beat.
 
 import type { CauseCategoryT, CauseSchemaT } from '@/core/schema/event/blocks';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import type { BBoxT, FigureRefT } from '@/core/schema/structured_question';
 
-/** A conjecture must recur across at least this many distinct failure attempts. */
 export const CONJECTURE_RECURRENCE_FLOOR = 2;
 
 /**
  * theta_precision below this ⇒ wide SE (thetaSe = 1/√precision) ⇒ low confidence in
- * the θ̂ point estimate ⇒ "probe here". DEFAULT precision is 1 at cold start (a weak
- * 1-unit prior, SE = 1), so a KC barely observed sits below the threshold and is
- * flagged. Placeholder scale until fixed-anchor calibration (ADR-0043); 1.5 ≈ SE 0.82,
- * i.e. flag anything not yet firmly pinned.
+ * the θ̂ point estimate ⇒ "probe here". Cold start has precision 1 (weak 1-unit
+ * prior, SE = 1), so a barely observed KC is flagged. Placeholder scale until
+ * fixed-anchor calibration; 1.5 ≈ SE 0.82.
  */
 export const LOW_PRECISION_THRESHOLD = 1.5;
 
@@ -47,16 +36,15 @@ export interface EvidenceCell {
   knowledge_id: string;
   /** Distinct failure attempts contributing to this cell (>= CONJECTURE_RECURRENCE_FLOOR). */
   recurrence_count: number;
-  /** provenance — the attempt event ids, in first-seen order (→ evidence_refs). */
+  /** Attempt event ids in first-seen order (→ evidence_refs). */
   evidence_event_ids: string[];
   /** θ̂ for this KC, or null when no mastery row exists (cold start). */
   theta_hat: number | null;
   /** Cumulative Fisher information for θ̂, or null on cold start. */
   theta_precision: number | null;
   /**
-   * A13 (YUK-440) baseline: PFA mastery p(L) for this KC (getMasteryProjection.mastery),
-   * or null on cold start. The job snapshots this as the conjecture's
-   * `baseline_p_at_induction` — the number the qualitative claim must later beat.
+   * PFA mastery p(L) for this KC, or null on cold start. Snapshotted as the
+   * conjecture's `baseline_p_at_induction` — the number the claim must later beat.
    */
   baseline_p: number | null;
   /** true ⇒ low-precision (or unknown) KC: a good place to spend the one probe. */
@@ -64,33 +52,19 @@ export interface EvidenceCell {
   /** true iff any contributing attempt has an owner-supplied (source:'user') cause. */
   has_owner_cause: boolean;
   /**
-   * YUK-1054 — 至少一条贡献 attempt 的【原始判】≠【effective 判】（contested
-   * verdict / 改判）。供 induction 区分「稳定的错误归因证据」与「争议判改判后
-   * 的证据」；缺原始判不视为 contested。
+   * 至少一条贡献 attempt 的【原始判】≠【effective 判】（contested verdict / 改判）。
+   * 供 induction 区分「稳定的错误归因证据」与「争议判改判后的证据」；缺原始判不视为 contested。
    */
   has_contested_verdict: boolean;
 }
 
-// ── YUK-786 grounding packet ────────────────────────────────────────────────
+// ── First-hand grounding packet ─────────────────────────────────────────────
 //
-// An EvidenceCell alone is 7 opaque scalars (UUIDs / an enum / numbers): zero
-// natural language, zero subject identity. The induction prompt nevertheless
-// asks for a DOMAIN-SPECIFIC claim + a whole discriminating question + its
-// machine-grading gold reference — so the model had no grounded way to produce
-// one and invented the subject. These types carry the first-hand evidence that
-// `gatherConjectureEvidence`'s upstream (FailureAttempt) already had and threw
-// away when it folded attempts into a cell.
-//
-// The TYPES live here (this module stays PURE — no DB import); the db-reading
-// builder lives in the `enrich` sibling and is called by the nightly job's
-// PRE-LLM read stage.
+// An EvidenceCell alone is opaque scalars, while the induction prompt asks for a
+// domain-specific claim plus a whole discriminating probe and its grading gold.
+// These types carry the first-hand evidence. They live here to keep this module
+// PURE; the db-reading builder is in the `enrich` sibling.
 
-/**
- * One representative failure attempt behind a cell, in the shape the LLM sees.
- * Every learner-authored / question-authored free-text field is already
- * truncated + wrapped in `<untrusted_learner_text>` by the enrich step — the
- * strings here are DATA, never instruction.
- */
 export interface ConjectureEvidenceFigure {
   asset_id: string;
   role: FigureRefT['role'];
@@ -107,43 +81,38 @@ export interface ConjectureEvidenceSample {
   question_prompt_md: string | null;
   /**
    * question.reference_md — the GOLD answer to that question (wrapped +
-   * truncated), or null when the question has none. Without it the packet shows
-   * what was asked and what the owner wrote but not what "right" was, so the
-   * deviation the claim is supposed to be ABOUT is not reconstructable.
+   * truncated), or null when absent. Without it the deviation the claim is about
+   * is not reconstructable.
    */
   question_reference_md: string | null;
-  /** question.choices_md — the complete choice set (each item wrapped + truncated). */
+  /** question.choices_md — the full choice set (each item wrapped + truncated). */
   question_choices_md: string[] | null;
-  /** First-class simple image refs for the question, copied from the DB row. */
+  /** First-class simple image refs for the question. */
   question_image_refs: string[];
-  /** Structured figure refs for the question, projected to an immutable prompt-safe shape. */
+  /** Structured figure refs, projected to an immutable prompt-safe shape. */
   question_figures: ConjectureEvidenceFigure[];
   /** question_part parent id, or null for a standalone question. */
   parent_question_id: string | null;
   /** parent prompt/shared passage needed to interpret a question_part. */
   parent_question_prompt_md: string | null;
-  /** parent reference answer, when present. */
   parent_question_reference_md: string | null;
-  /** parent choices, when present (each item wrapped + truncated). */
+  /** Parent choices (each item wrapped + truncated). */
   parent_question_choices_md: string[] | null;
-  /** Parent question image refs, copied from the DB row. */
   parent_question_image_refs: string[];
-  /** Parent structured figures, projected to an immutable prompt-safe shape. */
   parent_question_figures: ConjectureEvidenceFigure[];
-  /** the learner's own wrong answer (wrapped + truncated). */
+  /** The learner's own wrong answer (wrapped + truncated). */
   answer_md: string | null;
   /** Image-only or image-bearing learner answer asset refs. */
   answer_image_refs: string[];
-  /** YUK-562 process data: the learner's account of HOW they thought. */
+  /** Process data: the learner's account of HOW they thought. */
   reasoning_trace: string | null;
-  /** effective cause category for this attempt (owner cause wins over judge). */
+  /** Effective cause category for this attempt (owner cause wins over judge). */
   cause_category: CauseCategoryT | null;
   /** 'user' when the owner attributed it, 'agent' when the judge did. */
   cause_source: 'user' | 'agent' | null;
   /**
    * The written attribution. Both owner notes and upstream judge analysis are
-   * generated outside the induction prompt, so enrich truncates and delimits them
-   * as untrusted data.
+   * generated outside the induction prompt, so enrich delimits them as untrusted data.
    */
   cause_attribution_md: string | null;
 }
@@ -152,26 +121,26 @@ export interface ConjectureEvidenceSample {
 export interface EvidenceCellEnrichment {
   /** knowledge.name — human-readable, wrapped + truncated as untrusted text. */
   knowledge_name: string | null;
-  /** canonical subject id resolved from knowledge.domain, or null when untagged. */
+  /** Canonical subject id from the KC's effective domain, or null when untagged. */
   subject_id: string | null;
-  /** the subject's display name (e.g. 语文), or null when untagged. */
+  /** The subject's display name (e.g. 语文), or null when untagged. */
   subject_display_name: string | null;
   /**
-   * Representative first-hand evidence samples, capped; may be empty when rows are missing.
+   * Representative first-hand samples, capped; may be empty when rows are missing.
    * On an enriched cell, `evidence_event_ids` / `recurrence_count` are narrowed to ALL
    * reproducible attempts even when only the first few samples carry prompt text.
    */
   samples: ConjectureEvidenceSample[];
 }
 
-/** An {@link EvidenceCell} carrying its grounding packet (YUK-786). */
+/** An {@link EvidenceCell} carrying its grounding packet. */
 export type EnrichedEvidenceCell = EvidenceCell & EvidenceCellEnrichment;
 
 export type ConjectureEvidenceImageSource = 'question' | 'parent_question' | 'answer';
 
 /**
- * One image occurrence in the stable multimodal packet order:
- * child question → shared parent question → learner answer, per sample.
+ * One image occurrence in the stable packet order: child question → shared parent
+ * question → learner answer, per sample.
  */
 export interface ConjectureEvidenceAssetRef {
   asset_id: string;
@@ -180,10 +149,9 @@ export interface ConjectureEvidenceAssetRef {
 }
 
 /**
- * One unique asset plus every evidence occurrence that points at it.
- *
- * The bytes are sent once per induction sample; `occurrences` preserves the semantic roles
- * without duplicating the same base64 block for every attempt/source pair.
+ * One unique asset plus every evidence occurrence that points at it. The bytes are
+ * sent once per induction sample; `occurrences` preserves semantic roles without
+ * duplicating the same base64 block for every attempt/source pair.
  */
 export interface LoadedConjectureEvidenceImage {
   asset_id: string;
@@ -194,11 +162,9 @@ export interface LoadedConjectureEvidenceImage {
 }
 
 /**
- * Collect image occurrences in the same order the model will receive them.
- * Figure refs and simple refs within one sample/source can point at the same asset, so that
- * occurrence is deduped. The same bytes in another attempt or semantic role remain separate
- * manifest entries; collapsing them would erase that the learner reused a question image in
- * their answer (or that the asset recurred across attempts).
+ * Collect image occurrences in the order the model receives them. Figure refs and
+ * simple refs within one sample/source are deduped; the same asset in another attempt
+ * or semantic role stays separate so reuse is not erased.
  */
 export function collectConjectureEvidenceAssetRefs(
   cell: EnrichedEvidenceCell,
@@ -240,9 +206,9 @@ export function collectConjectureEvidenceAssetRefs(
 /**
  * Agency-owned, read-only projection of the legacy failure stream.
  *
- * Keep only fields conjecture evidence actually consumes. The job's legacy
- * `FailureAttempt` reader is structurally assignable to this contract, so the
- * agency domain stays independently testable without importing `@/server/*`.
+ * Keep only fields conjecture evidence consumes. The legacy `FailureAttempt`
+ * reader is structurally assignable to this contract, so the agency domain stays
+ * testable without importing `@/server/*`.
  */
 export interface ConjectureFailureAttempt {
   attempt_event_id: string;
@@ -258,9 +224,8 @@ export interface ConjectureFailureAttempt {
     created_at: Date;
   };
   /**
-   * YUK-1054 — 双轨裁决（§9）。`judge` 是 effective 判；本字段是原始执行收据
-   * 侧 earliest judge（首判，未链解析）。供 contested-verdict 信号用：原始判与
-   * effective 判走不同轨时，该 attempt 的归因证据是可争的。
+   * 双轨裁决：`judge` 是 effective 判；本字段是原始执行收据侧 earliest judge（首判，
+   * 未链解析）。原始判与 effective 判走不同轨时，该 attempt 的归因证据是可争的。
    */
   original_judge?: {
     cause: CauseSchemaT;
@@ -281,21 +246,21 @@ export interface ConjectureMasteryProjection {
 }
 
 export interface GatherConjectureEvidenceInput {
-  /** Recent failure attempts (caller fetched via getFailureAttempts({ since })). */
+  /** Recent failure attempts. */
   failures: ConjectureFailureAttempt[];
-  /** knowledge_id → mastery projection (caller resolved via getMasteryProjection). */
+  /** knowledge_id → mastery projection. */
   masteryByKnowledgeId: ReadonlyMap<string, ConjectureMasteryProjection>;
-  /** dedup: conjectureKey(...) values already raised — skip these cells. */
+  /** Dedup: conjectureKey(...) values already raised — skip these cells. */
   knownConjectureKeys: Set<string>;
 }
 
 interface CellAccumulator {
   cause_category: CauseCategoryT;
   knowledge_id: string;
-  /** distinct attempt ids, insertion-ordered (Map preserves first-seen order). */
+  /** Distinct attempt ids, insertion-ordered (Map preserves first-seen order). */
   attemptIds: Map<string, true>;
   hasOwnerCause: boolean;
-  /** YUK-1054 — 至少一条贡献 attempt 的原始判 ≠ effective 判（改判 contested）。 */
+  /** 至少一条贡献 attempt 的原始判 ≠ effective 判（改判 contested）。 */
   hasContestedVerdict: boolean;
 }
 
@@ -308,8 +273,8 @@ export interface EffectiveConjectureCause {
 
 /**
  * Conjecture-local effective-cause projection: owner attribution wins over the
- * upstream judge. This deliberately mirrors the legacy read policy while
- * returning only the fields induction consumes.
+ * upstream judge. Deliberately mirrors the legacy read policy; returns only the
+ * fields induction consumes.
  */
 export function effectiveCauseForConjectureFailure(
   failure: ConjectureFailureAttempt,
@@ -336,7 +301,7 @@ export function effectiveCauseForConjectureFailure(
 export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): EvidenceCell[] {
   const { failures, masteryByKnowledgeId, knownConjectureKeys } = input;
 
-  // 1. Fan each failure out across (effective cause_category × each referenced KC).
+  // Fan each failure out across (effective cause_category × each referenced KC).
   const acc = new Map<string, CellAccumulator>();
   for (const failure of failures) {
     const cause = effectiveCauseForConjectureFailure(failure);
@@ -355,9 +320,7 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
         } satisfies CellAccumulator);
       cell.attemptIds.set(failure.attempt_event_id, true); // Map ⇒ distinct, ordered
       if (isOwnerCause) cell.hasOwnerCause = true;
-      // YUK-1054 — 双轨：原始判存在且其 cause 分类 ≠ effective 判分类，或原始判
-      // 存在但 effective 判的 cause 被改判覆盖（本 cell 的 cause 来自不同判），
-      // 视为 contested。
+      // 双轨：原始判存在且分类 ≠ effective 分类时，视为 contested。
       if (
         failure.original_judge &&
         failure.original_judge.cause.primary_category !== cause.primary_category
@@ -368,11 +331,11 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
     }
   }
 
-  // 2. Keep cells at/above the recurrence floor, skip already-known, attach mastery.
+  // Keep cells at/above the recurrence floor, skip already-known, attach mastery.
   const cells: EvidenceCell[] = [];
   for (const [key, cell] of acc) {
     if (cell.attemptIds.size < CONJECTURE_RECURRENCE_FLOOR) continue;
-    if (knownConjectureKeys.has(key)) continue; // dedup against pending conjectures
+    if (knownConjectureKeys.has(key)) continue;
     const mastery = masteryByKnowledgeId.get(cell.knowledge_id) ?? null;
     const thetaHat = mastery?.theta_hat ?? null;
     const thetaPrecision = mastery?.theta_precision ?? null;
@@ -395,7 +358,7 @@ export function gatherConjectureEvidence(input: GatherConjectureEvidenceInput): 
     });
   }
 
-  // 3. Salience-first deterministic order: recurrence DESC, probe_here first, key ASC.
+  // Salience-first deterministic order: recurrence DESC, probe_here first, key ASC.
   cells.sort(
     (a, b) =>
       b.recurrence_count - a.recurrence_count ||

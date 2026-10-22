@@ -116,8 +116,8 @@ async function projectMistakeRecords(
     since: filter.since,
   });
   const failureByAttempt = new Map(failures.map((failure) => [failure.attempt_event_id, failure]));
-  // A record cursor can point past this question's newest failure window. Resolve
-  // only missing page identities rather than dropping old records or widening the scan.
+  // A record cursor can point past this question's newest failure window; resolve
+  // only the missing page identities instead of widening the scan.
   const missingAttempts = [...attemptIds].filter((id) => !failureByAttempt.has(id));
   const missingAttemptRows =
     missingAttempts.length > 0
@@ -192,10 +192,9 @@ async function projectMistakeRecords(
     editsByQuestionId.set(edit.question_id, dates);
   }
 
-  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
-  // 批量一次，不进循环）。id 保留在 primary_category / secondary_categories，
-  // 展示层用 primary_label ?? primary_category、secondary_labels[id] ?? id。
-  // effectiveCause 在此一并预算，emit 循环不再重复调用。
+  // Resolve misc_ labels in one batch and precompute effective causes so the emit
+  // loop does not query per row. Raw ids stay in the projection; callers fall back
+  // from label to id.
   const causeByAttempt = new Map(
     [...failureByAttempt.entries()].map(([id, failure]) => [
       id,

@@ -9,6 +9,7 @@
 //
 
 import { randomUUID } from 'node:crypto';
+import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/ai/agent-run-error';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   ASSESSMENT_RUBRIC_TIMEOUT_RETRIES,
@@ -24,7 +25,6 @@ import type {
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
 import { AssessmentRubricDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
-import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/server/ai/agent-run-error';
 import {
   isLaminarTracingEnabled,
   traceMetadata,

@@ -1,65 +1,20 @@
 /**
- * audit:relations — KG 死边反向审计 (YUK-357 / RT4)
+ * audit:relations — KG 死边反向审计
  *
- * 决策来源：docs/design/2026-06-14-gpt-doc-gap-analysis.md 决策 7（第 105 行）+
- * docs/design/2026-06-15-rethink-implementation-gate.md §1.7 7c。GPT §10.1 原则
- * 「只保留能影响诊断/推荐/复习的关系」——rethink 只对单条边治理（confusable_with
- * 死边），缺「边创建后是否真被下游消费」的反向审计。本脚本补这一维度。
+ * A relation type is a "dead edge" when rows are created, proposed, or persisted but no
+ * diagnosis / recommendation / review path reads it by type to change behavior. The graph grows
+ * without affecting learning. Creation-time validation does not count; generic reads that dump
+ * every type at a consumer do not count either. Only type-specific (specialized) consumption does.
  *
- * 「死边」定义：一个 relation_type 的边被造出来（提议 / accept / 持久化），但
- * 下游没有任何**特化学习消费路径**（诊断 / 推荐 / 复习）读它、按它的类型驱动
- * 行为。图在转、边在长，但不影响学习——这就是 GPT §10.1 要剪掉的「死关系」。
+ * The consumer registry is hand-maintained. Each entry names a file and a grep marker; this audit
+ * reverse-checks that the marker still exists, so a deleted or renamed consumer reports STALE
+ * instead of quietly keeping the type "alive".
  *
- * ── 三层消费分级（按 GPT §10.1 的辨别力，从弱到强）──────────────────────
+ * Default is report-only. `--strict` exits non-zero on a dead type or a stale declaration; whether
+ * to wire that into the test chain is an owner decision.
  *
- *   creation-validation  边**提议时**的校验闸（按 relation_type 分支做接受/拒绝
- *                        判断）。这是「该不该建这条边」，不是「建好的边影响不影响
- *                        学习」——GPT §10.1 明确区分二者，故 NOT 算下游学习消费。
- *                        证据：rubric-validator.ts relationGate() 5 路 case。
- *
- *   generic-read         泛化读：把**所有**类型的边不分 type 一把灌给消费者（典型
- *                        是 AI copilot 的邻域/路径工具）。每个核心类型都有这层，
- *                        但它不按 type 驱动差异化行为——是最弱的「活着」信号。
- *                        证据：knowledge-readers.ts loadEdges() 无 relationTypes 过滤。
- *
- *   specialized          特化学习消费：诊断/推荐/复习代码里**按具体 relation_type
- *                        分支**驱动差异化行为（如 prerequisite 驱动拓扑环检测、
- *                        hub-mesh 按 prerequisite/derived_from/contrasts_with 组装
- *                        笔记上下文）。这是 GPT §10.1 要保的「能影响学习」的关系。
- *
- *   ⇒ 「死边」= 某 relation_type **零 specialized 消费**（只被 generic-read 一把
- *      捞起 / 只在 creation-validation 被校验）。它在图里存在但不差异化影响学习。
- *
- * ── 反查机制（防 registry 漂移）────────────────────────────────────────
- *
- * 消费矩阵是**手维护的声明式 registry**（CONSUMER_REGISTRY），每条消费路径带
- * file + grep-marker 证据。脚本对每条声明做**源码反查**：marker 在 file 里仍命中
- * 才算「消费路径还活着」。若某消费路径的 file 不存在或 marker 不再命中（消费代码
- * 被删/改名），脚本报 STALE——registry 与实现漂移被抓到，避免「以为某 type 有消费
- * 其实代码早删了」的假阳性。这与 sibling audit（audit-schema / audit-draft-status）
- * 的「声明 + 反查」治理形态同构。
- *
- * 用法：
- *   pnpm audit:relations          # 死边报告（report-only，见 OWNER-DECISION 注）
- *   pnpm audit:relations --json   # JSON 输出
- *   pnpm audit:relations --strict # 有死边或 stale 即非零 exit（CI gate 模式）
- *
- * ── OWNER-DECISION-PENDING ─────────────────────────────────────────────
- *
- * (1) gate 严格度：默认 **report-only**（exit 0 即使有死边）。gap-analysis 决策 7
- *     标「低优先 / 纯治理」，gate doc §1.7 标「→ Linear follow-up」（非硬 gate）。
- *     故默认只报告、不进 pre-PR 硬链；--strict 留给 owner 决定是否升级为 CI gate。
- *     备选：直接进 `pnpm test` 链当硬 gate（像 audit:draft-status）。
- *
- * (2) 「死」的判据：本脚本取「零 specialized 消费」为死（generic-read 不算救活）。
- *     这忠于 GPT §10.1「只保留能影响诊断/推荐/复习的关系」——泛化一把捞不构成
- *     type-specific 学习影响。备选更宽松判据「有 generic-read 即不算死」会让所有
- *     核心 type 都活着（knowledge-readers 一把捞所有 type），审计退化为永远全绿、
- *     失去诊断价值。本脚本同时报告三层，owner 可据此重定判据。
- *
- * 限制：CONSUMER_REGISTRY 是人维护的——新增「按 relation_type 分支」的消费路径时，
- * 须在 registry 补一条（否则该 type 可能被误报死）。反查只防「声明的路径消失」，
- * 不能自动发现「未声明的新消费路径」。这是与 sibling audit 同源的已知 shape 限制。
+ * Limitation: the registry only catches declared paths that vanished. It cannot discover a new
+ * type-specific consumer that was never declared.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -73,13 +28,9 @@ const SRC_ROOT = join(REPO_ROOT, 'src');
 
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.claude', 'drizzle']);
 
-// ---------- relation_type universe ----------
-//
-// 5 个核心 relation_type（ADR-0010 §relation_type 核心集合，与
-// src/core/schema/event/blocks.ts CoreRelationType 枚举一致）。experimental:* 是
-// 命名空间逃逸阀（按 ADR-0006 v2 先跑稳再 promote），不是固定 type——不在死边枚举
-// 里逐条审计（它本就是「探索性、未稳」的，缺消费是预期），但脚本会统计 schema
-// 里实际出现的 experimental:* 前缀作可观测。
+// The 5 core relation types (ADR-0010, matching CoreRelationType). experimental:* is an escape
+// namespace for unproven types; it is reported for observability but not audited as a dead edge,
+// because lacking consumers there is expected while it is still exploratory.
 export const CORE_RELATION_TYPES = [
   'prerequisite',
   'related_to',
@@ -89,14 +40,9 @@ export const CORE_RELATION_TYPES = [
 ] as const;
 export type CoreRelationType = (typeof CORE_RELATION_TYPES)[number];
 
-// YUK-533 — the HETEROGENEOUS misconception_edge relation universe (ADR-0036, distinct
-// from the homogeneous knowledge_edge CORE set above). The vocabulary is IMPORTED from
-// src/core/schema/misconception-edge.ts (CANONICAL_MISCONCEPTION_RELATIONS) as the SINGLE
-// SOURCE OF TRUTH — no hand-copy here, so the audit universe can never silently drift from
-// the schema's canonical relation set. Added so the dead-edge reverse-audit covers
-// misconception_edge too (it was previously OUT of the audit universe — confusable_with was
-// NOT being flagged either way). Run as a SEPARATE verdict pass (computeDeadEdges accepts
-// the universe), so the knowledge_edge audit shape is unchanged.
+// Heterogeneous misconception_edge relation universe (ADR-0036), separate from the homogeneous
+// knowledge_edge set above. Import the vocabulary from the schema as the single source of truth so
+// the audit cannot drift. Run as its own verdict pass; the knowledge_edge shape stays unchanged.
 export const MISCONCEPTION_RELATION_TYPES = CANONICAL_MISCONCEPTION_RELATIONS;
 export type MisconceptionRelationType = (typeof MISCONCEPTION_RELATION_TYPES)[number];
 
@@ -108,9 +54,8 @@ export type AuditRelationType = CoreRelationType | MisconceptionRelationType;
 export type ConsumerTier = 'creation-validation' | 'generic-read' | 'specialized';
 
 /**
- * 下游消费路径的辨别力。dead-edge 判据只看 specialized：
- *   - specialized > generic-read > creation-validation（按是否「按 type 差异化
- *     影响学习」）
+ * How specifically a downstream path consumes an edge type. Only `specialized` keeps a type
+ * alive: it branches on the relation type and changes learning behavior.
  */
 export const TIER_RANK: Record<ConsumerTier, number> = {
   'creation-validation': 0,
@@ -119,8 +64,8 @@ export const TIER_RANK: Record<ConsumerTier, number> = {
 };
 
 /**
- * 一条声明式消费路径：哪个 relation_type、在哪个文件、用哪个 grep marker 反查、
- * 属于哪个消费层、归到诊断/推荐/复习哪个产品维度（surface），以及一句话证据。
+ * One declared consumer path: relation type, source file, grep marker for the reverse-check,
+ * consumption tier, learning surface, and a one-line evidence note.
  */
 export type ConsumerEntry = {
   relation: AuditRelationType;
@@ -134,23 +79,7 @@ export type ConsumerEntry = {
   evidence: string;
 };
 
-// ── CONSUMER_REGISTRY — 手维护，每条带 file:marker 反查证据 ──────────────────
-//
-// grounding（cite file:line，2026-06-19 实测于 origin/main）：
-//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:84 loadEdges() 无 relationTypes 过滤
-//     ⇒ get_knowledge_neighborhood / find_knowledge_paths 把**所有** type 一把灌给
-//     copilot（诊断/推荐上下文）。generic-read，覆盖全 5 type。
-//   - src/capabilities/knowledge/server/tools/knowledge-readers.ts:829 paths 工具对 related_to /
-//     contrasts_with 加反向邻接（双向语义）⇒ 这两 type 的 specialized 路径消费。
-//   - src/core/topology-gate.ts:52 ORDERED_RELATION =
-//     'prerequisite'，环/传递冗余检测**仅**对 prerequisite ⇒ prerequisite specialized。
-//   - src/capabilities/knowledge/server/hub-mesh.ts:63 RELATION_PRIORITY +
-//     :72 EXCLUDED_RELATIONS。笔记 hub 自动同步按 prerequisite/derived_from/
-//     contrasts_with 组装上下文，**显式排除** related_to / applied_in（rule iv）
-//     ⇒ 这三 type specialized（复习/笔记上下文）。
-//   - src/capabilities/knowledge/server/rubric-validator.ts:280 relationGate() 5 路
-//     case（prerequisite/contrasts_with/applied_in/related_to + derived_from）⇒ 全
-//     5 type 都有 creation-validation（提议时校验，非下游学习消费）。
+// ── CONSUMER_REGISTRY — hand-maintained; each entry carries its own file:marker evidence ─────
 const CONSUMER_REGISTRY: ConsumerEntry[] = [
   // ---- generic-read: copilot 邻域/路径一把灌（覆盖全 5 core type）----
   ...CORE_RELATION_TYPES.map(
@@ -179,7 +108,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'prerequisite'",
     surface: 'review',
     evidence:
@@ -201,7 +130,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'contrasts_with',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'contrasts_with'",
     surface: 'review',
     evidence:
@@ -220,7 +149,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'derived_from',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/hub-mesh.ts',
+    file: 'src/capabilities/notes/server/hub-curation.ts',
     marker: "'derived_from'",
     surface: 'review',
     evidence:
@@ -285,31 +214,16 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
   ),
 
   // NOTE: applied_in 故意**无** specialized 条目——这是预期的死边候选。grounding：
-  //   hub-mesh.ts:72 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
+  //   src/capabilities/notes/server/hub-curation.ts:35 EXCLUDED_RELATIONS 显式排除 applied_in；topology-gate 仅
   //   prerequisite；knowledge-readers paths 反向邻接仅 related_to/contrasts_with。
   //   applied_in 只被 generic-read 一把捞 + creation-validation 校验，零特化学习消费。
 ];
 
-// ── MISCONCEPTION_CONSUMER_REGISTRY (YUK-533) — misconception_edge consumers ──────────
+// ── MISCONCEPTION_CONSUMER_REGISTRY — same declarative file:marker shape for misconception_edge ──
 //
-// Same declarative-registry + file:marker reverse-check shape as CONSUMER_REGISTRY, for the
-// HETEROGENEOUS misconception_edge universe (caused_by / confusable_with / observed_in).
-// Run through computeDeadEdges with MISCONCEPTION_RELATION_TYPES as the universe.
-//
-// grounding (cite file:marker):
-//   - caused_by → SPECIALIZED. misconception-read.ts:loadConfirmed joins active
-//     misconceptions to a KC by the `caused_by` edge (relation_type-specific), driving the
-//     per-KC「指向此点的误区」funnel (A5 knowledge explorer). LIVE today.
-//   - confusable_with → SPECIALIZED. misconception-confusable-read.ts:loadConfusablePairs
-//     reads `confusable_with` edges by type → confusable-contrast-discovery.ts emits
-//     contrast-item supply targets. DARK-SHIP (CONFUSABLE_CONTRAST_ENABLED default OFF) but
-//     the type-specific read is WIRED-IN-SOURCE, so it is LIVE-in-code — exactly the
-//     precedent the A5/A6 mastery-projection entries (state.ts, dark behind GRAPH_LAPLACIAN_
-//     ENABLED / PREREQ_PROPAGATION_ENABLED) set in CONSUMER_REGISTRY above.
-//   - observed_in → NO specialized consumer. It is a provenance evidence-pointer
-//     (misconception → event); nothing reads it by type to differentiate learning. So it is
-//     the misconception-universe's INTENTIONAL dead-edge candidate — analogous to applied_in
-//     in the knowledge universe. (No entry ⇒ verdict DEAD/maxTier=none, report-only.)
+// caused_by and confusable_with have type-specific readers. observed_in has none: it is a
+// provenance evidence pointer, so it is this universe's intentional dead-edge candidate (like
+// applied_in above).
 const MISCONCEPTION_CONSUMER_REGISTRY: ConsumerEntry[] = [
   {
     relation: 'caused_by',
@@ -344,10 +258,7 @@ export function walkSource(root: string, out: string[] = []): string[] {
     } else if (
       entry.isFile() &&
       (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
-      // Mirror scripts/audit-draft-status.ts:132-134 walkSource EXACTLY: skip test
-      // files so the experimental-relations "wired in source" report reflects only
-      // production wiring — a relation_type that exists only in a *.test.ts fixture
-      // must not show up as a false "wired" positive (Cursor Bugbot LOW, PR #492).
+      // Skip tests so a relation type that exists only in a fixture cannot look wired in source.
       !entry.name.endsWith('.test.ts') &&
       !entry.name.endsWith('.test.tsx') &&
       !entry.name.endsWith('.d.ts')
@@ -362,11 +273,8 @@ export function walkSource(root: string, out: string[] = []): string[] {
 export type StaleConsumer = ConsumerEntry & { problem: 'file-missing' | 'marker-missing' };
 
 /**
- * Reverse-check every declared consumer: its file must exist AND its marker must
- * still appear in that file. Returns the stale entries (drift between registry and
- * code). `readFile` is injectable for unit testing without touching disk.
- *
- * Exported pure for unit testing.
+ * Reverse-check every declared consumer: its file must exist and its marker must still appear.
+ * Returns the stale entries (registry ↔ code drift). `readFile` is injectable. Pure.
  */
 export function reverseCheckConsumers(
   registry: ConsumerEntry[],
@@ -413,14 +321,9 @@ export type DeadEdgeResult = {
 };
 
 /**
- * Core verdict: per relation_type, compute the highest LIVE consumer tier (stale
- * entries are dropped — a declared-but-vanished consumer does NOT keep an edge
- * alive). A type is "dead" when it has no live `specialized` consumer. Exported
- * pure for unit testing.
- *
- * `relationTypes` is the universe to render verdicts over — defaults to the
- * knowledge_edge CORE set (back-compat); pass MISCONCEPTION_RELATION_TYPES (YUK-533) to
- * audit the heterogeneous misconception_edge universe with the SAME logic.
+ * Core verdict: per relation type, the highest LIVE consumer tier. Stale declarations are
+ * dropped, so a declared-but-vanished consumer does not keep a type alive. A type is dead when it
+ * has no live specialized consumer. `relationTypes` is the universe to render. Pure.
  */
 export function computeDeadEdges(
   registry: ConsumerEntry[],
@@ -462,15 +365,9 @@ export type UniverseAudit = {
 };
 
 /**
- * Run the dead-edge reverse-audit over BOTH universes (knowledge_edge + misconception_edge)
- * with PER-UNIVERSE stale scoping.
- *
- * YUK-533 fix — stale MUST be reverse-checked per registry, NOT once over the combined
- * registry: `DeadEdgeResult.ok = dead.length === 0 && stale.length === 0`, so feeding a
- * COMBINED stale list into both universes lets a stale marker in ONE universe drag the
- * OTHER universe's `ok` to false (cross-universe contamination). Each universe now gets
- * ONLY its own registry's stale, so `knowledge.ok` / `misconception.ok` each reflect solely
- * their own universe. Exported pure for unit testing.
+ * Run the audit over both universes with per-universe stale scoping. Stale must be checked per
+ * registry: a combined list would let a stale marker in one universe drag the other's `ok` to
+ * false. Pure.
  */
 export function auditBothUniverses(
   knowledgeRegistry: ConsumerEntry[],
@@ -491,20 +388,12 @@ export function auditBothUniverses(
 }
 
 /**
- * Scan source for `experimental:*` relation_type literals actually wired in
- * (observability only — experimental edges are exempt from the dead-edge gate by
- * design, they are explorations expected to lack specialized consumers).
+ * Scan source for `experimental:*` relation types actually wired in. Observability only: these
+ * are exempt from the dead-edge gate by design.
  *
- * IMPORTANT — relation_type vs event-name disambiguation: the `experimental:`
- * namespace is shared by BOTH knowledge_edge relation_types (ADR-0010, e.g.
- * `experimental:contrasts_register`) AND the event-schema's experimental EVENT
- * NAMES (e.g. `experimental:quiz_gen`, `experimental:knowledge_propose`). A flat
- * tree scan can't tell them apart and would drown the report in event names. So
- * we only count an `experimental:*` literal when its LINE also references a
- * relation_type context (`relation_type` / `new_relation_type` / `RelationType`).
- * This is a heuristic — it can miss an experimental relation declared far from any
- * relation_type token — but it eliminates the event-name false positives that make
- * the observability output useless.
+ * `experimental:` is shared by relation types and event names, so a flat scan would drown in
+ * event names. Count a literal only when its line also has a relation_type context. This is a
+ * heuristic: it can miss a relation declared far from any relation_type token.
  */
 export function findExperimentalRelations(
   files: string[],
@@ -515,8 +404,7 @@ export function findExperimentalRelations(
   for (const file of files) {
     const src = readFile(file);
     if (!src.includes('experimental:')) continue;
-    // Per-line scope: the literal counts only if its line also names a
-    // relation_type context (filters out experimental:* event names).
+    // Count the literal only when its line names a relation_type context, to drop event names.
     for (const line of src.split('\n')) {
       if (!line.includes('experimental:')) continue;
       if (!/relation_type|relationType|RelationType/.test(line)) continue;
@@ -567,10 +455,7 @@ function printUniverse(label: string, result: DeadEdgeResult): void {
 }
 
 function main(): void {
-  // YUK-533 — reverse-check + dead-edge over BOTH universes (knowledge_edge + the
-  // heterogeneous misconception_edge). Stale is reverse-checked PER registry so a stale
-  // marker in one universe never drags the other universe's `ok` to false; `stale` here is
-  // the combined list purely for the single shared drift-report section below.
+  // Stale is per registry; the combined list only feeds the shared drift-report section.
   const {
     knowledge: knowledgeResult,
     misconception: misconceptionResult,
@@ -624,13 +509,11 @@ function main(): void {
     );
   }
 
-  // OWNER-DECISION-PENDING (1): default report-only; --strict opts into a CI gate.
+  // Default report-only; --strict opts into a CI gate.
   if (isStrict && !(knowledgeResult.ok && misconceptionResult.ok)) process.exit(1);
 }
 
-// CLI-gate (mirrors audit-test-partition.ts / audit-draft-status.ts): only run +
-// exit when invoked as a CLI so the self-test can import the pure functions without
-// the top-level scan firing.
+// CLI-gate: only run when invoked directly, so importing the pure functions scans nothing.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

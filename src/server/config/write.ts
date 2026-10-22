@@ -31,7 +31,8 @@ import { type Db, type Tx, db as defaultDb } from '@/db/client';
 import { system_config, system_config_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { nativePiModel, piProviderId } from '@/server/ai/pi-provider-catalog';
+import { createLoomPiModels } from '@/server/ai/pi-models';
+import { piProviderId } from '@/server/ai/pi-provider-catalog';
 import { PROVIDER_ATTEMPT_ADMISSION_LANES } from '@/server/ai/provider-attempt-admission-config';
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
@@ -67,6 +68,20 @@ function validateEntryBasics(key: string, value: ConfigValue): void {
     );
   }
   validateStaticSemantics(key, parsed.data as ConfigValue);
+}
+
+/** YUK-1557 — undefined preserves an existing expiry; null clears it; a string sets a future stop. */
+function parseExpiresAt(expiresAt: string | null | undefined): Date | null | undefined {
+  if (expiresAt === undefined) return undefined;
+  if (expiresAt === null) return null;
+  const parsed = new Date(expiresAt);
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new ApiError('invalid_config_expiry', `invalid expires_at '${expiresAt}'`, 422);
+  }
+  if (parsed.getTime() <= Date.now()) {
+    throw new ApiError('invalid_config_expiry', 'expires_at must be in the future', 422);
+  }
+  return parsed;
 }
 
 /** Set and reset share the same registered, live keyspace. */
@@ -287,6 +302,33 @@ async function validateFinalProviderPairs(
     }
   }
   if (scopes.size === 0) return;
+  const models = await createLoomPiModels();
+  function validateNativeModel(
+    label: string,
+    provider: Provider,
+    model: string,
+    taskKind?: TaskKind,
+  ): void {
+    // The adapter uses this same lookup, including template presence and required catalog facts.
+    if (!models.getModel(piProviderId(provider), model)) {
+      throw new ApiError(
+        'invalid_config_value',
+        `${label}: model '${model}' is not executable in native pi provider '${piProviderId(provider)}': protocol or required catalog facts are unavailable`,
+        422,
+      );
+    }
+    if (taskKind) {
+      try {
+        assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
+      } catch (error) {
+        throw new ApiError(
+          'invalid_config_value',
+          error instanceof Error ? error.message : 'Incompatible task/model',
+          422,
+        );
+      }
+    }
+  }
   const solveTasks = ['SolutionGenerateTask', 'SolutionGenerateVisionTask'] as const;
   const visionTasks = VISION_JUDGE_TASK_KINDS;
   if (
@@ -487,33 +529,6 @@ async function validateFinalProviderPairs(
   }
 }
 
-/** Native membership and capability checks apply equally to task and global writes. */
-function validateNativeModel(
-  label: string,
-  provider: Provider,
-  model: string,
-  taskKind?: TaskKind,
-): void {
-  if (!nativePiModel(provider, model)) {
-    throw new ApiError(
-      'invalid_config_value',
-      `${label}: model '${model}' is not in native pi provider '${piProviderId(provider)}'`,
-      422,
-    );
-  }
-  if (taskKind) {
-    try {
-      assertModelProfileCapabilityFit(tasks[taskKind], provider, model);
-    } catch (error) {
-      throw new ApiError(
-        'invalid_config_value',
-        error instanceof Error ? error.message : 'Incompatible task/model',
-        422,
-      );
-    }
-  }
-}
-
 export interface ConfigWriteOptions {
   actor: ConfigActor;
   note?: string;
@@ -572,13 +587,19 @@ export async function mutateConfigs(
   if (mutations.length === 0) return [];
   const seen = new Set<string>();
   const touchedPairs = new Map<string, PairScope>();
+  const parsedExpiry = new Map<string, Date | null | undefined>();
   for (const mutation of mutations) {
     if (seen.has(mutation.key)) {
       throw new ApiError('duplicate_config_key', `duplicate config key '${mutation.key}'`, 400);
     }
     seen.add(mutation.key);
-    if (mutation.action === 'set') validateEntryBasics(mutation.key, mutation.value);
-    else validateWritableKey(mutation.key);
+    if (mutation.action === 'set') {
+      validateEntryBasics(mutation.key, mutation.value);
+      parsedExpiry.set(mutation.key, parseExpiresAt(mutation.expiresAt));
+    } else {
+      validateWritableKey(mutation.key);
+      parsedExpiry.set(mutation.key, null);
+    }
     const scope = pairScopeFor(mutation.key);
     if (scope) touchedPairs.set(scope.providerKey, scope);
   }
@@ -602,6 +623,8 @@ export async function mutateConfigs(
       const maxRevision = Number(maxRows[0]?.revision ?? 0);
       const revision =
         Math.max(Number.isFinite(maxRevision) ? maxRevision : 0, prevRow?.revision ?? 0) + 1;
+      const expiry = parsedExpiry.get(key);
+      const nextExpiresAt = expiry === undefined ? (prevRow?.expires_at ?? null) : expiry;
       if (mutation.action === 'clear') {
         if (prevRow) await tx.delete(system_config).where(eq(system_config.key, key));
       } else if (prevRow) {
@@ -611,6 +634,7 @@ export async function mutateConfigs(
             value: mutation.value,
             revision,
             source_note: opts.note ?? prevRow.source_note,
+            expires_at: nextExpiresAt,
             updated_by: opts.actor,
             updated_at: now,
           })
@@ -621,6 +645,7 @@ export async function mutateConfigs(
           value: mutation.value,
           revision,
           source_note: opts.note ?? null,
+          expires_at: nextExpiresAt,
           updated_by: opts.actor,
           created_at: now,
           updated_at: now,
@@ -635,6 +660,9 @@ export async function mutateConfigs(
         payload: {
           prev: prevRow?.value ?? null,
           next: mutation.action === 'set' ? mutation.value : null,
+          prev_expires_at: prevRow?.expires_at?.toISOString() ?? null,
+          next_expires_at:
+            mutation.action === 'set' ? (nextExpiresAt?.toISOString() ?? null) : null,
           note: opts.note ?? null,
         },
       });

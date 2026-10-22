@@ -27,6 +27,13 @@ import {
   BackupImportResponseSchema,
 } from './api/backup-contracts';
 import {
+  CustomProviderDeleteResponseSchema,
+  CustomProviderParamsSchema,
+  CustomProviderPutBodySchema,
+  CustomProviderWriteResponseSchema,
+  CustomProvidersListResponseSchema,
+} from './api/custom-providers-contracts';
+import {
   CalibrationMaturityResponseSchema,
   ConjectureScoresResponseSchema,
   CoverageLatticeResponseSchema,
@@ -42,6 +49,7 @@ import {
   JobEventParamsSchema,
   JobEventStreamResponseSchema,
 } from './api/event-contracts';
+import { HarnessScoreboardResponseSchema } from './api/harness-scoreboard-contracts';
 import {
   AdminSubjectParamsSchema,
   AdminSubjectSchema,
@@ -485,6 +493,15 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-config').then((m) => m.GET),
       },
       {
+        method: 'GET',
+        path: '/api/admin/harness-scoreboard',
+        operationId: 'getHarnessScoreboard',
+        responses: { 200: HarnessScoreboardResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/harness-scoreboard').then((m) => m.GET),
+      },
+      {
         method: 'PATCH',
         path: '/api/admin/config',
         operationId: 'writeAdminConfig',
@@ -509,6 +526,50 @@ export const observabilityCapability = defineCapability({
         },
         successStatus: 200,
         load: () => import('./api/admin-config-write').then((m) => m.RESET),
+      },
+      // YUK-1563 part 4 — custom provider CRUD（配置面，服务端+API only；UI 由
+      // 另一条线接）。写路径经组合根注入的 ops（server/ai/custom-providers.ts
+      // 真相源）：凭据只收 env 变量名，值不进库不进日志；PUT 后触发一次不含
+      // 付费探针的目录刷新（自定义 provider 只有 /models 这类不计费读取）。
+      {
+        method: 'GET',
+        path: '/api/admin/custom-providers',
+        operationId: 'listCustomProviders',
+        request: {},
+        responses: {
+          200: CustomProvidersListResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/custom-providers').then((m) => m.GET),
+      },
+      {
+        method: 'PUT',
+        path: '/api/admin/custom-providers/[id]',
+        operationId: 'putCustomProvider',
+        request: { params: CustomProviderParamsSchema, body: CustomProviderPutBodySchema },
+        responses: {
+          200: CustomProviderWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/custom-providers').then((m) => m.PUT),
+      },
+      {
+        method: 'DELETE',
+        path: '/api/admin/custom-providers/[id]',
+        operationId: 'deleteCustomProvider',
+        request: { params: CustomProviderParamsSchema },
+        responses: {
+          200: CustomProviderDeleteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/custom-providers').then((m) => m.DELETE),
       },
     ],
   },
@@ -562,6 +623,22 @@ export const observabilityCapability = defineCapability({
         load: () =>
           import('@/server/boss/handlers/ai_task_run_reconcile').then(
             (m) => m.buildAiTaskRunReconcileHandler,
+          ),
+      },
+      // YUK-1557 / ADR-0075 C6-2 — zero-AI daily harness scoreboard projection.
+      // 05:10 sits after the night chain and before the morning reader traffic.
+      {
+        name: 'harness_scoreboard_daily',
+        schedule: {
+          cron: '10 5 * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'harness_scoreboard_daily',
+          singletonSeconds: 21_600,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/harness_scoreboard_daily').then(
+            (m) => m.buildHarnessScoreboardDailyHandler,
           ),
       },
     ],

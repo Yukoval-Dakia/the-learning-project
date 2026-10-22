@@ -26,10 +26,10 @@ export {
 
 // ---------- 业务 enum ----------
 
-// YUK-386 (kind 收编收尾) — `question.kind` 不再是闭集权威：它是一个自由文本的
-// 「题面展示标签」。行为分支一律读 answer_class / 结构信号（choices_md /
-// structured / parent_question_id），绝不读 kind 的闭集成员资格。schema 层只
-// 要求非空字符串；KNOWN_QUESTION_KIND_IDS 是系统已知的惯用标签集合（UI 建议、
+// `question.kind` 不再是闭集权威：它是一个自由文本的「题面展示标签」。行为
+// 分支一律读 answer_class / 结构信号（choices_md / structured /
+// parent_question_id），绝不读 kind 的闭集成员资格。schema 层只要求非空
+// 字符串；KNOWN_QUESTION_KIND_IDS 是系统已知的惯用标签集合（UI 建议、
 // 词表折叠、旋转分类的识别面），不是 gate——集合之外的标签照样合法落库。
 export const QuestionKind = z.string().min(1);
 
@@ -46,14 +46,12 @@ export const KNOWN_QUESTION_KIND_IDS = [
   'computation',
   'reading',
   'translation',
-  // M2.1 (2026-05-22): math derivation — vision-aware steps@1 judge target.
-  // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
+  // math derivation — vision-aware steps@1 judge target.
   'derivation',
 ] as const;
 
-// UI suggestion list for the manual / vision pickers (YUK-387 Step 0
-// consolidation; YUK-386: kind is a free-form label, so this list SUGGESTS —
-// it never gates a write or read).
+// UI suggestion list for the manual / vision pickers. Kind is a free-form
+// label, so this list SUGGESTS — it never gates a write or read.
 //
 // DELIBERATELY 8 values, NOT the full 9-label KNOWN_QUESTION_KIND_IDS list:
 // 'derivation' is a vision/judge-only kind and was never offered in the manual
@@ -83,19 +81,17 @@ export const QuestionSource = z.enum([
   'reverse_mark',
   'mistake_variant',
   'teaching_check',
-  // Search-grounded QuizGen wave (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
-  // §2). Zod-enum addition only — no DDL ALTER (the question.source column is text).
+  // Search-grounded QuizGen. Zod-enum addition only — no DDL ALTER
+  // (the question.source column is text).
   'quiz_gen',
-  // YUK-216 S2 (题源扩展 Strategy D) — tier 2 "sourced" questions fetched from
-  // the web by SourcingTask. Zero-DDL Zod-enum addition (same手法 as 'quiz_gen'
-  // above; question.source is a text column). provenance lives in
-  // metadata.web_sourced (see src/core/schema/provenance.ts WebSourcedProvenance).
-  // docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §2.1.
+  // Tier 2 "sourced" questions fetched from the web by SourcingTask.
+  // Zero-DDL Zod-enum addition (same as 'quiz_gen' above; question.source is
+  // a text column). Provenance lives in metadata.web_sourced
+  // (src/core/schema/provenance.ts WebSourcedProvenance).
   'web_sourced',
-  // ADR-0031 / YUK-304 (quiz C→A, lane B) — copilot-authored draft question
-  // (author_question seed_mode='knowledge'|'material' → QuestionAuthorTask →
-  // question_draft proposal; accept promotes draft→active). Zero-DDL Zod-enum
-  // addition (same手法 as 'quiz_gen'/'web_sourced'; question.source is text).
+  // Copilot-authored draft question (author_question seed → question_draft
+  // proposal; accept promotes draft→active). Zero-DDL Zod-enum addition
+  // (question.source is text).
   'copilot_authored',
 ]);
 
@@ -122,15 +118,15 @@ export const LearningItemStatus = z.enum([
 
 // A learning item is open to practice/supply while it has not started yet or is actively being
 // worked. Keep this subset next to the full lifecycle enum so consumers cannot invent statuses
-// (YUK-604: three readers used the non-existent `active` literal and skipped every genesis row).
+// (three readers once used the non-existent `active` literal and skipped every genesis row).
 export const LearningItemOpenStatus = z.enum(['pending', 'in_progress']);
 
-// YUK-1009 — learner-declared curriculum stage (学段), the canonical vocabulary persisted on
-// `goal.declared_stage`. Declared at onboarding (WelcomePage Q1) as a CURRICULUM/scope
-// constraint only — it is NEVER an ability/θ̂ input (placement probes measure ability; the
-// stage only constrains which material sources are relevant, e.g. the jyeoo grade-route
-// corpus covering 高中 grades 10-12). `custom` = learner's stage is none of the standard
-// bands — consumers that cannot map it must treat the item as UNCONSTRAINED, not guess.
+// Learner-declared curriculum stage (学段), the canonical vocabulary persisted on
+// `goal.declared_stage`. Declared at onboarding as a CURRICULUM/scope constraint
+// only — it is NEVER an ability/θ̂ input (placement probes measure ability; the
+// stage only constrains which material sources are relevant). `custom` = learner's
+// stage is none of the standard bands — consumers that cannot map it must treat
+// the item as UNCONSTRAINED, not guess.
 export const DeclaredStage = z.enum(['middle_school', 'high_school', 'university', 'custom']);
 export type DeclaredStageT = z.infer<typeof DeclaredStage>;
 
@@ -170,9 +166,9 @@ export const LearningRecordProcessingStatus = z.enum(['raw', 'linked', 'actioned
 
 export const MemoryBriefScopeKey = z.string().regex(/^(global|subject:[a-zA-Z0-9_-]+)$/);
 
-// ADR-0033 D1 (YUK-306) — 'interactive': agent-generated interactive content
-// (Claude Artifacts pattern). Semantic kind; format lives in attrs (html for
-// now). Self-contained + OPAQUE to the note block-tree mesh — body_blocks stays
+// 'interactive' (ADR-0033 D1): agent-generated interactive content (Claude
+// Artifacts pattern). Semantic kind; format lives in attrs (html for now).
+// Self-contained + OPAQUE to the note block-tree mesh — body_blocks stays
 // null (tool_quiz precedent), no cross_link/embedded_check participation.
 // Reference, not practice: no FSRS / tool_state. Pure additive enum, no DDL
 // (artifact.type is a text column).
@@ -209,23 +205,23 @@ export const IngestionSessionStatus = z.enum([
   'failed',
 ]);
 
-// YUK-258: 'docx' entrypoint. The VISUAL line reuses initiateUpload+enqueueExtraction
-// with this entrypoint (page images feed tencent_ocr_extract); the TEXT line uses
-// the dedicated docx-ingestion owner and never reaches initiateUpload.
+// 'docx' entrypoint. The VISUAL line reuses initiateUpload+enqueueExtraction
+// with this entrypoint (page images feed tencent_ocr_extract); the TEXT line
+// uses the dedicated docx-ingestion owner and never reaches initiateUpload.
 export const IngestionEntrypoint = z.enum(['vision_single', 'vision_paper', 'docx']);
 
-// T-OC A2 (YUK-164, D1=C): `auto_enrolled` is a terminal-but-revertible state
-// distinct from human `imported` — set by the WorkflowJudge enroll path
-// (generated_by='workflow_judge'), revertible back to `draft` via OC-5.
-// draft → imported (human) | ignored (dismiss) | auto_enrolled (AI); auto_enrolled → draft (revert).
+// `auto_enrolled` is a terminal-but-revertible state distinct from human
+// `imported` — set by the WorkflowJudge enroll path, revertible back to
+// `draft`. draft → imported (human) | ignored (dismiss) | auto_enrolled (AI);
+// auto_enrolled → draft (revert).
 export const QuestionBlockStatus = z.enum(['draft', 'imported', 'ignored', 'auto_enrolled']);
 
 export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation']);
 
 export const VisualComplexity = z.enum(['low', 'medium', 'high']);
 
-// YUK-374 — 'rubric' / 'ai_flexible' are JudgeKind-space members with NO runner:
-// they parse (so an explicit judge_kind_override fails loudly as `unsupported`
+// 'rubric' / 'ai_flexible' are JudgeKind-space members with NO runner: they
+// parse (so an explicit judge_kind_override fails loudly as `unsupported`
 // instead of silently re-routing) but are not dispatchable. Runnable set =
 // RUNNABLE_ROUTES; declared-but-unimplemented set = UNIMPLEMENTED_JUDGE_ROUTES
 // (capabilities/practice/server/judge/question-contract.ts).
@@ -252,10 +248,9 @@ export const DreamingProposalKind = z.enum([
 
 // ---------- JSON 内层 schema ----------
 
-// M2.2 (2026-05-22): reference_solution for steps@1 judge.
-// expected_signals: 步骤应当体现的核心信号；final_answer: 标答；
-// answer_equivalents: 学生打字提交时加速比对的等价表达。
-// See src/core/capability/judges/steps.ts (StepsReferenceSolution).
+// reference_solution for steps@1 judge. expected_signals: 步骤应当体现的核心
+// 信号；final_answer: 标答；answer_equivalents: 学生打字提交时加速比对的等价
+// 表达（见 src/core/capability/judges/steps.ts）。
 export const RubricReferenceSolution = z.object({
   expected_signals: z.array(z.string().min(1)).min(1),
   final_answer: z.string().min(1),
@@ -364,9 +359,8 @@ export const NoteVerificationResult = z.object({
 });
 export type NoteVerificationResultT = z.infer<typeof NoteVerificationResult>;
 
-// YUK-17 / ADR-0018 — VariantVerifyTask second-pass output.
-// Used by `runVariantVerify` to decide whether to flip
-// `mistake_variant.status` from 'active' to 'broken'.
+// VariantVerifyTask second-pass output. Used by `runVariantVerify` to decide
+// whether to flip `mistake_variant.status` from 'active' to 'broken'.
 export const VariantVerificationResult = z.object({
   verdict: z.enum(['pass', 'fail']),
   failure_reasons: z.array(z.string().min(1).max(500)).max(10).default([]),
@@ -378,7 +372,7 @@ export type VariantVerificationResultT = z.infer<typeof VariantVerificationResul
 
 // ---------- Conjecture v3: grounded hypothesis → authored probes → independent review ----------
 //
-// YUK-821 separates two responsibilities that used to be conflated in one model sample:
+// Separates two responsibilities that used to be conflated in one model sample:
 // 1. MindModelInductionTask emits ONLY a claim plus a frozen DiagnosticSpec.
 // 2. ConjectureProbeAuthorTask authors a pair against that frozen spec.
 // 3. ConjectureProbeReviewTask independently reviews the complete pair.
@@ -1155,30 +1149,29 @@ export type ConjectureDraftT = z.infer<typeof ConjectureDraft>;
 
 // ---------- ToolState (tool_quiz artifact.tool_state) ----------
 //
-// U5 (YUK-203) ToolStateT v2 — additive `sections?` variant promoted to a
-// first-class shape (CO §5.1). NOT a discriminatedUnion('version'): the flat
-// `question_ids[]` form must coexist on the SAME artifact for embedded_check +
-// legacy quizzes, so a discriminator would break back-compat over the artifact
-// scan window. `sections?` optional is purely additive — every existing flat
-// quiz row (and every U4 row whose plan lives in `session_meta`) still parses
-// with `sections === undefined`.
+// ToolStateT v2 — additive `sections?` variant promoted to a first-class
+// shape. NOT a discriminatedUnion('version'): the flat `question_ids[]` form
+// must coexist on the SAME artifact for embedded_check + legacy quizzes, so a
+// discriminator would break back-compat over the artifact scan window.
+// `sections?` optional is purely additive — every existing flat quiz row (and
+// every row whose plan lives in `session_meta`) still parses with
+// `sections === undefined`.
 //
-// RL4: tool_state is jsonb, opaque to `pnpm audit:schema`. The load-bearing
-// guard is the Zod parse barrier exercised at every write point (write_review_
-// plan + the U5 paper submit/adaptation paths); Artifact.parse() referencing
-// this schema is defense-in-depth on read.
+// tool_state is jsonb, opaque to `pnpm audit:schema`. The load-bearing guard
+// is the Zod parse barrier exercised at every write point; Artifact.parse()
+// referencing this schema is defense-in-depth on read.
 
 export const ToolStateAssignment = z.object({
   question_id: z.string(),
-  // StructuredQuestion.id of the part this assignment targets (CO §2.2);
+  // StructuredQuestion.id of the part this assignment targets;
   // null/undefined for atomic questions (the whole question is one slot).
   part_ref: z.string().optional(),
   primary_knowledge_id: z.string(),
   secondary_knowledge_ids: z.array(z.string()).default([]),
   selection_reason: z.string(),
   // Snapshot blob of the review profile state at selection time. Narrow later
-  // once the shape stabilizes (CO §5.1); kept open so producers don't fork the
-  // schema per snapshot key.
+  // once the shape stabilizes; kept open so producers don't fork the schema
+  // per snapshot key.
   review_profile_snapshot: z.record(z.string(), z.unknown()),
 });
 export type ToolStateAssignmentT = z.infer<typeof ToolStateAssignment>;
@@ -1189,8 +1182,7 @@ export const ToolStateSection = z.object({
   // The U5 paper submit handler treats EXACTLY 'judge_now_show_later' as the
   // visible_to_user:false trigger (judge runs now, feedback buffered until the
   // paper completes); every other value (incl. the default 'immediate' / unset)
-  // → immediate-visible. See src/capabilities/practice/server/paper-submit.ts
-  // (§4.6 critic #5).
+  // → immediate-visible.
   feedback_policy: z.string(),
   adaptation_policy: z.string(),
   assignments: z.array(ToolStateAssignment),
@@ -1200,7 +1192,7 @@ export type ToolStateSectionT = z.infer<typeof ToolStateSection>;
 export const ToolState = z.object({
   question_ids: z.array(z.string()),
   session_meta: z.record(z.string(), z.unknown()).nullish(),
-  // U5 v2 — promoted first-class structured plan. Optional → back-compat.
+  // v2 — promoted first-class structured plan. Optional → back-compat.
   sections: z.array(ToolStateSection).optional(),
 });
 export type ToolStateT = z.infer<typeof ToolState>;
@@ -1211,17 +1203,17 @@ export type ToolStateT = z.infer<typeof ToolState>;
 // guards against pathological inputs, not normal heavy use (护栏两层语义).
 export const INTERACTIVE_HTML_MAX_CHARS = 500_000;
 
-// ADR-0033 D2 (YUK-306) — interactive artifact payload, stored in artifact.attrs
-// (existing jsonb column; NO new column, audit:schema untouched). Like ToolState
-// (RL4 above), the jsonb is opaque to audit:schema — this Zod parse at every
-// write point is the load-bearing barrier. Opaque to the note block-tree mesh:
-// body_blocks stays null (tool_quiz precedent), the HTML source lives here.
-// Deliberately NO HTML sanitizer/linter: the render-side sandbox owns security
-// (ADR-0033 D4) — the backend stores the source opaquely.
+// Interactive artifact payload, stored in artifact.attrs (existing jsonb
+// column; NO new column, audit:schema untouched). Like ToolState, the jsonb
+// is opaque to audit:schema — this Zod parse at every write point is the
+// load-bearing barrier. Opaque to the note block-tree mesh: body_blocks stays
+// null (tool_quiz precedent), the HTML source lives here. Deliberately NO
+// HTML sanitizer/linter: the render-side sandbox owns security (ADR-0033 D4)
+// — the backend stores the source opaquely.
 export const InteractiveArtifactAttrs = z
   .object({
-    // ADR-0033 D1: semantic kind 'interactive', format=html for now.
-    // Future formats widen this literal into an enum.
+    // semantic kind 'interactive', format=html for now. Future formats widen
+    // this literal into an enum.
     format: z.literal('html'),
     // Size cap is enforced at the tool input boundary (INTERACTIVE_HTML_MAX_CHARS).
     html: z.string().min(1),

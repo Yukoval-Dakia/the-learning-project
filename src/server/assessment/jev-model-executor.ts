@@ -8,6 +8,7 @@
 
 import Markdown from 'react-markdown';
 
+import { AgentRunError } from '@/ai/agent-run-error';
 import type {
   GroupEvidenceT,
   ModelExecutorRequest,
@@ -18,7 +19,6 @@ import type {
 import { evaluateScoringRule } from '@/core/schema/assessment/scoring-rule';
 import type { JevSystemOneResponseT } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import { runTypedPrimitiveTask } from '@/server/ai/typed-primitive-runner';
 import { gradingSliceMatchesLivePin } from './model-slice-registry';
 

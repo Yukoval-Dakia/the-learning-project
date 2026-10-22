@@ -1,5 +1,4 @@
-// YUK-1007 — notes 拥有键的 consumer-effective 事实（真实 reader 调用）。
-// 经 notes/public.ts 透出给组合根 facts seam。
+// Consumer-effective facts for config keys owned by Notes.
 import type { ConfigEffectiveFacts } from '@/core/config/effective';
 import { readHubSyncMode } from './hub-sync-reconciliation';
 

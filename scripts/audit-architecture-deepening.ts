@@ -1,45 +1,37 @@
-/* SIZE_OK: YUK-886 (F4.1) — one consolidated quantitative architecture audit keeps one
- * shared parse/import-closure model and one violation vocabulary; every check family
- * below is a section of the same report, not a reusable subsystem. */
+/* SIZE_OK: one consolidated quantitative architecture audit keeps one shared parse/import-closure
+ * model and one violation vocabulary; every check family is a section of the same report. */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 import type { DependencySnapshot } from './audit-capability-boundaries';
+import {
+  listTreeFiles,
+  readBlobs,
+  resolveAuditBaseSha,
+  resolveSpecifierInTree,
+  worktreeRenameMap,
+} from './lib/git-base-scan';
+import {
+  auditCompatShims,
+  diffPassThroughSites,
+  scanPassThroughSites,
+} from './lib/pass-through-sites';
 
-// YUK-885 (F3.11) — architecture-ownership audit, consolidated into the YUK-886
-// (F4.1) quantitative architecture-deepening audit.
-//
-// Consolidated check families (all must pass on the audited head):
-//   1. deep imports — src/server must reach capabilities only through their
-//      `public` / `ui-public` ports;
-//   2. uncatalogued reciprocal reads — every intra-SCC cross-capability value
-//      edge must appear in scripts/capability-public-read-cycles.ts;
-//   3. hidden writes — a catalogued public-read consumer file must contain no
-//      write signatures (Drizzle insert/update/delete/transaction, boss
-//      send/work/schedule, proposal/event writers, provider calls, write or
-//      propose tools) and must not consume command symbols;
-//   4. directed command cycles — files that legitimately write inside a cycle
-//      are classified as command files and must carry a review issue;
-//   5. central-root gates — the semantic quarry stays deleted, src/ai/registry
-//      stays a pure compatibility projection, the central proposal actions
-//      stay kind-branch-free, the central boss book stays housekeeping-only,
-//      the central events directory is transport/envelope only, and the
-//      central tools directory holds infrastructure only — no concrete tools;
-//   6. TaskSpec ownership census — every supported TaskSpec has exactly one
-//      capability owner, ProfileCriticTask Ingestion-owned with its live CLI
-//      caller, no copied central TaskDef, no runtime task locator/discovery;
-//   7. DomainTool ownership — every registered tool has one owner, input/output
-//      Zod schemas, manifest/registry/allowlist agreement, MCP output validation;
-//   8. pg-boss queue ownership — every domain queue is manifest-owned with
-//      registration metadata parity; central registrations are housekeeping only;
-//   9. proposal lifecycle — every supported proposal kind has one owner and
-//      loader-backed accept/dismiss/retract declarations; central kind-switch 0;
-//  10. provider attempt census — every explicit direct lane and opaque Mem0
-//      operation is classified, without unknown-as-zero accounting;
-//  11. dependency ceilings — totals strictly below 531/70/62 with the
-//      server->capability-deep bucket empty and every raw SCC member explained
-//      by the bounded public-read catalog.
+// Architecture-ownership audit. All check families must pass on the audited head:
+//   1. deep imports: src/server reaches capabilities only through public/ui-public ports;
+//   2. uncatalogued reciprocal reads: intra-SCC cross-capability value edges must be in
+//      capability-public-read-cycles.ts;
+//   3. hidden writes: catalogued public-read consumers contain no write/command signatures;
+//   4. command cycles: writer files inside a cycle are classified and linked to a review issue;
+//   5. central roots: no semantic quarry, registry stays a compatibility projection, proposal
+//      actions stay kind-branch-free, boss/events/tools directories stay infrastructure-only;
+//   6. TaskSpec ownership census: one capability owner, no copied central TaskDef or locator;
+//   7. DomainTool ownership: one owner, Zod schemas, manifest/registry/allowlist agreement;
+//   8. pg-boss queue ownership: domain queues are manifest-owned, central ones housekeeping-only;
+//   9. proposal lifecycle: one owner, loader-backed accept/dismiss/retract, zero central switch;
+//  10. provider attempt census: every explicit lane and opaque Mem0 operation is classified;
+//  11. dependency ceilings: totals below 531/70/62 and no unexplained SCC member.
 
 const SOURCE_RE = /\.[cm]?[jt]sx?$/;
 const TEST_RE = /\.(?:unit|db|migration|integration|e2e)?\.?(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -416,8 +408,8 @@ const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
   'src/server/ai/tools/pi-tools.ts',
-  // YUK-1022 — pi-side spawn contract + Task/Agent tool shell: the nested-run
-  // host lives in the adapter; this file is spec mapping + gate wiring only.
+  // pi-side spawn contract + Task/Agent tool shell: the nested-run host lives in the adapter;
+  // this file is spec mapping + gate wiring only.
   'src/server/ai/tools/pi-subagent.ts',
   'src/server/ai/tools/register-capability-tools.ts',
 ]);
@@ -518,7 +510,7 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — TaskSpec ownership census.
+// TaskSpec ownership census.
 // ---------------------------------------------------------------------------
 
 /** Structural shape of one owned TaskSpec (fixture-friendly; the real specs match). */
@@ -527,8 +519,8 @@ export interface OwnedTaskSpecShape {
   readonly definition?: { readonly kind?: string; readonly execution?: string } | null;
   readonly parseText?: unknown;
   readonly outputSchema?: { safeParse?: unknown } | null;
-  // YUK-1049 — typed-execution specs parse provider output via typed.inputSchema,
-  // not a chat-text parseText. Presence of this field exempts the parseText check.
+  // Typed-execution specs parse provider output via typed.inputSchema, not chat-text parseText;
+  // presence of this field exempts the parseText check.
   readonly typed?: { readonly inputSchema?: unknown } | null;
 }
 
@@ -681,7 +673,7 @@ export function scanTaskCensusConformance(input: TaskCensusConformanceInput): Ow
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — DomainTool ownership.
+// DomainTool ownership.
 // ---------------------------------------------------------------------------
 
 export interface DomainToolDeclarationShape {
@@ -700,7 +692,7 @@ export interface DomainToolOwnershipInput {
   readonly declarations: readonly DomainToolDeclarationShape[];
   readonly loadedTools: readonly DomainToolShape[];
   readonly allowlistNames: readonly string[];
-  /** mcp-bridge.ts contains the YUK-862 global output-schema validation wiring. */
+  /** mcp-bridge.ts contains the global output-schema validation wiring. */
   readonly bridgeValidatesOutput: boolean;
 }
 
@@ -798,7 +790,7 @@ export function scanDomainToolOwnership(input: DomainToolOwnershipInput): Owners
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — pg-boss queue ownership.
+// pg-boss queue ownership.
 // ---------------------------------------------------------------------------
 
 export interface QueueDeclarationShape {
@@ -925,7 +917,7 @@ export function scanCentralQueueLiterals(
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — proposal lifecycle ownership.
+// proposal lifecycle ownership.
 // ---------------------------------------------------------------------------
 
 export interface ProposalKindDeclarationShape {
@@ -1003,8 +995,7 @@ export function scanProposalLifecycle(input: ProposalLifecycleInput): OwnershipV
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — provider attempt census +
-// dependency ceilings.
+// provider attempt census + dependency ceilings.
 // ---------------------------------------------------------------------------
 
 export interface ProviderAttemptCensusInput {
@@ -1107,6 +1098,14 @@ export interface ArchitectureDeepeningFacts {
     /** Exact-baseline comparison violations from audit-capability-boundaries. */
     readonly baselineViolations: readonly { readonly source: string; readonly reason: string }[];
   };
+  /** Pass-through shell ratchet measured head-vs-base by the CLI runner. */
+  readonly passThrough?: {
+    readonly baseSites: number;
+    readonly headSites: number;
+    readonly added: number;
+    readonly removed: number;
+    readonly violations: readonly OwnershipViolation[];
+  };
 }
 
 export interface AuditResult {
@@ -1131,6 +1130,8 @@ export interface DeepeningAuditResult extends AuditResult {
     readonly classifiedProviderLanes: number;
     readonly unclassifiedProviderWires: number;
     readonly dependencyTotals: DependencyCeilings;
+    readonly passThroughSites: number;
+    readonly newPassThroughSites: number;
   };
 }
 
@@ -1204,6 +1205,7 @@ export function auditArchitectureDeepening(
       source: violation.source,
       reason: violation.reason,
     })),
+    ...(facts.passThrough?.violations ?? []),
   ];
 
   const uniqueOwners = new Set(facts.ownerMaps.flatMap((map) => Object.keys(map.specs))).size;
@@ -1237,6 +1239,8 @@ export function auditArchitectureDeepening(
       classifiedProviderLanes: facts.providerAttemptCensus.classifiedLaneFindings,
       unclassifiedProviderWires: facts.providerAttemptCensus.unclassifiedFindings,
       dependencyTotals: facts.dependency.totals,
+      passThroughSites: facts.passThrough?.headSites ?? 0,
+      newPassThroughSites: facts.passThrough?.added ?? 0,
     },
   };
 }
@@ -1251,9 +1255,13 @@ async function runCli(): Promise<void> {
   const { scanForbiddenTaskCatalogPatterns } = await import('./lib/task-census-guards.js');
   const { collectProviderWireFindings } = await import('./audit-provider-lanes.js');
   const { runProviderAttemptTruthAudit } = await import('./audit-provider-attempt-truth.js');
-  const { collectDependencySnapshot, compareDependencySnapshot } = await import(
-    './audit-capability-boundaries.js'
-  );
+  const {
+    collectDependencySnapshot,
+    compareDependencySnapshot,
+    parseBaseline,
+    readBaselineAtRef,
+    resolveImportTarget,
+  } = await import('./audit-capability-boundaries.js');
   const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
     '../src/kernel/tools/allowlists.js'
   );
@@ -1353,10 +1361,89 @@ async function runCli(): Promise<void> {
 
   // --- dependency facts -----------------------------------------------------
   const { snapshot } = collectDependencySnapshot(projectRoot);
+  const baselinePath = 'scripts/capability-boundary-baseline.json';
   const baseline = JSON.parse(
-    readFileSync(resolve(projectRoot, 'scripts/capability-boundary-baseline.json'), 'utf8'),
+    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
   ) as DependencySnapshot;
   const baselineViolations = compareDependencySnapshot(snapshot, baseline);
+
+  // --- pass-through / compat-shim ratchets ----------------------------------
+  // New pure re-export / identity-forward sites fail by default; only a
+  // coordinator-approved compatShims entry with real consumers, an exit
+  // condition, an issue and a <=14-day window may cover them.
+  const argv = process.argv.slice(2);
+  const baseIndex = argv.indexOf('--base');
+  if (baseIndex !== -1 && !argv[baseIndex + 1]) {
+    throw new Error('--base requires a commit SHA.');
+  }
+  const baseSha = resolveAuditBaseSha(
+    projectRoot,
+    baseIndex === -1 ? process.env.CAPABILITY_BASE_SHA : argv[baseIndex + 1],
+  );
+  const SCAN_ROOTS = ['src', 'server', 'web'];
+  const inScanScope = (path: string) =>
+    SCAN_ROOTS.some((root) => path.startsWith(`${root}/`)) &&
+    SOURCE_RE.test(path) &&
+    !TEST_RE.test(path) &&
+    !path.endsWith('.d.ts') &&
+    !path.includes('.generated.');
+  const resolveHeadTarget = (file: string, source: string) => {
+    const target = resolveImportTarget(projectRoot, resolve(projectRoot, file), source);
+    return target ? relative(projectRoot, target).split(sep).join('/') : undefined;
+  };
+  const headSources = SCAN_ROOTS.flatMap((root) =>
+    sourceFilesUnder(projectRoot, resolve(projectRoot, root)),
+  ).filter((file) => inScanScope(file.path));
+  const headSites = scanPassThroughSites(headSources, resolveHeadTarget);
+
+  const baseEntries = listTreeFiles(projectRoot, baseSha, SCAN_ROOTS).filter((entry) =>
+    inScanScope(entry.path),
+  );
+  const baseBlobs = readBlobs(
+    projectRoot,
+    baseSha,
+    baseEntries.map((entry) => entry.path),
+  );
+  const basePathSet = new Set(listTreeFiles(projectRoot, baseSha, []).map((entry) => entry.path));
+  const baseSources = baseEntries
+    .filter((entry) => baseBlobs.has(entry.path))
+    .map((entry) => ({ path: entry.path, code: baseBlobs.get(entry.path) ?? '' }));
+  const baseSites = scanPassThroughSites(baseSources, (file, source) =>
+    resolveSpecifierInTree(
+      basePathSet,
+      file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '',
+      source,
+    ),
+  );
+  const renames = worktreeRenameMap(projectRoot, baseSha, SCAN_ROOTS);
+  const siteDiff = diffPassThroughSites(baseSites, headSites, renames);
+  const baselineFull = parseBaseline(
+    readFileSync(resolve(projectRoot, baselinePath), 'utf8'),
+    baselinePath,
+  );
+  const previousFull = readBaselineAtRef(projectRoot, baseSha);
+  // stable_contract rulings share the changes ledger — only the tail
+  // appended after the base can classify a site (historical rulings already
+  // did their job and are never re-punished).
+  const stableRulings = baselineFull.changes
+    .slice(previousFull.changes.length)
+    .filter((change) => 'type' in change);
+  const passThroughViolations: OwnershipViolation[] = auditCompatShims({
+    headSites,
+    newSites: siteDiff.added,
+    records: baselineFull.compatShims,
+    previousRecords: previousFull.compatShims.length,
+    stableRulings,
+    readSource: (path) => {
+      try {
+        return readFileSync(resolve(projectRoot, path), 'utf8');
+      } catch {
+        return undefined;
+      }
+    },
+    resolveTarget: resolveHeadTarget,
+    today: new Date().toISOString().slice(0, 10),
+  });
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
@@ -1391,7 +1478,9 @@ async function runCli(): Promise<void> {
     proposals: {
       declarations: proposalDeclarations,
       supportedKinds,
-      producerOnlyKinds: ['archive', 'defer', 'judge_retraction'],
+      // judge_retraction now has an accept applier (practice proposal-appliers), so it leaves
+      // the producer-only set.
+      producerOnlyKinds: ['archive', 'defer'],
     },
     providerAttemptCensus: {
       attemptTruthViolations,
@@ -1409,6 +1498,13 @@ async function runCli(): Promise<void> {
         source: violation.source,
         reason: violation.reason,
       })),
+    },
+    passThrough: {
+      baseSites: baseSites.length,
+      headSites: headSites.length,
+      added: siteDiff.added.length,
+      removed: siteDiff.removed.length,
+      violations: passThroughViolations,
     },
   });
 
@@ -1428,7 +1524,7 @@ async function runCli(): Promise<void> {
       .map((component) => component.join('/'))
       .join(
         '; ',
-      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62.`,
+      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62; pass-through sites ${result.counts.passThroughSites} (+${result.counts.newPassThroughSites} new).`,
   );
 }
 

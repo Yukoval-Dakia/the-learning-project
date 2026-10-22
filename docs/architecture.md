@@ -182,13 +182,13 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可按需派聚焦的 evidence-scout。共享 spawn contract 结构性封顶 depth=1、广度 report-only 留痕而不设拍脑袋次数 cap；可留 agent note，从不结算 / 不碰 FSRS |
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
-| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
+| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan draft（daily_focus / 知识焦点 / proposals；题数 / 分钟 / 时间盒 / 科目配比由代码计算，daily_focus 的题量/分钟/百分比声明由服务端剥离，YUK-1622；propose_* 写 inbox）|
 | `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
 | `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
-| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）|
+| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）；handler 先跑确定性预检（选项重复/参考答案不在选项/选项数不足——choice 题型 0 选项同样拦截，命中则零模型调用留人审），copy_safety 的 `too_close` 以确定性 n-gram 为准（tier-3 素材原文豁免），模型-only too_close 转人审（YUK-1624）|
 | `TeachingQualityTask` | mimo-v2.5-pro | pg-boss `quiz_verify`（tier3/4 teaching_quality 审题闸，YUK-578） | 否 | — | 入池前审题：只读题面判 题干清晰度/唯一正解性/干扰项诊断力(仅选择题)；confident-fail 留 draft(needs_review) 绝不 promote |
 | `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
 | `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |
@@ -255,7 +255,8 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 - 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
-- 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
+- 每次调用写 `ai_task_runs` / `cost_ledger`；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
+- 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
 - **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
@@ -282,7 +283,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
   - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
 - 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
 - pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
-- assistant tool-use blocks 写 `tool_call_log`
+- 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
 - 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
 

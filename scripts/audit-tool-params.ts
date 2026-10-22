@@ -18,8 +18,10 @@
  *                        → structuredOutputSchema through the same converter
  *                        (pi-agent-adapter mounts it via piCustomTool).
  *   custom_mount       — the hand-rolled piCustomTool inventories: agency
- *                        evidence server, meeting director server, knowledge
- *                        write_proposal mount, and the Task/Agent spawn tools.
+ *                        evidence server, meeting director server, and the
+ *                        Task/Agent spawn tools. (YUK-1553 retired the private
+ *                        knowledge write_proposal mount; the shared
+ *                        propose_knowledge_* tools are scanned via domain_tool.)
  *                        Checked on the REAL produced AgentTool.parameters.
  *   remote_mcp         — NOT enumerable without a live server; enforced at
  *                        mount composition in connectPiRemoteMcp (mount fails
@@ -156,7 +158,6 @@ async function main(): Promise<void> {
     const { buildDirectorServer, createDirectorCaps } = await import(
       '@/capabilities/agency/server/meeting/director-tools'
     );
-    const { buildKnowledgeReviewPiMount } = await import('@/capabilities/knowledge/server/review');
     const { buildPiSpawnAgentTools } = await import('@/server/ai/tools/pi-subagent');
 
     const evidence = buildEvidenceServer({
@@ -181,17 +182,11 @@ async function main(): Promise<void> {
       failureAttempts: [],
       runTaskFn: (() => Promise.reject(new Error('audit stub — never called'))) as never,
     });
-    const writeProposal = buildKnowledgeReviewPiMount({} as never, 'audit');
     const spawn = buildPiSpawnAgentTools(
       {},
       { runNested: () => Promise.reject(new Error('audit stub — never called')) },
     );
-    for (const tool of [
-      ...evidence.tools,
-      ...director.tools,
-      ...(writeProposal.type === 'custom' ? writeProposal.tools : []),
-      ...spawn,
-    ]) {
+    for (const tool of [...evidence.tools, ...director.tools, ...spawn]) {
       customTools.push({ wire: tool.name, parameters: tool.parameters });
     }
   }

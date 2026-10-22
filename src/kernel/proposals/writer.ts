@@ -7,9 +7,8 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-// YUK-15 — record→proposal evidence loop: flip records cited as evidence
-// from raw → linked in the same DbLike scope as the propose event so the
-// projection stays consistent (caller can pass a tx to make this atomic).
+// Cited evidence records move raw -> linked in the same scope as the propose event;
+// pass a tx to make both atomic.
 import { extractRecordEvidenceIds, markRecordsLinked } from '@/kernel/records/record-processing';
 
 type DbLike = Db | Tx;
@@ -70,12 +69,9 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
         subject_kind: 'knowledge_edge',
         subject_id: proposalSubjectId(payload),
         event_payload: {
-          // ADR-0032 D4-E1 (YUK-203) — carry the edge_op discriminator (default
-          // 'create' for legacy/create payloads) + archive target onto the raw
-          // event payload so the accept applier (decideKnowledgeEdgeProposal,
-          // which reads proposeRow.payload directly) and the inbox derive can
-          // branch without re-parsing ai_proposal. Create-branch payloads keep
-          // the exact prior shape plus edge_op:'create' (additive, no regression).
+          // Carry edge_op (defaults to create for legacy payloads) and the archive
+          // target on the raw event so accept and inbox can branch without
+          // re-parsing ai_proposal.
           edge_op: payload.proposed_change.edge_op,
           from_knowledge_id: payload.proposed_change.from_knowledge_id,
           to_knowledge_id: payload.proposed_change.to_knowledge_id,
@@ -140,8 +136,7 @@ export async function writeAiProposal(db: DbLike, input: WriteAiProposalInput): 
     created_at: input.created_at,
   });
 
-  // YUK-15 — flip cited records raw→linked. Safe no-op when no record refs;
-  // shares db scope with the writeEvent call above (tx-aware via DbLike).
+  // No-op when there are no record refs; shares the event's tx-aware scope.
   const recordIds = extractRecordEvidenceIds(payload.evidence_refs);
   if (recordIds.length > 0) {
     await markRecordsLinked(db, recordIds);

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
+import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/core/tool-call-contract';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/server/ai/pi-hooks';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
 
@@ -21,10 +21,10 @@ import {
 } from './tools/present-primary-view';
 import type { CopilotPrimaryView } from './turns';
 
-// Uncapped by owner directive (durable Copilot carries no tool-call ceiling).
-// Kept as a named bound because the receipt schema derives its `.max()` from it
-// and the beforeToolCall gate reads it — MAX_SAFE_INTEGER makes both inert while
-// keeping the receipt shape finite and JSON-serializable.
+// Uncapped by owner directive. Kept as a named bound because the receipt schema
+// derives its `.max()` from it and the beforeToolCall gate reads it;
+// MAX_SAFE_INTEGER makes both inert while keeping the receipt finite and
+// JSON-serializable.
 export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
 const MAX_REPLY_CHARS = 64_000;
@@ -70,7 +70,7 @@ export function extractPrimaryView(
       const parsed = PresentPrimaryViewOutputSchema.safeParse(JSON.parse(jsonText));
       if (parsed.success) return parsed.data;
     } catch {
-      // handled below
+      // fall through to malformed handling
     }
     sawMalformed = true;
     return undefined;
@@ -309,9 +309,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   const byId = new Map<string, TraceEntry>();
   let traceVersion = 0;
 
-  // The pi hook pair. `piBeforeToolCall` opens a trace entry (ceiling deny →
-  // {block}); `piAfterToolCall` settles status/output hash and
-  // appends the `tool_use_id=` context block.
   const piBeforeToolCall: PiBeforeToolCall = (call, args) => {
     if (trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS) {
       return { block: true, reason: 'Copilot turn tool-call ceiling reached' };
@@ -335,7 +332,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   const piAfterToolCall: PiAfterToolCall = (observation) => {
     const entry = byId.get(observation.call.id);
     // Domain tools settle through observeDomainTool inside executeDomainToolCall
-    // before afterToolCall fires — same ordering as the SDK lane.
+    // before afterToolCall fires.
     if (entry?.status !== 'in_flight') return undefined;
     entry.status = observation.isError ? 'failed' : 'succeeded';
     entry.output_sha256 = sha256CanonicalJson(
@@ -384,8 +381,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
           entry.status === 'succeeded',
       );
       const controlOutput = successfulControls.at(-1)?.domain_output;
-      // The lifecycle metadata is produced by the control, not nomination data.
-      // Reject every other extra field, especially a model-supplied snapshot.
+      // Lifecycle metadata is produced by the control; reject every other extra
+      // field, especially a model-supplied snapshot.
       const { presentation_lifecycle: _lifecycle, ...nominationOutput } = isRecord(controlOutput)
         ? controlOutput
         : {};
@@ -443,8 +440,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     if (!id) return;
     const entry = byId.get(id);
     if (entry?.status !== 'in_flight' || domainToolName(entry.tool_name) !== result.name) return;
-    // Capture the observed value once. A caller retaining the mutable output
-    // cannot later change a nomination or displayed result behind its trace hash.
+    // Capture the observed value once so a caller retaining the mutable output
+    // cannot change a nomination or displayed result behind its trace hash.
     const output = structuredClone(result.output);
     entry.effect = result.effect;
     entry.status = result.error_reason === null ? 'succeeded' : 'failed';

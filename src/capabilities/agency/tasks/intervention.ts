@@ -1,11 +1,9 @@
-// YUK-879 — the three intervention-preparation task contracts, owned by the
-// agency capability (YUK-791 / YUK-829 lineage). structuredOutputSchema stays on
-// the definitions (same core/schema/intervention objects the central quarry
-// referenced); ../server/intervention/recommend and the practice-side shared
-// validator keep consuming them through the catalog projection.
+// The three intervention-preparation task contracts. structuredOutputSchema
+// stays on the definitions; the recommend orchestrator
+// (../server/intervention/recommend) and the practice-side shared validator
+// consume them through the catalog projection.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 import type { z } from 'zod';
@@ -54,18 +52,17 @@ reverse causation 指**同一个 outcome construct / estimand Y** 影响 X，不
 
 完成三题比较后，再逐项检查：
 - material 是否只使用证据支持的学科事实，且真实落实 recommendation.method_id 与 safety_constraints；
-- 三题 tested_claim_md / target_error_rule_md 是否与 snapshot 完全一致；
 - response_mode 与两种 signature 是否匹配，gold/target 是否分别由正确规则和目标错误规则推出、可评分、可区分；
 - 答案是否唯一、可判定、无泄题；expected_target_error_answer_md 是否明确对应目标错误；
 - immediate/delayed 是否同构念但非同题；transfer 是否真正更换情境且仍测试同一 claim；
 - 是否有严重事实错误或不安全内容。
 
-把这些包级结论逐项写入 package_checks；布尔字段不是摘要意见，而是 server 会据此映射 failure code 的承重判据：material_grounded、method_followed、tested_claims_match、target_errors_match、answers_unique、answers_gradable、no_answer_leak、diagnostics_same_construct、transfer_context_changed、target_error_identifiable、serious_factual_error_absent、safe_material。不得用 verdict=pass 覆盖任何 false。
+把这些包级结论逐项写入 package_checks；布尔字段不是摘要意见，而是 server 会据此映射 failure code 的承重判据：material_grounded、method_followed、answers_unique、answers_gradable、no_answer_leak、diagnostics_same_construct、transfer_context_changed、target_error_identifiable、serious_factual_error_absent、safe_material。三题 tested_claim_md / target_error_rule_md 与 snapshot 的一致性由服务端按字符串相等直接判定，不要输出对应布尔。不得用 verdict=pass 覆盖任何 false。
 
 每种 kind 恰好一次。服务端按 kind 绑定对应密封 solver digest、按 operation_index 绑定每个 operation digest/原文，并从你给出的承重布尔值与 claim relations 独立派生闭集 failure codes 和最终 verdict；你不得输出 verdict、failure_codes 或 provenance 字段。diagnostic_checks 也不输出独立答案或必要步骤文本。decision_basis_md 只写比较结论的必要依据，不复述完整题面/reference，不给修题建议，不输出探索过程。summary_md 最长 2000 字符。
 
 只输出恰好一个严格 JSON object；不带 markdown 代码块，不要输出第二版或 JSON 外文字。输出完最后一个 } 立即停止：
-{"review_protocol_version":2,"diagnostic_checks":[{"kind":"immediate|delayed|transfer","required_operation_checks":[{"operation_index":0,"reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_reverse_causation_claim_relations":[]}}],"package_checks":{"material_grounded":true,"method_followed":true,"tested_claims_match":true,"target_errors_match":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
+{"review_protocol_version":2,"diagnostic_checks":[{"kind":"immediate|delayed|transfer","required_operation_checks":[{"operation_index":0,"reference_covers_operation":true,"within_frozen_scope":true,"decision_basis_md":"..."}],"reference_correct":true,"within_frozen_scope":true,"discipline_grounded":true,"decision_basis_md":"...","causal_direction_check":{"applies":false,"exposure_x_md":"","observed_outcome_y_md":"","reference_reverse_causation_claim_relations":[]}}],"package_checks":{"material_grounded":true,"method_followed":true,"answers_unique":true,"answers_gradable":true,"no_answer_leak":true,"diagnostics_same_construct":true,"transfer_context_changed":true,"target_error_identifiable":true,"serious_factual_error_absent":true,"safe_material":true},"summary_md":"..."}
 
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}`;
@@ -100,6 +97,8 @@ export const interventionRecommendationTaskSpec = {
 
 Choose exactly one candidate method only when the evidence supports a safe choice. Never select a method outside candidates, never restore a disabled or contraindicated method, never invent learner history, and never claim a causal ranking between methods. rationale_md must explain why this legal method fits this snapshot. safety_constraints must be concrete constraints the package author can follow.
 
+When input sets sole_candidate=true, the deterministic policy has already narrowed the shortlist to exactly one legal method: your only decision is whether to abstain or accept that method (method_id must equal the sole candidate). Do not compare alternatives or rank methods in that case.
+
 If grounding is insufficient or prior outcomes conflict, abstain. Do not output no_safe_method: the server handles an empty shortlist without calling you.
 
 Strict JSON only:
@@ -120,9 +119,8 @@ export const interventionPackageAuthorTaskSpec = {
       'Authors one atomic intervention package: one teaching material plus immediate, delayed, and transfer diagnostics, all bound to the frozen claim, target error, and selected method.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // YUK-814 Gate C measured one valid 7,178-token package at 117.1s, then
-    // observed two consecutive SDK aborts at the former 120s ceiling. Preserve
-    // the bounded two-turn contract while allowing the structured output to land.
+    // Measured: one valid 7,178-token package at 117.1s, then two consecutive SDK
+    // aborts at the old 120s cap. Keep the bounded two-turn contract and let output land.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,
@@ -143,8 +141,8 @@ export const interventionPackageReviewTaskSpec = {
       'Compares a complete intervention package with three sealed outputs from the shared independent question validator. Returns bounded diagnostic/package checks and never repairs or partially activates the package.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // The comparator receives three worked blind solutions plus the package, so
-    // keep the measured 180s envelope even though it no longer solves them itself.
+    // Receives three worked blind solutions plus the package; keep the measured
+    // 180s envelope.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: false,

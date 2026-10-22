@@ -1,30 +1,23 @@
 // ====================================================================
-// YUK-1055 — DB contract epoch · 纯规则（零 import，unit-partition 可测）
+// DB contract epoch · 纯规则（零 IO；读写面在 ./epoch.ts）
 // ====================================================================
 //
-// 「本进程能否在 `contract_epoch` marker 所示的 DB 上执行 runtime 路径」的唯一
-// 裁决者。DB IO 在 ./epoch.ts；本文件只做判定，永不触连接。
+// 唯一职责：判断本进程能否在 `contract_epoch` marker 所示的 DB 上执行 runtime。
 //
-// Marker 语义（schema.ts `contract_epoch` 表注释同款）：
-//   - 缺表 / 空表 → 隐式 (CODE_CONTRACT_EPOCH, 'active')：无 marker 的 DB
-//     （migrate 首跑建表前的窗口）对本代码天然 runnable——历史「隐式 legacy」
-//     语义是 pre-cutover 时期的表述，翻转后隐式值随代码 epoch 走。
+// Marker 语义：
+//   - 缺表 / 空表 → 隐式 (CODE_CONTRACT_EPOCH, 'active')，让 fresh DB 能先 migrate 再 serve。
 //   - 'preparing'：迁移维护窗口 —— 任何 epoch 的 runtime 全部 fenced。
-//   - 'ready'：迁移完成待激活 —— 仍 fenced（新旧两侧都停，安静窗口）。
-//   - 'active'：仅 marker.epoch === 代码 contract epoch 才 runnable ——
-//     post-cutover app/worker 绝不在 pre-cutover 数据上跑（反之亦然）。
+//   - 'ready'：迁移完成待激活 —— 仍 fenced（新旧两侧都停的安静窗口）。
+//   - 'active'：仅 marker.epoch === 代码 epoch 才放行 —— 新代码不跑旧数据，旧代码也不跑新数据。
 //
-// 「新 guard 不能 fence 旧可执行」（grounding §15）：旧二进制没有本检查，
-// 停旧 writer 是运维动作（cutover runbook）；本 fence 只约束含本代码的进程。
+// 旧二进制没有本检查，停旧 writer 是运维动作；本 fence 只约束含本代码的进程。
 
 /** 全量迁移后代码携带的 epoch 名（评估契约系列的目标 epoch）。 */
 export const ASSESSMENT_CONTRACT_EPOCH = 'assessment-contract-v1' as const;
 
 /**
- * 本代码构建所实现的 contract epoch。
- * YUK-1059 统一切换已把 DB marker 激活为 assessment-contract-v1 —— 常量
- * 随发布翻转（release-blocker hotfix：翻转前部署的镜像会 epoch_mismatch
- * 自锁）。下一次 epoch 切换仍在统一切换 lane 改值。
+ * 本代码构建所实现的 contract epoch。常量必须随部署一起翻转：镜像与 DB marker
+ * 不一致时进程会 epoch_mismatch 自锁。
  */
 export const CODE_CONTRACT_EPOCH = ASSESSMENT_CONTRACT_EPOCH;
 
@@ -42,11 +35,7 @@ export interface EpochMarker {
   state: ContractEpochState;
 }
 
-/**
- * 缺表（42P01）/ 空表的隐式 marker：无 marker 的 DB 视为在本代码 epoch 下
- * runnable（隐式 active）。命名不含 'legacy'——pre-cutover 构建里它恰好是
- * 'legacy'，翻转后随 CODE_CONTRACT_EPOCH 走（fresh DB 可跑 migrate→serve）。
- */
+/** 缺表/空表的隐式 marker：无 marker 的 DB 对本代码天然 runnable。 */
 export const IMPLICIT_EPOCH_MARKER: EpochMarker = {
   epoch: CODE_CONTRACT_EPOCH,
   state: 'active',
@@ -60,7 +49,6 @@ export type EpochGateVerdict =
       readonly reason: 'maintenance' | 'epoch_mismatch';
     };
 
-/** 统一裁决：给定 marker（null = 表缺/空）与代码 epoch，runtime 是否放行。 */
 export function gateContractEpoch(
   marker: EpochMarker | null,
   codeEpoch: string = CODE_CONTRACT_EPOCH,
@@ -78,13 +66,11 @@ export function gateContractEpoch(
 // ───────────────────────── 状态迁移（entered_by 写 DB 前的校验） ─────────────────────────
 
 export type EpochTransitionKind =
-  /** 进入维护窗口：恒允许（安全方向）；可换目标 epoch（cutover 起点）。 */
+  /** 进入维护窗：恒允许（安全方向），可同时换目标 epoch。 */
   | 'begin_prepare'
-  /** 迁移完成、已核验，进入待激活安静窗口。只能 preparing→ready；此处完成
-   *  epoch 名切换（legacy→新 epoch）——迁移产物属于新合同。 */
+  /** 迁移核验通过，进入待激活安静窗口；可在此完成 epoch 名切换。 */
   | 'mark_ready'
-  /** 统一切换：激活目标 epoch。same-epoch 可从 preparing 或 ready（恢复中断的
-   *  维护窗）；换 epoch 激活只能从 ready 走（必须先安静窗口核验）。 */
+  /** 激活目标 epoch；same-epoch 可从 preparing/ready 恢复，换 epoch 只能从 ready 起。 */
   | 'activate';
 
 export type EpochTransitionError =
@@ -103,13 +89,8 @@ export interface EpochTransitionDecision {
 
 /**
  * 迁移状态机（写路径唯一校验，transitionContractEpoch 在事务内调用）。
- *
- *   begin_prepare : (cur, *)         → (target, preparing)          恒允许（安全方向）
- *   mark_ready    : (E1, preparing)  → (E2, ready)               迁移核验通过；E2 通常≠E1
- *                   (E2, ready)      → (E2, ready)               幂等
- *   activate      : (E, preparing|ready) → (E, active)           same-epoch 恢复/完成切换
- *                   (E1, ready)      → (E2≠E1, active)           拒绝——必须先 ready(E2)
- *                   (E, active)      → (E, active)               拒绝（假迁移历史）
+ * 只有安全方向（进入 preparing）无条件放行；激活换 epoch 必须先经过目标 epoch
+ * 的 ready 安静窗口，active→active 同 epoch 拒绝以免留下假迁移历史。
  */
 export function validateEpochTransition(
   current: EpochMarker | null,
@@ -129,9 +110,7 @@ export function validateEpochTransition(
   }
   switch (kind) {
     case 'begin_prepare': {
-      // 进入维护窗永远放行（安全方向）：(E, active)→(E, preparing) 起窗；
-      // (E1, active)→(E2, preparing) 是 cutover 起点；(E, ready)→(E, preparing)
-      // 是放弃 ready 回炉；(E, preparing)→(E, preparing) 是幂等重进。
+      // 进入维护窗永远放行：起窗、cutover 换 epoch、放弃 ready 回炉、preparing 幂等。
       return { ok: true, next: { epoch: targetEpoch, state: 'preparing' } };
     }
     case 'mark_ready': {
@@ -160,7 +139,7 @@ export function validateEpochTransition(
 
 // ───────────────────────── fence 观测面 ─────────────────────────
 
-/** fence 命中/解除的结构化日志 tag —— grep/告警的唯一稳定键（deterministic）。 */
+/** fence 命中/解除的日志 tag —— grep/告警的唯一稳定键。 */
 export const CONTRACT_EPOCH_LOG_TAG = '[contract-epoch]';
 
 /** 每次 fence 命中发一条确定 shape 的日志（不 crash、不静默）。 */
@@ -179,7 +158,7 @@ export function logContractEpochFence(
   });
 }
 
-/** fence 命中时抛出的确定性错误（boss 重投/DLQ 与 API 503 的公共类型）。 */
+/** fence 命中时抛出的确定性错误（boss 重投/DLQ 与 API 503 的共同类型）。 */
 export class ContractEpochFenceError extends Error {
   readonly marker: EpochMarker;
   readonly reason: 'maintenance' | 'epoch_mismatch';

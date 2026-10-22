@@ -1,11 +1,10 @@
-// U5 (YUK-203, §4.9 + §4.10) — practice read layer.
-//
+// practice read layer.
 // Two concerns:
-//   1. Derived judgement visibility (§4.9): 可见 = visible_to_user !== false ||
-//      session completed. NEVER mutated, no reveal event — visibility is purely
-//      derived at read time. The Coach read NEVER gates on visible_to_user.
-//   2. The GET /api/papers aggregation (§4.10 Q8/Q9): paper artifact + its
-//      linked review session + derived pos / right-wrong / gen / source.
+// 1. Derived judgement visibility : 可见 = visible_to_user !== false ||
+// session completed. NEVER mutated, no reveal event — visibility is purely
+// derived at read time. The Coach read NEVER gates on visible_to_user.
+// 2. The GET /api/papers aggregation (one query per concern): paper artifact + its
+// linked review session + derived pos / right-wrong / gen / source.
 
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { PAPER_INTENT_SOURCES } from '@/capabilities/practice/server/paper-intent-sources';
@@ -50,7 +49,7 @@ export async function resolveKnowledgeNames(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Derived visibility (§4.9)
+// Derived visibility
 // ────────────────────────────────────────────────────────────────────────────
 
 export type JudgeVisibilityInput = {
@@ -61,10 +60,10 @@ export type JudgeVisibilityInput = {
 };
 
 /**
- * USER-facing visibility (§4.9). A buffered judgement (visible_to_user:false)
+ * USER-facing visibility. A buffered judgement (visible_to_user:false)
  * stays hidden until the session is `completed`. Abandoned does NOT reveal
  * (the user walked away — only `completed` is in the reveal disjunct). A
- * reopened paper is `started` (abandoned→started only, §4.9), so the disjunct is
+ * reopened paper is `started` (abandoned→started only,), so the disjunct is
  * false and hidden stays hidden.
  */
 export function isJudgementVisibleToUser(input: JudgeVisibilityInput): boolean {
@@ -79,14 +78,14 @@ export function isJudgementVisibleToCoach(): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// GET /api/papers aggregation (§4.10)
+// GET /api/papers aggregation
 // ────────────────────────────────────────────────────────────────────────────
 
 // 往日 source-filter provenance mapping (critic #4). The UI tab filter is a pure
 // client-side predicate over `source` (review_plan → Coach 排期, etc.).
 export type PracticeSource = 'coach' | 'custom' | 'note' | 'other';
 
-// YUK-214 (Strategy D · S1): exported so the source-mapping is unit-testable
+// (Strategy D · S1): exported so the source-mapping is unit-testable
 // without a DB round-trip (Cross-统合 F-11). Internal callers (getPracticeList)
 // use it unchanged.
 export function intentSourceToPracticeSource(intentSource: string): PracticeSource {
@@ -97,7 +96,7 @@ export function intentSourceToPracticeSource(intentSource: string): PracticeSour
       return 'custom';
     case 'embedded_check':
       return 'note';
-    // YUK-214: an imported paper (ingest→practice bridge) maps to the existing
+    // an imported paper (ingest→practice bridge) maps to the existing
     // 'other' bucket — it still appears in the 今日/往日 main list (list inclusion
     // is decided ONLY by the inArray whitelist below, not by this source value;
     // Cross-统合 §C1). A dedicated 'ingested' PracticeSource + source tab is
@@ -131,7 +130,7 @@ export interface PracticePaperItem {
   session: {
     id: string;
     status: string;
-    /** answered-so-far = COUNT(DISTINCT slot) WHERE submitted (§4.10 Q9) */
+    /** answered-so-far = COUNT(DISTINCT slot) WHERE submitted (no double-count on re-submit) */
     pos: number;
     /** right/wrong distribution from the latest judge per slot */
     right: number;
@@ -194,9 +193,9 @@ export async function getPracticeList(
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const cursor = options.cursor ? decodePaperCursor(options.cursor) : null;
   // 1) Paper artifacts (the widened intent_source provenances).
-  //    YUK-214 (Strategy D · S1) — `ingestion_paper` is the fourth source
-  //    (ingest→practice bridge); must stay in lock-step with the start-session
-  //    whitelist in paper-intent-sources.ts (§Step 1).
+  // (Strategy D · S1) — `ingestion_paper` is the fourth source
+  // (ingest→practice bridge); must stay in lock-step with the start-session
+  // whitelist in paper-intent-sources.ts (§Step 1).
   const paperWhere = and(
     eq(artifact.type, 'tool_quiz'),
     inArray(artifact.intent_source, [...PAPER_INTENT_SOURCES]),
@@ -222,7 +221,7 @@ export async function getPracticeList(
   const paperIds = paperRows.map((r) => r.id);
 
   // 2) Linked review sessions (learning_session.artifact_id → paper). Take the
-  //    newest session per paper (a paper can be reopened / restarted).
+  // newest session per paper (a paper can be reopened / restarted).
   const sessionRows = await db
     .select({
       id: learning_session.id,
@@ -283,7 +282,7 @@ export async function getPracticeList(
   const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, currentNativeAnchors);
 
   // 3) Answered-slot counts per session: COUNT(DISTINCT slot) WHERE submitted
-  //    (§4.10 Q9 — DISTINCT so append-only re-submits don't double-count).
+  // DISTINCT so append-only re-submits don't double-count.
   const posBySession = new Map<string, number>();
   if (sessionIds.length > 0) {
     const posRows = await db.execute<{ session_id: string; pos: number }>(sql`
@@ -305,25 +304,24 @@ export async function getPracticeList(
   }
 
   // 4) Right/wrong per session, distinct by slot. We use the answer table as the
-  //    single truth source — same (session_id, question_id, COALESCE(part_ref,''))
-  //    slot key used by pos (step 3), so composite question parts are never
-  //    collapsed (Option B fix — the event.payload has no part_ref field; the
-  //    answer table's part_ref column is the canonical per-slot identifier).
-  //    Take the NEWEST frozen row per slot (MAX(submitted_at)).
-  //
-  //    Round-4 fix #2: use the JUDGE event's coarse_outcome instead of the
-  //    attempt event's outcome. YUK-1054：verdict 走 effective 轨（链解析后仍
-  //    live 的最新 judge）——rejudge/attritube 新判 + supersede 后旧判不再回魂，
-  //    被 retract/mark_wrong 的判不计入右错桶（回落 attempt outcome 语义）。
-  //    §4.10 Q9: correct/partial → right, anything else → wrong (deliberate —
-  //    partial counts as right, see comment in previous rounds).
+  // single truth source — same (session_id, question_id, COALESCE(part_ref,''))
+  // slot key used by pos (step 3), so composite question parts are never
+  // collapsed (Option B fix — the event.payload has no part_ref field; the
+  // answer table's part_ref column is the canonical per-slot identifier).
+  // Take the NEWEST frozen row per slot (MAX(submitted_at)).
+  // Round-4 fix #2: use the JUDGE event's coarse_outcome instead of the
+  // attempt event's outcome. ：verdict 走 effective 轨（链解析后仍
+  // live 的最新 judge）——rejudge/attritube 新判 + supersede 后旧判不再回魂，
+  // 被 retract/mark_wrong 的判不计入右错桶（回落 attempt outcome 语义）。
+  // Q9: correct/partial → right, anything else → wrong (deliberate —
+  // partial counts as right, see comment in previous rounds).
   const rightWrongBySession = new Map<string, { right: number; wrong: number }>();
   if (sessionIds.length > 0) {
     // Round-6 fix #2 (CR 3359820526): also fetch visible_to_user from the
     // effective judge. For sessions not yet 'completed', slots with
     // visible_to_user:false are excluded from the right/wrong count — the summary
     // must not let the caller infer the buffered verdict. For completed sessions
-    // all slots are counted (the visibility gate opens on completion per §4.9).
+    // all slots are counted (the visibility gate opens on completion per).
     const rwRows = await db.execute<{
       session_id: string;
       attempt_event_id: string;
@@ -375,7 +373,7 @@ export async function getPracticeList(
         rightWrongBySession.set(r.session_id, bucket);
         continue;
       }
-      // F1 (PR #309 round-4, YUK-215): an UN-JUDGED attempt (photo-only on a
+      // an UN-JUDGED attempt (photo-only on a
       // text-only route — `unsupported_judge='true'`, no judge event) is neither
       // right nor wrong; it is "未判分". Skip it entirely so it never pollutes the
       // right/wrong summary. Round-3 wrote this attempt with outcome='failure' and
@@ -397,7 +395,7 @@ export async function getPracticeList(
         effective?.verdict.coarse_outcome ??
         (r.attempt_outcome === 'success' ? 'correct' : (r.attempt_outcome ?? 'incorrect'));
       if (verdict === 'correct' || verdict === 'partial') {
-        // partial counts as right (§4.10 Q9 deliberate — meaningful progress)
+        // Partial counts as right (deliberate: meaningful progress).
         bucket.right += 1;
       } else {
         bucket.wrong += 1;
@@ -407,12 +405,12 @@ export async function getPracticeList(
   }
 
   // 5) Knowledge name resolution — one IN query across all paper knowledge_ids.
-  //    archived_at intentionally not filtered (historical papers still need names).
+  // archived_at intentionally not filtered (historical papers still need names).
   const allKnowledgeIds = [...new Set(paperRows.flatMap((r) => r.knowledge_ids ?? []))];
   const knowledgeNameMap = await resolveKnowledgeNames(db, allKnowledgeIds);
 
   // 6) Assemble. Total slots = the paper's distinct assignment slots (parsed via
-  //    readPaperSections, covering both U4 session_meta + U5 top-level plans).
+  // readPaperSections, covering both U4 session_meta + U5 top-level plans).
   const papers: PracticePaperItem[] = paperRows.map((row) => {
     const parsed = Artifact.safeParse(row);
     const toolState = parsed.success ? parsed.data.tool_state : null;

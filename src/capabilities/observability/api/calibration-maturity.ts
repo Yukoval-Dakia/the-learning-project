@@ -1,6 +1,4 @@
-// YUK-348 (B1) — GET /api/observability/calibration-maturity（只读）。
-// per-KC mastery-calibration firm-up 观测面，沿 admin-cost.ts 的读模型 → 路由形态
-// （db + errorResponse + Response.json）。/api/* token 校验由组合根中间件统一施加。
+// Read-only per-KC calibration firm-up surface. Auth is enforced upstream.
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 

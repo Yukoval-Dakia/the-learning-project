@@ -1,18 +1,13 @@
-import { initialSchedulingState } from '@/server/fsrs/state';
-// M4-T4 (YUK-319) — practice 包的提议 accept-applier 真身，从 dispatch 壳
+// T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
-//
 // practice 声明归属的 proposal kinds（manifest.proposals.kinds）：
-//   - variant_question  → acceptVariantQuestionProposal（本文件）
-//   - question_draft    → acceptQuestionDraftProposal（本文件）
-//                       + dismissQuestionDraftProposal（本文件，YUK-308：
-//                         dismiss tombstone 草稿行 metadata.dismissed_at）
-//   - judge_retraction  → 有 producer（producers.ts 的 judge_retraction 提议）
-//     但无 accept applier：accept 走 actions.ts 的 default throw
-//     （unsupported_proposal_kind），剩余 producer 语义归 YUK-44。归属声明
-//     与 applier 存在性解耦（见 kernel/manifest.ts 的 ProposalKindDecl 注释）。
-//
+// - variant_question → acceptVariantQuestionProposal（本文件）
+// - question_draft → acceptQuestionDraftProposal（本文件）
+// + dismissQuestionDraftProposal（本文件，：
+// dismiss tombstone 草稿行 metadata.dismissed_at）
+// - judge_retraction → acceptJudgeRetractionProposal（本文件；evaluation 目标走
+// appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
 
@@ -21,24 +16,33 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { ScoringUnitResultT } from '@/core/schema/assessment';
+import {
+  ActivateEvaluationIntent,
+  EvaluationProvenance,
+  PublishedQuestionRevision,
+  projectIssuedScoringBasis,
+} from '@/core/schema/assessment';
 import {
   LEGACY_DRAFT_STATUS,
   MARKING_RULE_PROVENANCE,
   QUESTION_AVAILABILITY,
 } from '@/core/schema/assessment/lifecycle';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
-import {
-  StructuredQuestion,
-  type StructuredQuestionT,
-  findStructuredNode,
-} from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { cause_category_overlay, event, mistake_variant, question } from '@/db/schema';
+import {
+  cause_category_overlay,
+  evaluation,
+  event,
+  mistake_variant,
+  question,
+  question_revision,
+} from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-// YUK-471 W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
+// W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
@@ -61,9 +65,10 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
+import { enrollPromotedQuestionScheduling } from './question-scheduling-enrollment';
+import { applyQuestionEdit } from './question-structure-edit';
 
-// YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
+// swappable enqueue hook so DB tests can drive
 // variant_question accept without spinning up pg-boss.
 export type EnqueueVariantVerifyFn = (mistakeVariantId: string) => Promise<void>;
 
@@ -81,7 +86,7 @@ export interface VariantQuestionAcceptResult {
   idempotent?: boolean;
 }
 
-// ADR-0031 / YUK-304 (lane B) — copilot-authored draft question accept.
+// copilot-authored draft question accept.
 export interface QuestionDraftAcceptResult {
   kind: 'question_draft';
   rate_event_id: string;
@@ -89,7 +94,7 @@ export interface QuestionDraftAcceptResult {
   idempotent?: boolean;
 }
 
-// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit accept.
+// D6-B — active-question structured node edit accept.
 export interface QuestionEditAcceptResult {
   kind: 'question_edit';
   rate_event_id: string;
@@ -107,8 +112,10 @@ export interface QuestionEditAcceptResult {
 export interface PracticeApplierOpts {
   decision?: string;
   user_note?: string;
-  // YUK-17 — swappable enqueue (DB tests inject a no-op or vi.fn).
+  // swappable enqueue (DB tests inject a no-op or vi.fn).
   enqueueVariantVerify?: EnqueueVariantVerifyFn;
+  // swappable rejudge enqueue (same reason as variant verify).
+  enqueueRejudge?: EnqueueRejudgeFn;
 }
 
 async function loadAcceptedQuestionOrThrow(
@@ -130,7 +137,7 @@ async function loadAcceptedQuestionOrThrow(
 }
 
 /**
- * YUK-17 / ADR-0018 — variant_question accept materializes the question row
+ * variant_question accept materializes the question row
  * (source='mistake_variant', draft_status='active'), flips the mistake_variant
  * row from 'draft' to 'active', writes the rate event, and enqueues
  * VariantVerifyTask. The question + mistake_variant + rate-event writes share
@@ -240,12 +247,12 @@ export async function acceptVariantQuestionProposal(
   const now = new Date();
   const newQuestionId = createId();
   const rateEventId = newId();
-  // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
+  // W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
 
   await db.transaction(async (tx) => {
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
-    // YUK-499 — lock the draft mistake_variant row FOR UPDATE before the new
+    // lock the draft mistake_variant row FOR UPDATE before the new
     // question + rate event + ROW write. projectMistakeVariantGuarded has no version-CAS (the table
     // has no version column), so the lock is the sole serializer: it stops a concurrent
     // dismiss/verify/retract of the same mv from interleaving between this accept's rate event and
@@ -279,9 +286,10 @@ export async function acceptVariantQuestionProposal(
       }),
     );
 
-    // YUK-1043 — 统一发布链（§2 矩阵 mistake_variant 行）：接受即发布 —— 不能绕
-    // 发布直接 active。variant 参考答案为 AI 提案、用户接受 ⇒ D9 手动带 provenance
-    //（manual ≠ official，D1）；接受人即人工核验门（verifier: human）。
+    // Unified publish chain (mistake_variant rows): accept publishes immediately; never
+    // skip publish and go active. The variant reference answer is an AI proposal accepted by
+    // a user, so it carries manual provenance (manual != official); the acceptor is the
+    // human verification gate.
     await publishQuestionGroupFromRow(tx, {
       rootId: newQuestionId,
       admission: {
@@ -299,7 +307,7 @@ export async function acceptVariantQuestionProposal(
           model_slice: null,
         },
       },
-      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      // 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入。
       suspension: { suspended: false },
       verification: {
         // 人工接受即核验（verifier: human —— 与上方 admission evidence 同源）。
@@ -359,7 +367,7 @@ export async function acceptVariantQuestionProposal(
 }
 
 /**
- * ADR-0031 / YUK-304 (lane B) — question_draft accept. The draft question row
+ * question_draft accept. The draft question row
  * was INSERTed at propose time (runQuestionAuthor, same tx as the proposal —
  * 决定4); accept PROMOTES it: draft_status='draft' → 'active' + per-knowledge
  * FSRS enroll-if-absent (copied from the quiz_verify promotion path, the one
@@ -368,7 +376,7 @@ export async function acceptVariantQuestionProposal(
  * (existingAcceptRate), like every sibling accept handler.
  *
  * Dismiss flows through the dedicated questionDraftProposalDismissApplier
- * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
+ * (, declared in manifest.proposals.kinds): the draft row stays inert
  * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
  * metadata.dismissed_at so it stops reading as a live draft — search_bank /
  * listQuestions / the draft-review pool exclude it and write_quiz's narrow
@@ -422,7 +430,7 @@ export async function acceptQuestionDraftProposal(
   const now = new Date();
   const rateEventId = newId();
 
-  // YUK-308 review (codex P1 ×2) — the decision check AND the promotion run
+  // review the decision check AND the promotion run
   // under the SAME lock the dismiss applier + the generic dismiss/retract
   // paths take (acquireProposalDecisionLock). Without it a racing dismiss or
   // retract could commit a second terminal decision alongside this accept, and
@@ -453,7 +461,7 @@ export async function acceptQuestionDraftProposal(
       );
     }
 
-    // YUK-497 — global learning-state write lock before any row access (shared
+    // global learning-state write lock before any row access (shared
     // tx-entry order with every material_fsrs_state / mastery_state writer and
     // the cascade revert). Ordered BEFORE the question row lock: the other
     // draft→active promoters (quiz_verify / verify_and_promote) hold this lock
@@ -481,7 +489,7 @@ export async function acceptQuestionDraftProposal(
     if (!row) {
       throw new ApiError('not_found', `question ${questionId} not found`, 404);
     }
-    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate.
     if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
       throw new ApiError(
         'conflict',
@@ -489,7 +497,7 @@ export async function acceptQuestionDraftProposal(
         409,
       );
     }
-    // Tombstone gate (codex P1): a sibling proposal's dismiss already retired
+    // Tombstone gate a sibling proposal's dismiss already retired
     // this draft. Promoting it would produce an active, FSRS-enrolled question
     // that the dismissed_at read filters still hide. Fail closed — there is no
     // un-dismiss path; author a fresh draft instead of resurrecting a
@@ -508,7 +516,7 @@ export async function acceptQuestionDraftProposal(
       .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
       .where(eq(question.id, questionId));
 
-    // YUK-1043 — 统一发布链（§2 矩阵 question_draft 行）：接受进入统一发布。
+    // Unified publish chain (question_draft rows): accept enters the unified publish flow.
     // draft 内容为 author/quiz 链生成，用户接受 ⇒ D9 手动带 provenance（manual ≠
     // official，D1）；接受人即人工核验门。同内容已发布过（如 sourced 草稿首版
     // withheld）时只翻 admission 维度，不铸新 revision。
@@ -529,7 +537,7 @@ export async function acceptQuestionDraftProposal(
           model_slice: null,
         },
       },
-      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      // 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入。
       suspension: { suspended: false },
       verification: {
         policy_id: 'proposal_accept@1',
@@ -541,38 +549,12 @@ export async function acceptQuestionDraftProposal(
       now,
     });
 
-    // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
-    // enroll-if-absent so a node with an existing review schedule is never
-    // reset; question-level fallback when the row carries no knowledge ids.
-    const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
-    if (fsrsSubjectIds.length > 0) {
-      for (const knowledgeId of fsrsSubjectIds) {
-        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
-        // structural anchor, never a content KC: skip enrollment (the subject
-        // read axis already excludes it — resolveSubjectKnowledgeIds). A
-        // roots-only label set enrolls ZERO cards; the question-level fallback
-        // stays reserved for a genuinely unlabeled draft.
-        if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-        const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-        if (existing) continue;
-        await upsertFsrsState(tx, {
-          subject_kind: 'knowledge',
-          subject_id: knowledgeId,
-          ...initialSchedulingState(knowledgeId, now),
-          last_review_event_id: rateEventId,
-        });
-      }
-    } else {
-      const existing = await getFsrsState(tx, 'question', questionId);
-      if (!existing) {
-        await upsertFsrsState(tx, {
-          subject_kind: 'question',
-          subject_id: questionId,
-          ...initialSchedulingState(questionId, now),
-          last_review_event_id: rateEventId,
-        });
-      }
-    }
+    await enrollPromotedQuestionScheduling(tx, {
+      questionId,
+      knowledgeIds: row.knowledge_ids ?? [],
+      evidenceEventId: rateEventId,
+      now,
+    });
 
     await writeEvent(tx, {
       id: rateEventId,
@@ -617,7 +599,7 @@ export interface QuestionDraftDismissResult {
 }
 
 /**
- * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
+ * question_draft dismiss applier (previously the phase-deferred gap:
  * the generic dismiss path left the draft row indistinguishable from a live
  * pending one, so search_bank's draft_state=all default and
  * write_quiz's draft admission kept re-surfacing a question the user already
@@ -694,8 +676,7 @@ export async function dismissQuestionDraftProposal(
 }
 
 // ===========================================================================
-// ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
-//
+// D6-B — active-question structured node edit.
 // This is the FIRST writer that mutates an ACTIVE question's `structured` jsonb
 // tree. The flat-field active-question writer (src/server/questions/write.ts
 // editQuestion) edits prompt_md / choices_md / etc. but never touches the
@@ -705,7 +686,6 @@ export async function dismissQuestionDraftProposal(
 // (practice domain owns the pooled question lifecycle), kept self-contained so
 // the practice applier does not import the ingestion package (import-cycle
 // hygiene + single domain ownership).
-//
 // Coordinate parity: nodes are addressed by `id` — the same id/role the L5
 // addressable projection exposes through get_question_context(include:
 // ['structure']). So the agent reads a node id and writes the same node id
@@ -713,146 +693,24 @@ export async function dismissQuestionDraftProposal(
 // ===========================================================================
 
 /**
- * Copy-on-write (path-copy) `node` and apply `mutate` to the node whose id
- * matches `target`. NOT a deep clone of the whole tree: only the root→target
- * path is freshly cloned (the matched node plus each of its ancestors); sibling
- * subtrees that do not contain the target are shared by reference with the
- * input. Because every node on the path to the match is fresh, mutating the
- * matched clone can never alias the persisted jsonb. Returns the new tree + whether a node matched.
- */
-function mapStructuredNodeById(
-  node: StructuredQuestionT,
-  target: string,
-  mutate: (n: StructuredQuestionT) => void,
-): { tree: StructuredQuestionT; matched: boolean } {
-  const clone: StructuredQuestionT = {
-    ...node,
-    sub_questions: node.sub_questions ? node.sub_questions.map((s) => ({ ...s })) : undefined,
-  };
-  if (clone.id === target) {
-    mutate(clone);
-    return { tree: clone, matched: true };
-  }
-  let matched = false;
-  if (clone.sub_questions) {
-    clone.sub_questions = clone.sub_questions.map((sub) => {
-      const res = mapStructuredNodeById(sub, target, mutate);
-      if (res.matched) matched = true;
-      return res.tree;
-    });
-  }
-  return { tree: clone, matched };
-}
-
-// The narrow set of structured-node fields a question_edit op may touch, plus
-// provenance. Snapshotted before/after for the reversible audit event.
-type NodeEditableSnapshot = Pick<
-  StructuredQuestionT,
-  'prompt_text' | 'answers' | 'analysis' | 'options' | 'kind'
->;
-
-function snapshotNode(node: StructuredQuestionT): NodeEditableSnapshot {
-  return {
-    prompt_text: node.prompt_text,
-    answers: node.answers,
-    analysis: node.analysis,
-    options: node.options,
-    kind: node.kind,
-  };
-}
-
-export type QuestionEditGateFailure =
-  | 'node_not_found'
-  | 'not_a_leaf' // set_choice targets a stem (only leaf/standalone carry options)
-  | 'empty_edit' // edit_reference with neither answers nor analysis
-  | 'invalid_structure'; // post-edit tree fails the StructuredQuestion invariants
-
-export interface QuestionEditApplyResult {
-  tree: StructuredQuestionT;
-  before: NodeEditableSnapshot;
-  after: NodeEditableSnapshot;
-}
-
-/**
- * Mini post-edit verify gate + apply. PURE — no IO. Returns the proposed tree on
- * success, or a typed failure code (the applier rejects without writing). The
- * gate enforces:
- *   1. the target node exists (node_not_found);
- *   2. op-specific node-shape constraints (set_choice → leaf only; edit_reference
- *      → at least one of answers/analysis);
- *   3. the resulting whole tree still satisfies the recursive StructuredQuestion
- *      schema (e.g. only a stem may carry sub_questions) — re-parsed, so a bad
- *      edit can never corrupt the persisted invariant.
- */
-export function applyQuestionEdit(
-  tree: StructuredQuestionT,
-  edit: QuestionEditOpT,
-  actorRef: string,
-): QuestionEditApplyResult | { failure: QuestionEditGateFailure } {
-  const target = findStructuredNode(tree, edit.node_id);
-  if (!target) return { failure: 'node_not_found' };
-  const before = snapshotNode(target);
-
-  // Op-specific pre-conditions (gate part 1+2).
-  if (edit.op === 'set_choice') {
-    const isLeaf = target.role !== 'stem';
-    if (!isLeaf) return { failure: 'not_a_leaf' };
-  }
-  if (edit.op === 'edit_reference' && edit.answers === undefined && edit.analysis === undefined) {
-    return { failure: 'empty_edit' };
-  }
-
-  const { tree: nextTree, matched } = mapStructuredNodeById(tree, edit.node_id, (n) => {
-    switch (edit.op) {
-      case 'edit_node_text':
-        n.prompt_text = edit.prompt_text;
-        break;
-      case 'edit_reference':
-        if (edit.answers !== undefined) n.answers = [...edit.answers];
-        if (edit.analysis !== undefined) n.analysis = edit.analysis;
-        break;
-      case 'set_choice':
-        n.options = edit.options.map((o) => ({ label: o.label, text: o.text }));
-        break;
-      case 'set_node_kind':
-        n.kind = edit.kind;
-        break;
-    }
-    n.source = 'agent_edit';
-    n.last_modified_by = actorRef;
-  });
-  // matched is guaranteed (findStructuredNode already hit), but keep the gate honest.
-  if (!matched) return { failure: 'node_not_found' };
-
-  // Gate part 3 — the resulting tree must still be a valid StructuredQuestion.
-  const parsed = StructuredQuestion.safeParse(nextTree);
-  if (!parsed.success) return { failure: 'invalid_structure' };
-
-  const editedNode = findStructuredNode(nextTree, edit.node_id);
-  // editedNode is present (we just mutated it); snapshot the after-state.
-  const after = editedNode ? snapshotNode(editedNode) : before;
-  return { tree: nextTree, before, after };
-}
-
-/**
- * ADR-0032 D6-B (YUK-203 lane L6) — question_edit accept. Applies the narrow
+ * D6-B — question_edit accept. Applies the narrow
  * node op to an ACTIVE question's `structured` tree behind the mini verify gate
  * (applyQuestionEdit), bumps the row version, and writes BOTH an
  * `experimental:question_structure_edit` audit event (before/after node snapshot
- * — the reversible record) AND the `rate` accept event, all in one transaction.
+ * the reversible record) AND the `rate` accept event, all in one transaction.
  *
  * Idempotency keys on caused_by_event_id = proposalId (existingAcceptRate), like
  * every sibling accept handler: a re-accept returns the prior result without a
  * second mutation or audit event.
  *
  * Gate / not-found policy:
- *   - missing question row → 404;
- *   - question not active (draft_status='draft' / other) → 409 (this tool edits
- *     POOLED questions only; draft structure is the ingestion block-edit path);
- *   - question has no structured tree → 422 (nothing to address);
- *   - verify-gate failure (node missing / wrong shape / would break invariants)
- *     → 422 with the typed reason; the proposal stays pending so the user can
- *     retract or the agent can re-propose a corrected op.
+ * - missing question row → 404;
+ * - question not active (draft_status='draft' / other) → 409 (this tool edits
+ * POOLED questions only; draft structure is the ingestion block-edit path);
+ * - question has no structured tree → 422 (nothing to address);
+ * - verify-gate failure (node missing / wrong shape / would break invariants)
+ * → 422 with the typed reason; the proposal stays pending so the user can
+ * retract or the agent can re-propose a corrected op.
  */
 export async function acceptQuestionEditProposal(
   db: Db,
@@ -862,7 +720,7 @@ export async function acceptQuestionEditProposal(
 ): Promise<QuestionEditAcceptResult> {
   ensureAcceptOnly('question_edit', opts);
   const change = asPlainRecord(proposal.payload.proposed_change);
-  // YUK-1468 — 统一契约提案：proposed_change.edit_request（ops/document/draft_ref
+  // 统一契约提案：proposed_change.edit_request（ops/document/draft_ref
   // + CAS 令牌）。accept = 重放 ops → draft → 同一 submit gate；legacy 提案
   // （proposed_change.edit 窄节点 op）仍走旧路径直到存量清空。
   if (change.edit_request != null) {
@@ -969,9 +827,10 @@ export async function acceptQuestionEditProposal(
       );
     }
 
-    // YUK-1043 — 统一发布链（§2 矩阵结构化编辑行）：structured 树是判分输入
-    //（part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
-    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份（§3.1）。
+    // Unified publish chain (structured-edit rows): the structured tree is grading input, so
+    // the edit enters the same publish flow.
+    // （part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
+    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份。
     // admission 缺省 preserve —— 内容编辑不改变准入资格。
     await publishQuestionGroupFromRow(tx, {
       rootId: row.parent_question_id ?? questionId,
@@ -1049,7 +908,7 @@ export async function acceptQuestionEditProposal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// YUK-1016 / 454-B — cause_category accept：往 cause_category_overlay INSERT
+//B — cause_category accept：往 cause_category_overlay INSERT
 // status='active' 行。这是该表的唯一写边界（audit:schema 的 write path）；行
 // 落地后进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
 export interface CauseCategoryAcceptResult {
@@ -1070,7 +929,7 @@ export async function acceptCauseCategoryProposal(
   const categoryId = requiredString(change.category_id, 'category_id', proposalId);
   const label = requiredString(change.label, 'label', proposalId);
   // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
-  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（YUK-1019 收紧）。
+  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（收紧）。
   if (!categoryId.startsWith(CAUSE_OVERLAY_ID_PREFIX)) {
     throw new ApiError(
       'validation_error',
@@ -1176,7 +1035,7 @@ export async function acceptCauseCategoryProposal(
       );
     }
 
-    // YUK-1019 — 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
+    // 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
     // categoryId 时两个 tx 可同过上方 SELECT。onConflictDoNothing 让并发 INSERT
     // 优雅落空（阻塞至对方提交后再判），空 returning = 撞上 → 同一个 409。
     const inserted = await tx
@@ -1228,15 +1087,14 @@ export async function acceptCauseCategoryProposal(
 }
 
 // =============================================================================
-// YUK-1468 — 统一 edit_question 契约提案 accept（edit_request 形状）
+// 统一 edit_question 契约提案 accept（edit_request 形状）
 // =============================================================================
-//
 // Copilot 的 edit_question(save) 落 proposed_change.edit_request =
 // {question_id, ops?, document?, draft_ref?, expected_revision?,
 // expected_draft_version?}。accept = 经同一 ops → draft → submit gate：
-//   1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
-//   2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
-//   3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
+// 1. saveDraftEdit（request_id = proposal-accept:<id> —— 重放幂等）；
+// 2. submitDraftQuestion（同 request_id —— CAS/去重/publish 唯一 seam）；
+// 3. rate(accept) 事件 + proposal decision 信号（与旧路径同生命周期）。
 // CAS 冲突（revision 已动 / draft 版本已动）⇒ 409，proposal 保留 pending。
 
 interface UnifiedEditRequest {
@@ -1445,5 +1303,465 @@ async function acceptUnifiedQuestionEditRequest(
     question_id: resolvedQuestionId ?? 'draft',
     edit_event_id: editEventId,
     version: nextVersion,
+  };
+}
+
+// ====================================================================
+// judge_retraction accept applier（判分纠错提案的真身）
+// ====================================================================
+// 两类目标：
+// - subject_kind='evaluation'（native 评价行）：按 proposed_change.correction_kind
+// · rejudge → 写 experimental:appeal_request（expected head = 提案创建时
+// 冻结的快照，允许非 effective 目标）→ rejudge job → 冻结输入重评 →
+// CAS 激活 → settlement replay 自动回算 FSRS/θ/掌握度；
+// · assert → 按 asserted_verdicts 产出 manual_assert candidate 并同步
+// 激活 + 写 appeal resolution 事件。
+// - subject_kind='event'（legacy judge event）：写 CorrectEvent(retract)，
+// 命中既有 event 纠偏投影（corrections.ts）。
+// 任何路径都不回写原评价/FSRS/掌握度 —— 全部走"新事件 + 新 candidate +
+// 激活 + replay"的既有可逆机制。
+
+export interface JudgeRetractionAcceptResult {
+  kind: 'judge_retraction';
+  rate_event_id: string | null;
+  /** evaluation 目标：appeal_request/纠错锚点事件 id。 */
+  correction_event_id?: string;
+  /** assert 路径：新激活的 candidate evaluation id。 */
+  corrected_evaluation_id?: string;
+  /** rejudge → 'queued_rejudge'；assert → 激活态；event → 'retracted'。 */
+  disposition: string;
+  idempotent?: boolean;
+}
+
+export type EnqueueRejudgeFn = (appealEventId: string) => Promise<void>;
+
+async function defaultEnqueueRejudge(appealEventId: string): Promise<void> {
+  const { getPracticeBoss } = await import('./queue-runtime');
+  const { REJUDGE_SINGLETON_SECONDS } = await import('../jobs/rejudge-config');
+  const boss = await getPracticeBoss();
+  await boss.send(
+    'rejudge',
+    { appeal_event_id: appealEventId },
+    { singletonKey: appealEventId, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
+  );
+}
+
+async function findProposalCorrectionEvent(db: Db, proposalId: string) {
+  const [row] = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:appeal_request'),
+        eq(event.caused_by_event_id, proposalId),
+      ),
+    )
+    .limit(1);
+  return row?.id ?? null;
+}
+
+async function writeCorrectionResolution(
+  db: Db | Tx,
+  input: {
+    correctionEventId: string;
+    evaluationSubjectId: string;
+    disposition: string;
+    evaluationId?: string;
+  },
+) {
+  const id = `evt_eval_correction_resolution_${canonicalHash(input.correctionEventId)}`;
+  const [existing] = await db.select({ id: event.id }).from(event).where(eq(event.id, id)).limit(1);
+  if (existing) return;
+  await writeEvent(db, {
+    id,
+    actor_kind: 'system',
+    actor_ref: 'assessment:correction',
+    action: 'experimental:assessment_appeal_resolution',
+    subject_kind: 'evaluation',
+    subject_id: input.evaluationSubjectId,
+    outcome: null,
+    caused_by_event_id: input.correctionEventId,
+    payload: {
+      disposition: input.disposition,
+      ...(input.evaluationId ? { evaluation_id: input.evaluationId } : {}),
+    },
+  });
+}
+
+// applyManualAssertCorrection 的确定性校验失败：写一条 failed:<code> resolution，
+// 但绝不落 accept —— 提案保持 pending，owner 可重试/驳回，而不是显示成已采纳却零效果。
+const permanentAssertFailureCodes: ReadonlySet<string> = new Set([
+  'not_correctable',
+  'frozen_input_unavailable',
+  'not_found',
+  'assert_coverage_incomplete',
+  'assert_unit_not_additive',
+  'assert_unit_unknown',
+  'evaluation_key_conflict',
+]);
+
+function permanentAssertFailureDisposition(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const code =
+    error instanceof ApiError
+      ? error.code
+      : error.name === 'EvaluateSubmissionError'
+        ? (error as Error & { code?: string }).code
+        : undefined;
+  return code && permanentAssertFailureCodes.has(code) ? `failed:${code}` : null;
+}
+
+/** assert 路径：人工判定 → manual_assert candidate → CAS 激活 + resolution 事件。 */
+async function applyManualAssertCorrection(
+  db: Db,
+  input: {
+    proposalId: string;
+    evaluationId: string;
+    correctionEventId: string;
+    reasonMd: string;
+    assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[];
+    /** proposal 创建时冻结的 head 期望（P1 review）——CAS 按此比对，不现读。 */
+    expectedHead: { effectiveEvaluationId: string | null; generation: number };
+  },
+): Promise<{ correctedEvaluationId: string; disposition: string }> {
+  const { evaluateAttempt } = await import('./judge/evaluation-authority');
+  const { activateSubmissionCandidate } = await import('./judge/evaluate-submission');
+
+  const [original] = await db
+    .select()
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, input.evaluationId))
+    .limit(1);
+  if (original?.status !== 'completed') {
+    throw new ApiError('not_correctable', 'target evaluation missing or not completed', 409);
+  }
+  const provenance = EvaluationProvenance.safeParse(original.provenance);
+  if (!provenance.success || !provenance.data.input_snapshot) {
+    throw new ApiError(
+      'frozen_input_unavailable',
+      'assert correction requires the frozen input snapshot',
+      409,
+    );
+  }
+  const [revisionRow] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, provenance.data.input_snapshot.revision_id))
+    .limit(1);
+  if (!revisionRow) {
+    throw new ApiError('not_found', 'frozen revision row missing for assert correction', 409);
+  }
+  const revision = PublishedQuestionRevision.parse({
+    revision_id: revisionRow.revision_id,
+    group_id: revisionRow.group_id,
+    revision_ordinal: revisionRow.revision_ordinal,
+    integrity_digest: revisionRow.integrity_digest,
+    structure: revisionRow.structure,
+    response_spec: revisionRow.response_spec,
+    scoring_basis: revisionRow.scoring_basis,
+    execution_plan: revisionRow.execution_plan,
+    published_at:
+      typeof revisionRow.published_at === 'string'
+        ? revisionRow.published_at
+        : revisionRow.published_at.toISOString(),
+    supersedes_revision_id: revisionRow.supersedes_revision_id,
+  });
+  const scopedBasis = projectIssuedScoringBasis(
+    revision,
+    provenance.data.input_snapshot.issued_part_ids,
+  );
+  const verdicts = new Map(input.assertedVerdicts.map((v) => [v.scoring_unit_id, v.verdict]));
+  // scopedBasis.units = 本次 issuance 发题范围内的全部 unit（assert 需全覆盖）。
+  const scopedUnits = scopedBasis.units;
+  const asserted: ScoringUnitResultT[] = scopedUnits.map((unit) => {
+    const verdict = verdicts.get(unit.scoring_unit_id);
+    if (verdict === undefined) {
+      throw new ApiError(
+        'assert_coverage_incomplete',
+        `asserted_verdicts must cover every in-scope unit; missing '${unit.scoring_unit_id}'`,
+        422,
+      );
+    }
+    if (unit.points === null) {
+      throw new ApiError(
+        'assert_unit_not_additive',
+        `unit '${unit.scoring_unit_id}' is not additive-scored — manual assert needs the holistic lane, which is not part of this correction path`,
+        422,
+      );
+    }
+    return {
+      status: 'scored',
+      scoring_unit_id: unit.scoring_unit_id,
+      points_awarded: verdict === 'correct' ? unit.points : 0,
+      scored_because: 'response',
+      judged_by: 'human_review',
+      feedback_md: input.reasonMd || undefined,
+      evidence_citations: [],
+    };
+  });
+  for (const v of input.assertedVerdicts) {
+    if (!scopedUnits.some((unit) => unit.scoring_unit_id === v.scoring_unit_id)) {
+      throw new ApiError(
+        'assert_unit_unknown',
+        `asserted_verdicts references unknown/out-of-scope unit '${v.scoring_unit_id}'`,
+        422,
+      );
+    }
+  }
+
+  const candidate = await evaluateAttempt({
+    db,
+    entry: 'appeal_rejudge',
+    contract: {
+      submission_id: original.submission_id,
+      evaluation_group_id: original.evaluation_group_id,
+      expected_submission_ids: provenance.data.input_snapshot.member_submission_ids,
+      evaluation_key: `correction:${input.proposalId}`,
+      mode: 'manual_assert',
+      asserted_unit_results: asserted,
+      provenance: {
+        source: 'manual',
+        assisted: false,
+        review_context: {
+          appeal_event_id: input.correctionEventId,
+          prior_evaluation_id: original.evaluation_id,
+          reason_md: input.reasonMd,
+        },
+      },
+    },
+  });
+  const candidateId = candidate.evaluation.record.evaluation_id;
+
+  // P1 review — CAS 期望来自 proposal 冻结快照，不是 accept 时的现值：head
+  // 已移动 ⇒ activation 返回 conflict，重放是非变异性的，绝不覆盖后到的 B。
+  const intent = ActivateEvaluationIntent.parse({
+    evaluation_id: candidateId,
+    expected_effective_id: input.expectedHead.effectiveEvaluationId,
+    expected_generation: input.expectedHead.generation,
+  });
+  let disposition: string;
+  if (candidate.evaluation.record.status === 'completed') {
+    const activation = await activateSubmissionCandidate(db, intent, {
+      actorRef: 'assessment:correction',
+      record: (tx) =>
+        writeCorrectionResolution(tx, {
+          correctionEventId: input.correctionEventId,
+          evaluationSubjectId: original.evaluation_id,
+          disposition: 'effective',
+          evaluationId: candidateId,
+        }),
+    });
+    disposition =
+      activation.status === 'activated' || activation.status === 'already_effective'
+        ? 'effective'
+        : `held:${activation.status}`;
+    if (disposition !== 'effective') {
+      await writeCorrectionResolution(db, {
+        correctionEventId: input.correctionEventId,
+        evaluationSubjectId: original.evaluation_id,
+        disposition,
+        evaluationId: candidateId,
+      });
+    }
+  } else {
+    disposition = 'held:candidate_pending';
+    await writeCorrectionResolution(db, {
+      correctionEventId: input.correctionEventId,
+      evaluationSubjectId: original.evaluation_id,
+      disposition,
+      evaluationId: candidateId,
+    });
+  }
+  return { correctedEvaluationId: candidateId, disposition };
+}
+
+export async function acceptJudgeRetractionProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: PracticeApplierOpts,
+): Promise<JudgeRetractionAcceptResult> {
+  ensureAcceptOnly('judge_retraction', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const target = asPlainRecord(proposal.payload.target);
+  const reasonMd =
+    typeof change.reason_md === 'string'
+      ? change.reason_md
+      : typeof proposal.payload.reason_md === 'string'
+        ? proposal.payload.reason_md
+        : '';
+
+  // ── native evaluation 目标：rejudge（异步）或 assert（同步人工判定激活）。
+  if (target.subject_kind === 'evaluation') {
+    const evaluationId = requiredString(change.evaluation_id, 'evaluation_id', proposalId);
+    const correctionKind = change.correction_kind === 'assert' ? 'assert' : 'rejudge';
+    // P1 review — 冻结的 head 期望必须随 proposal 落库（服务端观测，非 agent
+    // 提供）。缺字段 ⇒ 无法证明观察时点，拒绝而不是悄悄按 accept 时的 head
+    // 重订 —— 否则过期提案/重试会把后到的纠错 B 覆盖回 A。
+    const expectedEffectiveId =
+      change.expected_effective_id === null
+        ? null
+        : requiredString(change.expected_effective_id, 'expected_effective_id', proposalId);
+    if (typeof change.expected_generation !== 'number' || change.expected_generation < 0) {
+      throw new ApiError(
+        'validation_error',
+        `proposal ${proposalId} is missing required proposed_change.expected_generation`,
+        400,
+      );
+    }
+    const expectedGeneration = change.expected_generation;
+
+    // assert payload 校验放在写 appeal request 之前：畸形提案不能留下无结论的
+    // correction 事件。producer 已做同样的全覆盖校验，这里保留解析/兜底。
+    let assertedVerdicts: { scoring_unit_id: string; verdict: 'correct' | 'incorrect' }[] = [];
+    if (correctionKind === 'assert') {
+      const rawVerdicts = Array.isArray(change.asserted_verdicts) ? change.asserted_verdicts : [];
+      assertedVerdicts = rawVerdicts
+        .map((v) => asPlainRecord(v))
+        .map((v) => ({
+          scoring_unit_id: typeof v.scoring_unit_id === 'string' ? v.scoring_unit_id : '',
+          verdict: v.verdict === 'correct' ? ('correct' as const) : ('incorrect' as const),
+        }));
+      if (assertedVerdicts.length === 0 || assertedVerdicts.some((v) => v.scoring_unit_id === '')) {
+        throw new ApiError(
+          'validation_error',
+          "correction_kind='assert' requires non-empty asserted_verdicts",
+          400,
+        );
+      }
+    }
+
+    const existingRate = await existingAcceptRate(db, proposalId);
+    const existingCorrection = await findProposalCorrectionEvent(db, proposalId);
+
+    const { requestEvaluationCorrection } = await import('./assessment/appeal');
+    const correctionEventId =
+      existingCorrection ??
+      (await requestEvaluationCorrection(db, {
+        evaluation_id: evaluationId,
+        reason_md: reasonMd,
+        proposal_event_id: proposalId,
+        expected_effective_id: expectedEffectiveId,
+        expected_generation: expectedGeneration,
+      }));
+
+    if (correctionKind === 'rejudge') {
+      // P1 review — durable correction event / accept rate 都不是投递证明：
+      // crash/throw 可能把 job 留在未投态。任何路径都先补一遍 singleton
+      // enqueue —— 60s 窗口内 send 返回 null 不产生 dup job；窗口外的
+      // dup job 由 handler 的 appealAlreadyResolved + activation CAS 幂等
+      // 兜底 —— 之后才判定 done。顺序：correction event → enqueue → rate。
+      const enqueue = opts.enqueueRejudge ?? defaultEnqueueRejudge;
+      await enqueue(correctionEventId);
+      if (existingRate && existingCorrection) {
+        return {
+          kind: 'judge_retraction',
+          rate_event_id: existingRate.id,
+          correction_event_id: existingCorrection,
+          disposition: 'already_applied',
+          idempotent: true,
+        };
+      }
+      const rate = existingRate
+        ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
+        : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
+      await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+      return {
+        kind: 'judge_retraction',
+        rate_event_id: rate.rate_event_id,
+        correction_event_id: correctionEventId,
+        disposition: 'queued_rejudge',
+      };
+    }
+
+    // assert —— asserted_verdicts 已在上方解析校验，producer 也预校验过覆盖。
+    // assert 幂等：manual_assert 的 evaluation_key（correction:<proposalId>）在
+    // evaluateSubmission 里按 intent_digest 重放同一 candidate；activation CAS
+    // 以 proposal 冻结期望比对 —— head 已动则 conflict（非变异性），命中已激
+    // 活则 already_effective；resolution 事件按确定性 id 只写一次。
+    let outcome: { correctedEvaluationId: string; disposition: string };
+    try {
+      outcome = await applyManualAssertCorrection(db, {
+        proposalId,
+        evaluationId,
+        correctionEventId,
+        reasonMd,
+        assertedVerdicts,
+        expectedHead: {
+          effectiveEvaluationId: expectedEffectiveId,
+          generation: expectedGeneration,
+        },
+      });
+    } catch (error) {
+      // accept rate 必须写在效果之后：确定性校验失败时提案保持 pending。
+      // correction request 已提交，补终态 resolution，不让 appeal 无结论。
+      const disposition = permanentAssertFailureDisposition(error);
+      if (disposition) {
+        await writeCorrectionResolution(db, {
+          correctionEventId,
+          evaluationSubjectId: evaluationId,
+          disposition,
+        });
+      }
+      throw error;
+    }
+    const rate = existingRate
+      ? { rate_event_id: existingRate.id, rate_at: existingRate.created_at }
+      : await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
+    await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    return {
+      kind: 'judge_retraction',
+      rate_event_id: rate.rate_event_id,
+      correction_event_id: correctionEventId,
+      ...(outcome.correctedEvaluationId
+        ? { corrected_evaluation_id: outcome.correctedEvaluationId }
+        : {}),
+      disposition: outcome.disposition,
+    };
+  }
+
+  // ── legacy judge-event 目标：CorrectEvent(retract) → 既有纠偏投影。
+  const judgeEventId = requiredString(change.judge_event_id, 'judge_event_id', proposalId);
+  const [judgeEvent] = await db.select().from(event).where(eq(event.id, judgeEventId)).limit(1);
+  if (judgeEvent?.action !== 'judge') {
+    throw new ApiError(
+      'evidence_ref_must_be_judge_event',
+      'target event is not a judge event',
+      422,
+    );
+  }
+  const correctionEventId = `evt_event_correction_${canonicalHash({ proposal: proposalId, target: judgeEventId, kind: 'retract' })}`;
+  await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(eq(event.id, correctionEventId))
+      .limit(1);
+    if (existing.length === 0) {
+      await writeEvent(tx, {
+        id: correctionEventId,
+        actor_kind: 'user',
+        actor_ref: 'self',
+        action: 'correct',
+        subject_kind: 'event',
+        subject_id: judgeEventId,
+        outcome: 'success',
+        payload: {
+          correction_kind: 'retract',
+          reason_md: reasonMd || 'judge_retraction proposal accepted',
+          affected_refs: [{ kind: 'event', id: judgeEventId }],
+        },
+        caused_by_event_id: proposalId,
+      });
+    }
+  });
+  const rate = await writeProposalRateEvent(db, proposalId, 'accept', opts.user_note);
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'judge_retraction',
+    rate_event_id: rate.rate_event_id,
+    correction_event_id: correctionEventId,
+    disposition: 'retracted',
+    idempotent: rate.idempotent,
   };
 }

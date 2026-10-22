@@ -1,9 +1,5 @@
 // Stable server contract for consumers outside the knowledge capability.
-//
-// YUK-876 / FULL F3.7b — the failure-attempt evidence + attribution read models
-// (moved from src/server/events/queries.ts) are part of this contract.
 
-// YUK-885 — public read-model ports repointed from central deep imports.
 export { isDirectTreePair } from '@/core/topology-gate';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {
@@ -37,10 +33,8 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
-// YUK-1064 — script and cross-capability integration ports.
+export { KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
-// YUK-1007 — knowledge 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
-// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   EdgeProposalDecision,
@@ -62,20 +56,13 @@ export {
   listActiveMisconceptionsForKcs,
   loadFailureLearningKnowledgeContext,
 } from './server/failure-learning-context';
-// YUK-1571 — the learnable-frontier graph decision is knowledge-owned; the
-// practice capability consumes it through this narrow port (its compat shim on
-// the old learnable-frontier module path re-exports these same bindings).
+// Practice consumes the frontier decision through this narrow port.
 export type { FrontierResolution } from './server/frontier-read';
 export {
   isMasteredForFrontier,
   learnableFrontierResolved,
+  loadFrontierRail,
 } from './server/frontier-read';
-export type {
-  CuratedAtomic,
-  HubMeshAtomicInput,
-  HubMeshEdge,
-} from './server/hub-mesh';
-export { resolveHubMeshAtomics } from './server/hub-mesh';
 export type {
   CreateLearningIntentKnowledgeNodeFn,
   CreateLearningIntentKnowledgeNodeInput,
@@ -85,7 +72,12 @@ export {
   archiveMisconceptionEdge,
   createMisconceptionEdge,
 } from './server/misconception-edges';
-export { createKnowledgeNodeFromEvents } from './server/node-creation';
+export {
+  createKnowledgeNodeFromEvents,
+  ensureSubjectRoot,
+  subjectRootId,
+  updateSubjectRootNameFromControl,
+} from './server/node-creation';
 export {
   type MasteryDecayBucket,
   masteryDecayBucket,
@@ -97,11 +89,11 @@ export {
   dismissProposal,
   writeKnowledgeProposeEvent,
 } from './server/proposals';
+export { loadReviewDueSummary } from './server/review-due-summary';
 export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export { loadTreeSnapshot } from './server/tree';
 
-// YUK-1062 — task composition uses the narrow task-public entry directly.
 export { knowledgeTaskSpecs } from './task-public';

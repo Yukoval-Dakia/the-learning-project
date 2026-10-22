@@ -5,11 +5,11 @@ import { event, memory_brief_note } from '@/db/schema';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
+import { learnerEvidenceSql } from './learner-evidence';
 
-// YUK-565 — reserved rollback-ledger actions that were written before
-// writeEvent began persisting insert-time opt-out intent as affected_scopes=[].
-// The action list handles those historical rows; the actor-qualified `correct`
-// clause preserves ordinary user corrections while excluding cascade tombstones.
+// Reserved rollback-ledger actions written before writeEvent persisted insert-time
+// opt-out intent. The action list covers historical rows; the actor-qualified
+// `correct` clause keeps ordinary user corrections while excluding cascade tombstones.
 const LEGACY_INTERNAL_BRIEF_ACTIONS = [
   'experimental:grading_checkpoint',
   'experimental:state_snapshot',
@@ -43,10 +43,8 @@ export type BriefEvent = {
   action: string;
   subject_kind: string;
   subject_id: string;
-  // P5.4-L2 (PR #232 review) — `outcome` is a top-level event COLUMN (writeEvent
-  // sets `outcome: input.outcome`, schema.ts:555), NOT inside `payload`. Thread
-  // it end-to-end so the brief writer sees success/failure/partial and can write
-  // real weakness/progress summaries. null when the action carries no outcome.
+  // Top-level event column, not payload: the brief writer needs success/failure
+  // context for real weakness/progress summaries.
   outcome: string | null;
   payload: unknown;
   created_at: Date;
@@ -77,8 +75,7 @@ export type BriefRow = BriefDraft & {
   id: string;
   scope_key: string;
   subject_id: string | null;
-  // P5.3 (YUK-183) — computed in regenerateMemoryBrief, NOT part of BriefDraft
-  // (it is not the `generate` LLM's output). null = unjudgeable (§4.2).
+  // Computed here, not by the generate LLM. null means unjudgeable.
   long_term_freshness_score: number | null;
   source_event_id: string | null;
   latest_evidence_at: Date | null;
@@ -113,12 +110,14 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        // Question-bank authoring/publish events audit bank content, not learner
+        // activity, so they never enter the brief evidence window.
+        learnerEvidenceSql(),
         eventAllowsDerivationSql(),
       ),
     )
     .orderBy(desc(event.created_at))
-    // P5.2 (BR-9) — single-source per-brief read cap. Byte-identical to the
-    // prior hardcoded 50; budgets.ts is now the only place this number lives.
+    // Per-brief read cap; budgets.ts is the only place this number lives.
     .limit(BRIEF_REFRESH_BUDGET.maxEventsPerBrief);
   return rows.map((row) => ({
     id: row.id,
@@ -145,8 +144,7 @@ async function upsertBriefInDb(db: Db, row: BriefRow): Promise<void> {
         recent_week_evidence_ids: row.recent_week_evidence_ids,
         recent_months_evidence_ids: row.recent_months_evidence_ids,
         long_term_evidence_ids: row.long_term_evidence_ids,
-        // P5.3 (YUK-183) — also write on UPDATE so audit:schema sees a `.set(`
-        // write path (the INSERT path rides in via `.values(row)`). Spec §5.
+        // Also write on UPDATE so audit:schema sees a write path for the column.
         long_term_freshness_score: row.long_term_freshness_score,
         source_event_id: row.source_event_id,
         latest_evidence_at: row.latest_evidence_at,
@@ -158,12 +156,8 @@ async function upsertBriefInDb(db: Db, row: BriefRow): Promise<void> {
     });
 }
 
-// P5.2 (BR-10) — test-only export of the affected_scopes loader. The
-// acceptance test must prove that for a subject made active purely by
-// attempt/review events (referenced_knowledge_ids only), this affected_scopes
-// path returns 0 rows while the knowledge-resolved loader returns the events.
-// Not part of the production API; named with the `ForTest` suffix so it is
-// obviously a test seam, not a caller-facing helper.
+// Test seam: proves the affected_scopes path returns 0 rows for subjects made
+// active only by attempt/review events, while the knowledge-resolved loader finds them.
 export const loadEventsFromDbForTest = loadEventsFromDb;
 
 export async function listStaleBriefScopes(db: Db, now = new Date()): Promise<string[]> {
@@ -173,22 +167,11 @@ export async function listStaleBriefScopes(db: Db, now = new Date()): Promise<st
     .from(memory_brief_note)
     .where(
       and(
-        // P5.2 (BR-9) — EXCLUDE `subject:*` scopes from the 24h-stale loop.
-        // Subject refresh is owned ENTIRELY by the capped per-subject path
-        // (listActiveSubjectsSinceRefresh → selectSubjectsForRun, gated by
-        // BRIEF_REFRESH_BUDGET.maxSubjectsPerRun). If the stale loop also
-        // enqueued every >24h subject row, an already-built subject would be
-        // refreshed UNCAPPED via this path, bypassing maxSubjectsPerRun. `global`
-        // (and any legacy non-subject scope) stays on this stale path (BR-6
-        // unchanged).
+        // Subject scopes are owned by the capped per-subject path; enqueueing them
+        // here would bypass maxSubjectsPerRun. Global/legacy scopes stay on this path.
         not(like(memory_brief_note.scope_key, 'subject:%')),
-        // P5.2 — semantically identical to the prior raw
-        // `refreshed_at IS NULL OR refreshed_at < cutoff` fragment, but expressed
-        // via drizzle's typed operators so the `cutoff` Date binds against the
-        // timestamptz column type. The raw `sql\`... < ${cutoff}\`` form did NOT
-        // carry the column type, so postgres-js's prepared-statement bind crashed
-        // on a JS Date param (latent — the global sweep had no DB-level test until
-        // P5.2 exercised it). Same 24h gate, no behavior change for non-subject scopes.
+        // Typed operators keep the Date bound to the timestamptz column; a raw
+        // sql comparison dropped the column type and crashed on a Date param.
         or(isNull(memory_brief_note.refreshed_at), lt(memory_brief_note.refreshed_at, cutoff)),
       ),
     );
@@ -210,6 +193,8 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
       and(
         sql`${event.affected_scopes} @> ARRAY[${scopeKey}]::text[]`,
         excludesInternalBriefLedger(),
+        // Same classification as the evidence window: a question revision is not new evidence.
+        learnerEvidenceSql(),
         eventAllowsDerivationSql(),
         gt(event.created_at, briefLatest),
       ),
@@ -219,19 +204,9 @@ export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boo
 }
 
 /**
- * P5.3 (YUK-183) — resolve `created_at` for the long-term evidence ids backing
- * the freshness score (spec §4.3). The in-memory `events` array is the cheap
- * first pass; any id NOT present there (the test seams break the subset
- * guarantee, and the DB window is biased toward newest-50) is resolved LAZILY
- * and only if there is actually something to resolve AND a way to resolve it.
- *
- * CRASH-FIX (§4.3): we never construct a DB loader when `params.db` is
- * undefined. Resolution is gated on `missing.length > 0 && (loadEventTimestamps
- * || db)`. The injected-`loadEvents` unit path (no db, no loader) leaves the
- * missing ids unresolved → created_at: null → excluded from the score.
- *
- * Exported so the unit test can drive it directly with an injected
- * `loadEventTimestamps` fake without touching Postgres.
+ * Resolve created_at for evidence ids backing the freshness score. The loaded event
+ * window is the cheap first pass; missing ids are resolved in one batch only when a
+ * loader exists. Without one they stay null and are excluded from the score.
  */
 export async function resolveEvidenceTimestamps(
   ids: string[],
@@ -241,22 +216,21 @@ export async function resolveEvidenceTimestamps(
     loadEventTimestamps?: (ids: string[]) => Promise<{ id: string; created_at: Date }[]>;
   },
 ): Promise<{ id: string; created_at: Date | null }[]> {
-  // 1. In-memory map of already-loaded events (zero query).
+  // 1. Already-loaded events need no query.
   const known = new Map<string, Date>();
   for (const ev of events) known.set(ev.id, ev.created_at);
 
-  // 2. Partition into present (resolved from the map) vs missing.
+  // 2. Partition into resolved and missing ids.
   const missing: string[] = [];
   for (const id of ids) {
     if (!known.has(id)) missing.push(id);
   }
 
-  // 3. Lazily resolve the missing set — and only then.
+  // 3. Resolve the missing set lazily, only when a resolver exists.
   if (missing.length > 0 && (params.loadEventTimestamps || params.db)) {
     const rows = params.loadEventTimestamps
       ? await params.loadEventTimestamps(missing)
-      : // One batched query — no N+1. `params.db` is guaranteed defined here by
-        // the guard above, so we never dereference an undefined db.
+      : // One batched query — no N+1. The guard above guarantees db is defined.
         await (params.db as Db)
           .select({ id: event.id, created_at: event.created_at })
           .from(event)
@@ -264,8 +238,8 @@ export async function resolveEvidenceTimestamps(
     for (const r of rows) known.set(r.id, r.created_at);
   }
 
-  // 4. Any id still unresolved (invented by `generate`, or a learning_record id
-  //    — §4.3 note) → created_at: null → excluded from the score per §4.2.
+  // 4. Still-unresolved ids (invented by generate, or learning_record ids) get null
+  //    and are excluded from the score.
   return ids.map((id) => ({ id, created_at: known.get(id) ?? null }));
 }
 
@@ -276,8 +250,7 @@ export async function regenerateMemoryBrief(params: {
   searchFacts?: (scopeKey: string) => Promise<BriefFact[]>;
   generate: GenerateBrief;
   upsertBrief?: (row: BriefRow) => Promise<void>;
-  // P5.3 (YUK-183) — injectable timestamp seam (§4.3) so the unit test drives
-  // the decay path with in-memory timestamps and never touches Postgres.
+  // Injectable timestamp seam so the decay path stays DB-free in unit tests.
   loadEventTimestamps?: (ids: string[]) => Promise<{ id: string; created_at: Date }[]>;
   now?: () => Date;
 }): Promise<{ wrote: boolean; row: BriefRow }> {
@@ -323,14 +296,9 @@ export async function regenerateMemoryBrief(params: {
       ? null
       : new Date(Math.max(...events.map((row) => row.created_at.getTime())));
 
-  // ── P5.3 long-term freshness score (no LLM/embedding call; no row mutation) ──
-  // Computed over draft.long_term_evidence_ids (SoT ids) reusing the already-
-  // loaded events + at most one batched timestamp lookup (§4.3). draft's
-  // long_term_md + long_term_evidence_ids pass through verbatim below — there is
-  // NO demotion and NO override of the LLM's long-term fields. Spec §4.1.
-  // PR #229 review (medium): de-dup the SCORING input only — a duplicate evidence
-  // id would otherwise be counted twice in the mean and over-weight that one
-  // event (and double-query it). draft.long_term_evidence_ids is stored as-is.
+  // Long-term freshness is advisory: no LLM/embedding call and no mutation of the
+  // generated long-term fields. Deduplicate only the scoring input so a repeated id
+  // is not weighted twice; the stored id list is unchanged.
   const scoringEvidenceIds = [...new Set(draft.long_term_evidence_ids)];
   const evidenceTimestamps = await resolveEvidenceTimestamps(scoringEvidenceIds, events, params);
   const { score: longTermFreshnessScore } = scoreLongTermFreshness(
@@ -343,8 +311,8 @@ export async function regenerateMemoryBrief(params: {
     id: idForScope(params.scopeKey),
     scope_key: params.scopeKey,
     subject_id: subjectForScope(params.scopeKey),
-    ...draft, // long_term_md + long_term_evidence_ids UNTOUCHED
-    long_term_freshness_score: longTermFreshnessScore, // P5.3 (§5); number | null
+    ...draft, // long_term_md and long_term_evidence_ids pass through untouched
+    long_term_freshness_score: longTermFreshnessScore,
     source_event_id: events[0]?.id ?? null,
     latest_evidence_at: latestEvidenceAt,
     evidence_count: events.length,

@@ -16,6 +16,7 @@ import {
   MultipartFilePartSchema,
 } from '@/kernel/http-contracts';
 import {
+  IngestionAskAnswer,
   IngestionAskAnswerBody,
   IngestionAskAnswerHeaders,
   IngestionAskAnswerResponse,
@@ -23,29 +24,20 @@ import {
 } from '../server/agent/contract';
 
 /**
- * YUK-1408 — the client-facing consent enum for upload routes. Intentionally a
- * LOCAL literal, NOT the shared `DerivationPolicy` schema: ingestion callers
- * may only ever declare 'allow' | 'answer_only'. If the shared enum later
- * widens (e.g. with 'crisis'), client-sent values here must still be rejected
- * — crisis is a system-write state, never a client consent choice.
+ * Client-facing consent enum. Local on purpose: callers may only declare allow or
+ * answer_only, and widening the shared policy must not admit system states such as
+ * crisis as client consent.
  */
 export const IngestionDerivationPolicy = z.enum(['allow', 'answer_only']);
 
 export const CreateIngestionSessionBody = z.object({
   entrypoint: IngestionEntrypoint,
   asset_ids: z.array(z.string().min(1)).min(1).max(MAX_PDF_PAGES),
-  // YUK-1404 — explicit optional upload subject. Omitted / null = the learner
-  // did not pick one (legacy clients, skippable choice): the upload ALWAYS
-  // proceeds and no signal is persisted. A non-null value must resolve to a
-  // currently selectable subject (aliases canonicalized) or the request is
-  // rejected 400 before any source_document / learning_session write.
+  // Optional subject. Null or absent means no signal; a value must resolve to a
+  // selectable subject before any write, or the request is rejected.
   subject_id: z.string().nullable().optional(),
-  // YUK-1408 — the learner's consented usage for the uploaded document.
-  // 'allow' (default when absent) lets ingestion-derived records feed
-  // memory/briefs; 'answer_only' stamps every derived event so the shared
-  // derivation filter keeps the document's content out of those channels.
-  // Persisted on source_document.provenance.usage_policy; the consent UI reads
-  // and updates it there.
+  // Consented usage, persisted on document provenance. Allow (default) feeds
+  // derived records into memory/briefs; answer_only keeps them out.
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
@@ -56,6 +48,15 @@ export const IngestionSessionSchema = z
     entrypoint: z.string().nullable(),
     source_document_id: z.string().nullable().optional(),
     source_asset_ids: z.array(z.string()),
+    // List-only evidence fields (listIngestionSessions): which durable lane
+    // produced the session, proven title source, produced-item count, and
+    // lifecycle timestamps. Absent on create/detail echoes.
+    path: z.enum(['agent', 'extract']).nullable().optional(),
+    title: z.string().nullable().optional(),
+    title_source: z.enum(['source_document']).nullable().optional(),
+    item_count: z.number().int().min(0).optional(),
+    started_at: z.number().int().optional(),
+    ended_at: z.number().int().nullable().optional(),
   })
   .passthrough();
 
@@ -64,21 +65,15 @@ export const IngestionSessionResponseSchema = z.object({
 });
 
 /**
- * YUK-1408 (S1 read side) — the latest `experimental:ingestion_usage_receipt`
- * for the session's source_document. `derivation_policy` is the document's
- * CURRENT live policy (provenance.usage_policy) — a later withdrawal shows
- * immediately — NOT the policy stamped on the receipt. Counts are numbers
- * only; redacted values are never on the wire.
+ * The latest usage receipt for the session document. derivation_policy is the
+ * document's live policy, so a later withdrawal shows immediately. Counts only;
+ * redacted values never go on the wire.
  */
 export const IngestionUsageReceiptSchema = z.object({
   derivation_policy: IngestionDerivationPolicy,
   /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
   engine: z.string().nullable(),
-  /**
-   * What left the server for a model on this extraction: `page_images:'raw'`
-   * means the original page image was sent as-is (OCR/VLM must see it);
-   * only the extracted text is redacted. null on a receipt without channels.
-   */
+  /** Channels that left the server; page images are raw, text is redacted. */
   channels: z
     .object({
       page_images: z.enum(['raw', 'none']),
@@ -106,9 +101,8 @@ export const IngestionOperationSchema = z
 /** Runtime FormData carries a File; OpenAPI renders the shared marker as format: binary. */
 export const MultipartFileUploadSchema = z.object({ file: MultipartFilePartSchema }).passthrough();
 
-// YUK-1408 — the docx multipart accepts an optional consent field alongside the
-// file part so the OpenAPI client declares it (the route validates + rejects
-// unknown values; the catchall stays for other form parts).
+// The docx multipart declares optional consent next to the file; the route
+// rejects unknown values, and the catchall admits other form parts.
 export const MultipartDocxUploadSchema = MultipartFileUploadSchema.extend({
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
@@ -136,7 +130,7 @@ export const CreateMistakeBodySchema = z.object({
   prompt_md: z.string().min(1, 'prompt_md is required'),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string().min(1, 'wrong_answer_md is required'),
-  // This route has no independent subject signal, so at least one knowledge id stays required.
+  // No subject signal here, so at least one knowledge id is required.
   knowledge_ids: z.array(z.string().min(1)).min(1, 'at least one knowledge_id is required'),
   cause: z
     .object({
@@ -221,12 +215,10 @@ export const MistakeProjectionSchema = z.object({
     .object({
       source: z.enum(['agent', 'user']),
       primary_category: CauseCategory,
-      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
-      // unresolvable → null，渲染层回退 primary_category 裸 id。
+      // Display backfill from active misconception titles; null when not a misc id.
       primary_label: z.string().nullable(),
       secondary_categories: z.array(CauseCategory),
-      // YUK-1020 — secondary_categories 里 misc_ id 的显示回填（id → active
-      // misconception title Record map）；vocab / unresolvable 缺席 → 渲染裸 id。
+      // Display backfill for misc ids; absent entries fall back to raw ids.
       secondary_labels: z.record(z.string(), z.string()),
       user_notes: z.string().nullable(),
       confidence: z.number().min(0).max(1).nullable(),
@@ -339,11 +331,248 @@ export const RevertAutoEnrolledBlockResponseSchema = z.object({
   retractedEventId: z.string(),
 });
 
-// YUK-1522 (R8) — durable ask answer endpoint wire shapes. The binding
-// definitions live in server/agent/contract.ts (single source for the tool,
-// emitter and route); re-exported here so the api/ contracts file stays the
-// one-stop wire surface.
+// Ask answer wire shapes, re-exported from the single agent contract source so
+// this file stays the one-stop wire surface.
 export const IngestionAskAnswerBodySchema = IngestionAskAnswerBody;
 export const IngestionAskAnswerResponseSchema = IngestionAskAnswerResponse;
 export const IngestionAskAnswerHeadersSchema = IngestionAskAnswerHeaders;
 export const IngestionAskParamsSchema = IngestionAskParams;
+
+// ---------- session history (GET /api/ingestion-sessions/:id/history) ----------
+//
+// Read-back contract for reopening a finished ingestion session. `state_at_finish`
+// reports only frozen evidence (durable snapshot/live item-ledger status, or a
+// durable link with 'unknown' when no at-finish state was captured); mutable
+// question/question_block fields never substitute for it. `current` is today's
+// admission/serving state — the two are never merged. `prior_runs` carries
+// demoted checkpoints of earlier runs (v1 identity-less checkpoints land there
+// unprovable); live rows never overlay them.
+
+export const IngestionHistoryItemStateSchema = z.enum([
+  // Agent item ledger statuses (agent contract vocabulary).
+  'queued',
+  'structuring',
+  'solving',
+  'calibrating',
+  'admitted',
+  'withheld',
+  'failed',
+  // question_block.status (extract lane and unclaimed drafts).
+  'draft',
+  'imported',
+  'ignored',
+  'auto_enrolled',
+  // A durable link exists but no at-finish state is provable.
+  'unknown',
+]);
+
+export const IngestionHistoryCurrentSchema = z
+  .object({
+    draft_status: z.string().nullable(),
+    servable: z.boolean(),
+    // SERVING_HOLD_REASONS vocabulary; null = not held for a nameable reason.
+    hold_reason: z.string().nullable(),
+    held_since: z.string().nullable(),
+    next_action: z.object({ command: z.string(), method: z.string(), path: z.string() }).nullable(),
+    pending_action: z.object({ command: z.string(), since: z.string() }).nullable(),
+  })
+  .strict();
+
+export const IngestionHistoryItemSchema = z
+  .object({
+    item_id: z.string(),
+    /** 0-based display order within the session. */
+    ordinal: z.number().int().min(0),
+    question_no: z.string().nullable(),
+    /** 1-based source page when provenance records one. */
+    page: z.number().int().min(1).nullable(),
+    source_asset_ids: z.array(z.string()),
+    preview_md: z.string().nullable(),
+    preview_truncated: z.boolean(),
+    state_at_finish: IngestionHistoryItemStateSchema,
+    /** Model-written free-text reason (agent withheld/failed); null otherwise. */
+    reason: z.string().nullable(),
+    /** question_block.id — the versioned `qdraft1:` ref normalized for joins. */
+    draft_block_id: z.string().nullable(),
+    /** Raw durable draft ref as emitted (may be `qdraft1:<block>:<version>`). */
+    draft_ref: z.string().nullable(),
+    question_id: z.string().nullable(),
+    status_at: z.string().nullable(),
+    current: IngestionHistoryCurrentSchema.nullable(),
+  })
+  .strict();
+
+export const IngestionHistoryAskSchema = z
+  .object({
+    ask_id: z.string(),
+    item_id: z.string().nullable(),
+    question_no: z.string().nullable(),
+    prompt_md: z.string(),
+    answer_kind: z.enum(['choice', 'short']),
+    options: z.array(z.object({ id: z.string(), label_md: z.string() }).strict()).optional(),
+    placeholder: z.string(),
+    expires_at: z.string().nullable(),
+    created_at: z.string(),
+    resolved: z
+      .object({
+        answer: IngestionAskAnswer,
+        via: z.enum(['answer', 'timeout']),
+        at: z.string(),
+      })
+      .strict()
+      .nullable(),
+    /** True while no terminal resolution row exists — never inferred. */
+    unresolved: z.boolean(),
+    /** expires_at passed without a resolution; the sweeper window may have lapsed. */
+    expired_unresolved: z.boolean(),
+  })
+  .strict();
+
+export const IngestionHistoryRunSchema = z
+  .object({
+    /** execution_owner.run_ref of the live run; null when no owner exists. */
+    run_ref: z.string().nullable(),
+    run_state: z.enum(['in_progress', 'waiting', 'done', 'failed', 'lost']).nullable(),
+    stage: z.string().nullable(),
+    segment_count: z.number().int().min(0),
+    started_at: z.string().nullable(),
+    finished_at: z.string().nullable(),
+    captured_at: z.string().nullable(),
+    execution_closed: z.boolean().nullable(),
+    /** worker_lost settlement: a paid attempt's provider outcome was never proven. */
+    paid_outcome_unknown: z.boolean(),
+    /** Sticky marker: this run's durable error record was once truncated — the
+     *  missing rows are gone for good, never silently unmarked. */
+    errors_truncated: z.boolean(),
+    counts: z
+      .object({
+        items_total: z.number().int().min(0),
+        items_done: z.number().int().min(0),
+        items_withheld: z.number().int().min(0),
+        items_failed: z.number().int().min(0),
+      })
+      .strict()
+      .nullable(),
+    segments: z.array(
+      z
+        .object({
+          segment: z.number().int().min(0),
+          trigger: z.enum(['start', 'resume', 'continue']),
+          outcome: z.string().nullable(),
+          task_run_id: z.string().nullable(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+    errors: z.array(
+      z
+        .object({
+          scope: z.enum(['session', 'item']),
+          item_id: z.string().nullable(),
+          code: z.string(),
+          retryable: z.boolean(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+/**
+ * A demoted checkpoint of an earlier run — durable facts verbatim, no `current`
+ * projection and no live overlay. `run_ref` is null for v1 (identity-less)
+ * checkpoints whose run can never be proven.
+ */
+export const IngestionHistoryPriorRunSchema = z
+  .object({
+    run_ref: z.string().nullable(),
+    /** That run's job_events floor; null on v1 identity-less checkpoints. */
+    event_floor: z.number().int().nullable(),
+    captured_at: z.string(),
+    session_status: z.string(),
+    run_state: z.enum(['in_progress', 'waiting', 'done', 'failed', 'lost']),
+    stage: z.string().nullable(),
+    execution_closed: z.boolean(),
+    paid_outcome_unknown: z.boolean(),
+    /** True when that run's durable error record was truncated — permanent. */
+    errors_truncated: z.boolean(),
+    items: z.array(
+      z
+        .object({
+          item_id: z.string(),
+          question_no: z.string(),
+          status: IngestionHistoryItemStateSchema,
+          reason: z.string().nullable(),
+          page: z.number().int().min(1).nullable(),
+          preview_md: z.string().nullable(),
+          draft_ref: z.string().nullable(),
+          question_id: z.string().nullable(),
+          status_at: z.string().nullable(),
+        })
+        .strict(),
+    ),
+    asks: z.array(IngestionHistoryAskSchema),
+    segments: z.array(
+      z
+        .object({
+          segment: z.number().int().min(0),
+          trigger: z.enum(['start', 'resume', 'continue']),
+          outcome: z.string().nullable(),
+          task_run_id: z.string().nullable(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+    errors: z.array(
+      z
+        .object({
+          scope: z.enum(['session', 'item']),
+          item_id: z.string().nullable(),
+          code: z.string(),
+          retryable: z.boolean(),
+          at: z.string(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const IngestionSessionHistoryResponseSchema = z
+  .object({
+    session: z
+      .object({
+        id: z.string(),
+        status: z.string(),
+        /** Which lane produced the durable evidence; null when nothing ran yet. */
+        path: z.enum(['agent', 'extract']).nullable(),
+        entrypoint: z.string().nullable(),
+        source_document_id: z.string().nullable(),
+        source_asset_ids: z.array(z.string()),
+        title: z.string().nullable(),
+        title_source: z.enum(['source_document']).nullable(),
+        started_at: z.string(),
+        ended_at: z.string().nullable(),
+        created_at: z.string(),
+        updated_at: z.string(),
+        error_message: z.string().nullable(),
+        warnings: z.array(z.string()),
+      })
+      .strict(),
+    run: IngestionHistoryRunSchema.nullable(),
+    /** Earlier runs' demoted checkpoints, newest first. */
+    prior_runs: z.array(IngestionHistoryPriorRunSchema),
+    items: z.array(IngestionHistoryItemSchema),
+    asks: z.array(IngestionHistoryAskSchema),
+    evidence: z
+      .object({
+        snapshot: z.boolean(),
+        live_events: z.boolean(),
+        /** Slices with no provable data, e.g. 'run' | 'items' | 'asks' | 'snapshot'. */
+        missing: z.array(z.string()),
+      })
+      .strict(),
+  })
+  .strict();
+export type IngestionSessionHistoryResponse = z.infer<typeof IngestionSessionHistoryResponseSchema>;
+export type IngestionHistoryItem = z.infer<typeof IngestionHistoryItemSchema>;
+export type IngestionHistoryItemState = z.infer<typeof IngestionHistoryItemStateSchema>;

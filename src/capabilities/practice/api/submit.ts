@@ -6,13 +6,12 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { ratingFromCoarseOutcome } from '../server/judge-rating';
-import { JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { projectReviewAnswerResponse } from '../server/review-answer-response';
 import { submitReviewAnswer } from '../server/review-operation';
 import { CreateAttemptBodySchema } from './contracts';
 
 /**
- * #8 — EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
+ * EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
  * used to key on the bare `status === 202`, which silently assumes every 202 this route can
  * ever produce is a pending-judge body with no `review_event`; the day another 202 appears
  * for an unrelated reason, that heuristic hands the client a raw body and skips the resource
@@ -22,29 +21,19 @@ export const DURABLE_DIVERT_HEADER = 'x-durable-divert';
 export const DURABLE_DIVERT_JUDGE = 'judge';
 
 /** The 202-pending contract body returned when a submit diverts to the durable lane. */
-export interface DurableJudgePendingResponse {
-  run_id: string;
-  /** discriminant clients branch on (vs a resolved `judge` verdict). */
-  verdict: 'pending';
-  backfill: {
-    channel: 'sse';
-    url: string;
-    poll_url: string;
-  };
-}
+export type DurableJudgePendingResponse = Extract<
+  ReturnType<typeof projectReviewAnswerResponse>,
+  { kind: 'pending' }
+>['body'];
 
-/** Build the 202-pending response for `runId` (body + Location + the #8 divert header). */
-function durablePendingResponse(runId: string): Response {
-  const eventsUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/events`;
-  const pollUrl = `/api/jobs/${JUDGE_RUN_TABLE}/${encodeURIComponent(runId)}/status`;
-  const responseBody: DurableJudgePendingResponse = {
-    run_id: runId,
-    verdict: 'pending',
-    backfill: { channel: 'sse', url: eventsUrl, poll_url: pollUrl },
-  };
+/** Preserve the HTTP status and headers around the shared pending JSON. */
+function durablePendingResponse(responseBody: DurableJudgePendingResponse): Response {
   return Response.json(responseBody, {
     status: 202,
-    headers: { Location: eventsUrl, [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE },
+    headers: {
+      Location: responseBody.backfill.url,
+      [DURABLE_DIVERT_HEADER]: DURABLE_DIVERT_JUDGE,
+    },
   });
 }
 
@@ -59,37 +48,9 @@ export async function createAttempt(req: Request): Promise<Response> {
     }
     const body = parsed.data;
     const result = await submitReviewAnswer(db, body, { signal: req.signal });
-    if (result.kind === 'pending') return durablePendingResponse(result.run_id);
-    const committed = result.committed;
-    const judged = committed.candidate.result;
-    return Response.json({
-      status: committed.status,
-      assessment: {
-        submission_id: committed.submission.submission_id,
-        evaluation_group_id: committed.submission.evaluation_group_id,
-        candidate_id: committed.candidate.evaluation.record.evaluation_id,
-        activation_intent: committed.activation_intent,
-        effect: committed.status === 'effective' ? committed.activation.effect : null,
-      },
-      review_event: { id: committed.attempt_id },
-      judge: body.self_report
-        ? null
-        : {
-            route: 'evaluate_submission',
-            score: judged.score,
-            coarse_outcome: judged.coarse_outcome,
-            ...(judged.coarse_outcome === 'partial_unknown'
-              ? { partial_units: judged.partial_units }
-              : {}),
-            confidence: judged.confidence,
-            feedback_md: judged.feedback_md,
-            evidence_json: judged.evidence_json,
-            capability_ref: judged.capability_ref,
-            suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
-            auto_rated: body.auto_rate,
-            judge_event_id: null,
-          },
-    });
+    const response = projectReviewAnswerResponse(body, result);
+    if (response.kind === 'pending') return durablePendingResponse(response.body);
+    return Response.json(response.body);
   } catch (err) {
     return errorResponse(err);
   }
@@ -97,11 +58,11 @@ export async function createAttempt(req: Request): Promise<Response> {
 
 export async function createAttemptResource(req: Request): Promise<Response> {
   const inner = await createAttempt(req);
-  // YUK-594 — a durable divert returns 202-pending, whose body has NO `review_event`;
+  // A durable divert returns 202-pending, whose body has NO `review_event`;
   // canonicalResourceResponse derives Location from `review_event.id`, so it would blow
   // up on the pending shape. Pass it through untouched — durablePendingResponse already set
   // its own Location header (the run's SSE stream), which is the correct resource.
-  // #8 — keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
+  // keyed on the EXPLICIT divert header, not a bare 202: an unrelated future 202 from
   // this route must still go through the resource wrapper rather than leak a raw body.
   if (inner.headers.get(DURABLE_DIVERT_HEADER) === DURABLE_DIVERT_JUDGE) return inner;
   return canonicalResourceResponse(inner, {

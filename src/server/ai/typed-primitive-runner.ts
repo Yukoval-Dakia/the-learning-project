@@ -30,16 +30,12 @@
 // their truth (unknown cost counts as the reserve — never zero).
 
 import type { ZodTypeAny } from 'zod';
+import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
-import {
-  AgentRunError,
-  RETRY_ELAPSED_CAP_MS,
-  bindAgentRunError,
-  isTransientAgentFailure,
-} from './agent-run-error';
+import { bindAgentRunError } from './agent-run-error';
 import type { AttemptCostBasis } from './attempt-cost';
 import { JEV_CANONICAL_MODEL, JEV_MAX_PRICE_USD_PER_MILLION } from './pricing';
 import {
@@ -48,11 +44,10 @@ import {
   classifyLifecycleRetry,
   createRunLifecycle,
 } from './run-lifecycle';
+import { emptyStreamTextStats } from './timeout-usage';
 
 /** Worst-case USD reserved per wire attempt when the endpoint's own cost truth is absent. */
 export const TYPED_RESERVE_PER_CALL_USD = 0.005;
-/** Native typed decisions endpoint — NOT the chat completions façade. */
-export const SYSTEMONE_ENDPOINT_URL = 'https://openrouter.ai/api/v1/systemone';
 /** The actual typed transport provider, shared by execution and read-only facts. */
 const TYPED_PRIMITIVE_PROVIDER = 'openrouter' as const;
 /** TypeSafe is the only provider ever allowed to serve this lane. */
@@ -66,7 +61,7 @@ export const TYPESAFE_PROVIDER_CONSTRAINTS = {
 interface RegisteredTypedTask {
   readonly inputSchema: ZodTypeAny;
   readonly outputSchema: ZodTypeAny;
-  readonly endpointUrl: string;
+  readonly endpointPath: string;
   /** Pinned canonical response model; drift ⇒ typed_contract_violation. */
   readonly expectedModel: string;
   /** Pinned response provider tag when the wire carries one. */
@@ -84,7 +79,7 @@ const TYPED_TASKS: Record<string, RegisteredTypedTask> = {
   JevScoringDecisionTask: {
     inputSchema: JevScoringDecisionInput,
     outputSchema: JevSystemOneResponse,
-    endpointUrl: SYSTEMONE_ENDPOINT_URL,
+    endpointPath: 'systemone',
     expectedModel: JEV_CANONICAL_MODEL,
     expectedProvider: 'TypeSafe',
     providerConstraints: TYPESAFE_PROVIDER_CONSTRAINTS,
@@ -256,11 +251,13 @@ export async function runTypedPrimitiveTask<Output = unknown>(
       logScope: ctx.logScope ?? 'typedPrimitive',
     });
     let wireAttempted = false;
+    let endpointUrl: string;
     try {
       const output = await lifecycle.withProviderSession(body, {
         async prepare() {
-          // HTTP has no warm transport: the durable start row still lands
-          // between this hook and run(), keeping admission/attempt ordering.
+          if (lifecycle.resolved.authMode !== 'key' || !lifecycle.resolved.baseUrl)
+            throw new Error('Typed model catalog endpoint is unknown');
+          endpointUrl = `${lifecycle.resolved.baseUrl}/${registration.endpointPath}`;
         },
         async run() {
           await retrySource?.markRetried();
@@ -269,7 +266,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
           wireAttempted = true;
           let response: Response;
           try {
-            response = await transport(registration.endpointUrl, {
+            response = await transport(endpointUrl, {
               method: 'POST',
               redirect: 'error',
               headers: {
@@ -354,6 +351,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
               inputTokens: usage?.input_tokens ?? 0,
               outputTokens: usage?.output_tokens ?? 0,
             },
+            numTurns: 1,
             tokenCounts: {
               inputTokens: usage?.input_tokens ?? 0,
               outputTokens: usage?.output_tokens ?? 0,
@@ -403,6 +401,11 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         if (lifecycle.costBasis === 'unknown') unknownCost = true;
       }
       if (!lifecycle.started) throw error;
+      await lifecycle.recordEstimatedUsage({
+        promptText: JSON.stringify(body),
+        output: emptyStreamTextStats(),
+        priceOrigin: 'failure-estimate',
+      });
       const boundError = bindAgentRunError({
         error,
         kind,

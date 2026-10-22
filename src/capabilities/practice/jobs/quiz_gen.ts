@@ -25,11 +25,11 @@ import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
-import { assertGeneratedQuestionHasJudgeContract } from '@/capabilities/practice/server/judge/question-contract';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
+  explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
 
@@ -37,13 +37,7 @@ import {
   type NormalizedAuthorStructured,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
-import {
-  type QuizGenMetadataT,
-  QuizGenOutput,
-  type QuizGenOutputT,
-  type QuizGenPlanT,
-  type QuizGenQuestionT,
-} from '@/core/schema/quiz_gen';
+import type { QuizGenMetadataT, QuizGenPlanT, QuizGenQuestionT } from '@/core/schema/quiz_gen';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -65,7 +59,6 @@ import {
   type DomainToolName,
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,
@@ -130,10 +123,6 @@ import {
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
 } from '../server/question-supply/placement-starter-attempts';
-import {
-  type PlacementStarterFailure,
-  placementSchemaFailure,
-} from '../server/question-supply/placement-starter-outcome';
 import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
 import type { DifficultyBand } from '../server/question-supply/target-discovery';
 import {
@@ -144,6 +133,11 @@ import {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from '../server/quiz/content-fingerprint';
 import { type FewShotExample, renderFewShotBlock } from '../server/quiz/fewshot-retrieve';
+import {
+  embedMaterialInPrompt,
+  synthesizeMaterialSourceRefs,
+} from '../server/quiz/quiz-gen-material';
+import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
 import {
   QUIZ_PLAN_MAX_ATTEMPTS,
   checkPlanKnowledgeIds,
@@ -297,119 +291,6 @@ async function defaultEnqueueQuizVerify(
     },
     options,
   );
-}
-
-// §2 / §5 — output JSON parse + judge-contract assertion. The gate itself is
-// the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —
-// extracted for YUK-308 so the question_draft author flow enforces the same
-// contract; output validation failures retain sanitized schema paths and codes.
-// YUK-996 — `subjectProfile` is the run's resolved profile (same value threaded
-// to the QuizGenTask call ctx): the judge contract resolves the route the
-// runtime invoker will dispatch for the PERSISTED row.
-class QuizGenOutputFailure extends Error {
-  constructor(readonly reason: PlacementStarterFailure) {
-    super(`parseOutput: ${reason.code}: ${JSON.stringify(reason)}`);
-  }
-}
-
-function parseOutput(
-  text: string,
-  subjectProfile: SubjectProfile,
-): { parsed: QuizGenOutputT; parseRepaired: boolean } {
-  // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
-  // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。
-  let extracted: ReturnType<typeof parseJsonObjectLoose>;
-  try {
-    extracted = parseJsonObjectLoose(text, 'quiz_gen parseOutput');
-  } catch {
-    throw new QuizGenOutputFailure({ code: 'json_invalid' });
-  }
-  if (extracted === null) {
-    throw new QuizGenOutputFailure({ code: 'json_object_missing' });
-  }
-  const json: unknown = extracted.json;
-  const parsed = QuizGenOutput.safeParse(json);
-  if (!parsed.success) {
-    throw new QuizGenOutputFailure(placementSchemaFailure(parsed.error.issues));
-  }
-  for (const q of parsed.data.questions) {
-    // The INSERT below persists judge_kind_override = defaultJudgeKindForQuestion(q)
-    // (never null), which short-circuits the runtime resolver to that pinned
-    // value — so the contract asserts on the persisted shape, not the raw model
-    // output (a missing model-declared override must NOT fall through to the
-    // profile ladder here; at judge time it won't).
-    // YUK-1011 — a composite item (structured stem+subs) persists with a FORCED
-    // 'semantic' override and choices_md=null (the whole-composite answer is
-    // semantically graded against the merged reference; per-sub options live in
-    // the tree, not the column). Assert on THAT persisted shape so a composite
-    // without rubric_json.required_points is rejected before any insert.
-    const isComposite = q.structured != null;
-    assertGeneratedQuestionHasJudgeContract(
-      {
-        ...q,
-        judge_kind_override: isComposite ? 'semantic' : defaultJudgeKindForQuestion(q),
-        choices_md: isComposite ? null : q.choices_md,
-      },
-      'quiz_gen',
-      subjectProfile,
-    );
-  }
-  // jsonrepair 级修复 = 内容完整性无法机证 → 上抛给 metadata（quiz_verify 晋级门隔离）。
-  return { parsed: parsed.data, parseRepaired: extracted.repaired === 'jsonrepair' };
-}
-
-// YUK-224 F1 (PR #314 round-1) — read-model passthrough, v1 self-contained.
-// For a material_grounded question the题干 references a passage the learner can
-// only see if it is rendered alongside the prompt. The review / practice
-// render only reads prompt_md, so we EMBED the passage into prompt_md at persist
-// time as a leading blockquote ("阅读材料") followed by the original prompt. Pure
-// function so it is unit-testable.
-//
-// phase-deferred: the structural fix — a read-model that renders 题面 and 素材
-// separately and de-duplicates one passage across many questions (instead of
-// inlining a copy per question) — is a follow-up. See YUK-216 spec §6.1 row 3.
-// Until that read-model lands, the embedded copy keeps the learner-visible
-// material self-contained.
-export function embedMaterialInPrompt(promptMd: string, materialBodyMd: string): string {
-  const trimmed = materialBodyMd.trim();
-  if (trimmed.length === 0) return promptMd;
-  const quoted = trimmed
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
-  return `> **阅读材料**\n${quoted}\n\n${promptMd}`;
-}
-
-// YUK-224 F3 (PR #314 round-1) — synthesize per-question source_refs from the
-// top-level material so the deterministic copy-safety overlap (quiz_verify reads
-// meta.source_refs[].snippet) has the actual passage to compare against. A
-// material_grounded question that left source_refs empty would lose the overlap
-// signal entirely. We do NOT force the agent to re-emit the passage per question;
-// the handler folds ONE synthesized ref (the material URL + a snippet截段 of the
-// passage) into each question's source_refs, in addition to whatever the agent
-// declared. Pure function so it is unit-testable.
-const MATERIAL_SNIPPET_MAX = 500;
-export function synthesizeMaterialSourceRefs(
-  declared: QuizGenQuestionT['source_refs'],
-  material: { url: string; title: string; body_md: string },
-): QuizGenQuestionT['source_refs'] {
-  const snippet = material.body_md.trim().slice(0, MATERIAL_SNIPPET_MAX);
-  // Skip if the agent already declared a ref carrying the material URL with a
-  // snippet (don't duplicate). Otherwise prepend the synthesized material ref.
-  const alreadyHasMaterialSnippet = declared.some(
-    (r) => r.url === material.url && typeof r.snippet === 'string' && r.snippet.length > 0,
-  );
-  if (alreadyHasMaterialSnippet) return declared;
-  return [
-    {
-      url: material.url,
-      title: material.title,
-      snippet,
-      used_for: 'fact' as const,
-      extracted: true,
-    },
-    ...declared,
-  ];
 }
 
 export interface RunQuizGenParams {
@@ -600,7 +481,7 @@ async function prepareQuizGeneration(params: RunQuizGenParams) {
   const exaCfg = buildExa();
   const piToolMounts: PiToolMount[] = [
     piDomainMount(domainMountOptions),
-    ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES)] : []),
+    ...(exaCfg ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES, db)] : []),
   ];
   const allowedTools = [
     ...QUIZ_GEN_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),
@@ -1682,6 +1563,10 @@ async function emitQuizGenerationEvent(
       plan_cost_micro_usd: costUsdToMicroUsd(evidence.planRunResult?.cost_usd),
       stages: { producer: 'success', persist: 'success', verify_enqueue: 'pending' },
       difficulty_evidence: difficultyEvidenceByQuestion,
+      difficulty_reason_by_question: difficultyEvidenceByQuestion.map((entry) => ({
+        question_id: entry.question_id,
+        reason: explainDifficultyEvidence(entry.evidence),
+      })),
       exact_duplicate_count: exactDuplicates.length,
       exact_duplicate_knowledge_merge_count: exactDuplicates.filter(
         (duplicate) => duplicate.knowledge_merge_status === 'merged',

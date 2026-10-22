@@ -1,13 +1,15 @@
 import { createId } from '@paralleldrive/cuid2';
-import type { TaskTimeoutSource } from '@/ai/task-budget';
-import type { TaskDefinition } from '@/ai/task-spec';
-import { type TaskKind, tasks } from '@/capabilities/task-registry';
-import type { Db } from '@/db/client';
 import {
   ProviderSessionWallClockBudgetError,
   RETRY_ELAPSED_CAP_MS,
   isTransientAgentFailure,
-} from './agent-run-error';
+} from '@/ai/agent-run-error';
+import type { TaskTimeoutSource } from '@/ai/task-budget';
+import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskKind, tasks } from '@/capabilities/task-registry';
+import { taskInputHash } from '@/core/task-input-hash';
+import type { Db } from '@/db/client';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
   resolveAttemptCostTruth,
@@ -27,7 +29,6 @@ import {
   writeAiTaskAttemptFinished,
   writeAiTaskRunRetried,
   writeAiTaskRunStarted,
-  writeToolCallLog,
 } from './log';
 import {
   type ModelProfile,
@@ -48,7 +49,6 @@ import {
   createProviderTransportCollector,
 } from './provider-transport';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
-import { taskInputHash } from './task-input-hash';
 import { estimateAbortedUsage } from './timeout-usage';
 
 export type LifecycleUsage = AiTaskUsage;
@@ -68,6 +68,10 @@ export interface LifecycleResult {
 export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
+  /** YUK-1557 — completed assistant turns; persisted beside the token counters. */
+  numTurns?: number;
+  /** YUK-1557 — set when an estimate fills a terminal frame with no usable usage. */
+  priceOrigin?: 'timeout-estimate' | 'failure-estimate';
   /** Distinguishes missing usage from explicitly observed zero token counts. */
   tokenUsageObserved?: boolean;
   costUsd?: number;
@@ -77,10 +81,10 @@ export interface TerminalResultEvidence {
 
 export type ObservedRunUsage = Pick<
   TerminalResultEvidence,
-  'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
+  'usage' | 'tokenCounts' | 'numTurns' | 'tokenUsageObserved' | 'costUsd'
 > & {
   /** Set when tokens and any catalog USD came from an aborted stream, not a final usage payload. */
-  priceOrigin?: 'timeout-estimate';
+  priceOrigin?: 'timeout-estimate' | 'failure-estimate';
 };
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
@@ -295,7 +299,13 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   get usage(): LifecycleUsage {
     const base = this.terminal?.usage ??
-      this.observedUsage?.usage ?? { inputTokens: 0, outputTokens: 0 };
+      this.observedUsage?.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        numTurns: 0,
+      };
     const phased = !this.notePhases ? base : { ...base, phases: { ...this.notePhases } };
     // YUK-1630 — transport evidence is metadata namespaced beside the token
     // truth: it never feeds tokenCounts/costTruth, and a usage 0 / cost null
@@ -314,14 +324,22 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   /**
-   * Budget abort with no positive provider usage. Persist a non-zero estimate
-   * so the attempt row cannot claim the call was free.
+   * Persist a bounded estimate when a provider call ended without a usable
+   * usage payload. `failure-estimate` covers non-abort failures; `timeout-estimate`
+   * stays reserved for budget aborts.
    */
-  async recordAbortedUsage(input: {
+  async recordEstimatedUsage(input: {
     promptText: string;
     output: Parameters<typeof estimateAbortedUsage>[1];
+    priceOrigin: 'timeout-estimate' | 'failure-estimate';
   }): Promise<void> {
-    if (this.terminal) return;
+    const terminalHasUsableUsage =
+      this.terminal !== undefined &&
+      (this.terminal.tokenUsageObserved === true ||
+        this.terminal.usage.inputTokens > 0 ||
+        this.terminal.usage.outputTokens > 0 ||
+        this.terminal.costUsd !== undefined);
+    if (terminalHasUsableUsage) return;
     const observed = this.observedUsage;
     if (
       observed?.tokenUsageObserved === true &&
@@ -338,13 +356,14 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       );
       if (priced !== null) catalogCost = priced;
     }
-    this.observedUsage = {
+    const estimated = {
+      priceOrigin: input.priceOrigin,
+      numTurns: 1,
       tokenUsageObserved: true,
-      priceOrigin: 'timeout-estimate',
       usage: {
         inputTokens: estimate.inputTokens,
         outputTokens: estimate.outputTokens,
-        usage_basis: 'estimated',
+        usage_basis: 'estimated' as const,
       },
       tokenCounts: {
         inputTokens: estimate.inputTokens,
@@ -352,6 +371,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       },
       ...(catalogCost !== undefined ? { costUsd: catalogCost } : {}),
     };
+    if (this.terminal) {
+      this.terminal = { ...this.terminal, ...estimated };
+    } else {
+      this.observedUsage = estimated;
+    }
     this.costTruthCache = undefined;
   }
 
@@ -360,6 +384,21 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       this.terminal?.tokenCounts ??
       this.observedUsage?.tokenCounts ?? { inputTokens: 0, outputTokens: 0 }
     );
+  }
+
+  /**
+   * YUK-1557 — the persisted projection of usage. `usage` stays the public
+   * run-result shape (existing callers pin it), while the terminal row carries
+   * the provider cache counters and completed-turn count in one place.
+   */
+  private get persistedUsage(): AiTaskUsage {
+    const counts = this.tokenCounts;
+    return {
+      ...this.usage,
+      cacheReadTokens: counts.cacheReadTokens ?? 0,
+      cacheWriteTokens: counts.cacheCreationTokens ?? 0,
+      numTurns: this.terminal?.numTurns ?? this.observedUsage?.numTurns ?? 0,
+    };
   }
 
   get costTruth(): AttemptCostTruth {
@@ -842,7 +881,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         id: this.taskRunId,
         status: input.status,
         finish_reason: input.finishReason,
-        usage: this.usage,
+        usage: this.persistedUsage,
         cost_truth: this.costTruth,
         outcome: input.outcome,
         error_message: input.errorMessage,

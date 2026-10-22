@@ -1,15 +1,6 @@
-// YUK-203 U4 / D11① — active learning-item reader for the Coach brief.
-//
-// Models src/capabilities/agency/server/goals/queries.ts:listActiveGoals. Returns the pinned /
-// in_progress learning items so the coach_daily handler can feed their
-// `knowledge_ids` into the Coach input as ATTENTION PRESSURE only (D11① /
-// CO §7.1:723-726) — never as scheduling / bookkeeping state. ADR-0012: this is
-// a read-only ADD to the Coach signal set; it touches no FSRS / due / mastery.
-//
-// `learning_item.status` is plain text (default 'pending', schema.ts:221) — NOT
-// a pgEnum; 'in_progress' is the live status string (verified
-// proposal-tools.ts: `status !== 'pending' && status !== 'in_progress'`).
-// `user_pinned` is a boolean (default false, schema.ts:222).
+// Read-only active learning-item reader for the Coach brief. Results are attention
+// pressure only: this module never reads or writes scheduling, due, mastery, or
+// bookkeeping state. `status` is free text; 'in_progress' is the live value.
 
 import { and, asc, eq, isNull, or } from 'drizzle-orm';
 
@@ -26,15 +17,9 @@ export interface ActiveLearningItem {
 }
 
 /**
- * Active learning items = NOT archived AND (`status = 'in_progress'` OR
- * `user_pinned = true`). Ordered by created_at for a stable feed. Read-only;
- * writes nothing (ND-5 / D11: attention pressure, never bookkeeping).
- *
- * codex PR #298 #3357932406 — `archived_at IS NULL` guard. The learning-item
- * DELETE route soft-deletes by setting `archived_at` only; it does NOT flip
- * `status` (an in_progress item) or clear `user_pinned`. Without this guard a
- * just-archived item still matched the status/pin filter and was fed into the
- * Coach brief as attention pressure — surfacing a deleted item.
+ * Active items are not archived and are either in progress or pinned, oldest first.
+ * The `archived_at` guard is explicit because archiving only sets that column; it
+ * leaves status and pin intact, so a just-archived item would still match.
  */
 export async function listActiveLearningItems(db: DbLike): Promise<ActiveLearningItem[]> {
   const rows = await db

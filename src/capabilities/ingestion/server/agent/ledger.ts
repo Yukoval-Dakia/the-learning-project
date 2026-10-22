@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { writeAgentRunSegment } from '../events/agent-progress';
 import { type SessionAskRow, readSessionAsks } from './asks';
+import { readAgentEventFloor } from './budget-state';
 import {
   AGENT_ITEM_STATE,
   AGENT_PAID_ATTEMPT,
@@ -21,9 +22,8 @@ import {
   type IngestionAgentStageT,
 } from './contract';
 
-// YUK-1522 (R8) — run ledger: reconstructs the durable state of an agent run
-// from job_events. Resume segments consume this to rebuild context; the
-// orchestrator consumes it to decide waiting / continue / done.
+// Run ledger: rebuilds an agent run's durable state from job_events. Resume
+// segments use it for context; the orchestrator uses it for waiting/continue/done.
 
 const SESSION_TABLE = 'ingestion_session' as const;
 const TERMINAL_ITEM_STATUSES: readonly IngestionAgentItemStatusT[] = [
@@ -40,6 +40,10 @@ export interface ItemLedgerEntry {
   readonly preview_md?: string;
   readonly draft_ref?: string;
   readonly question_id?: string;
+  /** Model-written reason on the latest item event (withheld/failed context). */
+  readonly reason?: string;
+  /** ISO time of the latest session-stream item event. */
+  readonly status_at?: string;
 }
 
 export interface AgentRunLedger {
@@ -58,22 +62,26 @@ export interface AgentRunLedger {
 type RawEventRow = {
   readonly event_type: string;
   readonly payload: Record<string, unknown>;
+  readonly occurred_at: string | Date;
 };
 
 export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promise<AgentRunLedger> {
+  const floor = await readAgentEventFloor(db, sessionId);
   const sessionRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
+    SELECT event_type, payload, occurred_at
     FROM job_events
     WHERE business_table = ${SESSION_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type IN (${INGESTION_AGENT_STAGE}, ${INGESTION_AGENT_ITEM})
     ORDER BY id ASC
   `);
   const runRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
+    SELECT event_type, payload, occurred_at
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type IN (${AGENT_ITEM_STATE}, ${AGENT_RUN_SEGMENT}, ${AGENT_TERMINAL_REQUEST})
     ORDER BY id ASC
   `);
@@ -97,6 +105,8 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
       status: p.status,
       ...(p.page !== undefined ? { page: p.page } : {}),
       ...(p.preview_md !== undefined ? { preview_md: p.preview_md } : {}),
+      ...(p.reason !== undefined ? { reason: p.reason } : {}),
+      status_at: new Date(row.occurred_at).toISOString(),
     });
   }
 
@@ -135,7 +145,7 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
     };
   }
 
-  const asks = await readSessionAsks(db, sessionId);
+  const asks = await readSessionAsks(db, sessionId, floor);
   return {
     stage,
     items: [...items.values()],
@@ -153,10 +163,12 @@ export async function readTerminalRequest(
   db: Db | Tx,
   sessionId: string,
 ): Promise<{ code: string; reason?: string } | null> {
+  const floor = await readAgentEventFloor(db, sessionId);
   const rows = await db.execute<{ payload: Record<string, unknown> }>(sql`
     SELECT payload FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type = ${AGENT_TERMINAL_REQUEST}
     ORDER BY id ASC LIMIT 1
   `);
@@ -178,10 +190,12 @@ export async function readPaidAttempts(
   db: Db | Tx,
   sessionId: string,
 ): Promise<Map<number, { sent: boolean; settled: boolean; taskRunId?: string }>> {
+  const floor = await readAgentEventFloor(db, sessionId);
   const rows = await db.execute<{ payload: Record<string, unknown> }>(sql`
     SELECT payload FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type = ${AGENT_PAID_ATTEMPT}
     ORDER BY id ASC
   `);
@@ -204,19 +218,20 @@ export async function readPaidAttempts(
 /**
  * A numbered segment is OPEN while its latest row is outcome:'running' — any
  * later same-segment row (waiting/done/failed/early_exit) closes it. 'running'
- * rows older than STALE_SEGMENT_MS belong to crashed deliveries; the sweeper
- * closes them and they do NOT count as in-flight for exclusion.
+ * rows stay exclusive even past STALE_SEGMENT_MS. Only terminal recovery may
+ * close them; elapsed time is never permission for another paid segment.
  */
 export const STALE_SEGMENT_MS = 25 * 60_000;
 
 export type SegmentClaim =
   | { readonly kind: 'busy' }
-  | { readonly kind: 'over_cap'; readonly ledger: AgentRunLedger }
+  | { readonly kind: 'settlement_pending'; readonly segment: number; readonly markerId: number }
+  | { readonly kind: 'over_cap'; readonly segment: number; readonly ledger: AgentRunLedger }
   | { readonly kind: 'ok'; readonly segment: number; readonly ledger: AgentRunLedger };
 
 /**
  * Durable per-session mutual exclusion: the advisory lock serializes segment
- * claims; a session can hold at most one open (fresh, running) segment — a
+ * claims; a session can hold at most one open running segment — a
  * concurrent delivery exits 'busy' and is skipped, so the paid model loop can
  * never run twice for the same session.
  */
@@ -225,20 +240,21 @@ export async function claimRunSegment(
   sessionId: string,
   trigger: 'start' | 'resume' | 'continue',
   maxSegments: number,
-  staleSegmentMs = STALE_SEGMENT_MS,
 ): Promise<SegmentClaim> {
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${`ingestion-agent-run:${sessionId}`}))`,
   );
-  const rows = await tx.execute<{ payload: Record<string, unknown>; occurred_at: string }>(sql`
-    SELECT payload, occurred_at
+  const floor = await readAgentEventFloor(tx, sessionId);
+  const rows = await tx.execute<{ id: number; payload: Record<string, unknown> }>(sql`
+    SELECT id, payload
     FROM job_events
     WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type = ${AGENT_RUN_SEGMENT}
     ORDER BY id ASC
   `);
-  const latestBySegment = new Map<number, { outcome: string | null; at: number }>();
+  const latestBySegment = new Map<number, { outcome: string | null; id: number }>();
   let maxSegment = 0;
   for (const row of rows) {
     const parsed = AgentRunSegmentPayload.safeParse(row.payload);
@@ -246,24 +262,29 @@ export async function claimRunSegment(
     maxSegment = Math.max(maxSegment, parsed.data.segment);
     latestBySegment.set(parsed.data.segment, {
       outcome: parsed.data.outcome ?? null,
-      at: new Date(row.occurred_at).getTime(),
+      id: row.id,
     });
   }
-  const nowMs = Date.now();
-  const openFresh = [...latestBySegment.values()].some(
-    (seg) => seg.outcome === 'running' && nowMs - seg.at < staleSegmentMs,
-  );
-  if (openFresh) return { kind: 'busy' };
+  if ([...latestBySegment.values()].some((seg) => seg.outcome === 'running')) {
+    return { kind: 'busy' };
+  }
+  const latest = latestBySegment.get(maxSegment);
+  // Old paid catches could close failed before their terminal transaction.
+  // Never interpret that half-terminal as permission for another model call.
+  if (latest?.outcome === 'failed') {
+    return { kind: 'settlement_pending', segment: maxSegment, markerId: latest.id };
+  }
 
   const ledger = await readAgentRunLedger(tx, sessionId);
   const segment = maxSegment + 1;
-  if (segment > maxSegments) return { kind: 'over_cap', ledger };
-
   await writeAgentRunSegment(tx, sessionId, {
     segment,
     trigger,
     outcome: 'running',
   });
+  // Even the free cap terminal needs a durable recovery marker if its closing
+  // transaction rolls back and the queue exhausts delivery attempts.
+  if (segment > maxSegments) return { kind: 'over_cap', segment, ledger };
   return { kind: 'ok', segment, ledger };
 }
 
@@ -273,11 +294,13 @@ export async function readLatestItemStatus(
   sessionId: string,
   itemId: string,
 ): Promise<IngestionAgentItemStatusT | null> {
+  const floor = await readAgentEventFloor(db, sessionId);
   const rows = await db.execute<{ payload: Record<string, unknown> }>(sql`
     SELECT payload
     FROM job_events
     WHERE business_table = ${SESSION_TABLE}
       AND business_id = ${sessionId}
+      AND id > ${floor}
       AND event_type = ${INGESTION_AGENT_ITEM}
       AND payload ->> 'item_id' = ${itemId}
     ORDER BY id DESC

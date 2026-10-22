@@ -1,14 +1,11 @@
-// YUK-600 (YUK-597 v3 §3.6) — POST /api/admin/subjects：thin-create 科目创建
-// 唯一入口的 HTTP 面。业务全在 src/server/subjects/thin-create.ts（五步事务 +
-// 幂等/撞名合同）；本层只做 body 解析与状态码映射：
-//   created → 201 · replayed（幂等回放）→ 200 · invalid → 400 ·
-//   name_conflict（custom↔builtin 撞名 / retired 占坑）→ 422。
-// client 不参与 id/root/claim/绑定任何构造（YUK-602 onboarding UI 只调这里）。
+// Thin-create subject endpoint. The server module owns the transaction and
+// idempotency; this layer only parses the body and maps status:
+// created 201, replayed 200, invalid 400, name conflict 422.
 
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse, resourceResponse } from '@/kernel/http';
-import { thinCreateSubject } from '@/server/subjects/thin-create';
+import { thinCreateSubject } from '../public';
 
 const Body = z.object({ displayName: z.string() });
 

@@ -8,14 +8,11 @@ import { CapabilityRef, JudgeResultV2 } from '../capability';
 import { AttemptQuestionSnapshot } from '../question-evidence-snapshot';
 import { CauseSchema, FsrsStateSchema, RelationTypeSchema } from './blocks';
 
-// REASONING_TRACE_MAX_LEN 的真源在 core/limits.ts（纯模块）：这里只 import 来给下面两处
-// payload 的 .max() 用，**不再 re-export**。消费方一律走 @/kernel/limits —— 经本文件取会把
-// 整套 event schema 拖进调用方的 bundle 图（PR #1069 实测，见 src/kernel/limits.ts 头注释）。
+// REASONING_TRACE_MAX_LEN 的真源在 core/limits.ts（纯模块）：这里只 import 给 payload 的
+// .max() 用，**不再 re-export**——经本文件取会把整套 event schema 拖进调用方的 bundle 图。
+// 消费方一律走 @/kernel/limits。
 
-// ---------- 通用 envelope 字段 ----------
-//
-// 所有 event 行都有的字段（除 action / subject_kind / outcome / payload 由各分支 lock）。
-// 单独 spread 一次省重复。
+// 所有 event 分支共有的可选 envelope 字段；action/subject_kind/outcome/payload 由各分支锁。
 
 const baseOptionalFields = {
   caused_by_event_id: z.string().optional(),
@@ -35,10 +32,10 @@ const StableUserActorRef = z.custom<'self'>((actorRef) => stableActorRefAllowed(
   abort: false,
 });
 
-// YUK-772 / D7 — one policy function protects both the KnownEvent union and the
-// public member schemas that projections parse directly. Stable user events
-// represent the sole current owner, so every user lane is `self`; future
-// multi-user work changes this policy once rather than editing every event kind.
+// One policy function protects both the KnownEvent union and the public member
+// schemas that projections parse directly. Stable user events represent the sole
+// current owner, so every user lane is `self`; multi-user work changes this
+// policy once instead of every event kind.
 function enforceStableUserActorRef(data: StableActorAttribution, ctx: z.RefinementCtx): void {
   if (!stableActorRefAllowed(data.actor_kind, data.actor_ref)) {
     ctx.addIssue({
@@ -50,33 +47,23 @@ function enforceStableUserActorRef(data: StableActorAttribution, ctx: z.Refineme
 }
 
 /**
- * YUK-352 / YUK-469 — escalating-hint ceiling. An index and a count have different
- * inclusive bounds: indices span 0..20, so a client that traverses every level can
- * report 21 requests. Lives in core (no IO) so practice routes and durable events
- * share the same definitions.
+ * Escalating-hint ceiling: an index spans 0..20, but a client that traverses
+ * every level can report 21 requests, so the count bound is index + 1.
  */
 export const MAX_HINT_INDEX = 20;
 export const MAX_HINT_COUNT = MAX_HINT_INDEX + 1;
 
-// YUK-407 (Phase 0 red line) — ReconstructionSignal: was this answer DERIVED from the
-// knowledge node's parent derivation path, or RETRIEVED from memory? Logged as an
-// OPTIONAL attempt/review payload field so the future Reconstruction-as-method (教学法
-// 脑 palette entry, YUK-407) can backfill WHICH derivation-paths are reconstructable
-// without re-deriving history — the non-blocking Phase-0 logging red line (roadmap U1).
-// Stamped 'unknown' at the live write sites today: we capture the slot now;
-// classification comes when the method lands. Optional + the non-strict payload object
-// ⇒ every historical attempt/review event still parses byte-for-byte unchanged.
+// Was this answer DERIVED from the node's parent derivation path, or RETRIEVED
+// from memory? Logged as an optional payload field so a future reconstruction
+// method can backfill which derivation paths are reconstructable without
+// re-deriving history. Stamped 'unknown' at the live write sites today; optional
+// + non-strict payload ⇒ historical events parse byte-for-byte unchanged.
 export const ReconstructionSignal = z.enum(['reconstructed_from_parents', 'retrieved', 'unknown']);
 export type ReconstructionSignalT = z.infer<typeof ReconstructionSignal>;
 
 // ====================================================================
 // ADR-0006 v2 原 7 个 KnownEvent
 // ====================================================================
-
-// 1. AttemptOnQuestion — actor=user|agent / action='attempt' / subject='question'
-//
-// 用户或 agent 尝试回答一道题。outcome 表对错（success / failure / partial）。
-// payload 含 answer 内容 + 可选 duration。
 
 const AttemptOnQuestionSchema = z.object({
   actor_kind: z.enum(['user', 'agent']),
@@ -86,84 +73,53 @@ const AttemptOnQuestionSchema = z.object({
   subject_id: z.string(),
   outcome: z.enum(['success', 'failure', 'partial']),
   payload: z.object({
-    // YUK-1408 — ingestion-captured attempts inherit the source document's
-    // usage policy (same optional field ToolUseQuery carries). Absent ===
-    // 'allow' legacy default; 'answer_only' keeps the payload out of
-    // memory/brief derivation channels via the shared filter.
+    // 承载 source document 的用途策略：缺省 === 'allow'（legacy 默认）；
+    // 'answer_only' 经共享过滤把 payload 挡在 memory/brief 派生通道外。
     derivation_policy: DerivationPolicy.optional(),
     answer_md: z.string().nullable(),
     answer_image_refs: z.array(z.string()),
     duration_ms: z.number().int().optional(),
     // feeds knowledge_mastery view (ADR-0012): which knowledge nodes this attempt exercises
     referenced_knowledge_ids: z.array(z.string()).default([]),
-    // F1 (PR #309 round-4, YUK-215) — UN-JUDGED marker. A photo-only answer on a
-    // text-only judge route is captured (the answer IS frozen) but NOT judged: no
-    // judge event is written and FSRS is skipped (paper-submit.ts). Its attempt
-    // `outcome` is a structurally-required enum value but is SEMANTICALLY "未判分"
-    // (unsupported), NOT a wrong answer — so the read-layer right/wrong summaries
-    // MUST skip these slots (practice-read.ts / paper-detail.ts) and paper-detail
-    // surfaces outcome='unsupported' to the user. This explicit write-side flag is
-    // the source of truth for "un-judged" (chosen over `outcome='unanswered'`: the
-    // enum stays `[success|failure|partial]`, avoiding a schema/FSRS/mastery-view
-    // ripple). Optional + absent for every normal attempt → no read-shape change.
+    // Photo-only answer on a text-only judge route: the answer IS captured but NOT
+    // judged (no judge event, FSRS skipped). `outcome` is structurally required but
+    // semantically "un-judged", NOT wrong — read-layer right/wrong summaries MUST
+    // skip these slots. This explicit flag is the "un-judged" source of truth (chosen
+    // over adding an outcome enum value: avoids a schema/FSRS/mastery ripple).
+    // Optional + absent for every normal attempt → no read-shape change.
     unsupported_judge: z.boolean().optional(),
-    // YUK-352 (GPT §3 L3 / §6.4 hint_dependence) — hint 留痕「先攒数据」。hints_used =
-    // 本次作答前在该题上请求过的提示数（solve-tutor 链逐次升级 hint_index；写入路径
-    // submitSolveAttempt 把它落到这里）；final_hint_level = 触达的最高提示档（可选）。
-    // 仅 tutor-solve 提交路径携带，且当前为 CLIENT-REPORTED 计数（单用户工具 + 「先攒
-    // 数据不进算法」，server-authoritative per-session 计数是后续硬化，见 solve-session.ts
-    // submitSolveAttempt 注）。OPTIONAL + 对卷题 / FSRS 复习 / copilot 提示路径恒缺省 →
-    // 既有 attempt 读路径（practice-read.ts / mastery view 只吃扁平 outcome）逐字不变。
-    // hint-discounted accuracy（带提示答对按折扣进 p(L)）是 ADR-0035 的后续，不在本字段。
+    // hint 留痕「先攒数据」：hints_used = 本次作答前请求过的提示数，final_hint_level =
+    // 触达的最高提示档。仅 tutor-solve 提交路径携带，当前为 CLIENT-REPORTED 计数，
+    // server-authoritative 计数是后续硬化。OPTIONAL → 既有 attempt 读路径逐字不变。
+    // hint-discounted accuracy 是 ADR-0035 的后续，不在本字段。
     //
-    // CLIENT-REPORTED 值须有上界——hint_index 是 0-based 索引，hints_used 是请求计数；
-    // 遍历 0..MAX_HINT_INDEX 会产生 MAX_HINT_COUNT 次请求。分开封顶既挡住失真大数，
-    // 也不会在最后一级提示后拒绝合法提交。
+    // CLIENT-REPORTED 值须封上界：hint_index 是 0-based 索引、hints_used 是请求计数，
+    // 遍历 0..MAX_HINT_INDEX 会产生 MAX_HINT_COUNT 次请求，分开封顶既挡失真大数、也不
+    // 拒绝最后一级提示后的合法提交。
     //
-    // 跨字段不变式（final_hint_level ≤ hints_used、final_hint_level>0 ⇒ hints_used>0）当前
-    // **有意不强制**——「先攒数据」阶段只做原始捕获、不假设派生语义，故历史行不保证该不变式。
-    // 将来这两字段进算法消费时再 firm-up（届时是收紧契约的自然时机，见 PR 描述）。
+    // 跨字段不变式（final_hint_level ≤ hints_used 等）当前**有意不强制**——「先攒数据」
+    // 阶段不假设派生语义，历史行不保证该不变式；进算法消费时再 firm-up。
     hints_used: z.number().int().nonnegative().max(MAX_HINT_COUNT).optional(),
     final_hint_level: z.number().int().nonnegative().max(MAX_HINT_INDEX).optional(),
-    // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; stamped
-    // 'unknown' at the live attempt write sites (solve-session / ingestion mistakes).
+    // see ReconstructionSignal — stamped 'unknown' at the live attempt write sites.
     reconstruction_signal: ReconstructionSignal.optional(),
-    // YUK-367 (A1) — structured discriminated attempt-payload (objective archetypes
-    // route option/boolean/blank/number+unit; open kinds stay free-text). The
-    // canonical evidence-trail home for the carrier so a deterministic verifier
-    // (A5 / YUK-350) + item calibration (B1 / YUK-348) can read structured evidence
-    // instead of the flat `answer_md` text. OPTIONAL slot: no live writer yet (the
-    // submit write path is wired under A5 once the objective-kind verifier closes),
-    // so this is byte-identical for every historical attempt event — same
-    // capture-the-slot-now pattern as hints_used / reconstruction_signal above.
-    // Non-behavioral: judging today still reads `answer_md`; nothing in θ̂ / FSRS /
-    // mastery reads this field. See src/core/schema/attempt-payload.ts.
-    // NOTE: this slot validates against the FULL AttemptPayload union, so the event
-    // schema alone does NOT enforce archetype↔question-kind consistency (it has no
-    // QuestionKind in scope). That gate lives at the write point: A5 / YUK-350 must
-    // call `parseAttemptPayloadForKind(kind, …)` when wiring the live writer, NOT
-    // rely on this union to reject a mistyped archetype (e.g. a `numeric` payload on
-    // a `choice` question parses fine here).
+    // Structured attempt-payload carrier（客观题型结构化作答）。OPTIONAL slot：live
+    // writer 尚未接通，历史 attempt event byte-identical；判分今天仍读 answer_md。
+    // NOTE: 本 slot 校验的是 FULL AttemptPayload union——event schema 没有 QuestionKind
+    // 在手，不守 archetype↔question-kind 一致性；write 点必须调
+    // parseAttemptPayloadForKind(kind, …)，不能靠这里拒绝 mistyped archetype。
     attempt_payload: AttemptPayload.optional(),
-    // YUK-562 (process-data 最小采集) — reasoning_trace: 学生自述的解题思路 / 过程文本
-    // （区别于 answer_md 的最终答案）。首个 live writer 是 solve-session（把
-    // student_text_steps 额外落到这里，answer_md 的拼接行为保留、向后兼容）。OPTIONAL：
-    // 卷题 / FSRS 复习 / copilot 提示等无过程文本的路径恒缺省 → 既有 attempt 读路径逐字
-    // 不变（byte-identical 回归锚）。engagement 红线（零强制）在后端表现为字段全 optional。
-    // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
-    // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
+    // 学生自述的解题思路 / 过程文本（区别于 answer_md 的最终答案）。OPTIONAL →
+    // 无过程文本的路径恒缺省，既有读路径逐字不变；attribution_followup 从此字段读入。
+    // REASONING_TRACE_MAX_LEN 封上界挡失真大文本。engagement 红线 = 字段 optional。
     reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
-    // YUK-1051 / Q-922 (A10) — self_confidence: 学生在看到判定之前对本作答的主观把握
-    // （1–5 整数，1=完全没底 … 5=十拿九稳）。**observe-only**：仅作分析采集，绝不进
-    // θ̂ / FSRS / 判分（mirror ReviewOnQuestion.payload.self_confidence 的语义与命名）。
-    // 来源是卷面 per-question 信心自评插拍（PfPaper → buildPaperSubmissionBody）。
-    // OPTIONAL：无自评 / 历史 attempt / 非卷作答恒缺省 → 既有 attempt 读路径逐字不变
-    // （byte-identical）；engagement 红线（零强制）= 字段 optional。
+    // 学生在看到判定前对本作答的主观把握（1–5 整数）。**observe-only**：仅作分析采集，
+    // 绝不进 θ̂ / FSRS / 判分（语义与 review 侧 self_confidence 对齐）。OPTIONAL →
+    // 无自评 / 历史 attempt 恒缺省，既有读路径逐字不变。
     self_confidence: z.number().int().min(1).max(5).optional(),
-    // YUK-804 — immutable question evidence at answer time. Optional only for
-    // historical events; every live attempt writer must stamp it. The snapshot
-    // includes a shared parent stem for question parts, so later edits/deletes
-    // cannot pair a new prompt with an old learner answer.
+    // Immutable question evidence at answer time. Optional only for historical
+    // events; every live attempt writer must stamp it. The snapshot includes the
+    // shared parent stem, so later edits cannot pair a new prompt with an old answer.
     question_snapshot: AttemptQuestionSnapshot.optional(),
   }),
   ...baseOptionalFields,
@@ -171,11 +127,7 @@ const AttemptOnQuestionSchema = z.object({
 export const AttemptOnQuestion = AttemptOnQuestionSchema.superRefine(enforceStableUserActorRef);
 export type AttemptOnQuestionT = z.infer<typeof AttemptOnQuestion>;
 
-// 2. JudgeOnEvent — actor=agent / action='judge' / subject='event'
-//
-// AI 归因 / 批改一个 prior event（通常是 attempt event）。outcome='success' —— 批改
-// 行为本身成功；判分结果在 payload.cause。referenced_knowledge_ids 指批改时引用的
-// knowledge。
+// 2. JudgeOnEvent — outcome='success' 表示批改动作本身成功；答案对错在 payload.cause。
 
 const PromptIdentity = z.object({
   prompt_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
@@ -213,63 +165,45 @@ export const JudgeOnEvent = z.object({
   payload: z.object({
     cause: CauseSchema,
     referenced_knowledge_ids: z.array(z.string()),
-    // D6 (U4 L-stamp, 2026-06-04): judge-event version pinning. All three are
-    // optional so the union still parses every historical judge event in the
-    // 25-event scan window (no backfill, no rewrite of old results — rejudge =
-    // new event per D6). Sourced from SubjectProfile.version at the invoker /
-    // attribution layer, NOT from the 8 module-level '1.0.0' capability-id
-    // constants. See docs/design/2026-06-04-u0-decisions.md D6.
-    //   - profile_version: the SubjectProfile.version active when judged
-    //   - capability_ref:  the routed judge capability (id + resolved version);
-    //                      undefined for the pure-attribution path (not routed)
-    //   - judge_route:     which JudgeKind ran; undefined for attribution
+    // Judge-event version pinning: 三个字段都 optional，使 union 仍能解析全部历史
+    // judge event（不 backfill、不改写旧结果——rejudge = 新 event）。取值来自
+    // SubjectProfile.version（invoker/attribution 层），不是模块级 '1.0.0' 常量：
+    //   - profile_version: 判分时生效的 SubjectProfile.version
+    //   - capability_ref:  被路由到的 judge capability（纯 attribution 路径未路由 → undefined）
+    //   - judge_route:     实际运行的 JudgeKind（attribution → undefined）
     profile_version: z.string().optional(),
     capability_ref: CapabilityRef.optional(),
     judge_route: JudgeKind.optional(),
-    // YUK-589 — execution identity for newly written judge events. Optional only
-    // for historical compatibility; writers must stamp versioned provenance.
-    // Provider/model are allowed only when copied from an authoritative task run.
+    // Newly written judge events must stamp versioned provenance; optional only
+    // for historical compatibility. Provider/model are allowed only when copied
+    // from an authoritative task run.
     execution_provenance: JudgeExecutionProvenance.optional(),
-    // U5 (YUK-203, F1/Q1) — paper-path visibility gate. The independent paper
-    // judge event sets `false` for judge-now/show-later slots (feedback buffered
-    // until the paper completes); omitted/true → immediately visible. Optional so
-    // every historical judge event still parses (no backfill). Visibility is
-    // DERIVED at read time: 可见 = visible_to_user !== false || session completed.
-    // The single-question /api/review/submit embed path never sets this.
+    // Paper-path visibility gate: independent paper judge sets `false` for
+    // judge-now/show-later slots（feedback 缓冲到整卷完成）；omitted/true → 立即可见。
+    // 可见性在读取时派生：可见 = visible_to_user !== false || session completed。
+    // 单题 /api/review/submit embed 路径永不设置。
     visible_to_user: z.boolean().optional(),
-    // U5 (YUK-203) — paper judge result stored in payload so the read layer
-    // (paper-detail.ts) can reconstruct the coarse_outcome / score on page reload
-    // without re-running the judge. Optional so every historical judge event
-    // (pre-U5 + the single-question /api/review/submit embed path) still parses.
-    // coarse_outcome is the judge's verdict ('correct'/'partial'/'incorrect'/
-    // 'unsupported'); score is [0,1] or null.
+    // Paper judge result stored in payload so the read layer can reconstruct
+    // coarse_outcome / score on page reload without re-running the judge.
+    // Optional so pre-U5 + single-question embed-path events still parse.
     coarse_outcome: z.string().optional(),
     score: z.number().optional(),
-    // Round-4 fix #4 (YUK-203): paper placeholder judge sets this true so the
-    // attribution pipeline can distinguish "already attributed" from "pending
-    // real cause". The skip condition in attribute.ts / runAttributionAndWriteJudgeEvent
-    // checks `!attribution_pending` — only skips when a real attribution judge
-    // (written by the attribution agent) is found. Optional + defaults false so
-    // every historical judge event still parses with no backfill.
+    // Paper placeholder judge sets this true so the attribution pipeline can
+    // distinguish "already attributed" from "pending real cause"; the skip
+    // condition checks `!attribution_pending`. Defaults false, no backfill.
     attribution_pending: z.boolean().optional(),
-    // YUK-212 + YUK-484(B) "Lane C cut 1" — StructuredQuestion.id of the sub this
-    // verdict targets. ABSENT for atomic verdicts (conditional-spread on the
-    // writer keeps the key absent, not null, so every historical/atomic judge
-    // event parses byte-identically). Cut-1 use is observability / addressability
-    // ONLY — it does NOT drive mastery fan-out (mastery stays per-KC, ADR-0028);
-    // per-sub θ̂ / one-judge-event-per-sub is a later cut (YUK-485). This is the
-    // structured-jsonb axis id, NOT a question_part id. Not mirrored onto
-    // AttemptOnQuestion.payload in cut 1.
+    // StructuredQuestion.id of the sub this verdict targets; ABSENT for atomic
+    // verdicts (conditional-spread keeps the key absent, not null — historical
+    // events parse byte-identically). Observability/addressability ONLY — does
+    // NOT drive mastery fan-out (stays per-KC); this is the structured-jsonb
+    // axis id, NOT a question_part id.
     sub_ref: z.string().optional(),
   }),
   ...baseOptionalFields,
 });
 export type JudgeOnEventT = z.infer<typeof JudgeOnEvent>;
 
-// 3. ReviewOnQuestion — actor=user / action='review' / subject='question'
-//
-// 用户 FSRS 复习一道题。outcome 来自 fsrs_rating 派生（again→failure, hard/good→success）。
-// fsrs_state_after 为复习后的 ts-fsrs Card dump。
+// 3. ReviewOnQuestion — outcome 由 fsrs_rating 派生（见下方 superRefine）。
 
 export const ReviewOnQuestion = z
   .object({
@@ -282,10 +216,10 @@ export const ReviewOnQuestion = z
     payload: z.object({
       fsrs_rating: z.enum(['again', 'hard', 'good']),
       fsrs_state_after: FsrsStateSchema,
-      // YUK-832 — live multi-subject FSRS provenance. These keys have been written by
-      // practice submit since the knowledge-card rollout; keeping them optional preserves
-      // historical rows while preventing parseEvent/getEventById from stripping the only
-      // evidence that says which cards were advanced by this review.
+      // Live multi-subject FSRS provenance. Practice submit has written these
+      // keys since the knowledge-card rollout; keeping them optional preserves
+      // historical rows while preventing the union parse from stripping the only
+      // evidence of which cards this review advanced.
       fsrs_subject_kind: z.enum(['question', 'knowledge']).optional(),
       fsrs_subject_ids: z.array(z.string().min(1)).optional(),
       fsrs_state_after_by_subject: z
@@ -299,41 +233,30 @@ export const ReviewOnQuestion = z
         )
         .optional(),
       user_response_md: z.string().nullable(),
-      // YUK-215 (PR #309 round-1, F4) — handwriting-photo answer refs. The
-      // /api/review/submit write path freezes these onto the review event
-      // payload (submit/route.ts:380) as the judge's evidence trail, but without
-      // this field the discriminated-union parse stripped them on read so the
-      // refs vanished through the event API. Optional + array so every historical
-      // review event (pre-YUK-215, no image refs) still parses. Mirrors the
-      // attempt payload's `answer_image_refs` naming convention.
+      // Handwriting-photo answer refs frozen onto the review event as the
+      // judge's evidence trail. Without this field the union parse stripped
+      // them on read so the refs vanished through the event API. Optional so
+      // pre-image review events still parse.
       answer_image_refs: z.array(z.string()).optional(),
       // feeds knowledge_mastery view (ADR-0012)
       referenced_knowledge_ids: z.array(z.string()).default([]),
-      // Wall-clock time from when the question was first shown to when the
-      // user rated. Optional because legacy events (pre-2026-05-17) don't
-      // have it and we don't want to break the discriminated union.
+      // Optional because legacy events (pre-2026-05-17) don't have it.
       duration_ms: z.number().int().nonnegative().optional(),
-      // YUK-336 — exact correlation back to the practice stream slot that produced
-      // this review. Optional for historical/non-stream reviews. The stream read
-      // model uses this before its deliberately conservative legacy fallback, so a
-      // repeated review of the same question cannot lend its verdict to the wrong row.
+      // Exact correlation back to the practice stream slot that produced this
+      // review. The stream read model consults this before its conservative
+      // legacy fallback, so a repeated review cannot lend its verdict to the
+      // wrong row.
       stream_item_id: z.string().min(1).optional(),
-      // YUK-407 (Phase 0 red line) — see ReconstructionSignal. Optional; reserved on
-      // the review payload for symmetry (no live review site stamps it yet).
+      // see ReconstructionSignal — reserved for symmetry; no live review site
+      // stamps it yet.
       reconstruction_signal: ReconstructionSignal.optional(),
-      // YUK-562 (process-data 最小采集) — reasoning_trace: 学生自述的解题思路 / 过程文本
-      // （区别于 user_response_md 的最终作答）。PracticeFacePage/PfSolo 主流路径经
-      // /api/attempts 写 review event，API 侧先行支持（UI 过 design pre-flight 后补）。
-      // OPTIONAL：非采集面 / 历史 review 恒缺省 → 既有 review 读路径逐字不变。与 attempt
-      // 侧同风格 REASONING_TRACE_MAX_LEN 封上界。engagement 红线（零强制）= 字段 optional。
+      // 学生自述的解题思路（区别于 user_response_md 的最终作答）。OPTIONAL →
+      // 非采集面 / 历史 review 恒缺省，既有读路径逐字不变；与 attempt 侧同风格封上界。
       reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
-      // YUK-444 (A10 答题置信度自评) — self_confidence: 学生在看到判定之前对本次作答的
-      // 主观把握（1-5 整数，1=完全没底 … 5=十拿九稳）。PfSolo 提交后、判定揭晓前的 in-page
-      // interstitial 采集（推迟揭晓的元认知语义）。**observe-only**：仅落到 review event
-      // payload 供后续分析，绝不进 θ̂ / FSRS / 判分（命名刻意用 self_confidence 而非
-      // confidence——后者已被 judge 置信度占用）。OPTIONAL：跳过 / 客观题 auto-commit /
-      // 历史 review 恒缺省 → 既有读路径逐字不变（byte-identical 回归锚）。engagement 红线
-      // （零强制）= 字段 optional。
+      // 学生在看到判定前对本次作答的主观把握（1-5 整数），判定揭晓前的 interstitial
+      // 采集。**observe-only**：仅落 payload 供分析，绝不进 θ̂ / FSRS / 判分。命名用
+      // self_confidence——confidence 已被 judge 置信度占用。OPTIONAL → 跳过 / 客观题
+      // auto-commit / 历史 review 恒缺省，既有读路径逐字不变。
       self_confidence: z.number().int().min(1).max(5).optional(),
       // Diagnostic settlement uses judge correctness rather than the
       // learner-controlled FSRS rating/outcome.
@@ -354,11 +277,8 @@ export const ReviewOnQuestion = z
   });
 export type ReviewOnQuestionT = z.infer<typeof ReviewOnQuestion>;
 
-// 4. ProposeKnowledge — actor=agent / action='propose' / subject='knowledge'
-//
-// AI 提议新增一个 knowledge 节点。outcome='success' 或 'partial'（部分理由不齐时）。
-// payload 含 name / parent_id（挂哪个 tree node；null = 提议新学科/domain 根节点，
-// 此时 domain 必填）/ reasoning（必填，AI 解释为啥提议）。
+// 4. ProposeKnowledge — parent_id=null 表示提议新学科/domain 根节点（此时 domain
+// 必填，由业务层守门）。
 
 export const ProposeKnowledge = z.object({
   actor_kind: z.literal('agent'),
@@ -377,11 +297,8 @@ export const ProposeKnowledge = z.object({
 });
 export type ProposeKnowledgeT = z.infer<typeof ProposeKnowledge>;
 
-// 5. GenerateArtifact — actor=agent / action='generate' / subject='artifact'
-//
-// AI 产出一个 artifact（note / quiz / variant / summary）。outcome='success' 或 'failure'。
-// payload.artifact_kind 区分子类型；referenced_event_ids 是 artifact 派生自哪些 prior
-// events（如变式题 derive 自原错题 attempt event）。
+// 5. GenerateArtifact — payload.artifact_kind 区分子类型；referenced_event_ids
+// 记录 artifact 派生自哪些 prior events。
 
 export const GenerateArtifact = z.object({
   actor_kind: z.literal('agent'),
@@ -400,29 +317,23 @@ export const GenerateArtifact = z.object({
 });
 export type GenerateArtifactT = z.infer<typeof GenerateArtifact>;
 
-// YUK-543 — merge-repair breadcrumb. When a `rate=accept` event accepts a
-// `knowledge_merge` proposal, applyMerge now repairs 9 downstream attribution
-// surfaces per absorbed `from_id` (question/learning_item/goal knowledge_ids,
-// knowledge_edge endpoints, mastery/fsrs/axis/kc_typed per-KC state, misconception
-// edge targets). This array is a FORENSIC AUDIT TRAIL of what was touched — NOT a
-// reversibility guarantee (sequential θ̂/FSRS fits are not decomposable; see the
-// spec §6 red-line check 3). One entry per absorbed from_id, in payload.from_ids
-// array order. Widened EXPLICITLY here (not left to RateEvent.payload's non-strict
-// passthrough) matching the materialized_ids / prior-state-capture precedent style.
+// Merge-repair breadcrumb: a FORENSIC AUDIT TRAIL of what applyMerge touched —
+// NOT a reversibility guarantee (sequential θ̂/FSRS fits are not decomposable).
+// One entry per absorbed from_id, in payload.from_ids array order. Widened
+// explicitly here rather than left to RateEvent.payload's non-strict passthrough.
 export const MergeRepairEntry = z
   .object({
     from_id: z.string(),
     question_ids_rewritten: z.array(z.string()),
     learning_item_ids_rewritten: z.array(z.string()),
     goal_ids_rewritten: z.array(z.string()),
-    // Per-edge forensic outcome (YUK-543 review R4 — a bare `new_edge_id: null` overloaded three
-    // distinct causes). `new_edge_id` is non-null for 'rewired' (fresh edge created) and
-    // 'reactivated' (an archived tombstone already holding the rewritten UNIQUE key was un-archived
-    // instead — R2); null for the three archive-only outcomes: 'collapsed_self_loop' (both endpoints
-    // map to into_id), 'archived_duplicate' (a LIVE edge already holds the rewritten key),
-    // 'archived_dangling' (the non-into endpoint is archived/missing — degenerate edge, dropped
-    // with a warn). The outcome↔new_edge_id coupling is ENFORCED by the superRefine below (OCR O6),
-    // not just documented.
+    // Per-edge forensic outcome. `new_edge_id` is non-null for 'rewired' (fresh
+    // edge created) and 'reactivated' (an archived tombstone holding the
+    // rewritten UNIQUE key was un-archived); null for the archive-only outcomes:
+    // 'collapsed_self_loop' (both endpoints map to into_id), 'archived_duplicate'
+    // (a LIVE edge already holds the rewritten key), 'archived_dangling' (the
+    // non-into endpoint is archived/missing). The outcome↔new_edge_id coupling is
+    // ENFORCED by the superRefine below, not just documented.
     edges_rewired: z.array(
       z
         .object({
@@ -436,8 +347,8 @@ export const MergeRepairEntry = z
             'archived_dangling',
           ]),
         })
-        // .strict() — forensic data: a typo'd key must fail loudly, never be silently stripped
-        // (matches the materialized_ids precedent below). OCR O5.
+        // .strict() — forensic data: a typo'd key must fail loudly, never be
+        // silently stripped (matches the materialized_ids precedent below).
         .strict()
         .superRefine((entry, ctx) => {
           const wantsEdge = entry.outcome === 'rewired' || entry.outcome === 'reactivated';
@@ -458,14 +369,11 @@ export const MergeRepairEntry = z
     kc_typed_state: z.enum(['noop', 'renamed', 'frozen']),
     misconception_edges_rewritten: z.array(z.string()),
   })
-  // .strict() — same rationale as the element object + materialized_ids (OCR O5).
+  // .strict() — same rationale as the element object + materialized_ids.
   .strict();
 export type MergeRepairEntryT = z.infer<typeof MergeRepairEntry>;
 
-// 6. RateEvent — actor=user / action='rate' / subject='event'
-//
-// 用户对一个 prior event（通常 agent 提议 / 生成）投票 accept / dismiss / rollback。
-// outcome 固定为 'success' —— rate 行为本身没有失败。
+// 6. RateEvent — 用户对 prior event 投票 accept / dismiss / rollback。
 
 export const RateEvent = z.object({
   actor_kind: z.literal('user'),
@@ -477,70 +385,51 @@ export const RateEvent = z.object({
   payload: z.object({
     rating: z.enum(['accept', 'dismiss', 'rollback']),
     user_note: z.string().optional(),
-    // YUK-471 (retract fold/rollback) — when this rate event ACCEPTS a
-    // completion / relearn proposal it pins the learning_item it materialized so
-    // retract can find the row to reverse (the proposal payload carries the id too,
-    // but pinning it on the accept keeps the reversal self-contained). Optional —
-    // only completion/relearn accepts set it.
+    // When this rate event ACCEPTS a completion/relearn proposal it pins the
+    // learning_item it materialized so retract can find the row to reverse
+    // without re-reading the proposal. Only completion/relearn accepts set it.
     materialized_learning_item_id: z.string().optional(),
-    // YUK-471 (retract fold/rollback) — PRIOR-STATE CAPTURE. completion accepts a
-    // pending|in_progress item and relearn accepts a done|resting item, then both
-    // overwrite status (+ completed_at). The pre-accept values are otherwise
-    // UNRECOVERABLE, so retract would have to guess (and a wrong guess corrupts a
-    // `resting` item into `done` with a fabricated completed_at). The accept pins the
-    // exact prior state here so retract restores it byte-for-byte. Optional — only
-    // completion/relearn accepts set them; `null` means the prior completed_at was NULL.
-    // Reuse the shared LearningItemStatus enum (single source of truth — learning_item.status
-    // is bare text with no DB constraint, so this parse barrier is the only gate; a junk status
-    // fails loudly here instead of silently restoring an invalid state on retract).
+    // PRIOR-STATE CAPTURE: completion/relearn accepts overwrite status
+    // (+ completed_at); the pre-accept values are otherwise UNRECOVERABLE, and a
+    // wrong retract guess corrupts a `resting` item into `done` with a fabricated
+    // completed_at. The accept pins the exact prior state so retract restores it
+    // byte-for-byte. `null` means the prior completed_at was NULL. Reuses the
+    // shared LearningItemStatus enum — the DB column has no constraint, so this
+    // parse barrier is the only gate against restoring an invalid state.
     materialized_prior_status: LearningItemStatus.optional(),
     materialized_prior_completed_at: z.string().nullable().optional(),
-    // YUK-471 W1 payload #1 (Codex #3 keystone) — when this rate event ACCEPTS a
-    // structural proposal (applyProposeNew / applySplit), it pins the ids the
-    // accept path minted so the W1 fold can REPRODUCE the same knowledge.id /
-    // knowledge_edge.id on replay (deterministic projection). MUST be .optional():
-    // dismiss / rollback rate events mint nothing and must still parse. Each array
-    // is .optional() too (an accept may touch only nodes, only edges, or both).
+    // When this rate event ACCEPTS a structural proposal, it pins the ids the
+    // accept path minted so the fold can REPRODUCE the same knowledge.id /
+    // knowledge_edge.id on replay (deterministic projection). MUST be optional:
+    // dismiss/rollback mint nothing, and an accept may touch only nodes or only
+    // edges.
     materialized_ids: z
       .object({
         knowledge: z.array(z.string()).optional(),
         knowledge_edge: z.array(z.string()).optional(),
       })
-      // .strict() — reject unknown keys so a typo (e.g. `knowledge_edges`) fails
-      // loudly at the parse barrier instead of silently dropping the minted ids,
-      // which would break the W1 fold's deterministic replay (the projection would
-      // mint nothing for those rows). YUK-471 W1 PR-A1 (CodeRabbit MAJOR).
+      // .strict() — reject unknown keys so a typo (e.g. `knowledge_edges`)
+      // fails loudly at the parse barrier instead of silently dropping the
+      // minted ids, which would break the fold's deterministic replay.
       .strict()
       .optional(),
-    // YUK-543 — the merge-repair forensic breadcrumb (see MergeRepairEntry above).
-    // Optional: only merge accepts set it; every other accept/dismiss/rollback omits it.
+    // The merge-repair forensic breadcrumb (see MergeRepairEntry above).
+    // Only merge accepts set it.
     merge_repair: z.array(MergeRepairEntry).optional(),
   }),
   ...baseOptionalFields,
 });
 export type RateEventT = z.infer<typeof RateEvent>;
 
-// 6b. CorrectEvent — actor=user|agent / action='correct' / subject='event'
+// 6b. CorrectEvent — first-class semantic correction for append-only history
+// (supersede/retract/mark_wrong/restore), unlike RateEvent rating='rollback'.
 //
-// First-class semantic correction for append-only event history. Unlike
-// RateEvent.rating='rollback', this says how projections should treat a prior
-// event: superseded, retracted, marked wrong, or restored.
-//
-// ATTRIBUTION (YUK-344): a correction can be authored by the user OR by an
-// autonomous agent. The two authoring lanes are:
-//   - user lane:  actor_kind='user',  actor_ref='self'  (UI rejudge / correct /
-//                 revert — a human-initiated semantic correction);
-//   - agent lane: actor_kind='agent', actor_ref=<agent ref> (e.g. 'dreaming' —
-//                 the nightly edge reconcile SUPERSEDE auto-archives a contradicted
-//                 live edge with no human in the loop; mirrors the actor fields the
-//                 `generate` events on the same axis use, actor_kind='agent').
-// The shared stable-actor policy is applied to this public branch and again as a
-// union backstop; this branch keeps the independent agent half (`agent` MUST NOT
-// be `self`) so an autonomous supersede is never mis-recorded as a user
-// correction. Correction consumers
-// (corrections.ts getCorrectionStatuses, inbox / proposal-status projections) read
-// only correction_kind + replacement_event_id, so they are attribution-agnostic
-// and unaffected by which lane authored the row.
+// ATTRIBUTION: authored by the user lane (actor_kind='user', actor_ref='self')
+// or the agent lane (e.g. the nightly edge reconcile SUPERSEDE auto-archives a
+// contradicted live edge with no human in the loop). The branch keeps the
+// independent agent half (`agent` MUST NOT be `self`) so an autonomous supersede
+// is never mis-recorded as a user correction; consumers read only
+// correction_kind + replacement_event_id, so they are attribution-agnostic.
 
 export const CorrectionKind = z.enum(['supersede', 'retract', 'mark_wrong', 'restore']);
 export type CorrectionKindT = z.infer<typeof CorrectionKind>;
@@ -588,30 +477,20 @@ export const CorrectEvent = z
   .superRefine(enforceStableUserActorRef);
 export type CorrectEventT = z.infer<typeof CorrectEvent>;
 
-// 6c. CorrectArtifactEvent — actor=user / action='correct' / subject='artifact'
-//
-// Block-grained correction for note artifacts. Parallel to CorrectEvent;
-// kept as a separate schema (not a union variant of CorrectEvent) because the
-// payload shape differs — artifact targets have no natural `affected_refs`
-// (those live on activity refs, not artifacts) and supersede replacement is an
-// artifact_id, not an event_id.
-//
-// `block_id` is optional:
-//   - omitted → correction applies to the whole atomic artifact
-//   - present → correction applies to a single body_blocks node id
-//
-// See ADR-0020 — ADR-0019 section anchors are superseded by block anchors.
-//
-// `corrections.ts:getCorrectionStatuses` filters on subject_kind='event' and
-// does NOT see these rows. Artifact-scoped composition lives in a sibling
-// module (src/capabilities/notes/server/artifact-corrections.ts).
+// 6c. CorrectArtifactEvent — block-grained correction for note artifacts.
+// Kept a separate schema (not a union variant of CorrectEvent) because the
+// payload shape differs: artifact targets have no natural `affected_refs`, and
+// supersede replacement is an artifact_id, not an event_id. `block_id` omitted →
+// whole-artifact correction; present → one body_blocks node id (ADR-0020 block
+// anchors). getCorrectionStatuses filters on subject_kind='event' and does NOT
+// see these rows; artifact-scoped composition lives in
+// src/capabilities/notes/server/artifact-corrections.ts.
 
 export const CorrectArtifactPayload = z
   .object({
     correction_kind: CorrectionKind,
-    // block_id min(1): empty string would create a nonsense `''` bucket in
-    // the per-block projection Map (distinguishable from `undefined`
-    // whole-artifact corrections) — reject at the schema boundary.
+    // block_id min(1): an empty string would create a nonsense `''` bucket in
+    // the per-block projection Map — reject at the schema boundary.
     block_id: z.string().min(1).optional(),
     reason_md: z.string().min(1).max(2000),
     replacement_artifact_id: z.string().optional(),
@@ -647,20 +526,13 @@ export const CorrectArtifactEvent = z
   });
 export type CorrectArtifactEventT = z.infer<typeof CorrectArtifactEvent>;
 
-// 6d. SuppressArtifactLink — actor=user / action='suppress' / subject='artifact'
-//
-// YUK-95 P5 Lane-D (Wave 7), ADR-0020 §9 dismiss. The user hides one
-// system-maintained auto-link from a hub's `AutoLinksContainer`. The dismiss
-// write path (POST /api/hubs/[id]/dismiss-link) appends the dismissed target to
-// `artifact.attrs.suppressed_block_refs[]` AND writes this event so the action
-// is traceable + reversible (XC-5 event-driven: dismiss is an event, not a
-// silent attrs mutation). The nightly `hub_auto_sync_nightly` worker reads
-// `suppressed_block_refs` and skips the suppressed atomic on the next run.
-//
-// `subject_id` is the HUB artifact_id (the artifact whose auto-zone is being
-// pruned). `payload.suppressed_artifact_id` is the TARGET atomic whose
-// crossLinkBlock is dismissed. `relation` is optional provenance (the chip's
-// relation at dismiss time) for audit display.
+// 6d. SuppressArtifactLink — the user hides one system-maintained auto-link
+// from a hub. Dismiss is an event (traceable + reversible), not a silent attrs
+// mutation: the write path also appends the target to
+// `artifact.attrs.suppressed_block_refs[]`, which the nightly hub sync skips.
+// `subject_id` is the HUB artifact_id; `payload.suppressed_artifact_id` is the
+// TARGET atomic whose crossLinkBlock is dismissed; `relation` is optional
+// provenance for audit display.
 
 export const SuppressArtifactLink = z.object({
   actor_kind: z.literal('user'),
@@ -679,10 +551,7 @@ export const SuppressArtifactLink = z.object({
 });
 export type SuppressArtifactLinkT = z.infer<typeof SuppressArtifactLink>;
 
-// 7. ExtractSourceDocument — actor=agent / action='extract' / subject='source_document'
-//
-// Tencent OCR 抽取一份 source_document → 一组 question_block。outcome='success'（全成功）/
-// 'partial'（部分页/题失败）/ 'failure'（整文档失败）。
+// 7. ExtractSourceDocument — OCR 抽取 source_document → question_block。
 
 export const ExtractSourceDocument = z.object({
   actor_kind: z.literal('agent'),
@@ -692,8 +561,7 @@ export const ExtractSourceDocument = z.object({
   subject_id: z.string(),
   outcome: z.enum(['success', 'partial', 'failure']),
   payload: z.object({
-    // YUK-1408 — inherited document usage policy (same optional field the
-    // ToolUseQuery payload carries). Absent === 'allow' legacy default.
+    // 继承文档用途策略：缺省 === 'allow'（legacy 默认）。
     derivation_policy: DerivationPolicy.optional(),
     structured_block_ids: z.array(z.string()),
     layout_quality: z.enum(['structured', 'partial', 'text_only']),
@@ -706,13 +574,6 @@ export type ExtractSourceDocumentT = z.infer<typeof ExtractSourceDocument>;
 // ====================================================================
 // ADR-0011 新 4 个 KnownEvent（stable，已 promote 出 experimental:）
 // ====================================================================
-
-// 8. AcceptSuggestionChip — actor=user / action='accept_suggestion' / subject='chip'
-//
-// 用户接受 agent 提议的结构化动作（chip）。区分 'proactive'（agent 主动提议）vs
-// 'corrective'（用户错答后系统提议改正）—— payload.suggestion_kind 必填，ADR-0011 v2 §2.1。
-// source_event_id 必填 —— chip 出自哪个 agent explain event。target_tool / target_args
-// 可选（chip 可只是"我看见了"，不一定触发新 tool）。
 
 export const SuggestionKind = z.enum(['proactive', 'corrective']);
 export type SuggestionKindT = z.infer<typeof SuggestionKind>;
@@ -735,10 +596,7 @@ export const AcceptSuggestionChip = z.object({
 });
 export type AcceptSuggestionChipT = z.infer<typeof AcceptSuggestionChip>;
 
-// 9. ProposeKnowledgeEdge — actor=agent / action='propose' / subject='knowledge_edge'
-//
-// AI 提议加一条新 edge（dry-run，需用户 rate=accept 后才晋升到 knowledge_edge 表）。
-// payload.relation_type 是 ADR-0010 5 个核心 enum 或 experimental:* 命名空间。
+// 9. ProposeKnowledgeEdge — dry-run：需用户 rate=accept 后才晋升到 knowledge_edge 表。
 
 export const ProposeKnowledgeEdge = z.object({
   actor_kind: z.literal('agent'),
@@ -758,13 +616,9 @@ export const ProposeKnowledgeEdge = z.object({
 });
 export type ProposeKnowledgeEdgeT = z.infer<typeof ProposeKnowledgeEdge>;
 
-// 10. GenerateKnowledgeEdge — actor=agent|user / action='generate' / subject='knowledge_edge'
-//
-// 直接落库一条 knowledge_edge：maintenance agent 自动建（actor='agent'）或用户手加
-// （actor='user'）。reasoning 在 agent 时必填、user 时可省 —— 用 superRefine 加守门
-// （Zod 静态 schema 不直接表达条件性必填，留给业务层校验或 refine）。
-//
-// 注意 actor_kind 是 enum 而非 literal —— 但仍唯一锁住 (action, subject_kind) 组合。
+// 10. GenerateKnowledgeEdge — 直接落库一条 knowledge_edge（maintenance agent
+// 自动建或用户手加）。reasoning 在 agent 时必填、user 时可省——Zod 静态 schema
+// 表达不了条件性必填，留给下方 superRefine。
 
 export const GenerateKnowledgeEdge = z
   .object({
@@ -779,13 +633,11 @@ export const GenerateKnowledgeEdge = z
       to_knowledge_id: z.string(),
       relation_type: RelationTypeSchema,
       weight: z.number().min(0).max(1).default(1),
-      // YUK-471 W1 PR-A2b — accept `null` (not just absent) so the generate-event
-      // payload can encode an explicitly-absent reasoning the SAME way the ROW does
-      // (`reasoning ?? null`, actions.ts). This makes the edge fold lossless: the
-      // event payload now matches the row byte-for-byte, so foldKnowledgeEdge no
-      // longer needs the `'' → null` coercion workaround (reasonOrNull). user-actor
-      // generate events (actions.ts) may carry null; agent-actor still requires a
-      // non-empty string (the superRefine below — null is falsy → rejected for agent).
+      // Accept `null` (not just absent) so the event payload encodes an
+      // explicitly-absent reasoning the SAME way the ROW does (`reasoning ?? null`).
+      // The edge fold is then lossless and needs no `'' → null` coercion workaround;
+      // user-actor events may carry null, agent-actor is still rejected by the
+      // superRefine below (null is falsy).
       reasoning: z.string().nullable().optional(),
       propose_event_id: z.string().optional(),
     }),
@@ -807,15 +659,9 @@ export const GenerateKnowledgeEdge = z
   .superRefine(enforceStableUserActorRef);
 export type GenerateKnowledgeEdgeT = z.infer<typeof GenerateKnowledgeEdge>;
 
-// 12. ToolUseQuery — actor=agent / action='tool_use' / subject='query'
-//
-// Promoted out of `experimental:tool_use` per ADR-0011 §1.1 (T-D7 / YUK-126,
-// 2026-05-28). Copilot tool-use path: agent invokes a registered DomainTool,
-// the bridge mirrors the call into `event` (when `mirrorEvent` policy fires)
-// with payload `{ tool_name, args, result_summary?, result_count?, error_reason? }`.
-// `subject_id` is self-identifying (`'tool_use_<cuid>'`); `outcome='failure'`
-// requires `error_reason` to be populated (enforced via superRefine below) so
-// failure mirrors always carry diagnostic information.
+// 12. ToolUseQuery — copilot tool-use path: agent invokes a registered
+// DomainTool, the bridge mirrors the call into `event` when `mirrorEvent`
+// policy fires. `subject_id` is self-identifying (`'tool_use_<cuid>'`).
 
 export const ToolUseQuery = z
   .object({
@@ -928,11 +774,8 @@ export const ToolOperationSettled = z
   });
 export type ToolOperationSettledT = z.infer<typeof ToolOperationSettled>;
 
-// 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
-//
-// 用户对 propose / generate 的 edge 投票。rating='change_type' 时 new_relation_type 必填、
-// rating='reverse' 时 new_direction_reversed 应为 true —— 业务层校验。Zod 这里只锁 rating
-// enum，semantics 在 handler 守门。
+// 11. RateKnowledgeEdge — 用户对 propose / generate 的 edge 投票（change_type /
+// reverse 的附加字段要求由下方 superRefine 守门）。
 
 export const RateKnowledgeEdge = z
   .object({
@@ -973,18 +816,12 @@ export type RateKnowledgeEdgeT = z.infer<typeof RateKnowledgeEdge>;
 // KnownEvent union
 // ====================================================================
 //
-// Zod discriminatedUnion 只支持单键判别，且要求每个分支 literal 唯一。union 里有 4 个
-// action 重复（'propose' × {knowledge, knowledge_edge}、'generate' × {artifact,
-// knowledge_edge}、'rate' × {event, knowledge_edge}、'correct' × {event, artifact}），
-// 加上新增的 'suppress' × {artifact}（与 correct/artifact 同 subject 但 action 不同），
-// 所以**用 z.union**。
-//
-// 每个 schema 用 z.literal() 锁 (action, subject_kind) 组合，因此 parse 时仍单义解析 ——
-// Zod 会按 union 顺序尝试，第一个 matching schema 胜出。
-//
-// 顺序经过设计：相同 action 的分支按 subject_kind 字母序排列（艺术层面无意义，但稳定
-// parse 顺序避免误匹配）。每个 schema 用 .strict() 是不必要的，因为 z.literal() 已经
-// 保证不会跨匹配。
+// z.union 而非 discriminatedUnion：后者只支持单键判别且要求每个分支 literal 唯一，
+// 而这里有 5 组 action×subject_kind 重复（'propose'×{knowledge, knowledge_edge}、
+// 'generate'×{artifact, knowledge_edge}、'rate'×{event, knowledge_edge}、
+// 'correct'×{event, artifact}、'suppress'×{artifact}）。每个 schema 用 z.literal()
+// 锁 (action, subject_kind) 组合，parse 仍单义解析（Zod 按 union 顺序取第一个
+// matching schema；相同 action 的分支按 subject_kind 字母序排列以稳定顺序）。
 
 export const KnownEvent = z
   .union([

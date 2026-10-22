@@ -1,22 +1,6 @@
-// YUK-471 W2 — projectGoal: the IO shell around the PURE goal fold.
-//
-// Canonical structural writer after YUK-973; there is no per-entity mode switch.
-// It:
-//   1. GATHERS the superset of `event` rows that can affect `goalId` (the pure reducer filters
-//      internally, but the shell over-collects — a missed event silently drops a mutation),
-//   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),
-//   3. calls foldGoal(goalId, foldEvents) (PURE),
-//   4. WRITE-THROUGH: null → DELETE the row; else upsert the projected columns.
-//
-// goal has NO derived/excluded columns (unlike knowledge's embed_*), so the upsert covers the
-// full row — every column is fold truth.
-//
-// The read→fold half lives in the SHARED gather.ts (gatherAndFoldGoal) so this shell and
-// scripts/audit-projection.ts reconstruct a goal IDENTICALLY — a single gather implementation
-// means the drift auditor can never be blind to a gather bug in the SoT path. This shell adds
-// only the WRITE-THROUGH on top of that shared read→fold (mirrors projectKnowledgeNode).
-//
-// Db|Tx polymorphic.
+// Write-through shell for the pure `goal` fold: gather the event superset, fold it,
+// then delete or upsert the live row. The read→fold half lives in gather.ts so the
+// auditor reconstructs a goal identically.
 
 import { eq } from 'drizzle-orm';
 
@@ -28,15 +12,7 @@ import { hasGoalGenesisAnchor } from './parity';
 
 type DbLike = Db | Tx;
 
-/**
- * Project the current structural state of a single `goal` from the event log and write it
- * through to the live `goal` table. READ→FOLD→WRITE-THROUGH:
- *   - null  → DELETE FROM goal WHERE id=goalId (goal never existed / fully reverted),
- *   - row   → upsert (insert … onConflictDoUpdate target goal.id) the projected columns.
- *
- * @param db      Db or Tx (polymorphic — wired sites call it inside the accept/retract tx).
- * @param goalId  the goal row id to project.
- */
+/** Re-project one `goal`; a fold of null deletes the row, otherwise upsert. */
 export async function projectGoal(db: DbLike, goalId: string): Promise<void> {
   const projected = await gatherAndFoldGoal(db, goalId);
   if (projected === null) {
@@ -47,11 +23,8 @@ export async function projectGoal(db: DbLike, goalId: string): Promise<void> {
 }
 
 /**
- * The GUARDED goal write-through (the SoT-flip row writer). Identical to projectGoal EXCEPT the
- * null branch: a fold of null DELETEs the live row ONLY when the goal HAS a genesis anchor (a
- * genuine revert of an event-sourced goal). A fold-null on an UN-anchored goal — a pre-event-
- * sourced row the fold is blind to — must NOT delete the live row. Mirrors
- * projectKnowledgeNodeGuarded: lets the flip be activated before every goal is backfilled.
+ * Guarded write-through: a fold of null deletes only when the goal has a genesis anchor.
+ * Without one the fold is blind to a pre-event row, so deleting would lose data.
  */
 export async function projectGoalGuarded(db: DbLike, goalId: string): Promise<void> {
   const projected = await gatherAndFoldGoal(db, goalId);
@@ -65,7 +38,7 @@ export async function projectGoalGuarded(db: DbLike, goalId: string): Promise<vo
   await upsertProjectedGoal(db, projected);
 }
 
-// Shared upsert of the projected goal columns (the FULL row — no derived/excluded columns).
+// Upsert the full goal row; there are no derived or excluded columns.
 async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Promise<void> {
   await db
     .insert(goal)
@@ -74,11 +47,10 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
       title: projected.title,
       subject_id: projected.subject_id,
       scope_knowledge_ids: projected.scope_knowledge_ids,
-      // YUK-603 — the fold always materializes scope_mode (legacy payloads default 'explicit');
-      // the ?? is a type-level belt for the optional snapshot field, never hit at runtime.
+      // Legacy payloads default to 'explicit'; the ?? only satisfies the optional snapshot type.
       scope_mode: projected.scope_mode ?? 'explicit',
       sequence_hint: projected.sequence_hint,
-      // YUK-1009 — legacy snapshots carry no declared_stage; fold materializes NULL.
+      // Legacy snapshots carry no declared_stage; the fold materializes NULL.
       declared_stage: projected.declared_stage ?? null,
       status: projected.status,
       source: projected.source,

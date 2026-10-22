@@ -1,12 +1,7 @@
-// Phase 1c.1 Step 9.A — single-owner of `material_fsrs_state` (ADR-0005).
+// Single owner of `material_fsrs_state` (ADR-0005).
 //
-// Per ADR-0005 / data-assumptions: `material_fsrs_state` is the FSRS projection
-// of `event(action='review', subject_kind=<material kind>)`. The latest review
-// event for a (subject_kind, subject_id) drives a single row in this table.
-//
-// This module is the only allowed writer in `src/server/` and `app/` of this
-// table outside the Step 3 migration script. The Step 9.L invariant audit
-// enforces this.
+// The table projects `event(action='review')` for scheduled subjects: the latest review
+// event for a (subject_kind, subject_id) drives one row. Only this module writes it.
 
 import { and, eq, inArray } from 'drizzle-orm';
 
@@ -35,9 +30,6 @@ import { selectedForgettingEngine } from './engine-selection';
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
 
-/** Retention is a state-owner query, not a consumer's interpretation of card storage.
- * Missing cards stay absent (unknown), distinct from a real New card's zero retention.
- */
 /** Resolve one row under the selected engine without writing a second projection. */
 export async function resolveSchedulingProjection<T extends { state: unknown; due_at: Date }>(
   db: DbLike,
@@ -86,6 +78,8 @@ export async function resolveSchedulingProjection<T extends { state: unknown; du
   return { ...row, state: parsed.data };
 }
 
+/** Retention is a state-owner query, not a consumer's reading of stored cards. Missing
+ * rows stay absent (unknown), which is not the same as a New card's zero retention. */
 export async function getFsrsRetrievabilityByIds(
   db: DbLike,
   subjectKind: FsrsSubjectKind,
@@ -139,20 +133,13 @@ export interface UpsertFsrsStateInput {
   state: SchedulingState;
   due_at: Date;
   /**
-   * Review event id that produced this state — back-reference for audit / replay.
-   * Nullable (the column is nullable): a snapshot revert restores a Card whose prior
-   * review event id is unknown (YUK-471 W0 restore-snapshot) → null = "unknown prior".
+   * Review event that produced this state. Nullable because a snapshot restore can
+   * legitimately not know the prior id; null means unknown, not "never reviewed".
    */
   last_review_event_id: string | null;
 }
 
-/**
- * Upsert the FSRS state projection for a (subject_kind, subject_id) pair.
- *
- * The `material_fsrs_unique` index enforces one row per (kind, id) — concurrent
- * review-submit calls race on the index; the loser falls back to UPDATE inside
- * the same statement via ON CONFLICT.
- */
+/** Upsert the projection; the unique index turns a concurrent insert race into an update. */
 export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): Promise<void> {
   await withLearningStateLock(db, async (tx) => {
     const now = new Date();
@@ -180,11 +167,10 @@ export async function upsertFsrsState(db: DbLike, input: UpsertFsrsStateInput): 
 }
 
 /**
- * Materialize a fresh FSRS card only when the subject has never been enrolled.
+ * Materialize a fresh card only when the subject was never enrolled.
  *
- * Unlike {@link upsertFsrsState}, the conflict branch is intentionally a no-op: enrollment can
- * race a review submit, and the newly-created card must never overwrite a schedule/history that
- * appeared after an optimistic read. This module remains the single writer for the projection.
+ * Unlike {@link upsertFsrsState}, conflicts are intentionally a no-op: enrollment can race
+ * a review submit, and a newly-created card must never overwrite the newer schedule.
  */
 export async function enrollFsrsStateIfAbsent(
   db: DbLike,
@@ -211,12 +197,10 @@ export async function enrollFsrsStateIfAbsent(
 }
 
 /**
- * Retire a question-scoped one-shot diagnostic after its first review.
+ * Drop the derived FSRS row after a one-shot diagnostic's first review.
  *
- * Intervention diagnostics are deliberately scheduled as exact question cards,
- * not reusable knowledge-level reviews. Removing only their derived FSRS row
- * keeps the immutable question and review evidence while preventing a settled
- * diagnostic from resurfacing as an ordinary recurring review.
+ * The immutable question and review evidence stay; removing only the schedule keeps a
+ * settled diagnostic from resurfacing as an ordinary recurring review.
  */
 export async function retireQuestionFsrsState(db: DbLike, questionId: string): Promise<boolean> {
   return withLearningStateLock(db, async (tx): Promise<boolean> => {
@@ -234,16 +218,12 @@ export async function retireQuestionFsrsState(db: DbLike, questionId: string): P
 }
 
 /**
- * YUK-543 — repair `material_fsrs_state` (R-axis scheduling projection) when a KC (`fromId`) is
- * merged into another (`intoId`). NEVER merges FSRS Card state / recomputes stability or due dates
- * (no invented merge math; spec §6). 3-case identity-rename/freeze-and-log, mirroring
- * `retireMasteryStateOnMerge`:
- *   - neither row → 'noop'; only from → RENAME `subject_id` → 'renamed'; both → FREEZE + log →
- *     'frozen' (the from-row is inert — the R-axis reader keys off the rewritten `into_id`).
- * Takes the SAME `fsrs:knowledge:<id>` advisory-lock namespace (shared with mastery_state's live
- * writer + submit.ts / paper-submit.ts) for BOTH ids, sorted, so a concurrent review-submit upsert
- * serializes against the merge. Only `subject_kind='knowledge'` rows are per-KC (legacy
- * `subject_kind='question'` rows are keyed by question id, never a KC id, so they never match).
+ * Repair the projection when KC `fromId` is merged into `intoId`.
+ *
+ * Never merges Card state or recomputes stability/due dates (no invented merge math):
+ * absent source → noop, source only → rename, both → freeze and log. Locks both KC keys
+ * in the shared `fsrs:knowledge` namespace, sorted, so a concurrent review submit
+ * serializes against the merge. Only knowledge rows are KC-keyed; question rows never match.
  */
 export async function retireFsrsStateOnMerge(
   tx: Tx,
@@ -307,9 +287,7 @@ export interface FsrsStateRow {
   last_review_event_id: string | null;
 }
 
-/**
- * Read the latest FSRS state row for a (subject_kind, subject_id) pair, or null.
- */
+/** Latest FSRS row for a subject, or null. */
 export async function getFsrsState(
   db: DbLike,
   subject_kind: FsrsSubjectKind,
@@ -337,14 +315,8 @@ export async function getFsrsState(
 }
 
 /**
- * A5 S3 (YUK-354) — batched read of the FSRS state projection for many
- * (subject_kind, subject_id) pairs in one round-trip. Mirrors {@link getFsrsState}
- * but for a set of ids; absent ids are simply missing from the returned Map (the
- * caller treats "no row" as "no retrievability data yet", NOT R=0).
- *
- * SoT read only — this stays the single-owner module for `material_fsrs_state`.
- * Consumers needing only retention use getFsrsRetrievabilityByIds instead of
- * interpreting raw cards. Both operations share the cross-subject scheduling math.
+ * Batched {@link getFsrsState}. Absent ids are missing from the map, not R=0; consumers
+ * that only need retention should use getFsrsRetrievabilityByIds instead.
  */
 export async function getFsrsStatesByIds(
   db: DbLike,

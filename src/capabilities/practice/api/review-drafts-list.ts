@@ -1,6 +1,4 @@
-// YUK-402 inc-4a — GET /api/review/drafts: owner manual gate draft-review pool.
-//
-// docs/superpowers/specs/2026-06-18-inc4-owner-manual-gate-design.md §2.
+// GET /api/review/drafts: owner manual gate draft-review pool.
 //
 // Lists draft_status='draft' questions (excluding soft-archived drafts) with a
 // per-draft verify status derived from the latest terminal verify event. Auth is

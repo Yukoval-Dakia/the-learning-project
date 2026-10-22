@@ -16,13 +16,19 @@
 
 import { createHash } from 'node:crypto';
 import { eq, like } from 'drizzle-orm';
-import type { EffortLevel, Provider } from '@/ai/task-spec';
+import type { Provider } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
+import {
+  type CustomProviderDefinition,
+  type CustomProviderProtocol,
+  customProviderDefinitions,
+  customProvidersRegistryHydrated,
+} from '@/core/config/custom-providers';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
-import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
+import { CATALOG_PROVIDER_BY_INTERNAL, catalogProviderFor } from './model-profiles';
 import {
   type PaidProbePosting,
   type ProviderFetch,
@@ -46,7 +52,6 @@ export const MODEL_CATALOG_WATCH_INTERVAL_MS = 60_000;
 
 const FETCH_TIMEOUT_MS = 30_000;
 const REFRESH_LOCK_WAIT_MS = 15_000;
-const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const ENV_MODEL_KEYS = [
   'AI_PROVIDER_MODEL',
   'VERIFY_SOLVE_MODEL_OVERRIDE',
@@ -55,7 +60,7 @@ const ENV_MODEL_KEYS = [
 
 export type CatalogOrigin = 'remote' | 'cache' | 'snapshot';
 
-export type CatalogFinding =
+export type CatalogFinding = { owner: 'YUK-1563' } & (
   | {
       kind: 'model_absent';
       catalogProvider: string;
@@ -67,7 +72,8 @@ export type CatalogFinding =
       catalogProvider: string;
       model: string;
       fields: readonly string[];
-    };
+    }
+);
 
 export interface CatalogMeta {
   origin: CatalogOrigin;
@@ -86,17 +92,24 @@ export interface TokenRates {
   input: number;
   output: number;
   cache_read: number;
+  /** Present only when the catalog card declares a finite cache-write rate. */
+  cache_write?: number;
 }
 
-interface ParsedCatalogModel {
+export interface ParsedCatalogModel {
   toolCalling?: boolean;
   vision?: boolean;
   reasoning?: boolean;
   structuredOutput?: boolean;
+  forcedToolChoice?: boolean;
+  inputModalities?: readonly string[];
+  baseUrl?: string;
+  api?: 'anthropic-messages' | 'openai-completions';
   contextWindowTokens?: number;
+  maxInputTokens?: number;
   maxOutputTokens?: number;
   reasoningMode?: 'effort' | 'budget_tokens' | 'toggle';
-  supportedEfforts?: readonly EffortLevel[];
+  supportedEfforts?: readonly string[];
 }
 
 type Json = Record<string, unknown>;
@@ -161,36 +174,49 @@ function isUndefinedTable(err: unknown): boolean {
 }
 
 /** Narrow, fail-closed parse of one models.dev model object. */
-export function parseCatalogModelEntry(entry: unknown): ParsedCatalogModel {
+export function parseCatalogModelEntry(
+  entry: unknown,
+  providerEntry?: unknown,
+): ParsedCatalogModel {
   const parsed: ParsedCatalogModel = {};
   const model = asJson(entry);
   if (!model) return parsed;
 
+  const endpoint = asJson(model.provider)?.api ?? asJson(providerEntry)?.api;
+  parsed.baseUrl = catalogEndpoint(endpoint);
+  const npm = asJson(model.provider)?.npm;
+  if (npm === '@ai-sdk/anthropic') parsed.api = 'anthropic-messages';
+  if (npm === '@ai-sdk/openai-compatible') parsed.api = 'openai-completions';
   parsed.toolCalling = asBoolean(model.tool_call);
   parsed.structuredOutput = asBoolean(model.structured_output);
   parsed.reasoning = asBoolean(model.reasoning);
 
   const inputModalities = asJson(model.modalities)?.input;
-  if (Array.isArray(inputModalities)) {
+  if (
+    Array.isArray(inputModalities) &&
+    inputModalities.every((value) => typeof value === 'string')
+  ) {
+    parsed.inputModalities = inputModalities;
     parsed.vision = inputModalities.includes('image');
   }
 
   const limit = asJson(model.limit);
   if (limit) {
     parsed.contextWindowTokens = asPositiveInteger(limit.context);
+    parsed.maxInputTokens = asPositiveInteger(limit.input);
     parsed.maxOutputTokens = asPositiveInteger(limit.output);
   }
 
   const options = model.reasoning_options;
   if (Array.isArray(options) && options.length > 0) {
-    const first = asJson(options[0]);
-    const type = first?.type;
-    if (first && (type === 'effort' || type === 'budget_tokens' || type === 'toggle')) {
+    const parsedOptions = options.map(asJson);
+    const option = parsedOptions.find((value) => value?.type === 'effort') ?? parsedOptions[0];
+    const type = option?.type;
+    if (option && (type === 'effort' || type === 'budget_tokens' || type === 'toggle')) {
       parsed.reasoningMode = type;
-      if (type === 'effort' && Array.isArray(first.values)) {
-        const efforts = first.values.filter(
-          (value): value is EffortLevel =>
-            typeof value === 'string' && EFFORT_LEVELS.includes(value as EffortLevel),
+      if (type === 'effort' && Array.isArray(option.values)) {
+        const efforts = option.values.filter(
+          (value): value is string => typeof value === 'string' && value.length > 0,
         );
         if (efforts.length > 0) parsed.supportedEfforts = efforts;
       }
@@ -199,16 +225,30 @@ export function parseCatalogModelEntry(entry: unknown): ParsedCatalogModel {
   return parsed;
 }
 
+function catalogEndpoint(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+      return undefined;
+    return value.replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
 function capabilityDelta(previous: unknown, next: unknown): string[] {
   const before = parseCatalogModelEntry(previous);
   const after = parseCatalogModelEntry(next);
   const changed: string[] = [];
   const keys = [
+    'api',
     'toolCalling',
     'vision',
     'reasoning',
     'structuredOutput',
     'contextWindowTokens',
+    'maxInputTokens',
     'maxOutputTokens',
     'reasoningMode',
   ] as const;
@@ -218,12 +258,151 @@ function capabilityDelta(previous: unknown, next: unknown): string[] {
   const beforeEfforts = (before.supportedEfforts ?? []).join(',');
   const afterEfforts = (after.supportedEfforts ?? []).join(',');
   if (beforeEfforts !== afterEfforts) changed.push('supportedEfforts');
+  if (JSON.stringify(before.inputModalities) !== JSON.stringify(after.inputModalities)) {
+    changed.push('inputModalities');
+  }
+  if (before.baseUrl !== undefined && before.baseUrl !== after.baseUrl) changed.push('baseUrl');
   return changed;
 }
 
 function isProviderEntry(value: unknown): value is Json {
   const entry = asJson(value);
   return entry !== undefined && asJson(entry.models) !== undefined;
+}
+
+/** Split a stored document into known buckets and synthetic `custom:*` buckets. */
+function partitionProviders(providers: ProviderMap): { known: ProviderMap; custom: ProviderMap } {
+  const known: ProviderMap = {};
+  const custom: ProviderMap = {};
+  for (const [id, entry] of Object.entries(providers)) {
+    if (id.startsWith('custom:')) custom[id] = entry;
+    else known[id] = entry;
+  }
+  return { known, custom };
+}
+
+const PROTOCOL_NPM: Record<CustomProviderProtocol, string> = {
+  'openai-completions': '@ai-sdk/openai-compatible',
+  'anthropic-messages': '@ai-sdk/anthropic',
+};
+
+/** Stamp one entry with the custom provider's endpoint + protocol (config is truth here). */
+function restampCustomEntry(entry: unknown, definition: CustomProviderDefinition): unknown {
+  const model = asJson(entry);
+  if (!model) return entry;
+  return {
+    ...model,
+    provider: { npm: PROTOCOL_NPM[definition.protocol], api: definition.baseUrl },
+  };
+}
+
+/**
+ * Model-id → catalog entry index for custom provider facts. A custom provider
+ * has no models.dev bucket of its own, so capability fields come from a
+ * same-id entry elsewhere in the catalog — preferring buckets whose protocol
+ * matches the provider's, then any bucket, in sorted provider order
+ * (deterministic). Endpoint and protocol are NEVER taken from the source.
+ */
+function buildCustomModelFactsIndex(providers: ProviderMap): {
+  preferred: Map<string, Json>;
+  any: Map<string, Json>;
+} {
+  const preferred = new Map<string, Json>();
+  const any = new Map<string, Json>();
+  for (const providerId of Object.keys(providers).sort()) {
+    if (providerId.startsWith('custom:')) continue;
+    const models = asJson(providers[providerId]?.models);
+    if (!models) continue;
+    for (const [modelId, entry] of Object.entries(models)) {
+      if (!asJson(entry)) continue;
+      if (!any.has(modelId)) any.set(modelId, entry as Json);
+      const api = parseCatalogModelEntry(entry, providers[providerId]).api;
+      if (api !== undefined) {
+        const key = `${api}\t${modelId}`;
+        if (!preferred.has(key)) preferred.set(key, entry as Json);
+      }
+    }
+  }
+  return { preferred, any };
+}
+
+function customModelFactsEntry(
+  modelId: string,
+  definition: CustomProviderDefinition,
+  index: ReturnType<typeof buildCustomModelFactsIndex>,
+): Json | undefined {
+  // Prefer a source bucket that speaks the provider's protocol; fall back to
+  // any bucket carrying the id. Endpoint and protocol are never taken from
+  // the source — restampCustomEntry rewrites them from the definition.
+  const entry = index.preferred.get(`${definition.protocol}\t${modelId}`) ?? index.any.get(modelId);
+  return entry ? (asJson(entry) ?? undefined) : undefined;
+}
+
+/**
+ * Synthesize every live custom provider's bucket from its /models listing.
+ * Same merge semantics as models.dev buckets: an id that left a successful
+ * listing keeps its previous entry (absence then surfaces through the
+ * provider-check reconciliation as a provider_list finding), and a pinned
+ * model whose catalog facts changed keeps the previous facts with a
+ * capability_changed finding. A failed listing keeps the previous bucket —
+ * the failure is recorded on the list status, never as a model change.
+ * Buckets of deleted custom providers are dropped (not retained).
+ */
+function mergeCustomProviderBuckets(input: {
+  previous: ProviderMap;
+  definitions: readonly CustomProviderDefinition[];
+  listed: ReadonlyMap<string, { status: string; ids?: readonly string[] }>;
+  index: ReturnType<typeof buildCustomModelFactsIndex>;
+  pinned: ReadonlySet<string>;
+}): { providers: ProviderMap; findings: CatalogFinding[] } {
+  // A failed boot hydrate must not look like "every provider was deleted":
+  // keep the stored buckets until the watch retries the table read.
+  if (!customProvidersRegistryHydrated()) {
+    return { providers: input.previous, findings: [] };
+  }
+  const providers: ProviderMap = {};
+  const findings: CatalogFinding[] = [];
+  for (const definition of input.definitions) {
+    const previousModels = asJson(input.previous[definition.id]?.models) ?? {};
+    // Config is endpoint truth: normalize retained entries to the current
+    // definition before merging so an endpoint edit never emits a
+    // capability_changed finding or leaves a stale URL on a retained entry.
+    const normalized: Json = {};
+    for (const [modelId, entry] of Object.entries(previousModels)) {
+      normalized[modelId] = restampCustomEntry(entry, definition);
+    }
+    const listing = input.listed.get(definition.id);
+    const models: Json = {};
+    if (listing?.status === 'ok') {
+      for (const modelId of listing.ids ?? []) {
+        const entry = customModelFactsEntry(modelId, definition, input.index);
+        if (entry) models[modelId] = restampCustomEntry(entry, definition);
+      }
+      for (const modelId of [
+        ...new Set([...Object.keys(normalized), ...Object.keys(models)]),
+      ].sort()) {
+        const merged = mergeModelEntry(
+          normalized[modelId],
+          models[modelId],
+          input.pinned.has(modelId),
+        );
+        models[modelId] = merged.entry;
+        if (merged.kind === 'capability_changed') {
+          findings.push({
+            owner: 'YUK-1563',
+            kind: 'capability_changed',
+            catalogProvider: definition.id,
+            model: modelId,
+            fields: merged.fields,
+          });
+        }
+      }
+    } else {
+      Object.assign(models, normalized);
+    }
+    providers[definition.id] = { api: definition.baseUrl, models };
+  }
+  return { providers, findings };
 }
 
 /** Accept a models.dev root, a snapshot, or a stored `{ providers }` payload. */
@@ -256,12 +435,18 @@ function parseFindings(value: unknown): CatalogFinding[] {
     if (row.kind === 'model_absent') {
       const source =
         row.source === 'models_dev' || row.source === 'provider_list' ? row.source : 'legacy';
-      findings.push({ kind: 'model_absent', catalogProvider, model, source });
+      findings.push({ owner: 'YUK-1563', kind: 'model_absent', catalogProvider, model, source });
       continue;
     }
     if (row.kind === 'capability_changed' && Array.isArray(row.fields)) {
       const fields = row.fields.filter((field): field is string => typeof field === 'string');
-      findings.push({ kind: 'capability_changed', catalogProvider, model, fields });
+      findings.push({
+        owner: 'YUK-1563',
+        kind: 'capability_changed',
+        catalogProvider,
+        model,
+        fields,
+      });
     }
   }
   return findings;
@@ -316,6 +501,18 @@ export function catalogModelEntry(catalogProviderId: string, modelId: string): u
   return asJson(active.providers[catalogProviderId]?.models)?.[modelId];
 }
 
+export function catalogModelIds(catalogProviderId: string): readonly string[] {
+  const models = asJson(active.providers[catalogProviderId]?.models);
+  return models ? Object.keys(models).sort() : [];
+}
+
+export function catalogModelFacts(catalogProviderId: string, modelId: string): ParsedCatalogModel {
+  return parseCatalogModelEntry(
+    catalogModelEntry(catalogProviderId, modelId) ?? {},
+    active.providers[catalogProviderId],
+  );
+}
+
 export function catalogModelCost(
   catalogProviderId: string,
   modelId: string,
@@ -328,7 +525,15 @@ export function catalogModelCost(
   if (typeof input !== 'number' || !Number.isFinite(input)) return undefined;
   if (typeof output !== 'number' || !Number.isFinite(output)) return undefined;
   if (typeof cacheRead !== 'number' || !Number.isFinite(cacheRead)) return undefined;
-  return { input, output, cache_read: cacheRead };
+  const cacheWrite = cost.cache_write;
+  return {
+    input,
+    output,
+    cache_read: cacheRead,
+    ...(typeof cacheWrite === 'number' && Number.isFinite(cacheWrite) && cacheWrite >= 0
+      ? { cache_write: cacheWrite }
+      : {}),
+  };
 }
 
 function addModelId(ids: Set<string>, value: unknown): void {
@@ -379,6 +584,15 @@ function missingWiredProviders(providers: ProviderMap): string[] {
   return wiredCatalogProviderIds().filter((id) => providers[id] === undefined);
 }
 
+function withProviderEndpoint(entry: unknown, provider: Json | undefined): unknown {
+  const model = asJson(entry);
+  if (!model) return entry;
+  const endpoint = asJson(model.provider)?.api ?? provider?.api;
+  return endpoint === undefined
+    ? entry
+    : { ...model, provider: { ...asJson(model.provider), api: endpoint } };
+}
+
 /** Previous document ∪ fetched document. Absence keeps the old entry for every model. */
 function mergeCatalogDocuments(
   previous: ProviderMap,
@@ -397,13 +611,14 @@ function mergeCatalogDocuments(
     ].sort();
     for (const modelId of modelIds) {
       const merged = mergeModelEntry(
-        previousModels[modelId],
-        nextModels[modelId],
+        withProviderEndpoint(previousModels[modelId], previous[providerId]),
+        withProviderEndpoint(nextModels[modelId], next[providerId]),
         pinned.has(modelId),
       );
       models[modelId] = merged.entry;
       if (merged.kind === 'model_absent') {
         findings.push({
+          owner: 'YUK-1563',
           kind: 'model_absent',
           catalogProvider: providerId,
           model: modelId,
@@ -411,6 +626,7 @@ function mergeCatalogDocuments(
         });
       } else if (merged.kind === 'capability_changed') {
         findings.push({
+          owner: 'YUK-1563',
           kind: 'capability_changed',
           catalogProvider: providerId,
           model: modelId,
@@ -460,7 +676,13 @@ function reconcileCatalogFindings(
   for (const [catalogProvider, revision] of revisionByProvider) {
     if (revision.kind !== 'replace') continue;
     for (const model of revision.models) {
-      push({ kind: 'model_absent', catalogProvider, model, source: 'provider_list' });
+      push({
+        owner: 'YUK-1563',
+        kind: 'model_absent',
+        catalogProvider,
+        model,
+        source: 'provider_list',
+      });
     }
   }
   return kept;
@@ -492,7 +714,7 @@ function logActive(
     const fields =
       finding.kind === 'capability_changed' ? ` fields=${finding.fields.join(',')}` : '';
     console.warn(
-      `[model-catalog] retained ${finding.catalogProvider}/${finding.model} ${finding.kind}${fields}`,
+      `[model-catalog] retained ${finding.catalogProvider}/${finding.model} ${finding.kind}${fields} owner=${finding.owner}`,
     );
   }
   const seenAuth = new Map(
@@ -736,7 +958,7 @@ async function bookPaidProbes(
 }
 
 function priceProbe(provider: string, model: string, tokensIn: number, tokensOut: number) {
-  const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider as Provider];
+  const catalogProvider = catalogProviderFor(provider as Provider);
   const rates = catalogProvider ? catalogModelCost(catalogProvider, model) : undefined;
   return probePriceFor(provider, model, tokensIn, tokensOut, rates);
 }
@@ -816,9 +1038,23 @@ export async function refreshModelCatalog(
           const locked = await lockCatalogRow(tx);
           const pinned = await readPinnedModelIds(tx);
           const base = locked.providers ?? active.providers;
-          const merged = remote
-            ? mergeCatalogDocuments(base, remote.providers, pinned)
-            : { providers: base, findings: locked.findings };
+          // Custom buckets are synthesized, never fetched: partition them out
+          // so a models.dev pull cannot record their models as absent.
+          const partitioned = partitionProviders(base);
+          const mergedKnown = remote
+            ? mergeCatalogDocuments(partitioned.known, remote.providers, pinned)
+            : { providers: partitioned.known, findings: locked.findings };
+          const custom = mergeCustomProviderBuckets({
+            previous: partitioned.custom,
+            definitions: customProviderDefinitions(),
+            listed,
+            index: buildCustomModelFactsIndex(mergedKnown.providers),
+            pinned,
+          });
+          const merged = {
+            providers: { ...mergedKnown.providers, ...custom.providers },
+            findings: [...mergedKnown.findings, ...custom.findings],
+          };
           const { checks } = finalizeProviderModelsChecks({
             now,
             catalogProviders: merged.providers,
@@ -830,6 +1066,8 @@ export async function refreshModelCatalog(
           });
           const idle =
             remote === undefined &&
+            custom.findings.length === 0 &&
+            JSON.stringify(custom.providers) === JSON.stringify(partitioned.custom) &&
             sameChecks(checks, locked.checks) &&
             (locked.hasRow || checks.every((check) => check.list.status === 'unconfigured'));
           return { locked, merged, checks, idle };
@@ -902,6 +1140,100 @@ export async function refreshModelCatalog(
     );
   } finally {
     await bookPaidProbes(db, postings, now);
+  }
+}
+
+function stampCatalogRow(
+  tx: Tx,
+  now: Date,
+  upstreamVersion: string,
+  providers: ProviderMap,
+  findings: readonly CatalogFinding[],
+  checks: readonly ProviderModelsCheck[],
+): Promise<unknown> {
+  const version = documentVersion(providers, findings, checks);
+  const payload = { providers, provider_checks: checks };
+  return tx
+    .insert(model_catalog_cache)
+    .values({
+      id: 1,
+      fetched_at: now,
+      version,
+      upstream_version: upstreamVersion,
+      source_url: MODEL_CATALOG_URL,
+      payload,
+      findings,
+    })
+    .onConflictDoUpdate({
+      target: model_catalog_cache.id,
+      set: {
+        fetched_at: now,
+        version,
+        upstream_version: upstreamVersion,
+        source_url: MODEL_CATALOG_URL,
+        payload,
+        findings,
+      },
+    });
+}
+
+/**
+ * Drop a deleted custom provider's footprint (model bucket, provider check,
+ * findings) from the stored document under the refresh lock. Returns the new
+ * version, or undefined when there is no stored document to prune.
+ */
+export async function pruneCustomProviderFromCatalog(
+  db: Db,
+  customProviderId: string,
+): Promise<string | undefined> {
+  const now = new Date();
+  try {
+    const written = await withinSessionAdvisoryLock(
+      db,
+      {
+        key: 'model-catalog:refresh',
+        busy: () => new Error('model catalog refresh lock busy'),
+      },
+      new Date(Date.now() + REFRESH_LOCK_WAIT_MS),
+      async (lockedDb) =>
+        lockedDb.transaction(async (tx) => {
+          const locked = await lockCatalogRow(tx);
+          if (!locked.hasRow || !locked.providers) return undefined;
+          const providers: ProviderMap = {};
+          for (const [id, entry] of Object.entries(locked.providers)) {
+            if (id === customProviderId) continue;
+            providers[id] = entry;
+          }
+          const checks = locked.checks.filter((check) => check.provider !== customProviderId);
+          const findings = locked.findings.filter(
+            (finding) => finding.catalogProvider !== customProviderId,
+          );
+          await stampCatalogRow(tx, now, locked.upstreamVersion, providers, findings, checks);
+          const version = documentVersion(providers, findings, checks);
+          install(
+            {
+              origin: 'cache',
+              fetchedAt: now.toISOString(),
+              version,
+              upstreamVersion: locked.upstreamVersion,
+              providers,
+              findings,
+              providerChecks: checks,
+            },
+            'pruned',
+            locked.findings,
+            locked.checks,
+          );
+          return version;
+        }),
+    );
+    return written;
+  } catch (error) {
+    console.warn(
+      '[model-catalog] custom provider prune failed — the next refresh drops the leftover bucket',
+      error instanceof Error ? error.message : error,
+    );
+    return undefined;
   }
 }
 

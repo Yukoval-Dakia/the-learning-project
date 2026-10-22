@@ -3,20 +3,29 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
-import { db } from '@/db/client';
+import { type Tx, db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getStartedBoss } from '@/server/boss/client';
 import { Ingestion } from '@/server/session';
 import {
-  findIdempotentIngestionOperation,
+  agentOpOwnsSessionRun,
+  authorizeAgentRunStart,
+  settleAgentRunBudget,
+} from '../server/agent/budget';
+import {
+  AGENT_BUDGET_EXCEEDED_CODE,
+  AGENT_BUDGET_UNAVAILABLE_CODE,
+} from '../server/agent/budget-state';
+import {
   hasQueuedIngestionOperationEvent,
   isTerminalIngestionOperation,
   readIngestionOperation,
   reserveIngestionOperation,
   withIngestionOperationDispatchLock,
   writeIngestionOperationEvent,
+  writeIngestionOperationTerminalOnce,
 } from '../server/operation-store';
 import {
   IngestionOperationRequest,
@@ -58,8 +67,9 @@ function resourceResponse(
 async function validateSessionState(
   sessionId: string,
   request: IngestionOperationRequestParsed,
+  tx: Tx,
 ): Promise<void> {
-  const rows = await db
+  const rows = await tx
     .select({ status: learning_session.status })
     .from(learning_session)
     .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
@@ -98,7 +108,7 @@ async function ensureOperationDispatched(
   operationId: string,
   sessionId: string,
   request: IngestionOperationRequestParsed,
-  onDispatched?: () => void,
+  freshReservation: boolean,
 ) {
   return withIngestionOperationDispatchLock(db, operationId, async () => {
     const current = await readReservedResource(operationId);
@@ -110,86 +120,159 @@ async function ensureOperationDispatched(
       return current;
     }
 
-    const boss = await getStartedBoss();
-    let jobId: string | null = null;
-    if (request.kind === 'agent') {
-      const rows = await db
-        .select({ status: learning_session.status })
-        .from(learning_session)
-        .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
-        .limit(1);
-      const status = rows[0]?.status;
-      if (!status) throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
+    let dispatched = false;
+    try {
+      const boss = await getStartedBoss();
+      let jobId: string | null = null;
+      if (request.kind === 'agent') {
+        const rows = await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+          .limit(1);
+        const status = rows[0]?.status;
+        if (!status)
+          throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
 
-      if (status === 'uploaded' || status === 'failed') {
-        // R2-8 — refuse the paid agent lane up front when the document's
-        // strictest derivation policy forbids derivation (answer_only/crisis);
-        // the segment-entry policy_blocked error is the backstop.
-        const policy = await resolveSessionDerivationPolicy(db, sessionId);
-        if (policy !== 'allow') {
+        if (status === 'uploaded' || status === 'failed') {
+          if (await agentOpOwnsSessionRun(db, sessionId, operationId)) {
+            // A grant/job proves this handle already entered dispatch. An
+            // accepted stale snapshot cannot turn it into a second paid run.
+            await db.transaction((tx) =>
+              settleAgentRunBudget(tx, {
+                sessionId,
+                operationId,
+                terminal: 'failed',
+                executionClosed: false,
+                error: {
+                  code: 'dispatch_already_owned',
+                  message: 'Original dispatch cannot be restarted',
+                },
+              }),
+            );
+            return readReservedResource(operationId);
+          }
+          // Refuse the paid lane up front when the strictest policy forbids
+          // derivation; segment entry re-checks as a backstop.
+          const policy = await resolveSessionDerivationPolicy(db, sessionId);
+          if (policy !== 'allow') {
+            throw new ApiError(
+              'derivation_policy_forbids_agent',
+              `source usage policy '${policy}' does not permit the ingestion agent`,
+              422,
+            );
+          }
+          // The budget gate runs in the dispatch transaction. Denials commit the
+          // failed identity/evidence; the job insert shares the grant/owner/queued tx.
+          const dispatch = await Ingestion.enqueueAgentRun({
+            db,
+            boss,
+            sessionId,
+            operationId,
+            beforeTransition: (tx) => authorizeAgentRunStart(tx, { sessionId, operationId }),
+          });
+          if (dispatch.error) throw dispatch.error;
+          jobId = dispatch.jobId;
+        } else if (
+          !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
+        ) {
           throw new ApiError(
-            'derivation_policy_forbids_agent',
-            `source usage policy '${policy}' does not permit the ingestion agent`,
-            422,
+            'conflict',
+            `ingestion session ${sessionId} cannot resume agent dispatch from status '${status}'`,
+            409,
+          );
+        } else if (!(await agentOpOwnsSessionRun(db, sessionId, operationId))) {
+          // Recovery: if another run owns the session this op can never be paid, so
+          // fail explicitly instead of leaving a fake queued handle. In-flight means
+          // 503; past-terminal means the window was missed (409).
+          const inFlight = status === 'queued' || status === 'extracting';
+          const err = inFlight
+            ? {
+                code: AGENT_BUDGET_UNAVAILABLE_CODE,
+                message: '另一个录入还在进行中，请等它结束后再试。',
+                status: 503,
+              }
+            : {
+                code: 'conflict',
+                message: `ingestion session ${sessionId} is '${status}'; this operation can no longer dispatch`,
+                status: 409,
+              };
+          await writeIngestionOperationTerminalOnce(db, {
+            operationId,
+            eventType: 'operation.failed',
+            payload: { error: err },
+          });
+          throw new ApiError(
+            err.code,
+            err.message,
+            err.status,
+            undefined,
+            inFlight ? { reason: 'another_ingestion_in_flight' } : undefined,
           );
         }
-        ({ jobId } = await Ingestion.enqueueAgentRun({ db, boss, sessionId, operationId }));
-      } else if (
-        !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
-      ) {
-        throw new ApiError(
-          'conflict',
-          `ingestion session ${sessionId} cannot resume agent dispatch from status '${status}'`,
-          409,
-        );
-      }
-    } else if (request.kind === 'extract') {
-      const rows = await db
-        .select({ status: learning_session.status })
-        .from(learning_session)
-        .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
-        .limit(1);
-      const status = rows[0]?.status;
-      if (!status) throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
+      } else if (request.kind === 'extract') {
+        const rows = await db
+          .select({ status: learning_session.status })
+          .from(learning_session)
+          .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
+          .limit(1);
+        const status = rows[0]?.status;
+        if (!status)
+          throw new ApiError('not_found', `ingestion session ${sessionId} not found`, 404);
 
-      if (status === 'uploaded' || status === 'failed') {
-        ({ jobId } = await Ingestion.enqueueExtraction({ db, boss, sessionId, operationId }));
-      } else if (
-        !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
-      ) {
-        throw new ApiError(
-          'conflict',
-          `ingestion session ${sessionId} cannot resume extract dispatch from status '${status}'`,
-          409,
+        if (status === 'uploaded' || status === 'failed') {
+          ({ jobId } = await Ingestion.enqueueExtraction({ db, boss, sessionId, operationId }));
+        } else if (
+          !['queued', 'extracting', 'extracted', 'partial', 'reviewed', 'imported'].includes(status)
+        ) {
+          throw new ApiError(
+            'conflict',
+            `ingestion session ${sessionId} cannot resume extract dispatch from status '${status}'`,
+            409,
+          );
+        }
+      } else {
+        jobId = await boss.send(
+          OPERATION_QUEUE,
+          { operationId, sessionId, request },
+          {
+            // On a standard pg-boss queue, singletonKey needs singletonSeconds.
+            singletonKey: operationId,
+            singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
+          },
         );
+        // null means this operation was already accepted inside the singleton window.
       }
-    } else {
-      jobId = await boss.send(
-        OPERATION_QUEUE,
-        { operationId, sessionId, request },
-        {
-          // Context7 / pg-boss v12: singletonKey on a standard queue only
-          // dedupes when singletonSeconds defines the throttle window.
-          singletonKey: operationId,
-          singletonSeconds: OPERATION_DISPATCH_SINGLETON_SECONDS,
-        },
-      );
-      // null means this operation was already accepted inside the singleton window.
+      dispatched = true;
+      await writeIngestionOperationEvent(db, {
+        operationId,
+        eventType: 'operation.queued',
+        payload: jobId ? { job_id: jobId } : { dispatch_deduplicated: true },
+      });
+      return readReservedResource(operationId);
+    } catch (error) {
+      const budgetRejection =
+        error instanceof ApiError &&
+        [AGENT_BUDGET_EXCEEDED_CODE, AGENT_BUDGET_UNAVAILABLE_CODE].includes(error.code);
+      if (!dispatched && (freshReservation || budgetRejection)) {
+        // Still under the per-op lock: a late failure cannot race a replay's
+        // successful dispatch. A committed/ambiguous send remains recoverable.
+        const ownsRun =
+          request.kind === 'agent' && (await agentOpOwnsSessionRun(db, sessionId, operationId));
+        if (!ownsRun)
+          await writeIngestionOperationTerminalOnce(db, {
+            operationId,
+            eventType: 'operation.failed',
+            payload: { error: operationError(error) },
+          });
+      }
+      throw error;
     }
-    onDispatched?.();
-    await writeIngestionOperationEvent(db, {
-      operationId,
-      eventType: 'operation.queued',
-      payload: jobId ? { job_id: jobId } : { dispatch_deduplicated: true },
-    });
-    return readReservedResource(operationId);
   });
 }
 
-/** POST /api/ingestion-sessions/[id]/operations —— 创建可轮询的录入 operation。 */
+/** Creates a pollable ingestion operation. */
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
-  let createdOperationId: string | undefined;
-  let dispatched = false;
   try {
     const sessionId = params.id;
     if (!sessionId) throw new ApiError('validation_error', 'session id is required', 400);
@@ -216,28 +299,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     const request = parsed.data;
     const hash = inputHash(request);
 
-    // 重放必须先于当前 session-state 校验：首个 extract 已把 uploaded 推成 queued，
-    // 同 key 重试仍应拿回原 handle，而不是被新的状态挡成 409。
-    if (idempotencyKey) {
-      const existing = await findIdempotentIngestionOperation(db, {
-        sessionId,
-        idempotencyKey,
-      });
-      if (existing) {
-        if (existing.operationKind !== request.kind || existing.inputHash !== hash) {
-          throw new ApiError(
-            'idempotency_conflict',
-            `Idempotency-Key is already bound to operation ${existing.operationId}`,
-            409,
-          );
-        }
-        const resource = await ensureOperationDispatched(existing.operationId, sessionId, request);
-        return resourceResponse(resource, 200);
-      }
-    }
-
-    await validateSessionState(sessionId, request);
-
+    // Replay, session validation and reservation share the real key lock.
     const operationId = `ingop_${newId()}`;
     const reservation = await reserveIngestionOperation(db, {
       operationId,
@@ -245,6 +307,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       operationKind: request.kind,
       inputHash: hash,
       idempotencyKey,
+      beforeReserve: (tx) => validateSessionState(sessionId, request, tx),
     });
     if (reservation.outcome === 'conflict') {
       throw new ApiError(
@@ -254,34 +317,22 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
     if (reservation.outcome === 'reused') {
-      const resource = await ensureOperationDispatched(reservation.operationId, sessionId, request);
+      const resource = await ensureOperationDispatched(
+        reservation.operationId,
+        sessionId,
+        request,
+        false,
+      );
       return resourceResponse(resource, 200);
     }
-    createdOperationId = operationId;
-    const resource = await ensureOperationDispatched(operationId, sessionId, request, () => {
-      dispatched = true;
-    });
+    const resource = await ensureOperationDispatched(operationId, sessionId, request, true);
     return resourceResponse(resource, 202);
   } catch (err) {
-    // boss 已接收 job 后，即使后续 queued-event/readback 短暂失败也不能把真实运行中的
-    // operation 标成 failed；同 Idempotency-Key 重试会读回 accepted handle，worker/抽取
-    // session 的后续事件继续推进资源快照。
-    if (createdOperationId && !dispatched) {
-      try {
-        await writeIngestionOperationEvent(db, {
-          operationId: createdOperationId,
-          eventType: 'operation.failed',
-          payload: { error: operationError(err) },
-        });
-      } catch (writeErr) {
-        console.error('failed to record ingestion operation dispatch failure', writeErr);
-      }
-    }
     return errorResponse(err);
   }
 }
 
-/** GET /api/ingestion-operations/[id] —— one-shot operation 快照。 */
+/** Returns a one-shot operation snapshot. */
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const operationId = params.id;

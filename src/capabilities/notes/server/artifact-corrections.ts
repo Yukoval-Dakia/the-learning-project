@@ -1,9 +1,5 @@
-// Artifact-scoped correction projection (ADR-0020 / ADR-0019).
-//
-// YUK-1571 — implementation moved verbatim to
-// @/kernel/read-models/artifact-corrections (shared cross-capability read
-// model); this file remains as an explicit compat re-export for
-// notes-internal consumers and the notes/public surface.
+// Compat re-export: the projection lives in the shared kernel read model, but
+// notes-internal consumers and notes/public keep this path.
 
 export type {
   ArtifactCorrectionState,

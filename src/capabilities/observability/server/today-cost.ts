@@ -2,11 +2,11 @@ import { gte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { tool_call_log } from '@/db/schema';
-import type { CostTodayResponseSchema } from '../api/admin-observability-contracts';
 import {
   type ProviderCostAggregateRow,
   readProviderCostAggregates,
-} from './provider-cost-projection';
+} from '@/kernel/read-models/provider-cost-projection';
+import type { CostTodayResponseSchema } from '../api/admin-observability-contracts';
 
 export type TodayCost = z.infer<typeof CostTodayResponseSchema>;
 
@@ -87,9 +87,7 @@ export async function loadTodayCost(db: Db | Tx, now: Date = new Date()): Promis
       label: 'BJT today (from local midnight)',
     },
     today: {
-      // YUK-330: per-currency amount key is `cost` (unified with /api/_/admin/cost
-      // and the cost_ledger.cost source column). cost-today previously emitted
-      // `spend`, diverging from admin-cost's `cost` for the same concept.
+      // Per-currency amount key is `cost`, matching admin cost and the ledger column.
       by_currency: byCurrency,
       tokens_in: total?.tokens_in ?? 0,
       tokens_out: total?.tokens_out ?? 0,

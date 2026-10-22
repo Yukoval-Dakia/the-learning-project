@@ -1,6 +1,7 @@
 // Frozen solve sessions: issue-bound hints and atomic native submission.
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
@@ -12,7 +13,6 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt } from './assessment/attempt';
@@ -26,7 +26,7 @@ import { createAssessmentAssetLoader } from './assets';
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 // Default mastery threshold for solve-tutor: a judged attempt scoring below this
-// is enrolled as a mistake (spec §3.2 "score < subject's mastery threshold").
+// is enrolled as a mistake ("score < subject's mastery threshold").
 // Subject profiles do not yet carry a per-subject threshold; this constant is the
 // single default until they do (revisit when SubjectProfile gains the field).
 const SOLVE_MASTERY_THRESHOLD = 0.7;
@@ -100,7 +100,7 @@ export interface PlanSolveHintParams {
   expectedQuestionId?: string;
   runTaskFn?: RunTaskFn;
   /**
-   * YUK-1409 T4 — caller-owned cancellation for the whole generation section
+   * T4 — caller-owned cancellation for the whole generation section
    * (frozen media load + provider call). Defaults to an internal
    * SOLVE_HINT_GENERATION_BUDGET_MS timeout so a hung provider cannot push the
    * route past the ~20s usable-help observation bound.
@@ -109,7 +109,7 @@ export interface PlanSolveHintParams {
   /**
    * Absolute wall-clock deadline forwarded to the runner as
    * providerSessionDeadlineAt (admission + startup + execution share it).
-   * Defaults to Date.now() + SOLVE_HINT_GENERATION_BUDGET_MS.
+   * Defaults to Date.now + SOLVE_HINT_GENERATION_BUDGET_MS.
    */
   generationDeadlineAt?: number;
 }
@@ -118,11 +118,10 @@ export interface PlanSolveHintResult {
   text_md: string;
 }
 
-// AF S4 / YUK-203 U6 (OQ6, Cross-统合 §4.3) — the pure, session-FREE seed body
+// AF S4 / U6 (OQ6, Cross-统合) — the pure, session-FREE seed body
 // extracted from planSolveHint (was solve.ts:189-206) so the Copilot solve-skill
 // reuses the SAME TeachingTurnTask input rather than the tutor-session-bound
 // entry. It takes a question face + reference + hintIndex — NOT a sessionId.
-//
 // Seeds the worked solution as material + a synthetic message asking for ONLY the
 // next step (escalating with hintIndex). The TeachingTurnTask prompt forbids
 // dumping the full solution + caps ≤300 字/轮, so the returned text_md is a
@@ -153,7 +152,7 @@ export function buildSolveHintInput(
   };
 }
 
-// AF S4 / YUK-203 U6 — exported (was private) so the Copilot solve-skill parses
+// AF S4 / U6 — exported (was private) so the Copilot solve-skill parses
 // the TeachingTurnTask hint output with the SAME defensive parser (single contract).
 export function parseHintTurn(text: string): PlanSolveHintResult {
   const start = text.indexOf('{');
@@ -232,7 +231,7 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
     );
   const context = await loadFrozenStudyContext(db, issuanceId, questionId);
   const input = buildSolveHintInput(context, hintIndex);
-  // YUK-1409 T4 — one bounded budget covers frozen media load + provider call so
+  // T4 — one bounded budget covers frozen media load + provider call so
   // a slow upstream cannot push the route past the ~20s usable-help target.
   const signal = params.signal ?? AbortSignal.timeout(SOLVE_HINT_GENERATION_BUDGET_MS);
   const generationDeadlineAt =
@@ -269,23 +268,22 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
   return result;
 }
 
-// ─── YUK-1409 T4 — hint-generation failure fallback ──────────────────────────
-//
+// ─── T4 — hint-generation failure fallback ──────────────────────────
 // A failed hint turn (provider error, timeout, quota, parse failure) must still
 // leave the learner with usable help inside ~20s instead of a 502. The fallback
 // is typed so the client can render it honestly:
-//   - 'reference' help discloses the issued frozen reference (private sol_*
-//     material, projected scoring basis, or legacy question.reference_md) ONLY
-//     when the current hint level is at/past the ladder's full-solution stage
-//     (mirrors the UI ladder's H5 — see FULL_STAGE_INDEX in
-//     ui/hint-ladder.ts) or the issuance's solution was already revealed via the
-//     dedicated reveal path. Early levels never get the whole solution dumped —
-//     they get the deterministic next step plus an honest note that a frozen
-//     reference exists behind the reveal action.
-//   - 'deterministic_next_step' help is composed text (re-read the prompt, plus
-//     an existing ready note on the question's knowledge nodes) labelled as not
-//     produced by AI on demand.
-//   - 'unavailable' when neither exists: the learner can retry or skip.
+// - 'reference' help discloses the issued frozen reference (private sol_*
+// material, projected scoring basis, or legacy question.reference_md) ONLY
+// when the current hint level is at/past the ladder's full-solution stage
+// (mirrors the UI ladder's H5 — see FULL_STAGE_INDEX in
+// ui/hint-ladder.ts) or the issuance's solution was already revealed via the
+// dedicated reveal path. Early levels never get the whole solution dumped —
+// they get the deterministic next step plus an honest note that a frozen
+// reference exists behind the reveal action.
+// - 'deterministic_next_step' help is composed text (re-read the prompt, plus
+// an existing ready note on the question's knowledge nodes) labelled as not
+// produced by AI on demand.
+// - 'unavailable' when neither exists: the learner can retry or skip.
 
 /** Generation section budget: leaves ~2s of the 20s observation target for
  * fallback construction + response. */
@@ -522,7 +520,7 @@ async function buildSolveHintFallback(params: {
     };
   }
   // help.text_md 只放下一步本身：新前端自己说明「AI 提示暂时不可用」，
-  // 服务端不再重复那句开场（UI 线 YUK-1409 反馈）。顶层 text_md 是给只读
+  // 服务端不再重复那句开场（UI 线 反馈）。顶层 text_md 是给只读
   // {text_md} 的旧客户端的兼容字段，保留开场，避免旧前端把它当成 AI 提示。
   const LEGACY_PREFACE = '提示这次没生成出来 —— 给你一条确定性的下一步（不是 AI 现想的）：';
   const lines = [
@@ -624,7 +622,7 @@ export interface SubmitSolveAttemptParams {
   expectedQuestionId?: string;
   /** Optional client capture only; persisted issuance help controls assistance. */
   hintsUsed?: number;
-  /** YUK-352 — highest hint tier reached (optional companion to hintsUsed). */
+  /** highest hint tier reached (optional companion to hintsUsed). */
   finalHintLevel?: number;
 }
 

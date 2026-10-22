@@ -17,7 +17,7 @@ import type { QuestionSupplyTarget } from './target-discovery';
 const PLACEMENT_STARTER_COUNT = 8;
 
 // The status→queued transition can collide with placement_starter_claim_nonterminal_uq when another
-// claim for the same goal+subject is already in flight (YUK-452 round-2). postgres.js surfaces the
+// claim for the same goal+subject is already in flight (round-2). postgres.js surfaces the
 // index name as constraint_name; pg-boss's internal `pg` driver uses `constraint`. drizzle wraps the
 // driver error in a DrizzleQueryError, so walk the `.cause` chain and check both field names.
 function isNonterminalSingleFlightViolation(err: unknown): boolean {
@@ -114,7 +114,7 @@ export async function dispatchPlacementStarterClaimTx(
   // Enqueue + status→queued run in a SAVEPOINT (nested tx) so a nonterminal single-flight 23505 on
   // the pending→queued update rolls back the enqueue (no orphan quiz_gen job) without aborting the
   // outer tx — then we leave the claim pending for a later attempt. The outer FOR UPDATE lock on
-  // the claim persists across the savepoint (YUK-452 round-2 / YUK-776).
+  // the claim persists across the savepoint (round-2 /).
   try {
     return await tx.transaction(async (sp) => {
       const target = buildPlacementStarterTarget(claim);
@@ -176,25 +176,23 @@ export async function dispatchPlacementStarterClaim(
 
 // pg-boss job states from which a further delivery may STILL arrive. 'created' and 'retry' are
 // waiting to be fetched; 'active' is being worked right now.
-//
 // This is an ALLOWLIST, not an enumeration of the terminal states, and that is the load-bearing
 // property: any state not listed — including one added by a future pg-boss, or the historical
 // 'expired' — reads as NOT live. That is the safe default here, because "not live" only ever
 // leads to a reap that is already gated behind the 6h grace window and the claim's own status
 // re-check, whereas defaulting unknown states to live would let a genuine zombie block every
 // later goal revision forever (the exact bug this sweeper exists to fix).
-//
 // On 'expired' specifically (review PRRT…nAc suggested adding it to the state union): the
 // installed pg-boss v12.26.1 `job_state` enum has exactly six states — created / retry / active /
 // completed / cancelled / failed — and 'expired' is NOT among them; it is a v9/v10 state, and v12
 // handles a timed-out job by deleting and re-inserting it as retry or failed. That was verified
-// against plans.d.ts JOB_STATES + plans.js by YUK-758; see the mapBossState docblock in
+// against plans.d.ts JOB_STATES + plans.js by ; see the mapBossState docblock in
 // src/server/orchestration/orchestrator.ts for the full write-up. Naming it in the union here
 // would contradict that finding, so it is called out as the drift case the allowlist absorbs.
 const LIVE_PLACEMENT_JOB_STATES: ReadonlySet<string> = new Set(['created', 'retry', 'active']);
 
 /**
- * True when the quiz_gen job backing a placement starter claim may still redeliver (YUK-761).
+ * True when the quiz_gen job backing a placement starter claim may still redeliver.
  *
  * The recovery sweeper MUST consult this before terminalizing a long-stale 'retry_scheduled'
  * claim: elapsed time alone is not proof that the retry is dead. If the quiz_gen queue is paused,

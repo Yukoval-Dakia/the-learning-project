@@ -2,41 +2,18 @@ import { eq, inArray } from 'drizzle-orm';
 
 import type { Db } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
+import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
-import {
-  type R2Client,
-  type SourceAssetRow,
-  persistSourceAsset,
-  sha256Hex,
-} from './persist-image-asset';
+import type { R2Client, SourceAssetRow } from './persist-image-asset';
 
-// YUK-1404 (B2/R1) — unified source package.
+// Unified source package for one ingestion session.
 //
-// One ingestion session owns one source_document row (created by the session
-// guards, unchanged). This module fills in the package the ingestion agent
-// consumes:
-//
-//   source_document.body_md                — full anchored markdown
-//   source_document.provenance.source_package — SourcePackageV1 descriptor
-//   source_asset rows                      — original file, converted markdown,
-//                                            embedded media, page images,
-//                                            per-page text layers (each SHA'd)
-//
-// Three input shapes produce the SAME package shape:
-//   word  — pandoc gfm markdown + all embedded media + rendered page images
-//           (LibreOffice→PDF→PDFium; the page images are always produced so
-//           MathType / layout questions keep a pixel anchor).
-//   pdf   — per-page embedded text layer (pdfium; marker/empty layers are
-//           marked, never transcribed into fake text) + per-page image.
-//   images — photos / scans: pages carry images only, no text.
-//
-// The anchor convention (salvaged from feat/yuk-1404-anchored-markdown,
-// adapted to product refs) maps every markdown fragment back to its page:
-//
+// This module fills source_document.body_md, its source_package provenance, and the
+// SHA'd source_asset rows. Word, PDF, and image uploads all produce the same shape:
+// page images always exist so visual content keeps a pixel anchor; text layers are
+// recorded as markers rather than fabricated. Markdown fragments carry page anchors:
 //   <!-- tlp:page index=N asset=ast1:<asset_id>:<sha12> sha256=<hex> -->
-//
-// Package provenance keeps the full descriptor; tools resolve assets through
-// the ast1 versioned ref only — never paths, URLs or base64.
+// Tools resolve assets only through ast1 versioned refs, never paths or base64.
 
 // ---------- ast1 versioned asset ref ----------
 
@@ -75,10 +52,8 @@ export type AssetRefResolution =
   | { status: 'unresolvable' | 'digest_mismatch'; detail: string };
 
 /**
- * Resolve an agent-facing ref to its source_asset row. `ast1:` strings carry a
- * sha prefix; the structured form is the shared VersionedAssetRef shape
- * `{asset_id, digest:'sha256:<64hex>'}` (bare 64-hex also accepted). A digest
- * mismatch is an explicit error — NEVER a fallback to the latest version.
+ * Resolves an ast1 or structured versioned ref to its asset row. A digest mismatch
+ * is an error, never a fallback to the latest version.
  */
 export async function resolveAssetRef(db: Db, input: AssetRefInput): Promise<AssetRefResolution> {
   let assetId: string;
@@ -123,7 +98,7 @@ export async function resolveAssetRef(db: Db, input: AssetRefInput): Promise<Ass
   return { status: 'ok', row, ref: assetRefForRow(row) };
 }
 
-/** Read asset bytes and re-hash them — a served copy that drifted is an error. */
+/** Reads bytes and re-hashes; a drifted copy is an error. */
 export async function loadAssetBytesVerified(
   r2: R2Client,
   row: Pick<SourceAssetRow, 'id' | 'storage_key' | 'sha256'>,
@@ -182,8 +157,7 @@ export interface SourcePackageV1 {
   document_text_asset_id?: string;
   /** word only: rendered-PDF ancestor of the page images. */
   rendered_pdf_asset_id?: string;
-  /** word only: pandoc failed/tolerated — package has page images + original
-   * but no markdown (P2-3: the upload must stay additive, not reject). */
+  /** word only: pandoc failed, so the package has pages and original but no markdown. */
   markdown_absent_reason?: string;
 }
 
@@ -236,10 +210,8 @@ export interface PdfPackageDraftStamp {
 export const PDF_PACKAGE_DRAFT_KEY = 'source_package_draft' as const;
 
 /**
- * Persist the non-page artifacts of a PDF upload (original file + per-page
- * text layers) and return the provenance stamp each page-image row should
- * carry. Page images themselves are persisted by the caller (existing
- * renderPdfToPngPages flow unchanged).
+ * Persists a PDF's original file and text layers, returning the provenance stamp
+ * each page image should carry. The caller persists the images.
  */
 export async function preparePdfSourceAssets(
   db: Db,
@@ -321,15 +293,9 @@ function draftStamp(row: SourceAssetRow): PdfPackageDraftStamp | null {
 }
 
 /**
- * Fill `body_md` + `provenance.source_package` on an existing source_document.
- * Idempotent: re-running overwrites the same derived fields only — every other
- * provenance key (entrypoint, subject, omission audit) is preserved.
- *
- * Package kind is derived from evidence the upload actually produced:
- *   - every page asset carrying the same pdf draft stamp → 'pdf'
- *   - otherwise → 'images' (photos/scans/legacy uploads; image-only pages)
- * Word documents attach through attachWordSourcePackage instead (the caller
- * already holds the pandoc output).
+ * Fills body_md and source_package on an existing document, preserving other
+ * provenance keys. Kind is 'pdf' only when every page has the same PDF stamp;
+ * otherwise 'images'. Word documents use attachWordSourcePackage.
  */
 export async function materializeSourcePackage(
   db: Db,
@@ -347,9 +313,8 @@ export async function materializeSourcePackage(
     const stamp = draftStamp(row);
     return stamp ? [{ row, stamp }] : [];
   });
-  // A coherent pdf package requires: every asset stamped, one shared key,
-  // page_count agreement and distinct in-range page indices. Anything short of
-  // that falls back to the honest image-only package — never fabricated text.
+  // A PDF package needs every page stamped, one shared key, matching page counts,
+  // and distinct in-range indices; otherwise fall back to the image-only package.
   const pdfReady =
     stamped.length > 0 &&
     stamped.length === assets.length &&
@@ -408,8 +373,7 @@ export async function materializeSourcePackage(
           : [],
       ),
     ];
-    // Anchored markdown: one tlp:page comment per page followed by that page's
-    // text layer verbatim; empty/marker layers say so instead of fabricating.
+    // One page anchor followed by that page's text layer; empty layers say so.
     const sections = ordered.map(({ stamp }, position) => {
       const lines = [pageAnchorComment(pages[position])];
       if (stamp.text_class === 'text' && typeof stamp.text === 'string' && stamp.text.length > 0) {
@@ -462,8 +426,7 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 
 function mediaMime(path: string): string {
   const suffix = path.toLowerCase().split('.').at(-1) ?? '';
-  // svg is deliberately absent: stored/served as octet-stream so an active
-  // markup file can never be rendered as image content (XSS surface).
+  // SVG is stored as octet-stream so active markup never renders as an image.
   return (
     (
       {
@@ -479,9 +442,8 @@ function mediaMime(path: string): string {
 }
 
 /**
- * Rewrite pandoc's relative media references (`![](media/image1.png)` and
- * `<img src="media/image1.png">`) to versioned `ast1:` asset refs so the
- * markdown handed to the agent contains only resolvable asset identities.
+ * Rewrites pandoc's relative media references to ast1 refs so the agent-facing
+ * markdown contains only resolvable asset identities.
  */
 export function rewriteMediaRefs(markdown: string, pathToRef: Map<string, string>): string {
   let out = markdown;
@@ -508,11 +470,9 @@ export interface PackageMediaResult {
 }
 
 /**
- * Persist pandoc-extracted embedded media. The byte cap applies to ALL media
- * (raster AND opaque binaries like emf/wmf/tiff — an unbounded embed is an
- * unbounded row either way); skipped media land in `omitted` (the markdown
- * keeps its original reference — unrewritten, dangling by design). SVG is
- * stored as octet-stream, never image/svg+xml (P2-4).
+ * Persists pandoc's embedded media. The byte cap applies to opaque binaries too;
+ * skipped media stay listed in `omitted` and their markdown refs stay dangling.
+ * SVG is stored as octet-stream, never image/svg+xml.
  */
 export async function persistPackageMedia(
   db: Db,
@@ -545,8 +505,7 @@ export interface AttachWordPackageInput {
   originalBytes: Uint8Array;
   /** Bytes the converter actually saw (may equal originalBytes). */
   converterBytes: Uint8Array;
-  /** pandoc markdown, or null when conversion failed on the tolerant path
-   * (P2-3 — visual-line uploads must keep working without markdown). */
+  /** pandoc markdown, or null when tolerant conversion failed. */
   markdown: string | null;
   markdownAbsentReason?: string;
   /** Already-persisted embedded media (persistPackageMedia result). */
@@ -558,12 +517,9 @@ export interface AttachWordPackageInput {
 }
 
 /**
- * Write the 'word' package onto an existing source_document: persists the
- * original + (when sanitized) converter input + source.md, links the already
- * persisted media/page/pdf rows, rewrites the markdown's media references to
- * ast1 refs, and stores the result in body_md + provenance.source_package.
- * Runs for BOTH docx lines — MathType docs keep page images AND the pandoc
- * markdown; plain-text docs simply have no OLE media.
+ * Writes the word package: original and converter input, source markdown, media and
+ * page links, ast1 rewrites, and provenance. Both DOCX lines use it; text documents
+ * simply have no OLE media.
  */
 export async function attachWordSourcePackage(
   db: Db,
@@ -591,8 +547,7 @@ export async function attachWordSourcePackage(
   };
 
   const original = await save(input.originalBytes, 'original.docx', 'original', DOCX_MIME, 'docx');
-  // The converter copy is only a distinct artifact when sanitization changed
-  // the bytes (YUK-1476); identical input shares the original's content address.
+  // Only persist a converter copy when sanitization changed the bytes.
   const converterSha = await sha256Hex(input.converterBytes);
   if (converterSha !== original.sha256) {
     await save(input.converterBytes, 'converter.docx', 'converter_input', DOCX_MIME, 'docx');
@@ -613,8 +568,7 @@ export async function attachWordSourcePackage(
       name: m.path,
       mime: m.mime,
     });
-    // normalizeMediaPath parity: strip a leading './' if the manifest path
-    // carries one, so markdown refs resolve by the same normalized path.
+    // Match normalizeMediaPath: strip a leading './'.
     pathToRef.set(m.path.replace(/^\.\//, ''), formatAssetRef(m.asset_id, m.sha256));
   }
 
@@ -669,18 +623,9 @@ export async function attachWordSourcePackage(
 }
 
 /**
- * P2-8 — package attach/materialize runs AFTER the session row exists
- * (initiateUpload owns its own transaction). A package failure must not leave
- * an `uploaded` orphan behind a 500:
- *   - pre-output sessions (uploaded/queued/extracting) are marked `failed`
- *     with the reason. `uploaded → failed` has no guard transition
- *     (markExtractionFailed only covers queued/extracting), so the route
- *     writes it directly.
- *   - sessions that already produced extracted output (extracted/partial/
- *     reviewed/imported) are never downgraded — imports only admit
- *     extracted/reviewed, so `failed` would orphan a completed upload behind
- *     a transient package/R2 error. The failure is recorded on
- *     `source_document.provenance.source_package_attach_error` instead.
+ * A package failure must not leave a session orphaned: pre-output sessions are
+ * marked failed, while sessions with extracted output are never downgraded and the
+ * error is recorded on document provenance instead.
  */
 export async function markSessionPackageFailed(
   db: Db,
@@ -697,13 +642,8 @@ export async function markSessionPackageFailed(
     .where(eq(learning_session.id, sessionId))
     .limit(1);
   if (!session) return 'missing';
-  // Codex 4293474481 — sessions that already produced extracted output (the
-  // text-DOCX line commits question_blocks and reaches 'extracted' before the
-  // package attaches) must not be downgraded: imports only admit
-  // extracted/reviewed sessions, so flipping to 'failed' would orphan a
-  // completed upload behind a transient package/R2 failure. Record the attach
-  // failure on the document provenance instead; the original error still
-  // propagates to the caller.
+  // Extracted output must not be downgraded: record the attach failure on document
+  // provenance and still propagate the original error.
   if (['extracted', 'partial', 'reviewed', 'imported'].includes(session.status)) {
     if (session.source_document_id) {
       try {
@@ -722,15 +662,13 @@ export async function markSessionPackageFailed(
           })
           .where(eq(source_document.id, session.source_document_id));
       } catch {
-        // best-effort marker — the attach error itself is what propagates
+        // Best-effort marker; the attach error still propagates.
       }
     }
     return 'kept_extracted';
   }
-  // uploaded/queued/extracting have no extracted output yet: mark the session
-  // failed so it is not left orphaned ('uploaded' -> 'failed' is the only
-  // pre-output transition the guard allows; package materialization sits
-  // outside the guard's coverage, documented in the header comment).
+  // No extracted output yet: mark failed so it is not orphaned. Materialization
+  // sits outside the session guard, so the route writes this transition.
   await db
     .update(learning_session)
     .set({

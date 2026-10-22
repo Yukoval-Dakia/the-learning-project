@@ -1,7 +1,7 @@
 import type { ZodTypeAny } from 'zod';
 import type { SubjectProfile } from '@/subjects/profile';
 
-export type Provider =
+export type KnownProvider =
   | 'anthropic'
   | 'xiaomi'
   | 'xiaomi-token-plan'
@@ -11,6 +11,11 @@ export type Provider =
   | 'openai'
   | 'anthropic-sub'
   | 'opencode-go';
+
+/** Custom providers configured at runtime (YUK-1563 part 4): `custom:<name>`. */
+export type CustomProviderId = `custom:${string}`;
+
+export type Provider = KnownProvider | CustomProviderId;
 
 const LEGACY_PROVIDER_IDS = {
   'zai-coding-cn': 'zhipuai-coding-plan',

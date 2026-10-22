@@ -1,15 +1,5 @@
-// YUK-203 P1 (ADR-0027) — note(artifact) reads by knowledge label.
-//
-// ADR-0027 makes a note(artifact) a first-class knowledge-labeled entity: a
-// knowledge node may carry 0..N labeled notes (atomic 节点简介 + hub 主题入口 +
-// long 跨主题综合), not a single learning_item-owned primary. This reader returns
-// the notes labeled with a given knowledge id so the /knowledge/[id] page can list
-// ALL labeled notes (2b brief: "带当前 knowledge_id 标签的笔记列表 0/1/many"),
-// superseding the node page's single-primary-atomic read.
-//
-// Label model only (ADR-0020 §3): membership is `artifact.knowledge_ids` containing
-// the node id — NOT learning_item ownership. tool_quiz is excluded (it is a quiz
-// artifact, not a note).
+// Note (artifact) reads by knowledge label. A note may carry 0..N labels rather
+// than one primary owner; tool_quiz is excluded because it is a quiz, not a note.
 
 import { and, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 
@@ -22,11 +12,11 @@ const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
 
 export interface NoteSummary {
   id: string;
-  // note_atomic | note_hub | note_long — or 'interactive' when produced by
-  // interactiveForKnowledge (ADR-0033 D5; same summary shape, distinct read path).
+  // note_atomic | note_hub | note_long, or 'interactive' from
+  // interactiveForKnowledge (same summary shape, distinct read path).
   type: string;
   title: string;
-  // all knowledge labels on this note (the caller highlights the focal one).
+  // All labels; the caller highlights the focal one.
   knowledge_ids: string[];
   generation_status: string;
   verification_status: string;
@@ -36,8 +26,7 @@ export interface NoteSummary {
 
 const NOTE_TYPE_ORDER = sql`CASE ${artifact.type} WHEN 'note_atomic' THEN 0 WHEN 'note_hub' THEN 1 WHEN 'note_long' THEN 2 ELSE 3 END`;
 
-// YUK-919 — escape ILIKE wildcards so user input is matched literally
-// (same contract as artifacts-search.ts escapeLike).
+// Escape ILIKE wildcards so user input matches literally.
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
@@ -76,10 +65,8 @@ const NOTE_SUMMARY_COLUMNS = {
 } as const;
 
 /**
- * All non-archived notes (atomic/hub/long) labeled with `knowledgeId` via
- * `artifact.knowledge_ids @> [knowledgeId]`. Ordered atomic → hub → long (节点简介
- * first, then topic-entry, then long synthesis), newest within each type.
- * Returns [] when the node has no labeled notes (the page renders an empty state).
+ * Non-archived notes labeled with the node, atomic -> hub -> long, newest first.
+ * Returns [] when the node has no labeled notes.
  */
 export async function notesForKnowledge(
   db: DbLike,
@@ -117,9 +104,8 @@ export async function listNotes(
     if (subjectFilter) conditions.push(subjectFilter);
   }
   if (textQuery) {
-    // YUK-919 — 标题或正文匹配（title ilike OR body_blocks jsonb 序列化文本
-    // ilike；无迁移、无生成列，直接吃现有列）。body_blocks 为 NULL 时 NULL
-    // ILIKE 不成立 → 仅靠标题命中，符合直觉。与科目过滤 AND 组合。
+    // Match title or serialized body_blocks; a NULL body falls back to title only.
+    // Combined with the subject filter via AND.
     const pattern = `%${escapeLike(textQuery)}%`;
     const textFilter = or(
       ilike(artifact.title, pattern),
@@ -136,13 +122,8 @@ export async function listNotes(
 }
 
 /**
- * ADR-0033 D5 — non-archived interactive artifacts labeled with `knowledgeId`
- * (newest first), powering the /knowledge/[id] "互动内容" listing. Deliberately a
- * PARALLEL query to notesForKnowledge rather than a widened NOTE_TYPES:
- * NOTE_TYPES also gates the note-only read paths (notesForItem's primary
- * resolution + label-material overlap) and must NOT admit 'interactive' —
- * interactive artifacts are opaque to all note machinery (body_blocks null,
- * no verification / embedded-check / cross-link).
+ * Non-archived interactive artifacts for the node, newest first. Kept parallel to
+ * notesForKnowledge so NOTE_TYPES never admits 'interactive' into note machinery.
  */
 export async function interactiveForKnowledge(
   db: DbLike,
@@ -163,8 +144,8 @@ export async function interactiveForKnowledge(
 }
 
 export interface ItemNote extends NoteSummary {
-  // 'primary' = the item's primary_artifact_id points here; 'label' = shares ≥1
-  // knowledge label with the item (study material). primary wins on dedupe.
+  // primary = primary_artifact_id; label = shares a knowledge label. primary wins
+  // on dedupe.
   relation: 'primary' | 'label';
 }
 
@@ -175,11 +156,8 @@ export interface LearningItemNoteRefs {
 }
 
 /**
- * Notes a learning_item *references* (ADR-0027 — it no longer owns them): its
- * `primary_artifact_id` note (when that resolves to a non-archived note) plus
- * notes sharing ≥1 of the item's knowledge labels (study material). Deduped with
- * primary winning; primary first, then atomic→hub→long newest-within-type.
- * Powers the /learning-items/[id] "关联笔记" surface (wired in P5).
+ * Notes the item references: its primary note plus notes sharing a label, deduped
+ * with primary first, then atomic -> hub -> long.
  */
 export async function notesForItem(db: DbLike, item: LearningItemNoteRefs): Promise<ItemNote[]> {
   const out: ItemNote[] = [];
@@ -205,8 +183,7 @@ export async function notesForItem(db: DbLike, item: LearningItemNoteRefs): Prom
     }
   }
 
-  // label: notes sharing ≥1 of the item's knowledge labels. OR of `@>` per label
-  // reuses the established containment pattern (no `?|` operator).
+  // OR of containment checks per label.
   const labels = item.knowledge_ids ?? [];
   if (labels.length > 0) {
     const overlap = labels.map(

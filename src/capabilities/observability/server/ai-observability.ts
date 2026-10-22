@@ -3,13 +3,13 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import { ApiError, collectionPayload } from '@/kernel/http';
+import { readProviderCostAggregates } from '@/kernel/read-models/provider-cost-projection';
 import {
   type AdminCostQuerySchema,
   type AdminFailuresQuerySchema,
   AdminRunParamsSchema,
   AdminRunStatusSchema,
 } from '../api/admin-observability-contracts';
-import { readProviderCostAggregates } from './provider-cost-projection';
 
 type DbLike = Db | Tx;
 
@@ -109,8 +109,7 @@ export interface AdminRunTimeline {
   timeline: AdminRunTimelineEvent[];
 }
 
-// YUK-359: rows are split by currency (USD = mimo/runner, CNY = GLM-OCR /
-// memory reconcile). SUM is always within one currency — never cross-currency.
+// Rows are split by currency; never sum across currencies.
 export interface AdminCostDayRow {
   day: string;
   currency: string;
@@ -275,10 +274,9 @@ function projectRun(
   ledgerRows: Array<typeof cost_ledger.$inferSelect>,
   toolCallCount: number,
 ): AdminRunListRow {
-  // Once a run has classified attempt truth, only its attempt projection may
-  // contribute money. Keep legacy correlation rows in ledger_rows/job links
-  // for diagnosis, but never let them turn unknown into zero or double-count a
-  // reported/estimated attempt. Pre-YUK-841 runs still use their legacy rows.
+  // A classified run takes money only from attempt rows; legacy rows stay for
+  // diagnostics but must not turn unknown into zero or double-count. Unclassified
+  // runs still use legacy rows.
   const costProjectionRows =
     row.cost_basis === null
       ? ledgerRows
@@ -297,8 +295,8 @@ function projectRun(
     status: row.status,
     finish_reason: row.finish_reason,
     usage_json: row.usage_json,
-    // A classified terminal attempt is authoritative even when the amount is
-    // unknown/null. Only pre-YUK-841 rows (basis NULL) may use legacy fallback.
+    // A classified attempt is authoritative even when unknown; only unclassified
+    // rows may fall back to legacy cost.
     cost_usd: row.cost_basis !== null ? row.cost_usd : (row.cost_usd ?? ledgerCost),
     cost_basis:
       row.cost_basis === 'reported' ||
@@ -717,8 +715,8 @@ function adminRunDto(row: AdminRunListRow): AdminRunDto {
 
 function adminTimelineEventDto(event: AdminRunTimelineEvent): AdminRunTimelineEventDto {
   const dto = { ...event, at: event.at.toISOString() };
-  // Optional timeline values used to disappear during HTTP JSON serialization.
-  // Omit them in the shared DTO too, so RPC callers receive that same shape.
+  // Undefined optional values disappear over HTTP; omit them here too, so RPC
+  // callers get the same shape.
   for (const key of [
     'id',
     'tool_name',
@@ -737,7 +735,7 @@ function adminTimelineEventDto(event: AdminRunTimelineEvent): AdminRunTimelineEv
   return dto;
 }
 
-/** Complete collection envelope shared by HTTP and authenticated RPC consumers. */
+/** Collection envelope shared by HTTP and authenticated RPC consumers. */
 export async function loadAdminRuns(
   db: DbLike,
   opts: AdminRunsOptions = {},

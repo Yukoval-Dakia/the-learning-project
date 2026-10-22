@@ -1,8 +1,5 @@
-// YUK-601 (v3.2 §3.1/§3.3) — subject-scoped trait 写面三壳：
-//   PUT     /api/admin/subjects/:id/traits/:kind          → editSubjectTrait（主写面，自动 COW）
-//   FORK    /api/admin/subjects/:id/traits/:kind/fork     → forkSubjectTrait（显式剥离）
-//   BINDING /api/admin/subjects/:id/traits/:kind/binding  → rebindSubjectTrait（换绑）
-// Shared operations own post-commit hydration; JSON and Response stay in this adapter.
+// Subject-scoped trait writes: edit (copy-on-write), explicit fork, and rebind.
+// Shared operations own hydration; this adapter owns JSON and responses.
 
 import { db } from '@/db/client';
 import { canonicalResourceResponse, errorResponse } from '@/kernel/http';

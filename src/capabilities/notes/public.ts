@@ -1,6 +1,11 @@
 // Stable server contract for consumers outside the notes capability.
 
-export { NoteListQuerySchema, NoteListResponseSchema } from './api/contracts';
+export {
+  EditArtifactBodyBlocksBodySchema,
+  NoteIdParamsSchema,
+  NoteListQuerySchema,
+  NoteListResponseSchema,
+} from './api/contracts';
 export type {
   ArtifactCorrectionState,
   ArtifactCorrectionStatus,
@@ -10,6 +15,7 @@ export {
   getArtifactCorrectionState,
   getArtifactCorrectionStates,
 } from './server/artifact-corrections';
+export { searchArtifactReferences } from './server/artifact-reference-search';
 export { emitArtifactLifecycleEvent } from './server/artifacts/mutation-events';
 export type { BacklinksByArtifactType } from './server/block-refs';
 export {
@@ -17,12 +23,12 @@ export {
   listBacklinks,
   resolveOwningLearningItemIds,
 } from './server/block-refs';
-// YUK-878 — the teaching context loader (copilot capability) projects an
-// artifact's body blocks into note sections; expose the single projection
-// instead of a deep import into notes/server.
+// The teaching context loader projects body blocks into note sections; expose
+// that one projection instead of letting other capabilities deep-import.
 export { bodyBlocksToNoteSections } from './server/body-blocks';
-// YUK-1007 — notes 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
-// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { editArtifactBodyBlocks } from './server/body-blocks-edit';
+// Notes owns the consumer-effective facts for its config keys; the composition
+// root folds them into GET /api/admin/config.
 export { notesConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   CreateLearningIntentNoteFn,
@@ -37,6 +43,7 @@ export {
 } from './server/note-handoff';
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
+export { loadNotePage } from './server/note-page';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
@@ -66,5 +73,5 @@ export {
 } from './server/paid-effect-note-obligations';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { archiveProposalArtifacts } from './server/proposal-artifacts';
-// YUK-1062 — task composition uses the narrow task-public entry directly.
+// Task composition uses the narrow task-public entry, not this barrel.
 export { notesTaskSpecs } from './task-public';

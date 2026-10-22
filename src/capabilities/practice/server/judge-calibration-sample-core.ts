@@ -1,33 +1,12 @@
-// YUK-573 (Deliverable 2) — judge-calibration disagreement sampling core.
-//
-// REPORT-ONLY red line (design doc §5): this module re-judges already-decided
-// attempts through the PURE judgeAnswer pipeline on a second provider lane and
-// writes ONLY two observation actions — `experimental:judge_calibration_sample`
-// (one per re-judged pair, caused_by = the original judge event) and
-// `experimental:judge_calibration_run_summary` (one per run — the mass-skip
-// vs cold-start discriminator, r3 复核吸收 3). It NEVER calls handleRejudge,
-// never writes judge/correct/attempt/review events, never touches
-// mastery_state / θ̂ checkpoints / FSRS / draft_status. Both observation
-// actions prefill ingest_at (memory-outbox opt-out) — pure ledger rows.
-//
-// Selection (MF4): LLM-route whitelist (deterministic routes re-agree trivially
-// and would burn BATCH_MAX), newest judge per answer event (appeal overturns
-// supersede — rejudge.ts newest-wins), RANDOM order (Q4 ruling: recency slabs
-// anti-correlate with activity), capped at cfg.batchMax per run.
-//
-// Idempotency (MF8): the SELECT dedup below is a pre-filter only; the
-// correctness guarantee is the partial unique index
-// `event_judge_calibration_sample_unique_idx` (drizzle/0059) — the writer maps
-// a 23505 unique_violation to 'duplicate' and skips. The dedup is
-// action-filtered on purpose: appeal events ALSO anchor caused_by = judge
-// event id, so rejudge.ts's bare caused_by dedup precedent would misread an
-// appealed judge as already-sampled (load-bearing deviation, design §3.2).
-//
-// Lane (MF5/S1): the re-judge runs through a per-call ctx.override
-// { provider, model } — spread AFTER ...ctx so it beats the vision routes'
-// own visionJudgeProviderOverride() injection (S5 spread order). The global
-// AI_PROVIDER_OVERRIDE is never set or consulted for routing; sample rows
-// carry env snapshots + same_lane_suspected so a collapsed lane is visible.
+// Judge-calibration disagreement sampling core (report only).
+// Re-judges already-decided attempts through the pure judgeAnswer pipeline on a second
+// provider lane and writes only two observation actions: one sample per pair and one run
+// summary. It never writes judge/correct/attempt/review events and never touches
+// mastery_state, FSRS, or draft_status.
+// Selection: LLM routes only, newest judge per answer event, random order, capped by
+// cfg.batchMax. Idempotency relies on the partial unique index; the SELECT dedup is only a
+// pre-filter. The per-call provider/model override spreads after ...ctx so it beats vision
+// route injection; global AI_PROVIDER_OVERRIDE is neither set nor consulted.
 
 import { and, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -60,12 +39,12 @@ export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 
 // The LLM-backed judge routes worth double-judging (MF4① whitelist). Consumes
 // the canonical `MODEL_BACKED_JUDGE_ROUTES` predicate (@/capabilities/practice/server/judge,
-// YUK-589 route-resolve.ts) instead of a locally-owned duplicate — YUK-769
+// route-resolve.ts) instead of a locally-owned duplicate —
 // fixed a drift where this module's own copy omitted `unit_dimension` (its
 // LLM fallback route), silently excluding it from calibration sampling.
 // The routes whose invoker dispatch threads student_image_refs (photo answers).
 // OCR minor (PR #1056): this used to be a locally-owned Set duplicating the
-// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/server/judge, YUK-589
+// canonical `IMAGE_CONSUMING_JUDGE_ROUTES` (@/capabilities/practice/server/judge,
 // route-resolve.ts) — same double-write drift risk as the MODEL_BACKED_ROUTES
 // fix above. Consume the shared predicate instead of a local copy.
 const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;
@@ -226,7 +205,7 @@ export async function writeJudgeCalibrationSampleEvent(
       payload,
       caused_by_event_id: w.originalJudgeEventId,
       task_run_id: w.rejudgeTaskRunId,
-      // Memory-outbox opt-out (ADR-0021): a calibration ledger row is not a
+      // Memory-outbox opt-out: a calibration ledger row is not a
       // learning fact — it must never spawn a Mem0 add / brief regen.
       ingest_at: w.now,
       created_at: w.now,
@@ -238,7 +217,7 @@ export async function writeJudgeCalibrationSampleEvent(
   }
 }
 
-/** Fisher–Yates — the TS-side ORDER BY random() (MF4③ Q4 ruling). */
+/** Fisher–Yates — the TS-side ORDER BY random (MF4③ Q4 ruling). */
 function shuffleInPlace<T>(items: T[]): T[] {
   for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -257,7 +236,7 @@ export interface JudgeCandidate {
 }
 
 /** Execution outcome of ONE frozen candidate through the second lane.
- * YUK-1355 extraction (feature-owner released): provider EXECUTION and domain
+ * extraction (feature-owner released): provider EXECUTION and domain
  * APPLY are separate seams — `missing_*` and `unsupported` produce no
  * observation row (terminal for that effect); `rejudged` carries exactly what
  * the apply step needs. Throws on fetch/judge failures — callers keep their
@@ -283,15 +262,15 @@ export type JudgeCalibrationSingleRejudge =
       rawText: string | null;
     };
 
-/** Sample-time lane snapshots (YUK-1007: effective values, env+DB merged). */
+/** Sample-time lane snapshots (: effective values, env+DB merged). */
 export interface JudgeCalibrationLaneSnapshots {
   visionJudgeProviderAtSample: string | null;
   aiProviderOverrideAtSample: string | null;
 }
 
-/** MF4 selection — window query → effective-verdict walk (YUK-1054 §9) →
- * action-filtered dedup (§3.2) → RANDOM order (Q4) → batchMax cap. Extracted
- * verbatim from runJudgeCalibrationSample (YUK-1355): freezing a workset
+/** MF4 selection — window query → effective-verdict walk →
+ * action-filtered dedup → RANDOM order (Q4) → batchMax cap. Extracted
+ * verbatim from runJudgeCalibrationSample: freezing a workset
  * reuses THIS selection — no duplicated selection/domain math. */
 export async function selectJudgeCalibrationCandidates(
   db: Db,
@@ -321,8 +300,7 @@ export async function selectJudgeCalibrationCandidates(
       ),
     );
 
-  // Effective judge per answer event (YUK-1054 §9 dual-track — was "newest by
-  // created_at"). A rejudge anchors caused_by=appeal.id, so newest-by-created_at
+  // Effective judge per answer event — was "newest by created_at". A rejudge anchors caused_by=appeal.id, so newest-by-created_at
   // alone could pick a superseded/retracted row. resolveVerdictsForAttempts walks
   // the correct-chain and returns the chain-resolved effective judge — the standing
   // verdict the calibration should disagree-check.
@@ -344,7 +322,7 @@ export async function selectJudgeCalibrationCandidates(
   }
 
   // Already-sampled pre-filter (performance layer; MF8 index is the guarantee).
-  // ACTION-FILTERED — appeal events share the caused_by key space (§3.2).
+  // ACTION-FILTERED — appeal events share the caused_by key space.
   if (candidates.length > 0) {
     const sampledRows = await db
       .select({ caused_by_event_id: event.caused_by_event_id })
@@ -366,7 +344,7 @@ export async function selectJudgeCalibrationCandidates(
   return shuffleInPlace(candidates).slice(0, cfg.batchMax);
 }
 
-/** Lane snapshots — YUK-1007：lane 快照记「生效值」（env+DB 合并后），不是裸
+/** Lane snapshots — ：lane 快照记「生效值」（env+DB 合并后），不是裸
  * env——DB 写的 lane pin 也要被审计到。 lane.global.provider 才是 env pin >
  * DB > default 的生效值（裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除）。 */
 export function readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots {
@@ -591,7 +569,7 @@ export async function applyJudgeCalibrationRejudgeSample(
 
 /** Freeze the selected candidates into staged-workset items by capturing the
  * FULL prepared input face (question row, subject profile, answer face) at
- * freeze time — YUK-1355 R1 P1b: the freeze digest binds the exact runner
+ * freeze time — R1 P1b: the freeze digest binds the exact runner
  * inputs, and execution never re-reads the (mutable) business rows.
  * Un-preparable candidates are reported, never silently dropped. */
 export async function freezeCalibrationWorkSetFromCandidates(
@@ -629,7 +607,7 @@ export async function freezeCalibrationWorkSetFromCandidates(
   return { items, unprepared };
 }
 
-/** Runner factory for external single-item callers (YUK-1355): the same
+/** Runner factory for external single-item callers: the same
  * inner runner the retained batch resolves — exported so staged seams build
  * without adding a new capability→server import edge. */
 export function makeJudgeCalibrationRunner(db: Db): ReturnType<typeof makeRunTaskFn> {
@@ -667,7 +645,7 @@ export async function runJudgeCalibrationSample(
   const laneSnapshots = readCalibrationLaneSnapshots();
 
   // ── Per-candidate re-judge (per-item isolation; one failure never kills the batch) ──
-  // YUK-1355: EXECUTION (rejudgeSingleCalibrationCandidate — provider only) and
+  // EXECUTION (rejudgeSingleCalibrationCandidate — provider only) and
   // APPLY (applyJudgeCalibrationRejudgeSample — domain write only) are separate
   // seams composed here; counter semantics and isolation are unchanged.
   for (const candidate of batch) {
@@ -711,7 +689,7 @@ export async function runJudgeCalibrationSample(
       }
     } catch (err) {
       result.errors += 1;
-      // Message-only on purpose (review finding 3): never dump raw runner
+      // Message-only on purpose : never dump raw runner
       // errors — defensive against any future error shape carrying secrets.
       console.error('[judge_calibration_sample] per-item failure (isolated)', {
         judge_event_id: candidate.id,

@@ -1,5 +1,7 @@
 import type { Provider } from '@/ai/registry';
-import { currentModelCatalog } from './model-catalog';
+import { looksLikeCustomProviderId } from '@/core/config/custom-providers';
+import { catalogModelCost, currentModelCatalog } from './model-catalog';
+import { catalogProviderFor } from './model-profiles';
 import {
   ANTHROPIC_SUB_CONTRACT_REF,
   ATTEMPT_PRICEBOOK_VERSION,
@@ -42,7 +44,7 @@ export function resolveAttemptCostTruth(input: {
    * and any USD figure was priced from the same card as a finished run.
    * The ref prefix keeps that row distinct from a settled catalog charge.
    */
-  priceOrigin?: 'provider' | 'timeout-estimate';
+  priceOrigin?: 'provider' | 'timeout-estimate' | 'failure-estimate';
 }): AttemptCostTruth {
   if (input.provider === 'anthropic-sub') {
     return {
@@ -50,6 +52,27 @@ export function resolveAttemptCostTruth(input: {
       amountUsd: 0,
       ref: ANTHROPIC_SUB_CONTRACT_REF,
     };
+  }
+
+  // YUK-1563 part 4 — custom providers: pi's usage.cost comes from the rate
+  // card copied off the same-id catalog entry, so it is the same 'estimated'
+  // classification. Without a catalog card for that model there is no honest
+  // price → unknown, never a fabricated zero.
+  if (looksLikeCustomProviderId(input.provider)) {
+    const catalogProvider = catalogProviderFor(input.provider);
+    const hasCard =
+      catalogProvider !== undefined && catalogModelCost(catalogProvider, input.model) !== undefined;
+    const reported = input.reportedCostUsd;
+    if (hasCard && reported !== undefined && Number.isFinite(reported) && reported >= 0) {
+      const prefix =
+        input.priceOrigin === 'timeout-estimate' ? 'pi-catalog-timeout-estimate' : 'pi-catalog';
+      return {
+        basis: 'estimated',
+        amountUsd: reported,
+        ref: `${prefix}:${input.provider}/${input.model}`,
+      };
+    }
+    return unknownAttemptCostTruth(input.provider, input.model);
   }
 
   // YUK-921 P1 + YUK-1027 + YUK-1402 — pi-catalog lanes:
@@ -67,7 +90,11 @@ export function resolveAttemptCostTruth(input: {
     const reported = input.reportedCostUsd;
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       const prefix =
-        input.priceOrigin === 'timeout-estimate' ? 'pi-catalog-timeout-estimate' : 'pi-catalog';
+        input.priceOrigin === 'timeout-estimate'
+          ? 'pi-catalog-timeout-estimate'
+          : input.priceOrigin === 'failure-estimate'
+            ? 'pi-catalog-failure-estimate'
+            : 'pi-catalog';
       return {
         basis: 'estimated',
         amountUsd: reported,
@@ -118,7 +145,11 @@ export function resolveAttemptCostTruth(input: {
     estimated >= 0
   ) {
     const prefix =
-      input.priceOrigin === 'timeout-estimate' ? 'pricebook-timeout-estimate' : 'pricebook';
+      input.priceOrigin === 'timeout-estimate'
+        ? 'pricebook-timeout-estimate'
+        : input.priceOrigin === 'failure-estimate'
+          ? 'pricebook-failure-estimate'
+          : 'pricebook';
     return {
       basis: 'estimated',
       amountUsd: estimated,

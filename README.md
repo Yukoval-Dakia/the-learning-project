@@ -1,6 +1,6 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构详见 [docs/architecture.md](./docs/architecture.md)、[docs/modules/](./docs/modules/) 与 [docs/superpowers/status.md](./docs/superpowers/status.md)。
+自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md)（部分过时，采信前对照代码）为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
 
 > **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。
 
@@ -108,6 +108,25 @@ Prerequisites: **Node.js >=24.0.0**（`.node-version` 固定最低支持版本�
 **pnpm 11.13.1**。本地开发、生产 Docker 镜像与 CI 完整门禁统一使用 Node 24，
 避免公开运行时契约与实际验证环境漂移。
 
+### 本地重活限流
+
+`pnpm typecheck*`、`lint*`、`build*`、`test*` 和 web/compose build 入口自动使用
+`~/.cache/tlp-heavy-slots/slot-{1,2}`（`HEAVY_SLOTS=1` 可收紧）。与运营
+`heavy.sh` 使用同一 `owner` 协议；嵌套 pnpm 和 `heavy.sh pnpm build` 复用
+祖先持有的槽位。默认 Node 堆上限为 3072 MiB，覆盖继承的堆配置，其他
+`NODE_OPTIONS` 保留。这是每个 Node 进程的堆上限，不是整棵进程树的 RSS 上限。
+
+CI（`CI`、`GITHUB_ACTIONS` 或 `CIRCLECI` 为 `true` / `1`）不拿槽、不改
+`NODE_OPTIONS`，原命令及退出状态继续传给 CI。Docker build 内部的槽位不与
+宿主共享，因此 **宿主 docker build、pnpm install、直接运行 vitest 等仍须经**
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh <命令>`。
+每条工作线同时最多一个重活；开运行窗前还须确认磁盘 ≥20GB、
+`memory_pressure` free ≥25%、load ≤20。这些运行窗检查不由 pnpm 包装器替代。
+
+包装器收到 INT/TERM/HUP 时转发给自己的命令进程组，组内进程退出后才归还槽位。
+它不自动删除旧槽，避免与其他进程回收竞争。若主机重启或 SIGKILL 留下槽位，先核
+`owner` PID 及运行资源，再由运营清理确认为过期的槽；不要删除仍由其他线持有的槽。
+
 Local development uses the docker-compose Postgres database as the source of truth.
 Inside compose, services use `postgres:5432`; host-side commands use the local overlay
 port `127.0.0.1:5433`.
@@ -141,18 +160,44 @@ pnpm smoke:local
 `hydrateModelCatalogBeforeServe`、`src/server/ai/model-catalog.ts` `startModelCatalogWatch`）。
 拉取失败沿用该行；没有该行就用 `src/server/ai/model-catalog.snapshot.json`。
 `pnpm gen:model-catalog` 仍重写这份随包快照。
+工具调用、推理及原生档位、输入模态、上下文/输入/输出上限和 API base URL
+统一从该目录读取；Pi 只提供协议与兼容处理，不覆盖这些事实。目录缺项保持 unknown，
+执行缺少必需端点或限额时明确报错。只有目录缺失或实测不符才能在
+`src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
+配置保存与 adapter 启动都以 `createLoomPiModels().getModel` 判定可执行性；
+task、global 和 pin 设置均先校验必需事实，再校验任务能力，不接受保存成功但无法启动的模型。
+目录缺失的四个旧模型以固定 main 快照补缺，Grok 另有已封存实测；这些依据不等同于新的付费准入。
+压缩沿用 85% 触发、60% 裁剪目标，基数为目录 context 与显式 input 上限的较小值，
+取整后至少为 1；最新工具结果与其调用成组保留，即使该组超出裁剪目标。
+请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。
+目录的模型级 Anthropic/OpenAI-compatible 协议声明优先于 Pi 协议快照；
+OpenCode Go 已知协议路径不匹配时不执行。Anthropic 的目录 `/v1` 仅在传输适配时
+去重，避免 SDK 再追加 `/v1/messages`。目录能力不等同于应用已接线或实测准入。
+刷新不改任务选模；已选模型消失或能力/端点变化保留旧事实，并记录由 YUK-1563
+负责处理的 finding。
+
+自定义 provider（YUK-1563 ④）：`PUT /api/admin/custom-providers/:id` 填 baseURL、
+key 环境变量名与协议（openai-completions / anthropic-messages）即可接入新 provider，
+不改代码、不跑脚本。定义存 `custom_provider` 表（只有 env 变量名，key 值放
+`.env.local` / 容器 env，不进库、不进日志）；变量名必须以 `_API_KEY` / `_TOKEN`
+结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
+（值会被当作 Bearer 发到该 provider）。模型列表来自该端点自己的 `GET /models`
+（自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
+同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`
+（可列出但过不了可运行性检查，不能保存为任务模型）。每个自定义 provider 在运行时
+目录里有一个 `custom:<slug>` 合成 bucket：消失的已选模型与能力变化走同一条有主
+finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（只显示
+已配置/未配置/认证失败 与 env 变量名），per-task 选模沿用 `PATCH /api/admin/config`
+（provider 填 `custom:<slug>`），保存时与内置 provider 过同一道 `getModel` 可运行性检查。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或
 pg-boss worker 在服务端执行。
 
-API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再通过
-`src/server/env.ts` 的 t3-env server schema 校验运行时配置；`DATABASE_URL` 是共享运行时
-必需项，`INTERNAL_TOKEN` 仅由 API 组合根在监听前显式校验，DB-only 脚本不需要 API token。
-其余 provider、R2、OCR、feature flag 配置保持各自原有的可缺性与默认值。当前 Vite SPA
-没有 `VITE_*` 消费点，因此不设 client schema。Vitest 会
-跳过启动校验，让 DB 分区的 `tests/setup.db-fork.ts` 先改写每个 fork 的连接串；bundle build
-只打包入口，容器实际启动时仍会执行同一校验。
+API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，再由
+`src/server/env.ts` 用 @t3-oss/env-core + zod 校验 server schema。加载顺序、
+必填项、compose 与本机 dev 的取值、逐键默认值及 DB 配置层见
+[docs/configuration.md](./docs/configuration.md)。
 
 常用检查 / PR 前门禁：
 
@@ -175,15 +220,9 @@ pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.
 
 ## 当前部署目标：Mac 上的 Agent 开发测试环境
 
-Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL。2026-10-07 已按 owner 要求清空并重建当前业务库；只有 owner 后续明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
 
-当前独立附件存储及真实 CRUD 验收见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)。当前用途与重置证据见[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续工作见 [PLAN](PLAN.md)。此前发布验收不代表新空库已完成业务或模型验收。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
-
-### 容器 DNS（YUK-1404）
-
-本机宿主的 fake-IP DNS 返回 198.18.0.0/15 地址，容器曾继承该解析结果，导致图题候选被 SSRF 守卫拒绝。`docker-compose.mac.yml` 的 app 和 worker 使用 `dns: [223.5.5.5, 119.29.29.29]`；2026-10-11 的同镜像隔离探针确认它们能返回 jyeoo 的公网地址。私有部署 compose 也必须保留这两个服务的 `dns` 设置，并在重建后核对 `getent hosts www.jyeoo.com`。不修改宿主代理，不放行 198.18.0.0/15。
-
-共享 IP 守卫用于图题候选下载；jyeoo Rust 子进程和 Exa 远程抓取是另外的路径，不能用 DNS 探针声称它们均已验收。候选若保存的是 `/shiti/` 网页地址，还需解析真实题图并对网页、图片及重定向逐次校验。
+compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale / 局域网等访问约束统一见[运维](docs/operations.md)。远程入口是可选的 Tailscale Serve（同一 tailnet、Mac 开机且用户会话内 daemon 运行，未开 Funnel）；主机名和局域网地址属于本机私有配置。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
@@ -201,45 +240,14 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    - Point the public hostname, for example `loom.<your-domain>`, to `http://app:8787`.
    - Copy the Tunnel Token shown after creation.
 
-2. **Configure environment variables** — copy `.env.example` to `.env` and fill in:
-   ```bash
-   DATABASE_URL=postgres://loom:loom@postgres:5432/loom?sslmode=disable
-   INTERNAL_TOKEN=...
-   XIAOMI_API_KEY=...
-   ANTHROPIC_API_KEY=...
-   # OPENAI_API_KEY=...          # 可选：opt-in openai/gpt-6-astra Responses lane（YUK-1027），默认路径不需要
-   TUNNEL_TOKEN=<paste-token-here>
-   TUNNEL_PROTOCOL=auto          # use http2 if outbound UDP/7844 is blocked
-   # + R2 / Tencent OCR keys
-   # MEM0_* keys are optional — see .env.example for defaults
-   ```
+2. **Configure environment variables** — copy `.env.example` to `.env`; 至少填写
+   `DATABASE_URL`、`INTERNAL_TOKEN` 和所选 provider lane 的 key（模板默认 lane 用
+   `OPENCODE_API_KEY`）。走 Cloudflare Tunnel 时填 `TUNNEL_TOKEN`；录入需要 R2 的 key，
+   以及 OCR 引擎的 key——默认 `glm` 需要 `ZHIPU_API_KEY`，设为 `tencent` 时改为腾讯 OCR
+   的 key；worker 处理记忆事件需要 `DASHSCOPE_API_KEY`。
 
-   `BANK_GAP_EVIDENCE_SECRET`（app 侧）：`search_bank` 用它给 gap_request 签 MAC，
-   `file_bank_gap` 验 MAC；短于 32 字符或等于 `INTERNAL_TOKEN` 时视为未设，未设时
-   `file_bank_gap` 拒绝所有提交。
-   `WORKSHEET_RENDER_APP_ORIGIN`（worker 侧）：`worksheet_render` 打开打印页的 origin，
-   compose 已设 `http://app:8787`；只有变量完全未设置才缺省 `http://localhost:5173`，
-   照抄 `.env.example` 留空会让 job 报 `WORKSHEET_RENDER_APP_ORIGIN is empty`，
-   本机要么删掉该行要么填值。
-
-   `DASHSCOPE_API_KEY` is required as soon as the worker
-   processes its first `memory_event_ingest` job (every `writeEvent` enqueues
-   one, per ADR-0017 §"Write triggers" #1). Pinned memory extraction requires
-   `OPENCODE_API_KEY`; `ZHIPU_API_KEY` is needed only for the unpinned GLM
-   path or a configured dedicated GLM OCR path. The fact layer runs on Mem0 with
-   the 阿里百炼 `text-embedding-v4` embedder. Product generative AI uses
-   `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro` with
-   `OPENCODE_API_KEY` in **both app and worker**. This pair covers chat task
-   overrides, Copilot children, Mem0 fact extraction and memory/knowledge-edge
-   reconciliation. `MEM0_LLM_*` cannot override the pair. Mem0 runs inside these
-   two processes, with app reads and worker writes; there is no separate Mem0
-   container. Keep `DASHSCOPE_API_KEY`, existing embedding model/dimensions,
-   pgvector collection and history volume unchanged. Without a global pin,
-   legacy task registry Xiaomi and Mem0 GLM configuration remains available for
-   explicit rollback; the known Xiaomi 402 is still a failure. Dedicated Jev
-   typed scoring and layout OCR keep their protocol-specific services.
-   See [product AI migration and runtime checklist](docs/planning/2026-10-07-yuk1341-product-mimo-routing.md)
-   for source, actual-output and deployment boundaries.
+   变量含义、默认值、AI/记忆 pin 与 DB 配置层见
+   [docs/configuration.md](./docs/configuration.md)。
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
@@ -332,62 +340,16 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-**日级自动 dump（YUK-992 安装，YUK-1041 修复，Mac 生产）**：launchd 每日 07:15
-（Asia/Shanghai）跑 `mac-daily-dump.sh`，向 runtime 目录写
-`loom-daily-YYYYMMDD.dump`（custom format，`pg_restore` 用；保留最近 14 份 +
-每月 1 号归档）。
+**日级 dump（Mac 本机）**：launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](docs/operations.md#备份与恢复)。
 
-⚠️ **launchd 子进程被 macOS TCC 拒绝对 `/Volumes/*`（外置盘）的任何 I/O**
-（exec / read / write / 建 stdout 文件全部 EPERM，表现为 `last exit code = 78`
-EX_CONFIG "spawn failed"，脚本根本跑不起来）。所以脚本与 launchd log 必须装在
-内置盘 `~/Library/Application Support/loom-daily-dump/`，对 runtime 目录的读写
-全部经 `docker run -v` 在容器内完成（OrbStack virtiofs 不走 TCC）。一次性安装：
-
-```bash
-mkdir -p ~/Library/Application\ Support/loom-daily-dump
-cp scripts/mac-daily-dump.sh ~/Library/Application\ Support/loom-daily-dump/
-chmod +x ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh
-cp scripts/launchd/studio.yukoval.loom-daily-dump.plist ~/Library/LaunchAgents/
-launchctl bootout gui/$(id -u)/studio.yukoval.loom-daily-dump  # 若已装载
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
-```
-
-失败发现面与巡检（YUK-1056 加固）：成功写 `.loom-daily-dump-last-success` epoch 戳
-（连续 2 日未更新即异常）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记 **且
-`exit 1`** —— 容器可达时写进 runtime 目录，容器/daemon 不可达时改写
-`~/Library/Application Support/loom-daily-dump/`（本地兜底，launchd `last exit code` 可见）。
-脚本日志 `loom-daily-dump.log`（runtime 目录），launchd stdout/stderr 在
-`~/Library/Application Support/loom-daily-dump/launchd.log`。环境覆盖
-`LOOM_RUNTIME_DIR`/`LOOM_PG_CONTAINER`/`LOOM_DB_USER`/`LOOM_DB_NAME`/`LOOM_KEEP_DAILY`/
-`LOOM_MIN_BYTES`（默认值=当前 Mac 生产）。巡检命令：
-
-```bash
-cat …/tlp-local-prod-*/.loom-daily-dump-last-success   # epoch 戳，>2 日即 stale
-launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
-~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh  # 手动补一份（幂等，同日覆盖）
-~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
-```
-
-**完整 Postgres 恢复演练（YUK-1359/YUK-1329）**：外部 maintenance owner 先建立并持续持有全部 writer/客户端/序列写入的隔离边界，再运行
-`scripts/cutover-final-backup.sh --target=<pg-url> --quiescence-evidence=<file> --out=<dir> --strict`。
-它使用存活的 exported snapshot 捕获 dump 和完整非 system schema/table 内容及 sequence 状态。
-`scripts/restore-drill.sh --dump=<file> --source-manifest=<file> --out=<receipt>` 在隔离 scratch 容器比较同一份 staged dump；
-最终 manifest 必须另加 `--require-restore-parity`。`--strict` 仅检查 capture 工件；旧 `verified:true` 只保留为历史报告。
-详见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。
-
-**手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
+**手动 dump / restore**：
 
 ```bash
 pnpm db:dump
-```
-
-To restore:
-
-```bash
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
 
-恢复完整 runbook（OrbStack VM wipe 等场景）：`docs/sub5-restore-cli.md`。
+**完整 Postgres 恢复演练**：外部 maintenance owner 持有 writer 边界后跑 `scripts/cutover-final-backup.sh ... --strict`，用 `scripts/restore-drill.sh` 在隔离 scratch 比较，最终 manifest 另加 `--require-restore-parity`；`--strict` 只检查 capture 工件。命令、边界与重开条件见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。Postgres dump 不含 R2 对象，需独立备份。
 
 ## 目录
 
@@ -423,7 +385,7 @@ src/
   ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
-docs/             # architecture, modules, ADRs, planning
+docs/             # architecture, configuration, operations, modules, ADRs, planning
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
@@ -432,8 +394,4 @@ docs/             # architecture, modules, ADRs, planning
 
 ### TEST home LAN access (owner decision 2026-10-11)
 
-The current Mac TEST app keeps both `127.0.0.1:8787:8787` and `192.168.50.76:8787:8787` in its private Compose `services.app.ports`. On the home LAN, open <http://192.168.50.76:8787>. Bind this specific LAN address, never `0.0.0.0`; retain both entries when generating the next release Compose file. Tailscale Serve continues forwarding to the loopback address.
-
-Keep the existing application sign-in and `x-internal-token` checks. Only `/api/health` and `/api/ready` are exempt. Do not inject a token in the proxy or URL. PostgreSQL remains loopback-only, and storage/worker have no public host bindings. Preserve all existing environment values when regenerating private Compose, including unused provider keys.
-
-Change app bindings under the shared deployment mkdir lock; recreate only the app with the pinned current image, then verify both addresses, API 401, health/ready 200, unchanged worker/PG/storage identities, and release the owner-matched lock. A same-Mac probe is not proof of access from the iPad. Plain LAN HTTP is currently approved; features requiring a secure context need a separate HTTPS decision.
+The current Mac TEST app keeps both `127.0.0.1:8787:8787` and a specific home-LAN address in its private Compose `services.app.ports`; never bind `0.0.0.0`. LAN addressing, Tailscale remote entry, token/health rules, and the binding-change checklist are in [docs/operations.md](docs/operations.md#网络与访问). Specific addresses and hostnames stay in owner private records, not this repo.

@@ -24,81 +24,54 @@ export const aiProposalKinds = [
   'variant_question',
   'completion',
   'relearn',
-  // T-D6/C (YUK-120) — Coach plan_adjustment 'defer' lane.
+  // Coach plan_adjustment 'defer' lane.
   'defer',
   'record_links',
   'record_promotion',
   'archive',
   'judge_retraction',
-  // YUK-143 / ADR-0025 — North-Star: AI infers a goal's covered knowledge +
-  // rough ordering; user confirms via the proposal inbox (accept materializes
-  // the `goal` row). Surfaces through the existing `experimental:proposal`
-  // event path (writeAiProposal default) + inbox derive — no inbox.ts change.
+  // AI infers a goal's covered knowledge + rough ordering; user confirms via
+  // the proposal inbox and accept materializes the `goal` row.
   'goal_scope',
-  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — AI proposes
-  // cross-page/adjacent block merges; the user accepts in the inbox, which
-  // reuses the YUK-195 `mergeQuestions` primitive (no auto-merge — hard safety
-  // boundary). Flows through the existing experimental:proposal event/inbox
-  // path (writeAiProposal default + proposalWhere); no writer/inbox change.
+  // AI proposes cross-page/adjacent block merges; accept reuses the
+  // `mergeQuestions` primitive — no auto-merge (hard safety boundary).
   'block_merge',
-  // YUK-227 S3 Slice C (题源扩展 Strategy D / ADR-0002) — SourcingTask located a
-  // real-question source whose stem is image-only (tavily_extract could not lift it
-  // as text). The handler proposes it INSTEAD of auto-extracting; VLM 抽图 runs ONLY
-  // on explicit user accept (守 ADR-0002 — VLM 抽图是用户授权的付费动作). Accept
-  // downloads the image, runs VisionExtractTask (manual_rescue_only), and produces a
-  // tier-2 SourcedQuestion through the existing source_verify gate. Flows through the
-  // existing experimental:proposal event/inbox path (writeAiProposal default +
-  // proposalWhere); accept is dispatched in src/server/proposals/actions.ts. See
-  // docs/superpowers/plans/2026-06-06-yuk227-s3-image-reachability.md §2 Slice C + §4.
+  // SourcingTask located a real-question source whose stem is image-only.
+  // Proposed INSTEAD of auto-extracting; VLM 抽图 runs ONLY on explicit user
+  // accept (用户授权的付费动作，ADR-0002)。Accept downloads the image, runs
+  // VisionExtractTask (manual_rescue_only), and produces a tier-2
+  // SourcedQuestion through the existing source_verify gate.
   'image_candidate',
-  // ADR-0031 / YUK-304 (quiz C→A, lane B) — copilot-authored draft question. The
-  // author_question knowledge|material seed INSERTs the question row with
-  // draft_status='draft' (non-destructive: invisible to pool / review / FSRS —
-  // same Option-B gate as QuizGen drafts) and writes THIS proposal in the same
-  // transaction. Accept (acceptQuestionDraftProposal in
-  // src/server/proposals/actions.ts) PROMOTES draft→active + FSRS-enrolls
-  // (决定5: accept = promotion, not insert). Flows through the existing
-  // experimental:proposal event/inbox path (writeAiProposal default +
-  // proposalWhere); no writer/inbox change.
+  // Copilot-authored draft question: the tool INSERTs the question row with
+  // draft_status='draft' (invisible to pool / review / FSRS) and writes this
+  // proposal in the same transaction. Accept PROMOTES draft→active +
+  // FSRS-enrolls (accept = promotion, not insert).
   'question_draft',
-  // ADR-0032 D6-B (YUK-203 lane L6) — propose a narrow, typed node edit to an
-  // ACTIVE (draft_status='active', pooled) question's `structured` tree. The
-  // propose_question_edit tool addresses nodes by the SAME id/role coordinate
-  // system the L5 addressable projection reads (get_question_context
-  // include:['structure']) — read≡write coordinate parity. Proposal-only +
-  // reversible: accept (acceptQuestionEditProposal in the practice package)
-  // re-runs a mini verify gate, then applies the op to question.structured via
-  // a node-addressed mutation, bumps version, and writes an
-  // experimental:question_structure_edit audit event (before/after) so retract
-  // can correct it — never a raw structured overwrite. Flows through the
-  // existing experimental:proposal event/inbox path (writeAiProposal default +
-  // proposalWhere); no writer/inbox change.
+  // A narrow, typed node edit to an ACTIVE question's `structured` tree,
+  // addressing nodes by the SAME id/role coordinate system the addressable
+  // projection reads (read≡write coordinate parity). Proposal-only +
+  // reversible: accept re-runs a mini verify gate, applies the op via a
+  // node-addressed mutation, and writes an audit event (before/after) so
+  // retract can correct it — never a raw structured overwrite.
   'question_edit',
-  // YUK-440 / YUK-406 (教研团 Phase 0 conjecture 引擎) — A13 prediction-grounding.
-  // The nightly research-meeting job induces a first-class CONJECTURE about the
-  // learner's mind: a misconception belief (claim_md) + an unrun discriminating
-  // probe + the claim's implied p̂ on that probe (predicted_p) + the quantitative
-  // PFA/θ baseline it must beat (baseline_p_at_induction). HAS a real accept
-  // applier (acceptConjectureProposal, agency package): accept/edit/reject +
-  // idempotency, so it is in acceptSupportedProposalKinds. Flows through the
-  // existing experimental:proposal event/inbox path (writeAiProposal default +
-  // proposalWhere); no writer/inbox change. See
-  // docs/design/2026-06-27-a13-ts-half-design.md.
+  // A first-class CONJECTURE about the learner's mind: a misconception belief
+  // (claim_md) + an unrun discriminating probe + the claim's implied p̂ on that
+  // probe (predicted_p) + the quantitative PFA/θ baseline it must beat
+  // (baseline_p_at_induction). Has a real accept applier
+  // (acceptConjectureProposal, agency package), so it is in
+  // acceptSupportedProposalKinds.
   'conjecture',
-  // YUK-1016 / 454-B — 错因 catalog 扩张：`other` 归因复发 → LLM 提议新类目
-  // （或 owner 手动提议）→ owner accept → `cause_category_overlay` INSERT。
-  // 词表从此不只靠发版扩张（DB overlay 与 profile.causeCategories 合并读取）。
-  // accept applier 真身在 practice 包（acceptCauseCategoryProposal）；retract
-  // 置 overlay 行 archived_at。Flow 走既有 experimental:proposal 路径
-  // （writeAiProposal default + proposalWhere）；无 writer/inbox 改动。
+  // 错因 catalog 扩张：`other` 归因复发 → LLM 提议新类目（或 owner 手动提议）→
+  // owner accept → `cause_category_overlay` INSERT。词表从此不只靠发版扩张
+  // （DB overlay 与 profile.causeCategories 合并读取）。
   'cause_category',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
 export type AiProposalKindT = z.infer<typeof AiProposalKind>;
 
-// YUK-645 — canonical proposal-decision resource. The public vocabulary is
-// deliberately smaller than the legacy route vocabulary:
+// Canonical proposal-decision resource. The public vocabulary is deliberately
+// smaller than the legacy route vocabulary:
 //   reject / veto -> dismiss (compatibility adapters)
 //   retract       -> an L3 correction event
 // accept/reverse/change_type/dismiss remain immutable rate events. The
@@ -123,10 +96,10 @@ export const ProposalDecisionInput = z
       .object({ claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS) })
       .strict()
       .optional(),
-    // YUK-1404 — block_merge is lossy (absorbed blocks fold into the primary
-    // and cannot be un-merged). Accepting one requires an explicit
-    // confirm_lossy: true; the flag is accept-only and enforced at the shared
-    // accept boundary, so legacy/direct callers cannot bypass it.
+    // block_merge is lossy (absorbed blocks fold into the primary and cannot
+    // be un-merged). Accepting one requires an explicit confirm_lossy: true;
+    // the flag is accept-only and enforced at the shared accept boundary, so
+    // legacy/direct callers cannot bypass it.
     confirm_lossy: z.literal(true).optional(),
   })
   .strict()
@@ -176,15 +149,14 @@ export const ProposalDecisionInput = z
   });
 export type ProposalDecisionInputT = z.infer<typeof ProposalDecisionInput>;
 
-// YUK-1404 — the decision resource is an explicit union, not a broadly
-// nullable success contract: every COMMITTED decision still requires its
-// immutable event id (readable through GET /api/events/:id, so the HTTP
-// handler can return an honest Location). Exactly ONE narrow member carries
-// decision_event_id:null — the block_merge soft-stale accept, where nothing
-// was decided (the merge was skipped: no rate event, no decision signal, no
-// status change), so there is no event to point at. The union keeps that null
-// hole typed to this single member, and the route serves it 200 non-created
-// with no Location header.
+// The decision resource is an explicit union, not a broadly nullable success
+// contract: every COMMITTED decision still requires its immutable event id
+// (readable through GET /api/events/:id, so the HTTP handler can return an
+// honest Location). Exactly ONE narrow member carries decision_event_id:null —
+// the block_merge soft-stale accept, where nothing was decided (the merge was
+// skipped: no rate event, no decision signal, no status change), so there is
+// no event to point at. The union keeps that null hole typed to this single
+// member, and the route serves it 200 non-created with no Location header.
 const ProposalDecisionResourceCommitted = z.object({
   proposal_id: z.string().min(1),
   proposal_kind: AiProposalKind,
@@ -198,9 +170,8 @@ const ProposalDecisionResourceCommitted = z.object({
 
 // The soft-stale member: an accept of a block_merge proposal whose referenced
 // blocks left draft before the merge ran (applier returned {stale:true}). The
-// proposal stays pending — no false resolve — and the UI reads result.stale
-// (isBlockMergeStale) to show the stale notice instead of treating the card as
-// accepted.
+// proposal stays pending — no false resolve — and the UI reads result.stale to
+// show the stale notice instead of treating the card as accepted.
 export const ProposalDecisionResource = z.union([
   ProposalDecisionResourceCommitted,
   ProposalDecisionResourceCommitted.extend({
@@ -214,13 +185,12 @@ export const ProposalDecisionResource = z.union([
 ]);
 export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
-// M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
-// actions.ts）为这 16 个 kind 实现了 accept applier；只有 defer / archive /
-// judge_retraction 走 default 分支抛 unsupported_proposal_kind 400（producer/accept
-// 语义归 YUK-44）。Phase 0 关系脑 (YUK-406/YUK-440) 的 conjecture 现有真身 accept
-// applier（acceptConjectureProposal，agency 包），故已纳入本集合。UI（ProposalCard）
-// 据此门控 Accept CTA；inbox-meta.unit.test.ts 钉住「本集合 ∪ 未实现三 kind ===
-// aiProposalKinds」，dispatchAccept 增删 kind 时漂移会被测试拦下。
+// dispatchAccept（src/server/proposals/actions.ts）为这些 kind 实现了 accept
+// applier；只有 defer / archive 走 default 分支抛 unsupported_proposal_kind
+// 400。UI（ProposalCard）据此门控 Accept CTA；增删 accept kind 时保持
+// 「本集合 ∪ 未实现 kind === aiProposalKinds」不漂移。judge_retraction 的
+// 接受面在 practice proposal-appliers（判分纠错走 appeal/rejudge/CAS 激活 +
+// settlement replay；legacy judge-event → CorrectEvent）。
 export const acceptSupportedProposalKinds = [
   'knowledge_node',
   'knowledge_edge',
@@ -236,28 +206,31 @@ export const acceptSupportedProposalKinds = [
   'block_merge',
   'image_candidate',
   'question_draft',
-  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit.
+  // Active-question structured node edit.
   'question_edit',
-  // Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept/edit/reject applier
-  // (acceptConjectureProposal). accept = calibration anchor (NOT confirmed);
-  // edit → mem0 CORE; reject → digest. Never writes FSRS (ND-5).
+  // Conjecture accept/edit/reject applier (acceptConjectureProposal).
+  // accept = calibration anchor (NOT confirmed); edit → mem0 CORE; reject →
+  // digest. Never writes FSRS (ND-5).
   'conjecture',
-  // YUK-1016 / 454-B — cause_category_overlay 写路径 = accept applier
-  // （audit:schema 要求的唯一 INSERT 边界）。
+  // cause_category_overlay 写路径 = accept applier（audit:schema 要求的唯一
+  // INSERT 边界）。
   'cause_category',
+  // 判分纠错提案（evaluation 目标走 appeal/rejudge/CAS 激活链；legacy
+  // judge-event 目标写 CorrectEvent）。人审 accept，不自动执行。
+  'judge_retraction',
 ] as const satisfies readonly AiProposalKindT[];
 
 // ───────────────────────────────────────────────────────────────────────────
-// A4 出手强度轴 (YUK-521 / ADR-0039 A 档 strength tier) — 与 accept-applier 轴
-// (acceptSupportedProposalKinds, YUK-44) 正交的第三轴。三档语义：
+// 出手强度轴（ADR-0039 A 档 strength tier）— 与 accept-applier 轴
+// (acceptSupportedProposalKinds) 正交的第三轴。三档语义：
 //   A — reserved auto-apply tier. No proposal kind currently uses it: destructive
 //       lifecycle changes require an explicit user decision.
 //   B — propose（pending 入收件箱，人审 accept）。默认档，绝大多数 kind 在此。
 //   C — observe-only（仅折叠到 AI 观察面，无 Accept CTA）。恰好是「无 accept
 //       applier」的三 kind：dispatchAccept 对它们抛 unsupported_proposal_kind。
 //
-// 红线（防双 SoT 漂移，proposal-strength.unit.test.ts 钉死）：C 档集合 ⟺
-// `aiProposalKinds ∖ acceptSupportedProposalKinds`（={defer,archive,judge_retraction}）
+// 红线（防双 SoT 漂移）：C 档集合 ⟺
+// `aiProposalKinds ∖ acceptSupportedProposalKinds`（当前 = {defer, archive}）
 // 恒等。强度轴 ≠ accept-applier 轴 ≠ tone 视觉轴（KIND_META.tone），三轴勿耦合。
 export type AiProposalStrength = 'A' | 'B' | 'C';
 
@@ -267,19 +240,20 @@ export const aiProposalKindStrength = {
   // C — observe-only（恒 ⟺ aiProposalKinds ∖ acceptSupportedProposalKinds）。
   defer: 'C',
   archive: 'C',
-  judge_retraction: 'C',
+  // 判分纠错：人审 accept 才生效（B 档），绝不自动执行。
+  judge_retraction: 'B',
   // B — propose（默认档）。
   knowledge_node: 'B',
   knowledge_edge: 'B',
   knowledge_mutation: 'B',
   learning_item: 'B',
-  // note_update 是下一个 A 候选（小可逆笔记编辑；ADR-0040 note-refine 已在 mutator
-  // 侧验证 auto-apply + 撤销窗口，proposal 侧仍 B，待 owner 翻档）。
+  // note_update 是下一个 A 候选（小可逆笔记编辑；mutator 侧已验证 auto-apply +
+  // 撤销窗口，proposal 侧仍 B，待 owner 翻档）。
   note_update: 'B',
   variant_question: 'B',
   relearn: 'B',
-  // record_links / record_promotion 是 LEGACY tombstone —— accept applier 仍在
-  // (YUK-15) 但 producer 早停写，永不 surface 到收件箱。归 B 仅为穷举完整，实际不渲染。
+  // LEGACY tombstone —— accept applier 仍在但 producer 早停写，永不 surface 到
+  // 收件箱。归 B 仅为穷举完整，实际不渲染。
   record_links: 'B',
   record_promotion: 'B',
   goal_scope: 'B',
@@ -288,7 +262,7 @@ export const aiProposalKindStrength = {
   question_draft: 'B',
   question_edit: 'B',
   conjecture: 'B',
-  // YUK-1016 — catalog 扩张永远过人审（词表是归因合同的一部分）。
+  // catalog 扩张永远过人审（词表是归因合同的一部分）。
   cause_category: 'B',
 } as const satisfies Record<AiProposalKindT, AiProposalStrength>;
 
@@ -299,8 +273,8 @@ export function kindStrength(kind: AiProposalKindT): AiProposalStrength {
 export const ProposalEvidenceRef = z.object({
   kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),
   id: z.string().min(1),
-  // YUK-1019 — kind='event' 的可选 action 角色细分：tally 证据里 user_cause
-  // 与 judge event 混排，不带 role 时 reviewer 得回查 event 行才能分辨。
+  // kind='event' 的可选 action 角色细分：tally 证据里 user_cause 与 judge
+  // event 混排，不带 role 时 reviewer 得回查 event 行才能分辨。
   event_role: z.enum(['judge', 'user_cause']).optional(),
 });
 export type ProposalEvidenceRefT = z.infer<typeof ProposalEvidenceRef>;
@@ -323,15 +297,13 @@ const BaseProposal = z.object({
   evidence_refs: z.array(ProposalEvidenceRef).default([]),
   rollback_plan: z.unknown().optional(),
   cooldown_key: z.string().min(1).max(300).optional(),
-  // P5.6 / YUK-178 (ADR-0011 v2 §2.1) — proactive (default, absence) vs corrective
-  // discriminator. OPTIONAL on every kind via the union; absence === 'proactive'
-  // (ND-SK-1, see resolveSuggestionKind). Set deterministically only by the
-  // variant_question producer (the one structurally-corrective kind, SK-3) and by
-  // explicit model labeling via the 4 propose tools' optional input arg (§4.1/§4.2).
-  // It changes ONLY KPI attribution (corrective is excluded from the
-  // accept-learned signal, §5.1), never proposal accept/reject side-effects
-  // (ND-SK-2). No migration — payload field on the existing experimental:proposal
-  // event.
+  // Proactive (default, absence) vs corrective discriminator. OPTIONAL on
+  // every kind via the union; absence === 'proactive' (see
+  // resolveSuggestionKind). Set deterministically only by the
+  // variant_question producer (the one structurally-corrective kind) and by
+  // explicit model labeling via the 4 propose tools' optional input arg.
+  // Changes ONLY KPI attribution (corrective is excluded from the
+  // accept-learned signal), never proposal accept/reject side-effects.
   suggestion_kind: SuggestionKind.optional(),
 });
 
@@ -348,38 +320,32 @@ export const KnowledgeNodeProposalChange = z.object({
 });
 export type KnowledgeNodeProposalChangeT = z.infer<typeof KnowledgeNodeProposalChange>;
 
-// ADR-0032 D4-E1 (YUK-203) — edge proposal discriminator. `edge_op` distinguishes
-// CREATE (the pre-existing default: propose a new mesh edge) from ARCHIVE (soft-delete
-// a live edge — set archived_at via the accept applier, never a hard delete;守
-// 「写入仅 propose + correction 可回滚」不变量). It is an ADDITIVE marker with
-// `.default('create')`, so every payload written before this field (the nightly
-// batch path, all create-branch tool callers, every persisted proposal event)
-// parses byte-identically to the prior create shape — backward compatibility is
-// preserved by construction. `from/to/relation_type` stay required on BOTH ops:
-// for archive they NAME the edge the proposal targets (inbox card render + rubric
-// structural checks read them), while `archive_edge_id` is the authoritative id
-// the applier flips. The node omnibus (propose_knowledge_mutation: propose_new …
-// archive) is the discriminator precedent; here the discriminator lives on the
-// proposed_change rather than a separate proposal kind to keep the knowledge_edge
-// kind (and its inbox/writer/dispatch wiring) single — only one new branch.
+// Edge proposal discriminator. `edge_op` distinguishes CREATE (the
+// pre-existing default: propose a new mesh edge) from ARCHIVE (soft-delete a
+// live edge — set archived_at via the accept applier, never a hard delete) and
+// SUPERSEDE (preserve a reconcile replacement recommendation until an explicit
+// user accept). It is an ADDITIVE marker with `.default('create')`, so every
+// payload written before this field parses byte-identically to the prior
+// create shape. `from/to/relation_type` stay required on BOTH ops: for archive
+// they NAME the edge the proposal targets (inbox card render + rubric
+// structural checks read them), while `archive_edge_id` is the authoritative
+// id the applier flips. The discriminator lives on the proposed_change rather
+// than a separate proposal kind to keep the knowledge_edge kind (and its
+// inbox/writer/dispatch wiring) single.
 export const KnowledgeEdgeProposalChange = z.object({
-  // 'create' (default / absence) = propose a new edge; 'archive' = soft-delete the
-  // live edge named by archive_edge_id; 'supersede' = preserve a reconcile
-  // replacement recommendation as pending until an explicit user accept.
-  // Defaulted so legacy/create payloads are unchanged.
   edge_op: z.enum(['create', 'archive', 'supersede']).default('create'),
   from_knowledge_id: z.string().min(1),
   to_knowledge_id: z.string().min(1),
   relation_type: RelationTypeSchema,
   weight: z.number().min(0).max(1).default(1),
-  // Authoritative target for edge_op==='archive': the live knowledge_edge.id to
-  // soft-delete. Optional on the shape so create payloads omit it; the archive
-  // PROPOSE path requires it (enforced at the tool executor, not the schema, so
-  // the create branch's parse stays untouched).
+  // Authoritative target for edge_op==='archive': the live knowledge_edge.id
+  // to soft-delete. Optional on the shape so create payloads omit it; the
+  // archive PROPOSE path requires it (enforced at the tool executor, not the
+  // schema, so the create branch's parse stays untouched).
   archive_edge_id: z.string().min(1).optional(),
-  // YUK-689 — a reconcile SUPERSEDE is still an edge proposal: the model may
-  // recommend replacing a live edge, but only an explicit user accept applies
-  // the archive + replacement transaction. These fields preserve the judged
+  // A reconcile SUPERSEDE is still an edge proposal: the model may recommend
+  // replacing a live edge, but only an explicit user accept applies the
+  // archive + replacement transaction. These fields preserve the judged
   // decision until that accept boundary.
   supersede_confidence: z.number().min(0).max(1).optional(),
   supersede_neighbor_index: z.number().int().min(0).nullable().optional(),
@@ -413,10 +379,10 @@ export const KnowledgeMutationProposalChange = z.discriminatedUnion('mutation', 
 ]);
 export type KnowledgeMutationProposalChangeT = z.infer<typeof KnowledgeMutationProposalChange>;
 
-// YUK-143 / ADR-0025 — goal_scope proposed_change. `scope_knowledge_ids` are
-// the AI-inferred + user-confirmable nodes the goal covers; `sequence_hint` is
-// AI-internal ordering (NOT a progress metric, ND-4). The user can edit any of
-// these before accepting (W10 inbox UI) — accept materializes the goal row.
+// goal_scope proposed_change. `scope_knowledge_ids` are the AI-inferred +
+// user-confirmable nodes the goal covers; `sequence_hint` is AI-internal
+// ordering (NOT a progress metric, ND-4). The user can edit any of these
+// before accepting — accept materializes the goal row.
 export const GoalScopeProposalChange = z.object({
   title: z.string().min(1).max(280),
   // nullable / optional — cross-subject goals allowed (ND-1).
@@ -427,13 +393,13 @@ export const GoalScopeProposalChange = z.object({
 });
 export type GoalScopeProposalChangeT = z.infer<typeof GoalScopeProposalChange>;
 
-// YUK-202 / BlockAssembly path-B (design 2026-06-02 §1) — block_merge
-// proposed_change. `primary_block_id` keeps its structured tree; `merge_block_ids`
-// fold into it (min 1). `ingestion_session_id` scopes the merge (mergeQuestions is
-// same-session only). `continuity_signal` is the AI's semantic-only cue (§0:
-// spatial/bbox page-edge detection is DEFERRED to slice 2b — the task gains a
-// spatial input later with no rework); optional because low-signal candidates can
-// still propose. Acceptance reuses the YUK-195 `mergeQuestions` primitive.
+// block_merge proposed_change. `primary_block_id` keeps its structured tree;
+// `merge_block_ids` fold into it (min 1). `ingestion_session_id` scopes the
+// merge (mergeQuestions is same-session only). `continuity_signal` is the AI's
+// semantic-only cue (spatial/bbox page-edge detection is deferred — the task
+// gains a spatial input later with no rework); optional because low-signal
+// candidates can still propose. Acceptance reuses the `mergeQuestions`
+// primitive.
 export const BlockMergeProposalChange = z.object({
   primary_block_id: z.string().min(1),
   merge_block_ids: z.array(z.string().min(1)).min(1),
@@ -441,51 +407,45 @@ export const BlockMergeProposalChange = z.object({
   continuity_signal: z
     .enum(['page_edge', 'numbering', 'stem_answer_split', 'carryover'])
     .optional(),
-  // YUK-202 fork 4a — the AI's 0..1 confidence in this merge candidate, persisted
-  // at propose time so the inbox can sort/colour by it (consumed by the redraw UI
-  // slice, YUK-169). The model's confidence is not recoverable after the run, so
-  // it must be stored now even though the v1 inbox does not yet display it.
+  // The AI's 0..1 confidence in this merge candidate. The model's confidence
+  // is not recoverable after the run, so it must be persisted at propose time
+  // even before the inbox displays it.
   confidence: z.number().min(0).max(1).optional(),
 });
 export type BlockMergeProposalChangeT = z.infer<typeof BlockMergeProposalChange>;
 
-// YUK-227 S3 Slice C (ADR-0002) — image_candidate proposed_change. The page URL +
-// title + the agent's summary of why it judged the source image-type. NO image bytes
-// here: the bytes are downloaded from `source_url` only on accept (the accept handler
-// in actions.ts is the single VLM 抽图 trigger — there is no auto path). Mirrors the
-// SourcingImageCandidate output shape (src/core/schema/sourcing.ts).
+// image_candidate proposed_change. The page URL + title + the agent's summary
+// of why it judged the source image-type. NO image bytes here: the bytes are
+// downloaded from `source_url` only on accept (the accept handler is the
+// single VLM 抽图 trigger — there is no auto path). Mirrors the
+// SourcingImageCandidate output shape (sourcing.ts).
 export const ImageCandidateProposalChange = z.object({
   source_url: z.string().url(),
   source_title: z.string().min(1),
   summary_md: z.string().min(1).max(4000),
-  // YUK-227 S3 Slice C (FIX-3) — the knowledge_ids the sourcing job already
-  // resolved for this run (same archived-filtered live nodes the text path
-  // attributes its drafts to). Carried at propose time so the accept handler can
-  // attribute the materialized question WITHOUT re-resolving — the text path
-  // stamps these on the question.knowledge_ids column, so the image path must too
-  // or the materialized question is orphaned (unattributable to the originating
-  // 知识点). Optional + defaulted: a legacy proposal written before this field
-  // (or a run that resolved no node) parses to [] and the accept handler inserts
-  // an empty attribution exactly as before — no behaviour regression.
+  // The knowledge_ids the sourcing run already resolved for this candidate.
+  // Carried at propose time so the accept handler can attribute the
+  // materialized question WITHOUT re-resolving — the text path stamps these on
+  // question.knowledge_ids, so the image path must too or the materialized
+  // question is orphaned (unattributable to the originating 知识点).
+  // Defaulted: a legacy proposal (or a run that resolved no node) parses to []
+  // and the accept handler inserts an empty attribution exactly as before.
   knowledge_ids: z.array(z.string().min(1)).default([]),
-  // YUK-227 S3 Slice C (FIX-R2-5) — the 题型约束 the sourcing run was pinned to (if
-  // any). The text path enforces answerClassCompatible per question; image candidates carry no
-  // per-question kind at propose time (the stem is unread until accept's VLM), so the
-  // run-level requested kind is stamped here and the accept handler normalizes it
-  // through the single-authority question-kind vocabulary (src/subjects/question-kind.ts)
-  // to set question.kind. Optional + free-string: a legacy proposal or an unpinned run
-  // omits it and accept falls back to short_answer (the prior unconditional behaviour);
-  // the value is validated/normalized at accept time (an unrecognised value also falls
-  // back), not here, so a relaxed string keeps the proposal write tolerant.
+  // The 题型约束 the sourcing run was pinned to (if any). Image candidates
+  // carry no per-question kind at propose time (the stem is unread until
+  // accept's VLM), so the run-level requested kind is stamped here and the
+  // accept handler normalizes it through the single-authority question-kind
+  // vocabulary (src/subjects/question-kind.ts) to set question.kind.
+  // Free-string + validated/normalized at accept time (an unrecognised value
+  // falls back to short_answer), not here, so the proposal write stays tolerant.
   requested_kind: z.string().min(1).optional(),
 });
 export type ImageCandidateProposalChangeT = z.infer<typeof ImageCandidateProposalChange>;
 
-// ADR-0031 / YUK-304 (lane B) — question_draft proposed_change. `question_id` is
-// the ALREADY-INSERTED draft row (written in the same tx as this proposal by
-// runQuestionAuthor — see src/server/ai/question-author.ts); the rest is a
-// display/audit snapshot so the inbox card can render without a question join.
-// Accept reads `question_id` and promotes draft→active + FSRS-enrolls.
+// question_draft proposed_change. `question_id` is the ALREADY-INSERTED draft
+// row (written in the same tx as this proposal); the rest is a display/audit
+// snapshot so the inbox card can render without a question join. Accept reads
+// `question_id` and promotes draft→active + FSRS-enrolls.
 export const QuestionDraftProposalChange = z.object({
   question_id: z.string().min(1),
   kind: QuestionKind,
@@ -501,18 +461,13 @@ export const QuestionDraftProposalChange = z.object({
 });
 export type QuestionDraftProposalChangeT = z.infer<typeof QuestionDraftProposalChange>;
 
-// ADR-0032 D6-B (YUK-203 lane L6) — question_edit proposed_change. The edit is a
-// NARROW, typed node operation (NOT an arbitrary JSON patch): one op per
-// proposal, addressing a node by its `node_id` in the active question's
-// `structured` tree (the same id/role coordinate the L5 addressable projection
-// exposes). Each op is intentionally scoped to a single structured-node field so
-// the accept-side verify gate can re-derive the resulting tree and re-validate
-// the StructuredQuestion invariants before persisting:
-//   - edit_node_text   — overwrite a node's prompt_text (stem passage / leaf 题面).
-//   - edit_reference    — overwrite a leaf node's answers + analysis (参考答案/解析).
-//   - set_choice        — replace the option list of a single-choice/leaf node.
-//   - set_node_kind     — set the advisory `kind` hint on a node (no pool effect).
-// `question_id` names the active question row; `node_id` names the target node.
+// question_edit proposed_change. The edit is a NARROW, typed node operation
+// (NOT an arbitrary JSON patch): one op per proposal, addressing a node by its
+// `node_id` in the active question's `structured` tree (the same id/role
+// coordinate the addressable projection exposes). Each op is intentionally
+// scoped to a single structured-node field so the accept-side verify gate can
+// re-derive the resulting tree and re-validate the StructuredQuestion
+// invariants before persisting.
 export const QuestionEditOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('edit_node_text'),
@@ -522,8 +477,8 @@ export const QuestionEditOp = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('edit_reference'),
     node_id: z.string().min(1),
-    // Both optional individually, but the tool/applier require at least one to be
-    // present (an edit must change something). answers replaces the full list.
+    // Both optional individually, but the tool/applier require at least one to
+    // be present (an edit must change something). answers replaces the full list.
     answers: z.array(z.string()).optional(),
     analysis: z.string().optional(),
   }),
@@ -541,14 +496,14 @@ export const QuestionEditOp = z.discriminatedUnion('op', [
 export type QuestionEditOpT = z.infer<typeof QuestionEditOp>;
 
 export const QuestionEditProposalChange = z.object({
-  // Legacy 提案必带；YUK-1468 新文档提案（document create）落 edit_request 时可为空。
+  // Legacy 提案必带；新文档提案（document create）落 edit_request 时可为空。
   question_id: z.string().min(1).optional(),
-  // Legacy narrow op（旧 propose_question_edit 形状；YUK-1468 后新提案走 edit_request）。
+  // Legacy narrow op（旧 propose_question_edit 形状；新提案走 edit_request）。
   edit: QuestionEditOp.optional(),
-  // Display-only excerpt for the inbox card (the question row is the source of
-  // truth — accept re-reads the live tree, never trusts this snapshot).
+  // Display-only excerpt for the inbox card (accept re-reads the live tree,
+  // never trusts this snapshot).
   node_preview: z.string().optional(),
-  // YUK-1468 — 统一 edit_question 契约提案（新路径优先于窄 edit）：
+  // 统一 edit_question 契约提案（新路径优先于窄 edit）：
   // {ops?, document?, draft_ref?, expected_revision?, expected_draft_version?}。
   // accept 时经同一 draft ops → submit gate 管线回放。
   edit_request: z
@@ -564,19 +519,18 @@ export const QuestionEditProposalChange = z.object({
 });
 export type QuestionEditProposalChangeT = z.infer<typeof QuestionEditProposalChange>;
 
-// YUK-440 / YUK-406 (教研团 Phase 0) — conjecture proposed_change. A first-class
-// belief about the learner's mind, induced by the nightly research-meeting job from
-// a recurring (cause_category × KC) failure cell. The conjecture IS the qualitative
-// claim AND its falsifiable prediction: `predicted_p` is the claim's implied P(owner
-// answers the probe correctly), and `baseline_p_at_induction` snapshots the
-// quantitative PFA/θ p(L) the claim must beat (scored later by scorePrediction).
-// `confidence` is internal ranking/calibration only — the read model strips it and it
-// is NEVER rendered as a number (anti-false-precision). `discriminating` asserts the
-// probe is one only THIS misconception produces a wrong answer to — a hard
-// precondition (with recurrence_count ≥ 2) for the typed-ledger writing
-// `confused-with-X`, so a single off-target failure cannot flip the ledger to a
-// misconception state (the consistency-gate role YUK-344 plays in Phase 1+; Phase 0
-// substitutes this in-payload contract). See docs/design/2026-06-27-a13-ts-half-design.md.
+// conjecture proposed_change. A first-class belief about the learner's mind,
+// induced from a recurring (cause_category × KC) failure cell. The conjecture
+// IS the qualitative claim AND its falsifiable prediction: `predicted_p` is
+// the claim's implied P(owner answers the probe correctly), and
+// `baseline_p_at_induction` snapshots the quantitative PFA/θ p(L) the claim
+// must beat (scored later by scorePrediction). `confidence` is internal
+// ranking/calibration only — the read model strips it and it is NEVER rendered
+// as a number (anti-false-precision). `discriminating` asserts the probe is
+// one only THIS misconception produces a wrong answer to — a hard precondition
+// (with recurrence_count ≥ 2) for the typed-ledger writing `confused-with-X`,
+// so a single off-target failure cannot flip the ledger to a misconception
+// state.
 export const ConjectureProposalChange = z
   .object({
     claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS),
@@ -590,16 +544,14 @@ export const ConjectureProposalChange = z
     // Judge gold reference. The 2000 cap matches current v3 producer output and the
     // historical payload contract.
     probe_reference_md: z.string().trim().min(1).max(2000),
-    // Optional only for historical payload compatibility. Every v2 producer writes
-    // both fields; a well-formed old proposal keeps its terminal v1 answer rule
-    // instead of inventing a follow-up or stranding an active probe.
+    // Optional only for historical payload compatibility. Every v2 producer
+    // writes both fields; a well-formed old proposal keeps its terminal v1
+    // answer rule instead of inventing a follow-up or stranding an active probe.
     followup_probe_md: z.string().trim().min(1).max(2000).optional(),
-    // Historical v2 outer fields keep their original caps; nested v3 specs enforce
-    // the tighter producer contract before any new proposal can be accepted.
     followup_probe_reference_md: z.string().trim().min(1).max(2000).optional(),
-    // YUK-821 v3 additions are optional only so historical v1/v2 proposal JSON
-    // remains readable. Every new automatic producer writes the complete trio,
-    // and the accept path fails closed for a newly-created proposal without it.
+    // Optional only so historical v1/v2 proposal JSON remains readable. Every
+    // new automatic producer writes the complete trio, and the accept path
+    // fails closed for a newly-created proposal without it.
     diagnostic_spec: ConjectureDiagnosticSpec.optional(),
     probe_spec: ConjectureProbeSpec.optional(),
     followup_probe_spec: ConjectureProbeSpec.optional(),
@@ -721,9 +673,9 @@ export const ConjectureProposalChange = z
   });
 export type ConjectureProposalChangeT = z.infer<typeof ConjectureProposalChange>;
 
-// YUK-1016 / 454-B — 新错因类目的收编载荷。`category_id` 必须走
-// `ov_<slug>` 命名空间（生产者负责生成，applier 只做 Zod 校验 + 防撞检查）；
-// `source` 区分 LLM 复发提议与 owner 手动提议，两条路径共用同一 accept 落点。
+// 新错因类目的收编载荷。`category_id` 必须走 `ov_<slug>` 命名空间（生产者负责
+// 生成，applier 只做 Zod 校验 + 防撞检查）；`source` 区分 LLM 复发提议与 owner
+// 手动提议，两条路径共用同一 accept 落点。
 export const CauseCategoryProposalChange = z.object({
   category_id: CauseCategory,
   label: z.string().trim().min(1).max(60),
@@ -796,51 +748,48 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     target: ProposalTarget.extend({ subject_kind: z.literal('goal') }),
     proposed_change: GoalScopeProposalChange,
   }),
-  // YUK-202 / BlockAssembly path-B (design 2026-06-02 §1).
+  // YUK-202 / BlockAssembly path-B — 见 BlockMergeProposalChange。
   BaseProposal.extend({
     kind: z.literal('block_merge'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question_block') }),
     proposed_change: BlockMergeProposalChange,
   }),
-  // YUK-227 S3 Slice C (ADR-0002) — image-type source candidate. target.subject_kind
-  // is 'source_asset' (the materialized asset the accept handler will create); the
-  // subject_id is null at propose time (the asset does not exist until accept).
+  // image_candidate: target.subject_kind is 'source_asset' (the materialized
+  // asset the accept handler will create); the subject_id is null at propose
+  // time (the asset does not exist until accept).
   BaseProposal.extend({
     kind: z.literal('image_candidate'),
     target: ProposalTarget.extend({ subject_kind: z.literal('source_asset') }),
     proposed_change: ImageCandidateProposalChange,
   }),
-  // ADR-0031 / YUK-304 (lane B) — copilot-authored draft question. target is the
-  // already-inserted draft question row (subject_id = question id, known at
-  // propose time — contrast image_candidate whose asset is minted on accept).
+  // question_draft: target is the already-inserted draft question row
+  // (subject_id = question id, known at propose time — contrast image_candidate
+  // whose asset is minted on accept).
   BaseProposal.extend({
     kind: z.literal('question_draft'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
     proposed_change: QuestionDraftProposalChange,
   }),
-  // ADR-0032 D6-B (YUK-203 lane L6) — active-question structured node edit. target
-  // is the live active question row (subject_id = question id, known at propose
-  // time). Accept applies the narrow op to question.structured (practice package
-  // applier) behind a mini verify gate; reversible via the audit event.
+  // question_edit: target is the live active question row. Accept applies the
+  // narrow op to question.structured (practice package applier) behind a mini
+  // verify gate; reversible via the audit event.
   BaseProposal.extend({
     kind: z.literal('question_edit'),
     target: ProposalTarget.extend({ subject_kind: z.literal('question') }),
     proposed_change: QuestionEditProposalChange,
   }),
-  // YUK-440 / YUK-406 (教研团 Phase 0) — conjecture about the learner's mind. target
-  // subject_kind 'mind_model' with subject_id = the knowledge_id the belief is about
-  // (the conjecture is not an edit to any persisted row — it is a hypothesis-as-event).
-  // accept/edit/reject are handled by acceptConjectureProposal (agency package).
-  // Flows through the existing experimental:proposal event/inbox path
-  // (writeAiProposal default + proposalWhere).
+  // conjecture: target subject_kind 'mind_model' with subject_id = the
+  // knowledge_id the belief is about (the conjecture is not an edit to any
+  // persisted row — it is a hypothesis-as-event). accept/edit/reject are
+  // handled by acceptConjectureProposal (agency package).
   BaseProposal.extend({
     kind: z.literal('conjecture'),
     target: ProposalTarget.extend({ subject_kind: z.literal('mind_model') }),
     proposed_change: ConjectureProposalChange,
   }),
-  // YUK-1016 / 454-B — 错因 catalog 扩张提议。target.subject_kind =
-  // 'subject_profile'、subject_id = 目标科目 profile.id（被扩张的是该 profile
-  // 的词表视图）；category_id 本体在 proposed_change（收编后 = overlay 行 id）。
+  // cause_category: target.subject_kind = 'subject_profile'、subject_id = 目标
+  // 科目 profile.id（被扩张的是该 profile 的词表视图）；category_id 本体在
+  // proposed_change（收编后 = overlay 行 id）。
   BaseProposal.extend({
     kind: z.literal('cause_category'),
     target: ProposalTarget.extend({ subject_kind: z.literal('subject_profile') }),
@@ -854,10 +803,10 @@ export function parseAiProposalPayload(input: unknown): AiProposalPayloadT {
   return AiProposalPayload.parse(input);
 }
 
-// P5.6 / YUK-178 (ND-SK-1) — absence === 'proactive'. The single reader helper
-// so the default-to-proactive rule lives in one place; the KPI gate
-// (signals.ts) and any future reader resolve the kind through this. A corrective
-// proposal must have explicitly set the field at emit (producer hard-set for
+// absence === 'proactive'. The single reader helper so the
+// default-to-proactive rule lives in one place; the KPI gate (signals.ts) and
+// any future reader resolve the kind through this. A corrective proposal must
+// have explicitly set the field at emit (producer hard-set for
 // variant_question, or model-labeled via the propose-tool arg).
 export function resolveSuggestionKind(payload: {
   suggestion_kind?: SuggestionKindT;

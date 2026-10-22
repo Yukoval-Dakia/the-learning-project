@@ -1,21 +1,14 @@
-// YUK-453 cold-start inc-A — POST /api/practice/calibration/anchors: owner
-// fixed-anchor write face.
+// POST /api/practice/calibration/anchors: owner fixed-anchor write face.
 //
-// docs/design/2026-06-20-cold-start-day-one-design.md §5 inc-A + §4.1.
-//
-// owner 钦定 ~5-10 道锚题的难度档（粗分桶，§5 Q2 决策）→ 写 item_calibration
+// owner 钦定 ~5-10 道锚题的难度档（粗分桶）→ 写 item_calibration
 // { b: bucketToLogit(bucket), b_anchor: same, track:'hard', source:'fixed_anchor' }。
-// 这是 n=1 唯一不违红线的「校 LLM 难度系统性 offset」杠杆（§4.1 缓解 1）。
+// 这是 n=1 唯一不违红线的「校 LLM 难度系统性 offset」杠杆。
 //
-// 写真身在 src/server/mastery/fixed-anchor.ts（item_calibration 单写者契约——
-// db.insert/update(item_calibration) 只允许出现在 src/server/mastery/，
-// step9-invariant-audit.test.ts）；本 handler 只 CALL setFixedAnchors，绝不直接写表
-// （镜像 review-draft-enable 只 CALL verifyAndPromote 的纪律）。
+// 写真身在 server/mastery/fixed-anchor.ts（item_calibration 单写者契约——直接
+// insert/update 只允许出现在 src/server/mastery/）；本 handler 只 CALL
+// setFixedAnchors。θ̂ 读路径优先读非 NULL 锚，故新锚自动被选题 / θ̂ 更新读到。
 //
-// θ̂ 读路径不动：effectiveB = b_calib ?? b_anchor ?? b 已优先读非 NULL 锚
-// （recalibration.ts:90），故新锚自动被选题 / θ̂ 更新读到，无需任何读路径改动（§3 红线 3）。
-//
-// Auth：/api/* internal-token 中间件由组合根（server/app.ts）统一施加，本 handler 无需再校验。
+// Auth：/api/* internal-token 由组合根（server/app.ts）统一施加。
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';

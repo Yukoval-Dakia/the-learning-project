@@ -24,7 +24,7 @@ import { AggregationPolicy } from './scoring';
 // D5：已接收（含 202）的作答守恒/零丢失 —— ResponseSet 原样冻结于
 // SubmissionRecord；rejudge/appeal 只重解读原证据（D8），不改写 submission。
 
-// ---------- group 级证据（P1-6：整页照等 whole-group 证据的显式载体） ----------
+// ---------- group 级证据（整页照等 whole-group 证据的显式载体） ----------
 
 /**
  * 声明式关联目标：默认附到当前 evaluation group（all_units），
@@ -55,7 +55,7 @@ export const SubmissionRecord = z.object({
   revision_id: RevisionId,
   evaluation_group_id: EvaluationGroupId,
   response_set: ResponseSet,
-  /** group 级原始证据（P1-6；requires_group_evidence 的单元从这里取证据）。 */
+  /** group 级原始证据（requires_group_evidence 的单元从这里取证据）。 */
   group_evidence: z.array(GroupEvidence).default([]),
   /** 幂等键：同 key 不同答案/附件/revision/occurrence ⇒ 冲突（不是覆盖）。 */
   idempotency_key: z.string().min(1),
@@ -115,7 +115,7 @@ export const ScoredUnitResult = z.object({
   points_awarded: z.number().min(0).nullable(),
   scored_because: z.enum(['response', 'blank_marked_zero']),
   /**
-   * ADR-0074 D3a / 独立复核 P1-1 修复：加法单元判为【部分对且无印规则】的
+   * ADR-0074 D3a：加法单元判为【部分对且无印规则】的
    * typed 承载 —— 正确数/总数 + points_awarded=null（分数未知，不造分、
    * 不摊等权、不伪零）。执行器只在确定性判得正确计数、且卷面没有可折算
    * 分数的 typed 规则时携带；聚合进 no_mapping（见 aggregateUnitResults）。
@@ -160,7 +160,18 @@ export const ScoredUnitResult = z.object({
           }),
         )
         .optional(),
-      rule_case: z.union([z.number().int().min(0), z.literal('otherwise')]),
+      rule_case: z.union([z.number().int().min(0), z.literal('otherwise')]).optional(),
+      /**
+       * YUK-1407 — exact 判分的终态答案提取证据：过程作答里确定性抽出的
+       * 明示结论（"答：…"/"所以…"/末行等式右侧）及其 marker。只在比较器
+       * 实际走了终态提取时携带；缺省 = 没有提取（直接整段比较）。
+       */
+      final_answer: z
+        .object({
+          value: z.string(),
+          marker: z.enum(['answer_marker', 'conclusion_marker', 'trailing_equality']),
+        })
+        .optional(),
     })
     .optional(),
   matched: z
@@ -172,6 +183,12 @@ export const ScoredUnitResult = z.object({
     .optional(),
   feedback_md: z.string().optional(),
   evidence_citations: z.array(EvidenceCitation).default([]),
+  /**
+   * YUK-1407 — 实际执行路径：deterministic comparator id / model task_kind /
+   * 'human_review'。由 evaluateSubmissionCore 分发点盖印（receipt 的 route
+   * 真相）；asserted 结果由调用方按实标注。历史行无此字段 ⇒ 未知不补造。
+   */
+  judged_by: z.string().min(1).optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type ScoredUnitResultT = z.infer<typeof ScoredUnitResult>;
@@ -181,6 +198,8 @@ export const PendingUnitResult = z.object({
   status: z.literal('pending'),
   scoring_unit_id: z.string().min(1),
   pending: PendingState,
+  /** YUK-1407 — 见 ScoredUnitResult.judged_by；pending 单元同样盖印执行路径。 */
+  judged_by: z.string().min(1).optional(),
   probe_judgement: ConjectureProbeResponseJudgement.optional(),
 });
 export type PendingUnitResultT = z.infer<typeof PendingUnitResult>;
@@ -218,7 +237,7 @@ export const AggregateOutcome = z.discriminatedUnion('kind', [
     kind: z.literal('partial_unknown_points'),
     /** 已确定分值单元的合计（partial 单元分数未知，不计入、不折算）。 */
     known_points: z.number().min(0),
-    /** 分数未知的部分对单元（typed 正确数/总数；无分数、无比例 —— ADR-0074 D3a / 复核 P1-1 收口）。 */
+    /** 分数未知的部分对单元（typed 正确数/总数；无分数、无比例 —— ADR-0074 D3a）。 */
     partial_units: z
       .array(
         z.object({
@@ -285,7 +304,7 @@ export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
 // ---------- evaluation record ----------
 
 /**
- * YUK-1096 P1-2：status / unit_results / aggregate 的一致性 superRefine ——
+ * YUK-1096：status / unit_results / aggregate 的一致性 superRefine ——
  * 矛盾态在【schema 层】拒收，不只是消费侧约定：
  *   - pending ⇒ aggregate 必须为 null（未决评估绝不携带聚合快照）；
  *   - completed ⇒ aggregate 必须非 null（完成态无聚合是矛盾）；
@@ -383,7 +402,7 @@ export type EvaluationRecordT = z.infer<typeof EvaluationRecord>;
 /**
  * 唯一聚合点：unit 结果 → 总分/等级，每个 unit 恰好计一次。fail-closed：
  *
- * 规则（§4.4 / D13 —— 总分只聚合一次；P1-1 复审加严）：
+ * 规则（§4.4 / D13 —— 总分只聚合一次）：
  *   - basis 自身防御：重复 unit id ⇒ invalid_result（不得双计）；
  *   - 结果集必须与 basis.units 【恰好相等】（多余 ⇒ mismatch —— 多余结果
  *     不得被忽略，也不得混入总分）；
@@ -403,7 +422,7 @@ export function aggregateUnitResults(
   basis: ScoringBasisT,
   unitResults: readonly ScoringUnitResultT[],
 ): AggregateOutcomeT {
-  // basis 防御：重复 unit id 会让下方 Map 静默合并双计（P1-1）。
+  // basis 防御：重复 unit id 会让下方 Map 静默合并双计。
   const unitById = new Map<string, ScoringUnitT>();
   for (const unit of basis.units) {
     if (unitById.has(unit.scoring_unit_id)) {
@@ -465,7 +484,7 @@ export function aggregateUnitResults(
 
   // 每单元解析恰好一次贡献：加法用结果分（受发布上限约束）；
   // holistic 用发布侧 level_points 映射；空白计零受 basis 政策约束，
-  // 且【绝不允许解析为正分】（P1-A：加法正分与 holistic 正映射都算矛盾结果）。
+  // 且【绝不允许解析为正分】（加法正分与 holistic 正映射都算矛盾结果）。
   const contributionOf = (unitId: string): Contribution => {
     const unit = unitById.get(unitId) as ScoringUnitT;
     const result = scored(unitId);
@@ -475,7 +494,7 @@ export function aggregateUnitResults(
         detail: `unit '${unitId}' scored blank as zero but basis.blank_scores_zero=false`,
       };
     }
-    // P1-1：typed 部分对承载的一致性裁决（fail-closed，同 points 纪律层）。
+    // typed 部分对承载的一致性裁决（fail-closed，同 points 纪律层）。
     const partial = result.partial_unknown_points;
     if (partial != null) {
       if (unit.criterion.kind === 'holistic_level') {
@@ -498,7 +517,7 @@ export function aggregateUnitResults(
       }
     }
     if (unit.criterion.kind === 'holistic_level') {
-      // YUK-1096 P1-3：holistic 单元的分数只经发布侧 level_points 映射
+      // YUK-1096：holistic 单元的分数只经发布侧 level_points 映射
       // 解析 —— 执行器自报 points_awarded 是矛盾输入（999 分不得泄入
       // breakdown/总分），fail-closed，不静默归一化。
       if (result.points_awarded !== null) {
@@ -520,7 +539,7 @@ export function aggregateUnitResults(
         };
       }
       if (result.scored_because === 'blank_marked_zero' && mapped > 0) {
-        // P1-A：空白判零的结果不得经 holistic 映射获得正分。
+        // 空白判零的结果不得经 holistic 映射获得正分。
         return {
           kind: 'invalid',
           detail: `unit '${unitId}' is blank_marked_zero but its mapped level '${levelId}' yields positive credit ${mapped}`,
@@ -552,7 +571,7 @@ export function aggregateUnitResults(
       };
     }
     if (result.scored_because === 'blank_marked_zero' && result.points_awarded > 0) {
-      // P1-A：空白判零却携带正分是矛盾结果 —— 拒绝，不静默改写为 0。
+      // 空白判零却携带正分是矛盾结果 —— 拒绝，不静默改写为 0。
       return {
         kind: 'invalid',
         detail: `unit '${unitId}' is blank_marked_zero but carries positive credit ${result.points_awarded}`,
@@ -587,7 +606,7 @@ export function aggregateUnitResults(
     resolved.push({ unitId, points: contribution.points });
   }
 
-  // weighted 缺权重 ⇒ fail-closed（不得雷默当 0，P1-1）。
+  // weighted 缺权重 ⇒ fail-closed（不得雷默当 0）。
   if (basis.aggregation.kind === 'weighted_sum') {
     for (const unitId of unitIds) {
       if (!(unitId in basis.aggregation.weights)) {
@@ -643,7 +662,7 @@ export function aggregateUnitResults(
   return { kind: 'points_total', points: total, policy: basis.aggregation };
 }
 
-// ---------- 幂等冲突判定（D5/§4.3；P1-7：occurrence 身份参与冲突判定） ----------
+// ---------- 幂等冲突判定（D5/§4.3；occurrence 身份参与冲突判定） ----------
 
 export type SubmissionIdempotencyOutcome =
   | { outcome: 'same_payload' }
@@ -660,7 +679,7 @@ export type SubmissionIdempotencyOutcome =
  * 纯判定：同 idempotency_key 重复提交时，逐字相同的冻结输入幂等重放，
  * 不同答案/附件/revision ⇒ 冲突（不覆盖、不丢已接收作答）。
  *
- * P1-7：幂等键只在【同一 occurrence】内有效 —— 同 key 同答案但不同
+ * 幂等键只在【同一 occurrence】内有效 —— 同 key 同答案但不同
  * issuance / evaluation group 是另一次作答事件，不得被误判为幂等重放
  * （否则后续提交会被静默丢弃）。跨 scope 的键是调用方 bug：这里显式报
  * conflict（issuance_mismatch / evaluation_group_mismatch），fail-closed。

@@ -1,12 +1,8 @@
-// YUK-548 (worklist #5, component 3) — per-kind projection audit. YUK-549 (K10/K13) — the two
-// per-kind switches that used to live here (`auditProjectionKind`'s read+fold and `buildKindScanData`)
-// are gone: both now consume the ONE registry read pass, `PROJECTION_ENTITIES[kind].gatherWithContext`
-// (entity-registry.ts). This module keeps only the audit POLICY on top of that read — the value audit
-// (fold vs live row, throws propagate) and the symmetric rowset+value audit (anchor-gated, throws
-// isolated). READ-ONLY; writes nothing.
+// Per-kind projection audit policy built on the registry's single read pass. The value
+// audit compares fold to live values; the symmetric audit also checks the row set and
+// isolates per-id fold throws. Both are read-only.
 //
-// Consumers unchanged: scripts/audit-projection.ts (full-table loop), scripts/b3-gate.ts (flip gate),
-// and src/capabilities/knowledge/jobs/projection_oracle_sweep.ts (Q4a symmetric leg).
+// Consumed by scripts/audit-projection.ts, scripts/b3-gate.ts, and the oracle sweep.
 
 import type { Db, Tx } from '@/db/client';
 import { PROJECTION_ENTITIES, type ProjectionKind } from './entity-registry';
@@ -14,7 +10,6 @@ import { diffSnapshots } from './snapshot-diff';
 
 type DbLike = Db | Tx;
 
-// ── Allowlist shape (mirror audit-schema-allowlist.json) ──────────────────────────────
 export interface AllowlistEntry {
   reason: string;
   resolves_when: {
@@ -25,7 +20,6 @@ export interface AllowlistEntry {
 }
 export type ProjectionAllowlist = Record<string, AllowlistEntry>;
 
-// ── Drift representation ──────────────────────────────────────────────────────────────
 export interface DriftRecord {
   id: string;
   subject_kind: ProjectionKind;
@@ -55,19 +49,9 @@ function classify(
 }
 
 /**
- * Re-derive fold(events) for every live row of ONE `kind` and deep-diff against the live structural
- * columns. Returns the per-kind audit result. READ-ONLY — writes nothing.
- *
- * This is the VALUE audit (fold vs the live/imperative row). It intentionally has NO applicability
- * (genesis-anchor) gate: on a prod-CLONE that has been fully backfilled + rebuilt (the B3 gate flow)
- * every live row is anchored, so a fold-null is genuine drift. The LIVE-prod continuous oracle uses
- * a DIFFERENT, anchor-gated path (auditProjectionKindSymmetric, component 4) — see M3.
- *
- * THROW SEMANTICS (review O9, deliberate): a fold throw (the edge fold's ADR-0034 topology reject)
- * PROPAGATES out of `foldOne` and out of this function — the b3-gate depends on catching it to model
- * its audit.topologyReject NO-GO verdict; swallowing it here would silently downgrade a hard NO-GO
- * signal to a drift count. The report-only sweep path uses the symmetric audit below, which isolates
- * per-id throws instead.
+ * Re-derive fold(events) for every live row of one `kind` and deep-diff the structural
+ * columns. Read-only. A fold throw propagates: the b3 gate uses it as a topology NO-GO
+ * and must not see it downgraded to a drift count.
  */
 export async function auditProjectionKind(
   db: DbLike,
@@ -76,8 +60,7 @@ export async function auditProjectionKind(
 ): Promise<KindAuditResult> {
   const drift: DriftRecord[] = [];
   const allowed: DriftRecord[] = [];
-  // K10 — one registry read pass: per-kind live-row snapshot map + a prefetch-primed foldOne (the
-  // YUK-547 learning_item merge prefetch, the YUK-549 knowledge merge/rate prefetch, the edge mesh).
+  // One registry read pass: live snapshots plus a prefetch-primed foldOne.
   const { liveSnapshots, foldOne } = await PROJECTION_ENTITIES[kind].gatherWithContext(db);
   for (const [id, liveSnap] of liveSnapshots) {
     const expected = await foldOne(id); // throws propagate — see docblock (O9)
@@ -87,18 +70,13 @@ export async function auditProjectionKind(
   return { checked: liveSnapshots.size, drift, allowed };
 }
 
-// ── Component 4 (Q4a): symmetric rowset + value audit ─────────────────────────────────────────
+// ── Symmetric rowset + value audit ──────────────────────────────────────────────────────────────
 //
-// The CONTINUOUS oracle's read side (§0 table): over the FULL id universe (live rows ∪ event subjects
-// ∪ index anchors), detect (a) out-of-band value changes on anchored rows (FIELD_DRIFT), (b) rows the
-// log implies but that are not live (GHOST — would resurrect on a flip), and (c) anchored live rows
-// the log folds to null (MISSING — out-of-band insert, or the log implies deletion). It does NOT prove
-// reducer correctness (that is structurally tautological on an ON entity — see §0).
-//
-// M3 APPLICABILITY GATE: un-anchored ids are SKIPPED (a pre-event-sourced / §9.3 data-fix row folds to
-// null and would FALSE-positive as GHOST/MISSING). The gate reuses the registry's withGenesisAnchor.
-// The CALLER must run this inside a single REPEATABLE READ tx (M4) so the row read + the event read
-// see one snapshot — otherwise a concurrent write between them fabricates drift.
+// Over the full id universe (live rows, event subjects, index anchors), detect out-of-band
+// value changes on anchored rows (FIELD_DRIFT), rows the log implies but are not live
+// (GHOST), and anchored live rows that fold to null (MISSING). Un-anchored ids are skipped:
+// a pre-event row folds to null and would false-positive. Callers must hold one REPEATABLE
+// READ transaction so the row and event reads share a snapshot.
 
 export type SymmetricVerdict = 'CLEAN' | 'GHOST' | 'MISSING' | 'FIELD_DRIFT';
 
@@ -110,17 +88,10 @@ export interface SymmetricRecord {
 }
 
 /**
- * Symmetric (rowset + value) audit of ONE kind over the FULL id universe. Returns the NON-CLEAN
- * records (allowlisted ids excluded). READ-ONLY — writes nothing. MUST be called inside a single
- * REPEATABLE READ tx (M4). Un-anchored ids are skipped (M3).
- *
- * THROW ISOLATION (review O9): a per-id fold throw (foldKnowledgeEdge's ADR-0034 topology reject, or
- * any unanticipated reducer throw) is caught PER ID and recorded as FIELD_DRIFT with a
- * `<fold-threw>` sentinel diff (the parity.ts convention) — one bad row must never crash the whole
- * report-only sweep (a throw would propagate to the pg-boss handler → DLQ → a silent week-long
- * evidence blind spot). CONTRAST with auditProjectionKind above, which deliberately KEEPS throwing:
- * the b3-gate models the topology throw as its audit.topologyReject NO-GO verdict and must not have
- * that signal silently downgraded to a drift count.
+ * Symmetric (rowset + value) audit of one kind over the full id universe. Returns non-CLEAN
+ * records minus allowlisted ids. Read-only; the caller supplies one REPEATABLE READ
+ * transaction. A per-id fold throw is recorded as FIELD_DRIFT so one bad row cannot kill
+ * the report-only sweep; the value audit above deliberately keeps throwing.
  */
 export async function auditProjectionKindSymmetric(
   db: DbLike,
@@ -128,10 +99,8 @@ export async function auditProjectionKindSymmetric(
   allowlist: ProjectionAllowlist = {},
 ): Promise<SymmetricRecord[]> {
   const adapter = PROJECTION_ENTITIES[kind];
-  // Review K7 — ONE table scan: gatherWithContext already reads every live row for the snapshot map,
-  // so derive the live id set from its keys instead of a second adapter.liveIds(db) scan of the same
-  // table. The universe→anchored ordering constraint is unchanged; adapter.liveIds stays on the
-  // interface (the rebuild path's allProjectionIds still consumes it).
+  // Derive the live id set from the snapshot map instead of scanning the table twice.
+  // adapter.liveIds stays on the interface for the rebuild path's allProjectionIds.
   const { liveSnapshots, foldOne } = await adapter.gatherWithContext(db);
   const live = new Set(liveSnapshots.keys());
   const subjects = await adapter.eventSubjectIds(db);
@@ -141,13 +110,13 @@ export async function auditProjectionKindSymmetric(
   const out: SymmetricRecord[] = [];
   for (const id of universe) {
     if (allowlist[id]) continue; // known-acceptable divergence
-    if (!anchored.has(id)) continue; // M3 — un-anchored (fold-blind) row: skip, never false-positive
+    if (!anchored.has(id)) continue; // un-anchored row: skip, never false-positive
     let fold: Record<string, unknown> | null;
     try {
       fold = await foldOne(id);
     } catch (err) {
-      // O9 — report, don't crash (see docblock). A DB error inside the caller's tx poisons the tx
-      // and fails the run regardless; this rescue is for pure fold/reducer throws.
+      // Report, don't crash. A DB error poisons the caller's tx anyway; this rescues
+      // pure fold/reducer throws.
       out.push({
         id,
         kind,

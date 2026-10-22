@@ -4,10 +4,11 @@ import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { requireKnowledgeHistory } from '@/server/projections/knowledge';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 
 type InitialKnowledge = Pick<
@@ -36,25 +37,17 @@ export async function createKnowledgeNodeFromEvents(
       `knowledge ${initial.id} has history without a live row; repair before creation`,
     );
   }
-  // YUK-1004 — `general` is the fallback subject identity and is NEVER a valid
-  // node domain (subjects/profile.ts contract). Fail closed on it at the sole
-  // creation seam; registered aliases canonicalise at write, unrecognised
-  // domains (e.g. a custom subject minted pre-hydration) pass through verbatim.
+  // `general` is the fallback identity, never a node domain. Aliases canonicalize;
+  // unknown domains pass through.
   const canonicalDomain = resolveKnownSubjectId(initial.domain);
   if (canonicalDomain === 'general') {
     throw new Error(
       `knowledge ${initial.id} rejected: 'general' is the fallback subject identity, not a node domain`,
     );
   }
-  // YUK-1405 (Stage 1 B6 S5) — genesis-writes-`'approved'` is now a CALLER
-  // contract, not a universal rule: every caller of this seam must be creating
-  // the node inside an owner-authorised plan (seeds, subject roots, accepted
-  // proposal/import paths, the learner-initiated placement starter anchor).
-  // Agent-invented KCs must NOT come through here — `tagKnowledge` declares
-  // `approval_status:'pending'` on its own `experimental:auto_tag_kc_created`
-  // event and the knowledge fold honors only that claim. If a future genesis
-  // caller is ad-hoc rather than owner-authorised, the authorization must be
-  // carried as an explicit argument instead of silently self-approving.
+  // Callers own authorization: this seam creates approved nodes. Agent-invented
+  // KCs go through tagKnowledge, which declares pending. A future ad-hoc caller
+  // must carry explicit authorization rather than self-approving.
   const row: KnowledgeRowSnapshotT = {
     ...initial,
     domain: canonicalDomain ?? initial.domain,
@@ -85,4 +78,81 @@ export async function createKnowledgeNodeFromEvents(
   });
   await projectKnowledgeNodeGuarded(tx, row.id);
   return true;
+}
+
+export function subjectRootId(subjectId: string): string {
+  return `seed:${subjectId}:root`;
+}
+
+/** Idempotent subject root birth. Existing roots are never rewritten or given replacement history. */
+export async function ensureSubjectRoot(
+  tx: Tx,
+  subjectId: string,
+  displayName: string,
+): Promise<{ created: boolean; rootId: string }> {
+  const rootId = subjectRootId(subjectId);
+  const created = await createKnowledgeNodeFromEvents(
+    tx,
+    {
+      id: rootId,
+      name: displayName,
+      domain: subjectId,
+      parent_id: null,
+      proposed_by_ai: false,
+      created_at: new Date(),
+    },
+    { actorRef: 'subject-root-create' },
+    'skip',
+  );
+  return { created, rootId };
+}
+
+/** Caller owns control authorization and CAS; the root mutation shares its transaction. */
+export async function updateSubjectRootNameFromControl(
+  tx: Tx,
+  args: {
+    subjectId: string;
+    nextName: string;
+    controlAction: 'rename' | 'reset';
+  },
+): Promise<void> {
+  const rootId = subjectRootId(args.subjectId);
+  const [root] = await tx
+    .select()
+    .from(knowledge)
+    .where(eq(knowledge.id, rootId))
+    .limit(1)
+    .for('update');
+  // Legacy/test rows can exist without a root. With no knowledge row there is no
+  // mutation to fold; a later ensureSubjectRoot writes the genesis with displayName.
+  if (!root) return;
+  await requireKnowledgeHistory(tx, root);
+
+  // Stamp the materialization after the root row lock. A knowledge proposal can
+  // mutate this root without the control-plane lock; reusing an earlier timestamp
+  // would let replay order this rename before the mutation we just observed.
+  const materializedAt = new Date();
+  const nextVersion = root.version + 1;
+
+  await writeEvent(tx, {
+    id: newId(),
+    actor_kind: 'user',
+    actor_ref: 'owner',
+    action: 'experimental:subject_root_name_update',
+    subject_kind: 'knowledge',
+    subject_id: rootId,
+    outcome: 'success',
+    payload: {
+      control_action: args.controlAction,
+      subject_id: args.subjectId,
+      previous_name: root.name,
+      next_name: args.nextName,
+      previous_version: root.version,
+      next_version: nextVersion,
+    },
+    created_at: materializedAt,
+    // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
+    ingest_at: materializedAt,
+  });
+  await projectKnowledgeNodeGuarded(tx, rootId);
 }

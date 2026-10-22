@@ -42,8 +42,6 @@ export const mathProfile: SubjectProfile = {
     teachingStyle: '先检查条件和目标，再给推导路径，最后总结方法触发信号。',
     checkQuestionPolicy: '检查题应聚焦一个公式、条件判断或关键变形。',
     learningIntentPolicy: '把模糊目标改写成可练习的题型、知识点或解题步骤。',
-    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
-    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
     methodology: '',
     rubricGuidance: '',
   },
@@ -53,7 +51,7 @@ export const mathProfile: SubjectProfile = {
       label: '概念理解',
       description: '对数学定义、定理、条件的理解错误',
       review_priority: 5,
-      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      // Cause semantics are profile-owned.
       meta_cause_prior: 'flawed_model',
       rating_lean: 'conceptual',
       variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
@@ -139,8 +137,7 @@ export const mathProfile: SubjectProfile = {
       meta_cause_prior: null,
     },
   ],
-  // YUK-739 — verdict → FSRS rating mapping is profile-owned; math declares the
-  // universal 3-state mapping explicitly (FSRS surface is subject-agnostic today).
+  // FSRS is subject-agnostic today, so math declares the universal map.
   ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
@@ -150,22 +147,16 @@ export const mathProfile: SubjectProfile = {
   schedulingHints: {
     default_policy: 'fsrs',
   },
-  // M2.1 (2026-05-22): + 'steps' for derivation question kind.
-  // steps@1 capability is registered in default registry; run() body lands in M2.2.
-  // YUK-201: + 'multimodal_direct' so it is available as a judge_kind_override on
-  // math questions (override path). NOT added to preferredRoutes — steps@1 owns
-  // math derivations; math does not auto-route to multimodal_direct.
+  // steps owns derivations, so multimodal_direct is available only as an explicit
+  // override here and is deliberately absent from preferredRoutes.
   judgeCapabilities: ['exact', 'keyword', 'semantic', 'steps', 'multimodal_direct'],
-  // YUK-225 (S2 slice 4) — OF-1 首批源白名单候选 (调研报告
-  // .omc/research/2026-06-05-source-whitelist-candidates.md, owner review pending).
-  //   gaokao.eol.cn      — 中国教育在线·掌上高考, 历年高考数学真题+解析, 官方媒体 / 无登录,
-  //                        覆盖 2010–2025 (形态: 真题多图片嵌入, OCR 抽取有难度)。
-  //   gaokao.zxxk.com    — 学科网高考专项子站 (形态: 登录边界待 owner 人工确认)。
-  //   gaokao.neea.edu.cn — 教育部中国教育考试网, 权威性最高 (形态: 试题评析文章非题库, SSL 不稳)。
-  //   www.jyeoo.com — 菁优网 (YUK-697): jyeoo-rs 确定性题源 producer host。加入白名单使
-  //                   jyeoo_fetch 抓取的题 whitelist_match=true (选题排序不降权)。
+  // First-batch source whitelist candidates; owner confirmation still pending.
+  //   gaokao.eol.cn      — official media, 2010–2025 papers, OCR needed.
+  //   gaokao.zxxk.com    — login boundary unconfirmed.
+  //   gaokao.neea.edu.cn — highest authority, articles rather than a paper bank.
+  //   www.jyeoo.com      — jyeoo_fetch producer host; listed so its items sort normally.
   sourceWhitelist: ['gaokao.eol.cn', 'gaokao.zxxk.com', 'gaokao.neea.edu.cn', 'www.jyeoo.com'],
-  // 计算题优先找现成真题, 不足凭知识闭卷出 / 变式扩展。
+  // Prefer real papers, then closed-book generation / variants.
   sourcingRoutePreference: {
     calculation: ['sourced', 'closed_book', 'variant'],
   },

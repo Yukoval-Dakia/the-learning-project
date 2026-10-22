@@ -1,33 +1,14 @@
-// YUK-1355 — judge_calibration_sample durable operation boundary (timed-model
-// group reference extraction).
-//
-// This module is the family-specific reusable execution boundary shared by the
-// retained pg-boss handler (../jobs/judge_calibration_sample.ts — the real
-// runtime consumer) and the bounded DBOS migration candidate
-// (src/server/durable/calibration-sample-family.ts — NOT admitted runtime).
-// It preserves the family contract verbatim:
-//
-//   1. Kill switch JUDGE_CALIBRATION_SAMPLING_ENABLED — default OFF, read
-//      through the shared runtime-flag grammar on EVERY execution. Disabled
-//      means zero spend, zero events; the cron stays registered.
-//   2. MF3① batch-level bare provider pre-flight — resolveTaskProvider is
-//      called OUTSIDE any swallowing try/catch (the reverse of
-//      vision-judge-config.ts's degrade-to-undefined is deliberate: a dead
-//      second lane must fail the WHOLE run loud, never silently re-route or
-//      write observations). A throw here is a desired failure mode and is NOT
-//      routed through the paid-batch error hook.
-//   3. The paid batch stays the retained core's job (lazy import preserved):
-//      per-item isolation, MF8 unique-index duplicate mapping, run-summary
-//      event. This module adds NO provider retries, fallbacks or new writes.
-//
-// A `dbos` source pins the cutoff clock and summary label to scheduledAt.
-// This does not freeze candidate rows or prevent paid replay. The unregistered
-// DBOS candidate evaluates only the gate until durable claims exist.
-// A `pg-boss` source keeps sampleDeps.now (core default: new Date()) unchanged.
-//
-// The explicitly dispatched staged operation below consumes the fixed shared
-// store. The retained handler and unregistered gate-only candidate still use
-// Part 1; parent owns producer integration and runtime admission.
+// judge_calibration_sample durable operation boundary.
+// Shared by the retained pg-boss handler (the real consumer) and the unregistered DBOS
+// candidate.
+// 1. JUDGE_CALIBRATION_SAMPLING_ENABLED defaults off and is read every run: disabled means
+// zero spend and zero events; the cron stays registered.
+// 2. The bare provider pre-flight runs outside a swallowing try/catch: a dead second lane
+// must fail the whole run, not silently reroute or write observations.
+// 3. The paid batch stays in the retained core: per-item isolation, duplicate mapping, and
+// the run-summary event. No provider retries, fallbacks, or new writes here.
+// A dbos source pins the cutoff clock and summary label to scheduledAt but does not freeze
+// candidate rows or prevent paid replay. pg-boss keeps the core's default now.
 
 import { z } from 'zod';
 import type { Provider } from '@/ai/registry';
@@ -87,9 +68,9 @@ export interface CalibrationSampleOperationDeps {
   /** test hook: replace the env-derived config. */
   config?: JudgeCalibrationConfig;
   /** test hook: replace the pre-flight resolver (default: REAL resolveTaskProvider).
-   *  Returns void — the call exists solely for its throwing side-effect, and a
-   *  sync signature keeps an async test double from turning the intended
-   *  handler-visible throw into a dropped promise rejection (OCR review). */
+   * Returns void — the call exists solely for its throwing side-effect, and a
+   * sync signature keeps an async test double from turning the intended
+   * handler-visible throw into a dropped promise rejection (OCR review). */
   resolveProviderFn?: (
     kind: 'SemanticJudgeTask',
     override: { provider: Provider; model: string },
@@ -109,8 +90,8 @@ export interface CalibrationSampleOperationHooks {
   onDisabled?(flagEnv: string | undefined): void;
   onSampled?(result: JudgeCalibrationSampleResult): void;
   /** Called ONLY for paid-batch failures, before the rethrow that preserves the
-   *  backend-visible failure (pg-boss retry / DBOS workflow error). Pre-flight
-   *  and gate failures bypass this hook — the original handler's distinction. */
+   * backend-visible failure (pg-boss retry / DBOS workflow error). Pre-flight
+   * and gate failures bypass this hook — the original handler's distinction. */
   onPaidBatchError?(error: unknown): void;
 }
 
@@ -123,7 +104,7 @@ export type CalibrationSampleOperationOutcome =
   | { kind: 'sampled'; source: CalibrationSampleTickSource; result: JudgeCalibrationSampleResult };
 
 /**
- * Phase 1 — replay-safe, zero spend. Kill switch, then config, then the bare
+ * replay-safe, zero spend. Kill switch, then config, then the bare
  * MF3① pre-flight whose throw IS the failure mode. Order matches the retained
  * handler exactly.
  */
@@ -151,7 +132,7 @@ export async function readCalibrationSampleGate(
 }
 
 /**
- * Phase 2 — the paid batch. Lazy core import preserved (unit tests inject
+ * the paid batch. Lazy core import preserved (unit tests inject
  * runSampleFn and never load the reconstruction chain). Errors propagate to
  * the caller; this phase never catches.
  */
@@ -389,7 +370,7 @@ export interface CalibrationStagedSeamContext {
  * observation row, terminal for this effect) OR the sent effect's exact
  * immutable receipt. Throws on failure (the orchestrator records the unknown
  * obligation). The real implementation is the released core single-item seam
- * — see buildCalibrationStagedCoreSeams. */
+ * see buildCalibrationStagedCoreSeams. */
 export type ExecuteCalibrationItemFn = (
   item: CalibrationWorkSetItem,
   identity: CalibrationEffectIdentity,

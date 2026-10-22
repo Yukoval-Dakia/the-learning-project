@@ -7,7 +7,7 @@ import { listNotes } from './notes-read';
 export type NoteListQuery = z.infer<typeof NoteListQuerySchema>;
 export type NoteListResponse = z.infer<typeof NoteListResponseSchema>;
 
-// Both transports validate with NoteListQuerySchema before calling this operation.
+// Both transports validate with NoteListQuerySchema first.
 export async function loadNoteList(
   database: Db | Tx,
   input: NoteListQuery,

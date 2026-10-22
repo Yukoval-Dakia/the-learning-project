@@ -1,9 +1,6 @@
-// YUK-95 P5 Lane-D (Wave 7), ADR-0020 §9 — single-owner write path + pure helpers
-// for the hub auto-link dismiss flow. `persistHubLinkDismiss` is the sole owner of
-// the artifact/event writes (attrs suppressed_block_refs + suppress event +
-// immediate-removal note_refine_apply, all atomic in one tx); the pure helpers
-// below stay here (not in the route) because Next.js route files may only export
-// route handlers, which also keeps them unit/db-testable in isolation.
+// Single owner of the dismiss writes: suppression, event, and immediate removal
+// stay in one tx. Helpers live here rather than in the route so they stay
+// testable.
 
 import { eq } from 'drizzle-orm';
 
@@ -32,9 +29,8 @@ function recordOrEmpty(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Append `{ artifact_id }` to `attrs.suppressed_block_refs`, deduping on
- * artifact_id. Returns the new attrs object (caller writes it). Tolerant of
- * legacy/missing shapes.
+ * Append the target id, deduping on it, and return the new attrs. Tolerant of
+ * missing or legacy shapes.
  */
 export function appendSuppressedRef(
   attrs: Record<string, unknown> | null | undefined,
@@ -53,11 +49,8 @@ export function appendSuppressedRef(
 }
 
 /**
- * Build a single `replace_block` patch that drops the auto crossLinkBlock whose
- * `attrs.artifact_id === suppressedArtifactId` from the doc-root
- * AutoLinksContainer. Returns null when there is no container or no matching
- * auto child (idempotent: the child is already gone, or this hub has no
- * auto-zone).
+ * Build the replace_block patch that drops this auto link, or null when there is
+ * no container or no matching child.
  */
 export function buildRemoveAutoLinkPatch(
   bodyBlocks: unknown,
@@ -82,7 +75,6 @@ export function buildRemoveAutoLinkPatch(
       attrs.artifact_id === suppressedArtifactId;
     return !isAutoTarget;
   });
-  // No matching auto child → nothing to remove.
   if (remaining.length === children.length) return null;
 
   const replacement = {
@@ -94,18 +86,10 @@ export function buildRemoveAutoLinkPatch(
 }
 
 /**
- * Single-owner write path for dismissing one system-maintained auto-link from a
- * hub. In the passed transaction this: (1) appends `{ artifact_id }` to
- * `attrs.suppressed_block_refs` (dedup) so `hub_auto_sync_nightly` skips it
- * forever; (2) writes an append-only `suppress` event (XC-5 traceable); and
- * (3) immediately removes the dismissed crossLinkBlock from the AutoLinksContainer
- * via `persistNoteRefineApply` (undoable; no-op when the child is already gone).
- *
- * Idempotent: dismissing the same target twice keeps a single suppressed entry
- * and still appends a suppress event, but the removal patch becomes a no-op.
- * The version bump is owned by the inner `persistNoteRefineApply` (so the attrs
- * update here deliberately does NOT bump version — both writes stay consistent
- * inside the one tx). Throws `ApiError` for unknown hub / non-hub artifact.
+ * Dismiss one auto link in the passed transaction: record the suppression so the
+ * nightly sync skips it, write an append-only suppress event, and remove the
+ * chip immediately (undoable). A repeat dismissal adds no second entry and the
+ * removal is a no-op. The inner apply owns the version bump.
  */
 export async function persistHubLinkDismiss(
   tx: Tx,
@@ -113,8 +97,8 @@ export async function persistHubLinkDismiss(
 ): Promise<{ suppress_event_id: string; removed: boolean }> {
   const { hubId, suppressedArtifactId, relation } = params;
 
-  // Validate the suppress event against the canonical KnownEvent schema so the
-  // wire contract is the single source of truth (same pattern as the correct route).
+  // Validate against the canonical event schema; the wire contract stays the
+  // single source of truth.
   const parsedEvent = SuppressArtifactLink.safeParse({
     actor_kind: 'user',
     actor_ref: 'self',
@@ -128,21 +112,16 @@ export async function persistHubLinkDismiss(
     throw new ApiError('validation_error', 'invalid suppress payload', 400);
   }
 
-  // FOR UPDATE row lock serializes concurrent dismisses + the nightly auto-sync
-  // on the SAME hub. Without it, two dismisses of different auto-links race on the
-  // read-modify-write of attrs.suppressed_block_refs (JS append) and the later
-  // commit silently drops the earlier suppressed entry (lost update); it also
-  // closes the stale window between this body_blocks read and persistNoteRefineApply
-  // re-reading the live body — while the lock is held no concurrent tx can mutate
-  // either field. The lock is released on tx commit/rollback.
+  // Serialize dismissals and the nightly sync on this hub. Two appends would
+  // otherwise race on the attrs read-modify-write and lose one; the lock also
+  // closes the stale window between this read and the inner apply's re-read.
   const [hub] = await tx
     .select({
       id: artifact.id,
       type: artifact.type,
       attrs: artifact.attrs,
       body_blocks: artifact.body_blocks,
-      // W3-C1γ — the version at attrs-update time (the attrs UPDATE does NOT bump it; the inner
-      // note_refine_apply owns the bump). The set_attrs fold event carries this unchanged version.
+      // The attrs update does not bump this; the inner apply does.
       version: artifact.version,
     })
     .from(artifact)
@@ -160,20 +139,17 @@ export async function persistHubLinkDismiss(
     suppressedArtifactId,
   );
 
-  // W3-C1γ single clock: the attrs UPDATE + suppress event + set_attrs fold event all stamp `now`;
-  // the inner note_refine_apply is forced to `now + 1ms` so the set_attrs (version unchanged) ALWAYS
-  // folds BEFORE the note_refine_apply (version + 1) — otherwise an id-tiebreak at the same ms could
-  // fold set_attrs LAST and regress the version below the apply's bump (a fold≠row flake).
+  // One clock for the attrs write and both events; the inner apply runs at
+  // now + 1ms so the unchanged-version set_attrs always folds before the bump.
   const now = new Date();
 
-  // 1. Persist the dedup'd suppressed_block_refs on attrs (no version bump — the
-  //    immediate-removal apply below owns the version bump + optimistic guard).
+  // 1. Suppression only; the apply below owns the version bump.
   await tx
     .update(artifact)
     .set({ attrs: nextAttrs as never, updated_at: now })
     .where(eq(artifact.id, hubId));
 
-  // 2. Append-only suppress event (XC-5 traceable).
+  // 2. Append-only suppress event.
   const suppressEventId = newId();
   await writeEvent(tx, {
     id: suppressEventId,
@@ -187,11 +163,7 @@ export async function persistHubLinkDismiss(
     created_at: now,
   });
 
-  // 2b. W3-C1γ — fold-source set_attrs event so foldArtifact reproduces the suppressed_block_refs
-  //     attrs write. next_version = the UNCHANGED version (the attrs UPDATE did not bump it; the
-  //     note_refine_apply below does, and — being ordered strictly after — wins as the final version).
-  //     Chained to the suppress event (caused_by). Same tx — a malformed payload rolls back the attrs
-  //     UPDATE (parseEvent barrier).
+  // 2b. Fold event for the attrs write, before the apply's version bump.
   await emitArtifactLifecycleEvent(tx, {
     subjectId: hubId,
     op: 'set_attrs',
@@ -203,9 +175,7 @@ export async function persistHubLinkDismiss(
     createdAt: now,
   });
 
-  // 3. Immediately remove the dismissed auto crossLinkBlock from the container
-  //    (undoable note_refine_apply). No-op when the child is already gone. Forced to `now + 1ms` so it
-  //    folds strictly AFTER the set_attrs event (the version-ordering guarantee above).
+  // 3. Remove the chip now (undoable); now + 1ms keeps it after the fold above.
   const patch = buildRemoveAutoLinkPatch(hub.body_blocks, suppressedArtifactId);
   let removed = false;
   if (patch) {

@@ -1,6 +1,6 @@
 import type { CopilotExecutionActivity } from './copilot-execution';
 
-/** Must stay aligned with SPAWN_TOOL_NAME in src/server/ai/spawn-contract.ts */
+/** Must stay aligned with SPAWN_TOOL_NAME in src/core/subagent-contract.ts */
 const NATIVE_SPAWN_TOOL_NAME = 'Task';
 
 export interface ToolUseSseCall {
@@ -14,7 +14,7 @@ export interface ToolResultSsePayload {
   input: Record<string, unknown>;
   summary: string;
   errorReason?: string;
-  /** YUK-920 — 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
+  /** 同名并行 call 的确定性关联 id；有则投影进 SSE。 */
   toolUseId?: string;
 }
 

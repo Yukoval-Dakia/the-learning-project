@@ -2,10 +2,8 @@ import sharp from 'sharp';
 
 import type { BBoxT } from '@/core/schema/structured_question';
 
-// YUK-1404 (B2/R2–R4) — pure image primitives shared by the pipeline crop path
-// (crop.ts) and the agent-facing media tools (tools/media-tools.ts). Pixel math
-// absorbs the extract clamping that crop.ts already had; rotation adds the
-// EXIF-aware normalize the repo never had.
+// Pure image primitives shared by the pipeline crop path and the agent media
+// tools. Pixel math clamps extraction boxes; rotation normalizes EXIF orientation.
 
 export interface PixelBBox {
   x: number;

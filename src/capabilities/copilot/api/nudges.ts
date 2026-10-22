@@ -1,11 +1,10 @@
-// YUK-577 — copilot 主动开口 nudge 路由（薄路由 + 纯 drizzle 读/写）。
-// design: docs/design/2026-07-07-yuk577-proactive-triggers.md §3.5 / §3.6.
+// copilot 主动开口 nudge 路由（薄路由 + 纯 drizzle 读/写）。
 //
 //   GET  /api/copilot/nudges              → 当前应呈现的 nudge（排 shadow/过期/已处置 + 静默窗 backstop）
 //   POST /api/copilot/nudges/[id]/dismiss → 写 experimental:copilot_nudge_dismissed（× 关闭）
 //   POST /api/copilot/nudges/[id]/opened  → 写 experimental:copilot_nudge_opened（点「看看」展开对话）
 //
-// dismiss/opened 是 YUK-178 分离的 KPI 分子/分母对面：dismiss_rate = dismissed/(opened+dismissed)，
+// dismiss/opened 是 KPI 分子/分母对面：dismiss_rate = dismissed/(opened+dismissed)，
 // ignored = 过期无处置。三 action 独立聚合，绝不写 accept_suggestion、不碰 proposal KPI。
 // /api/* token 校验由组合根中间件统一施加。
 
@@ -74,12 +73,11 @@ async function writeNudgeCompanion(
         caused_by_event_id: nudgeId,
       });
     } catch (err) {
-      // YUK-577 (Codex P2-2) — idempotency: the per-action partial unique index
-      // (event_copilot_nudge_{opened,dismissed}_unique_idx ON event(caused_by_event_id)) rejects a
-      // second companion for the same nudge (network retry / fast double-click). Treat 23505 as
-      // already-recorded — return ok WITHOUT a new event so the opened/dismissed KPI is not
-      // double-counted. (writeEvent's onConflictDoNothing only targets the PK; other unique
-      // violations still throw here.)
+      // Idempotency: the per-action partial unique index on event(caused_by_event_id)
+      // rejects a second companion for the same nudge (network retry / fast
+      // double-click). Treat 23505 as already-recorded — return ok without a new
+      // event so the opened/dismissed KPI is not double-counted. writeEvent's
+      // onConflictDoNothing only targets the PK; other unique violations throw.
       if (isUniqueViolation(err)) {
         return Response.json({ ok: true, deduped: true });
       }

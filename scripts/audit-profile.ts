@@ -27,11 +27,9 @@ export interface ProfileAuditResult {
 
 export type ProfileAuditInput = readonly SubjectProfile[] | Record<string, SubjectProfile>;
 
-// YUK-206: `auditProfiles()`'s default arg is this hardcoded 3-subject record,
-// retained only as backward-compat for the unit tests that exercise validation
-// failure modes with explicit `auditProfiles([profile], registry)` args. The CLI
-// (`runCli`) walks the live registry instead (see below) so a 4th subject
-// auto-enters the audit; this const is NO LONGER the `runCli` source of truth.
+// `auditProfiles()`'s default arg is this hardcoded 3-subject record, retained for unit tests that
+// exercise validation failures with explicit args. The CLI walks the live registry instead, so a
+// 4th subject enters automatically; this const is not the runCli source of truth.
 export const auditSubjectProfiles: Record<string, SubjectProfile> = {
   yuwen: yuwenProfile,
   math: mathProfile,
@@ -48,7 +46,7 @@ function toProfileList(profiles: ProfileAuditInput): SubjectProfile[] {
   return Array.isArray(profiles) ? [...profiles] : Object.values(profiles);
 }
 
-// YUK-739 — builtin fail-closed semantics check, shared with the --db mode via
+// Builtin fail-closed semantics check, shared with --db mode via
 // src/subjects/evaluation-semantics-audit.ts.
 
 export function auditProfiles(
@@ -111,8 +109,8 @@ export function formatProfileAuditReport(result: ProfileAuditResult): string {
 }
 
 export function runCli(args: string[] = process.argv.slice(2)): number {
-  // YUK-206 (RL2): walk the live SubjectRegistry so any registered subject —
-  // including a future 4th — is audited, instead of the hardcoded 3-subject default.
+  // Walk the live SubjectRegistry so every registered subject is audited, not the hardcoded
+  // 3-subject default.
   const result = auditProfiles(getDefaultSubjectRegistry().listProfiles());
   if (args.includes('--json')) {
     console.log(JSON.stringify(result, null, 2));
@@ -122,16 +120,15 @@ export function runCli(args: string[] = process.argv.slice(2)): number {
   return result.valid ? 0 : 1;
 }
 
-// YUK-601 PR7 (v3.2 §7) — `--db` 模式：读 DB 活绑定逐科装配校验（与无参的
-// 编译期 registry 模式互补——抓共享 trait 编辑后的装配漂移 / deprecated judge
-// 存活装配）。默认 report-only（恒 exit 0）；`--strict` 才以 invalid 非零退出。
-// 动态 import：load-env 必须先于 @/db/client（backfill-genesis-events.ts 先例），
-// 且无 --db 时零 DB 依赖（pnpm test 的编译期路径不动）。
+// `--db` mode reads live DB bindings per subject and checks assembly, complementing the compile-
+// time registry mode (it catches shared-trait drift and deprecated judges still wired). Report-only
+// by default; --strict exits non-zero on invalid. Dynamic import keeps load-env before @/db/client
+// and keeps the no-argument path DB-free.
 export async function runDbCli(args: string[]): Promise<number> {
   await import('./load-env');
   const { db } = await import('@/db/client');
   const { auditProfilesFromDb, formatDbProfileAuditReport } = await import(
-    '@/server/subjects/audit-profile-db'
+    '@/capabilities/observability/public'
   );
   const result = await auditProfilesFromDb(db);
   if (args.includes('--json')) {
@@ -145,9 +142,8 @@ export async function runDbCli(args: string[]): Promise<number> {
 export function main(): void {
   const args = process.argv.slice(2);
   if (args.includes('--db')) {
-    // process.exit（非 exitCode）——postgres 池无 idle_timeout，连接 socket 会
-    // 钉住事件循环，进程永不自然退出（review-769 HIGH；backfill-lost-attribution
-    // .ts:123 同结构先例）。
+    // process.exit, not exitCode: the postgres pool has no idle_timeout, so its socket keeps the
+    // event loop alive and the process never exits naturally.
     runDbCli(args)
       .then((rc) => process.exit(rc))
       .catch((err) => {

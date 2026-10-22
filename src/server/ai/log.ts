@@ -2,55 +2,18 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
-import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
+import { ai_task_runs, cost_ledger } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
 import type { ProviderTransportEvidence } from './provider-transport';
 
-// cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
-// INSERT/UPDATE works against either a top-level Db or a Tx. Accepting DbLike lets callers
+// cost_ledger is a loose-coupled correlation log (no FK); a single
+// INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
 // fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
 // the per-accept cost row into the question-INSERT tx for atomicity). FIX-R2-10 — all
-// THREE correlation-log writers (writeCostLedger, writeToolCallLog,
-// setToolCallLogMirroredEventId) accept DbLike for the same reason; only the ai_task_runs
+// tool-call correlation writers in kernel/tools/call-evidence retain the same
+// DbLike contract; only the ai_task_runs
 // lifecycle writers below stay Db (they are written by the runner outside any caller tx).
 type DbLike = Db | Tx;
-
-export interface ToolCallLogEntry {
-  task_run_id: string;
-  task_kind: string;
-  tool_name: string;
-  input_json: unknown;
-  output_json: unknown;
-  iteration: number;
-  latency_ms: number;
-  cost: number;
-  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
-  effect?: 'read' | 'propose' | 'write' | 'control';
-  /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
-  error_reason?: string;
-  /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
-  mirrored_event_id?: string;
-}
-
-export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Promise<string> {
-  const id = createId();
-  await db.insert(tool_call_log).values({
-    id,
-    task_run_id: entry.task_run_id,
-    task_kind: entry.task_kind,
-    tool_name: entry.tool_name,
-    effect: entry.effect ?? null,
-    input_json: entry.input_json as Record<string, unknown>,
-    output_json: entry.output_json as Record<string, unknown>,
-    error_reason: entry.error_reason ?? null,
-    iteration: entry.iteration,
-    latency_ms: entry.latency_ms,
-    cost: entry.cost,
-    occurred_at: new Date(),
-    mirrored_event_id: entry.mirrored_event_id ?? null,
-  });
-  return id;
-}
 
 /** Warn when a tool-calling task has no pi tool mounts configured in its context. */
 export function logMissingToolMountsWarning(entry: {
@@ -62,18 +25,6 @@ export function logMissingToolMountsWarning(entry: {
     task_run_id: entry.task_run_id,
     kind: entry.task_kind,
   });
-}
-
-/** YUK-79: backfill `mirrored_event_id` after mirrorEvent policy fires. */
-export async function setToolCallLogMirroredEventId(
-  db: DbLike,
-  toolCallLogId: string,
-  eventId: string,
-): Promise<void> {
-  await db
-    .update(tool_call_log)
-    .set({ mirrored_event_id: eventId })
-    .where(eq(tool_call_log.id, toolCallLogId));
 }
 
 interface CostLedgerEntryBase {
@@ -193,7 +144,13 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     prompt_context_digest: entry.promptContextDigest ?? null,
     status: 'running',
     finish_reason: null,
-    usage_json: { inputTokens: 0, outputTokens: 0 },
+    usage_json: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      numTurns: 0,
+    },
     cost_usd: null,
     cost_basis: null,
     cost_ref: null,
@@ -219,6 +176,15 @@ export interface NoteGeneratePhaseTimings {
 export interface AiTaskUsage {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
+   * (0 when the lane reported no cache) so the scoreboard can compute cache
+   * share without treating absence as unknown.
+   */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** YUK-1557 — completed assistant turns (provider `num_turns`, or observed frames). */
+  numTurns?: number;
   /**
    * `estimated` when a budget abort had to infer tokens from the prompt and
    * any streamed text. Absent when the provider reported the counts.
@@ -263,7 +229,13 @@ export async function writeAiTaskRunFinished(
     .set({
       status: entry.status,
       finish_reason: entry.finish_reason ?? null,
-      usage_json: entry.usage ?? { inputTokens: 0, outputTokens: 0 },
+      usage_json: entry.usage ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        numTurns: 0,
+      },
       cost_usd: entry.cost_usd ?? null,
       cost_basis: entry.cost_basis ?? null,
       cost_ref: entry.cost_ref ?? null,

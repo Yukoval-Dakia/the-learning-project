@@ -2,11 +2,7 @@
 
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
-export {
-  type EffectiveTruth,
-  activeEffectiveTruth,
-  getEffectiveTruths,
-} from '@/kernel/events';
+export type { EffectiveTruth } from '@/kernel/events';
 export {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
@@ -14,23 +10,23 @@ export {
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
 export type { QuizGenJobData } from './jobs/quiz_gen';
-export { runSourceVerify } from './jobs/source_verify';
+
 export { runQuestionAdmissionChecks } from './server/admission/checks';
-// YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
-// barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
+// Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
+// bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
-export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
-export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
+export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
+
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
   type CalibrationSampleDispatch,
   calibrationSampleDispatchSchema,
 } from './server/calibration-sample-store';
-// YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
-export type { ReviewDueQuery, ReviewDueRow } from './server/due-list';
-export { retrievabilityForKc, scheduleReview } from './server/fsrs';
+
+export { scheduleReview } from './server/fsrs';
 export {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
@@ -56,21 +52,13 @@ export {
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
-export {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-} from './server/learnable-frontier';
-export {
-  LEARNING_CONTENT_MAX_QUESTIONS,
-  type LearningContentValidationDeps,
-  validateLearningContent,
-} from './server/learning-content-validation';
+export { isMasteredForFrontier } from './server/learnable-frontier';
+export { validateLearningContent } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
-// YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by
-// placement-scope but consumed from server/*; re-exported through the public
-// seam so server→capability stays public (not deep).
+// The seed-root anchor regex is owned by placement-scope but consumed from server/*;
+// re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
+
 export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
@@ -81,11 +69,7 @@ export {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
-export {
-  runQuestionContentValidation,
-  runSolveCheck,
-  runTeachingQualityCheck,
-} from './server/quiz/verify-framework';
+
 export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
 export {
   SolveError,
@@ -95,6 +79,12 @@ export {
 export type { PracticeTaskRunFn } from './server/task-runtime';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
+// Coach's nightly daily-plan inputs share the practice due queue and
+// measured question pace.
+export const resolveDailyReviewPlanInputs: typeof import('./server/daily-review-plan').resolveDailyReviewPlanInputs =
+  async (...args) =>
+    (await import('./server/daily-review-plan')).resolveDailyReviewPlanInputs(...args);
+export type { DailyReviewPlanInputs } from './server/daily-review-plan';
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
@@ -103,7 +93,7 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
 };
 
 export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
-// YUK-1064 — explicit operations used by scripts and integration consumers.
+// explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export {
   commitFormalAttempt,
@@ -121,22 +111,18 @@ export type {
   VariantProposalResult,
 } from './server/failure-learning-public';
 export { proposeFailureVariant } from './server/failure-learning-public';
-export type { InterventionAuthorDeps } from './server/intervention-author';
+
 export {
   authorInterventionPackage,
   reviewInterventionPackageCandidate,
 } from './server/intervention-author';
-export type { CommittedInterventionDiagnosticAttempt } from './server/intervention-diagnostics';
+
 export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
-  loadCommittedInterventionDiagnosticAttempt,
-  loadLatestTrustedInterventionDiagnosticVerdict,
-  loadNativeInterventionDiagnosticState,
-  loadNativeInterventionDiagnosticVerdict,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
-// YUK-1063 — explicit judging contract consumed by the stable kernel facade.
+// explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
   type ContractAttemptInput,
@@ -181,170 +167,75 @@ export {
   rewriteQuestionKnowledgeIds,
 } from './server/merge-attribution';
 export { submitPaperSlot } from './server/paper-submit';
-export { selectNextPlacementItem } from './server/placement-select';
-export { getPracticeList } from './server/practice-read';
+
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
   QuestionEditAcceptResult,
   VariantQuestionAcceptResult,
 } from './server/proposal-appliers';
-// YUK-885 — public ports repointed from central deep imports.
-export { applyQuestionEdit } from './server/proposal-appliers';
-export type {
-  DispatchDeps,
-  DispatchResult,
-  DispatchStatus,
-  EnqueueFn,
-  EnqueueQuizGenFn,
-} from './server/question-supply/dispatcher';
+// public ports repointed from central deep imports.
+export type { DispatchResult } from './server/question-supply/dispatcher';
 export {
   SUPPLY_DISPATCH_COOLDOWN_DAYS,
   dispatchSupplyTarget as dispatchPracticeSupplyTarget,
   dispatchSupplyTargets as dispatchPracticeSupplyTargets,
   inFlightSupplyCount,
 } from './server/question-supply/dispatcher';
-export type {
-  EvidenceDemandV1T,
-  SupplyTraceV1T,
-} from './server/question-supply/evidence-demand';
-export {
-  EvidenceDemandV1,
-  SupplyTraceV1,
-  buildCoverageEvidenceDemand,
-  buildSupplyTrace,
-  evidenceDemandToTargetContext,
-  parseEvidenceDemand,
-  withSupplyTraceDifficultyEvidence,
-} from './server/question-supply/evidence-demand';
-export {
-  JYEOO_FETCH_CANARY_ACTION,
-  jyeooBudgetRemaining,
-  jyeooDailyFetchBudget,
-} from './server/question-supply/jyeoo-budget';
-// YUK-986 (Supply-Agent/1) — jyeoo agent-tool 链公开面：候选抓取核心（tool 与 CLI 共用）、
-// 事件溯源日预算、hint 名匹配（CLI/executor 的确定性归属辅助）。两个 DomainTool 也从
-// barrel 透出（见文件尾）——agent surface 由 manifest copilotTools 授予，CLI 直接调 execute。
-export type {
-  JyeooCandidate,
-  JyeooFetchCandidatesInput,
-  JyeooFetchCandidatesResult,
-} from './server/question-supply/jyeoo-candidates';
+export type { SupplyTraceV1T } from './server/question-supply/evidence-demand';
+export { withSupplyTraceDifficultyEvidence } from './server/question-supply/evidence-demand';
+
+// Jyeoo agent-tool public surface: candidate fetch shared with the CLI and deterministic
+// hint matching. DomainTool registration loads deep paths from the manifest; the CLI calls
+// execute directly.
 export { runJyeooFetchCandidates } from './server/question-supply/jyeoo-candidates';
 export {
   findSubjectRootKnowledgeId,
   matchJyeooKnowledgeHints,
 } from './server/question-supply/jyeoo-hint-match';
-export type {
-  JyeooExitClassification,
-  JyeooFailureClass,
-  JyeooMetaT,
-  JyeooParsedLine,
-} from './server/question-supply/jyeoo-loom-adapter';
-export {
-  JYEOO_EXIT,
-  classifyJyeooExit,
-  hasMalformedMarkdownImage,
-  isForeignSourceHost,
-  isImageDependentQuestion,
-  markdownImageSources,
-  parseJyeooLine,
-  rewriteMarkdownImageSources,
-} from './server/question-supply/jyeoo-loom-adapter';
-export type {
-  SpawnJyeooFn,
-  SpawnJyeooOptions,
-  SpawnJyeooResult,
-} from './server/question-supply/jyeoo-spawn';
-export { spawnJyeooFetch as spawnPracticeJyeooFetch } from './server/question-supply/jyeoo-spawn';
+
 export {
   JYEOO_BACKFILL_PER_QUESTION_MS,
-  JYEOO_FETCH_ROUTE,
-  JYEOO_SOURCE_HOST,
   jyeooBackfillSpawnTimeoutMs,
-  jyeooBinaryPath,
-  jyeooSpawnMaxStderrBytes,
-  jyeooSpawnMaxStdoutBytes,
-  jyeooSpawnTimeoutMs,
 } from './server/question-supply/jyeoo-supply-config';
 export {
-  buildPlacementStarterDemand,
-  buildPlacementStarterTarget,
   dispatchPlacementStarterClaim,
-  dispatchPlacementStarterClaimTx,
   isPlacementStarterJobLive,
 } from './server/question-supply/placement-starter';
 export type {
-  LostPlacementDeliverySnapshot,
-  PlacementAttemptAuthority,
-  PlacementAttemptHeartbeat,
   PlacementCostComponentKind,
   PlacementVerificationAuthority,
 } from './server/question-supply/placement-starter-attempts';
 export {
-  PLACEMENT_ATTEMPT_HEARTBEAT_MS,
-  PLACEMENT_ATTEMPT_LEASE_MS,
-  PLACEMENT_DECISION_DEADLINE_MS,
   PLACEMENT_GENERATION_RESERVATION_MICRO_USD,
   PLACEMENT_PAID_CALL_RESERVATION_MICRO_USD,
   PLACEMENT_QUEUE_EXPIRY_MS,
-  PLACEMENT_RENEWAL_CEILING_MS,
-  PLACEMENT_STARTER_REQUIRED_COUNT,
-  PLACEMENT_VERIFY_POLL_MS,
-  PlacementStarterAdmissionError,
-  PlacementStarterAttemptActiveError,
   PlacementStarterBudgetExhaustedError,
-  PlacementStarterDeadlineError,
-  PlacementStarterStaleAuthorityError,
-  PlacementStarterUnderfillError,
   PlacementStarterUnknownCostError,
   acquirePlacementAttempt,
   addAuthorizedCostComponent,
-  assertPlacementAttemptFence,
-  assertPlacementAuthority,
-  countEligiblePlacementQuestions,
-  finishPlacementAttempt,
-  markAttemptVerifying,
-  placementAttemptVerificationSettled,
-  placementDeliveryMetadata,
-  placementFulfillmentDisposition,
-  recordPlacementAttemptOutput,
   releaseAuthorizedPaidCall,
-  renewPlacementAttempt,
   reserveAuthorizedPaidCall,
   reservePlacementGenerationCall,
   settleAuthorizedPaidCall,
-  startPlacementAttemptHeartbeat,
   terminalizeLostPlacementDelivery,
   terminalizePlacementUnknownCost,
 } from './server/question-supply/placement-starter-attempts';
-export type { PlacementStarterIdentity } from './server/question-supply/placement-starter-identity';
-export {
-  placementStarterAttemptId,
-  placementStarterIdentity,
-} from './server/question-supply/placement-starter-identity';
-export type { PlacementStarterGoalAuthority } from './server/question-supply/placement-starter-store';
+
 export {
   addPlacementStarterCostComponent,
-  addPlacementStarterKnowledgeToExplicitGoal,
-  authorizePlacementStarterQuestion,
-  ensurePlacementStarterAnchorAndClaim,
   markPlacementStarterClaimTerminal,
-  materializePlacementStartersForGoal,
-  recordPlacementStarterAttempt,
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
-// YUK-988 (Supply-Agent/3) — executeSupplyPlan/buildSupplyExecutorDeps 不进本 barrel：
-// 该链（plan-executor → web-candidates → SourcingTask → pi agent runtime）
-// 会把 SDK 拉进 build:migrate 的 cjs bundle，SDK 顶层 createRequire(import.meta.url)
-// 在 cjs 下启动即崩（server/worker 构建标 external 所以只 migrate 中招）。
-// scripts/supply-execute.ts 走深路径直引（E1 jyeoo-backfill 先例）。
-export { planSupplyRoutes } from './server/question-supply/route-planner';
+// Keep executeSupplyPlan/buildSupplyExecutorDeps out of this barrel: that chain
+// (plan-executor → web-candidates → SourcingTask → pi agent runtime) pulls the SDK into the
+// migrate cjs bundle, whose top-level createRequire(import.meta.url) fails at startup.
+// server/worker mark it external, so only migrate is affected. scripts/supply-execute.ts
+// imports the deep path directly.
+
 export type {
   DifficultyBand,
-  FrontierKnowledgeInput,
-  PoolQuestion,
   QuestionSupplyTarget,
   ScanInput,
   SupplyGapKind,
@@ -353,14 +244,10 @@ export type {
 export {
   COVERAGE_DEPTH_THRESHOLD,
   NEAR_WINDOW,
-  acquisitionTierForQuestion,
   assembleScanInput,
-  discoverSupplyTargets,
   scanCoverageGaps,
-  seedGenerationMethod,
-  seedRoutePreference,
-  targetFingerprint,
 } from './server/question-supply/target-discovery';
+export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
@@ -368,30 +255,18 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
-export { editQuestionTool } from './server/tools/edit-question';
-export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates';
-// YUK-892 — due-review queue reader for non-LLM read paths (today summary).
+
+// due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { submitQuestionTool } from './server/tools/submit-question';
-// YUK-1468 — `store_sourced_question` 工具面已并入 submit_question（旧名不再
-// 注册/授权）；函数级 compat 仍在 ./server/tools/store-sourced-question。
-// YUK-1062 — task composition uses the narrow task-public entry directly.
-export { practiceTaskSpecs } from './task-public';
+// store_sourced_question is folded into submit_question (the old tool is no longer
+// registered or granted); the function-level compat export remains.
+
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
 
-export type { JudgeStatusDto, JudgeStatusRead } from './server/judge-run-observation';
-export {
-  JudgeRunStatusResponseSchema,
-  JudgeRunTerminalResultSchema,
-} from './server/judge-run-status';
 export async function readJudgeRunStatus(database: import('@/db/client').Db, runId: string) {
   return (await import('./server/judge-run-observation')).readJudgeRunStatus(database, runId);
-}
-export async function runJudgeDelivery(
-  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeRun>
-) {
-  return (await import('./jobs/judge_run')).runJudgeRun(...args);
 }
 export async function reconcileJudgeAttempts(
   ...args: Parameters<typeof import('./jobs/judge_pending_reconcile').reconcileStalledJudgeAttempts>
@@ -422,6 +297,7 @@ export async function executeJudgeWorkflow(
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
 
+export type { PlacementProfileResponse } from './api/placement-contracts';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -433,24 +309,25 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
+export { readPlacementProfile } from './server/placement-profile';
+export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';
 
-// YUK-1358 — stream typed operations：HTTP adapter（api/stream.ts）与 TanStack Start
-// live consumer 共用的 HTTP 无关 seam。lazy 透出同上方 submitReviewAnswer——stream-store
-// compose 链可达 AI runner SDK，不能静态进本 barrel 的 migrate-bundle 消费面。
-export type {
-  PracticeStreamRecomposeResult,
-  PracticeStreamUpdatedItem,
-  PracticeStreamViewItem,
-} from './server/stream-operations';
+// Resolve the existing session operation in the initialized host graph after auth.
+export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
 
-type GetPracticeStream = typeof import('./server/stream-operations').getPracticeStream;
-type RecomposePracticeStream = typeof import('./server/stream-operations').recomposePracticeStream;
-type UpdatePracticeStreamItem =
-  typeof import('./server/stream-operations').updatePracticeStreamItem;
+export { UpdatePlacementSessionBodySchema } from './api/placement-contracts';
+export const transitionPlacementSession: typeof import('./server/session-operations/placement-session').transitionPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).transitionPlacementSession(
+      ...args,
+    );
 
-export const getPracticeStream: GetPracticeStream = async (...args) =>
-  (await import('./server/stream-operations')).getPracticeStream(...args);
-export const recomposePracticeStream: RecomposePracticeStream = async (...args) =>
-  (await import('./server/stream-operations')).recomposePracticeStream(...args);
-export const updatePracticeStreamItem: UpdatePracticeStreamItem = async (...args) =>
-  (await import('./server/stream-operations')).updatePracticeStreamItem(...args);
+export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
+
+export { readPaperList } from './server/papers-list';
+
+export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
+
+export { selectNextPlacementQuestion } from './server/session-operations/placement-next';

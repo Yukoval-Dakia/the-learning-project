@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 
+import { db } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
+import { agentIntentPayload } from './ownership';
 
-// YUK-1522 (R8) — pg-boss dispatch seam for the ingestion agent lane. All
-// sends funnel here so the capability keeps exactly one boss edge: initial
-// dispatch goes through Ingestion.enqueueAgentRun (session guard); resume and
-// self-continuation go through the functions below with a per-session
-// singleton so a burst of answers/timeouts cannot stack duplicate runs.
+// Single pg-boss dispatch seam for the agent lane. Initial dispatch goes through
+// Ingestion.enqueueAgentRun; resumes and self-continuation use a per-session
+// singleton so bursts of answers or timeouts cannot stack duplicate runs.
 
 export const INGESTION_AGENT_RUN_QUEUE = 'ingestion_agent_run' as const;
 export const INGESTION_ASK_SWEEP_QUEUE = 'ingestion_ask_sweep' as const;
@@ -23,6 +23,7 @@ export interface AgentRunJobPayload {
   readonly sessionId: string;
   readonly trigger: 'start' | 'resume' | 'continue';
   readonly operationId?: string;
+  readonly runRef?: string;
 }
 
 export async function sendAgentRun(payload: AgentRunJobPayload): Promise<string | null> {
@@ -55,7 +56,7 @@ export async function enqueueAgentResume(
   // segment claim guards double delivery.
   return boss.send(
     INGESTION_AGENT_RUN_QUEUE,
-    { sessionId, trigger: 'resume' },
+    await agentIntentPayload(db, sessionId, 'resume', intentId),
     intentId != null
       ? { id: deterministicJobId(`ingestion-agent-resume:${sessionId}:${intentId}`) }
       : undefined,
@@ -70,7 +71,7 @@ export async function enqueueAgentContinuation(
   const boss = await getStartedBoss();
   return boss.send(
     INGESTION_AGENT_RUN_QUEUE,
-    { sessionId, trigger: 'continue' },
+    await agentIntentPayload(db, sessionId, 'continue', intentId),
     {
       id: deterministicJobId(`ingestion-agent-continue:${sessionId}:${intentId}`),
     },

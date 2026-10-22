@@ -1,38 +1,8 @@
-// YUK-1514 — question serving release commands.
-//
-// POST /api/questions/[id]/serving-actions/{command} execution core. Three
-// owner commands release a held question through EXISTING seams only:
-//
-//   reverify            — re-enqueue the question_admission_run batch through
-//                         #1752's publish-event mechanism. A group withheld for
-//                         a non-pending reason is first re-pended
-//                         (withheld → unverified_rules, dimension-only publish:
-//                         same digest ⇒ admission_updated, generation+1) so the
-//                         new publish event itself is a valid enqueue source;
-//                         its paid_effect claim still decides whether the
-//                         identical base is ever paid again. When the canonical
-//                         enqueue dedups (same deterministic job id) yet no job
-//                         is in-flight, a manual fresh-id re-dispatch onto the
-//                         same family queue replays the claim under locks —
-//                         still never a second pay for an applied batch.
-//   recheck_source      — re-dispatch source_verify onto the same pg-boss queue
-//                         the verify-dispatch outbox drains to. The outbox's
-//                         intent ledger is per-(verifier,question) first-write-
-//                         wins, so a re-check cannot ride a new intent; the
-//                         command event IS the durable record and
-//                         runSourceVerify's own terminal-event guard decides
-//                         whether a real (error-only) re-run happens.
-//   release_verify_hold — synchronous: clear suspension through the publisher's
-//                         row-publish dimension-only path (#1753 semantics —
-//                         admission:'preserve' + suspension:{suspended:false} ⇒
-//                         admission_updated, never a new revision; a drifted
-//                         group rolls the command back instead of minting).
-//                         The seam's suspension resolver never clears
-//                         retraction_hold.
-//
-// Every command writes exactly one experimental:question_serving_action event
-// keyed by Idempotency-Key; a replay returns the recorded accepted flag with a
-// freshly derived serving projection.
+// Question serving release commands for POST /api/questions/[id]/serving-actions.
+// reverify re-enqueues the admission batch through the publish-event path; recheck_source
+// re-dispatches source verify (its terminal-event guard decides whether a real run happens);
+// release_verify_hold clears suspension through the publisher. All commands use existing
+// seams and paid-effect claims, so none can pay twice for an applied batch.
 
 import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
@@ -127,7 +97,7 @@ async function sendJobIdempotent(
 
 interface ServingCommandEventRecord {
   accepted: boolean;
-  /** P1-C — a persisted ApiError rejection replays the original status/code. */
+  /** C — a persisted ApiError rejection replays the original status/code. */
   error: { code: string; status: number; message: string } | null;
 }
 
@@ -710,7 +680,7 @@ export async function runServingAction(
       const existing = await findServingActionEvent(tx, eventId);
       if (existing != null) return { kind: 'replay' as const, existing };
 
-      // P2-1 — an Idempotency-Key is scoped to (question group × command):
+      // 1 — an Idempotency-Key is scoped to (question group × command):
       // reusing the same key on a different command or a different group is a
       // protocol error, not a fresh command.
       const reuseRows = await tx
@@ -746,7 +716,7 @@ export async function runServingAction(
     });
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
-      // P1-C — the mutation tx rolled back; record the rejection outcome in its
+      // C — the mutation tx rolled back; record the rejection outcome in its
       // own tx so a later replay of this key returns the ORIGINAL 409 rather
       // than re-executing against changed state.
       await db.transaction(async (tx) =>

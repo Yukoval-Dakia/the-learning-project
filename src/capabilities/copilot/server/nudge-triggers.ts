@@ -1,19 +1,13 @@
-// YUK-577 — copilot 主动开口触发线：确定性判定器（零 LLM）。
-// design: docs/design/2026-07-07-yuk577-proactive-triggers.md §3.1 / §3.2 / §3.3.
+// Copilot 主动开口触发线：确定性判定器（零 LLM）。
 //
-// evaluateNudgeTrigger 是**纯 db-in / decision-out**——只读，不写。写 nudge event + 23505
-// 幂等收口由 handler（copilot_nudge_evaluate.ts）做（读/写分离，测试面干净）。触发判定全程
-// 确定性（事件模式匹配 + 计数查询），绝不调 LLM——「我注意到 X」的语义观察留给点击后的
-// CopilotTask 首 turn（UI 阶段）。
-//
-// cut-1 只实现 ingestion_complete kind。streak（kc_wrong_streak）是 cut-2 fast-follow，
-// 纯 additive 挂进本 evaluate 的 kind 分支。
+// evaluateNudgeTrigger 是纯 db-in / decision-out——只读，不写。写 nudge event 与 23505 幂等收口
+// 由 handler（copilot_nudge_evaluate.ts）做；判定只做事件模式匹配 + 计数查询。
 
 import { type AnyColumn, type SQL, and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { NudgePayloadT } from '@/core/schema/event/nudge-events';
 import type { Db, Tx } from '@/db/client';
-import { event, learning_session, question_block, source_document } from '@/db/schema';
+import { evaluation, event, learning_session, question_block, source_document } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
 import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import type { NudgeConfig } from './nudge-config';
@@ -25,30 +19,28 @@ export const NUDGE_OPENED_ACTION = 'experimental:copilot_nudge_opened';
 const HISTORY_PAGE_SIZE = 100;
 const RELATED_EVENT_QUERY_CHUNK_SIZE = 100;
 
-// 静默窗读模型 backstop（§3.2 / Q7）：这些 kind 在「正答题/正练习中」由 GET /nudges 延迟呈现
-// （练习结束后自然重现）。cut-1 的 ingestion_complete **非** interrupt-sensitive（录入完成时用户
-// 通常不在答题）——恒呈现。此集合为 cut-2 streak（练习中触发）预留，读模型 backstop 随 cut-1
-// 建好可测（should#4）。
+// 静默窗读模型 backstop：练习/答题中由 GET /nudges 延迟呈现，练习结束后自然重现。
+// ingestion_complete 非 interrupt-sensitive（录入完成时通常不在答题），恒呈现。
 export const INTERRUPT_SENSITIVE_KINDS: ReadonlySet<string> = new Set(['kc_wrong_streak']);
 
-/** boss.send payload —— 只带定位 id，判定事实由 handler 从 event 表回读（evidence-first §3.1）。 */
+/** boss.send payload：只带定位 id，判定事实由 handler 从 event 表回读。 */
 export type NudgeEvaluateInput =
   | { kind: 'ingestion_complete'; session_id: string }
   | { kind: 'attempt_failure'; attempt_event_id: string };
 
 export type NudgeDecisionReason =
-  | 'no_extract_event' // ingestion 完成事件缺失（post-commit 后不应发生，防御）
+  | 'no_extract_event' // post-commit 后不应发生，防御
   | 'no_blocks' // 提取 0 片段——不为空材料开口
-  | 'already_nudged' // 同一触发源已发过 nudge（perf 层；unique index 是正确性保证）
+  | 'already_nudged' // perf 层；unique index 才是正确性保证
   | 'attempt_not_found'
   | 'not_failure'
   | 'no_knowledge'
   | 'streak_below_threshold'
   | 'kc_cooldown'
-  | 'daily_cap' // 当日可见 nudge 达上限（best-effort 软上限，非硬保证——TOCTOU §3.2）
-  | 'dismiss_fused'; // owner 当日 dismiss 过同 kind → 该 kind 当日不再发（A3「同场景」）
+  | 'daily_cap'
+  | 'dismiss_fused'; // 当日 dismiss 过同 kind → 该 kind 当日不再发
 
-/** fire=true 时交给 handler 写入的 nudge event（envelope 承重字段 + typed payload）。 */
+/** fire=true 时交给 handler 写入的 nudge event。 */
 export interface NudgeToWrite {
   subject_kind: 'learning_session' | 'knowledge';
   subject_id: string;
@@ -65,7 +57,7 @@ function sameShanghaiDay(col: AnyColumn | SQL, now: Date): SQL {
   return sql`(${col} AT TIME ZONE 'Asia/Shanghai')::date = (${now.toISOString()}::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`;
 }
 
-/** 当前是否有 open practice session（per-type open 态白名单）——写进 payload 供读模型静默窗 backstop（§3.2）。 */
+/** 当前是否有 open practice session（per-type open 态白名单）。 */
 export async function isInActivePracticeSession(db: Db | Tx): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
@@ -190,9 +182,8 @@ async function evaluateWrongStreakInSnapshot(
       if (rows.length === 0) break;
 
       const attemptIds = rows.map((row) => row.id);
-      // YUK-1054 §9 — subject_id ∪ caused_by 双锚（mirror resolver）：申诉重判的
-      // judge 仍 subject_id=attempt，但历史 caused_by-only 锚也存在，单查
-      // subject_id 会把它们的 contested 状态漏掉。
+      // subject_id ∪ caused_by 双锚（mirror resolver）：申诉重判的 judge 仍 subject_id=attempt，
+      // 但历史 caused_by-only 锚也存在，单查 subject_id 会漏掉它们的 contested 状态。
       const judges = await db
         .select({
           id: event.id,
@@ -230,8 +221,47 @@ async function evaluateWrongStreakInSnapshot(
           );
         for (const row of appealRows) appealedJudgeIds.add(row.subjectId);
       }
-      // YUK-1054 §9 — 'unsupported' 判定须取 effective 判（链解析），不是任意
-      // judge 行：一条已 supersede 的 unsupported judge 不能继续冻结该 attempt。
+      // 判分纠错提案（judge_retraction accept）产生的 appeal_request 挂在
+      // subject_kind='evaluation'：attempt 上如有在途纠错申诉同样标 contested，防止重判在途时
+      // Copilot 沿用旧诊断放大误判。
+      const appealedAttemptIds = new Set<string>();
+      const submissionIds = attemptIds
+        .filter((id) => id.startsWith('evt_assessment_'))
+        .map((id) => id.slice('evt_assessment_'.length));
+      if (submissionIds.length > 0) {
+        const evals = await db
+          .select({
+            evaluationId: evaluation.evaluation_id,
+            submissionId: evaluation.submission_id,
+          })
+          .from(evaluation)
+          .where(inArray(evaluation.submission_id, submissionIds));
+        const submissionByEvalId = new Map(
+          evals.map((row) => [row.evaluationId, row.submissionId]),
+        );
+        const evalIds = [...submissionByEvalId.keys()];
+        for (let offset = 0; offset < evalIds.length; offset += RELATED_EVENT_QUERY_CHUNK_SIZE) {
+          const evalAppealRows = await db
+            .select({ subjectId: event.subject_id })
+            .from(event)
+            .where(
+              and(
+                eq(event.action, 'experimental:appeal_request'),
+                eq(event.subject_kind, 'evaluation'),
+                inArray(
+                  event.subject_id,
+                  evalIds.slice(offset, offset + RELATED_EVENT_QUERY_CHUNK_SIZE),
+                ),
+              ),
+            );
+          for (const row of evalAppealRows) {
+            const submissionId = submissionByEvalId.get(row.subjectId);
+            if (submissionId) appealedAttemptIds.add(`evt_assessment_${submissionId}`);
+          }
+        }
+      }
+      // 'unsupported' 须取 effective 判（链解析），不是任意 judge 行：已 supersede 的
+      // unsupported judge 不能继续冻结该 attempt。
       const verdictMap = await resolveVerdictsForAttempts(db, attemptIds);
       const unsupportedAttemptIds = new Set(
         [...verdictMap.values()]
@@ -253,6 +283,9 @@ async function evaluateWrongStreakInSnapshot(
             attemptIdSet.has(judge.subjectId) ? judge.subjectId : (judge.causedById as string),
           ),
       );
+      for (const id of appealedAttemptIds) {
+        if (attemptIdSet.has(id)) contestedAttemptIds.add(id);
+      }
 
       if (
         rows.some(
@@ -397,8 +430,7 @@ export async function evaluateNudgeTrigger(
     return evaluateWrongStreak(db, input, config, now);
   }
 
-  // 1. 触发源 = 该 session 的域 extract 事件（evidence-first 证据链 + unique 幂等键）。
-  //    subject_id = source_document_id（docx-ingestion.ts:208 / applyExtractionResult），用于取标题。
+  // 触发源 = 该 session 的域 extract 事件；subject_id = source_document_id，用于取标题。
   const extractRows = await db
     .select({ id: event.id, subjectId: event.subject_id })
     .from(event)
@@ -408,7 +440,7 @@ export async function evaluateNudgeTrigger(
   const extractEvent = extractRows[0];
   if (!extractEvent) return { fire: false, reason: 'no_extract_event' };
 
-  // 2. perf 层查重（unique index 是正确性保证，handler 捕 23505）。
+  // perf 层查重；unique index 是正确性保证，handler 捕 23505。
   const dup = await db
     .select({ one: sql<number>`1` })
     .from(event)
@@ -416,7 +448,7 @@ export async function evaluateNudgeTrigger(
     .limit(1);
   if (dup.length > 0) return { fire: false, reason: 'already_nudged' };
 
-  // 3. flag-invariant 提取事实计数（should#3）：数 question_block 行，非「收进 N 题」。
+  // 数 question_block 行（提取事实），非「收进 N 题」。
   const countRows = await db
     .select({ n: sql<number>`count(*)` })
     .from(question_block)
@@ -426,11 +458,10 @@ export async function evaluateNudgeTrigger(
 
   const shadow = !config.enabled;
 
-  // 4. surfacing 护栏——只在 enabled（写可见 nudge）时施加。shadow 期故意跳过 dailyMax /
-  // dismiss-fuse，以便观测真实触发率（§3.7 澄清：soft-cap 只约束可见写入；COUNT 也只数
-  // 非 shadow 行，所以把同一检查套到 shadow 期要么永不触发、要么压扁观测窗）。
+  // surfacing 护栏只在 enabled（写可见 nudge）时施加：shadow 期跳过 dailyMax / dismiss-fuse，
+  // 以便观测真实触发率；COUNT 也只数非 shadow 行。
   if (!shadow) {
-    // 每日上限：只数当日**可见**（非 shadow）nudge（doc §3.2 表「非 shadow COUNT」）。
+    // 每日上限只数当日可见（非 shadow）nudge。
     const capRows = await db
       .select({ n: sql<number>`count(*)` })
       .from(event)
@@ -443,7 +474,7 @@ export async function evaluateNudgeTrigger(
       );
     if (Number(capRows[0]?.n ?? 0) >= config.dailyMax) return { fire: false, reason: 'daily_cap' };
 
-    // dismiss 熔断（ingestion=kind-wide）：当日 dismiss 过 ingestion_complete nudge → 该 kind 当日不再发。
+    // dismiss 熔断（kind-wide）：当日 dismiss 过 ingestion_complete → 该 kind 当日不再发。
     const dismissed = alias(event, 'nudge_dismissed');
     const nudge = alias(event, 'nudge_src');
     const fusedRows = await db
@@ -461,10 +492,10 @@ export async function evaluateNudgeTrigger(
     if (fusedRows.length > 0) return { fire: false, reason: 'dismiss_fused' };
   }
 
-  // 5. 静默窗 backstop 观测位（§3.2 / Q7）——判定时算出，读模型消费。
+  // 静默窗 backstop 观测位：冻结进 payload 作为开口时的审计位；读侧另行重算当前态。
   const inActiveSession = await isInActivePracticeSession(db);
 
-  // 6. session 显示名 = source_document.title（可空；learning_session 无 name 列）。空则降级去《》。
+  // session 显示名 = source_document.title（可空；learning_session 无 name 列）；空则降级。
   let title: string | null = null;
   if (extractEvent.subjectId) {
     const docRows = await db
@@ -479,7 +510,7 @@ export async function evaluateNudgeTrigger(
   const expiresAt = new Date(now.getTime() + config.expiresHours * 3_600_000).toISOString();
   const payload: NudgePayloadT = {
     kind: 'ingestion_complete',
-    // flag-invariant 措辞：「提取到」断言 extraction 产出（永真，不随 auto-enroll flag 漂移）。绝不「收进 N 题」。
+    // 措辞断言 extraction 产出（不随 auto-enroll flag 漂移），绝不「收进 N 题」。
     headline: title
       ? `我处理完《${title}》，提取到 ${blockCount} 个题目片段`
       : `我处理完你上传的材料，提取到 ${blockCount} 个题目片段`,

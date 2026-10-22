@@ -1,25 +1,18 @@
-// Phase 0 关系脑 (YUK-406 / YUK-440) — conjecture accept applier. Owned by the
-// agency package (the nightly 例会 sleep job is the single proposer of
-// `conjecture` proposals; this is the owner-decision applier). Three semantics:
+// Conjecture accept applier. The nightly 例会 job is the single proposer of
+// `conjecture` proposals; this is the owner-decision applier:
 //
-//   accept — owner agrees with the DIRECTION of the conjecture. This is a
-//            calibration ANCHOR, NOT a confirmed weakness. `weakness_confirmed`
-//            is ALWAYS false here — only the probe one-shot (a later task) mints
-//            a confirmed weakness via its own confirmation path.
-//   edit   — owner rewrote the claim (corrected_payload). corrected_by_owner=true;
-//            the durable rate event outbox projects it to mem0 in the worker.
-//   reject — handled by dismissAiProposal's default branch (writeGenericRateEvent
-//            rating='dismiss' + recordProposalDecisionSignal → digest); not here.
+//   accept — owner agrees with the DIRECTION of the conjecture. A calibration
+//            ANCHOR, not a confirmed weakness; `weakness_confirmed` is ALWAYS false
+//            here (only the probe one-shot mints that).
+//   edit   — owner rewrote the claim (corrected_payload); corrected_by_owner=true,
+//            projected to mem0 by the rate-event outbox worker.
+//   reject — handled by dismissAiProposal's default branch, not here.
 //
-// ND-5 RED LINE: this path NEVER writes FSRS / review state, NEVER enrolls a
-// learning item, NEVER touches review scheduling. A conjecture accept is a
-// calibration anchor, not a learning-item event.
+// This path NEVER writes FSRS / review state, never enrolls a learning item.
 //
-// Canonical identity (a13 design §6 / MISMATCH #1): the conjecture has NO
-// separate row in PR-1 — the conjecture IS the proposal event, so its stable id
-// (`conjecture_id`, referenced downstream as `conjecture_event_id`) is the
-// proposalId. `target.subject_kind === 'mind_model'`, `target.subject_id ===
-// knowledge_id`. The kind literal is `'conjecture'` (NOT `'mind_model'`).
+// The conjecture has NO separate row: its stable id is the proposal event id.
+// `target.subject_kind === 'mind_model'`, `target.subject_id === knowledge_id`;
+// the kind literal is `'conjecture'` (NOT `'mind_model'`).
 //
 // import 环 gate：本文件不得 import producers/writer/actions；共享 helper 走
 // @/server/proposals/applier-helpers（与 sibling proposal-appliers 同约束）。
@@ -59,14 +52,12 @@ import {
   requiredString,
 } from '@/server/proposals/applier-helpers';
 
-// YUK-711 — wire error code raised (as a typed ApiError, HTTP 409) when the accept
-// cannot serve its discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES active
-// probes already exist. It is a RETRYABLE state conflict, NOT a failure of the
-// accept: throwing it inside the accept transaction rolls back the rate anchor + dark
-// promotion together, so the proposal stays pending and the owner can re-accept the
-// SAME finding once a probe is answered and a slot frees. The felt UI keys on this
-// code to surface a non-blaming "probe slots full, retry" inline error (teaching-brief
-// contract §7: accept 交互失败 → 保留当前状态,不乐观转态,允许原位重试,清晰非责备的 inline error).
+// Wire error code (typed ApiError, HTTP 409) raised when the accept cannot serve its
+// discriminating probe because MAX_CONCURRENT_ACTIVE_PROBES probes are already active.
+// RETRYABLE state conflict, not an accept failure: the throw rolls back the rate anchor +
+// dark promotion together, so the proposal stays pending and the same finding can be
+// re-accepted once a probe is answered and a slot frees. The UI surfaces this code as a
+// non-blaming inline "probe slots full, retry" error.
 export { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
 
 import { PROBE_SLOTS_FULL_CODE } from '@/core/schema/conjecture';
@@ -76,9 +67,8 @@ export const CONJECTURE_PROBE_QUALITY_REQUIRED_CODE = 'CONJECTURE_PROBE_QUALITY_
 export interface ConjectureApplierOpts {
   decision?: string;
   user_note?: string;
-  // EDIT path: the owner-rewritten conjecture payload (canonical field names,
-  // MISMATCH #2). Presence ⇒ corrected_by_owner=true; the durable rate-event outbox
-  // worker projects the rewrite to mem0 CORE asynchronously (no direct CORE write here).
+  // EDIT path: the owner-rewritten conjecture payload. Presence ⇒ corrected_by_owner=true;
+  // the rate-event outbox projects the rewrite to mem0 CORE asynchronously (no direct write).
   corrected_payload?: { claim_md: string };
 }
 
@@ -105,9 +95,9 @@ export async function acceptConjectureProposal(
   // The conjecture's stable identity is the proposal event id (no separate row).
   const conjectureId = proposalId;
 
-  // Idempotency: a prior accept rate event short-circuits (409s on a non-accept
-  // prior decision via existingAcceptRate). No second rate event, no second CORE
-  // write — re-accept returns the recorded corrected_by_owner verbatim.
+  // Idempotency: a prior accept rate event short-circuits (409s on a non-accept prior
+  // decision via existingAcceptRate). No second rate event, no second CORE write — re-accept
+  // returns the recorded corrected_by_owner verbatim.
   const existingRate = await existingAcceptRate(db, proposalId);
   if (existingRate) {
     await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
@@ -122,9 +112,9 @@ export async function acceptConjectureProposal(
     };
   }
 
-  // YUK-821: all newly accepted conjectures must carry a frozen DiagnosticSpec,
-  // both structured probe specs, and a passing independent-review audit. Optionality
-  // in the proposal JSON schema exists only so historical terminal rows remain readable.
+  // All newly accepted conjectures must carry a frozen DiagnosticSpec, both structured
+  // probe specs and a passing independent-review audit. Optionality in the proposal JSON
+  // schema exists only so historical terminal rows remain readable.
   const diagnosticSpec = ConjectureDiagnosticSpec.safeParse(change.diagnostic_spec);
   const primaryProbeSpec = ConjectureProbeSpecV2.safeParse(change.probe_spec);
   const followupProbeSpec = ConjectureProbeSpecV2.safeParse(change.followup_probe_spec);
@@ -234,16 +224,13 @@ export async function acceptConjectureProposal(
   const now = new Date();
   const rateEventId = newId();
 
-  // YUK-531 PR-3 — the rate write + the (dark, flag-gated) misconception promotion
-  // are ATOMIC in ONE db.transaction. When the flag is OFF this is effect-identical to
-  // today (a single rate-event INSERT, same payload — wrapping one write in BEGIN/COMMIT
-  // changes no observable row). When ON, atomicity is load-bearing: a crash AFTER the
-  // rate write but BEFORE the misconception upsert would otherwise strand a
-  // misconception-less accept that the idempotency guard above then permanently skips.
+  // The rate write + the flag-gated misconception promotion are ATOMIC in ONE transaction.
+  // Atomicity is load-bearing: a crash after the rate write but before the promotion upsert
+  // would strand a misconception-less accept that the idempotency guard above then skips
+  // permanently.
   //
-  // ND-5 RED LINE preserved: this path still NEVER writes FSRS / review / learning-item
-  // state. A minted misconception is SOFT-track (source='soft', dark flag) — an AI prior
-  // the owner agreed with, NOT a confirmed weakness (only the probe one-shot mints that).
+  // Still no FSRS / review / learning-item state. A minted misconception is SOFT-track
+  // (source='soft', dark flag) — an AI prior the owner agreed with, NOT a confirmed weakness.
   await db.transaction(async (tx) => {
     await writeEvent(tx, {
       id: rateEventId,
@@ -253,17 +240,14 @@ export async function acceptConjectureProposal(
       subject_kind: 'event',
       subject_id: proposalId,
       outcome: 'success',
-      // RateEvent.payload (known.ts:268) is non-strict — these extra keys are
-      // stripped by parse but PERSISTED raw on the event row (verified queries.ts;
-      // mirrors goal_scope's materialized_goal_id). The read model + calibration
-      // retro read them off the row.
+      // RateEvent.payload is non-strict — these extra keys are stripped by parse but
+      // PERSISTED raw on the event row; the read model + calibration read them back.
       payload: {
         rating: 'accept',
         conjecture_id: conjectureId,
-        // codex P2 (PR #1039) — scope-tagger derives `topic:<kc>` from
-        // referenced_knowledge_ids, so this rate event's affected_scopes (and the
-        // verbatim mem0 projection that copies them) are retrievable under the
-        // conjecture's knowledge scope instead of only 'global'.
+        // scope-tagger derives `topic:<kc>` from referenced_knowledge_ids, so this event's
+        // affected_scopes (and the mem0 projection that copies them) are retrievable under
+        // the conjecture's knowledge scope instead of only 'global'.
         referenced_knowledge_ids: [requiredString(change.knowledge_id, 'knowledge_id', proposalId)],
         // accept = agree with direction (NOT confirmed); edit = corrected_by_owner.
         corrected_by_owner: isEdit,
@@ -275,26 +259,15 @@ export async function acceptConjectureProposal(
       created_at: now,
     });
 
-    // DARK promotion hop. Reads recurrence_count off the persisted proposal change
-    // (NOT a fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the
-    // induction floor (every conjecture already recurred ≥2) — the real gate is the
-    // flag + the human accept (see misconception-promote.ts).
+    // DARK promotion hop. Reads recurrence_count off the persisted proposal change (NOT a
+    // fresh gatherConjectureEvidence). K_PROMOTE=2 is redundant with the induction floor
+    // (every conjecture already recurred ≥2) — the real gate is the flag + human accept.
     //
-    // YUK-785 — an EDIT accept promotes NOTHING. Both title candidates cause a distinct
-    // harm and there is no third claim to mint:
-    //   - the owner's rewrite has NO evidence of its own (nothing re-derives induction
-    //     evidence for it), so titling the node with it would hang the ORIGINAL claim's
-    //     `evidenceEventIds` provenance off an unevidenced belief;
-    //   - the original claim is precisely what the owner just declined to accept as
-    //     worded, so persisting it as an `status='active'` misconception would park a
-    //     belief the owner corrected in the knowledge surface indefinitely.
-    // Skipping is the only option that commits neither, and it is what this whole ticket
-    // argues structurally: a rewrite is UNTESTED, so it must not create any fait accompli.
-    // Nothing is lost — `corrected_by_owner` + `corrected_claim_md` stay durable on the
-    // rate event above (and project to mem0), so an edited accept remains findable if a
-    // later pass wants to re-derive evidence for the rewritten claim. A PLAIN accept
-    // (`isEdit === false`) is unaffected and still promotes on `change.claim_md`.
-    // The flag is OFF by default, so this dark landmine is defused BEFORE it is flipped.
+    // An EDIT accept promotes NOTHING: the rewrite has no evidence of its own (titling a node
+    // with it would hang the original claim's evidenceEventIds off an unevidenced belief),
+    // and persisting the original claim would park a belief the owner just declined. Nothing
+    // is lost: corrected_by_owner + corrected_claim_md stay durable on the rate event (and
+    // project to mem0), so a later pass can re-derive evidence for the rewrite.
     const promotionEnabled = misconceptionPromoteEnabled();
     const knowledgeId = requiredString(change.knowledge_id, 'knowledge_id', proposalId);
     const causeCategory = requiredString(change.cause_category, 'cause_category', proposalId);
@@ -321,29 +294,18 @@ export async function acceptConjectureProposal(
       });
     }
 
-    // conjecture-wire #13 (YUK-538 ⑬) — serve the discriminating probe ATOMICALLY
-    // with the rate event + dark promotion. Per spec §4 Q1 (line 69) the atomicity
-    // is INTENTIONAL: "同 tx 原子（rate event + probe serve 一起回滚）" was the chosen
-    // semantic — a probe-serve THROW (DB constraint / serialization conflict / etc.)
-    // propagates through the nested SAVEPOINT and aborts the WHOLE outer tx (rate
-    // event + dark promotion roll back together), so the owner never gets an accept
-    // record without its probe. serveProbeOnce's internal `db.transaction` nests as
-    // a SAVEPOINT inside this outer tx; its `pg_advisory_xact_lock` is transaction-
-    // scoped to this outer tx, so the cap-serialize guarantee holds across the whole
-    // accept. ND-5 preserved: serveProbeOnce writes ONLY the draft question row
-    // (no FSRS / attempt / θ̂). Idempotency: the existingRate short-circuit above
-    // prevents re-accept from ever reaching this tx, so a probe is served at most
-    // once per conjecture.
+    // Serve the discriminating probe ATOMICALLY with the rate event + dark promotion: a
+    // serve throw propagates through the nested SAVEPOINT and aborts the whole outer tx, so
+    // the owner never gets an accept record without its probe. serveProbeOnce's internal
+    // db.transaction nests as a SAVEPOINT, and its pg_advisory_xact_lock is transaction-
+    // scoped, so the cap-serialize guarantee holds across the whole accept. serveProbeOnce
+    // writes ONLY the draft question row (no FSRS / attempt / θ̂). The existingRate
+    // short-circuit above means a probe is served at most once per conjecture.
     //
-    // YUK-711 — `cap_reached` is a normal RETURN (not a throw), so it does NOT
-    // self-abort the tx. The earlier code IGNORED the result and COMMITTED anyway,
-    // stranding a rate anchor + dark promotion with NO probe — an accepted-without-
-    // probe dangling chain the existingRate idempotency guard then blocked the owner
-    // from ever retrying. Treat it as "this accept did not complete": throw a typed
-    // ApiError so the WHOLE outer tx rolls back (rate anchor + promotion + would-be
-    // probe all vanish). The proposal stays pending; once a live probe is answered
-    // (reconcile scores it → countActiveProbes drops) the owner re-accepts the SAME
-    // finding and it succeeds. No re-dispatch worker, no second lifecycle.
+    // `cap_reached` is a normal RETURN, so it does NOT self-abort the tx. Throw instead:
+    // committing the rate anchor + promotion with no probe strands an accepted-without-probe
+    // chain that the idempotency guard would then block from retry. The proposal stays pending
+    // until a probe is answered (countActiveProbes drops) and the owner re-accepts.
     const probe = await serveProbeOnce({
       db: tx,
       conjectureProposalId: conjectureId,

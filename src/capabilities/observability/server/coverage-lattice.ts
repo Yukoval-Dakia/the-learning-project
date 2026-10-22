@@ -1,10 +1,6 @@
-// YUK-579 — 供题治理覆盖细目表（coverage lattice）只读读模型 IO 层。READ-ONLY：零写、零 LLM、
-// 零 schema、零新查询子系统。纯函数核在 coverage-lattice-core.ts（可 unit 测）；本层做 DB IO +
-// 注入真常量。设计真理源 docs/design/2026-07-07-yuk579-coverage-lattice.md。
-//
-// 单次 DB 遍历（assembleScanInput 复用发现引擎两私有 loader）+ 一条 experimental:question_supply
-// 活动聚合查询（MF1）。派题、cooldown 皆不改（只读）。should#1：本蓝图只覆盖 scanCoverageGaps 四
-// 规则，confusable_contrast（独立 discovery，同事件不同来源）fingerprint 不匹配 → 正确不 join。
+// Read-only IO layer for the coverage lattice. Pure functions live in the core; this
+// does DB reads with the real constants. It covers the scanner's four rules only:
+// confusable_contrast comes from a different discovery source, so it is not joined.
 
 import { and, asc, eq, gte } from 'drizzle-orm';
 import {
@@ -35,9 +31,8 @@ export type {
 
 const SUPPLY_EVENT_ACTION = 'experimental:question_supply';
 const DAY_MS = 24 * 60 * 60 * 1000;
-// 活动查询回看窗（design §4）：≥ cooldown_days，取 30d。命中 event_action_outcome_idx 的
-// leading `action` 列做等值扫；`created_at` 是该复合索引第三列（中间 outcome 未约束），故只是
-// 索引内 post-filter 而非纯范围——单用户量级（~数百行/30d）无关紧要。
+// At least the cooldown window. The composite index filters on action, then created_at
+// inside the index; at this data scale that is fine.
 const ACTIVITY_LOOKBACK_DAYS = Math.max(30, SUPPLY_DISPATCH_COOLDOWN_DAYS);
 
 const LATTICE_CONSTANTS: LatticeConstants = {
@@ -46,7 +41,7 @@ const LATTICE_CONSTANTS: LatticeConstants = {
   cooldownDays: SUPPLY_DISPATCH_COOLDOWN_DAYS,
 };
 
-/** subjectId → displayName（registry 只读派生）。 */
+/** Read-only display names from the subject registry. */
 function displayNameMap(): Record<string, string | null> {
   const out: Record<string, string | null> = {};
   for (const p of getDefaultSubjectRegistry().listProfiles()) {
@@ -56,8 +51,8 @@ function displayNameMap(): Record<string, string | null> {
 }
 
 /**
- * READ-ONLY 端到端：assembleScanInput（复用私有 loader，含 scan_ms 计时）→ scanCoverageGaps（纯）
- * → 一条 fingerprint 聚合活动查询 → buildCoverageLattice（纯）。零写、零 LLM、零新查询子系统。
+ * Assemble the scan input (timed), run the pure gap scan, fetch supply activity in
+ * one query, and build the lattice. Read-only.
  */
 export async function loadCoverageLattice(
   db: Db | Tx,
@@ -68,14 +63,13 @@ export async function loadCoverageLattice(
   const scanMs = Date.now() - t0;
   const targets = scanCoverageGaps(scanInput);
 
-  // MF1：单条按 action + 回看窗过滤的活动查询（无 status 过滤），内存按 fingerprint 聚合。
+  // One activity query over the lookback window; aggregate per fingerprint in memory.
   const cutoff = new Date(now.getTime() - ACTIVITY_LOOKBACK_DAYS * DAY_MS);
   const rows = await db
     .select({ payload: event.payload, created_at: event.created_at })
     .from(event)
     .where(and(eq(event.action, SUPPLY_EVENT_ACTION), gte(event.created_at, cutoff)))
-    // NIT-1 (review): stable order so per-fingerprint latest/dispatched pick is deterministic
-    // even when two same-fingerprint events share an exact-millisecond created_at.
+    // Stable order makes latest/dispatched deterministic for equal timestamps.
     .orderBy(asc(event.created_at));
 
   const activityEvents: SupplyActivityEvent[] = [];

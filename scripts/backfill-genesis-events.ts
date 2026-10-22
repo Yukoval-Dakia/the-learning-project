@@ -1,51 +1,26 @@
-// YUK-471 W1 PR-A2a (B3 scoped, YUK-471) — genesis backfill: seed ONE experimental:genesis event
-// per TRULY EVENT-LESS row.
+// Genesis backfill: seed ONE `experimental:genesis` event per TRULY event-less row (plus a
+// materialized_id_index anchor where the entity enters the index), so the projection folds can
+// reproduce rows that predate the event-sourced writers. The reducers treat genesis as the
+// trusted seed of a row's initial projected state: fold(genesis) == row.
 //
-// WHY. The W1 structural fold (foldKnowledgeNode / foldKnowledgeEdge) projects a
-// `knowledge` / `knowledge_edge` row by replaying its `event` log. But every row that EXISTS
-// before Wave 1 has NO originating event — the fold would project an empty world. This script
-// closes the gap: for each EVENT-LESS live row it writes ONE system `experimental:genesis` event
-// whose payload.row is a FULL snapshot of that row, so fold(genesis) == row. The reducers treat
-// `experimental:genesis` as the trusted seed that establishes a row's initial projected state.
-// It also writes the materialized_id_index entry (row.id → the genesis event id) so the node
-// shell's reverse-index path (Q2) resolves a genesis-born id to its anchor.
+// Rows already event-sourced (an originating event, or an index anchor) are SKIPPED: they
+// re-fold from their own log, and a genesis snapshot of their current state sorts LAST in the
+// fold and would overwrite the reducer output — masking the reducer drift the parity audit
+// exists to catch. The skip pre-scan doubles as the idempotency check, so re-running is a no-op.
 //
-// SCOPED — anchor only EVENT-LESS rows (B3, YUK-471). A row that is ALREADY event-sourced — a node
-// with a genesis / auto_tag event or a materialized_id_index anchor (knowledgeNodesWithGenesisAnchor),
-// or an edge with a generate / genesis event (edgesWithOriginatingEvent) — is SKIPPED. Anchoring it
-// would be WRONG twice: (1) it re-folds correctly from its own log already (it does not need a base),
-// and (2) a genesis snapshot of its CURRENT state is stamped at backfill time, which sorts LAST in
-// the fold and would OVERWRITE the mutation-reducer output — masking any reducer drift that the B3
-// audit exists to catch. Leaving event-sourced rows un-anchored makes the audit re-derive them
-// through their reducers (real value-drift teeth) AND is the correct flip-prep (post-flip those rows
-// fold from their own events; only event-less rows need a genesis base to mutate from).
-//
-// BEHAVIOR-PRESERVING (PR-A2a): this is a one-shot BACKFILL script, NOT wired into any live
-// request path. It only ADDS event rows + index rows; it never mutates `knowledge` /
-// `knowledge_edge`. The genesis events OPT OUT of the memory outbox (ingest_at = now at
-// INSERT) so backfilling N rows does NOT flood mem0 (the outbox poller selects
-// `WHERE ingest_at IS NULL`; a non-NULL stamp at INSERT skips the row — see WriteEventInput
-// .ingest_at / ADR-0021).
-//
-// IDEMPOTENT (single-run). An already-event-sourced row is SKIPPED, and a genesis event is itself
-// an "event-sourced" marker, so a row backfilled on a prior run is skipped on the next — re-running
-// is a no-op. (The skip pre-scan is the event-sourced check above, not a genesis-only scan.) Each row's
-// genesis event + its materialized_id_index entry are written in ONE transaction, so a crash
-// mid-row leaves NEITHER and the re-run redoes both — closing the "event committed, index
-// write lost, re-run skips the row → permanent index gap" hole (CodeRabbit MAJOR). NOTE: this
-// is a one-shot maintenance script, NOT designed to run CONCURRENTLY with itself — two parallel
-// runs could each pass the point-in-time pre-scan and write two genesis events for the same row
-// (each uses a fresh newId(), so the event PK never collides). Run it once, not in parallel.
-//
-// ORDER. knowledge rows first, THEN knowledge_edge rows — FK order (edges reference
-// knowledge.id); also the node shell's Q2 wants the index populated before a node projects.
+// The script only ADDS event/index rows; it never mutates the entity tables. Genesis events
+// stamp ingest_at = now at INSERT to opt out of the memory outbox (the poller selects
+// `WHERE ingest_at IS NULL`; ADR-0021) so a backfill does not flood mem0. Each row's event +
+// index entry commit in ONE transaction (a crash mid-row leaves neither and the re-run redoes
+// both). Two parallel runs are NOT supported: both could pass the point-in-time pre-scan and
+// double-seed the same row. Run it once, not in parallel.
 //
 // CLI:
 //   pnpm db:backfill:genesis   # idempotent: seed genesis events + index for un-seeded rows
 //
-// Like seed-synthetic.ts, the pipeline fns take a DbLike handle and are EXPORTED so the DB
-// test can drive them against the testcontainer; the main()/auto-run only fires when this
-// module is the CLI entry point, so importing it is side-effect-free.
+// The pipeline fns take a DbLike handle and are EXPORTED so the DB test can drive them; the
+// main()/auto-run only fires when this module is the CLI entry point, so importing is
+// side-effect-free.
 
 // Load `.env` BEFORE importing `@/db/client` (the client throws on a missing DATABASE_URL at
 // construction). Must be the first import (ESM evaluates an imported module's side effects
@@ -53,9 +28,9 @@
 import './load-env';
 
 import { and, eq, inArray, or } from 'drizzle-orm';
-// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent). Only THAT is a per-row data
-// problem to accumulate; anything else (DB connectivity / deadlock / constraint from db.insert or
-// upsertMaterializedIdIndex) is infra and must abort the whole backfill loud — see the catch blocks.
+// ZodError is the genesis parse-barrier failure (writeEvent → parseEvent) — the only per-row
+// data problem to accumulate. Anything else (connectivity / deadlock / constraint) is infra and
+// must abort the whole backfill — see the catch blocks.
 import { ZodError } from 'zod';
 import { newId } from '@/core/ids';
 import type {
@@ -77,31 +52,28 @@ import {
   question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-// The SCOPED backfill skips already-event-sourced NODES — reuse the SAME genesis-anchor check the
-// accept-time parity assert uses (genesis / auto_tag event, or a materialized_id_index anchor), so
-// "event-sourced" means exactly the same thing on both sides. (YUK-471 W2: goalsWithGenesisAnchor
-// is the goal analog; mistakeVariantsWithGenesisAnchor is the mistake_variant analog;
-// learningItemsWithGenesisAnchor is the learning_item analog — a genesis / index anchor. YUK-471
-// W3-C2: artifactsWithGenesisAnchor (genesis/create event OR index anchor) is the artifact analog;
-// questionBlocksWithGenesisAnchor (genesis/create event ONLY — question_block is not in the index)
-// is the question_block analog.)
+import {
+  knowledgeNodesWithGenesisAnchor,
+  knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
+} from '@/kernel/records/knowledge-node-history';
+import { learningItemsWithGenesisAnchor } from '@/kernel/records/learning-items';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
+// Reuse the SAME genesis-anchor checks the accept-time parity assert uses, so "event-sourced"
+// means exactly the same thing on both sides. Edges are the exception: they have no index
+// anchor, only a generate / genesis event (edgesWithOriginatingEvent below).
 import {
   artifactsWithGenesisAnchor,
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
-  knowledgeNodesWithGenesisAnchor,
-  learningItemsWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
-// SHARED artifact / question_block row→snapshot mappers (W3-C3 review) — the genesis backfill, the
-// audit, and the parity assert all map through the SAME field-pick so the snapshot shape can't drift
-// (esp. the question_block extracted_prompt_md strip, design §5.2).
+// Shared artifact / question_block / item_calibration row→snapshot mappers — the genesis
+// backfill, the audit, and the parity assert all map through the SAME field-pick so the
+// snapshot shape can't drift.
 import {
   artifactRowToSnapshot,
   itemCalibrationRowToSnapshot,
-  knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
 
@@ -110,8 +82,6 @@ type EdgeRow = typeof knowledge_edge.$inferSelect;
 type GoalRow = typeof goal.$inferSelect;
 type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
-// artifact / question_block row types live with the shared mappers (artifactRowToSnapshot /
-// questionBlockRowToSnapshot, ./snapshot-mappers) — imported above (W3-C3 review dedup).
 
 const GENESIS_ACTION = 'experimental:genesis';
 const GENESIS_ACTOR_REF = 'genesis-backfill';
@@ -127,8 +97,7 @@ export interface BackfillCounts {
   item_calibration: { seeded: number; skipped: number };
 }
 
-// edgeRowToSnapshot — map a live `knowledge_edge` DB row to KnowledgeEdgeRowSnapshotT. The
-// edge table has NO version and NO embed_*; the full structural snapshot IS the row.
+// The edge table has NO version and NO embed_*; the full structural snapshot IS the row.
 function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
   return {
     id: row.id,
@@ -143,12 +112,10 @@ function edgeRowToSnapshot(row: EdgeRow): KnowledgeEdgeRowSnapshotT {
   };
 }
 
-// Edge ids that are ALREADY event-sourced — they carry a `generate` (create/archive) or
-// `experimental:genesis` event keyed on the edge, so the edge fold reproduces them from their OWN
-// log. Only event-LESS edges (seed / pre-W1 legacy) need a backfilled genesis base. (The node-side
-// equivalent is knowledgeNodesWithGenesisAnchor, imported from parity — it additionally treats a
-// materialized_id_index anchor as event-sourced, which edges do not have.) This DOUBLES as the
-// idempotency pre-scan: a previously-backfilled edge now carries a genesis event and is skipped.
+// Edges already event-sourced carry a `generate` (create/archive) or `experimental:genesis`
+// event keyed on the edge, so the fold reproduces them from their OWN log. Doubles as the
+// idempotency pre-scan: a previously-backfilled edge now carries a genesis event and is
+// skipped. Unlike nodes, edges have no materialized_id_index anchor.
 async function edgesWithOriginatingEvent(db: DbLike, edgeIds: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (edgeIds.length === 0) return out;
@@ -176,12 +143,6 @@ export async function backfillKnowledgeGenesis(
   now: Date = new Date(),
 ): Promise<{ seeded: number; skipped: number }> {
   const rows = await db.select().from(knowledge);
-  // SCOPED: skip rows already event-sourced (a genesis / auto_tag event, or a materialized_id_index
-  // anchor) — they re-fold from their OWN log, so the B3 audit re-derives them through the reducers.
-  // Anchoring an event-sourced row would MASK reducer drift (the genesis snapshot sorts LAST in the
-  // fold and overwrites the mutation output). Only TRULY event-less rows (seed roots / pre-W1
-  // legacy) need a genesis base. This also serves as the idempotency pre-scan: a previously
-  // backfilled row now carries a genesis event and is treated as event-sourced → skipped.
   const eventSourced = await knowledgeNodesWithGenesisAnchor(
     db,
     rows.map((r) => r.id),
@@ -194,8 +155,6 @@ export async function backfillKnowledgeGenesis(
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: the genesis event + its index entry commit together (see header) so a
-    // crash can never leave the event without its anchor index row.
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: genesisEventId,
@@ -206,8 +165,7 @@ export async function backfillKnowledgeGenesis(
         subject_id: row.id,
         outcome: 'success',
         payload: { row: knowledgeRowToSnapshot(row) },
-        // OUTBOX OPT-OUT: stamp ingest_at non-NULL at INSERT so the memory poller
-        // (WHERE ingest_at IS NULL) never picks up the backfill flood (ADR-0021).
+        // outbox opt-out: a non-NULL ingest_at skips the memory poller (ADR-0021)
         ingest_at: now,
       });
       await upsertMaterializedIdIndex(tx, {
@@ -230,9 +188,6 @@ export async function backfillKnowledgeEdgeGenesis(
   now: Date = new Date(),
 ): Promise<{ seeded: number; skipped: number }> {
   const rows = await db.select().from(knowledge_edge);
-  // SCOPED: skip edges already event-sourced (a generate or genesis event keyed on the edge) — see
-  // edgesWithOriginatingEvent. Only event-LESS edges need a genesis base. (Doubles as the
-  // idempotency pre-scan.)
   const eventSourced = await edgesWithOriginatingEvent(
     db,
     rows.map((r) => r.id),
@@ -245,7 +200,6 @@ export async function backfillKnowledgeEdgeGenesis(
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: genesisEventId,
@@ -269,21 +223,18 @@ export async function backfillKnowledgeEdgeGenesis(
   return { seeded, skipped };
 }
 
-// goalRowToSnapshot — map a live `goal` DB row to GoalRowSnapshotT (the FULL row — goal has no
-// derived/embed columns). Dates stay Date (GenesisExperimental's z.coerce.date() accepts both).
-// scope_knowledge_ids defaults to [] at the column, so it is always a string[] here.
+// The FULL row — goal has no derived/embed columns. Dates stay Date (z.coerce.date() accepts
+// both); scope_knowledge_ids defaults to [] at the column.
 function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
   return {
     id: row.id,
     title: row.title,
     subject_id: row.subject_id,
     scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // YUK-603 — snapshot the CURRENT scope_mode so a backfilled subject_live goal re-folds
-    // to subject_live (omitting it would fold to the 'explicit' default → parity drift).
+    // Snapshot the CURRENT scope_mode / declared_stage: omitting them would fold to the
+    // column defaults ('explicit' / null) and drift parity against the live row.
     scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
-    // YUK-1009 — snapshot the current declared_stage so a backfilled goal re-folds
-    // to the same persisted stage (omitting it would fold to null → parity drift).
     declared_stage: row.declared_stage,
     status: row.status,
     source: row.source,
@@ -296,18 +247,9 @@ function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
 
 /**
  * Seed genesis events + index entries for every `goal` row lacking an originating event chain.
- * (YUK-471 W2.) Same shape as backfillKnowledgeGenesis (outbox opt-out, atomic per-row tx,
- * idempotent). Returns { seeded, skipped }.
- *
- * SCOPED (mirror the W1 node/edge backfill): skip goals already event-sourced — a goal with a
- * genesis / goal_scope proposal / status-scope action event, or a goal materialized_id_index
- * anchor (goalsWithGenesisAnchor). A proposal-accepted goal re-folds from its OWN proposal+rate
- * chain, so anchoring it with a current-state genesis snapshot would MASK reducer drift (the
- * genesis snapshot sorts last in the fold and overwrites the reducer output) — the exact reason
- * the design's "absence of genesis" predicate must NOT seed proposal-accepted goals. Only truly
- * EVENT-LESS goals (the manual at-entry path, goal-create.ts source='manual', which writes NO
- * event) need a genesis base. The pre-scan DOUBLES as the idempotency check (a previously
- * backfilled goal now carries a genesis event → skipped). timestamps verbatim from the row.
+ * Same shape as backfillKnowledgeGenesis. Only truly EVENT-LESS goals need a base — the manual
+ * at-entry path (goal-create.ts source='manual') writes no event; a proposal-accepted goal
+ * re-folds from its own proposal+rate chain. Timestamps verbatim from the row.
  */
 export async function backfillGoalGenesis(
   db: DbLike,
@@ -326,7 +268,6 @@ export async function backfillGoalGenesis(
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: genesisEventId,
@@ -350,11 +291,9 @@ export async function backfillGoalGenesis(
   return { seeded, skipped };
 }
 
-// mistakeVariantRowToSnapshot — map a live `mistake_variant` DB row to MistakeVariantRowSnapshotT
-// (the FULL row — no derived/embed/version columns). The fold-blind `cause_category` is snapshotted
-// here (the backfill compensation, critic A4 — the same field the runtime create event carries).
-// Dates stay Date (GenesisExperimental's z.coerce.date() accepts both). failure_reasons defaults to
-// [] at the column, so it is always a string[] here.
+// The FULL row — no derived/embed/version columns. The fold-blind `cause_category` is snapshotted
+// as backfill compensation (the same field the runtime create event carries). failure_reasons
+// defaults to [] at the column.
 function mistakeVariantRowToSnapshot(row: MistakeVariantRow): MistakeVariantRowSnapshotT {
   return {
     id: row.id,
@@ -371,19 +310,9 @@ function mistakeVariantRowToSnapshot(row: MistakeVariantRow): MistakeVariantRowS
 
 /**
  * Seed genesis events + index entries for every `mistake_variant` row lacking a base anchor.
- * (YUK-471 W2 — the HARDEST entity; cause_category is fold-blind.) Same shape as backfillGoalGenesis
- * (outbox opt-out, atomic per-row tx, idempotent). Returns { seeded, skipped }.
- *
- * SCOPED (mirror the W1 node/edge + W2 goal backfill): skip variants already event-sourced — a
- * variant with a runtime `experimental:mistake_variant_create` event, a backfill
- * `experimental:genesis`, or a mistake_variant materialized_id_index anchor
- * (mistakeVariantsWithGenesisAnchor). A runtime-created variant re-folds from its OWN create + chain,
- * so anchoring it with a current-state genesis snapshot would MASK reducer drift (the genesis sorts
- * last in the fold and overwrites the reducer output). Only truly EVENT-LESS variants (pre-W2 rows
- * written by the imperative variant_gen INSERT before this wave) need a genesis base. The pre-scan
- * DOUBLES as the idempotency check. cause_category MUST go into the snapshot (fold-blindness
- * compensation). timestamps verbatim from the row. FK ORDER: AFTER question + event (mistake_variant
- * softly references parent_question_id + proposal_event_id) — handled by backfillGenesisEvents below.
+ * Same shape as backfillGoalGenesis. cause_category MUST go into the snapshot (fold-blindness
+ * compensation). Only truly EVENT-LESS variants (rows written by the imperative variant_gen
+ * INSERT before the runtime create event existed) need a base.
  */
 export async function backfillMistakeVariantGenesis(
   db: DbLike,
@@ -402,7 +331,6 @@ export async function backfillMistakeVariantGenesis(
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: genesisEventId,
@@ -426,12 +354,9 @@ export async function backfillMistakeVariantGenesis(
   return { seeded, skipped };
 }
 
-// learningItemRowToSnapshot — map a live `learning_item` DB row to LearningItemRowSnapshotT,
-// EXCLUDING the non-structural / derived columns (child_learning_item_ids / ai_score / due_at /
-// reviewed_at — design §3①). Those have no write path the fold owns, so they are NOT part of the
-// structural snapshot fold(genesis) reproduces (mirrors the node shell's embed_* exclusion).
-// user_pinned IS retained (carried verbatim). Dates stay Date (z.coerce.date() accepts both).
-// knowledge_ids defaults to [] at the column, so it is always a string[] here.
+// EXCLUDES the non-structural / derived columns (child_learning_item_ids / ai_score / due_at /
+// reviewed_at): they have no write path the fold owns, so they are not part of the structural
+// snapshot (mirrors the node shell's embed_* exclusion). user_pinned IS carried verbatim.
 function learningItemRowToSnapshot(row: LearningItemRow): LearningItemRowSnapshotT {
   return {
     id: row.id,
@@ -456,26 +381,11 @@ function learningItemRowToSnapshot(row: LearningItemRow): LearningItemRowSnapsho
 
 /**
  * Seed genesis events + index entries for every `learning_item` row lacking a genesis anchor.
- * (YUK-471 W2.) Same shape as backfillGoalGenesis (outbox opt-out, atomic per-row tx, idempotent).
- * Returns { seeded, skipped }.
- *
- * PER-ID genesis (design §3②/§3⑤): hub + each child item gets its OWN genesis event (subject_id =
- * item.id), NOT one genesis per tree — each learning_item folds INDEPENDENTLY (child_learning_item_ids
- * is excluded from the snapshot, so the hub never depends on child state).
- *
- * C3 HUB-BEFORE-CHILD TOPO ORDER (design §3⑦): the rows are seeded sorted so a parent is anchored
- * BEFORE its children (rows with parent_learning_item_id === null first, then children). The genesis
- * writes only ADD event/index rows (no learning_item FK on parent_learning_item_id is enforced here),
- * but the deterministic parent-first order keeps the convention + makes the seeded sequence stable.
- *
- * SCOPED (mirror the W1 node/edge + W2 goal/mistake_variant backfill): skip items already
- * event-sourced — an item with a backfill `experimental:genesis` or a learning_item
- * materialized_id_index anchor (learningItemsWithGenesisAnchor). The pre-scan DOUBLES as the
- * idempotency check (a previously backfilled item now carries a genesis event → skipped). Only truly
- * EVENT-LESS items (pre-W2 rows written by the imperative learning_intent / ai_dream INSERT before
- * this wave) need a genesis base. timestamps verbatim from the row. FK ORDER: AFTER artifact + event
- * (learning_item softly references primary_artifact_id + source_ref→event) — handled by
- * backfillGenesisEvents below.
+ * Same shape as backfillGoalGenesis. PER-ID genesis: hub + each child item gets its OWN genesis
+ * event (subject_id = item.id), NOT one genesis per tree — each learning_item folds INDEPENDENTLY
+ * (child_learning_item_ids is excluded from the snapshot, so the hub never depends on child state).
+ * Only truly EVENT-LESS items (rows written by the imperative learning_intent / ai_dream INSERT)
+ * need a base.
  */
 export async function backfillLearningItemGenesis(
   db: DbLike,
@@ -486,18 +396,12 @@ export async function backfillLearningItemGenesis(
     db,
     rows.map((r) => r.id),
   );
-  // C3 HUB-BEFORE-CHILD: stable sort with parentless (hub) rows first, then children. Among rows
-  // of the same parent-ness the input order is preserved (Array.prototype.sort is stable), so the
-  // seeded sequence is deterministic.
-  //
-  // 2-LEVEL TREE ASSUMPTION (A7): this is a BINARY parentless-first partition, NOT a true topo sort
-  // — it only guarantees every hub precedes every child, not that an arbitrary grandchild follows
-  // its parent. That is sufficient because the learning_item tree is structurally 2-level by the
-  // current data model: the ONLY writers of parent_learning_item_id set it to either null (a hub:
-  // learning_intent hub / ai_dream single item) or the hub's id (atomic/long children of that hub
-  // — learning_intent.ts) — no site ever points a child at another child, so no grandchildren
-  // exist. IF the model ever grows a deeper hierarchy (>2 levels), this MUST become a real
-  // dependency topo sort (e.g. Kahn) so every node is anchored after its parent.
+  // HUB-BEFORE-CHILD: stable sort with parentless (hub) rows first (Array.prototype.sort is
+  // stable, so the seeded sequence is deterministic). This is a BINARY parentless-first
+  // partition, NOT a true topo sort — sufficient because the learning_item tree is structurally
+  // 2-level: the only writers of parent_learning_item_id set it to null (a hub) or the hub's id
+  // (children), so no grandchildren exist. IF the model ever grows a deeper hierarchy, this MUST
+  // become a real dependency topo sort (e.g. Kahn) so every node is anchored after its parent.
   const ordered = [...rows].sort((a, b) => {
     const aHub = a.parent_learning_item_id === null ? 0 : 1;
     const bHub = b.parent_learning_item_id === null ? 0 : 1;
@@ -511,7 +415,6 @@ export async function backfillLearningItemGenesis(
       continue;
     }
     const genesisEventId = newId();
-    // ATOMIC per row: genesis event + index entry commit together (see header).
     await db.transaction(async (tx) => {
       await writeEvent(tx, {
         id: genesisEventId,
@@ -617,7 +520,6 @@ export async function backfillArtifactGenesis(
     }
     const genesisEventId = newId();
     try {
-      // ATOMIC per row: genesis event + index entry commit together (see header).
       await db.transaction(async (tx) => {
         await writeEvent(tx, {
           id: genesisEventId,
@@ -698,7 +600,6 @@ export async function backfillQuestionBlockGenesis(
     }
     const genesisEventId = newId();
     try {
-      // ATOMIC per row: ONLY the genesis event (no index entry — question_block is not in the index).
       await db.transaction(async (tx) => {
         await writeEvent(tx, {
           id: genesisEventId,
@@ -767,7 +668,6 @@ export async function backfillItemCalibrationGenesis(
     }
     const genesisEventId = newId();
     try {
-      // ATOMIC per row: ONLY the genesis event (no index entry — item_calibration is not in the index).
       await db.transaction(async (tx) => {
         await writeEvent(tx, {
           id: genesisEventId,

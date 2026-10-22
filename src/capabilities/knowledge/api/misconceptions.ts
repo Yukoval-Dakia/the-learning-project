@@ -1,10 +1,5 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — per-KC misconception read endpoint.
-//
-// GET /api/knowledge/[id]/misconceptions
-//   → 200 { rows: MisconceptionRow[] } — the「指向此点的误区」funnel: live confirmed
-//          误区 (caused_by edge join) + per-KC pending conjecture candidates. Read-only;
-//          no write path. Empty KC → { rows: [] } (honest empty, never zero-filled).
-//   → 400 missing / blank id.
+// Per-KC misconception funnel: live confirmed rows plus pending candidates.
+// Read-only; an empty KC returns an empty list, never a placeholder.
 
 import { KnowledgeIdParamsSchema } from '@/capabilities/knowledge/api/contracts';
 import { loadMisconceptionsForKc } from '@/capabilities/knowledge/server/misconception-read';

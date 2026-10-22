@@ -189,7 +189,7 @@ export function structurallyVerifyGeneratedQuestion(input: {
   plan: QuestionGenerationPlanT;
   anchor: QuestionAnswerAnchorT | null;
   // Only the generated `kind`'s implied answer class participates in the
-  // structural veto (YUK-386: kind is a free-form display label — the veto
+  // structural veto (kind is a free-form display label — the veto
   // compares the class each label implies, not label identity). The reference
   // answer is deliberately NOT compared here: that is objective correctness,
   // which stays `unverified` until a proven comparator policy exists (see

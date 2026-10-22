@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
 import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
+import { sha256Canonical } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
-import { JUDGE_PROMPT_TEMPLATE_REVISION, sha256Canonical } from './judge-execution-provenance';
+import { JUDGE_PROMPT_TEMPLATE_REVISION } from './judge-execution-provenance';
 
 export interface JudgeExecutionIdentity {
   task_kind: string;
@@ -10,7 +11,7 @@ export interface JudgeExecutionIdentity {
   input_hash: string;
   prompt_fingerprint: string;
   prompt_template_revision: string;
-  // YUK-589 (High-sec) — the digest of the exact judge result the caller is
+  // (High-sec) — the digest of the exact judge result the caller is
   // asking us to trust. Only the supplied-verified path sets this; it is
   // corroborated against the digest the run itself persisted so a caller can
   // never bind a real run to a result the model did not produce.
@@ -25,7 +26,7 @@ interface TaskRunIdentity {
   model: string;
   status: string;
   finished_at: Date | null;
-  // YUK-589 — prompt/result identity the run persisted at execution time.
+  // prompt/result identity the run persisted at execution time.
   // Nullable for rows written before this column existed (legacy runs stay
   // uncorroborated → supplied_unverified, never falsely trusted).
   prompt_fingerprint: string | null;
@@ -43,7 +44,7 @@ export function resolveModelExecutionProvenance(
     prompt_template_revision: execution.prompt_template_revision,
   };
 
-  // YUK-589 (Finding 4) — a caller that already knows the input is unverified
+  // a caller that already knows the input is unverified
   // must never be promoted. Preserve the discriminant regardless of any run
   // match: an unverified input can never come out the other side as verified.
   if (kind === 'supplied_unverified') {
@@ -58,7 +59,7 @@ export function resolveModelExecutionProvenance(
     run.status === 'success' &&
     run.finished_at !== null;
 
-  // YUK-589 (Finding 1) — the supplied path must corroborate the exact prompt
+  // the supplied path must corroborate the exact prompt
   // AND result identity the run persisted, not merely a successful id/kind/input
   // lookup. `invoked` is the server's own just-run call and needs no such
   // cross-check (and legacy pre-column runs would have null digests).
@@ -91,7 +92,7 @@ export async function modelExecutionProvenance(
 ): Promise<JudgeExecutionProvenanceT> {
   let run: TaskRunIdentity | undefined;
   if (execution.task_run_id) {
-    // YUK-589 (K3a) — a DB blip during the ai_task_runs lookup must NOT crash the
+    // (K3a) — a DB blip during the ai_task_runs lookup must NOT crash the
     // submit/paper/rejudge write path. Contain it: on error, resolve with NO run
     // row, which fails closed (`supplied_*` → supplied_unverified, `invoked` →
     // historical_unknown) rather than throwing. execution_provenance is an audit
@@ -124,18 +125,18 @@ export async function modelExecutionProvenance(
 }
 
 /**
- * YUK-589 — single source for stamping the provenance of a judge result the
+ * single source for stamping the provenance of a judge result the
  * server JUST invoked (submit auto-rate / paper slot / rejudge overturn). The
  * three consumers previously duplicated this 3-arm decision; the honest signal
  * is whether a model invocation was ATTEMPTED (`invoked.modelAttempted`), NOT
  * whether the route is model-backed — an accelerator-resolved unit_dimension
  * slot (route ∈ model set, but no model call) is deterministic, not
  * historical_unknown.
- *   - execution present  → the model ran and produced provenance → `invoked`.
- *   - model attempted, no execution → the model ran but metadata/persist failed
- *     (or the call itself failed) → `historical_unknown` (a real model run whose
- *     identity is unknown — never a no-model `deterministic` lie).
- *   - no model attempted → a local/deterministic verdict → `deterministic`.
+ * - execution present → the model ran and produced provenance → `invoked`.
+ * - model attempted, no execution → the model ran but metadata/persist failed
+ * (or the call itself failed) → `historical_unknown` (a real model run whose
+ * identity is unknown — never a no-model `deterministic` lie).
+ * - no model attempted → a local/deterministic verdict → `deterministic`.
  */
 export async function resolveInvokedExecutionProvenance(
   db: Db,
@@ -151,7 +152,7 @@ export async function resolveInvokedExecutionProvenance(
 }
 
 /**
- * YUK-589 — persist the prompt/result digests a judge run produced onto its
+ * persist the prompt/result digests a judge run produced onto its
  * ai_task_runs row so the supplied-verified path can later corroborate a
  * client-supplied result against what the model actually ran. This function does
  * NOT swallow failures — it awaits the UPDATE and lets errors propagate. The

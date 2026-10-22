@@ -1,9 +1,5 @@
-// YUK-604 — learner-declared "我想学 X" command.
-//
-// M5 removed the old Next route together with the retired /learning-items page,
-// leaving planLearningIntent with no live caller. This capability-owned handler
-// restores proposal creation only. The owner reviews and accepts the resulting
-// learning_item proposal through the canonical proposal inbox decision route.
+// Learner-declared "我想学 X" command: creates a learning_item proposal that the owner
+// reviews and accepts through the canonical proposal inbox decision route.
 
 import type { Db } from '@/db/client';
 import { db } from '@/db/client';
@@ -39,12 +35,10 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
 
       try {
         const database = deps.database ?? db;
-        // UI disables repeat submits, but the API also reuses an already-pending
-        // proposal for the same topic. This avoids another paid outline run after
-        // a reload or request retry. Scan ALL same-topic pending rows and restore
-        // the first that still satisfies the public contract; a malformed legacy
-        // row is skipped individually (not the whole dedup) so one bad row can't
-        // force a fresh paid run when a valid same-topic proposal already exists.
+        // UI disables repeat submits, but the API also reuses an already-pending proposal
+        // for the same topic to avoid another paid outline run after a reload or retry.
+        // A malformed legacy row is skipped individually so one bad row cannot force a
+        // fresh paid run when a valid same-topic proposal exists.
         const pending = await listProposalInboxRows(database, {
           status: 'pending',
           kind: 'learning_item',
@@ -59,9 +53,8 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
           if (restored.success) return Response.json(restored.data);
         }
 
-        // YUK-691 — only charge the global AI-funnel budget when this request is
-        // actually about to dispatch a paid outline run. Same-topic replays above
-        // remain free and do not consume the limiter.
+        // Charge the global AI-funnel budget only when this request is actually about to
+        // dispatch a paid outline run; same-topic replays above stay free.
         checkRateLimit();
         const proposal = await planLearningIntent({
           db: database,
@@ -71,10 +64,9 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
         return Response.json(proposal);
       } catch (err) {
         if (err instanceof LearningIntentError) {
-          // topic_not_found = requested topic isn't in the tree (client-correctable → 422).
+          // topic_not_found = topic isn't in the tree (client-correctable → 422).
           // llm_parse_failed / invalid_atomic_knowledge_id are upstream AI-quality faults,
-          // not server bugs → 502 so monitoring doesn't page on model hiccups. Anything
-          // else (e.g. proposal_not_found, never thrown on the create path) → 500.
+          // not server bugs → 502 so monitoring doesn't page on model hiccups.
           const status =
             err.code === 'topic_not_found'
               ? 422

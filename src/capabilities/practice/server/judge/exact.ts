@@ -1,8 +1,12 @@
-import { extractAnswerHead } from '@/core/schema/judge-routing';
+import {
+  extractAnswerHead,
+  extractFinalAnswer,
+  isProcessLikeAnswer,
+} from '@/core/schema/judge-routing';
 
 export interface JudgeInput {
   reference: string;
-  // YUK-260: option texts for choice questions. When present, both answer and
+  // option texts for choice questions. When present, both answer and
   // reference are resolved letter↔text before comparison so a letter submission
   // ("A" / "BC") matches a reference stored as option text (and vice versa).
   // Optional/nullable ⇒ non-choice callers (incl. raw DB / JudgeQuestionRow rows
@@ -25,7 +29,7 @@ export type JudgeResultV1 = JudgeResult;
 const normalize = (s: string) => s.normalize('NFKC').trim().toLowerCase();
 
 export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResult {
-  // YUK-260: choice questions — the student UI submits the letter ("A", multi
+  // choice questions — the student UI submits the letter ("A", multi
   // "BC") while the reference may store option TEXT (or vice versa, depending on
   // the sourcing line). Resolve both sides to choice indices when possible and
   // compare as sets; fall back to plain text equality so non-choice exact
@@ -57,7 +61,7 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
 
     // (3) Leading-letter prefix: reference_md per the reading-comprehension skill
     // is "正确项字母 + 依据" (e.g. "C。原文依据…"), and choices_md options may carry
-    // a label prefix ("A. 修八尺有余…"). YUK-1003: jyeoo/web-sourced references
+    // a label prefix ("A. 修八尺有余…"). : jyeoo/web-sourced references
     // also use the parenthesised form "（C）选项原文（+解析）" — allow an optional
     // full/half-width open paren before the letter. Parse the leading letter
     // when followed by a separator so 'C' answer ↔ "C。…" / "（C）…" reference
@@ -72,7 +76,7 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
 
     return null;
   };
-  // YUK-1003: web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
+  // web-sourced reference_md stores "<bare answer>\n\n解析：…" — the
   // judgeable surface is the extracted answer head. Same for the learner's
   // answer ("答：X" / trailing self-written explanation is still a correct
   // answer). resolveChoiceIndices and the text compare both run on heads.
@@ -87,19 +91,26 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
     answerIdx.every((v, i) => v === referenceIdx[i]);
 
   const match = choiceMatch || normalize(answerHead) === normalize(referenceHead);
-  // YUK-260 evidence: record HOW the match was decided plus resolved indices, so
-  // a choice_index verdict (where normalized text legitimately differs) does not
-  // read as self-contradictory. Kept isomorphic with the V2 capability judge.
+  // 头比较 miss 后确定性抽明示终态再比一次（与 V2 判官及 native
+  // exact_text comparator 同形）。V1 没有 pending/unsupported 语义：过程文本
+  // 仍回落 incorrect，但 evidence 如实标注 process_answer_unresolvable —
+  // 消费面（calibration 对照）能据此区分"真错"与"exact 判不动"。
+  const finalAnswer = match ? null : extractFinalAnswer(answer.content);
+  const finalMatch =
+    finalAnswer?.kind === 'found' &&
+    finalAnswer.values.some((candidate) => normalize(candidate) === normalize(referenceHead));
+  const effectiveMatch = match || finalMatch === true;
+  const processUnresolvable = !effectiveMatch && isProcessLikeAnswer(answer.content);
   return {
-    verdict: match ? 'correct' : 'incorrect',
-    score: match ? 1 : 0,
-    feedback_md: match
+    verdict: effectiveMatch ? 'correct' : 'incorrect',
+    score: effectiveMatch ? 1 : 0,
+    feedback_md: effectiveMatch
       ? `正确答案：${question.reference}。`
       : `参考答案：${question.reference}。你的答案：${answer.content}。`,
     evidence_json: {
-      match,
+      match: effectiveMatch,
       normalized_reference: normalize(question.reference),
-      // YUK-1003: when either side embedded an explanation tail the compare ran
+      // when either side embedded an explanation tail the compare ran
       // on extracted heads — record them, otherwise a stripped verdict reads
       // self-contradictory (normalized texts visibly differ).
       ...(answerHead !== answer.content.normalize('NFKC').trim()
@@ -108,7 +119,11 @@ export function judgeExact(question: JudgeInput, answer: AnswerInput): JudgeResu
       ...(referenceHead !== question.reference.normalize('NFKC').trim()
         ? { reference_answer_head: referenceHead }
         : {}),
-      match_type: choiceMatch ? 'choice_index' : 'text',
+      ...(finalAnswer?.kind === 'found'
+        ? { final_answer: { value: finalAnswer.values[0] ?? '', marker: finalAnswer.marker } }
+        : {}),
+      ...(processUnresolvable ? { process_answer_unresolvable: true } : {}),
+      match_type: finalMatch === true ? 'final_answer' : choiceMatch ? 'choice_index' : 'text',
       answer_choice_indices: answerIdx,
       reference_choice_indices: referenceIdx,
     },

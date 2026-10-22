@@ -30,9 +30,9 @@ import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import {
   type PrepDeskProbeWire,
   type ProbeAnswerVerdict,
-  getActiveProbes,
   submitProbeAnswer,
 } from './probe-answer-api';
+import { useWorkbenchClient } from './workbench-client';
 
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
@@ -73,6 +73,7 @@ function VerdictMessage({ verdict }: { verdict: ProbeAnswerVerdict['resolution']
 }
 
 export function ProbeAnswers() {
+  const { getActiveProbes } = useWorkbenchClient();
   const q = useQuery({ queryKey: ['prep-desk-probes'], queryFn: getActiveProbes });
   const probes = q.data?.probes ?? [];
 

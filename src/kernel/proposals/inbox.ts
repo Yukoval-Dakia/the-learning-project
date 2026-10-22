@@ -47,12 +47,9 @@ import {
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 
-// P5.4 / YUK-143 (RB-7 / RB-8) — 'rubric_rejected' is a TERMINAL derived status
-// for propose events the Layer-1 rubric folded (carrying a `rubric_verdict`
-// marker on the event payload). It is NOT 'pending', so live-pending dedup /
-// cooldown queries that key on status:'pending' exclude it (the rejected edge
-// can be re-proposed later by a better attempt). It is the folded / low-
-// visibility bucket the inbox exposes (RB-8); no UI in P5.4.
+// Terminal derived status for propose events a fold rejected (rubric or topology).
+// Not 'pending', so pending dedup and cooldown queries exclude it and a better
+// attempt may re-propose.
 export type ProposalStatus = 'pending' | 'accepted' | 'dismissed' | 'stale' | 'rubric_rejected';
 
 export interface ProposalInboxRow {
@@ -74,28 +71,20 @@ export interface ProposalInboxRow {
 
 export interface ListProposalInboxOpts {
   status?: ProposalStatus;
-  // M4 review fix (YUK-318/YUK-319) — kind 在投影层过滤（与 status 同位）：
-  // legacy 事件的 kind 由 deriveLegacyAiProposal 从 action/subject_kind 派生，
-  // SQL 层的 payload->'ai_proposal'->>'kind' 表达式覆盖不了 legacy 形态。
-  // 投影层过滤吃到 listProposalInboxPage 的补批 loop，跨页分页语义正确
-  // （之前在路由层做页内 post-filter，next_cursor 指向未过滤流——codex P2 /
-  // coderabbit major）。
+  // Filtered in the projection layer because legacy kinds derive from
+  // action/subject_kind and SQL cannot see them. The pagination loop refills, so
+  // cursor semantics stay correct.
   kind?: AiProposalPayloadT['kind'];
-  // decision excludes C-strength observe-only records. The Inbox uses this lane to guarantee that
-  // a large observation backlog cannot hide actionable rows behind the API page boundary.
+  // decision excludes C-strength observe-only rows, so an observation backlog
+  // cannot hide actionable rows behind the page boundary.
   lane?: ProposalInboxLane;
-  // Optional projection-layer filter on the source event's `actor_ref` (e.g.
-  // 'dreaming'). Applied alongside status/kind in projectLoadedProposalRows so the
-  // ranked pagination loop refills to the requested `limit` of matching rows,
-  // rather than the caller projecting every row just to post-filter by author.
+  // Projection-layer filter, refilled by the pagination loop so `limit` still means
+  // matching rows.
   actorRef?: string;
   /**
-   * YUK-1404 — pending block_merge proposals are learner-visible ONLY when the
-   * stored rows prove the merge joins one question (see
-   * block-merge-admission.ts). Inadmissible proposals stay stored but read as
-   * invisible by default; internal callers that need the RAW pending set
-   * (durable-producer cooldown dedup) opt out via this flag. Terminal
-   * (accepted/dismissed/stale/rubric_rejected) rows are never affected.
+   * Pending block_merge rows are visible only when stored facts prove the merge.
+   * Internal callers that need the raw pending set opt out here; terminal rows are
+   * never affected.
    */
   includeInadmissibleBlockMerges?: boolean;
   limit?: number;
@@ -141,11 +130,7 @@ function rateStatus(rate: EventRow | undefined): ProposalStatus {
   return isTerminalRating(payload.rating) ? terminalRateStatus[payload.rating] : 'pending';
 }
 
-// Read a verdict marker (sibling of ai_proposal on the propose event payload)
-// under `key`, null/object-guard it, and apply `predicate` to the marker object.
-// Shared by isRubricRejected (rubric_verdict) and isTopologyRejected
-// (topology_verdict) — both are "does this event carry a terminal fold marker?"
-// checks with the same null/object guard and only the key + predicate differ.
+// Shared guard for terminal fold markers (rubric_verdict / topology_verdict).
 function hasVerdictMarker(
   row: EventRow,
   key: string,
@@ -157,43 +142,22 @@ function hasVerdictMarker(
   );
 }
 
-// P5.4 / YUK-143 (RB-6 / RB-7) — a propose event the Layer-1 rubric folded
-// carries a `rubric_verdict` marker (sibling of ai_proposal in the event
-// payload). Read it from the propose event row so the derived status becomes
-// terminal 'rubric_rejected' BEFORE the rate-based derivation runs. A
-// rubric-rejected event has no chained rate, so without this it would derive
-// 'pending' and re-occupy the (kind, cooldown_key) for live-pending dedup —
-// the exact lockout RB-7 forbids.
+// A rubric-rejected propose event has no chained rate; without the marker it would
+// derive pending and re-occupy its (kind, cooldown_key) against live-pending dedup.
 function isRubricRejected(row: EventRow): boolean {
   return hasVerdictMarker(row, 'rubric_verdict', (v) => v.ok === false);
 }
 
-// ADR-0034 §2 / YUK-344 — a propose event the write-time TOPOLOGY gate hard-
-// rejected (cycle / direction contradiction) carries a `topology_verdict` marker
-// with status 'reject' (sibling of ai_proposal) and NO rubric_verdict key. It is
-// folded EXACTLY like a rubric reject: a marked propose event for audit, no live
-// pending proposal, no chained rate. Without a terminal branch here it would
-// derive 'pending' and re-occupy the (kind, cooldown_key) for live-pending dedup
-// — the same lockout RB-7 forbids, now via the topology marker. We fold it into
-// the same terminal `rubric_rejected` (folded / low-visibility) bucket so the
-// derived status is non-pending and non-acceptable, mirroring the rubric handling
-// without widening the public ProposalStatus enum surface.
+// A topology-rejected propose event is folded like a rubric reject: visible for
+// audit, not pending, no rate. It shares the rubric_rejected bucket so the public
+// ProposalStatus enum does not widen.
 function isTopologyRejected(row: EventRow): boolean {
   return hasVerdictMarker(row, 'topology_verdict', (v) => v.status === 'reject');
 }
 
-// Resolve the terminal status for a propose event. A non-active correction
-// (stale) takes PRIORITY over the rubric_rejected marker: a folded edge that is
-// later retracted/corrected (a `correct` event chained off it via
-// retractAiProposal) must clear the folded `?status=rubric_rejected` bucket and
-// derive 'stale' — otherwise it would stay pinned as rubric_rejected forever and
-// could never be cleared (codex r4 P2 #2). The rubric_rejected marker only wins
-// when there is no correction. `stale` is ALSO non-pending, so the live-pending
-// dedup / cooldown queries (RB-7, in propose_edge.ts + review.ts) still exclude
-// a stale-from-correction proposal — those queries key on the correction state +
-// the `rubric_verdict` marker directly, not on this derived enum. The pure
-// (uncorrected) folded proposal still derives 'rubric_rejected'. Shared by the
-// list + single-row projections so the bucketing is uniform.
+// A correction takes priority over a fold marker: a retracted folded proposal must
+// not stay rubric_rejected forever. Shared by list and single-row projections so
+// bucketing is uniform.
 function deriveProposalStatus(
   row: EventRow,
   correction: ProposalCorrectionDecision | undefined,
@@ -201,11 +165,7 @@ function deriveProposalStatus(
 ): ProposalStatus {
   if (correction) return correction.status;
   if (isRubricRejected(row)) return 'rubric_rejected';
-  // ADR-0034 §2 / YUK-344 — a topology-rejected fold is terminal just like a
-  // rubric reject: fold it into the same non-pending / non-acceptable bucket so
-  // it never derives 'pending' and re-occupies the (kind, cooldown_key) the
-  // dup-pending callers key on. Correction (above) still wins, identical to the
-  // rubric_rejected ordering.
+  // Same terminal bucket as a rubric reject.
   if (isTopologyRejected(row)) return 'rubric_rejected';
   return rateStatus(rate);
 }
@@ -237,10 +197,7 @@ function proposalWhere() {
     and(eq(event.action, 'propose'), inArray(event.subject_kind, ['knowledge', 'knowledge_edge'])),
     like(event.action, 'experimental:knowledge_%'),
     eq(event.action, 'experimental:proposal'),
-    // YUK-19 — planLearningIntent writes proposals with the legacy
-    // `experimental:propose_learning_intent` action via event_override (see
-    // writeLearningItemProposal in src/server/proposals/producers.ts).
-    // Surface them in the unified inbox so the rollback / accept UI sees them.
+    // Legacy learning-intent proposals also surface in the unified inbox.
     eq(event.action, 'experimental:propose_learning_intent'),
   );
 }
@@ -250,14 +207,11 @@ const observationProposalKinds = Object.entries(aiProposalKindStrength)
   .map(([kind]) => kind as AiProposalKindT);
 
 /**
- * Push the Inbox lane split into the ranked event query without duplicating proposal schemas.
- *
- * Modern proposals expose a canonical kind either under `ai_proposal` or at the root of legacy
- * `experimental:proposal` payloads, so those can be classified exactly. The older
- * `experimental:knowledge_*` representation has no kind; its mutation mapping mirrors
- * deriveLegacyAiProposal just far enough to identify the C-strength archive fallback. Full Zod
- * validation remains in the projection layer, so this predicate may retain malformed candidates
- * but can never promote one into the Inbox.
+ * Push the inbox lane split into the ranked query. Modern proposals have a canonical
+ * kind; the older experimental:knowledge_* form has none, so its mutation mapping
+ * mirrors deriveLegacyAiProposal just far enough to identify the C-strength archive
+ * fallback. Zod validation still runs in projection, so this can retain malformed
+ * candidates but never promote one.
  */
 function proposalLaneWhere(lane: ProposalInboxLane | undefined): SQL | undefined {
   if (!lane) return undefined;
@@ -297,14 +251,11 @@ function proposalLaneWhere(lane: ProposalInboxLane | undefined): SQL | undefined
 }
 
 /**
- * Count the pending inbox projection by proposal kind without loading ranked pages.
+ * Count pending rows by kind without loading ranked pages. SQL only drops proposals
+ * whose latest rate is terminal; payload shape, corrections, verdicts, and legacy
+ * derivation stay on the same TypeScript/Zod path as the inbox.
  *
- * SQL only removes proposals whose latest rate is terminal. Payload shape, correction folding,
- * rubric/topology verdicts, and legacy derivation stay on the same TypeScript/Zod path as the
- * interactive inbox. This keeps the count schema-proof while avoiding signal joins, sorting, and
- * materializing the accepted/dismissed history on every Today request. `hasMore` is true only at
- * the accident ceiling; in that case `byKind` is an explicit lower bound rather than a reason to
- * fail the Today hot path.
+ * hasMore means the batch ceiling was hit, so byKind is a lower bound.
  */
 export interface PendingProposalCountResult {
   byKind: Partial<Record<AiProposalKindT, number>>;
@@ -373,10 +324,7 @@ export async function countPendingProposalInboxByKind(
     if (candidateRows.length === 0) break;
     batchCount += 1;
 
-    // Counting only needs active-vs-corrected state; do not perform the second
-    // decided-at lookup used by rendered Inbox rows. With the 5k candidate batch,
-    // a full 50k safety-window costs at most 10 candidate + 10 correction queries
-    // instead of the previous ~300 sequential round-trips.
+    // Counts need only active-vs-corrected state, not the decided-at lookup rows use.
     const correctionStatuses = await getCorrectionStatuses(
       db,
       candidateRows.map((row) => row.id),
@@ -392,10 +340,8 @@ export async function countPendingProposalInboxByKind(
       pendingPayloads.push(payload);
     }
 
-    // YUK-1404 — same learner-visibility rule as the list: pending block_merge
-    // proposals that fail the stored-facts admission proof are not counted.
-    // The pending set is internal-truth-complete regardless; the count tracks
-    // what a learner would see. One batched fact load per batch (no N+1).
+    // Same learner-visibility rule as the list: inadmissible pending block_merge
+    // rows are not counted.
     const mergeInputs = new Map<
       AiProposalPayloadT,
       ReturnType<typeof blockMergeAdmissionInputFromPayload>
@@ -433,14 +379,9 @@ export async function countPendingProposalInboxByKind(
   return { byKind: counts, hasMore: false };
 }
 
-// YUK-520 (A1 夜窗 digest) — windowed proposal count for the overnight-digest read
-// model. Lives HERE (next to proposalWhere) so the "what counts as a proposal event"
-// predicate has a single source of truth — overnight-digest.ts must NOT re-implement
-// proposalWhere() or it drifts when the predicate changes. Pure count, zero derivation
-// (no rate / correction / signals joins) — far cheaper than listProposalInboxRows for a
-// felt digest count. `conjectures` is the subset whose ai_proposal.kind = 'conjecture'
-// (written via writeAiProposal default branch → action 'experimental:proposal'); the
-// caller subtracts it so the inbox feed (ProposalStrip) and 备课台 feed don't overlap.
+// Windowed count for the overnight digest. Lives next to proposalWhere so the
+// proposal-event predicate has one owner; conjectures is the subset written via the
+// default experimental:proposal branch, which the caller subtracts.
 export async function countProposalsInWindow(
   db: DbLike,
   window: { from: Date; to: Date },
@@ -744,9 +685,8 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
       proposed_change: {
         mutation: 'propose_new',
         name: String(payload.name ?? ''),
-        // Root proposals carry null + the anchoring domain; legacy events
-        // always had a string parent, so null only ever comes from the new
-        // root-creation contract.
+        // Root proposals carry null plus an anchoring domain; legacy events always
+        // had a string parent.
         parent_id: payload.parent_id == null ? null : String(payload.parent_id),
         ...(typeof payload.domain === 'string' && payload.domain.length > 0
           ? { domain: payload.domain }
@@ -755,10 +695,8 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
     });
   }
   if (row.action === 'propose' && row.subject_kind === 'knowledge_edge') {
-    // ADR-0032 D4-E1 (YUK-203) — carry the edge_op discriminator + archive target
-    // through the derive so an ARCHIVE proposal renders as archive (not create) in
-    // the inbox. Absent edge_op (legacy events written before D4-E1) defaults to
-    // 'create' in the schema parse, so the create-branch derive is unchanged.
+    // Carry edge_op and the archive target so an archive proposal renders as archive.
+    // Absent edge_op (pre-D4-E1 events) defaults to create in the schema parse.
     const edgeOp =
       payload.edge_op === 'archive' || payload.edge_op === 'supersede' ? payload.edge_op : 'create';
     return parseAiProposalPayload({
@@ -809,10 +747,8 @@ export async function listProposalInboxRows(
   return (await listProposalInboxPage(db, opts)).rows;
 }
 
-// YUK-1404 — one batched admission proof for every pending block_merge row in
-// a projected batch: ONE question_block query + ONE source_document query
-// (no per-row N+1), run BEFORE signals/presentation loading so dropped rows
-// neither surface nor consume pagination capacity.
+// One batched admission proof per projected batch, run before signals/presentation
+// so dropped rows neither surface nor consume pagination capacity.
 async function dropInadmissibleBlockMerges(
   db: DbLike,
   rows: ProposalInboxRow[],
@@ -980,18 +916,10 @@ export async function getProposalInboxRow(
     signals: null,
     presentation: null,
   };
-  // YUK-1404 — same rule as the list for every PROOF failure: a pending
-  // block_merge that fails the stored-facts admission proof is invisible (404
-  // on every decision lane, so the accept path can never bypass the visibility
-  // rule). Terminal rows (accepted/dismissed/…) are never filtered, preserving
-  // idempotent replay.
-  //
-  // YUK-1404 stale lane — the not_draft arm is EXEMPT on this single-row read
-  // only: a chain that already left draft makes the proposal STALE, not
-  // unproven, and the decision lane must still see the row so the accept
-  // applier can answer with the honest soft-stale result (200, no rate event,
-  // proposal stays pending) instead of a bare 404. The list/count reads keep
-  // hiding every ineligible row — the learner never sees the stale card.
+  // Same learner-visibility rule as the list, but the not_draft arm is exempt here:
+  // the chain is stale rather than unproven, so the decision lane must still see the
+  // row and answer with the honest soft-stale result instead of 404. Terminal rows
+  // are never filtered, preserving idempotent replay.
   if (row.kind === 'block_merge' && row.status === 'pending') {
     const input = blockMergeAdmissionInputFromPayload(payload);
     if (!input) return null;
@@ -1014,9 +942,8 @@ export async function getProposalInboxRow(
 function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; reasoning: string } {
   const payload = toRecord(row.payload);
   if (row.subject_kind === 'knowledge_edge') {
-    // ADR-0032 D4-E1 (YUK-203) — additively carry edge_op + archive target so the
-    // legacy knowledge-proposal consumer can distinguish archive from create.
-    // Absent edge_op (pre-D4-E1 events) → 'create' default downstream.
+    // Carry edge_op and archive target so the legacy consumer can distinguish
+    // archive from create. Absent edge_op defaults to create downstream.
     return {
       payload: {
         mutation: 'propose_knowledge_edge',
@@ -1112,18 +1039,17 @@ export async function listLegacyKnowledgeProposals(
 }
 
 /**
- * YUK-892 — shared cooldown dedup used by the capability-owned record/question
- * proposal tools (Practice author/record seed + Ingestion record links/promotion).
- * True when a pending proposal of `kind` already carries `cooldownKey`.
+ * Shared cooldown dedup for capability-owned proposal tools. This is a read: callers
+ * that need atomic "check pending then write" must lock the same cooldown key inside
+ * their write transaction.
  */
 export async function pendingProposalWithCooldown(
-  db: Db,
+  db: DbLike,
   kind: string,
   cooldownKey: string,
 ): Promise<boolean> {
-  // Cooldown dedup must see the RAW pending set: an inadmissible (learner-
-  // invisible) block_merge still occupies its cooldown slot so the producer
-  // cannot re-propose it forever (YUK-1404).
+  // Dedup sees the raw pending set: an invisible block_merge still occupies its
+  // cooldown slot, so the producer cannot re-propose it forever.
   const rows = await listProposalInboxRows(db, {
     status: 'pending',
     includeInadmissibleBlockMerges: true,

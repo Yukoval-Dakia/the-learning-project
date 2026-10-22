@@ -1,13 +1,7 @@
-// Practice-owned Failure Learning — attribution stage.
-//
-// PREVIOUSLY: takes mistakeId + expectedVersion, UPDATEs mistake.cause with optimistic
-// version check. NOW: takes attemptEventId, writes a chained judge event via writeEvent.
-// Per ADR-0006 v2, attribution is no longer a column UPDATE — it's a JudgeOnEvent row
-// chained on the attempt via caused_by_event_id.
-//
-// Idempotency: if a judge event with caused_by_event_id=attemptEventId already exists,
-// skip + warn (mirrors the legacy "cause already set" check). Single-owner write path
-// per ADR-0005 — never INSERT the event row directly; goes through writeEvent.
+// Practice-owned Failure Learning attribution stage.
+// Takes an attempt event and writes a chained judge event through writeEvent; it never
+// updates mistake.cause directly. If a judge event already chains from the attempt, skip
+// and warn. This is the single write path.
 
 import { and, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
@@ -17,8 +11,8 @@ import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
-// YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
-// resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
+// stale-const 收口（v2①）：defaultSubjectProfile 冻结常量 → 活 registry
+// resolveSubjectProfile（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type MisconceptionCauseSource,
@@ -58,24 +52,24 @@ export interface RunAttributionAndWriteJudgeEventParams {
 }
 
 /**
- * Outcome discriminant for {@link runAttributionAndWriteJudgeEvent} (YUK-379 B1).
+ * Outcome discriminant for {@link runAttributionAndWriteJudgeEvent} (B1).
  *
  * The helper NEVER throws — it classifies every terminal state so the caller
  * decides retry policy:
- *  - `written`   — a real judge event was written.
- *  - `skipped`   — a real judge already existed (idempotent early-out).
- *  - `retryable` — the idempotency read / LLM call / judge write hit a transient
- *                  (DB fault or provider) failure. The caller (pg-boss job)
- *                  rethrows `error` so pg-boss retries + the llm_dlq are the
- *                  record of record. A best-effort `failed_retryable` ledger row
- *                  is ALSO written (OCR #6): the copilot `attribute_mistake`
- *                  caller does NOT rethrow (no pg-boss retry / llm_dlq), so that
- *                  row is its only observability for a retryable failure. The
- *                  discriminant + rethrow contract is unchanged.
- *  - `permanent` — the LLM SUCCEEDED but its output failed parse/validate.
- *                  Retrying re-spends money on a systematic failure, so a
- *                  `failed_permanent` cost_ledger row (carrying the task_run_id)
- *                  is written for observability and the job does not retry.
+ * - `written` — a real judge event was written.
+ * - `skipped` — a real judge already existed (idempotent early-out).
+ * - `retryable` — the idempotency read / LLM call / judge write hit a transient
+ * (DB fault or provider) failure. The caller (pg-boss job)
+ * rethrows `error` so pg-boss retries + the llm_dlq are the
+ * record of record. A best-effort `failed_retryable` ledger row
+ * is ALSO written (OCR #6): the copilot `attribute_mistake`
+ * caller does NOT rethrow (no pg-boss retry / llm_dlq), so that
+ * row is its only observability for a retryable failure. The
+ * discriminant + rethrow contract is unchanged.
+ * - `permanent` — the LLM SUCCEEDED but its output failed parse/validate.
+ * Retrying re-spends money on a systematic failure, so a
+ * `failed_permanent` cost_ledger row (carrying the task_run_id)
+ * is written for observability and the job does not retry.
  */
 export type AttributionOutcome =
   | { outcome: 'written' }
@@ -91,7 +85,7 @@ export type AttributionOutcome =
  * Idempotency: if a real prior judge already exists for this attempt, returns
  * `{ outcome: 'skipped' }` + warns. Never throws — every failure is classified
  * into the {@link AttributionOutcome} discriminant so the caller owns retry
- * policy (YUK-379 B1). The attempt event is never mutated on any path.
+ * policy (B1). The attempt event is never mutated on any path.
  */
 export async function runAttributionAndWriteJudgeEvent(
   params: RunAttributionAndWriteJudgeEventParams,
@@ -114,11 +108,11 @@ export async function runAttributionAndWriteJudgeEvent(
   // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
   // and so has no other observability for a retryable failure.
   let result: Awaited<ReturnType<PracticeTaskRunFn>>;
-  // YUK-1015 — promoted misconception nodes fetched for the candidate pool are
+  // promoted misconception nodes fetched for the candidate pool are
   // ALSO the extra allowed ids for the post-LLM validation below (hoisted so
   // stage B sees them). Empty day-one (promote flag off / no KC match).
   let miscCandidates: AttributionCandidate[] = [];
-  // YUK-1016 — effectiveProfile = 声明词表 ∪ overlay.active（同 subject）。
+  // effectiveProfile = 声明词表 ∪ overlay.active（同 subject）。
   // 合成一次后同时喂 retrieve 候选、rerank 的 subjectProfile（prompt taxonomy /
   // metaCauseContract 自动带 overlay 行，prior 为 null——诚实）与 stage-B 校验
   // 词表。无 overlay 行时复用原 profile 引用——行为等价。
@@ -127,16 +121,16 @@ export async function runAttributionAndWriteJudgeEvent(
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
     // dedupe by attempt to avoid wastefully calling the LLM.
-    //
-    // Round-4 fix #4 (YUK-203): a paper placeholder judge sets
+    // Round-4 fix #4: a paper placeholder judge sets
     // `attribution_pending: true` in its payload to signal that real attribution
     // has NOT happened yet. We must NOT skip when the only existing judge is a
     // pending placeholder — otherwise paper mistakes never get a real cause and
     // the D4 mistake-flywheel stays silent. Skip only when a real attribution
     // judge (no attribution_pending flag, or explicitly false) is present.
-    // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（不是 caused_by 直读）。
-    // getJudgeForAttempt 只匹配 caused_by=attempt；改判 rejudge 锚 caused_by=appeal
-    // 会漏。effective 判承载 placeholder 的 attribution_pending + visibility 继承。
+    // Chain-resolved effective judge, not a direct caused_by read.
+    // getJudgeForAttempt only matches caused_by=attempt; a rejudge anchors caused_by=appeal
+    // and would be missed. The effective judge carries the placeholder's
+    // attribution_pending flag and visibility inheritance.
     const verdicts = await resolveVerdictForAttempt(params.db, params.attemptEventId);
     const effectiveJudgeEventId = verdicts.effective?.judge_event_id ?? null;
     if (effectiveJudgeEventId) {
@@ -178,30 +172,27 @@ export async function runAttributionAndWriteJudgeEvent(
       };
     }
 
-    // YUK-462 — retrieve→rerank-with-rationale. The profile (resolved above) is
+    // retrieve→rerank-with-rationale. The profile (resolved above) is
     // reused for both the L1 retriever and the post-LLM parse/clamp.
-    //
     // Stage 1 (retrieve): deterministic, no-LLM candidate selection. For every
     // current profile (cause vocab <= K_SMALL) this returns the full vocab verbatim,
     // so the candidate set handed to stage 2 is byte-identical to the inline
     // taxonomy the legacy AttributionTask prompt embedded — behavior-equivalent.
-    //
     // Stage 2 (rerank): AttributionRerankTask picks primary_category FROM the
     // candidate list + gives a per-candidate rationale. The candidate field is
     // added only to this internal rerank input; AttributionInput stays pure for
     // the 3 external callers. Post-LLM parse/clamp/write are unchanged below.
-    //
-    // YUK-1015 — the pool also carries promoted misconception nodes edged
+    // the pool also carries promoted misconception nodes edged
     // (caused_by) to the attempt's KCs (design §L1「词表 + 已晋升误区节点」).
     // A rerank may pick a `misc_` id as primary/secondary — that lands the
     // fine-grained node in the stored cause, so validation below must allow it
     // (see the extended vocab in stage B). A DB fault here classifies
     // `retryable` like the idempotency read above — nothing reached the LLM.
-    // YUK-1016 — DB overlay 词表层的读取点：active 行映射成
+    // DB overlay 词表层的读取点：active 行映射成
     // CauseCategoryDeclaration 追加到声明词表之后（序：profile 声明 → overlay →
     // misc 候选）。draft / archived 行在 reader 里就被滤掉。
     effectiveProfile = await withActiveCauseCategoryOverlays(params.db, profile);
-    // YUK-1018 (454-A 邻近召回) — misc 召回范围 = attempt 直挂 KC ∪ 祖先链
+    // (454-A 邻近召回) — misc 召回范围 = attempt 直挂 KC ∪ 祖先链
     // （就近先序）。祖先方向语义合法：`caused_by` 父节点的误区覆盖子题；后代
     // 方向裁掉——child misc 是窄于 attempt 主题的次粒度信号，不是本题因。单次
     // 全树加载（同 batchResolveEffectiveDomains 模式，单用户百级节点规模）；
@@ -234,14 +225,14 @@ export async function runAttributionAndWriteJudgeEvent(
   // result.task_run_id so it joins into run-detail observability.
   let parsed: AttributionOutput;
   try {
-    // YUK-1015 — a rerank picking a `misc_` candidate id must SURVIVE
+    // a rerank picking a `misc_` candidate id must SURVIVE
     // validation: validateCauseAgainstProfile clamps out-of-vocab ids to
     // 'other', which would silently drop the misconception the LLM actually
     // chose (analysis discusses it while the verdict reads 'other'). The
     // validation vocab is therefore the profile ∪ the fetched misc candidates
-    // — same extension the rerank prompt offered. An id outside BOTH (a
+    // same extension the rerank prompt offered. An id outside BOTH (a
     // hallucination) still clamps, preserving the existing contract.
-    // YUK-1016 — 校验词表 = effectiveProfile（声明 ∪ overlay.active）∪ misc。
+    // 校验词表 = effectiveProfile（声明 ∪ overlay.active）∪ misc。
     const validationProfile: SubjectProfile = miscCandidates.length
       ? {
           ...effectiveProfile,
@@ -276,7 +267,7 @@ export async function runAttributionAndWriteJudgeEvent(
     // the resolved SubjectProfile already in scope, not the invoker telemetry.
     // Stamp `profile_version` only; `capability_ref` / `judge_route` stay
     // undefined (attribution has no routed judge capability) — both remain
-    // optional on JudgeOnEvent.payload. See docs/design/2026-06-04-u0-decisions.md D6.
+    // optional on JudgeOnEvent.payload. See D6.
     const profileVersion = profile.version;
     const persisted = await params.db.transaction(async (tx) => {
       if (params.nativeExpectation) {
@@ -344,7 +335,7 @@ export async function runAttributionAndWriteJudgeEvent(
     return { outcome: 'retryable', error: err };
   }
 
-  // ── Stage D: catalog 扩张旁路（YUK-1016）──────────────────────────────────
+  // ── Stage D: catalog 扩张旁路──────────────────────────────────
   // 归因落 other → tally（effective cause 读侧聚合）→ ≥floor → LLM 提议新类目
   // → propose event → owner accept 才写 overlay。全吞错旁路：提议失败绝不影响
   // 已写完的 judge 与 outcome='written' 语义。

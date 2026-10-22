@@ -1,9 +1,9 @@
-// YUK-17 / ADR-0018 — second-pass verification for accepted mistake variants.
+// ADR-0018 — second-pass verification for accepted mistake variants.
 //
 // Enqueued by acceptAiProposal() when a `variant_question` proposal is
 // accepted. The handler loads the freshly-materialized variant question, the
-// parent question, and the original failure attempt's effective cause (CC-1:
-// always via effectiveCauseForFailureAttempt, never the raw judge), then
+// parent question, and the original failure attempt's effective cause (always
+// via effectiveCauseForFailureAttempt, never the raw judge), then
 // asks VariantVerifyTask whether the variant is still on-target.
 //
 // verdict='pass'   → mistake_variant row stays 'active' (no DB change beyond
@@ -32,7 +32,7 @@ import {
   costUsdToMicroUsd,
 } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-// YUK-471 W2 — mistake_variant verify (E3) write-through. verify already writes the
+// mistake_variant verify write-through. verify already writes the
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
 // pass). OFF still runs the write-time fold==row parity assert.
@@ -99,19 +99,19 @@ function parseVariantVerifyOutput(text: string): VariantVerificationResultT {
 }
 
 /**
- * YUK-299 — three-state dispatch over a runTask result for VariantVerifyTask.
+ * three-state dispatch over a runTask result for VariantVerifyTask.
  * Exported so the unit test can feed constructed results directly (no runner/DB).
  *
  *   (A) result.structured_output present (endpoint honoured outputFormat) →
  *       Zod second-pass via VariantVerificationResult.safeParse. The Zod pass is
- *       NOT optional (约束⑥): outputFormat only guarantees JSON shape, not the
+ *       NOT optional: outputFormat only guarantees JSON shape, not the
  *       app-level business constraints (failure_reasons[].length<=500, maxItems
  *       <=10, enums). A shape-valid-but-constraint-violating payload throws here
  *       so pg-boss re-runs the job — same outcome as the text-fallback path.
  *       safeParse also re-applies the .default([]) for an omitted failure_reasons.
  *   (B) result.structured_output undefined (outputFormat unset / endpoint
  *       unsupported / model fell back to text) → the existing char-scan
- *       parseVariantVerifyOutput fallback (约束③ — defensive layer kept).
+ *       parseVariantVerifyOutput fallback (defensive layer kept).
  */
 export function parseVariantVerifyResult(result: TaskTextResult): VariantVerificationResultT {
   // Exclude null as well as undefined: `structured_output?: unknown` includes
@@ -135,8 +135,8 @@ export function parseVariantVerifyResult(result: TaskTextResult): VariantVerific
 /**
  * Returns the source_attempt_event_id stored on the original
  * variant_question proposal event payload (under ai_proposal.proposed_change),
- * so we can pull the effective cause via the same CC-1 helper that
- * variant_gen used.
+ * so we can pull the effective cause via the same canonical cause-policy helper
+ * that variant_gen used.
  */
 function extractAttemptEventIdFromProposal(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
@@ -218,7 +218,7 @@ export async function runVariantVerify(
   const attemptEventId = extractAttemptEventIdFromProposal(proposalRow.payload);
   if (!attemptEventId) return { status: 'skipped:no_attempt' };
 
-  // CC-1: always use the canonical cause-policy helper, never read judge
+  // Always use the canonical cause-policy helper, never read judge
   // events directly.
   const failure = await getFailureAttemptById(db, attemptEventId);
   if (!failure) return { status: 'skipped:no_attempt' };
@@ -263,7 +263,7 @@ export async function runVariantVerify(
     },
   };
 
-  // YUK-299 — pilot: ask the SDK to constrain the model to the verification
+  // pilot: ask the SDK to constrain the model to the verification
   // schema. The endpoint may ignore outputFormat (mimo); parseVariantVerifyResult
   // falls back to the char-scan path when structured_output is absent, so this is
   // a zero-loss opt-in. The Zod second-pass still enforces business constraints.
@@ -275,7 +275,7 @@ export async function runVariantVerify(
   const now = new Date();
   const verifyEventId = createId();
 
-  // YUK-350 (B5 increment C) — project the variant pass|fail verdict onto the unified
+  // project the variant pass|fail verdict onto the unified
   // verify contract shape. PROVABLY-EQUIVALENT: `parsed.verdict` is passed IN (the
   // model verdict); the helper only PROJECTS it (pass ⇒ overall pass, fail ⇒ overall
   // fail + validation_failure) and turns cause_targeting into an axis. NOTE: this does
@@ -291,10 +291,10 @@ export async function runVariantVerify(
     confidence: parsed.confidence,
   });
 
-  // YUK-471 W2 — gate who writes the mistake_variant ROW (read ONCE outside the tx).
+  // gate who writes the mistake_variant ROW (read ONCE outside the tx).
 
   await db.transaction(async (tx) => {
-    // YUK-499 — lock the mistake_variant row FOR UPDATE as the FIRST statement, before the verify
+    // lock the mistake_variant row FOR UPDATE as the FIRST statement, before the verify
     // event + ROW write. The table has no version column, so projectMistakeVariantGuarded relies on
     // this lock to serialize against a concurrent accept/dismiss/retract of the same mv: without it a
     // later gather could miss an uncommitted event → stale fold → row drift. The lock is taken HERE,
@@ -323,7 +323,7 @@ export async function runVariantVerify(
         proposal_event_id: proposalEventId,
         attempt_event_id: attemptEventId,
         verdict: parsed.verdict,
-        // YUK-350 (B5 increment C) — unified verify contract shape (axes + overall +
+        // unified verify contract shape (axes + overall +
         // failure_class? + summary_md + confidence). SUPERSET: the variant-specific keys
         // (verdict / cause_targeting / failure_reasons / cause_source / …) stay
         // unchanged. `unified.failure_class` (validation_failure on a 'fail' verdict)
@@ -376,18 +376,18 @@ export function buildVariantVerifyHandler(
         });
         console.log(`[variant_verify] ${mistakeVariantId} → ${result.status}`);
       } catch (err) {
-        // YUK-350 (RL1) — error-safe: this catch only logs + re-throws (pg-boss
+        // error-safe: this catch only logs + re-throws (pg-boss
         // retries). variant_verify writes NO verify event on a thrown failure and
         // writes no `overall`, so a system error cannot promote a variant (promotion
         // = mistake_variant status change happens only inside the committed txn in
         // runVariantVerify, which is past the throw). No result-layer 'error' value is
         // assigned here (no `overall` field exists for variants).
         //
-        // YUK-350 (L3, RL5) — PHASE-DEFERRED observability gap: unlike quiz_verify /
+        // Observability gap: unlike quiz_verify /
         // source_verify, variant_verify has NO catch-bottom verify event, so a system
         // error here is NOT recorded as a failure_class='system_error' verify event —
         // only this console.error + the pg-boss retry trail. Intentionally NOT adding a
-        // catch event (L3-Q2 decided): it would touch the retry/idempotency semantics
+        // catch event (decided): it would touch the retry/idempotency semantics
         // (this handler has no transient-error event guard). Revisit if variant-verify
         // observability needs event-level system-error coverage.
         console.error(`[variant_verify] ${mistakeVariantId} failed`, err);

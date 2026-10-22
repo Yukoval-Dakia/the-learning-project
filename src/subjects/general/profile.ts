@@ -1,25 +1,12 @@
 import { UNIVERSAL_RATING_POLICY } from '@/core/schema/profile-decl';
 import type { SubjectProfile } from '../profile';
 
-// The framework's NEUTRAL DEFAULT subject profile (deprotagonist floor).
+// Neutral fallback profile for untagged or unknown domains: system font, no
+// notation, generic Chinese voice. The sample subjects (yuwen/math/physics) are
+// examples, not the product's identity.
 //
-// The product is a general-purpose learning framework; yuwen / math / physics
-// are filled-in *sample* subjects, not the product's identity. Before this
-// profile existed, `DEFAULT_SUBJECT_ID` pointed at the classical-Chinese subject
-// (canonical id `yuwen`, pre-rename id `wenyan`; YUK-249), so any null / unknown
-// domain inherited classical-Chinese voice + serif-CJK rendering. `general` is
-// the subject-neutral floor every untagged / unknown-domain node falls back to:
-// plain `system` font, no notation, generic 中文讲解 voice.
-//
-// It is deliberately NOT in `KNOWN_SUBJECT_IDS` — nodes are never *tagged* with
-// `general`; it is only the fallback identity. Keeping it out of that list means
-// it is never a goal-scope candidate nor a derived `?subject=` axis (those iterate
-// KNOWN_SUBJECT_IDS over real node domains).
-//
-// All registry-backed fields reuse the minimal legal set already proven by
-// yuwen (exact / keyword / semantic judges + fsrs scheduler), so it passes
-// `validateProfile` + `pnpm audit:profile` without touching the capability
-// registry.
+// `general` is deliberately not in BUILTIN_IDS: nodes are never tagged
+// with it, so it is never a goal-scope candidate or a derived subject axis.
 export const generalProfile: SubjectProfile = {
   id: 'general',
   version: '1.0.0',
@@ -50,8 +37,6 @@ export const generalProfile: SubjectProfile = {
     teachingStyle: '先给出依据，再解释判断过程，最后给出可复用规则。',
     checkQuestionPolicy: '检查题应短小，聚焦一个概念或判断点。',
     learningIntentPolicy: '把模糊目标改写成可练习的具体能力。',
-    // YUK-599 — charter trait 两新节的种子 = 空串（v3 §6；写门 default('') 同义，
-    // 此处显式写出保持 profile 对象 = schema 输出形状的逐字段等价）。
     methodology: '',
     rubricGuidance: '',
   },
@@ -61,7 +46,7 @@ export const generalProfile: SubjectProfile = {
       label: '概念理解',
       description: '对定义、框架或概念边界的理解错误',
       review_priority: 5,
-      // YUK-739 — subject-owned evaluation semantics (moved off cross-subject mirrors).
+      // Cause semantics are profile-owned.
       meta_cause_prior: 'flawed_model',
       rating_lean: 'conceptual',
       variant_strategy: '同概念不同语境 / 反向考查（验证概念边界）',
@@ -124,8 +109,6 @@ export const generalProfile: SubjectProfile = {
       meta_cause_prior: null,
     },
   ],
-  // YUK-739 — verdict → FSRS rating mapping is profile-owned; the neutral
-  // default subject declares the universal 3-state mapping explicitly.
   ratingPolicy: UNIVERSAL_RATING_POLICY,
   renderConfig: {
     font_family: 'system',
@@ -136,8 +119,7 @@ export const generalProfile: SubjectProfile = {
     default_policy: 'fsrs',
   },
   judgeCapabilities: ['exact', 'keyword', 'semantic'],
-  // No source whitelist: the neutral default subject has no curated题源域名;
-  // every source is whitelist_match=false (cold-start default). sourcingRoutePreference
-  // is omitted → default sourced→material→closed_book sequence.
+  // No curated sources: everything is whitelist_match=false. Omitting
+  // sourcingRoutePreference keeps the default sourced→material→closed_book order.
   sourceWhitelist: [],
 };

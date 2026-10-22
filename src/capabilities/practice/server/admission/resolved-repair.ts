@@ -1,8 +1,7 @@
-// YUK-1547 — explicit free repair lane for the applied-but-wrongly-published
+// explicit free repair lane for the applied-but-wrongly-published
 // admissions (the P0 set whose 'admitted' lifecycle sits on a frozen
 // human_review revision because the job published the base input instead of
 // the paid resolved contract).
-//
 // This lane NEVER re-pays: it does not claim, send, record a result, or touch
 // the applied paid_effect row. It re-publishes the receipt's `resolved`
 // contract through the central publisher with the same evidence builder the
@@ -11,7 +10,6 @@
 // digest + the superseded revision, so the old paid row keeps pointing at the
 // old revision while the new revision provably maps back to exactly that paid
 // admission.
-//
 // Gates (all fail-closed inside one transaction): family lock → root+lifecycle
 // locks → exact paid row (unit + input_digest + fence, state must be applied)
 // → paid-effect identity RECOMPUTED from input_json (producer recipe, never
@@ -40,7 +38,10 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
-import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import {
+  type PublishQuestionGroupInput,
+  publishQuestionGroup,
+} from '@/kernel/records/assessment-publication';
 import { runQuestionAdmissionChecks } from './checks';
 import { ADMISSION_FAMILY, lockAdmissionGroup } from './enqueue';
 import { AdmissionResultReceipt, FrozenAdmissionInput } from './receipt';
@@ -55,7 +56,7 @@ import {
 const DIGEST = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 /** One manifest entry pins the exact paid row AND the exact frozen state the
- *  operator audited — apply verifies every field before touching anything. */
+ * operator audited — apply verifies every field before touching anything. */
 export const RepairManifestEntry = z.strictObject({
   group_id: z.string().min(1),
   expected_current_revision_id: z.string().min(1),
@@ -71,8 +72,8 @@ export type RepairManifestEntry = z.infer<typeof RepairManifestEntry>;
 
 export const REPAIR_SOURCE = 'yuk1547-repair-resolved-contracts';
 /** Distinct actor_ref purely for audit provenance. No-re-enqueue comes from
- *  the event payload alone: enqueuePublishedQuestionAdmission only follows
- *  'withheld' publications, and a repair publish is always 'admitted'. */
+ * the event payload alone: enqueuePublishedQuestionAdmission only follows
+ * 'withheld' publications, and a repair publish is always 'admitted'. */
 export const REPAIR_ACTOR_REF = 'practice:question_admission_repair';
 
 export type RepairEvaluation =
@@ -101,13 +102,13 @@ export interface ReadyRepair {
   applicationRevisionId: string | null;
   availability: 'general_pool' | 'container_only';
   /** Retained same-base 'unknown' rows (unit + digest) — audit only; the
-   *  repair never consumes or edits them. */
+   * repair never consumes or edits them. */
   retainedUnknownRows: { unit: string; input_digest: string }[];
 }
 
 /** The full paid-receipt binding a repair/normal-path resolved publication
- *  carries on published_by — every field must match for already_repaired; a
- *  partial or foreign binding is ambiguous and blocks (never supersede). */
+ * carries on published_by — every field must match for already_repaired; a
+ * partial or foreign binding is ambiguous and blocks (never supersede). */
 const RevisionPaidBinding = z
   .object({
     paid_receipt: z
@@ -188,7 +189,7 @@ export async function evaluateResolvedRepair(
       'frozen_input_revision_mismatch: paid input names another revision',
     );
 
-  // P1 (Codex R1) — the row's PK columns are claims, not proof: recompute the
+  // the row's PK columns are claims, not proof: recompute the
   // paid-effect identity from the parsed input with the SAME recipe
   // claimAdmissionBatch used at send time (FrozenAdmissionInput.parse →
   // computePaidEffectIdentity over the parsed object — the schema-stripped
@@ -446,6 +447,7 @@ export async function evaluateResolvedRepair(
 export interface RepairApplyOptions {
   operatorReason: string;
   now: Date;
+  readAssetBytes?: PublishQuestionGroupInput['readAssetBytes'];
 }
 
 export type RepairOutcome =
@@ -511,7 +513,10 @@ export async function applyResolvedRepair(
   });
   if (built.kind === 'blocked')
     return { status: 'blocked', group_id: entry.group_id, reason: built.reason };
-  const persisted = await publishQuestionGroup(tx, built.publish);
+  const persisted = await publishQuestionGroup(tx, {
+    ...built.publish,
+    readAssetBytes: opts.readAssetBytes,
+  });
   if (persisted.status === 'conflict')
     return { status: 'conflict', group_id: entry.group_id, reason: persisted.reason };
   if (persisted.status !== 'published')

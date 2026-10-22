@@ -1,13 +1,9 @@
-// YUK-548 (worklist #5, Q2/Q3) — the ProjectionAdapter registry: ONE exhaustive
-// Record<ProjectionKind, ProjectionAdapter> replacing the five hand-written per-entity branch sets
-// (parity.ts / gather.ts / audit-projection.ts / rebuild-projection.ts / b3-gate.ts). tsc enforces
-// exhaustiveness (a missing kind = compile error), which is Q3's "readiness checklist" leg made
-// mechanical: an entity that is not registered here cannot be rebuilt / gated / swept.
+// Exhaustive projection adapter registry: one record per kind, replacing the former
+// per-entity branch sets in the audit, rebuild, and gate scripts. A missing kind is a
+// compile error, so an entity cannot be silently omitted from rebuild or gating.
 //
-// Each adapter reuses the ALREADY-LANDED per-entity primitives (the guarded write-through shells +
-// the parity.ts batch anchor helpers); it adds NO new fold/reducer logic. The rebuild / b3-gate /
-// oracle sweep consume this registry so a new entity is wired by adding ONE adapter, not by editing
-// five call sites.
+// Adapters reuse the existing write-through shells and anchor helpers; they add no fold
+// logic. A new entity is wired by adding one adapter.
 
 import { and, eq, inArray } from 'drizzle-orm';
 import { ARTIFACT_STATE_ACTIONS } from '@/core/projections/artifact';
@@ -24,6 +20,20 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
+import {
+  gatherAndFoldKnowledgeNode,
+  knowledgeLiveRowToSnapshot,
+  knowledgeNodesWithGenesisAnchor,
+  prefetchKnowledgeMergeEvents,
+  prefetchKnowledgeRates,
+} from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNode } from '@/kernel/records/knowledge-node-materialization';
+import {
+  gatherAndFoldLearningItem,
+  learningItemsWithGenesisAnchor,
+  prefetchLearningItemMergeEvents,
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
 import { projectArtifactGuarded } from './artifact';
 import {
   edgeRowToSnapshot,
@@ -31,19 +41,12 @@ import {
   gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
-  gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
-  prefetchKnowledgeMergeEvents,
-  prefetchKnowledgeRates,
-  prefetchLearningItemMergeEvents,
 } from './gather';
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectKnowledgeNode } from './knowledge';
 import { projectKnowledgeEdge } from './knowledge_edge';
-import { projectLearningItemGuarded } from './learning_item';
 import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
   artifactsWithGenesisAnchor,
@@ -51,10 +54,7 @@ import {
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
-  knowledgeLiveRowToSnapshot,
-  knowledgeNodesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
-  learningItemsWithGenesisAnchor,
   mistakeVariantLiveRowToSnapshot,
   mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
@@ -70,13 +70,9 @@ import type { ProjectionEntity } from './sot-flag';
 
 type DbLike = Db | Tx;
 
-// ── Structural read columns (K10 — moved here from audit-kind.ts so the per-kind read lives in the
-// registry) ──────────────────────────────────────────────────────────────────────────────────────
-// The knowledge / learning_item scans SELECT only the structural snapshot columns, NOT the large
-// embed_* vectors (knowledge) or the non-fold-owned derived columns (learning_item:
-// child_learning_item_ids / ai_score / due_at / reviewed_at — design §3①). The column sets must
-// satisfy the corresponding Live-row mapper's inline param type — tsc enforces the sync at the
-// gatherWithContext call site (review K9/O8).
+// Structural read columns: the knowledge scan omits embed_*; the learning_item scan omits
+// derived columns the fold does not own. tsc ties each set to its mapper at the
+// gatherWithContext call site.
 const KNOWLEDGE_STRUCTURAL_COLUMNS = {
   id: knowledge.id,
   name: knowledge.name,
@@ -133,20 +129,13 @@ export const ALL_PROJECTION_KINDS = [
 ] as const satisfies readonly ProjectionKind[];
 
 /**
- * FK-forced tx clusters (Lens B m7). Kinds within one cluster share a SINGLE rebuild transaction
- * (a topology/FK reject rolls the cluster back together), applied IN ARRAY ORDER (FK parent before
- * child). The ONLY real inter-projection FK is `knowledge_edge.from/to_knowledge_id → knowledge.id`
- * (verified src/db/schema.ts:1302-1307; learning_item.primary_artifact_id has NO DB FK — ADR-0027
- * dropped it, schema.ts:406-412), so knowledge + knowledge_edge are one cluster (knowledge first)
- * and every other kind is an INDEPENDENT singleton cluster — a single kind's reject never balloons
- * into an all-cluster rollback. item_calibration (YUK-496) has NO FK to any projection table —
- * another independent singleton.
+ * FK-forced transaction clusters for rebuild. Kinds in one cluster share a single
+ * transaction and are applied in array order (parent before child), so a reject rolls
+ * back only that cluster. `knowledge_edge` references `knowledge`, so those two form one
+ * cluster; every other kind is independent.
  *
- * EXHAUSTIVENESS (review O12): unlike PROJECTION_ENTITIES (whose Record<ProjectionKind, …> makes a
- * missing kind a compile error), a plain array literal has NO such guarantee — a kind absent here
- * would be silently unreachable from rebuild-projection / the b3-gate CLI. Two guards close that:
- * the `satisfies` keeps element types literal so MissingClusterKind (below) is a COMPILE error when
- * a kind is missing, and the module-load assert catches duplicates/mismatch at runtime.
+ * The `satisfies` plus the compile-time coverage check make a missing kind a type error;
+ * the module-load check catches duplicates.
  */
 export const PROJECTION_FK_CLUSTERS = [
   ['knowledge', 'knowledge_edge'],
@@ -158,16 +147,14 @@ export const PROJECTION_FK_CLUSTERS = [
   ['item_calibration'],
 ] as const satisfies readonly (readonly ProjectionKind[])[];
 
-// Compile-time: every ProjectionKind must appear in the clusters. If one is missing,
-// MissingClusterKind is non-never and the AssertNever instantiation fails to typecheck.
+// Compile-time: every ProjectionKind must appear in the clusters.
 type ClusterCoveredKind = (typeof PROJECTION_FK_CLUSTERS)[number][number];
 type AssertNever<T extends never> = T;
 export type _AssertClustersCoverEveryKind = AssertNever<
   Exclude<ProjectionKind, ClusterCoveredKind>
 >;
 
-// Runtime (module load): no duplicates across clusters + exact coverage (belt to the type-level
-// suspenders — the type check cannot catch a kind listed twice).
+// Runtime: no duplicates and exact coverage; the type check cannot catch a kind listed twice.
 {
   const flat = PROJECTION_FK_CLUSTERS.flat();
   const set = new Set<ProjectionKind>(flat);
@@ -182,43 +169,28 @@ export interface ProjectionAdapter {
   kind: ProjectionKind;
   /** Explicit writer policy identity; no implicit global mode. */
   flagEntity: ProjectionEntity;
-  /** live row ids (the materialized table). */
+  /** live row ids from the materialized table. */
   liveIds(db: DbLike): Promise<Set<string>>;
   /**
-   * The GHOST-detection id universe beyond the live rows: `event.subject_id` for this kind, UNION
-   * the materialized_id_index anchors for kinds that WRITE the index (M8 id-universe: knowledge has
-   * the propose_new/split reverse-index mint whose id is never an event subject_id; goal /
-   * mistake_variant / learning_item / artifact write index anchors too, folded in for symmetry;
-   * question_block does NOT enter the index — design §5.3 — so it is event-subject-only).
+   * The extra id universe for GHOST detection: this kind's event subjects, plus index
+   * anchors for kinds that write `materialized_id_index`. question_block has no minting
+   * indirection, so it is event-subject-only.
    */
   eventSubjectIds(db: DbLike): Promise<Set<string>>;
-  /** the ALREADY-LANDED write-through shell (knowledge/edge: the unchanged W1 unguarded rebuild
-   * shells; the 5 W2/W3 entities: their guarded SoT-flip shells). Reused verbatim. */
+  /** The existing write-through shell for this kind (guarded for canonical writers). */
   project(db: DbLike, id: string): Promise<void>;
-  /** batch applicability gate — the subset of `ids` that are EVENT-SOURCED (foldable). Reuses the
-   * parity.ts batch anchor helper. The Q4a symmetric audit skips un-anchored live rows with this. */
+  /** Batch applicability gate: the subset of ids that are event-sourced (foldable). */
   withGenesisAnchor(db: DbLike, ids: string[]): Promise<Set<string>>;
-  /** K10/K13 — live row → structural snapshot (the field-pick the accept-time parity assert, the
-   * value/symmetric audit, and the golden capture all share). Row type is erased to the uniform
-   * adapter shape; the concrete read↔mapper tie is enforced per entry by `defineScan`'s generic
-   * (review K9/O8). */
+  /** Live row to structural snapshot, shared by parity, audits, and golden capture. */
   toSnapshot(row: unknown): Record<string, unknown>;
-  /** K10/K13 — the PURE @/core reducer for this kind, sourced from the DB-free PROJECTION_FOLDS
-   * registry (the SAME reducer gatherWithContext folds with). It surfaces the pure fold on the adapter
-   * so the per-kind operation catalog is complete; golden-reaudit imports PROJECTION_FOLDS DIRECTLY
-   * (never this DB-heavy adapter) to keep its offline re-fold free of a DB connection. */
+  /** The pure reducer for this kind, sourced from the DB-free PROJECTION_FOLDS registry. */
   fold: PureFold;
-  /** K10/K13 — the ONE per-kind DB read+fold context that the four ex-switches now share: every live
-   * row → snapshot map, plus a prefetch-primed per-id `foldOne` (the YUK-547 learning_item merge
-   * prefetch, the YUK-549 knowledge merge/rate prefetch, and the edge topology mesh). Consumed by
-   * auditProjectionKind, auditProjectionKindSymmetric, and capture-golden. */
+  /** One per-kind read+fold pass: live snapshots plus a prefetch-primed per-id fold. */
   gatherWithContext(db: DbLike): Promise<KindScanData>;
 }
 
-/** The per-kind read+fold context (K10) — every live row → its imperative snapshot, plus a per-id fold
- * closure primed with any prefetch/mesh context. `foldOne` runs the SAME gather the write-through shell
- * uses; it PROPAGATES a reducer throw (the edge fold's ADR-0034 topology reject) so the value audit can
- * model it as a NO-GO — the symmetric audit isolates the throw per id at its own call site. */
+/** Per-kind read+fold context: live snapshots plus a fold closure primed with any prefetch
+ * or mesh. `foldOne` propagates reducer throws; the symmetric audit isolates them per id. */
 export interface KindScanData {
   liveSnapshots: Map<string, Record<string, unknown>>;
   foldOne: (id: string) => Promise<Record<string, unknown> | null>;
@@ -226,22 +198,17 @@ export interface KindScanData {
 
 type FoldOne = (id: string) => Promise<Record<string, unknown> | null>;
 
-// Bind a per-kind live-row read to its snapshot mapper and its fold-context builder, then erase to the
-// uniform adapter shape. The `Row` generic ties the read's row type to BOTH the mapper param and the
-// makeFoldOne `rows` arg, so a schema/column mismatch is a COMPILE error here (review O8) — the
-// compile-time safety the old typed per-file switches provided, relocated into the registry. The
-// returned `toSnapshot` is the erased mapper (only ever called on rows from THIS read); the returned
-// `gatherWithContext` builds the live-snapshot map + the prefetch-primed foldOne in ONE read pass.
+// Bind a per-kind live-row read to its snapshot mapper and fold-context builder. The Row
+// generic ties the read's row type to both the mapper and makeFoldOne, so a schema/column
+// mismatch is a compile error. The returned gatherWithContext builds the snapshot map and
+// the primed foldOne in one read pass.
 function defineScan<Row extends { id: string }>(def: {
-  // PromiseLike (not Promise): a drizzle select builder is thenable but not a real Promise, so this
-  // lets `(db) => db.select(cols).from(table)` assign without an `async` wrapper. `await` unwraps it.
+  // PromiseLike lets a drizzle select builder assign without an async wrapper; await unwraps it.
   readLiveRows: (db: DbLike) => PromiseLike<Row[]>;
   toSnapshot: (row: Row) => Record<string, unknown>;
   makeFoldOne: (db: DbLike, rows: Row[]) => Promise<FoldOne>;
 }): Pick<ProjectionAdapter, 'toSnapshot' | 'gatherWithContext'> {
-  // The adapter's `toSnapshot` field IS the snapshot builder gatherWithContext uses (not a parallel
-  // copy) — the O8 read↔mapper tie holds at the `def` literal, so calling it on rows from THIS read is
-  // safe despite the erased signature.
+  // The adapter's toSnapshot is the same builder gatherWithContext uses, not a parallel copy.
   const toSnapshot = (row: unknown): Record<string, unknown> => def.toSnapshot(row as Row);
   return {
     toSnapshot,
@@ -255,14 +222,9 @@ function defineScan<Row extends { id: string }>(def: {
   };
 }
 
-// event.subject_id set for `kind`, optionally unioned with the materialized_id_index anchors when
-// the kind writes the index. Shared by every adapter's eventSubjectIds.
-//
-// UNBOUNDED-READ NOTE (review O13, deliberate): no LIMIT/pagination — the id UNIVERSE is the whole
-// point of this read (ghost detection must see every id the log implies; a truncated universe is a
-// blind oracle). Boundedness comes from the deployment envelope, not the query: single-user (n=1)
-// tool, per-kind subject counts are 10²-10⁴ scale, and only distinct ids are retained in the Set.
-// If the event table ever outgrows that envelope, the fix is a DISTINCT/keyset scan — never a LIMIT.
+// event.subject_id set for a kind, optionally unioned with index anchors. Deliberately
+// unbounded: the id universe is the whole point, and a LIMIT would blind ghost detection.
+// Boundedness comes from the single-user deployment envelope; only distinct ids are kept.
 async function eventSubjectIdSet(
   db: DbLike,
   kind: ProjectionKind,
@@ -280,9 +242,7 @@ async function eventSubjectIdSet(
     );
   for (const r of evRows) out.add(r.subject_id);
   if (kind === 'question_block') {
-    // A merge/edit can name secondary blocks only in its payload. They still have
-    // history: do not backfill a fresh baseline over those mutations or omit them
-    // from symmetric row-set audits.
+    // A merge/edit names secondary blocks only in its payload; they still have history.
     const edits = await db
       .select({ payload: event.payload })
       .from(event)
@@ -305,9 +265,8 @@ async function eventSubjectIdSet(
   return out;
 }
 
-// The 7 projection tables all share a text `id` PK — ONE factory replaces seven identical liveIds
-// closures (review K12). The Record literal below stays fully explicit per kind, so the tsc
-// exhaustiveness guarantee is unaffected.
+// One factory for the identical liveIds closure over the shared text id PK; the explicit
+// per-kind record below keeps the exhaustiveness guarantee.
 type ProjectionTable =
   | typeof knowledge
   | typeof knowledge_edge
@@ -320,8 +279,7 @@ type ProjectionTable =
 
 function liveIdsFrom(table: ProjectionTable): (db: DbLike) => Promise<Set<string>> {
   return async (db) => {
-    // Annotation (not a cast — review O14): assignment-checked against the drizzle-inferred result,
-    // so a future table whose `id` is not a text column fails HERE at compile time.
+    // Annotation, not a cast: a future table whose id is not text fails here at compile time.
     const rows: { id: string }[] = await db.select({ id: table.id }).from(table);
     return new Set(rows.map((r) => r.id));
   };
@@ -339,7 +297,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
     ...defineScan({
       readLiveRows: (db) => db.select(KNOWLEDGE_STRUCTURAL_COLUMNS).from(knowledge),
       toSnapshot: (row) => knowledgeLiveRowToSnapshot(row) as Record<string, unknown>,
-      // YUK-549 (K6): prefetch the node-independent Q3 merge + rate legs ONCE for the whole scan.
+      // Prefetch the node-independent merge and rate legs once for the whole scan.
       makeFoldOne: async (db) => {
         const merges = await prefetchKnowledgeMergeEvents(db);
         const rates = await prefetchKnowledgeRates(db);
@@ -362,8 +320,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
     ...defineScan({
       readLiveRows: (db) => db.select().from(knowledge_edge),
       toSnapshot: (row) => edgeRowToSnapshot(row) as Record<string, unknown>,
-      // The live topology mesh is derived from the SAME read the snapshot map uses (O(E), not O(E²)),
-      // and checkEdgeTopology treats it as a SET so row order is irrelevant.
+      // The mesh comes from the same read as the snapshot map (O(E), not O(E²)).
       makeFoldOne: async (db, rows) => {
         const mesh = rows.filter((e) => e.archived_at === null).map(edgeRowToSnapshot);
         return (id) =>
@@ -415,7 +372,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
     ...defineScan({
       readLiveRows: (db) => db.select(LEARNING_ITEM_STRUCTURAL_COLUMNS).from(learning_item),
       toSnapshot: (row) => learningItemLiveRowToSnapshot(row) as Record<string, unknown>,
-      // YUK-547: prefetch the item-independent merge legs ONCE for the whole scan.
+      // Prefetch the item-independent merge legs once for the whole scan.
       makeFoldOne: async (db) => {
         const prefetched = await prefetchLearningItemMergeEvents(db);
         return (id) =>
@@ -442,7 +399,7 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
     kind: 'question_block',
     flagEntity: 'question_block',
     liveIds: liveIdsFrom(question_block),
-    // question_block does NOT enter materialized_id_index (design §5.3) → event-subject-only.
+    // question_block has no minting indirection, so its universe is event-subject-only.
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'question_block', false),
     project: projectQuestionBlockGuarded,
     withGenesisAnchor: questionBlocksWithGenesisAnchor,
@@ -454,17 +411,14 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
         gatherAndFoldQuestionBlock(db, id) as Promise<Record<string, unknown> | null>,
     }),
   },
-  // YUK-496 (方案 A) — anchor-only coverage: the fold reproduces a row from its genesis anchor, the
-  // B1 imperative writers in src/server/mastery/ stay the live row writers, and the per-entity SoT
-  // flag is default OFF with NO flip planned (the future canonical-event 方案 B is the flip
-  // prerequisite). Registered so audit:projection / rebuild / the B3 gate cover the table instead of
-  // leaving it the event-sourcing blind spot ADR-0044 §7 flagged.
+  // Anchor-only coverage: the fold reproduces a row from its genesis anchor, the imperative
+  // writers stay authoritative, and the writer flag is off with no planned flip. Registered
+  // so audits cover the table instead of leaving it an event-sourcing blind spot.
   item_calibration: {
     kind: 'item_calibration',
     flagEntity: 'item_calibration',
     liveIds: liveIdsFrom(item_calibration),
-    // item_calibration does NOT enter materialized_id_index (the question_block §5.3 precedent —
-    // the row id is ALWAYS the genesis event's subject_id) → event-subject-only.
+    // Same reason as question_block: no minting indirection, so event-subject-only.
     eventSubjectIds: (db) => eventSubjectIdSet(db, 'item_calibration', false),
     project: projectItemCalibrationGuarded,
     withGenesisAnchor: itemCalibrationsWithGenesisAnchor,
@@ -478,9 +432,8 @@ export const PROJECTION_ENTITIES: Record<ProjectionKind, ProjectionAdapter> = {
   },
 };
 
-/** All ids to re-project for a kind = live rows ∪ the ghost id universe (event subjects + anchors).
- * Sequential reads (NOT Promise.all) — the rebuild runs inside a single tx connection that serializes
- * queries; concurrent reads on it are avoided. */
+/** All ids to re-project for a kind: live rows plus the ghost id universe. Sequential reads
+ * because the rebuild runs on one serialized tx connection. */
 export async function allProjectionIds(db: DbLike, kind: ProjectionKind): Promise<string[]> {
   const adapter = PROJECTION_ENTITIES[kind];
   const live = await adapter.liveIds(db);

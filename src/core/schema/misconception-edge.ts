@@ -1,4 +1,4 @@
-// YUK-531 (A5 S4 / ADR-0036 RT1) — heterogeneous misconception edge schema.
+// ADR-0036 RT1 — heterogeneous misconception edge schema.
 //
 // HAND-WRITTEN Zod (NOT drizzle-zod generated). Canonical domain shape for a
 // `misconception_edge`: a polymorphic (from_kind/to_kind discriminator) edge that

@@ -1,34 +1,10 @@
-// YUK-471 W1 PR-A2b (DoubleWrite phase) — the accept-time projection PARITY ASSERT.
+// Accept-time projection parity assert. After a live write, the caller gathers and folds
+// the same id read-only and compares the result with the row just written, inside the
+// same transaction.
 //
-// PR-A2b makes the projection fold VERIFIABLE against the live row at accept time, so PR-B
-// can flip the source-of-truth safely. The imperative write STAYS the SoT (no flip here).
-// After each live accept site writes the row + its events, it calls one of these asserts:
-// gather→fold the SAME id read-only (gatherAndFold*, which write NOTHING) and deep-compare
-// the projected snapshot against the live row the imperative path just wrote IN THE SAME TX.
-//
-// WHY in-tx. The assert runs inside the accept tx AFTER the rate/generate write so the fold
-// sees the chained accept (a node folded before its accepting rate is written would project
-// stale/null). The FOR-UPDATE-serialized accept tx is the natural boundary; reading the
-// just-written row + events back through the gather is what proves fold(events) == row.
-//
-// ── DEV-THROWS / PROD-LOGS CONTRACT ──────────────────────────────────────────────────────
-// onParityMismatch is severity-switched on NODE_ENV:
-//   - PRODUCTION (process.env.NODE_ENV === 'production') → console.warn (structured, tag
-//     '[projection-parity]') and RETURN. We NEVER break a live accept over a fold/parity
-//     bug: the imperative write already succeeded and is the SoT; a divergent fold is a
-//     projection bug, not a reason to fail the user's accept. Accumulated drift is caught
-//     BEFORE the SoT flip by `pnpm audit:projection` against a prod-clone (PR-B's B3 gate).
-//   - DEV / TEST (anything else) → THROW. Tests and local dev must surface a fold↔row
-//     divergence immediately (a silently-passing mismatch in CI would let a real reducer
-//     bug land), so the assert is a hard gate everywhere except prod.
-//
-// The deep-equal (diffSnapshots / normalize) lives in ./snapshot-diff and is SHARED with
-// scripts/audit-projection.ts so the in-tx assert and the offline B3 audit agree byte-for-byte
-// on what "fold == row" means. It is OBJECT-KEY-ORDER-INSENSITIVE (jsonb key-order from
-// Postgres never reads as drift) but compares ARRAYS positionally — the one array field,
-// knowledge.merged_from, is meaningfully ordered (merge history) and matches on both sides. A
-// null live row + null fold both pass (a node/edge the fold says should not exist and the live
-// path did not write is parity-OK).
+// Severity is environment-switched: production logs structured field names and returns so
+// a projection bug never breaks a user's accept; dev and test throw so drift fails loudly.
+// The diff helper is shared with the offline audit so both agree on what "fold == row" means.
 
 import { and, eq, inArray, or } from 'drizzle-orm';
 import type {
@@ -42,16 +18,19 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
 import {
   gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
+
+export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
+export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
 
 type DbLike = Db | Tx;
 
@@ -65,14 +44,9 @@ type ParitySubjectKind =
   | 'artifact'
   | 'question_block';
 
-// diffFieldName — the VALUE-FREE field name (or whole-row sentinel) of one diff line, for the
-// prod warn. A normal line is "<col>: <live> → <folded>" (snapshot-diff), so the column name is
-// the prefix before its first ':'. Whole-row sentinels are angle-bracketed and may carry their
-// OWN ':' — `<row>`, `<fold-threw>`, and the ADR-0034 reject marker `<fold-threw:topology>` — so
-// the whole `<...>` token is the name. A bare `split(':', 1)[0]` truncates that tag to
-// `<fold-threw`, making a topology reject indistinguishable from a generic fold throw in the
-// structured prod log (SCF-210 / YUK-1271). Column names never contain '<', so the branch is
-// unambiguous, and the returned token is still never a user VALUE.
+// Value-free field name (or whole-row sentinel) from one diff line, for the prod warn.
+// Whole-row sentinels are angle-bracketed and may contain their own colon, so match the
+// whole `<...>` token. Column names never contain '<'.
 function diffFieldName(line: string): string {
   if (line.startsWith('<')) {
     const end = line.indexOf('>');
@@ -81,17 +55,12 @@ function diffFieldName(line: string): string {
   return line.split(':', 1)[0] ?? line;
 }
 
-// onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
-// full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
+// Dev/test throw; production logs and returns (see file header).
 function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: string[]): void {
   const diffText = diff.join('; ');
   if (process.env.NODE_ENV === 'production') {
-    // PROD: log only the diverged FIELD NAMES + count — NEVER the values. Each diff line is
-    // "<col>: <live> → <folded>"; diffFieldName takes the column (or the WHOLE '<row>' /
-    // '<fold-threw[:topology]>' sentinel). Knowledge names, domains and edge reasoning are
-    // user content and must not leak into prod logs; full per-value detail stays in the
-    // dev/test thrown message and is recoverable offline via `pnpm audit:projection` against
-    // a prod-clone (PR-B's B3 SoT-flip gate).
+    // Log field names and count only; values are user content. Full detail stays in the
+    // dev/test message and the offline audit.
     console.warn('[projection-parity] fold != live row', {
       subject_kind: subjectKind,
       id,
@@ -105,149 +74,15 @@ function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: stri
   );
 }
 
-/**
- * Pick the structural KnowledgeRowSnapshot fields from a live `knowledge` DB row (drops
- * embed_*; NO Zod parse/validation). Use this at the accept-time call sites instead of
- * `KnowledgeRowSnapshot.parse(row)`: a Zod `.parse()` on the hot path could THROW and abort a
- * live accept in prod, defeating the never-throw-on-the-hot-path contract this module upholds.
- * A plain field-pick cannot throw; the row came straight from the appliers so its types hold.
- */
-export function knowledgeLiveRowToSnapshot(row: {
-  id: string;
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  merged_from: string[];
-  archived_at: Date | null;
-  proposed_by_ai: boolean;
-  approval_status: 'pending' | 'approved' | 'rejected';
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-/**
- * Does this `knowledge` node have a GENESIS ANCHOR in the event log — i.e. is it
- * event-sourced (reproducible by the fold) at all? READ-ONLY.
- *
- * APPLICABILITY GATE for the accept-time parity assert. A node that PREDATES event-sourcing
- * (a seed root, a legacy pre-W1 row) was INSERTed directly and has no originating event, so
- * `gatherAndFoldKnowledgeNode` folds it to null — comparing fold(null) against the live row
- * would be a guaranteed FALSE mismatch, not a real divergence. (The PR-A2a genesis backfill
- * establishes those anchors later; until then audit:projection's allowlist covers them.)
- *
- * A node IS event-sourced iff at least one of:
- *   1. an `experimental:genesis` seed event with subject_id = nodeId (backfilled pre-W1 row),
- *   2. an `experimental:auto_tag_kc_created` event with subject_id = nodeId (auto-tag create),
- *   3. a `materialized_id_index` row keyed by nodeId (propose_new / split mint, post-keystone).
- * (A propose_new/split node has NO event with subject_id = nodeId — its only anchor is the
- * index row, which is why #3 is required.)
- *
- * Callers gate the parity assert on this: assert only when the node is event-sourced; a
- * non-event-sourced node is SKIPPED (its fold-vs-row mismatch is expected, not a bug).
- */
-export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string): Promise<boolean> {
-  const genesisOrAutoTag = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        eq(event.subject_id, nodeId),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    )
-    .limit(1);
-  if (genesisOrAutoTag.length > 0) return true;
-
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, nodeId),
-        // genesis anchor for a NODE — materialized_id_index also carries edge anchors, so
-        // constrain by subject_kind to never read an edge anchor as a node's genesis anchor.
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/**
- * Batch form of hasKnowledgeNodeGenesisAnchor — returns the subset of `nodeIds` that ARE
- * event-sourced (have a genesis anchor). One query per source (events / index) instead of one
- * per id. READ-ONLY.
- */
-export async function knowledgeNodesWithGenesisAnchor(
-  db: DbLike,
-  nodeIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (nodeIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        inArray(event.subject_id, nodeIds),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, nodeIds),
-        // NODE anchors only — see hasKnowledgeNodeGenesisAnchor (edge anchors share the table).
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
-// EDGE anchor actions — the ONLY event actions the edge fold can seed a row from (`generate`
-// create/archive + the `experimental:genesis` backfill seed). MUST stay in lockstep with
-// edgesWithOriginatingEvent (scripts/backfill-genesis-events.ts) AND foldKnowledgeEdge's consumed
-// actions: any OTHER subject-keyed event (e.g. the `propose` an edge-archive proposal writes on the
-// REAL edge_id — proposal-tools.ts proposeKnowledgeEdgeArchive) does NOT make the edge foldable.
+// The only edge actions that can seed a row: generate create/archive and the genesis
+// backfill. Must stay in step with the backfill skip predicate and the fold.
 const KNOWLEDGE_EDGE_ANCHOR_ACTIONS = ['generate', 'experimental:genesis'] as const;
 
 /**
- * Batch anchor gate for `knowledge_edge` (YUK-548 — the ONLY W1 entity lacking a batch anchor form;
- * added so the entity-registry / Q4a symmetric audit can gate every ON kind uniformly). An edge is
- * EVENT-SOURCED (foldable — its fold-null is a genuine drop, not a fold-blind miss) iff it has an
- * ANCHOR-ACTION event (KNOWLEDGE_EDGE_ANCHOR_ACTIONS — mirrors edgesWithOriginatingEvent, the edge
- * backfill's own skip predicate) OR a materialized_id_index anchor. A live edge with NEITHER is a
- * pure out-of-band INSERT the fold is blind to (folds null) → the applicability gate SKIPS it (else
- * a false GHOST/MISSING). The action filter is LOAD-BEARING (independent review K1): an un-anchored
- * legacy edge that merely has a `propose` event keyed on it (edge-archive proposal) would otherwise
- * count as anchored → fold null → false MISSING + a permanent false forensic breadcrumb. READ-ONLY.
+ * Batch anchor gate for edges: an anchor-action event or an index anchor. A live edge with
+ * neither is an out-of-band insert, so the audit skips it instead of reporting a false
+ * GHOST/MISSING. The action filter matters: an unanchored legacy edge with only a propose
+ * event is still fold-blind.
  */
 export async function knowledgeEdgesWithGenesisAnchor(
   db: DbLike,
@@ -279,32 +114,15 @@ export async function knowledgeEdgesWithGenesisAnchor(
   return out;
 }
 
-// ── goal genesis-anchor helpers (YUK-471 Wave 2) ─────────────────────────────────────────────
+// ── goal genesis-anchor helpers ────────────────────────────────────────────────────────────────
 //
-// A goal is EVENT-SOURCED (reproducible by foldGoal, so its fold-null is a genuine "should not
-// exist" rather than a fold-blind miss) iff it has any of:
-//   1. an `experimental:genesis` seed (backfilled pre-W2 / event-less manual goal),
-//   2. an `experimental:proposal` event with subject_kind='goal' subject_id=goalId (the
-//      goal_scope proposal that materialized it — the proposal+accept chain folds it),
-//   3. a `materialized_id_index` row keyed by goalId with subject_kind='goal' (the backfill anchor).
-// All of these have subject_id = goalId (no minting indirection), so the event check is a single
-// subject-keyed scan over the action set.
-//
-// SCF-250 (YUK-1307): the W2 action events (`experimental:goal_status_update` /
-// `experimental:goal_scope_update`) are deliberately NOT anchors. foldGoal applies them ONLY
-// onto an EXISTING row (`if (row === null) continue`), so a goal whose log holds ONLY a
-// status/scope action folds to null. Counting it as an anchor would call such a goal
-// "event-sourced", make the guarded write-through DELETE its live row, and make the backfill
-// SKIP it — a latent data-integrity bug. Anchors must be BASE-producing (genesis / materializing
-// proposal / index), which is exactly what foldGoal can reconstruct.
+// A goal is event-sourced when it has a genesis seed, a goal_scope proposal, or an index
+// anchor. Status/scope updates are deliberately not anchors: the fold applies them only to
+// an existing row, so counting them would let the guarded writer delete a live goal and the
+// backfill skip it.
 const GOAL_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:proposal'] as const;
 
-/**
- * Does this `goal` have a genesis anchor / originating event chain — i.e. is it event-sourced
- * (reproducible by foldGoal) at all? READ-ONLY. Used by the guarded write-through (a fold-null
- * on a NON-event-sourced goal must NOT delete the imperative row) — mirrors
- * hasKnowledgeNodeGenesisAnchor.
- */
+/** Whether a goal has an anchor the fold can reproduce. */
 export async function hasGoalGenesisAnchor(db: DbLike, goalId: string): Promise<boolean> {
   const ev = await db
     .select({ id: event.id })
@@ -331,13 +149,7 @@ export async function hasGoalGenesisAnchor(db: DbLike, goalId: string): Promise<
   return indexed.length > 0;
 }
 
-/**
- * Batch form of hasGoalGenesisAnchor — the subset of `goalIds` that ARE event-sourced. One
- * query per source (events / index). READ-ONLY. Used by the backfill to SKIP goals that already
- * re-fold from their own log (anchoring them with a current-state genesis snapshot would mask
- * reducer drift — same rationale as knowledgeNodesWithGenesisAnchor). DOUBLES as the backfill
- * idempotency pre-scan (a previously-backfilled goal now carries a genesis event → skipped).
- */
+/** Batch form; also serves as the backfill's idempotency pre-scan. */
 export async function goalsWithGenesisAnchor(db: DbLike, goalIds: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (goalIds.length === 0) return out;
@@ -366,23 +178,9 @@ export async function goalsWithGenesisAnchor(db: DbLike, goalIds: string[]): Pro
 }
 
 /**
- * Assert the node fold reproduces the live `knowledge` row passed in. READ-ONLY gather→fold;
- * dev/test THROW on mismatch, prod warn+return (see file header). A null live row that folds
- * to null passes.
- *
- * The node gather is try-wrapped the SAME way as the edge assert: foldKnowledgeNode is a large
- * pure reducer that could throw on an unanticipated event shape (e.g. a TypeError), and the
- * gather runs AFTER the SoT write inside the accept tx — letting such a throw propagate would
- * roll back a successful accept, violating the contract "never break a live accept over a
- * fold/parity bug." Any gather throw is routed through the SAME dev-throws/prod-logs switch as
- * a mismatch (prod warn + return, dev/test rethrow). A genuine DB error already poisons the tx
- * so the commit fails regardless — the wrap only rescues the pure-reducer-throw case.
- *
- * @param db       Db or Tx — pass the SAME tx the accept wrote in so the gather sees the
- *                 just-written row + rate event.
- * @param nodeId   the knowledge id to re-project.
- * @param liveRow  the structural snapshot of the row the imperative path just wrote (or null
- *                 if the live path produced no row), in KnowledgeRowSnapshot shape.
+ * Assert that the node fold reproduces the live row. The gather is wrapped so a reducer
+ * throw follows the same dev-throw/prod-log path as a mismatch instead of aborting a live
+ * accept. Pass the transaction that performed the write.
  */
 export async function assertKnowledgeNodeParity(
   db: DbLike,
@@ -393,8 +191,7 @@ export async function assertKnowledgeNodeParity(
   try {
     folded = await gatherAndFoldKnowledgeNode(db, nodeId);
   } catch (err) {
-    // A reducer/gather throw (unanticipated event shape, etc.) must never abort the live
-    // accept in prod — route it through the same switch as a mismatch (see the doc comment).
+    // Route reducer/gather throws through the same switch as a mismatch.
     onParityMismatch('knowledge', nodeId, [
       `<fold-threw>: ${err instanceof Error ? err.message : String(err)}`,
     ]);
@@ -408,25 +205,9 @@ export async function assertKnowledgeNodeParity(
 }
 
 /**
- * Assert the edge fold reproduces the live `knowledge_edge` row passed in. READ-ONLY
- * gather→fold; dev/test THROW on mismatch, prod warn+return. A null live row that folds to
- * null passes.
- *
- * TOPOLOGY-REJECT SAFETY: gatherAndFoldKnowledgeEdge re-runs the ADR-0034 topology gate on a
- * live prerequisite create and may THROW on a cycle/direction reject. The IMPERATIVE edge
- * create path (actions.ts) does NOT run that gate, so a just-committed prerequisite edge that
- * the fold considers cyclic would make the gather throw. We must NOT let that abort the live
- * accept in production (same contract as a parity mismatch: the imperative write is the SoT;
- * a fold-side reject is a projection concern, not a reason to fail the user's accept). So the
- * gather is wrapped — any throw (topology reject or other gather failure) is routed through
- * the SAME dev-throws/prod-logs switch: prod → warn + return, dev/test → rethrow (surface it
- * loudly so the inconsistency is caught before the SoT flip).
- *
- * @param db       Db or Tx — pass the accept tx so the gather sees the just-written edge +
- *                 generate event.
- * @param edgeId   the knowledge_edge id to re-project.
- * @param liveRow  the structural snapshot of the edge row just written (or null), in
- *                 KnowledgeEdgeRowSnapshot shape.
+ * Assert that the edge fold reproduces the live row. The imperative edge path does not gate
+ * topology, so a topology reject from the fold follows the same dev-throw/prod-log path as
+ * a mismatch instead of aborting the accept.
  */
 export async function assertKnowledgeEdgeParity(
   db: DbLike,
@@ -437,14 +218,8 @@ export async function assertKnowledgeEdgeParity(
   try {
     folded = await gatherAndFoldKnowledgeEdge(db, edgeId);
   } catch (err) {
-    // A fold-side throw (ADR-0034 topology reject on a prerequisite the imperative path did
-    // not gate, or any gather failure) must never break a live accept in prod. Route it
-    // through the prod-logs / dev-throws switch as a whole-row mismatch.
-    // Tag a topology-reject distinctly from a generic reducer/gather throw: the fold re-runs
-    // the ADR-0034 gate the imperative path skipped, so a throw here can mean a cyclic/invalid
-    // edge was committed (a data-integrity gap) rather than a plain projection bug. In prod
-    // both only warn, and they'd log identically without this tag — so an operator can't tell
-    // them apart. (OCR #580.)
+    // Tag a topology reject distinctly from a generic reducer throw: production only warns,
+    // and an operator needs to tell a data-integrity gap from a projection bug.
     const msg = err instanceof Error ? err.message : String(err);
     const isTopologyReject = /topology|cycle|prerequisite|direction/i.test(msg);
     onParityMismatch('knowledge_edge', edgeId, [
@@ -459,26 +234,12 @@ export async function assertKnowledgeEdgeParity(
   if (diff.length > 0) onParityMismatch('knowledge_edge', edgeId, diff);
 }
 
-// ── goal parity assert (YUK-471 Wave 2) ──────────────────────────────────────────────────────
+// ── goal parity assert ────────────────────────────────────────────────────────────────────────
 //
-// The write-time fold==row guard for the goal imperative sites (accept / goal-create / retract /
-// status / scope), mirroring assertKnowledgeNodeParity. After an OFF-path imperative write, the
-// site re-selects the row → maps to GoalRowSnapshot → calls this, which gather→folds the SAME id
-// read-only and deep-compares. dev/test THROW on mismatch, prod warn+return (the shared
-// onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift the
-// moment it happens — goal establishes the pattern mistake_variant + learning_item inherit.
-//
-// APPLICABILITY GATE (mirror assertAcceptParity): the CALLER must only invoke this for a goal
-// that is EVENT-SOURCED (hasGoalGenesisAnchor) — a pre-event-sourced goal folds to null and would
-// FALSE-mismatch its live row. The wired sites always anchor the goal this tx (accept writes the
-// proposal index anchor; goal-create writes a genesis), so they always assert; the no-live-caller
-// status/scope helpers gate on hasGoalGenesisAnchor.
+// Write-time fold==row guard for the goal sites, mirroring the node assert. Callers must
+// only assert event-sourced goals; a pre-event goal folds to null and would false-mismatch.
 
-/**
- * Pick the GoalRowSnapshot fields from a live `goal` DB row (NO Zod parse — a .parse() throw on
- * the hot path could abort a live write in prod, defeating the never-throw contract). goal has no
- * derived columns, so the full row IS the snapshot.
- */
+/** Pick snapshot fields from a live goal row without Zod parsing. */
 export function goalLiveRowToSnapshot(row: {
   id: string;
   title: string;
@@ -499,12 +260,10 @@ export function goalLiveRowToSnapshot(row: {
     title: row.title,
     subject_id: row.subject_id,
     scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // YUK-603 — NOT NULL column with default; always present on a live row, always compared
-    // (the fold side materializes it too, defaulting legacy genesis payloads to 'explicit').
+    // NOT NULL with a default; the fold materializes the same value for legacy payloads.
     scope_mode: row.scope_mode,
     sequence_hint: row.sequence_hint,
-    // YUK-1009 — nullable column; the fold materializes NULL for legacy payloads too, so
-    // the live side must surface the column verbatim (undefined → false drift).
+    // Nullable; the fold materializes NULL for legacy payloads too, so surface it verbatim.
     declared_stage: row.declared_stage,
     status: row.status,
     source: row.source,
@@ -515,18 +274,7 @@ export function goalLiveRowToSnapshot(row: {
   };
 }
 
-/**
- * Assert the goal fold reproduces the live `goal` row passed in. READ-ONLY gather→fold; dev/test
- * THROW on mismatch, prod warn+return (file header contract). A null live row that folds to null
- * passes. The gather is try-wrapped the SAME way as the node/edge asserts so an unanticipated
- * reducer throw never aborts a live write in prod.
- *
- * @param db       Db or Tx — pass the SAME tx the write happened in so the gather sees the
- *                 just-written row + events.
- * @param goalId   the goal id to re-project.
- * @param liveRow  the structural snapshot of the row the imperative path just wrote (or null), in
- *                 GoalRowSnapshot shape.
- */
+/** Assert that the goal fold reproduces the live row; see the node assert for throw handling. */
 export async function assertGoalParity(
   db: DbLike,
   goalId: string,
@@ -548,27 +296,17 @@ export async function assertGoalParity(
   if (diff.length > 0) onParityMismatch('goal', goalId, diff);
 }
 
-// ── mistake_variant genesis-anchor helpers (YUK-471 Wave 2) ──────────────────────────────────
+// ── mistake_variant genesis-anchor helpers ────────────────────────────────────────────────────
 //
-// A mistake_variant is EVENT-SOURCED (reproducible by foldMistakeVariant, so its fold-null is a
-// genuine "should not exist" rather than a fold-blind miss) iff it has any of:
-//   1. an `experimental:mistake_variant_create` runtime base event (post-W2 creation), OR
-//   2. an `experimental:genesis` backfill seed (pre-W2 row), OR
-//   3. a `materialized_id_index` row keyed by mvId with subject_kind='mistake_variant' (the
-//      backfill/creation anchor).
-// Both base events have subject_id = mvId (createId()-preallocated, no minting indirection), so the
-// event check is a single subject-keyed scan over the two base actions.
+// A variant is event-sourced when it has a create/genesis base event or an index anchor.
+// Lifecycle events mutate an existing row and are not anchors on their own.
 
 const MISTAKE_VARIANT_ANCHOR_ACTIONS = [
   'experimental:mistake_variant_create',
   'experimental:genesis',
 ] as const;
 
-/**
- * Does this `mistake_variant` have a base/genesis anchor — i.e. is it event-sourced (reproducible
- * by foldMistakeVariant) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a
- * NON-event-sourced variant must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor.
- */
+/** Whether a variant has a base anchor the fold can reproduce. */
 export async function hasMistakeVariantGenesisAnchor(db: DbLike, mvId: string): Promise<boolean> {
   const ev = await db
     .select({ id: event.id })
@@ -595,14 +333,7 @@ export async function hasMistakeVariantGenesisAnchor(db: DbLike, mvId: string): 
   return indexed.length > 0;
 }
 
-/**
- * Batch form of hasMistakeVariantGenesisAnchor — the subset of `mvIds` that ARE event-sourced. One
- * query per source (events / index). READ-ONLY. Used by the backfill to SKIP variants that already
- * re-fold from their own log (anchoring an already-event-sourced row with a current-state genesis
- * snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as the
- * backfill idempotency pre-scan (a previously-backfilled variant now carries a genesis event, and a
- * runtime-created variant carries a create event → both skipped).
- */
+/** Batch form; also serves as the backfill's idempotency pre-scan. */
 export async function mistakeVariantsWithGenesisAnchor(
   db: DbLike,
   mvIds: string[],
@@ -633,25 +364,12 @@ export async function mistakeVariantsWithGenesisAnchor(
   return out;
 }
 
-// ── mistake_variant parity assert (YUK-471 Wave 2) ───────────────────────────────────────────
+// ── mistake_variant parity assert ─────────────────────────────────────────────────────────────
 //
-// The write-time fold==row guard for the mistake_variant imperative sites (creation / accept /
-// verify / dismiss / retract), mirroring assertGoalParity. After an OFF-path imperative write, the
-// site re-selects the row → maps to MistakeVariantRowSnapshot → calls this, which gather→folds the
-// SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return (the shared
-// onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift the moment
-// it happens — especially the fold-blind cause_category (the base event must carry it).
-//
-// APPLICABILITY GATE: the CALLER must only invoke this for a mistake_variant that is EVENT-SOURCED
-// (hasMistakeVariantGenesisAnchor) — a pre-event-sourced row folds to null and would FALSE-mismatch
-// its live row. The wired sites always anchor the variant this tx (creation writes the create event
-// + index; accept/verify/dismiss/retract operate on an already-anchored row), so they always assert.
+// Write-time fold==row guard for the variant sites, especially the fold-blind
+// cause_category, which must be on the base event. Callers only assert anchored variants.
 
-/**
- * Pick the MistakeVariantRowSnapshot fields from a live `mistake_variant` DB row (NO Zod parse — a
- * .parse() throw on the hot path could abort a live write in prod, defeating the never-throw
- * contract). The row has no derived/version columns, so the full row IS the snapshot.
- */
+/** Pick snapshot fields from a live variant row without Zod parsing. */
 export function mistakeVariantLiveRowToSnapshot(row: {
   id: string;
   parent_question_id: string;
@@ -668,9 +386,7 @@ export function mistakeVariantLiveRowToSnapshot(row: {
     parent_question_id: row.parent_question_id,
     variant_question_id: row.variant_question_id,
     proposal_event_id: row.proposal_event_id,
-    // status is a free `text` column on the table; narrow to the snapshot enum (the wired writers
-    // only ever set draft|active|broken|dismissed, so the cast holds — a plain field-pick cannot
-    // throw, unlike a Zod .parse() on the hot path).
+    // status is free text; the wired writers only set the snapshot enum values.
     status: row.status as MistakeVariantRowSnapshotT['status'],
     failure_reasons: row.failure_reasons ?? [],
     cause_category: row.cause_category,
@@ -679,16 +395,7 @@ export function mistakeVariantLiveRowToSnapshot(row: {
   };
 }
 
-/**
- * Assert the mistake_variant fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
- * THROW on mismatch, prod warn+return (file header contract). A null live row that folds to null
- * passes. The gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated
- * reducer throw never aborts a live write in prod.
- *
- * @param mvId    the mistake_variant id to re-project.
- * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
- *                MistakeVariantRowSnapshot shape.
- */
+/** Assert that the variant fold reproduces the live row; see the node assert for throw handling. */
 export async function assertMistakeVariantParity(
   db: DbLike,
   mvId: string,
@@ -710,113 +417,14 @@ export async function assertMistakeVariantParity(
   if (diff.length > 0) onParityMismatch('mistake_variant', mvId, diff);
 }
 
-// ── learning_item genesis-anchor helpers (YUK-471 Wave 2) ────────────────────────────────────
+// ── learning_item parity assert ────────────────────────────────────────────────────────────────
 //
-// A learning_item is EVENT-SOURCED (reproducible by foldLearningItem, so its fold-null is a genuine
-// "should not exist" rather than a fold-blind miss) iff it has any of:
-//   1. an `experimental:genesis` seed (backfilled pre-W2 row, OR the per-id genesis written at the
-//      learning_intent / ai_dream INSERT sites under the recommended route), OR
-//   2. a `materialized_id_index` row keyed by itemId with subject_kind='learning_item' (the
-//      genesis/creation anchor).
-// (The W2 complete/relearn/archive action events are NOT anchors on their own — they mutate an
-// already-seeded row; a row with ONLY a mutation event but no genesis base would fold to null, so
-// the genesis/index anchor is the real "event-sourced" predicate.) The genesis subject_id = itemId
-// (no minting indirection), so the event check is a single subject-keyed scan over the genesis action.
-
-const LEARNING_ITEM_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
+// Write-time fold==row guard for the item sites. Callers assert only anchored items; the
+// excluded derived columns are absent from the snapshot, so they never enter the diff.
 
 /**
- * Does this `learning_item` have a genesis anchor — i.e. is it event-sourced (reproducible by
- * foldLearningItem) at all? READ-ONLY. Used by the guarded write-through (a fold-null on a
- * NON-event-sourced item must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor.
- */
-export async function hasLearningItemGenesisAnchor(db: DbLike, itemId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        eq(event.subject_id, itemId),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, itemId),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/**
- * Batch form of hasLearningItemGenesisAnchor — the subset of `itemIds` that ARE event-sourced. One
- * query per source (events / index). READ-ONLY. Used by the backfill to SKIP items that already
- * re-fold from their own log (anchoring an already-event-sourced row with a current-state genesis
- * snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as the
- * backfill idempotency pre-scan (a previously-backfilled item now carries a genesis event → skipped).
- */
-export async function learningItemsWithGenesisAnchor(
-  db: DbLike,
-  itemIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (itemIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        inArray(event.subject_id, itemIds),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, itemIds),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
-// ── learning_item parity assert (YUK-471 Wave 2) ──────────────────────────────────────────────
-//
-// The write-time fold==row guard for the learning_item imperative sites (creation / complete /
-// relearn / archive-retract), mirroring assertGoalParity. After an OFF-path imperative write, the
-// site re-selects the row → maps to LearningItemRowSnapshot → calls this, which gather→folds the
-// SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return (the shared
-// onParityMismatch switch).
-//
-// APPLICABILITY GATE: the CALLER must only invoke this for a learning_item that is EVENT-SOURCED
-// (hasLearningItemGenesisAnchor) — a pre-event-sourced row folds to null and would FALSE-mismatch
-// its live row. The wired creation sites always anchor the item this tx (genesis + index), so they
-// always assert; the complete/relearn/archive sites gate on hasLearningItemGenesisAnchor (an
-// un-backfilled pre-W2 item carries no anchor and is skipped).
-//
-// EXCLUDED columns (child_learning_item_ids / ai_score / due_at / reviewed_at) are NOT in the
-// snapshot the row-pick produces, so they never enter the deep-diff — a row differing ONLY in those
-// columns folds clean.
-
-/**
- * Pick the LearningItemRowSnapshot fields from a live `learning_item` DB row (NO Zod parse — a
- * .parse() throw on the hot path could abort a live write in prod, defeating the never-throw
- * contract). EXCLUDES child_learning_item_ids / ai_score / due_at / reviewed_at (not in the
- * snapshot). `status` is a free `text` column; the field-pick passes it through unchanged
- * (the snapshot's `status` is z.string(), so no narrowing is needed — a plain pick cannot throw).
+ * Pick snapshot fields from a live item row without Zod parsing; excludes the derived
+ * columns the fold does not own.
  */
 export function learningItemLiveRowToSnapshot(row: {
   id: string;
@@ -858,16 +466,7 @@ export function learningItemLiveRowToSnapshot(row: {
   };
 }
 
-/**
- * Assert the learning_item fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
- * THROW on mismatch, prod warn+return (file header contract). A null live row that folds to null
- * passes. The gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated
- * reducer throw never aborts a live write in prod.
- *
- * @param itemId  the learning_item id to re-project.
- * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
- *                LearningItemRowSnapshot shape.
- */
+/** Assert that the item fold reproduces the live row; see the node assert for throw handling. */
 export async function assertLearningItemParity(
   db: DbLike,
   itemId: string,
@@ -889,26 +488,14 @@ export async function assertLearningItemParity(
   if (diff.length > 0) onParityMismatch('learning_item', itemId, diff);
 }
 
-// ── artifact genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B1 IO shell) ─────────────
+// ── artifact genesis-anchor helpers ───────────────────────────────────────────────────────────
 //
-// An artifact is EVENT-SOURCED (reproducible by foldArtifact, so its fold-null is a genuine "should
-// not exist" rather than a fold-blind miss) iff it has any of:
-//   1. an `experimental:artifact_create` runtime base event (post-W3 creation), OR
-//   2. an `experimental:genesis` backfill seed (pre-W3 row), OR
-//   3. a `materialized_id_index` row keyed by artifactId with subject_kind='artifact' (the backfill
-//      anchor — artifact enters the index in C2, design §5.3).
-// Both base events have subject_id = artifactId (no minting indirection — artifactId == the create
-// event's subject_id), so the event check is a single subject-keyed scan over the two base actions.
-// C2 ADDS leg #3 (the materialized_id_index leg the B1 shell omitted because artifact was not in the
-// index yet) so the anchor check matches hasGoalGenesisAnchor / the knowledge anchor exactly.
+// An artifact is event-sourced when it has a create/genesis base event or an index anchor.
+// Both base events are subject-keyed, so the event leg is complete.
 
 const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
 
-/**
- * Does this `artifact` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
- * foldArtifact) at all? READ-ONLY. Used by projectArtifactGuarded (a fold-null on a NON-event-sourced
- * artifact must NOT delete the imperative row) — mirrors hasGoalGenesisAnchor (event leg + index leg).
- */
+/** Whether an artifact has an anchor the fold can reproduce. */
 export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
   const ev = await db
     .select({ id: event.id })
@@ -935,14 +522,7 @@ export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): 
   return indexed.length > 0;
 }
 
-/**
- * Batch form of hasArtifactGenesisAnchor — the subset of `artifactIds` that ARE event-sourced. One
- * query per source (events / index). READ-ONLY. Used by the C2 backfill to SKIP artifacts that
- * already re-fold from their own log (anchoring an already-event-sourced row with a current-state
- * genesis snapshot would mask reducer drift — same rationale as goalsWithGenesisAnchor). DOUBLES as
- * the backfill idempotency pre-scan (a previously-backfilled artifact now carries a genesis event,
- * and a runtime-created artifact carries a create event → both skipped).
- */
+/** Batch form; also serves as the backfill's idempotency pre-scan. */
 export async function artifactsWithGenesisAnchor(
   db: DbLike,
   artifactIds: string[],
@@ -973,83 +553,19 @@ export async function artifactsWithGenesisAnchor(
   return out;
 }
 
-// ── question_block genesis-anchor helpers (YUK-471 Wave 3 — C2 hoist from the B2 IO shell) ────────
+export {
+  hasQuestionBlockGenesisAnchor,
+  questionBlocksWithGenesisAnchor,
+} from '@/kernel/records/question-block-projection';
+
+// ── item_calibration genesis-anchor helpers ───────────────────────────────────────────────────
 //
-// A question_block is EVENT-SOURCED (reproducible by foldQuestionBlock) iff it has either:
-//   1. an `experimental:question_block_create` runtime base event (OCR/rescue/docx/import), OR
-//   2. an `experimental:genesis` backfill seed (pre-W3 row).
-// NO materialized_id_index leg: question_block does NOT enter the index (design §5.3 — the row id is
-// ALWAYS the subject_id, so the anchor is always a subject-keyed event and this event-table check is
-// complete — the ONE intentional asymmetry vs artifact, §9.4). Both base events have subject_id =
-// blockId, so the check is a single subject-keyed scan over the two base actions.
-
-const QUESTION_BLOCK_ANCHOR_ACTIONS = [
-  'experimental:genesis',
-  'experimental:question_block_create',
-] as const;
-
-/**
- * Does this `question_block` have a genesis/create anchor — i.e. is it event-sourced (reproducible by
- * foldQuestionBlock) at all? READ-ONLY. Used by projectQuestionBlockGuarded (a fold-null on a NON-
- * event-sourced block must NOT delete the imperative row). NO index leg (design §5.3).
- */
-export async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        eq(event.subject_id, blockId),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  return ev.length > 0;
-}
-
-/**
- * Batch form of hasQuestionBlockGenesisAnchor — the subset of `blockIds` that ARE event-sourced.
- * READ-ONLY (event leg ONLY — question_block is not in the index). Used by the C2 backfill to SKIP
- * blocks that already re-fold from their own log; DOUBLES as the idempotency pre-scan (a previously-
- * backfilled / runtime-created block carries a genesis / create event → skipped).
- */
-export async function questionBlocksWithGenesisAnchor(
-  db: DbLike,
-  blockIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (blockIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        inArray(event.subject_id, blockIds),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  return out;
-}
-
-// ── item_calibration genesis-anchor helpers (YUK-496 — ADR-0044 §7 item_calibration 例外, 方案 A) ──
-//
-// An item_calibration row is EVENT-SOURCED (reproducible by foldItemCalibration) iff it carries an
-// `experimental:genesis` backfill anchor — the ONLY event kind the anchor-only fold consumes (the
-// table has no runtime create / mutation events; 方案 A deliberately keeps the B1 imperative
-// writers untouched). NO materialized_id_index leg: item_calibration does NOT enter the index (the
-// question_block design §5.3 precedent — the row id is ALWAYS the subject_id, so the anchor is
-// always a subject-keyed event and this event-table check is complete).
+// A calibration row is event-sourced only through its genesis anchor; the table has no
+// runtime mutation events. It has no index anchor for the same reason as question_block.
 
 const ITEM_CALIBRATION_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
 
-/**
- * Does this `item_calibration` row have a genesis anchor — i.e. is it event-sourced (reproducible by
- * foldItemCalibration) at all? READ-ONLY. Used by projectItemCalibrationGuarded (a fold-null on a
- * NON-anchored row must NOT delete the imperative row — it is fold-blindness, not a revert).
- */
+/** Whether a calibration row has a genesis anchor the fold can reproduce. */
 export async function hasItemCalibrationGenesisAnchor(db: DbLike, rowId: string): Promise<boolean> {
   const ev = await db
     .select({ id: event.id })
@@ -1065,12 +581,7 @@ export async function hasItemCalibrationGenesisAnchor(db: DbLike, rowId: string)
   return ev.length > 0;
 }
 
-/**
- * Batch form of hasItemCalibrationGenesisAnchor — the subset of `rowIds` that ARE anchored.
- * READ-ONLY (event leg ONLY — item_calibration is not in the index). Used by the YUK-496 backfill
- * to SKIP rows that already carry an anchor; DOUBLES as the idempotency pre-scan (a previously-
- * backfilled row carries a genesis event → skipped, mirroring every sibling lane).
- */
+/** Batch form (event leg only); also serves as the idempotency pre-scan. */
 export async function itemCalibrationsWithGenesisAnchor(
   db: DbLike,
   rowIds: string[],
@@ -1091,37 +602,16 @@ export async function itemCalibrationsWithGenesisAnchor(
   return out;
 }
 
-// ── artifact parity assert (YUK-471 Wave 3 — C3) ─────────────────────────────────────────────────
+// ── artifact parity assert ───────────────────────────────────────────────────────────────────
 //
-// The write-time fold==row guard for the artifact imperative sites (the body_blocks edit seam + the
-// create/lifecycle/note-refine sites as they wire), mirroring assertGoalParity. After an OFF-path
-// imperative write, the site re-selects the row → maps to ArtifactRowSnapshot → calls this, which
-// gather→folds the SAME id read-only and deep-compares. dev/test THROW on mismatch, prod warn+return
-// (the shared onParityMismatch switch). This is the "real teeth" that catches a reducer/wiring drift
-// the moment it happens during the double-write phase, before the W3-D SoT flip.
-//
-// APPLICABILITY GATE (mirror assertGoalParity): the CALLER must only invoke this for an artifact that
-// is EVENT-SOURCED (hasArtifactGenesisAnchor) — a pre-event-sourced artifact folds to null and would
-// FALSE-mismatch its live row. A runtime-created artifact is anchored by its artifact_create event;
-// an edit/lifecycle site that touches a pre-W3 (un-backfilled) artifact has no anchor → the caller
-// SKIPS the assert (the imperative write stays the SoT until the C2 genesis backfill anchors it).
+// Write-time fold==row guard for the artifact sites. Callers assert only anchored artifacts;
+// an edit against a pre-event artifact is skipped.
 
-// W3-C3 (review) — the artifact row→snapshot field-pick now lives in the ONE shared mapper
-// (./snapshot-mappers) so the audit / backfill / parity snapshot shapes can't drift on a schema change.
-// Re-exported under the `artifactLiveRowToSnapshot` name the accept-time callers (body-blocks-edit,
-// the C3 parity test) already import.
+// The shared mapper lives in snapshot-mappers so audit, backfill, and parity cannot drift.
+// Re-exported under the name existing callers import.
 export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from './snapshot-mappers';
 
-/**
- * Assert the artifact fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test THROW on
- * mismatch, prod warn+return (file header contract). A null live row that folds to null passes. The
- * gather is try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw
- * never aborts a live write in prod.
- *
- * @param artifactId the artifact id to re-project.
- * @param liveRow    the structural snapshot of the row the imperative path just wrote (or null), in
- *                   ArtifactRowSnapshot shape.
- */
+/** Assert that the artifact fold reproduces the live row; see the node assert for throw handling. */
 export async function assertArtifactParity(
   db: DbLike,
   artifactId: string,
@@ -1143,42 +633,17 @@ export async function assertArtifactParity(
   if (diff.length > 0) onParityMismatch('artifact', artifactId, diff);
 }
 
-// ── question_block parity assert (YUK-471 Wave 3 — C3) ────────────────────────────────────────────
+// ── question_block parity assert ──────────────────────────────────────────────────────────────
 //
-// The write-time fold==row guard for the question_block imperative sites (the structured-edit seam +
-// the create sites as they wire), mirroring assertGoalParity. After an OFF-path imperative write, the
-// site re-selects the row → maps to QuestionBlockRowSnapshot (STRIPPING the legacy `extracted_prompt_md`
-// column, design §5.2) → calls this, which gather→folds the SAME id read-only and deep-compares.
-// dev/test THROW on mismatch, prod warn+return (the shared onParityMismatch switch).
-//
-// EXTRACTED_PROMPT_MD STRIP (§5.2): the live DB row STILL carries `extracted_prompt_md` (legacy,
-// DROP deferred to Step 11.5), but the snapshot OMITS it (markdown views derive from `structured`,
-// ADR-0002). The row-pick below simply never picks it, so the deep-diff never sees it (a row differing
-// only in that legacy column folds clean) — the same strip the C2 backfill's questionBlockRowToSnapshot
-// does before the strict Artifact/QuestionBlock genesis parse.
-//
-// APPLICABILITY GATE: the CALLER must only invoke this for a block that is EVENT-SOURCED
-// (hasQuestionBlockGenesisAnchor) — a pre-event-sourced block folds to null and would FALSE-mismatch
-// its live row. A runtime-created block is anchored by its question_block_create event; an edit site
-// touching a pre-W3 (un-backfilled) block has no anchor → the caller SKIPS the assert.
+// Write-time fold==row guard for the block sites. The legacy extracted_prompt_md column is
+// omitted from the snapshot, so a row differing only there folds clean. Callers assert only
+// anchored blocks.
 
-// W3-C3 (review) — the question_block row→snapshot field-pick (incl. the legacy extracted_prompt_md
-// strip, design §5.2) now lives in the ONE shared mapper (./snapshot-mappers) so the audit / backfill /
-// parity snapshot shapes can't drift on a schema change. Re-exported under the
-// `questionBlockLiveRowToSnapshot` name the accept-time callers (block-structured-edit, the C3 parity
-// test) already import.
+// The shared mapper (including the legacy column strip) lives in snapshot-mappers so audit,
+// backfill, and parity cannot drift. Re-exported under the name existing callers import.
 export { questionBlockRowToSnapshot as questionBlockLiveRowToSnapshot } from './snapshot-mappers';
 
-/**
- * Assert the question_block fold reproduces the live row passed in. READ-ONLY gather→fold; dev/test
- * THROW on mismatch, prod warn+return. A null live row that folds to null passes. The gather is
- * try-wrapped the SAME way as the goal/node/edge asserts so an unanticipated reducer throw never
- * aborts a live write in prod.
- *
- * @param blockId the question_block id to re-project.
- * @param liveRow the structural snapshot of the row the imperative path just wrote (or null), in
- *                QuestionBlockRowSnapshot shape (extracted_prompt_md already stripped).
- */
+/** Assert that the block fold reproduces the live row; see the node assert for throw handling. */
 export async function assertQuestionBlockParity(
   db: DbLike,
   blockId: string,

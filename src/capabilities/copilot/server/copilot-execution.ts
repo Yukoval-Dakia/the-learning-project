@@ -1,5 +1,6 @@
 import { observeTaskOperation } from '@/ai/task-observation';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
+import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -17,7 +18,6 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
-import type { PiAfterToolCall } from '@/server/ai/pi-hooks';
 import {
   type RunTaskResult,
   type StreamCollectResult,
@@ -344,7 +344,7 @@ export function createCopilotExecutionOwner(
     const exa = answerOnly ? null : adapters.buildExaMcpServerFn();
     const piToolMounts = [
       piDomainMount(domainMountOptions),
-      ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES)] : []),
+      ...(exa ? [piRemoteMcpMount(EXA_MCP_SERVER_NAME, exa, EXA_SCOPED_TOOL_NAMES, db)] : []),
     ];
     const baseAllowedTools = [
       ...(answerOnly

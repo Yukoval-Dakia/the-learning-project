@@ -24,10 +24,9 @@ import {
   IngestionEventsHeadersSchema,
   IngestionOperationSchema,
   IngestionSessionDetailResponseSchema,
+  IngestionSessionHistoryResponseSchema,
   IngestionSessionResponseSchema,
   IngestionSessionSchema,
-  LegacyExtractionResponseSchema,
-  LegacyImportResponseSchema,
   LegacyMakePaperResponseSchema,
   LegacyRescueResponseSchema,
   MistakeListQuerySchema,
@@ -38,7 +37,6 @@ import {
   RevertAutoEnrolledBlockBodySchema,
   RevertAutoEnrolledBlockResponseSchema,
 } from './api/contracts';
-import { ImportBody } from './api/import-schema';
 import { IngestionOperationRequest, MakePaperBody, RescueBody } from './api/operation-schema';
 
 export const ingestionCapability = defineCapability({
@@ -46,9 +44,8 @@ export const ingestionCapability = defineCapability({
   description:
     '录入：任何题目进系统的通道（拍照/PDF/DOCX/手输 → 原图留存 → OCR/VLM 三层提取 → 切块 → 标注 → 入库）。错题是题目的标记不是通道（D11）。',
   api: {
-    // M1-T4 (YUK-314)：所有 route 声明均带 load 懒加载 thunk（manifest 保持纯元数据，
-    // unit 分区不拉 db）。[id] 段由
-    // server/app.ts 的 toHonoPath 转为 :id 并把捕获参数透传 handler 第二实参。
+    // Every route lazy-loads through `load` so the manifest stays pure metadata.
+    // [id] segments are converted to :id by the app and passed to the handler.
     routes: [
       {
         method: 'GET',
@@ -106,6 +103,19 @@ export const ingestionCapability = defineCapability({
         load: () => import('./api/session-detail').then((m) => m.GET),
       },
       {
+        // Durable read-back for reopening a finished session (YUK-1522 history).
+        // Agent runs merge the agent_budget.history snapshot with whatever
+        // job_events still survive the 30-day window; extract runs read blocks.
+        method: 'GET',
+        path: '/api/ingestion-sessions/[id]/history',
+        operationId: 'getIngestionSessionHistory',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: IngestionSessionHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/session-history').then((m) => m.GET),
+      },
+      {
         method: 'POST',
         path: '/api/ingestion/pdf',
         operationId: 'expandIngestionPdf',
@@ -140,14 +150,13 @@ export const ingestionCapability = defineCapability({
         load: () => import('./api/blocks').then((m) => m.GET),
       },
       {
-        // SSE 首例：fetch + ReadableStream 消费端带标准 x-internal-token header
-        // （src/ui/lib/sse.ts 从不使用 EventSource），token gate 无需任何豁免。
+        // Consumed with fetch + ReadableStream (never EventSource), so the normal
+        // x-internal-token gate applies without an exemption.
         method: 'GET',
         path: '/api/ingestion/[id]/events',
         operationId: 'streamIngestionSessionEvents',
         request: { params: ApiIdParamsSchema, headers: IngestionEventsHeadersSchema },
-        // Replay/setup occurs inside ReadableStream.start(), after the 200 Response exists.
-        // Only auth middleware can still produce a pre-stream JSON error here.
+        // Replay starts inside ReadableStream.start(); only auth can fail before the stream.
         responses: {
           200: IngestionEventStreamResponseSchema,
           401: ApiErrorResponseSchema,
@@ -157,10 +166,8 @@ export const ingestionCapability = defineCapability({
         load: () => import('./api/events').then((m) => m.GET),
       },
       {
-        // YUK-1522 (R8) — durable ask answer acceptance. Body {answer} is the
-        // contract union; Idempotency-Key is a required header (400 when
-        // missing). 202 accept/replay, 409 ask_already_resolved /
-        // idempotency_conflict, 422 contract answer codes.
+        // Durable ask answers. Idempotency-Key is required; 202 accept/replay, 409
+        // resolved/conflict, 422 contract answer codes.
         method: 'POST',
         path: '/api/ingestion-sessions/[id]/asks/[ask_id]/answers',
         operationId: 'answerIngestionAsk',
@@ -185,6 +192,8 @@ export const ingestionCapability = defineCapability({
           200: IngestionOperationSchema,
           202: IngestionOperationSchema,
           ...API_ERROR_RESPONSES,
+          // 503 means the budget gate itself is unavailable; 429 is already covered.
+          503: ApiErrorResponseSchema,
         },
         successStatus: [200, 202],
         load: () => import('./api/operations').then((m) => m.POST),
@@ -197,26 +206,6 @@ export const ingestionCapability = defineCapability({
         responses: { 200: IngestionOperationSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/operations').then((m) => m.GET),
-      },
-      {
-        method: 'POST',
-        path: '/api/ingestion/[id]/extract',
-        operationId: 'extractLegacyIngestionSession',
-        request: { params: ApiIdParamsSchema },
-        responses: { 200: LegacyExtractionResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
-        load: () => import('./api/extract').then((m) => m.POST),
-      },
-      {
-        method: 'POST',
-        path: '/api/ingestion/[id]/import',
-        operationId: 'importLegacyIngestionSession',
-        request: { params: ApiIdParamsSchema, body: ImportBody },
-        responses: { 200: LegacyImportResponseSchema, ...API_ERROR_RESPONSES },
-        successStatus: 200,
-        deprecation: { successor: '/api/ingestion-sessions/[id]/operations' },
-        load: () => import('./api/import').then((m) => m.POST),
       },
       {
         method: 'POST',
@@ -256,7 +245,7 @@ export const ingestionCapability = defineCapability({
         load: () => import('./api/revert').then((m) => m.POST),
       },
       {
-        // multipart 首例：handler 内 req.formData()（Web 标准），Hono 直通。
+        // Handled with the standard req.formData() in Hono.
         method: 'POST',
         path: '/api/assets',
         operationId: 'createAsset',
@@ -283,15 +272,14 @@ export const ingestionCapability = defineCapability({
         operationId: 'getAssetContent',
         request: { params: ApiIdParamsSchema },
         responses: { 200: AssetContentResponseSchema, ...API_ERROR_RESPONSES },
-        // YUK-1497 v2（K5 自定义块）：同一 route 也服务冻结 JS 代码资产，但
-        // 以惰性表示（text/plain + CSP sandbox，见 handler）—— 与图片并列
-        // 声明，OpenAPI/生成客户端才能表达该 200 的两种表示。
+        // Also serves frozen JS assets as inert text/plain with a CSP sandbox; both
+        // representations are declared so generated clients model them.
         responseMediaTypes: { 200: ['image/*', 'text/plain', 'application/octet-stream'] },
         successStatus: 200,
         load: () => import('./api/asset-content').then((m) => m.GET),
       },
-      // M5-T5a (YUK-321) — 手输错题通道收编（D11：错题是题目的标记不是通道，
-      // 录入域持有写入口；the old after() pattern 已改写 fire-and-forget，见 api/mistakes.ts）。
+      // Mistakes are a question marker, not a separate channel (D11), so ingestion
+      // owns the write path.
       {
         method: 'POST',
         path: '/api/mistakes',
@@ -321,11 +309,8 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./jobs/ingestion_operation').then((m) => m.buildIngestionOperationHandler),
       },
-      // YUK-882 (F3.6c) — Step 9 生产 OCR job 自中央渐缩簿收编（等价平移红线：
-      // AGENT 档 2h expire + DLQ、0.5s polling、batchSize 1、includeMetadata 读
-      // retryCount 驱动 provider-attempt resume、lazy r2 getter——test worker 无
-      // R2 env 也能起，生产 env 必须齐全）。r2 经 load 内动态 import 取
-      // getR2，manifest 顶层保持纯元数据（unit 分区不拉 @/server/r2）。
+      // AGENT tier with 2h expiry + DLQ; metadata carries retryCount for provider
+      // resume. R2 is resolved lazily so the manifest stays metadata-only.
       {
         name: 'tencent_ocr_extract',
         queue: 'agent',
@@ -340,37 +325,33 @@ export const ingestionCapability = defineCapability({
           return (db: Parameters<typeof buildTencentOcrHandler>[0]['db']) =>
             buildTencentOcrHandler({
               db,
-              // lazy r2 —— 首次 OCR 才解析 env；缺 credentials 在 handler 调用点抛
+              // Resolve R2 on first use; missing credentials fail at the handler.
               get r2() {
                 return getR2();
               },
             } as Parameters<typeof buildTencentOcrHandler>[0]);
         },
       },
-      // YUK-882 (F3.6c) — Strategy D Slice B observe-only auto-enroll 消费者收编
-      // （LLM 档 1h expire + DLQ；注册器默认 2s/1 与原中央行显式 opts 等价）。
+      // LLM tier with 1h expiry + DLQ.
       {
         name: 'auto_enroll',
         queue: 'llm',
         load: () => import('./jobs/auto_enroll').then((m) => m.buildAutoEnrollHandler),
       },
-      // YUK-1522 (R8) — whole-package ingestion agent run. AGENT tier (2h
-      // expire + DLQ); one durable run per session segmented across deliveries
-      // (ask suspension exits the job; answers/timeouts re-dispatch).
+      // AGENT tier; one durable run per session spans deliveries, and ask
+      // suspension exits the job until an answer or timeout re-dispatches.
       {
         name: 'ingestion_agent_run',
         queue: 'agent',
-        // retryCount drives the retries-exhausted terminal write; the
-        // heartbeat tightens a crashed worker's lease on this 2h-expire queue
-        // so the stale-segment sweeper can recover the run sooner.
+        // retryCount drives the exhausted terminal write; the heartbeat lets the
+        // sweeper recover a crashed worker sooner on this 2h queue.
         includeMetadata: true,
         heartbeatSeconds: 300,
         load: () =>
           import('./jobs/ingestion_agent_run').then((m) => m.buildIngestionAgentRunHandler),
       },
-      // YUK-1522 (R8) — every-minute ask sweeper: resolves expired asks as
-      // skipped-by-timeout and re-dispatches resume_requested markers that no
-      // running segment followed.
+      // Resolves expired asks as skipped-by-timeout and re-dispatches resume
+      // markers that no running segment followed.
       {
         name: 'ingestion_ask_sweep',
         queue: 'fast',
@@ -380,18 +361,13 @@ export const ingestionCapability = defineCapability({
       },
     ],
   },
-  // M4-T4 (YUK-319)：proposal kind 归属声明。block_merge 的 accept applier 真身
-  // 在 ./server/proposal-appliers（YUK-202 path-B，等价平移自 dispatch 壳）；
-  // image_candidate 的在 ./server/image-candidate-accept（YUK-227 S3 Slice C，
-  // 整文件随包迁入）。壳层 actions.ts 的 accept case 只路由到本包。
+  // Proposal ownership; the shared dispatch only routes accepts here.
   proposals: {
     kinds: [
       {
         kind: 'block_merge',
         accept: {
-          // YUK-1404 — merging is irreversible: the accept requires the
-          // explicit confirm_lossy input (enforced in the applier; this flag
-          // scopes where the shared dispatch boundary admits the field).
+          // Merging is irreversible, so accept requires explicit confirm_lossy.
           confirmLossy: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
@@ -428,11 +404,9 @@ export const ingestionCapability = defineCapability({
       },
     ],
   },
-  // M1-T6：录入面（学习记录 mode 按 D11 不迁）。
   ui: { pages: uiPagesFor('ingestion') },
-  // M5-T3 / YUK-328 — 完整 DomainTool 归属声明（字段名沿用 copilotTools）。
-  // record 域退役时 query/get + propose 两组随声明一并摘除；draft block reader/edit
-  // 只由 ingestion_block_edit surface 的 allowlist 授权，不会因此泄漏给 Copilot。
+  // Tool ownership. Draft block reader/edit tools are granted only on the
+  // ingestion_block_edit surface, never to Copilot.
   copilotTools: {
     tools: [
       {
@@ -461,10 +435,8 @@ export const ingestionCapability = defineCapability({
         load: () =>
           import('./server/tools/proposal-tools').then((m) => m.proposeRecordPromotionTool),
       },
-      // YUK-1468 — 六个窄 question-block 编辑薄壳【保留在 inventory 但无任何
-      // surface 授权】：编辑统一走 edit_question，提交走 submit_question。
-      // allowlist 不授它们；注册保留给存量 db 测试与后续删除 PR（owner 批准
-      // 测试删除后清理模块）。纯逻辑留在 server/block-structured-edit.ts。
+      // Registered but not granted on any surface: edits go through edit_question
+      // and submission through submit_question. Kept for existing DB tests.
       {
         name: 'update_prompt',
         load: () =>
@@ -503,9 +475,8 @@ export const ingestionCapability = defineCapability({
             (module) => module.reassignFigureTool,
           ),
       },
-      // YUK-1497 (K5) — 展示层组合工具（spec §5：录入 agent 生成 presentation
-      // 走本工具，与发布同一道绑定校验）。只写 question_block.structured 的
-      // presentation 一个键；仅 ingestion_block_edit surface 授权。
+      // Presentation composition uses the same binding validation as publishing;
+      // it writes only structured.presentation and is granted only to ingestion.
       {
         name: 'compose_presentation',
         load: () =>
@@ -513,9 +484,7 @@ export const ingestionCapability = defineCapability({
             (module) => module.composePresentationTool,
           ),
       },
-      // YUK-1404 (B2/R2–R5) — the five shared source-package tools. Ownership
-      // declaration only; they are granted exclusively on the `ingestion`
-      // surface (kernel/tools/allowlists.ts), never on copilot/maintenance.
+      // Source-package tools, granted only on the ingestion surface.
       {
         name: 'read_source',
         load: () => import('./server/tools/source-tools').then((module) => module.readSourceTool),
@@ -536,10 +505,8 @@ export const ingestionCapability = defineCapability({
         name: 'glm_ocr',
         load: () => import('./server/tools/media-tools').then((module) => module.glmOcrTool),
       },
-      // YUK-1522 (R8) — the two agent contract tools. Granted ONLY on the
-      // `ingestion` surface (kernel/tools/allowlists.ts): progress events are
-      // the SSE-visible durable stream; asks are durable + resumable, never a
-      // blocked worker.
+      // Agent contract tools: progress feeds the durable SSE stream, and asks are
+      // durable/resumable rather than a blocked worker.
       {
         name: 'report_ingestion_progress',
         load: () =>

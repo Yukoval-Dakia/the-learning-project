@@ -1,45 +1,20 @@
-// YUK-471 W1 B3 / YUK-548 (worklist #5) — the prod-clone SoT-flip GATE orchestrator.
+// Prod-clone SoT-flip gate orchestrator.
 //
-// WHAT. One command that runs the documented B3 cutover gate against a (clone) database for a set of
-// projection KINDS and prints a GO / NO-GO verdict for flipping that entity's SoT-writer flag. It
-// chains the landed primitives + the structural safety checks the flip requires:
+// Runs the cutover gate for one projection FK-cluster at a time and prints GO / NO-GO:
+//   1. snapshot the live id sets per kind;
+//   2. scoped, idempotent genesis backfill for the gated kinds;
+//   3. audit fold(events) against the current imperative row;
+//   4. rebuild the cluster in one transaction;
+//   5. compare live id sets both ways (deleted rows and stale-anchor resurrections).
 //
-//   1. snapshot the live id sets per kind (the "before").
-//   2. SCOPED genesis backfill (idempotent, ALL kinds) — anchor only TRULY event-less rows.
-//   3. AUDIT (the real teeth) — fold(events) vs the CURRENT imperative row, BEFORE the rebuild
-//      overwrites anything, PER requested kind. Value drift, present→fold-null, and a cyclic
-//      prerequisite (fold THROWS) all surface here.
-//   4. full rebuild of the requested kinds IN ONE TX (FK-cluster) — re-fold every id through the
-//      write-through shells. A topology/tree-redundancy invariant reject rolls the cluster back.
-//   5. rowset parity per kind — diff the live id sets BOTH ways: a row the rebuild DELETED (data
-//      loss) OR MATERIALIZED with no live counterpart (a stale-anchor resurrection the live-only
-//      audit never sees) is a divergence the flip would introduce → hard NO-GO.
+// GO iff audit is clean, rebuild succeeds, and the row set survives.
 //
-//   GO  iff  audit.clean && rebuild.ok && survival.ok.
+// The audit must run before the rebuild: after a write-through rebuild it would compare the fold
+// against itself. Running first exposes reducer drift against the imperative row.
 //
-// YUK-548: generalized from a hard-coded knowledge/knowledge_edge run to `runB3Gate(db, kinds, …)`.
-// Callers pass an FK-CLUSTER (PROJECTION_FK_CLUSTERS): knowledge + knowledge_edge together (FK), each
-// other kind alone. The CLI iterates every cluster. The knowledge/knowledge_edge GO/NO-GO VERDICTS
-// are behavior-preserved (the report SHAPE changed to per-kind maps — m10).
-//
-// SAFETY — THIS SCRIPT MUTATES THE TARGET DATABASE (steps 2 + 4 WRITE). Run it ONLY against a
-// PROD-CLONE, NEVER live prod. The CLI refuses unless B3_GATE_CONFIRM_CLONE=1. The exported
-// runB3Gate() is unguarded so the DB test can drive it against the testcontainer.
-//
-// WHY THE AUDIT RUNS BEFORE THE REBUILD (real value teeth). The rebuild WRITES the fold through, so a
-// post-rebuild audit would compare the fold against itself — tautologically clean. Run BEFORE, the
-// audit compares fold(events) against the IMPERATIVE row, so a mutation-reducer value bug surfaces as
-// DRIFT. This is only real teeth because the backfill is SCOPED (an already-event-sourced row is NOT
-// genesis-anchored, so its fold re-derives through its reducers rather than collapsing to a
-// current-state snapshot — an unscoped backfill would mask exactly this divergence).
-//
-// NOT in the `pnpm test` chain — like audit:projection it needs a populated DB. CI coverage is the DB
-// test (b3-gate.db.test.ts): the GO path + every NO-GO leg (topology, drift, deletion, resurrection)
-// for knowledge/edge AND each W2/W3 entity.
-//
-// CLI:
-//   B3_GATE_CONFIRM_CLONE=1 pnpm b3:gate          # human-readable GO / NO-GO per cluster; exit 0/1
-//   B3_GATE_CONFIRM_CLONE=1 pnpm b3:gate --json    # JSON report
+// SAFETY: this mutates the target database (steps 2 and 4 write). Run it only against a
+// PROD-CLONE; the CLI refuses without B3_GATE_CONFIRM_CLONE=1. The exported runB3Gate() stays
+// unguarded so the DB test can drive it against the testcontainer.
 
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
@@ -66,10 +41,9 @@ import { type RebuildCounts, rebuildProjectionForKinds } from './rebuild-project
 
 type KindBackfillCounts = { seeded: number; skipped: number };
 
-// Per-kind backfill dispatch (review O3): the gate backfills ONLY the kinds it gates. The all-7
-// backfillGenesisEvents ran once per cluster (6×7 = 42 full-table scans, 5 runs pure no-ops) AND
-// meant a per-cluster gate WROTE genesis events for kinds outside its cluster — violating the
-// cluster-isolation story. All 7 functions share the (db, now) → {seeded, skipped} shape.
+// Backfill only the kinds this cluster gates. A single all-kinds pass would scan every table per
+// cluster and write genesis events for kinds outside the cluster. All entries share the
+// (db, now) → {seeded, skipped} shape.
 const KIND_BACKFILL: Record<ProjectionKind, (db: Db, now: Date) => Promise<KindBackfillCounts>> = {
   knowledge: backfillKnowledgeGenesis,
   knowledge_edge: backfillKnowledgeEdgeGenesis,
@@ -84,24 +58,22 @@ const KIND_BACKFILL: Record<ProjectionKind, (db: Db, now: Date) => Promise<KindB
 export interface B3GateReport {
   go: boolean;
   kinds: ProjectionKind[];
-  // per-kind backfill counts — ONLY the gated kinds (cluster-scoped, review O3).
+  // Backfill counts for the gated kinds only (cluster-scoped).
   backfill: Partial<Record<ProjectionKind, KindBackfillCounts>>;
-  // audit runs BEFORE the rebuild — fold(events) vs the CURRENT imperative row (real value-drift
-  // teeth). driftCount = non-allowlisted drift over the requested kinds; topologyReject is the
-  // legacy report field for a cyclic topology or tree-redundancy invariant throw mid-scan.
+  // Audit runs before the rebuild, so drift is fold-vs-imperative. topologyReject carries a
+  // cyclic topology or tree-redundancy invariant throw from mid-scan.
   audit: {
     clean: boolean;
     driftCount: number;
     allowedCount: number;
     topologyReject: string | null;
   };
-  // rebuild materializes the post-flip state + independently re-confirms projection invariants.
-  // ok=false with topologyReject means it rolled back on topology/tree redundancy — hard NO-GO.
+  // The rebuild re-confirms projection invariants. ok=false with topologyReject means it rolled
+  // back — hard NO-GO.
   rebuild: { ok: boolean; counts: RebuildCounts | null; topologyReject: string | null };
-  // rowset parity (named `survival`) — the rebuild must reproduce the EXACT pre-existing live id set
-  // per kind. deleted = rows the rebuild dropped (data LOSS on flip). created = rows the rebuild
-  // MATERIALIZED that had no live counterpart (a stale-anchor resurrection the live-only audit never
-  // sees, since the rebuild id universe is BROADER: event subjects + index anchors). Either → NO-GO.
+  // The rebuild must reproduce the exact pre-existing live id set. deleted = data loss; created =
+  // a stale-anchor resurrection the live-only audit cannot see, because the rebuild id universe
+  // also includes event subjects and index anchors. Either is NO-GO.
   survival: {
     ok: boolean;
     deleted: Partial<Record<ProjectionKind, string[]>>;
@@ -125,14 +97,14 @@ async function liveIdsByKind(
 }
 
 /**
- * Run the B3 SoT-flip gate against `db` (a CLONE) for the given `kinds` (an FK-cluster). READS then
- * WRITES (backfill + rebuild), then verifies. Returns the structured GO/NO-GO report. Exported (no
- * safety gate) so the DB test can drive it; the CLI `main()` enforces the B3_GATE_CONFIRM_CLONE guard.
+ * Run the SoT-flip gate against a clone database for one FK-cluster. Reads, writes (backfill +
+ * rebuild), then verifies; returns the structured GO/NO-GO report. Exported without the safety
+ * guard so tests can drive it; the CLI enforces B3_GATE_CONFIRM_CLONE.
  *
- * @param db        the clone DB handle (must support .transaction — the rebuild needs one tx).
- * @param kinds     the projection kinds to gate (a PROJECTION_FK_CLUSTERS entry).
- * @param allowlist known-acceptable drift (mirrors audit:projection's allowlist).
- * @param now       genesis-backfill timestamp (defaults to new Date()); injected for deterministic tests.
+ * @param db        clone handle (must support .transaction — the rebuild needs one transaction).
+ * @param kinds     projection kinds to gate (one PROJECTION_FK_CLUSTERS entry).
+ * @param allowlist known-acceptable drift, same contract as audit:projection.
+ * @param now       genesis timestamp; injected for deterministic tests.
  */
 export async function runB3Gate(
   db: Db,
@@ -140,22 +112,17 @@ export async function runB3Gate(
   allowlist: ProjectionAllowlist = {},
   now: Date = new Date(),
 ): Promise<B3GateReport> {
-  // 1. snapshot the live id sets per kind BEFORE the gate mutates anything.
+  // 1. Snapshot before anything mutates.
   const before = await liveIdsByKind(db, kinds);
 
-  // 2. genesis backfill (idempotent), CLUSTER-SCOPED (review O3): only the gated kinds — a
-  // per-cluster gate must not write genesis events for kinds outside its cluster, and the CLI's
-  // 6-cluster loop backfills each kind exactly once instead of 6 redundant all-7 passes.
+  // 2. Cluster-scoped genesis backfill; the CLI's cluster loop then touches each kind once.
   const backfill: B3GateReport['backfill'] = {};
   for (const kind of kinds) {
     backfill[kind] = await KIND_BACKFILL[kind](db, now);
   }
 
-  // 3. AUDIT — the real teeth. Compare fold(events) against the CURRENT imperative row PER kind,
-  // BEFORE the rebuild. A cyclic prerequisite or tree-redundant live edge makes projection THROW —
-  // caught here as an invariant NO-GO (the rebuild re-confirms at step 4). Any other error propagates.
-  // Counts are hoisted OUTSIDE the try (review CR3/O2): a later kind's topology throw must not
-  // discard the drift/allowed already accumulated from earlier kinds in the same cluster.
+  // 3. Audit before the rebuild. A topology/tree-redundancy throw is an invariant NO-GO; anything
+  // else propagates. Counts live outside the try so a later kind's throw keeps earlier drift.
   let audit: B3GateReport['audit'];
   let driftCount = 0;
   let allowedCount = 0;
@@ -172,9 +139,8 @@ export async function runB3Gate(
     audit = { clean: false, driftCount, allowedCount, topologyReject: msg };
   }
 
-  // 4. rebuild IN ONE TX (FK-cluster) — materialize the post-flip state + independently re-confirm
-  // topology. A topology/tree-redundancy reject rolls the cluster back and is reported as NO-GO;
-  // any other error propagates.
+  // 4. Rebuild in one transaction. A topology/tree-redundancy reject rolls back and is NO-GO;
+  // anything else propagates.
   let rebuild: B3GateReport['rebuild'];
   try {
     const counts = await db.transaction((tx) => rebuildProjectionForKinds(tx, kinds));
@@ -185,8 +151,7 @@ export async function runB3Gate(
     rebuild = { ok: false, counts: null, topologyReject: msg };
   }
 
-  // 5. survival — per kind, did the rebuild drop a pre-existing row (data loss) or resurrect an
-  // event-only/anchored row with no live counterpart?
+  // 5. Survival: did the rebuild drop a pre-existing row or resurrect an event-only/anchored one?
   const after = await liveIdsByKind(db, kinds);
   const deleted: Partial<Record<ProjectionKind, string[]>> = {};
   const created: Partial<Record<ProjectionKind, string[]>> = {};
@@ -215,13 +180,12 @@ function printReport(report: B3GateReport): void {
   console.log(
     `\n=== B3 SoT-flip gate [${report.kinds.join(', ')}]: ${report.go ? 'GO ✅' : 'NO-GO ❌'} ===\n`,
   );
-  // backfill visibility (review O1): it is a MUTATING step (genesis events + index entries), so the
-  // human-readable path must show what it did — not just the --json path.
+  // Backfill mutates (genesis events + index rows), so the human-readable path must show it too.
   const bfEntries = Object.entries(report.backfill)
     .map(([k, c]) => `${k}: seeded ${c.seeded}, skipped ${c.skipped}`)
     .join('; ');
   console.log(`backfill — ${bfEntries || '(none)'}`);
-  // audit FIRST (it runs before the rebuild — the real fold-vs-imperative teeth).
+  // Audit output first: it is the fold-vs-imperative check, not the post-rebuild result.
   if (report.audit.topologyReject) {
     console.log(`audit    — NO-GO: projection invariant reject — ${report.audit.topologyReject}`);
   } else {
@@ -292,8 +256,7 @@ async function main(): Promise<void> {
   process.exit(allGo ? 0 : 1);
 }
 
-// CLI-gate: only run + exit as the CLI entry point so the DB test can import runB3Gate without
-// the top-level run firing.
+// CLI-gate: only run as the entry point so the DB test can import runB3Gate without side effects.
 if (typeof process.argv[1] === 'string' && process.argv[1].endsWith('b3-gate.ts')) {
   main().catch((err) => {
     console.error('[b3-gate] failed:', err);

@@ -141,11 +141,14 @@ const welcomeRoute = createRoute({
   component: WelcomeRoute,
 });
 
-const OnboardingUploadRoute = lazyNavigableRoute(loadOnboardRecordPage);
+const OnboardingUploadRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadOnboardRecordPage);
 
 const onboardingUploadRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('onboarding-upload'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: OnboardingUploadRoute,
 });
 
@@ -398,29 +401,35 @@ const worksheetPrintRoute = createRoute({
 });
 
 // M3-T6 (YUK-317) — 知识面：图谱页 + 节点详情页。
-const KnowledgeIndexRoute = lazyNavigableRoute(loadKnowledgePage);
+const KnowledgeIndexRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadKnowledgePage);
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('knowledge'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: KnowledgeIndexRoute,
 });
 
-const KnowledgeDetailRouteC = lazyRouteComponent(async () => {
-  const KnowledgeDetailPage = await loadKnowledgeDetailPage();
+const KnowledgeDetailRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const KnowledgeDetailPage = await loadKnowledgeDetailPage();
 
-  function KnowledgeDetailRouteComponent() {
-    const router = useRouter();
-    const { id } = knowledgeDetailRoute.useParams();
-    return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function KnowledgeDetailRouteComponent() {
+        const router = useRouter();
+        const { id } = knowledgeDetailRoute.useParams();
+        return <KnowledgeDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+      }
 
-  return { default: KnowledgeDetailRouteComponent };
-});
+      return { default: KnowledgeDetailRouteComponent };
+    });
 
 const knowledgeDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('knowledge-detail'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: KnowledgeDetailRouteC,
 });
 
@@ -434,21 +443,24 @@ const notesRoute = createRoute({
 });
 
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
-const NoteReaderRouteC = lazyRouteComponent(async () => {
-  const NoteReaderPage = await loadNoteReaderPage();
+const NoteReaderRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const NoteReaderPage = await loadNoteReaderPage();
 
-  function NoteReaderRouteComponent() {
-    const router = useRouter();
-    const { id } = noteReaderRoute.useParams();
-    return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function NoteReaderRouteComponent() {
+        const router = useRouter();
+        const { id } = noteReaderRoute.useParams();
+        return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
+      }
 
-  return { default: NoteReaderRouteComponent };
-});
+      return { default: NoteReaderRouteComponent };
+    });
 
 const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('note-detail'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: NoteReaderRouteC,
 });
 
@@ -456,11 +468,12 @@ const noteReaderRoute = createRoute({
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
-const CoachRoute = lazyNavigableRoute(loadCoachHub);
+const CoachRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadCoachHub);
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('coach'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: CoachRoute,
 });
 

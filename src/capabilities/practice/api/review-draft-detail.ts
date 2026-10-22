@@ -1,11 +1,9 @@
-// YUK-403 inc-4b — GET /api/review/drafts/[id]: full-text draft preview.
+// GET /api/review/drafts/[id]: full-text draft preview for the owner manual gate.
 //
-// Serves the owner manual gate preview pane (loom DrPreviewBody): the UNtruncated
-// prompt + passage / options / answer / difficulty / knowledge for one draft. Only
-// draft_status='draft' AND non-soft-archived questions are visible (same filter as
-// the list); a non-draft / soft-archived / missing question → 404. Auth is enforced
-// upstream by the /api/* internal-token middleware; thin shell over
-// getDraftReviewDetail (the projection logic lives in server/draft-review.ts).
+// Only draft_status='draft' and non-soft-archived questions are visible (same
+// filter as the list); anything else 404s. Auth is enforced upstream by the
+// /api/* internal-token middleware. Projection logic lives in
+// server/draft-review.ts.
 
 import { getDraftReviewDetail } from '@/capabilities/practice/server/draft-review';
 import { db } from '@/db/client';

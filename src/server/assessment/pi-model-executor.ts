@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AgentRunError } from '@/ai/agent-run-error';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type {
   ModelExecutorRequest,
@@ -9,7 +10,6 @@ import type {
 import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import {
   isLaminarTracingEnabled,
   traceMetadata,

@@ -11,11 +11,9 @@ import { ApiError } from '@/kernel/http';
 import { projectArtifactGuarded } from '@/server/projections/artifact';
 import { hasArtifactGenesisAnchor } from '@/server/projections/parity';
 
-// ADR-0033 D1 (YUK-309) — body_blocks block-tree editing is a NOTE-ONLY write path.
-// Opaque artifact types (tool_quiz, interactive) MUST keep body_blocks null and never
-// participate in the cross_link mesh; editing them here would (1) break the D1 opaque
-// invariant and (2) make the row a mesh source via syncBlockRefsForArtifact. Guarding the
-// edited artifact's type to NOTE_TYPES closes both at the source side.
+// Block-tree editing is note-only. Opaque types (tool_quiz, interactive) must
+// keep body_blocks null and never become mesh sources, so a hand-crafted PATCH
+// cannot bypass the type guard.
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
 
 export interface EditArtifactBodyBlocksParams {
@@ -48,8 +46,7 @@ export async function editArtifactBodyBlocks(
       .select({
         id: artifact.id,
         type: artifact.type,
-        // W3-C1γ — the BEFORE body, carried on the body_blocks_edit event as previous_body_blocks
-        // (for revert; the existing optimistic-lock SELECT already reads the row, so this is free).
+        // The before body rides the fold event for revert; this SELECT already reads it.
         body_blocks: artifact.body_blocks,
         history: artifact.history,
         archived_at: artifact.archived_at,
@@ -57,14 +54,13 @@ export async function editArtifactBodyBlocks(
       })
       .from(artifact)
       .where(eq(artifact.id, params.artifactId))
-      // Serialize version validation, projection and backlink sync as one edit.
+      // Version check, projection, and backlink sync are one serialized edit.
       .for('update')
       .limit(1);
     const row = rows[0];
     if (!row) throw new ApiError('not_found', `artifact ${params.artifactId} not found`, 404);
-    // YUK-309: refuse to write a block-tree onto an opaque artifact type. Without this
-    // a hand-crafted PATCH against an interactive / tool_quiz id would write body_blocks
-    // (breaking the ADR-0033 D1 opaque invariant) and turn the row into a mesh source.
+    // Reject opaque types before writing: a block tree here would break their
+    // invariant and turn the row into a mesh source.
     if (!(NOTE_TYPES as readonly string[]).includes(row.type)) {
       throw new ApiError(
         'conflict',
@@ -99,8 +95,7 @@ export async function editArtifactBodyBlocks(
       );
     }
 
-    // Full before/after body and history support replay and undo. Keep the user
-    // activity outbox behavior unchanged (ingest_at remains null).
+    // Leave the user-activity outbox behaviour unchanged (ingest_at stays null).
     await emitArtifactBodyBlocksEditEvent(tx, {
       subjectId: params.artifactId,
       eventId,
@@ -117,7 +112,6 @@ export async function editArtifactBodyBlocks(
 
     await projectArtifactGuarded(tx, params.artifactId);
 
-    // The same committed event drives the body and its backlink index.
     await syncBlockRefsForArtifact(tx, params.artifactId, bodyBlocks);
 
     return {

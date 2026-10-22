@@ -1,31 +1,23 @@
 import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
 import { extractPdfTextLayers } from '@/capabilities/ingestion/server/pdf-text';
-import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import {
   pdfPageImageProvenance,
   preparePdfSourceAssets,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { persistImageAsset } from '@/kernel/records/asset-store';
 import { getR2 } from '@/server/r2';
 
-// PDF expansion endpoint (YUK-250). Takes ONE PDF multipart upload, renders it
-// to N PNG page images, persists each via the SHARED content-addressed
-// image-asset write path (the same helper /api/assets uses), and returns the
-// produced asset ids. After this, the page assets are plain kind='image' rows —
-// byte-identical in contract to a photo — so the rest of the ingestion pipeline
-// (session create → Tencent/VLM extract worker) needs zero changes.
+// PDF expansion: one upload renders into page images persisted through the shared
+// content-addressed asset path. The page rows are ordinary images, so the rest of
+// the pipeline needs no special case.
 //
-// Render runs synchronously in the route handler (not the pg-boss worker): the
-// user is actively waiting at the upload UI, a 1–15 page render is sub-10s, and
-// keeping the renderer out of scripts/worker.ts keeps the worker bundle
-// untouched. The 30s render timeout + 15-page cap (in pdf-render.ts) bound the
-// worst case to one loud failure, not a hang.
+// Rendering runs in the route because the user is waiting; the render timeout and
+// page cap bound the worst case to one loud failure rather than a hang.
 
-// Source-PDF upload cap — larger than the 8 MB per-image cap because a 15-page
-// scanned exam can exceed that. Local to this route; the /api/assets per-image
-// cap stays 8 MB. (Next App Router route handlers have no framework body limit;
-// this app constant is the only gate.)
+// Source-PDF cap, larger than the per-image cap because a scanned exam can exceed
+// it. The per-image cap stays unchanged.
 const MAX_PDF_UPLOAD_BYTES = 30_000_000;
 
 export async function POST(req: Request): Promise<Response> {
@@ -35,11 +27,8 @@ export async function POST(req: Request): Promise<Response> {
     if (!(file instanceof File)) {
       throw new ApiError('validation_error', 'file is required', 400);
     }
-    // Accept the canonical application/pdf, plus an empty type when the filename
-    // ends in .pdf — browsers send '' for drag-and-drop / some OS pickers even
-    // for genuine PDFs (mirrors the client isPdf fallback). This is not the
-    // security gate: renderPdfToPngPages validates the %PDF magic bytes and 400s
-    // a misnamed non-PDF, so a wrong-extension file is still rejected loudly.
+    // Accept application/pdf or an empty type with a .pdf filename (drag-and-drop).
+    // Not the security gate: the renderer validates the %PDF magic bytes.
     const isPdfMime =
       file.type === 'application/pdf' ||
       (file.type === '' && file.name.toLowerCase().endsWith('.pdf'));
@@ -58,26 +47,19 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
-    // Throws ApiError('validation_error', <中文>, 400) for corrupt / encrypted /
-    // zero-page / over-cap / timeout / oversized-page. req.signal (YUK-522) is
-    // threaded so a client disconnect aborts cooperatively between page renders
-    // (ApiError('request_aborted', ..., 499)) instead of finishing the document.
+    // Corrupt, encrypted, empty, over-cap, timed-out, or oversized pages are 400.
+    // req.signal aborts cooperatively between page renders on client disconnect.
     const pages = await renderPdfToPngPages(pdfBytes, req.signal);
 
     const r2 = getR2();
 
-    // YUK-1404 (B2/R1) — unified source package: the original PDF and every
-    // page's embedded text layer (when present) are SHA'd source_asset rows.
-    // The draft stamp each page image carries lets session creation assemble
-    // provenance.source_package without any contract change on this route or
-    // on /api/ingestion-sessions.
+    // The original PDF and each text layer become SHA'd assets; page-image stamps
+    // let session creation assemble the source package without a contract change.
     const textLayers = await extractPdfTextLayers(pdfBytes, req.signal);
     const { stamps } = await preparePdfSourceAssets(db, r2, { pdfBytes, textLayers });
 
     const assetIds: string[] = [];
-    // Sequential so page order is preserved in asset_ids (page_index downstream
-    // is array-index-driven). Content-addressed dedup: re-rendering the same PDF
-    // page yields the same storage_key.
+    // Sequential so page order is preserved; content addressing dedups re-renders.
     for (const [index, page] of pages.entries()) {
       const row = await persistImageAsset(db, r2, {
         bytes: page.png,

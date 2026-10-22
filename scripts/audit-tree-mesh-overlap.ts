@@ -1,6 +1,5 @@
-// YUK-674 — report-only inventory of live prerequisite mesh edges that duplicate
-// a direct knowledge.parent_id relationship. This script never mutates data;
-// remediation remains an explicit owner decision.
+// Report-only inventory of live prerequisite mesh edges that duplicate a direct
+// knowledge.parent_id relationship. Never mutates data; remediation is an owner decision.
 
 import './load-env';
 

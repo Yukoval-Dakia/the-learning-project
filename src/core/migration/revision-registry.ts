@@ -1,8 +1,8 @@
 import { canonicalHash } from './canonical';
 
 // ====================================================================
-// YUK-1572 — 历史迁移 apply · revision registry v2 工件解析 +
-// occurrence/snapshot 绑定裁决（自 apply.ts 迁出；函数体逐字不变）
+// 历史迁移 apply · revision registry v2 工件解析 +
+// occurrence/snapshot 绑定裁决
 // ====================================================================
 //
 // 「revision registry / occurrence snapshot binding」决策的唯一 owner：
@@ -17,7 +17,7 @@ export type RegistryBindingKind = 'snapshot_verified' | 'question_asserted';
 
 /**
  * 语料导入（publisher/normalizer lane 或隔离演练产物）声明的 legacy → 新契约
- * 绑定。v2（review P1-4）：
+ * 绑定。v2：
  *   - occurrence/snapshot 感知：同一 legacy question 的多个历史版本可各绑不同
  *     revision/快照；多个 legacy question 也可绑同一 group revision 的不同 parts。
  *   - `snapshot_verified`：携带冻结 snapshot digest，解析时与历史记录自身的
@@ -211,7 +211,7 @@ export function groupEntriesByQuestion(
 }
 
 /**
- * 绑定裁决（原 apply.ts 内 Resolution）：registry 只能产出
+ * 绑定裁决：registry 只能产出
  * pending/mapped/conflicted 三态；historical_unresolved 由规划器在分类层
  * 给出（缺冻结上下文），不经 registry。
  */
@@ -223,9 +223,7 @@ export interface RegistryBindingResolution {
 }
 
 /**
- * registry v2 解析（P1-4）：snapshot 逐一对照 + 显式断言 + 漂移/缺证明分支。
- * 原 buildMigrationApplyPlan 内闭包 resolveAgainstRegistry —— 函数体逐字
- * 不变，仅把闭包捕获的 registryByQuestion 提为显式参数。
+ * registry v2 解析：snapshot 逐一对照 + 显式断言 + 漂移/缺证明分支。
  */
 export function resolveRegistryBinding(
   registryByQuestion: ReadonlyMap<string, RevisionRegistryEntry[]>,

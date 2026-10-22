@@ -68,9 +68,7 @@ export async function decideKnowledgeEdgeProposal(
   }
   const proposal = await getProposalInboxRow(db, proposeEventId);
   const proposePayload = proposeRow.payload as {
-    // ADR-0032 D4-E1 (YUK-203) — edge_op discriminator on the raw event payload
-    // (writer.ts stamps it; legacy events written before this field are absent →
-    // treated as 'create' below, the backward-compatible default).
+    // Legacy events predate this field and default to create.
     edge_op?: 'create' | 'archive' | 'supersede';
     archive_edge_id?: string;
     supersede_confidence?: number;
@@ -126,16 +124,8 @@ export async function decideKnowledgeEdgeProposal(
     };
   }
 
-  // P5.4 / YUK-143 (RB-8) — the folded `rubric_rejected` bucket must be truly
-  // NON-EXECUTABLE. A rubric-rejected propose event carries no chained rate, so
-  // it slips past the `existingRate` idempotency guard above; without this check
-  // any caller with the propose event id could accept / reverse / change_type it
-  // and write the knowledge_edge anyway, bypassing the Layer-1 rubric. Reject any
-  // decision whose derived status is not `pending` (rubric_rejected, or any other
-  // terminal status: accepted/dismissed/stale that reached here without a matching
-  // rate row) BEFORE writing any rate or edge. A genuinely accepted/dismissed
-  // proposal re-decided with the SAME decision is handled idempotently above; a
-  // genuinely pending proposal is unaffected.
+  // A rubric-folded event has no rate row, so the idempotency guard above misses it.
+  // Reject any non-pending status before writing, or the rubric could be bypassed.
   if (proposal && proposal.status !== 'pending') {
     throw new ApiError(
       'not_pending',
@@ -174,13 +164,8 @@ export async function decideKnowledgeEdgeProposal(
     };
   }
 
-  // ADR-0032 D4-E1 (YUK-203) — ARCHIVE accept. Soft-deletes the live edge named by
-  // archive_edge_id (project archived_at from its accepted archive event; never a
-  // hard delete — 守 propose+correction-reversible 不变量). reverse / change_type
-  // are CREATE-edge semantics and meaningless for an archive proposal; reject them.
-  // Idempotency mirrors create: the existingRate guard above short-circuits a
-  // re-accept, and the row lock below serializes the live→archived transition, so a
-  // racing/duplicate accept that slips past the guard still cannot double-archive.
+  // Archive accepts soft-delete the named edge; never hard delete, so correction
+  // stays possible. reverse/change_type only make sense for creates.
   if (edgeOp === 'archive') {
     if (decision !== 'accept') {
       throw new ApiError(
@@ -241,9 +226,8 @@ export async function decideKnowledgeEdgeProposal(
     };
   }
 
-  // YUK-689 — SUPERSEDE is proposal-only until this explicit accept. The model's
-  // reconcile decision is carried on the proposal, while the replacement create,
-  // old-edge archive, correction provenance and audit log apply atomically here.
+  // The judge's supersede stays a proposal until this accept; the replacement,
+  // archive, provenance and audit apply atomically here.
   if (edgeOp === 'supersede') {
     if (decision !== 'accept') {
       throw new ApiError(
@@ -263,14 +247,8 @@ export async function decideKnowledgeEdgeProposal(
       );
     }
 
-    // YUK-737 — the supersede accept CREATES a live edge (the replacement candidate) just like
-    // create/reverse/change_type, so it gets the SAME accept-time discipline: endpoint locks +
-    // sorted advisory + lock-scoped revalidation (acquireEdgeEndpointLocks on the NEW edge's
-    // endpoints), the whole accept tx wrapped in the bounded NOWAIT retry, and the ADR-0034 fold
-    // topology gate on the replacement (runEdgeTopologyGate). Before #971/#YUK-737 the supersede
-    // branch had NO accept-time cycle check — the reconcile replacement could close a prerequisite
-    // cycle. translateReject surfaces a clean Api(409) since this decision is reachable via the
-    // proposal-decide route.
+    // Supersede creates a live replacement, so it needs the same locks and topology
+    // gate as create; without them a replacement could close a prerequisite cycle.
     const newFromId = proposePayload.from_knowledge_id;
     const newToId = proposePayload.to_knowledge_id;
     const supersedeEndpointIds = Array.from(new Set([newFromId, newToId]));
@@ -280,9 +258,7 @@ export async function decideKnowledgeEdgeProposal(
         db.transaction(async (tx) => {
           await acquireEdgeEndpointLocks(tx, newFromId, newToId, supersedeEndpointIds);
 
-          // YUK-737 — lock the OLD edge row NOWAIT (was a blocking FOR UPDATE): once the endpoint
-          // locks above are held, blocking here could form a merge-vs-supersede deadlock, so fail
-          // fast (55P03) and let withEdgeEndpointLockRetry roll back + retry, per the NOWAIT doctrine.
+          // NOWAIT: blocking here while holding endpoint locks could deadlock with a merge.
           const oldEdge = (
             await tx
               .select()
@@ -354,9 +330,7 @@ export async function decideKnowledgeEdgeProposal(
             proposeEventId,
           });
 
-          // ADR-0034 topology gate on the replacement edge (runs AFTER the old edge is archived, so
-          // the live mesh reflects the post-supersede state). A cycle / direction reject THROWS and
-          // rolls the whole supersede back — nothing lands.
+          // Gate after archiving, against the post-supersede mesh. A reject rolls all back.
           await runEdgeTopologyGate(tx, result.edgeId, { translateReject: true });
 
           return result;
@@ -386,23 +360,13 @@ export async function decideKnowledgeEdgeProposal(
   const weight = proposePayload.weight ?? 1;
 
   const endpointIds = Array.from(new Set([fromId, toId]));
-  // Pre-tx fast-fail (no lock): reject an obviously-invalid proposal before opening a tx. The
-  // authoritative re-check runs under the locks inside the tx (acquireEdgeEndpointLocks re-asserts
-  // the same invariant tx-scoped).
+  // Fast-fail before opening a transaction; the locks re-assert the same invariants.
   await assertEdgeEndpointsValid(db, fromId, toId, endpointIds);
 
   const edgeId = createId();
   const generateEventId = createId();
-  // YUK-546 (codex P1) / YUK-737 — the accept tx runs inside the shared bounded-retry wrapper. Inside:
-  //   1. acquireEdgeEndpointLocks — endpoint rows FOR UPDATE NOWAIT (id-sorted) + the sorted
-  //      knowledge_edge advisory + a lock-scoped endpoint revalidation, so this path and the merge
-  //      accept share ONE global lock order and a merge that archives an endpoint under the locks is
-  //      caught (codex P2) rather than landing a live edge on a tombstone.
-  //   2. the rate + generate event writes.
-  //   3. runEdgeTopologyGate — the projection writer that re-runs ADR-0034 topology and
-  //      THROWS (rolls the accept back) on a cycle / direction reject.
-  // The wrapper backs off + retries a NOWAIT lock miss (55P03) and maps a UNIQUE violation (23505,
-  // from the projection upsert) to a 409.
+  // Lock endpoints, write rate and generate events, then gate topology. The wrapper
+  // retries NOWAIT contention and maps unique violations to 409.
   await withEdgeEndpointLockRetry(
     () =>
       db.transaction(async (tx) => {
@@ -439,9 +403,7 @@ export async function decideKnowledgeEdgeProposal(
             to_knowledge_id: toId,
             relation_type: relationType,
             weight,
-            // YUK-471 W1 PR-A2b — encode absent reasoning as null (not ''), matching the
-            // ROW's `?? null` above so the edge fold is lossless (see GenerateKnowledgeEdge
-            // note). The generate-event payload now equals the row byte-for-byte.
+            // Null, not '', so the event folds losslessly into the row.
             reasoning: proposePayload.reasoning ?? null,
             propose_event_id: proposeEventId,
           },
@@ -449,8 +411,6 @@ export async function decideKnowledgeEdgeProposal(
           created_at: now,
         });
 
-        // The event is the only source of the new row. Topology rejection aborts the
-        // complete accept; retain this path's existing plain-Error translation contract.
         await runEdgeTopologyGate(tx, edgeId);
       }),
     { uniqueViolationMessage: `edge already exists: ${fromId} --${relationType}--> ${toId}` },

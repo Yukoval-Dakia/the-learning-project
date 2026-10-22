@@ -1,29 +1,9 @@
-// YUK-737 — shared knowledge_edge accept-time write scaffold (lock discipline + ADR-0034 topology gate).
+// Shared scaffold for every live knowledge-edge write: validate endpoints, take the
+// endpoint locks in global order, then run the topology gate in the same transaction.
 //
-// PR #971 (YUK-546) gave decideKnowledgeEdgeProposal's create/reverse/change_type branch the full
-// accept-time lock+gate discipline INLINE. YUK-737 extends the SAME discipline to the two remaining
-// live-edge write paths that had none — the supersede accept branch and the direct POST
-// /api/knowledge/edges route — so a `prerequisite` cycle can no longer be written through them.
-// Rather than copy-paste the scaffold a third time, the reusable pieces live here and ALL THREE
-// paths call them (the create branch was migrated to these helpers in the same change; its exact
-// behaviour is pinned by edge-decide-advisory-lock.db.test.ts).
-//
-// The pieces (in the order the accept tx runs them):
-//   - assertEdgeEndpointsValid   — both endpoints live + not a direct tree pair (moved here from
-//                                  actions.ts so pre-tx fast-fail and in-tx revalidation share ONE
-//                                  definition and can never drift).
-//   - acquireEdgeEndpointLocks   — endpoint knowledge rows FOR UPDATE NOWAIT (id-sorted) + the
-//                                  same-namespace sorted `knowledge_edge` advisory + a lock-scoped
-//                                  endpoint revalidation (codex P2 lock-then-revalidate).
-//   - runEdgeTopologyGate        — the canonical event projection writer, which
-//                                  re-runs ADR-0034 checkEdgeTopology through the fold and THROWS on
-//                                  a cycle / direction reject (rolling the accept back). The optional
-//                                  `translateReject` maps that throw to a clean ApiError for the
-//                                  direct-call routes (see foldRejectToApiError).
-//   - withEdgeEndpointLockRetry  — the bounded retry wrapper around the accept tx: a NOWAIT lock
-//                                  miss (55P03) backs off + retries; a UNIQUE violation (23505)
-//                                  surfaces as a 409; everything else (including a topology reject)
-//                                  propagates.
+// All paths use it so a prerequisite cycle cannot slip through a branch that copied only
+// part of the discipline. NOWAIT lock misses retry with backoff; unique violations map
+// to 409; topology rejects roll the write back.
 
 import { inArray } from 'drizzle-orm';
 import { isDirectTreePair } from '@/core/topology-gate';
@@ -34,13 +14,8 @@ import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { projectKnowledgeEdgeGuarded } from '@/server/projections/knowledge_edge';
 
 /**
- * YUK-546 — the edge-accept endpoint invariants (both endpoints live + not a direct tree pair),
- * factored out (OCR round-2) so the pre-tx fast-fail (on `db`) and the post-lock revalidation
- * (on `tx`, under the row + advisory locks) can never drift in what they enforce. Throws the same
- * ApiError shapes the inline checks used.
- *
- * YUK-737 — moved verbatim from actions.ts so the supersede branch and POST /edges reuse the SAME
- * definition rather than re-implementing the endpoint checks.
+ * Endpoints must be live and must not repeat a direct tree pair. One definition serves
+ * both the pre-transaction check and the locked revalidation.
  */
 export async function assertEdgeEndpointsValid(
   dbOrTx: Db | Tx,
@@ -83,26 +58,10 @@ export async function assertEdgeEndpointsValid(
 }
 
 /**
- * YUK-546 / YUK-737 — the in-tx lock preamble every live-edge accept shares, in the global lock
- * order (endpoint knowledge rows → knowledge_edge advisory), then a lock-scoped endpoint
- * revalidation.
- *
- *   1. FOR UPDATE NOWAIT (id-sorted) on the endpoint knowledge rows — mirrors lockMutationRows'
- *      strength + order so this path and the merge accept share ONE global order and cannot
- *      deadlock. NOWAIT (round-3): the accept fails fast (55P03) on any contended endpoint instead
- *      of blocking while holding a lock, so it is never the hold-and-wait edge of a merge-vs-accept
- *      cycle; the caller's bounded retry (withEdgeEndpointLockRetry) rolls back and retries.
- *   2. the same-namespace sorted `knowledge_edge` advisory (mirrors rewireKnowledgeEdges' merge-side
- *      lock) — acquired before the fold's live-mesh read so a concurrent accept of A→B and B→A
- *      serializes and the second is rejected by the ADR-0034 topology gate instead of silently
- *      completing the cycle.
- *   3. lock-then-revalidate (codex P2): re-assert both endpoint invariants under the locks — a
- *      merge holding the endpoint row + advisory can archive an endpoint + rewire + commit in the
- *      pre-lock window, after which a blind write would land a live edge pointing at the
- *      just-archived node.
- *
- * `endpointIds` is the de-duplicated endpoint set (locking/validating each id once); `fromId`/`toId`
- * feed the advisory + the tree-pair check (order-independent — both sort/dedup internally).
+ * Lock endpoints in the global order: endpoint rows for update, then the knowledge_edge
+ * advisory, then revalidate. NOWAIT avoids hold-and-wait; the advisory serializes
+ * concurrent A->B and B->A accepts so the gate sees the cycle. Revalidation catches an
+ * endpoint archived by a merge between the pre-check and the lock.
  */
 export async function acquireEdgeEndpointLocks(
   tx: Tx,
@@ -121,18 +80,8 @@ export async function acquireEdgeEndpointLocks(
 }
 
 /**
- * The fold's ADR-0034 topology reject throw shape, translated to a clean ApiError.
- *
- * foldKnowledgeEdge (src/core/projections/knowledge_edge.ts) throws a plain Error
- *   "foldKnowledgeEdge: ADR-0034 topology reject on edge <id> (gate=<gate>): <reason>"
- * on a cycle / direction_contradiction / tree_redundancy verdict. Under the OFF-path parity assert
- * that same message is re-wrapped as "... <fold-threw:topology>: foldKnowledgeEdge: ADR-0034 ...",
- * so matching the inner substring covers both flip states. Returns null for any other error (the
- * caller rethrows it unchanged).
- *
- * The 409 status matches the tree_redundancy / duplicate ApiErrors the write path already returns
- * for a conflict with the live topology; the gate name is preserved as the error CODE so a
- * direct caller (UI / tool) can distinguish cycle vs direction_contradiction.
+ * Translate the fold's topology reject into a 409. Match the inner message, because the
+ * parity assert may re-wrap it. Any other error returns null and is rethrown unchanged.
  */
 function foldRejectToApiError(err: unknown): ApiError | null {
   if (err instanceof ApiError) return null;
@@ -149,11 +98,8 @@ function foldRejectToApiError(err: unknown): ApiError | null {
 }
 
 /**
- * Materialize the accepted create event and enforce ADR-0034 in the same transaction.
- * Topology rejection always aborts, independently of environment or legacy writer flags.
- *
- * `opts.translateReject` (the direct-call routes) maps the fold's plain-Error reject to a clean
- * ApiError; without it the raw Error propagates (the create branch's unchanged behaviour).
+ * Materialize the accepted event and enforce topology in the same transaction. A reject
+ * always aborts; `translateReject` maps it to a clean ApiError for direct routes.
  */
 export async function runEdgeTopologyGate(
   tx: Tx,
@@ -174,17 +120,8 @@ export async function runEdgeTopologyGate(
 const MAX_LOCK_ATTEMPTS = 6;
 
 /**
- * YUK-546 (codex P1, round-3) / YUK-737 — the bounded retry wrapper around the accept tx, extracted
- * from the create branch. The endpoint row lock inside is FOR UPDATE NOWAIT; on a contended endpoint
- * it fails fast (55P03) instead of blocking while holding another lock, so the accept can never be
- * the hold-and-wait edge of a merge-vs-accept cycle.
- *
- *   - 55P03 (lock_not_available): a concurrent structural writer holds a conflicting endpoint lock.
- *     Nothing committed; back off (exponential 25/50/…/500ms + jitter → ~0.6-1s window) and retry.
- *     Bounded so a genuinely stuck lock surfaces as a 409 rather than looping forever.
- *   - 23505 (unique_violation): the (from,to,relation_type) slot is taken → 409 with the caller's
- *     message. (createKnowledgeEdge already maps its own 23505, so this only fires for a raw INSERT.)
- *   - anything else (including a topology reject): propagate.
+ * Retry a contended NOWAIT lock with bounded backoff, so a stuck lock ends as 409 rather
+ * than looping. A unique violation maps to 409; topology rejects propagate.
  */
 export async function withEdgeEndpointLockRetry<T>(
   runTx: () => Promise<T>,

@@ -1,3 +1,4 @@
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import { PEDAGOGY_METHOD_LIBRARY, selectPedagogyCandidates } from '@/core/pedagogy';
 import {
   INTERVENTION_CONTRACT_VERSION,
@@ -8,7 +9,6 @@ import {
   type PedagogyRecommendationModelOutputT,
   type PedagogyRecommendationT,
 } from '@/core/schema/intervention';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import type { TaskTextResult, TaskTextRunFn } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 
@@ -57,8 +57,9 @@ export async function recommendPedagogy(
   }
 
   // Operational/provider errors deliberately propagate to pg-boss so its
-  // durable retry policy can run. Only a returned-but-invalid model artifact is
-  // translated into an epistemic preparation failure below.
+  // durable retry policy can run; only a returned-but-invalid model artifact
+  // becomes an epistemic preparation failure below. With one legal candidate
+  // the deterministic policy has already chosen; the model only may abstain.
   const result: TaskTextResult = await input.runTaskFn(
     'InterventionRecommendationTask',
     {
@@ -66,6 +67,7 @@ export async function recommendPedagogy(
       candidate_methods: candidates,
       excluded_methods: excluded,
       prior_interventions: input.snapshot.prior_interventions,
+      ...(candidateIds.length === 1 ? { sole_candidate: true } : {}),
       output_contract: {
         allowed_method_ids: candidateIds,
         recommendation_version: INTERVENTION_CONTRACT_VERSION,

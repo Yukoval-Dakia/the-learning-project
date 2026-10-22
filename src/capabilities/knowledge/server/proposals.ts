@@ -13,12 +13,14 @@
 // history, prepares side effects, writes the complete decision, then projects nodes
 // in one transaction. There is no second structural writer.
 
+import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
 import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/capabilities/practice/public';
+import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
@@ -27,11 +29,11 @@ import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { writeArchiveProposal } from '@/kernel/proposals/producers';
+import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
-import { embedHash, knowledgeEmbedText } from '@/server/ai/embed-source';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
@@ -40,7 +42,6 @@ import {
   projectKnowledgeNodeGuarded,
   requireKnowledgeHistory,
 } from '@/server/projections/knowledge';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   archiveKnowledgeEdgeFromEvents,
@@ -191,6 +192,82 @@ export function knowledgeNodeCooldownKey(payload: {
     : `knowledge_node:${payload.parent_id}:${payload.name}`;
 }
 
+export interface KnowledgeMutationCooldown {
+  /** Proposal kind the writer stores / the gate queries. */
+  kind: 'knowledge_node' | 'archive' | 'knowledge_mutation';
+  /**
+   * Canonical key first (the one this writer persists). Archive also carries
+   * its legacy equivalent; change-scoped mutations have no node-level alias,
+   * so a different change to the same node is neither deduped nor cooled down.
+   */
+  cooldownKeys: readonly string[];
+}
+
+/**
+ * The change a reparent/merge/split proposal actually asks for, independent of
+ * the CAS token. Two proposals with the same identity are duplicates; a
+ * different target/parent/from-set/layout is a different proposal even when it
+ * touches the same node.
+ */
+function mutationChangeIdentity(
+  payload: ReparentPayload | MergePayload | SplitPayload,
+): readonly unknown[] {
+  switch (payload.mutation) {
+    case 'reparent':
+      return [payload.node_id, payload.new_parent_id];
+    case 'merge':
+      return [payload.into_id, [...payload.from_ids].sort()];
+    case 'split':
+      return [
+        payload.from_id,
+        payload.into
+          .map(({ name, parent_id }) => [name, parent_id])
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      ];
+  }
+}
+
+/**
+ * Single source for a mutation's `(kind, cooldown_key)` dedup identity, shared
+ * by {@link writeKnowledgeProposeEvent} (stored marker) and the propose tool's
+ * pending/dismiss gate. reparent/merge/split key on the change itself so
+ * different proposals on one node do not suppress each other.
+ */
+export function knowledgeMutationCooldown(
+  payload: KnowledgeMutationPayload,
+): KnowledgeMutationCooldown {
+  switch (payload.mutation) {
+    case 'propose_new':
+      return { kind: 'knowledge_node', cooldownKeys: [knowledgeNodeCooldownKey(payload)] };
+    case 'archive':
+      return {
+        kind: 'archive',
+        cooldownKeys: [
+          archiveProposalCooldownKey('knowledge', payload.node_id),
+          // Legacy experimental:knowledge_archive rows derive this key.
+          `legacy_knowledge:archive:${payload.node_id}`,
+        ],
+      };
+    case 'reparent':
+    case 'merge':
+    case 'split': {
+      // Keep the key bounded (proposal payload contract: <=300 chars) while
+      // still distinguishing changes: the subject id stays readable, the
+      // identity digest carries the target/parent/from-set/layout.
+      const identityDigest = createHash('sha256')
+        .update(JSON.stringify(mutationChangeIdentity(payload)))
+        .digest('hex')
+        .slice(0, 32);
+      return {
+        kind: 'knowledge_mutation',
+        cooldownKeys: [
+          `knowledge_mutation:${payload.mutation}:${mutationSubjectId(payload)}:${identityDigest}`,
+        ],
+      };
+    }
+  }
+}
+
 export async function writeKnowledgeProposeEvent(
   db: DbLike,
   entry: WriteProposalEntry,
@@ -236,8 +313,8 @@ export async function writeKnowledgeProposeEvent(
         },
         cooldown_key: knowledgeNodeCooldownKey(entry.payload),
         // P5.6 / YUK-178 — model-labeled discriminator (default proactive at the
-        // tool call site); only set when present so the field stays absent for
-        // non-tool callers (KnowledgeReviewTask etc.), keeping absence === proactive.
+        // tool call site); only set when present so absence === proactive for
+        // direct callers of this writer.
         ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
       },
       task_run_id: entry.task_run_id ?? null,
@@ -298,7 +375,7 @@ export async function writeKnowledgeProposeEvent(
       reason_md: reasoning,
       evidence_refs: entry.evidence_refs ?? [],
       proposed_change: entry.payload,
-      cooldown_key: `knowledge_mutation:${entry.payload.mutation}:${subjectId}`,
+      cooldown_key: knowledgeMutationCooldown(entry.payload).cooldownKeys[0],
       // P5.6 / YUK-178 — model-labeled discriminator; absent → proactive.
       ...(entry.suggestion_kind ? { suggestion_kind: entry.suggestion_kind } : {}),
     },

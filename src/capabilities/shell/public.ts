@@ -1,4 +1,4 @@
-// YUK-885 — public port repointed from a central deep import.
+export { TeachingBriefAckBodySchema } from './api/contracts';
 export type {
   WorkbenchHeatDay,
   WorkbenchSessionRow,
@@ -14,8 +14,15 @@ export const loadWorkbenchSummary: LoadWorkbenchSummary = async (...args) => {
 export { loadOvernightDigest } from './server/overnight-digest';
 
 export { loadPrepDeskConjectures } from './server/prep-desk';
+export { loadActiveProbes } from './server/prep-desk-probes';
 export { type ProposalInboxQuery, readProposalInbox } from './server/proposal-inbox-read';
-export { isCandidateError, validateAckableOutcome } from './server/teaching-brief';
+export { type LearnerSubjectRow, loadLearnerSubjects } from './server/subjects-list';
+export {
+  isCandidateError,
+  loadTeachingBrief,
+  validateAckableOutcome,
+} from './server/teaching-brief';
+export { acknowledgeTeachingBriefOutcome } from './server/teaching-brief-ack';
 export type {
   BriefSeenPayload,
   PrimaryActionStartedPayload,

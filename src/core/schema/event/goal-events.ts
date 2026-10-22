@@ -2,30 +2,18 @@ import { z } from 'zod';
 import { DeclaredStage } from '../business';
 
 // ====================================================================
-// Goal action events — YUK-471 Wave 2 (goal fold)
+// Goal action events (goal fold)
 // ====================================================================
 //
 // goal is a WEAK event-sourced entity (design §0): its proposal/accept/retract chain is
-// event-logged (experimental:proposal → rate(accept) → correct(retract)), but its
-// `updateGoalStatus` / `updateGoalScope` helpers (server/goals/queries.ts) are BARE imperative
-// UPDATEs with NO corresponding event — so a status/scope change is invisible to the fold.
-// W2 closes that gap with two dedicated typed action events so a status/scope change is
-// fold-visible. They are reserved experimental actions (see RESERVED_EXPERIMENTAL_ACTIONS in
-// ./experimental.ts) so a malformed payload is rejected at the parseEvent barrier instead of
-// falling through to the loose generic ExperimentalEvent.
-//
-// DEFER-FLIP-NOT-BUILD (per the goal A1 decision): `updateGoalStatus`/`updateGoalScope` have
-// no live caller TODAY. W2 wires the helpers to write these events + a guarded write-through
-// so the moment a caller appears the path is already fold-complete (the event log + reducer
-// already model the transition). Defining the event contract now is the build half; the only
-// thing deferred is who writes the ROW (the per-entity PROJECTION_IS_WRITER_GOAL flag).
-//
-// Dedicated FILE (not known.ts) to minimise merge conflict with the in-flight retract lane
-// (PR #592) which is touching known.ts's RateEvent enum.
+// event-logged (experimental:proposal → rate(accept) → correct(retract)), and status/scope
+// changes go through these two dedicated typed action events (written by mutateGoal,
+// capabilities/agency/server/goals/commands.ts, behind updateGoalStatus/updateGoalScope)
+// so a status/scope change is fold-visible. They are reserved experimental actions (see
+// RESERVED_EXPERIMENTAL_ACTIONS in ./experimental.ts) so a malformed payload is rejected at
+// the parseEvent barrier instead of falling through to the loose generic ExperimentalEvent.
 
-// ── experimental:goal_status_update ──────────────────────────────────────────
-//
-// A qualitative status transition (active | dormant | done — ND-4, never a progress %).
+// A qualitative status transition (active | dormant | done — never a progress %).
 // Mirrors updateGoalStatus: the imperative path bumps `version` (+1) and stamps `updated_at`.
 // The reducer applies status→payload.status, version+1, updated_at=event.created_at.
 export const GoalStatusUpdateExperimental = z.object({
@@ -44,8 +32,6 @@ export const GoalStatusUpdateExperimental = z.object({
 });
 export type GoalStatusUpdateExperimentalT = z.infer<typeof GoalStatusUpdateExperimental>;
 
-// ── experimental:goal_scope_update ───────────────────────────────────────────
-//
 // A re-scope (title / scope_knowledge_ids / sequence_hint / declared_stage). Mirrors
 // updateGoalScope: the
 // imperative path applies only the provided fields, bumps `version` (+1) and stamps
@@ -66,7 +52,7 @@ export const GoalScopeUpdateExperimental = z.object({
       title: z.string().optional(),
       scope_knowledge_ids: z.array(z.string()).optional(),
       sequence_hint: z.number().int().optional(),
-      // YUK-1009 — learner-declared stage correction (「用户纠正学段」the command-level
+      // Learner-declared stage correction (「用户纠正学段」the command-level
       // write path). Optional like every patch field; explicit NULL clears the
       // declaration. Curriculum constraint only — never an ability/θ̂ input.
       declared_stage: DeclaredStage.nullable().optional(),

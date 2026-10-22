@@ -1,21 +1,11 @@
 /**
- * Revert an auto-enrolled block — T-OC slice B1b (YUK-164, OC-5 / D2=A).
- *
- * The OC-5 "AI auto-enrolled N items" surface lets the user undo a WorkflowJudge
- * auto-enrollment. Revert is append-only + evidence-first (ADR-0019/0024): it does
- * NOT hard-delete. In one transaction it
- *   1. asserts the block is `status='auto_enrolled'` (else 404/409),
- *   2. writes one `CorrectEvent(correction_kind='retract')` against the enroll's
- *      origin event (the attempt event for an answered capture, or the
- *      `record_capture` event for an unanswered one) — the retract IS the audit
- *      record,
- *   3. archives the `learning_record` (mirrors `retractAiProposal`),
- *   4. resets the `question_block` → `status='draft'`, NULL `imported_*`,
- * and leaves the `question` row in place (harmless item-bank content, reusable;
- * matches the proposal-retract "set dormant, never hard-delete" posture).
+ * Reverts one auto-enrolled block. Revert is append-only (ADR-0019/0024): it checks
+ * the block is auto_enrolled, retracts the enrollment's origin event, archives the
+ * learning_record, and resets the block to draft with cleared import links. The
+ * question row stays as reusable item-bank content; nothing is hard-deleted.
  */
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
@@ -25,7 +15,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { withdrawCapturedOccurrence } from '@/kernel/judge';
 import { archiveLearningRecord } from '@/kernel/records/queries';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 
 export interface RevertAutoEnrolledBlockParams {
   blockId: string;
@@ -157,33 +147,11 @@ export async function revertAutoEnrolledBlock(
 
     await archiveLearningRecord(tx, record.id, record.version);
 
-    const [{ version: revertedBlockVersion }] = await tx
-      .update(question_block)
-      .set({
-        status: 'draft',
-        imported_question_id: null,
-        imported_attempt_event_id: null,
-        updated_at: now,
-        version: sql`${question_block.version} + 1`,
-      })
-      .where(eq(question_block.id, params.blockId))
-      .returning({ version: question_block.version });
-
-    // YUK-471 W3-D — make the revert reset fold-visible (additive double-write; same `now`/tx).
-    // op='set_status' carries status='draft' + an EXPLICIT null for both imported_* (an honest clear,
-    // distinct from omit) + bumped version, so foldQuestionBlock reproduces this row. actor mirrors the
-    // retract event above ('user'/'self').
-    await writeQuestionBlockLifecycleEvent(tx, {
-      blockId: params.blockId,
-      op: 'set_status',
-      status: 'draft',
-      importedQuestionId: null,
-      importedAttemptEventId: null,
-      nextVersion: revertedBlockVersion,
-      actorKind: 'user',
-      actorRef: 'self',
+    await applyQuestionBlockTransition(
+      tx,
+      { kind: 'restore_after_revert', blockId: params.blockId },
       now,
-    });
+    );
 
     return { questionId, recordId: record.id, retractEventId, retractedEventId };
   });

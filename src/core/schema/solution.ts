@@ -1,4 +1,4 @@
-// YUK-193 — SolutionGenerateTask LLM structured output.
+// SolutionGenerateTask LLM structured output.
 //
 // The generator's job is to produce a reference_solution (the same shape the
 // shipped StepsJudge consumes from rubric_json) PLUS a human-readable worked

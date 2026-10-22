@@ -1,16 +1,15 @@
-// YUK-1445 — admission definition builder.
-//
+// admission definition builder.
 // Turns a NormalizedContract (row-normalized draft four layers, produced by
 // kernel assessment-normalization) into a QuestionAdmissionDefinition:
-//   - legacy response slots are upgraded to the batch-A surface
-//     (single/multi_choice → select, text/numeric/formula → blank,
-//     open_response kept for free); non-representable kinds stay untouched and
-//     their units classify as 'unsupported'.
-//   - existing typed criteria become SEEDS the dual solve must reproduce —
-//     never the key source themselves (G1: AI-written structured answers are
-//     admitted only when a second independent solve agrees).
-//   - private solution/rubric materials are collected as source_answers for
-//     the cross-check lane only (never parsed into keys — 零文本解析键).
+// - legacy response slots are upgraded to the batch-A surface
+// (single/multi_choice → select, text/numeric/formula → blank,
+// open_response kept for free); non-representable kinds stay untouched and
+// their units classify as 'unsupported'.
+// - existing typed criteria become SEEDS the dual solve must reproduce —
+// never the key source themselves (G1: AI-written structured answers are
+// admitted only when a second independent solve agrees).
+// - private solution/rubric materials are collected as source_answers for
+// the cross-check lane only (never parsed into keys — 零文本解析键).
 
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { ResponseSlotT } from '@/core/schema/assessment/response';
@@ -79,7 +78,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
           kind: 'select',
           items: slot.options.map((option) => ({
             item_id: option.option_id,
-            // YUK-1406：select.label_md 只写选项原文 —— 渲染层自画 A/B/C 序号
+            // select.label_md 只写选项原文 —— 渲染层自画 A/B/C 序号
             // （OptionListBlock 的 mark span / worksheet-plan 的 letterFor），前缀
             // 会造成双序号（DTO 实证：label_md "C. …" + 渲染端两道序号）。同
             // draft-contract.ts single/multi→select 与 question-draft 的 label_md
@@ -99,7 +98,7 @@ function convertSlot(slot: ResponseSlotT): { slot: ResponseSlotT; targetKind: Ad
           kind: 'select',
           items: slot.options.map((option) => ({
             item_id: option.option_id,
-            // YUK-1406：同 single_choice —— label_md 仅选项原文，序号由渲染层画。
+            // 同 single_choice —— label_md 仅选项原文，序号由渲染层画。
             ...(option.text.length > 0 ? { label_md: option.text } : {}),
           })),
           pick: 'many',

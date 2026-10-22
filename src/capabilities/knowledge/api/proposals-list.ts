@@ -1,7 +1,5 @@
-// Phase 1c.1 Step 9.C — `/api/knowledge/proposals` rewritten over the event stream.
-//
-// YUK-42 keeps this legacy wire shape stable while moving projection logic into
-// `src/server/proposals/inbox.ts`, the shared proposal reader for L5.
+// Legacy knowledge proposal list. The wire shape stays stable while the shared
+// inbox reader owns projection.
 
 import { LegacyKnowledgeProposalQuerySchema } from '@/capabilities/knowledge/api/contracts';
 import { db } from '@/db/client';

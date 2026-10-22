@@ -11,7 +11,7 @@ export const CreatePlacementSessionBodySchema = z.object({
   pace: z.enum(['light', 'medium', 'dense']).optional(),
 });
 
-/** YUK-1405 L1 — a held issuance's typed exits. Emitted only while phase='held';
+/** a held issuance's typed exits. Emitted only while phase='held';
  *  continue records the item unresolved (never counted as wrong) and advances;
  *  end completes the probe and marks it in unresolved_items. Refresh/re-entry
  *  re-derives the same pair — the offer is a projection, not a stored flag. */
@@ -23,7 +23,7 @@ export const PlacementHeldExitSchema = z.object({
   end_url: z.string(),
 });
 
-/** YUK-1405 L1/L2 — an issued item that will not contribute a verdict to this
+/** an issued item that will not contribute a verdict to this
  *  probe's result. Reasons are a closed set: 'held_released' (learner skipped a
  *  held item), 'awaiting_evaluation' (submission accepted, no settlement yet),
  *  'unanswered' (issued but never submitted — end-of-probe honesty only). */
@@ -34,7 +34,7 @@ export const PlacementUnresolvedItemSchema = z.object({
 });
 export type PlacementUnresolvedItem = z.infer<typeof PlacementUnresolvedItemSchema>;
 
-/** YUK-1405 L2 — typed alternative when no automatically servable item exists.
+/** typed alternative when no automatically servable item exists.
  *  starterSupply carries the per-subject supply detail; this object says the
  *  probe itself has nothing to serve and what the learner can do next. */
 export const PlacementNoItemSchema = z.object({
@@ -72,9 +72,9 @@ export const PlacementSessionCreatedSchema = z.object({
   // Optional while existing clients construct local resume results. The backend
   // emits this on every successful start/next/detail response.
   starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
-  /** YUK-1405 — always emitted (fresh sessions → []). */
+  /** always emitted (fresh sessions → []). */
   unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
-  /** YUK-1405 L2 — non-null exactly when question is null: the typed alternative. */
+  /** non-null exactly when question is null: the typed alternative. */
   no_item: PlacementNoItemSchema.nullable().optional(),
 });
 
@@ -99,12 +99,12 @@ export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('do
     sourcingNeeded: z.boolean(),
     starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
     unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
-    /** YUK-1405 L2 — non-null exactly when question is null: the typed alternative. */
+    /** non-null exactly when question is null: the typed alternative. */
     no_item: PlacementNoItemSchema.nullable().optional(),
   }),
 ]);
 
-/** YUK-1405 L1 — release the session's currently-held issuance so the probe can
+/** release the session's currently-held issuance so the probe can
  *  advance. Idempotent on issuance_id: re-POSTing the same id replays the same
  *  advance result instead of double-recording. */
 export const CreatePlacementHeldReleaseBodySchema = z.object({
@@ -131,7 +131,7 @@ export type EndPlacementSessionBody = z.infer<typeof EndPlacementSessionBodySche
 export const LegacyPlacementSessionTransitionResponseSchema = z.object({
   ok: z.literal(true),
   status: z.enum(['completed', 'abandoned']),
-  /** YUK-1405 L1 — the honest end marker; optional for back-compat readers. */
+  /** the honest end marker; optional for back-compat readers. */
   unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
 });
 
@@ -149,7 +149,7 @@ export const PlacementSessionResponseSchema = z.object({
   ended_at: z.string().datetime().nullable(),
   updated_at: z.string().datetime(),
   starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
-  /** YUK-1405 L1 — items with no verdict at read time (released / awaiting / unanswered). */
+  /** items with no verdict at read time (released / awaiting / unanswered). */
   unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
 });
 
@@ -160,7 +160,7 @@ export const PlacementSessionTransitionResponseSchema = z.object({
   status: PlacementSessionStatusSchema,
   changed: z.boolean(),
   allowed_statuses: z.array(PlacementSessionStatusSchema),
-  /** YUK-1405 L1 — the honest end result: items closed without a verdict. */
+  /** the honest end result: items closed without a verdict. */
   unresolved_items: z.array(PlacementUnresolvedItemSchema).optional(),
 });
 
@@ -226,3 +226,5 @@ export const PlacementProfileResponseSchema = z.object({
   // The empty-scope fast path predates sigma-mode reporting and intentionally omits it.
   sigma_mode: z.enum(['poly', 'libm']).optional(),
 });
+
+export type PlacementProfileResponse = z.infer<typeof PlacementProfileResponseSchema>;

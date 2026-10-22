@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { ensureSubjectRoot } from '@/capabilities/knowledge/public';
 
 import { newId } from '@/core/ids';
 import type { DeclaredStageT } from '@/core/schema/business';
@@ -7,11 +8,10 @@ import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { projectGoal, projectGoalGuarded } from '@/server/projections/goal';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { hasGoalGenesisAnchor } from '@/server/projections/parity';
-import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
 type GoalDb = Db | Tx;
@@ -25,9 +25,8 @@ export interface InsertGoalInput {
   scope_knowledge_ids: string[];
   scope_mode?: GoalScopeMode;
   sequence_hint: number;
-  // YUK-1009 — learner-declared curriculum stage (学段). Captured at goal create
-  // (POST /api/goals) and correctable via the 'scope' mutation. NULL/absent =
-  // undeclared. Curriculum constraint only — never an ability/θ̂ input.
+  // Learner-declared curriculum stage (学段). NULL/absent = undeclared. Curriculum
+  // constraint only — never an ability/θ̂ input.
   declared_stage?: DeclaredStageT | null;
   status?: GoalStatus;
   source: string;
@@ -39,7 +38,7 @@ type GoalScopePatch = {
   title?: string;
   scope_knowledge_ids?: string[];
   sequence_hint?: number;
-  /** YUK-1009 — declared_stage correction; explicit null clears the declaration. */
+  /** declared_stage correction; explicit null clears the declaration. */
   declared_stage?: DeclaredStageT | null;
 };
 type GoalMutation =

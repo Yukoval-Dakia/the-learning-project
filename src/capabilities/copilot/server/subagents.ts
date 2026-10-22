@@ -1,21 +1,21 @@
 import { getConfigFlag } from '@/core/config/store';
+import {
+  type AgentDefinition,
+  type PiSpawnContract,
+  SPAWN_TOOL_ALIASES,
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  createPiSpawnContract,
+  isSpawnToolName,
+} from '@/core/subagent-contract';
 import { READ_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { EXA_MCP_ALLOWED_TOOLS } from '@/server/ai/mcp/exa';
 import type {
-  AgentDefinition,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
 } from '@/server/ai/sdk-types';
-import {
-  SPAWN_TOOL_ALIASES,
-  SPAWN_TOOL_NAME,
-  type SpawnBudgetObservation,
-  createSpawnDecider,
-  isSpawnToolName,
-} from '@/server/ai/spawn-contract';
-import { type PiSpawnContract, createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
 
 export type { PiSpawnContract, SpawnBudgetObservation };
 
@@ -52,9 +52,8 @@ export interface BuildCopilotSubagentsOptions {
 /**
  * Build the single depth-1 Copilot researcher.
  *
- * `tools` is deliberately explicit. Omitting it would make the child inherit
- * the parent's Task/propose/write surface and would break both depth=1 and
- * least privilege. Wire-name filtering happens in the adapter's childToolsFor.
+ * `tools` is deliberately explicit: omitting it would make the child inherit the
+ * parent's Task/propose/write surface, breaking depth=1 and least privilege.
  */
 export function buildCopilotSubagents(
   opts: BuildCopilotSubagentsOptions,
@@ -91,7 +90,7 @@ export interface BuildCopilotNativeResearchOptions {
 }
 
 export interface CopilotNativeResearchConfig {
-  /** Root model surface. Historical mailbox/tool-operation controls are drain-only. */
+  /** Root model surface. */
   allowedTools: string[];
   /**
    * The pi spawn contract: depth-one `PiSubagentSpec`s plus a `beforeToolCall`
@@ -117,8 +116,7 @@ export function buildCopilotNativeResearchConfig(
     }),
     onBudgetObservation: options.onBudgetObservation,
   };
-  const decider = options.enabled ? createSpawnDecider(contractOptions) : undefined;
-  const piSpawnContract = decider ? createPiSpawnContract(contractOptions, decider) : undefined;
+  const piSpawnContract = options.enabled ? createPiSpawnContract(contractOptions) : undefined;
   return {
     allowedTools,
     ...(piSpawnContract ? { piSpawnContract } : {}),
@@ -129,7 +127,7 @@ export function buildCopilotNativeResearchConfig(
 export function isCopilotSubagentEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-  // YUK-1007：DB > env > code-default(true)。
+  // DB > env > code-default(true)。
   return getConfigFlag(COPILOT_SUBAGENT_ENABLED_ENV, env as NodeJS.ProcessEnv);
 }
 
@@ -156,21 +154,16 @@ const RUNNING_SUBTASK_LABEL = '正在深入核对证据';
 
 /**
  * Project the SDK task lifecycle onto the public card payload allowlist.
- *
- * Intentionally ignored fields include `prompt`, `summary`, `usage`, raw `error`,
- * and every assistant/thinking message. The native Task tool result remains the
- * private conclusion channel back to the parent Copilot.
+ * `prompt`, `summary`, `usage`, raw `error`, and assistant/thinking messages are
+ * never forwarded; the Task tool result stays the private conclusion channel.
  */
 export function toCopilotSubtaskEvent(message: CopilotTaskLifecycleMessage): CopilotSubtaskEvent {
   if (message.subtype === 'task_started' || message.subtype === 'task_progress') {
     return {
       step_kind: 'subtask',
       subtask_id: message.task_id,
-      // SDK descriptions are model-authored prose. They can contain an
-      // unreviewed conclusion (for example “队列已清空”), so lifecycle cards
-      // expose only a deterministic phase label before the final evidence
-      // review. The private Task result still carries the useful conclusion
-      // back to the parent Copilot.
+      // SDK descriptions are model-authored prose that can contain an unreviewed
+      // conclusion, so lifecycle cards expose only a deterministic phase label.
       label: RUNNING_SUBTASK_LABEL,
       status: 'running',
     };
@@ -200,12 +193,10 @@ export function toCopilotSubtaskEvent(message: CopilotTaskLifecycleMessage): Cop
 
 /**
  * Admit only lifecycle events that belong to this run's declared researcher.
- *
- * The SDK also emits task_* messages for local workflows and ambient tasks. A
- * started event is the identity gate; later messages often omit subagent_type,
- * so they are accepted only for a task_id admitted by that exact start. This
- * also honors skip_transcript instead of accidentally turning hidden SDK work
- * into a public ToolUseCard.
+ * The SDK also emits task_* for local workflows and ambient tasks, so a started
+ * event is the identity gate; later messages often omit subagent_type and are
+ * accepted only for a task_id admitted by that exact start. skip_transcript is
+ * honored so hidden SDK work never becomes a public card.
  */
 export function createCopilotSubtaskProjector(): CopilotSubtaskProjector {
   const admittedTaskIds = new Set<string>();

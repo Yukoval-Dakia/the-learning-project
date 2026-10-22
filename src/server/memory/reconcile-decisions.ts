@@ -7,10 +7,8 @@ export type ReconcileDecision = {
   confidence: number;
   reason: string;
   /**
-   * Only meaningful for action=MERGE: the rewritten text that absorbs the new
-   * memory into the existing one (becomes the surviving memory's payload.data).
-   * parseReconcileResponse REQUIRES this when action=MERGE (else ReconcileParseError
-   * → batch degrades to KEEP_BOTH) — never let `reason` stand in for merged text.
+   * MERGE only: the rewritten text that absorbs the new memory. The parser requires
+   * it for MERGE; reason is never a substitute for merged text.
    */
   merged_text?: string | null;
 };
@@ -32,10 +30,8 @@ export type CandidateEntry = {
   memory_id: string;
   created_ms?: number;
   /**
-   * YUK-557 (Q1): mem0 Memory.search() fused score (pgvector cosine ⊕ BM25 ⊕
-   * entity-boost, [0,1]) for this candidate — previously discarded. Consumed by
-   * the second structural corroboration gate (passesStructuralCorroboration).
-   * undefined = no score available (defensive) → that gate abstains (returns true).
+   * mem0's fused search score for this candidate. The structural corroboration
+   * gate uses it; undefined means no score, so that gate abstains.
    */
   score?: number;
 };
@@ -46,20 +42,16 @@ export type CandidatesByNew = Map<number, CandidateEntry[]>;
 type Warn = (message: string) => void;
 const ignoreWarning: Warn = () => {};
 
-// YUK-557 (Q1): 0.5 未经数据验证的保守地板值，非拟合结果（n=1 红线，spec Q1 论证 #4）。
-// 明显高于 mem0 预过滤 0.1、明显低于"高置信度重复"直觉上限（0.8+）；本闸是加固层、
-// 非主拦截层（主拦截仍是 0.6 confidence）。将来可用 llm_raw.referenced_score 真实分布回顾校准。
+// Conservative floor, not fitted: clearly above mem0's 0.1 pre-filter and well below
+// a high-confidence duplicate. This gate is reinforcement, not the primary 0.6
+// confidence filter; revisit with the real llm_raw.referenced_score distribution.
 export const MERGE_RETRACT_SCORE_FLOOR = 0.5;
 
 /**
- * YUK-557 (Q1) — second, non-LLM structural gate. MERGE/RETRACT_NEW must clear
- * BOTH the 0.6 confidence threshold (applyConfidenceThreshold) AND this floor on
- * the referenced candidate's mem0 fused score. SUPERSEDE/KEEP_BOTH are exempt
- * (softSupersede is reversible; the scarce structural signal is spent on the
- * irreversible destructive actions). score===undefined (no candidate to key on,
- * e.g. RETRACT_NEW noise with no neighbor) → this gate ABSTAINS (returns true);
- * the caller MUST then emit a "floor skipped (no score)" structured log (m8) so
- * that fail-open path stays visible/countable.
+ * Second, non-LLM structural gate: destructive actions must also clear the score
+ * floor of the referenced candidate. SUPERSEDE/KEEP_BOTH are exempt because a
+ * soft supersede is reversible. A missing score abstains, and the caller must log
+ * that fail-open path.
  */
 export function passesStructuralCorroboration(
   action: ReconcileAction,
@@ -71,34 +63,26 @@ export function passesStructuralCorroboration(
 }
 
 /**
- * YUK-557 (Q1b) — deterministic per-kind execution gate. weakness/event MERGE is
- * always forbidden: those are mistake/error trajectories whose history has value
- * (prompt per-kind rule leans KEEP_BOTH; this hard-enforces it). High-similarity
- * wrong MERGE is exactly the hole passesStructuralCorroboration structurally
- * CANNOT plug (score is high precisely when the LLM is most overconfident), so a
- * kind-based guard is the only cheap close. Returns true = this kind forbids MERGE.
+ * Weakness/event MERGE is always forbidden: mistake trajectories keep historical
+ * value, and a high similarity score is exactly when the LLM is most confidently
+ * wrong, so the score gate cannot catch this. Returns true when the kind forbids MERGE.
  */
 export function kindForbidsMerge(kind: string): boolean {
   return kind === 'weakness' || kind === 'event';
 }
 
 /**
- * YUK-557 (F6) — the "hard-delete set": actions whose apply physically drops a
- * mem0 vector row (MERGE drops the absorbed new row; RETRACT_NEW drops the new
- * row). Distinct from `needsOldTarget` below (the "needs an existing old row"
- * set) — MERGE is in BOTH, RETRACT_NEW only here, SUPERSEDE only there. Used to
- * gate the score floor, the "floor skipped" log, the apply-time client
- * requirement, and the m7 client-less skip so they never drift apart.
+ * Actions whose apply physically drops a mem0 row: MERGE (absorbs the new row) and
+ * RETRACT_NEW (drops it). Kept separate from needsOldTarget so gates, logging, and
+ * the client requirement cannot drift apart.
  */
 export function isHardDelete(action: ReconcileAction): boolean {
   return action === 'MERGE' || action === 'RETRACT_NEW';
 }
 
 /**
- * YUK-557 (F6) — the "needs an existing old row" set: actions that reference and
- * act on an existing candidate (SUPERSEDE marks it, MERGE rewrites it). Drives
- * bad-target degrade (no resolvable old row → KEEP_BOTH) and the write-ahead
- * prev_metadata capture (only these two have an old payload to snapshot).
+ * Actions that reference an existing candidate: SUPERSEDE marks it, MERGE rewrites
+ * it. Drives bad-target degrade and the write-ahead prev_metadata capture.
  */
 export function needsOldTarget(action: ReconcileAction): boolean {
   return action === 'SUPERSEDE' || action === 'MERGE';
@@ -112,12 +96,9 @@ function downgradeToKeepBoth(
 }
 
 /**
- * YUK-557 (Q1) — max candidate score for the RETRACT_NEW null-old_index fallback.
- * outlier-permissive approximation: `max` is the statistic MOST sensitive to a
- * single entity-boosted candidate spiking to ~0.99, so it biases toward PASSING
- * the floor. Acceptable because the null-old_index path is the noise∪duplicate
- * fallback where floor-skip (undefined → gate abstains + log) is the safe
- * alternative. No scored candidates → undefined (caller logs "floor skipped").
+ * Score for the RETRACT_NEW null-old_index fallback. max is permissive to an
+ * entity-boosted outlier, but this path is the noise/duplicate fallback where the
+ * floor aborts to the safe skip alternative anyway.
  */
 function topCandidateScore(cands: CandidateEntry[]): number | undefined {
   const scores = cands.map((c) => c.score).filter((s): s is number => typeof s === 'number');
@@ -132,13 +113,9 @@ export function applyDecisionGates(
   warn: Warn = ignoreWarning,
 ) {
   const oldMem = d.old_index != null ? cands[d.old_index] : undefined;
-  // YUK-557 (PR #699 CR-4): an explicitly-provided old_index that fails to
-  // resolve to a candidate (LLM-hallucinated out-of-range index) is invalid
-  // for EVERY action — fail-safe downgrade to KEEP_BOTH before any deletion
-  // decision. Without this, RETRACT_NEW (NOT in needsOldTarget) would let a
-  // bogus old_index slip past badTarget and delete the new memory on a top-
-  // score/abstain path. Pairs with F3/V3: after this guard the RETRACT_NEW
-  // topCandidateScore fallback only ever sees the legal old_index===null state.
+  // An unresolved old_index is invalid for every action, including RETRACT_NEW
+  // (which is not in needsOldTarget): otherwise a bogus index could reach a
+  // deletion path on the fallback/abstain route.
   const invalidOldIndex = d.old_index != null && !oldMem;
   const badTarget =
     !newMem ||
@@ -146,13 +123,12 @@ export function applyDecisionGates(
     (needsOldTarget(d.action) && !oldMem) ||
     (d.action === 'RETRACT_NEW' && !newMem);
 
-  // Unified synthesis: badTarget → per-kind (Q1b) → score-floor (Q1) →
-  // final. Every downgrade routes through downgradeToKeepBoth so
-  // action↔reason never diverge in the WAL (F6 / Lens A A5-1/A5-2).
+  // Unified synthesis: bad target → per-kind → score floor → final. Every
+  // downgrade rewrites reason together with action so the WAL cannot diverge.
   let action: ReconcileAction = d.action;
   let reason = d.reason;
 
-  // 1) bad-target degrade (out-of-range / unresolved old index → KEEP_BOTH)
+  // 1) bad target: out-of-range or unresolved old index
   if (badTarget) {
     ({ action, reason } = downgradeToKeepBoth(
       `out-of-range index downgraded from ${d.action}`,
@@ -160,7 +136,7 @@ export function applyDecisionGates(
     ));
   }
 
-  // 2) per-kind gate (Q1b): weakness/event forbid MERGE
+  // 2) per-kind: weakness/event forbid MERGE
   if (action === 'MERGE' && newMem && kindForbidsMerge(newMem.kind)) {
     ({ action, reason } = downgradeToKeepBoth(
       `Per-kind guard (kind=${newMem.kind} forbids MERGE); downgraded from MERGE`,
@@ -171,17 +147,10 @@ export function applyDecisionGates(
     ); // Q3 detection
   }
 
-  // 3) score floor (Q1): MERGE keys on the referenced candidate's score;
-  // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
-  // fallback ONLY when there is NO referenced candidate (old_index=null). A
-  // referenced candidate that carries no score must NOT fall through to max —
-  // it abstains (undefined → gate passes) + logs m8, symmetric with MERGE
-  // (F3: max fallback is authorized only for old_index=null).
-  // OCR (PR #699, triggers.ts:743) — if/else chain (repo bans nested
-  // ternaries; semantics unchanged): MERGE keys on the referenced candidate;
-  // RETRACT_NEW keys on the referenced candidate, else the topCandidateScore
-  // fallback ONLY when there is NO referenced candidate (old_index===null);
-  // every other action abstains (undefined).
+  // 3) score floor: MERGE uses the referenced candidate's score. RETRACT_NEW uses
+  // it too when present, and only falls back to the max candidate score when there
+  // is no referenced candidate (old_index null). A referenced candidate without a
+  // score abstains instead of borrowing the max.
   let referencedScore: number | undefined;
   if (action === 'MERGE') {
     referencedScore = oldMem?.score;
@@ -189,9 +158,7 @@ export function applyDecisionGates(
     referencedScore = oldMem ? oldMem.score : topCandidateScore(cands);
   }
   const corroborated = passesStructuralCorroboration(action, referencedScore);
-  // !corroborated already implies isHardDelete(action): passesStructural-
-  // Corroboration only returns false for MERGE/RETRACT_NEW (dead action
-  // conjunct removed, F6/V7).
+  // Only MERGE/RETRACT_NEW can fail corroboration, so this also implies a hard delete.
   if (!corroborated) {
     ({ action, reason } = downgradeToKeepBoth(
       `Low structural corroboration (score=${referencedScore}); downgraded from ${action}`,
@@ -206,12 +173,10 @@ export function applyDecisionGates(
     ); // m8
   }
 
-  // 4) YUK-690 execution policy: model output is advisory only. Memory
-  // events are user-authored text and therefore an untrusted prompt
-  // boundary; no LLM recommendation may supersede, rewrite or delete a
-  // stored memory without a separate human-approval surface. Preserve the
-  // original decision in llm_raw below, but deterministically make the WAL
-  // action non-destructive.
+  // 4) Model output is advisory. Memory text is user-authored and therefore an
+  // untrusted prompt boundary; no recommendation may rewrite or delete a stored
+  // memory without a separate human-approval surface. Preserve the recommendation
+  // in llm_raw, but make the WAL action non-destructive.
   if (action !== 'KEEP_BOTH') {
     const recommendedAction = action;
     ({ action, reason } = downgradeToKeepBoth(

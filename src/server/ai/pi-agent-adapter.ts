@@ -59,6 +59,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
+import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -68,8 +69,13 @@ import type {
   RunnerMessage,
 } from './execution-adapter';
 import { startTraceSpan, traceOperation, tracePiStream } from './laminar-tracing';
+import {
+  createPiContextCompactionPolicy,
+  createPiLlmMessageConverter,
+  estimatePiTokens,
+} from './pi-context-policy';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
-import { createLoomPiModels } from './pi-models';
+import { type LoomPiModel, createLoomPiModels } from './pi-models';
 import { piProviderId } from './pi-provider-catalog';
 import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import {
@@ -85,7 +91,6 @@ import {
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
-import { isSpawnToolName } from './spawn-contract';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -100,11 +105,7 @@ import {
   isToolParamContractRejection,
   repairToolArguments,
 } from './tool-param-contract';
-import {
-  type PiSubagentHost,
-  type PiSubagentSpec,
-  buildPiSpawnAgentTools,
-} from './tools/pi-subagent';
+import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
 import {
   type PiRemoteMcpMountHandle,
   type PiToolMount,
@@ -155,62 +156,10 @@ export function piMaxRetries(): number | undefined {
  */
 export const PI_SESSION_ID_PREFIX = 'pi:';
 
-/**
- * Rough chars-per-token divisor for the transformContext compaction trigger.
- * The estimate only decides WHEN to prune — the durable evidence is the
- * compact_boundary frame's own pre/post counts, not billing usage.
- */
-const PI_COMPACT_CHARS_PER_TOKEN = 4;
-/**
- * CJK codepoints estimate to ~1 token each — the repo's own budget note puts
- * 400 CJK chars at ~400–1000 tokens (kernel/tools/budgets.ts), so the generic
- * divisor would undercount a Chinese transcript 4–10× and the window would
- * overflow before the 85% trigger ever fired. Erring toward early compaction
- * is the safe direction.
- */
-const PI_COMPACT_CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
-/** Compact when estimated context tokens exceed this share of the window. */
-const PI_COMPACT_TRIGGER_RATIO = 0.85;
-/** Prune back to this share of the window (headroom for the reply). */
-const PI_COMPACT_TARGET_RATIO = 0.6;
-
 function piSessionIdFor(optionsResume: string | undefined): string {
   return optionsResume?.startsWith(PI_SESSION_ID_PREFIX)
     ? optionsResume
     : `${PI_SESSION_ID_PREFIX}${randomUUID()}`;
-}
-
-/** Estimate context tokens over the LLM-visible text of a message list. */
-function estimatePiTokens(messages: readonly AgentMessage[]): number {
-  let chars = 0;
-  let cjkChars = 0;
-  const addText = (text: string) => {
-    chars += text.length;
-    cjkChars += text.match(PI_COMPACT_CJK_RE)?.length ?? 0;
-  };
-  for (const message of messages) {
-    if (message.role === 'user' || message.role === 'toolResult' || message.role === 'system') {
-      const content = message.content;
-      if (typeof content === 'string') {
-        addText(content);
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text') addText(block.text);
-        }
-      }
-      if (message.role === 'system') {
-        if (message.sections) addText(JSON.stringify(message.sections));
-        if (message.toolsAdded) addText(JSON.stringify(message.toolsAdded));
-      }
-    } else if (message.role === 'assistant') {
-      for (const block of message.content) {
-        if (block.type === 'text') addText(block.text);
-        else if (block.type === 'thinking') addText(block.thinking);
-        else if (block.type === 'toolCall') addText(JSON.stringify(block.arguments));
-      }
-    }
-  }
-  return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
 }
 
 /** End at the configured ceiling without turning a clean final answer into failure. */
@@ -949,7 +898,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
-    private readonly model: PiModel<PiApi>,
+    private readonly model: LoomPiModel,
     private readonly deps: Required<PiAdapterDeps>,
     tools: AgentTool[],
     private readonly remoteMcpHandles: PiRemoteMcpMountHandle[],
@@ -1186,19 +1135,12 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     if (!compaction) return undefined;
     const sessionId = this.sessionId;
     const sessionContext = compaction.sessionContext;
-    const contextWindow = this.model.contextWindow;
-    const triggerTokens = Math.floor(contextWindow * PI_COMPACT_TRIGGER_RATIO);
-    const targetTokens = Math.floor(contextWindow * PI_COMPACT_TARGET_RATIO);
-    const isSessionContextMessage = (message: AgentMessage): boolean =>
-      message.role === 'user' &&
-      (message.content === sessionContext ||
-        (Array.isArray(message.content) &&
-          message.content.some((block) => block.type === 'text' && block.text === sessionContext)));
+    const planCompaction = createPiContextCompactionPolicy(this.model, sessionContext);
 
     return async (messages) => {
       try {
-        const preTokens = estimatePiTokens(messages);
-        if (preTokens <= triggerTokens) return messages;
+        const plan = planCompaction(messages);
+        if (!plan) return messages;
         const startedAt = Date.now();
         // Keep the newest tail that fits the target; the current-turn prompt
         // is the last element and is never dropped.
@@ -1206,33 +1148,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         // Replay their deltas before pruning so neither can disappear with history.
         const { getCurrentSystemMessage } = await import('@earendil-works/pi-ai');
         const system = getCurrentSystemMessage(messages);
-        const history = messages.filter((message) => message.role !== 'system');
-        const prefix: AgentMessage[] = [...(system ? [system] : []), piUserMessage(sessionContext)];
-        const kept: AgentMessage[] = [];
-        let budget = targetTokens - estimatePiTokens(prefix);
-        for (let i = history.length - 1; i >= 0; i -= 1) {
-          const message = history[i];
-          const cost = estimatePiTokens([message]);
-          if (kept.length > 0 && cost > budget) break;
-          kept.unshift(message);
-          budget -= cost;
-          if (i === 0) break;
-        }
-        // A fresh injection replaces any previously injected copy so repeated
-        // compactions never stack duplicate session contexts.
-        const tail = kept.filter((message) => !isSessionContextMessage(message));
-        // Boundary cleanup: if the retained head is a toolResult, its paired
-        // assistant toolCall was just cut — an orphan toolResult gets rejected
-        // by the provider. Trim leading orphans (never the last element: that
-        // is the current-turn prompt).
-        while (tail.length > 1 && tail[0].role === 'toolResult') {
-          tail.shift();
-        }
-        const transformed: AgentMessage[] = [...prefix, ...tail];
+        const transformed = plan.selectMessages(system, piUserMessage);
         this.emitFrame(
           piCompactBoundaryFrame({
             sessionId,
-            preTokens,
+            preTokens: plan.preTokens,
             postTokens: estimatePiTokens(transformed),
             durationMs: Date.now() - startedAt,
           }),
@@ -1300,14 +1220,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // All prompts are standard LLM messages — identity conversion narrowed
       // to the LLM roles the union type needs. UI-only AgentMessages never
       // reach this lane (loom owns the durable transcript).
-      convertToLlm: (messages): PiMessage[] =>
-        messages.filter(
-          (m): m is PiMessage =>
-            m.role === 'system' ||
-            m.role === 'user' ||
-            m.role === 'assistant' ||
-            m.role === 'toolResult',
-        ),
+      convertToLlm: createPiLlmMessageConverter(),
       // The x-opencode-session header is an opencode-go wire requirement
       // (400 MissingSessionID without it). Scope it to that lane: forwarding a
       // stray opencode-namespaced header to api.openai.com / the anthropic
@@ -1349,7 +1262,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     return resolveStructuredSubmitPolicy(this.args.resolved.provider, this.args.resolved.model);
   }
 
-  private readonly streamFn: StreamFn = (model, llmContext, streamOptions) => {
+  private readonly streamFn: StreamFn = (model: LoomPiModel, llmContext, streamOptions) => {
+    const effort = streamOptions?.reasoning;
+    const inputTokens = estimatePiTokens(llmContext.messages);
+    const remaining = model.contextWindow - inputTokens;
+    streamOptions = {
+      ...streamOptions,
+      maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
+    };
     const submitPolicy = this.structuredSubmitPolicy(model);
     // YUK-1547 — per-task model-native reasoning params (resolved +
     // fail-closed-validated in resolveTaskProvider): pass the model's own
@@ -1357,28 +1277,37 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     // This is NOT the options.effort → pi ThinkingLevel enum path — startup
     // rejects both being set so the param has exactly one writer.
     const nativeReasoning = this.args.resolved.nativeReasoningParams;
-    const streamOptionsWithPayload =
-      submitPolicy !== undefined || nativeReasoning
-        ? {
-            ...streamOptions,
-            onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
-              const transformed = await streamOptions?.onPayload?.(payload, requestModel);
-              const body = transformed ?? payload;
-              if (body == null || typeof body !== 'object' || Array.isArray(body)) {
-                throw new Error('structured output requires an object provider payload');
-              }
-              return {
-                ...body,
-                // The structured-submit contract lives on the wire, not merely
-                // in the prompt — forced where the lane accepts it, 'auto'
-                // where the provider rejects a forced choice (one closing
-                // reminder turn then compensates, see iterate()).
-                ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
-                ...nativeReasoning,
-              };
-            },
-          }
-        : streamOptions;
+    const streamOptionsWithPayload = {
+      ...streamOptions,
+      onPayload: async (payload: unknown, requestModel: PiModel<PiApi>) => {
+        // Pi converts onPayload failures into terminal errors; throwing from streamFn crashes its loop.
+        if (
+          effort !== undefined &&
+          model.catalogReasoning &&
+          !model.catalogReasoning.supportedEfforts.includes(effort)
+        ) {
+          throw new Error(
+            `Model '${model.provider}/${model.id}' does not declare reasoning effort '${effort}' in the runtime catalog`,
+          );
+        }
+        if (inputTokens > (model.maxInputTokens ?? model.contextWindow) || remaining <= 0) {
+          throw new Error(
+            `Model '${model.provider}/${model.id}' input exceeds its catalog token limit`,
+          );
+        }
+        const transformed = await streamOptions?.onPayload?.(payload, requestModel);
+        const body = transformed ?? payload;
+        if (submitPolicy === undefined && !nativeReasoning) return body;
+        if (body == null || typeof body !== 'object' || Array.isArray(body)) {
+          throw new Error('structured output requires an object provider payload');
+        }
+        return {
+          ...body,
+          ...(submitPolicy !== undefined ? structuredSubmitWireFields(submitPolicy) : {}),
+          ...nativeReasoning,
+        };
+      },
+    };
     return tracePiStream(
       (m, context, options) =>
         withPiUsageEvidence(
@@ -2043,11 +1972,21 @@ export class PiAgentAdapter implements ExecutionAdapter {
     try {
       for (const mount of mounts) {
         if (mount.type === 'domain') {
-          tools.push(...buildPiDomainAgentTools(mount.options));
+          tools.push(
+            ...buildPiDomainAgentTools({
+              ...mount.options,
+              // YUK-1557 — the runner owns the active run identity; it stamps
+              // every bridge row even when a tool's spend owner uses another id.
+              logTaskRunId: args.runId,
+            }),
+          );
         } else if (mount.type === 'custom') {
           tools.push(...mount.tools);
         } else {
-          const handle = await deps.connectRemoteMcp(mount, args.initializeTimeoutMs);
+          const handle = await deps.connectRemoteMcp(mount, args.initializeTimeoutMs, {
+            taskRunId: args.runId,
+            taskKind: args.kind,
+          });
           remoteHandles.push(handle);
           tools.push(...handle.tools);
         }
@@ -2081,7 +2020,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
     const model = deps.models.getModel(piProviderId(args.resolved.provider), args.resolved.model);
     if (!model) {
       throw new Error(
-        `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,
+        `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
     // YUK-1547 — the wire's reasoning_effort must have exactly one writer:

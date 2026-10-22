@@ -1,40 +1,25 @@
-// YUK-572 PR-2 §6 — research-meeting director orchestrator.
+// Research-meeting director orchestrator.
 //
 // Assembles the shared read-only evidence server + the director write server + the
-// nested evidence-scout AgentDefinition, then runs ONE charter agent on the Opus
-// anthropic-sub OAuth lane via runAgentTask. The director has agenda power (it picks
-// what — if anything — to investigate); it PROPOSES conjectures / leaves agent notes
-// through the director server (server-enforced single writer) and may conditionally
-// spawn depth-one scouts. YUK-757/YUK-572 v2 retires the speculative count=1 cap:
-// Task attempts are observed report-only until real usage justifies a numeric budget.
+// nested evidence-scout AgentDefinition, then runs ONE charter agent on the
+// anthropic-sub OAuth lane via runAgentTask. The director has agenda power: it picks
+// what to investigate, proposes conjectures / leaves agent notes through the
+// server-enforced single writer, and may conditionally spawn depth-one scouts.
+// Author/reviewer task runs attach their cost to the proposal event, not this scan, so
+// each model call is attributed once.
 //
-// Provenance / evidence-first: the run anchors on a trigger event; the tool-call reads
-// persist to tool_call_log after the run; a scan event records the director main-thread
-// cost. YUK-821 adds separate author/reviewer task runs after a tool proposal: their cost
-// is attached to that proposal event and is not included in the director scan, so each
-// model call remains attributed once. Settlement single-home: this NEVER calls reconcile /
-// writes FSRS.
+// Degrade red line: a generic runAgentTask throw (maxTurns / abort / SDK error) becomes
+// a degraded scan event (partial when output landed, otherwise failure), never a rethrow,
+// so the nightly job returns cleanly. Probe Author/Review operational failures are the
+// exception: the handler records the outage and this orchestrator rethrows before writing
+// a scan so pg-boss can retry instead of counting an outage as a quality rejection. Post-LLM persistence
+// is best-effort; if the scan write itself fails, the next nightly run sees
+// "claim exists, no scan" and retries once — that retry re-spends tokens, which is an
+// accepted trade-off rather than a silent black hole.
 //
-// Degrade (red line): a generic runAgentTask throw (maxTurns / 300s abort / SDK error)
-// is caught and turned into a PARTIAL scan event + a degraded result — it is NOT
-// rethrown, so the nightly job returns cleanly (already-landed proposals are kept; the
-// dayKey claim, held by the job, blocks any re-spend). One deliberate exception is a
-// probe Author/Review operational failure: the tool handler returns a well-formed soft
-// failure to the model, records the outage in its closure, and this orchestrator
-// rethrows it BEFORE writing a scan. The nightly claim+no-scan rule then lets pg-boss
-// retry instead of misclassifying an outage as a quality rejection. POST-LLM persistence
-// (persistToolTrace + the
-// scout_spawned / scan event writes) is ALSO best-effort — wrapped in its own try/catch,
-// logged, and swallowed (§3 review fix): a throw there must not propagate either, since by
-// that point the LLM has already run and a pg-boss retry driven by a rethrow would
-// re-spend Opus quota for no benefit. RESIDUAL RISK (accepted trade-off, documented not
-// hidden): if the scan event write itself fails, the nightly job's dayKey-claim +
-// scan-existence check (research_meeting_agent_nightly.ts §2 fix) treats "claim exists,
-// no scan" as an orphaned mid-run failure and allows ONE retry on the next invocation —
-// that retry DOES re-spend tokens (unlike the zero-spend PRE-LLM-throw retry case), which
-// is an accepted degrade rather than a silent black hole. PRE-LLM DB reads are the
-// zero-spend retryable path; probe quality outages are the deliberate, possibly-spent
-// retryable path because provider failure must never count as a quality vote.
+// Settlement has a single home: this module never reconciles probe outcomes or writes
+// FSRS. A degraded run keeps already-landed proposals; the nightly job's dayKey claim
+// blocks a second concurrent spend, though its documented recovery retry can re-spend once.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -55,6 +40,7 @@ import { createFindingsCapture } from '@/capabilities/agency/server/scout/report
 import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
 import { tasks } from '@/capabilities/task-registry';
 import { newId } from '@/core/ids';
+import { SPAWN_BUDGET_MODE, createPiSpawnContract } from '@/core/subagent-contract';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -62,11 +48,9 @@ import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { SPAWN_BUDGET_MODE } from '@/server/ai/spawn-contract';
-import { createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
-import { getMasteryProjection } from '@/server/mastery/state';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,
@@ -82,18 +66,11 @@ export { RESEARCH_MEETING_AGENT_ACTOR } from './director-tools';
 
 /** Recency window for the director's failure scan (mirrors the deterministic lane). */
 export const RESEARCH_MEETING_AGENT_WINDOW_DAYS = 14;
-/** Candidate-cell cap surfaced to the director (§5 — ≤20 cells). */
+/** Candidate-cell cap surfaced to the director. */
 export const RESEARCH_MEETING_AGENT_MAX_CELLS = 20;
-// round-5 review minor 0.60 — DERIVED from the registry (single source of truth), not
-// hand-duplicated magic numbers: tasks.ResearchMeetingDirectorTask.budget IS what
-// buildQueryOptions (runner.ts) actually turns into Options.maxTurns / the abort
-// timer — these two constants used to independently restate the SAME two numbers with
-// no compile-time link to the registry entry that actually governs the runner's real
-// budget, so an edit to one could silently drift from the other. No circular import
-// risk: src/ai/registry.ts is a leaf module (zero imports from src/capabilities/**),
-// and this import direction is already an established pattern elsewhere (e.g.
-// goals/scope.db.test.ts imports { tasks } from '@/ai/registry' too).
-/** Director main-thread turn budget — derived from the registry. */
+// Derived from the registry so the runner's real budget and these echoed constants
+// cannot drift.
+/** Director main-thread turn budget. */
 export const RESEARCH_MEETING_AGENT_MAX_TURNS =
   tasks.ResearchMeetingDirectorTask.budget.maxIterations;
 /** Wall-clock budget (seconds) echoed into the director input — derived from the
@@ -105,9 +82,9 @@ export const TRIGGER_ACTION = 'experimental:trigger_research_meeting_agent';
 export const SCAN_ACTION = 'experimental:research_meeting_agent_scan';
 export const SCOUT_SPAWNED_ACTION = 'experimental:research_meeting_agent_scout_spawned';
 
-// Asia/Shanghai is a fixed UTC+8 (no DST) so the day-key is a pure JS computation
-// (same technique as overnight-digest-summary.ts). Shared with the nightly job's claim
-// key, hence exported here (the job imports the director).
+// Asia/Shanghai is a fixed UTC+8 (no DST) so the day-key is a pure JS computation.
+// Shared with the nightly job's claim key, hence exported here (the job imports the
+// director).
 const BJT_OFFSET_MS = 8 * 60 * 60 * 1000;
 export function shanghaiDateKey(now: Date): string {
   const bjt = new Date(now.getTime() + BJT_OFFSET_MS);
@@ -117,9 +94,9 @@ export function shanghaiDateKey(now: Date): string {
   return `${y}-${m}-${d}`;
 }
 
-// The evidence-scout charter (three-question task book, scout spec §3). Injected into the
-// AgentDefinition — the registry-inline SoT for the nested subagent lives here with the
-// caller (scout-agent.ts is pure assembly). Subject-neutral.
+// The evidence-scout charter (three-question task book). Injected into the
+// AgentDefinition — the registry-inline SoT lives here with the caller (scout-agent.ts
+// is pure assembly). Subject-neutral.
 export const EVIDENCE_SCOUT_CHARTER =
   '你是教研 director 派出的证据侦察兵。你被指派对一个「知识点 × 错因」单元做一次聚焦的只读调查，然后把三问结论回报。\n\n' +
   '【工具（全部只读）】get_attempt_details（按 attempt/review 事件 id 看错答+归因）、get_question（题面+参考答案）、get_probe_history（该 KC 过往探针/预测打分）、get_typed_state（该 KC typed 分类态）、get_notes（该 KC 笔记）、get_agent_notes（其它 agent 的软提示——非事实，绝不当确认）。get_traces 尚不可用（YUK-562），勿调。\n\n' +
@@ -134,12 +111,9 @@ export interface ResearchMeetingDirectorResult {
   proposals_created: number;
   notes_created: number;
   scout_spawned: number;
-  /** total run cost, USD, as reported by the SDK. round-5 review minor 0.80 — null on a
-   *  DEGRADED run (the throw happens before the runner's cost ledger write, so the true
-   *  cost is UNKNOWN), matching the scan event's cost_micro_usd:null semantics for the
-   *  exact same case (round-3 #7 fixed that side; this aligns the public result with
-   *  it). A genuine $0 on a SUCCESSFUL run (the flat OAuth lane reporting no per-call
-   *  cost) is the literal 0, not null — "unknown" and "free" are different facts. */
+  /** Total run cost in USD as reported by the SDK; null on a degraded run (the throw
+   *  happens before the cost ledger write, so cost is unknown). A genuine $0 on a
+   *  successful run is the literal 0 — "unknown" and "free" are different facts. */
   cost_usd: number | null;
   /** the SDK task_run_id (empty string on a degraded run that never produced one). */
   task_run_id: string;
@@ -236,9 +210,8 @@ function buildMeetingContext(
   };
 }
 
-/** round-2 review MINOR #7 — accumulate (not overwrite) post-run errors: the scan event
- *  is the operator's ONLY observability surface for a degraded run, so it must carry
- *  every failure that occurred, not just the first. */
+/** Accumulate post-run errors: the scan event is the operator's only observability
+ *  surface for a degraded run. */
 function appendPostRunError(existing: string | undefined, err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   return existing !== undefined ? `${existing}; ${message}` : message;
@@ -263,9 +236,9 @@ export async function runResearchMeetingDirector(
     deps.loadDirectorOutputCountsForDayFn ?? loadDirectorOutputCountsForDay;
   const dayKey = shanghaiDateKey(now);
 
-  // ── PRE-LLM reads (OUTSIDE the runAgentTask try/catch — a throw here is a legit
+  // ── PRE-LLM reads (outside the runAgentTask try/catch — a throw here is a legit
   // retryable DB fault that propagates so the nightly job's dayKey claim can gate a
-  // retry). Mirrors the deterministic lane's PRE-LLM half. ──
+  // retry). ──
   const since = new Date(now.getTime() - RESEARCH_MEETING_AGENT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const failures: FailureAttempt[] = await getFailureAttemptsFn(db, {
     includeReviewFailures: true,
@@ -274,13 +247,13 @@ export async function runResearchMeetingDirector(
   const kcIds = [...new Set(failures.flatMap((f) => f.referenced_knowledge_ids))];
   const masteryByKnowledgeId =
     kcIds.length > 0 ? await getMasteryProjectionFn(db, kcIds) : new Map();
-  // Recovery is still the same nightly meeting. Seed closure counters from durable
-  // outputs linked to every prior trigger for this day so a second director cannot
-  // reset the 3-proposal / 2-note caps.
+  // Recovery is still the same nightly meeting, so seed closure counters from durable
+  // outputs linked to every prior trigger for this day; a second director cannot reset
+  // the 3-proposal / 2-note caps.
   const priorOutputCounts = await loadDirectorOutputCountsForDayFn(db, dayKey);
 
-  // Pending conjectures (ALL actors) → dedup base + agenda display (§0.D shadow-with-
-  // suppression: the deterministic lane's just-committed proposals are in this set).
+  // Pending conjectures from all actors → dedup base + agenda display, including the
+  // deterministic lane's just-committed proposals.
   const pendingRows = await listPendingConjecturesFn(db);
   const knownConjectureKeys = new Set<string>();
   const pendingConjectures: MeetingContext['pending_conjectures'] = [];
@@ -295,8 +268,8 @@ export async function runResearchMeetingDirector(
     });
   }
 
-  // Deterministic 取证 → salience-sorted cells (same math as the control lane; the
-  // director gets it as MATERIAL, not the top-3 forced-induce slice).
+  // Deterministic evidence gathering → salience-sorted cells (same math as the control
+  // lane; the director gets it as MATERIAL, not a forced-induce slice).
   const gatheredCells = gatherConjectureEvidence({
     failures,
     masteryByKnowledgeId,
@@ -374,11 +347,10 @@ export async function runResearchMeetingDirector(
     resolveSubjectProfileForKnowledgeIdsFn: deps.resolveSubjectProfileForKnowledgeIdsFn,
   });
   const scout = buildEvidenceScoutAgentDefinition({ prompt: EVIDENCE_SCOUT_CHARTER });
-  // The outer nightly handler owns the default-OFF RESEARCH_MEETING_AGENT_ENABLED
-  // switch, so reaching this function means this surface is enabled. The shared v2
-  // contract still carries an explicit kill-switch input for other consumers, makes
-  // every supplied AgentDefinition depth=1, and observes each unique Task id without a
-  // speculative count denial. Existing SDK tool_call/cost paths remain authoritative.
+  // The nightly handler owns the default-OFF RESEARCH_MEETING_AGENT_ENABLED switch, so
+  // reaching this function means this surface is enabled. The shared v2 contract still
+  // carries an explicit kill-switch input, makes every supplied AgentDefinition depth=1,
+  // and observes each unique Task id without a speculative count denial.
   const spawnContract = createPiSpawnContract({
     enabled: true,
     agents: { 'evidence-scout': scout },
@@ -431,10 +403,9 @@ export async function runResearchMeetingDirector(
   const spawnBudgetReport = spawnContract.readBudgetReport();
   const scoutSpawns = spawnBudgetReport.allowedAttempts;
 
-  // §3 review fix (MAJOR) — POST-LLM persistence is best-effort: a throw here must NOT
-  // propagate (see the file-header degrade comment for the residual-retry-cost trade-off
-  // this accepts). `postRunError` downgrades the final outcome to 'partial' when the LLM
-  // run itself succeeded but a persistence write hiccuped.
+  // POST-LLM persistence is best-effort: a throw here must not propagate (see the
+  // file-header trade-off). `postRunError` downgrades the final outcome to 'partial'
+  // when the LLM run succeeded but a persistence write hiccuped.
   let postRunError: string | undefined;
 
   // Persist the evidence read trace to tool_call_log (best-effort). The preallocated
@@ -479,13 +450,9 @@ export async function runResearchMeetingDirector(
         cost_micro_usd: null,
         // Execution trace only; do not feed Mem0 or regenerate learner briefs.
         ingest_at: scoutEventAt,
-        // round-2 review MINOR #8 — WRITE-TIME timestamp (mirrors dreaming_nightly.ts:390
-        // `deps.now?.() ?? new Date()`), not the function-entry `now` snapshot: this write
-        // happens AFTER the (up to 300s) LLM run, so entry-time `now` would understate how
-        // long ago the run actually started. Predicate-coupling check (§2 review fix):
-        // the nightly job's hasScanEventForDayFn queries `payload.day_key` (an explicit,
-        // entry-time-computed string field, NOT created_at) — so this timestamp change
-        // introduces ZERO coupling risk with the claim/scan idempotency check.
+        // Write-time timestamp, not the entry-time snapshot: this write happens after
+        // the (up to 300s) LLM run. The nightly claim/scan check keys on payload.day_key,
+        // so the timestamp change has no idempotency coupling.
         created_at: scoutEventAt,
       });
     } catch (err) {
@@ -497,9 +464,8 @@ export async function runResearchMeetingDirector(
     }
   }
 
-  // §9 review fix — flattened from a nested ternary (house style forbids ternary-in-
-  // ternary). Precedence: an LLM-run degrade (maxTurns/abort/SDK error) wins over a
-  // post-run persistence hiccup for classifying failure vs partial.
+  // An LLM-run degrade wins over a post-run persistence hiccup for classifying
+  // failure vs partial.
   let outcome: ResearchMeetingDirectorResult['outcome'];
   if (degraded) {
     if (proposalsCreated > 0 || notesCreated > 0) {
@@ -539,15 +505,12 @@ export async function runResearchMeetingDirector(
       cost_micro_usd: costMicroUsd,
       // Aggregate run telemetry is retained for admin/cost views, not learner memory.
       ingest_at: scanEventAt,
-      // round-2 review MINOR #8 — write-time timestamp (see the scout_spawned write
-      // above for the full rationale + the day_key/created_at decoupling conclusion).
+      // Write-time timestamp (see the scout_spawned write above).
       created_at: scanEventAt,
     });
   } catch (err) {
-    // Best-effort — see the file-header degrade comment: if THIS write itself fails, the
-    // scan event never lands, and a subsequent nightly run will see "claim exists, no
-    // scan" (research_meeting_agent_nightly.ts §2 fix) and retry (re-spending tokens
-    // once). Never rethrow.
+    // Best-effort: if the scan write fails too, the next nightly run sees "claim exists,
+    // no scan" and retries once (re-spending tokens). Never rethrow.
     console.error(
       '[research_meeting_agent director] scan event write failed (best-effort, degrading)',
       err,

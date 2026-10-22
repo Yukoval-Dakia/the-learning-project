@@ -116,6 +116,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/custom-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCustomProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/custom-providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putCustomProvider"];
+        post?: never;
+        delete: operations["deleteCustomProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/failures": {
         parameters: {
             query?: never;
@@ -124,6 +156,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["listAdminFailureClusters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/harness-scoreboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHarnessScoreboard"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1063,6 +1111,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingestion-sessions/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestionSessionHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion-sessions/{id}/operations": {
         parameters: {
             query?: never;
@@ -1105,40 +1169,6 @@ export interface paths {
         get: operations["streamIngestionSessionEvents"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ingestion/{id}/extract": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["extractLegacyIngestionSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ingestion/{id}/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["importLegacyIngestionSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1710,40 +1740,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/placement/{id}/end": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["endPlacementSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/placement/{id}/next": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createPlacementQuestionSelectionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/placement/profile": {
         parameters: {
             query?: never;
@@ -1754,41 +1750,6 @@ export interface paths {
         get: operations["getPlacementProfile"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/placement/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createPlacementSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/practice": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @deprecated */
-        get: operations["listPapersLegacy"];
-        put?: never;
-        /** @deprecated */
-        post: operations["createPaperReviewSessionLegacy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1806,40 +1767,6 @@ export interface paths {
         get: operations["getPaperLegacy"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/practice/{id}/answer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createPaperAnswerDraftLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/practice/{id}/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createPaperSubmissionLegacy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2006,23 +1933,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/proposals/{id}/decide": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["decideProposalLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/proposals/{id}/decisions": {
         parameters: {
             query?: never;
@@ -2033,23 +1943,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["createProposalDecision"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/proposals/{id}/retract": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["retractProposalLegacy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2130,57 +2023,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["runQuestionServingAction"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/questions/{id}/solve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["startQuestionSolveLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/questions/{id}/solve/{sid}/hint": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["requestQuestionSolveHintLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/questions/{id}/solve/{sid}/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["submitQuestionSolveLegacy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2315,23 +2157,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/review/appeal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createReviewAppealLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/review/drafts": {
         parameters: {
             query?: never;
@@ -2406,108 +2231,6 @@ export interface paths {
         get: operations["listDueReviews"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createReviewSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/sessions/{id}/end": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["endReviewSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/sessions/{id}/pause": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["pauseReviewSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/sessions/{id}/reopen": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["reopenReviewSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/sessions/{id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["resumeReviewSessionLegacy"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/review/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @deprecated */
-        post: operations["createReviewAttemptLegacy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2955,6 +2678,8 @@ export interface operations {
                             /** @enum {string} */
                             env_mode: "fallback" | "priority" | "pinned";
                             env_name: string | null;
+                            expired?: boolean;
+                            expires_at?: string | null;
                             key: string;
                             note?: string;
                             read_only: boolean;
@@ -3187,6 +2912,8 @@ export interface operations {
                     changes: ({
                         /** @enum {string} */
                         action: "set";
+                        /** Format: date-time */
+                        expires_at?: string | null;
                         key: string;
                         value: boolean | number | string | string[] | {
                             [key: string]: unknown;
@@ -3990,6 +3717,462 @@ export interface operations {
             };
         };
     };
+    listCustomProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        facts_injected?: boolean;
+                        providers: {
+                            api_key_env: string;
+                            auth: string;
+                            base_url: string;
+                            display_name: string;
+                            findings: number;
+                            id: string;
+                            key_present: boolean;
+                            /** @enum {string} */
+                            protocol: "openai-completions" | "anthropic-messages";
+                            runnable_models: string[];
+                            unknown_models: string[];
+                        }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    putCustomProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    api_key_env: string;
+                    /** Format: uri */
+                    base_url: string;
+                    display_name: string;
+                    /** @enum {string} */
+                    protocol: "openai-completions" | "anthropic-messages";
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        catalog: {
+                            /** @enum {string} */
+                            outcome: "stored";
+                            version: string;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            outcome: "kept";
+                            reason: string;
+                        } | {
+                            /** @enum {string} */
+                            outcome: "not_wired";
+                        };
+                        provider: {
+                            api_key_env: string;
+                            auth: string;
+                            base_url: string;
+                            display_name: string;
+                            findings: number;
+                            id: string;
+                            key_present: boolean;
+                            /** @enum {string} */
+                            protocol: "openai-completions" | "anthropic-messages";
+                            runnable_models: string[];
+                            unknown_models: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deleteCustomProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        catalog_version?: string;
+                        removed: boolean;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     listAdminFailureClusters: {
         parameters: {
             query?: {
@@ -4025,6 +4208,230 @@ export interface operations {
                             }[];
                         }[];
                         limit: number;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHarnessScoreboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        age_hours: number | null;
+                        note: string;
+                        scoreboard: {
+                            /** Format: date-time */
+                            generated_at: string;
+                            health: {
+                                /** Format: date-time */
+                                checked_at: string;
+                                duplicate_tool_call_rows: number;
+                                exa_tool_call_rows: number;
+                                failed_runs: number;
+                                failed_runs_null_cost: number;
+                                runs_missing_usage_fields: number;
+                                terminal_runs: number;
+                            };
+                            m1_zero_yield_token_share: {
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                by_task: {
+                                    denominator: number;
+                                    key: string;
+                                    numerator: number;
+                                    value: number | null;
+                                }[];
+                                failed_input_tokens: number;
+                                note: string;
+                                total_input_tokens: number;
+                                value: number | null;
+                            };
+                            m2_loop_runs: {
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                by_task: {
+                                    denominator: number;
+                                    key: string;
+                                    numerator: number;
+                                    value: number | null;
+                                }[];
+                                note: string;
+                                threshold: number;
+                                value: number;
+                            };
+                            m3_dropped_paid_output: {
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                by_task: {
+                                    denominator: number;
+                                    key: string;
+                                    numerator: number;
+                                    value: number | null;
+                                }[];
+                                note: string;
+                                verifier_rejections: {
+                                    action: string;
+                                    failed: number;
+                                    ratio: number | null;
+                                    total: number;
+                                }[];
+                            };
+                            m4_inbox_backlog: {
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                decided_in_window: number;
+                                note: string;
+                                oldest_pending_age_days: number | null;
+                                pending: number;
+                                proposed_in_window: number;
+                            };
+                            m5_duplicate_rate: {
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                duplicate_ratio: number | null;
+                                exact_duplicates: number;
+                                new_questions: number;
+                                note: string;
+                                same_name_knowledge_pairs: number;
+                            };
+                            m6_idle_spend: {
+                                active_daily_avg_usd: number | null;
+                                /** @enum {string} */
+                                basis: "measured" | "proxy" | "unavailable";
+                                /** @enum {string} */
+                                currency: "USD";
+                                daily: {
+                                    cost_usd: number;
+                                    day: string;
+                                    input_tokens: number;
+                                    user_events: number;
+                                }[];
+                                idle_daily_avg_usd: number | null;
+                                idle_days: number;
+                                note: string;
+                            };
+                            /** @enum {number} */
+                            version: 1;
+                            window: {
+                                /** Format: date-time */
+                                from: string;
+                                from_day: string;
+                                /** Format: date-time */
+                                to: string;
+                                to_day: string;
+                            };
+                        } | null;
+                        stale: boolean;
                     };
                 };
             };
@@ -8193,7 +8600,7 @@ export interface operations {
                         content: ({
                             attrs?: {
                                 artifact_id?: string;
-                                block_id?: string;
+                                block_id?: string | null;
                                 id?: string;
                                 prompt_preview?: string;
                                 question_id?: string;
@@ -8234,7 +8641,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;
@@ -13626,11 +14033,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -13771,11 +14186,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14028,11 +14451,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -14173,11 +14604,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14303,11 +14742,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14476,6 +14923,332 @@ export interface operations {
                         /** @enum {boolean} */
                         accepted: true;
                         replayed: boolean;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getIngestionSessionHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        asks: {
+                            /** @enum {string} */
+                            answer_kind: "choice" | "short";
+                            ask_id: string;
+                            created_at: string;
+                            expired_unresolved: boolean;
+                            expires_at: string | null;
+                            item_id: string | null;
+                            options?: {
+                                id: string;
+                                label_md: string;
+                            }[];
+                            placeholder: string;
+                            prompt_md: string;
+                            question_no: string | null;
+                            resolved: {
+                                answer: {
+                                    /** @enum {string} */
+                                    kind: "choice";
+                                    option_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "text";
+                                    text: string;
+                                    /** @enum {string} */
+                                    via_option?: "none_of_these";
+                                } | {
+                                    /** @enum {string} */
+                                    by: "learner" | "timeout";
+                                    /** @enum {string} */
+                                    kind: "skipped";
+                                };
+                                at: string;
+                                /** @enum {string} */
+                                via: "answer" | "timeout";
+                            } | null;
+                            unresolved: boolean;
+                        }[];
+                        evidence: {
+                            live_events: boolean;
+                            missing: string[];
+                            snapshot: boolean;
+                        };
+                        items: {
+                            current: {
+                                draft_status: string | null;
+                                held_since: string | null;
+                                hold_reason: string | null;
+                                next_action: {
+                                    command: string;
+                                    method: string;
+                                    path: string;
+                                } | null;
+                                pending_action: {
+                                    command: string;
+                                    since: string;
+                                } | null;
+                                servable: boolean;
+                            } | null;
+                            draft_block_id: string | null;
+                            draft_ref: string | null;
+                            item_id: string;
+                            ordinal: number;
+                            page: number | null;
+                            preview_md: string | null;
+                            preview_truncated: boolean;
+                            question_id: string | null;
+                            question_no: string | null;
+                            reason: string | null;
+                            source_asset_ids: string[];
+                            /** @enum {string} */
+                            state_at_finish: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
+                            status_at: string | null;
+                        }[];
+                        prior_runs: {
+                            asks: {
+                                /** @enum {string} */
+                                answer_kind: "choice" | "short";
+                                ask_id: string;
+                                created_at: string;
+                                expired_unresolved: boolean;
+                                expires_at: string | null;
+                                item_id: string | null;
+                                options?: {
+                                    id: string;
+                                    label_md: string;
+                                }[];
+                                placeholder: string;
+                                prompt_md: string;
+                                question_no: string | null;
+                                resolved: {
+                                    answer: {
+                                        /** @enum {string} */
+                                        kind: "choice";
+                                        option_id: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "text";
+                                        text: string;
+                                        /** @enum {string} */
+                                        via_option?: "none_of_these";
+                                    } | {
+                                        /** @enum {string} */
+                                        by: "learner" | "timeout";
+                                        /** @enum {string} */
+                                        kind: "skipped";
+                                    };
+                                    at: string;
+                                    /** @enum {string} */
+                                    via: "answer" | "timeout";
+                                } | null;
+                                unresolved: boolean;
+                            }[];
+                            captured_at: string;
+                            errors: {
+                                at: string;
+                                code: string;
+                                item_id: string | null;
+                                retryable: boolean;
+                                /** @enum {string} */
+                                scope: "session" | "item";
+                            }[];
+                            errors_truncated: boolean;
+                            event_floor: number | null;
+                            execution_closed: boolean;
+                            items: {
+                                draft_ref: string | null;
+                                item_id: string;
+                                page: number | null;
+                                preview_md: string | null;
+                                question_id: string | null;
+                                question_no: string;
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
+                                status_at: string | null;
+                            }[];
+                            paid_outcome_unknown: boolean;
+                            run_ref: string | null;
+                            /** @enum {string} */
+                            run_state: "in_progress" | "waiting" | "done" | "failed" | "lost";
+                            segments: {
+                                at: string;
+                                outcome: string | null;
+                                segment: number;
+                                task_run_id: string | null;
+                                /** @enum {string} */
+                                trigger: "start" | "resume" | "continue";
+                            }[];
+                            session_status: string;
+                            stage: string | null;
+                        }[];
+                        run: {
+                            captured_at: string | null;
+                            counts: {
+                                items_done: number;
+                                items_failed: number;
+                                items_total: number;
+                                items_withheld: number;
+                            } | null;
+                            errors: {
+                                at: string;
+                                code: string;
+                                item_id: string | null;
+                                retryable: boolean;
+                                /** @enum {string} */
+                                scope: "session" | "item";
+                            }[];
+                            errors_truncated: boolean;
+                            execution_closed: boolean | null;
+                            finished_at: string | null;
+                            paid_outcome_unknown: boolean;
+                            run_ref: string | null;
+                            /** @enum {string|null} */
+                            run_state: "in_progress" | "waiting" | "done" | "failed" | "lost" | null;
+                            segment_count: number;
+                            segments: {
+                                at: string;
+                                outcome: string | null;
+                                segment: number;
+                                task_run_id: string | null;
+                                /** @enum {string} */
+                                trigger: "start" | "resume" | "continue";
+                            }[];
+                            stage: string | null;
+                            started_at: string | null;
+                        } | null;
+                        session: {
+                            created_at: string;
+                            ended_at: string | null;
+                            entrypoint: string | null;
+                            error_message: string | null;
+                            id: string;
+                            /** @enum {string|null} */
+                            path: "agent" | "extract" | null;
+                            source_asset_ids: string[];
+                            source_document_id: string | null;
+                            started_at: string;
+                            status: string;
+                            title: string | null;
+                            /** @enum {string|null} */
+                            title_source: "source_document" | null;
+                            updated_at: string;
+                            warnings: string[];
+                        };
                     };
                 };
             };
@@ -14770,6 +15543,20 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15181,290 +15968,6 @@ export interface operations {
             };
             /** @description Unauthorized */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    extractLegacyIngestionSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        businessId: string;
-                        jobId: string;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    importLegacyIngestionSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    blocks: {
-                        block_id?: string;
-                        cause: {
-                            primary_category: string;
-                            user_notes: string | null;
-                        } | null;
-                        /** @default 3 */
-                        difficulty?: number;
-                        final_prompt_md: string;
-                        final_reference_md: string | null;
-                        final_wrong_answer_md: string;
-                        image_refs: string[];
-                        knowledge_ids: string[];
-                        /**
-                         * @default failure
-                         * @enum {string}
-                         */
-                        outcome?: "failure" | "success" | "partial" | "unanswered";
-                        page_spans: {
-                            bbox: {
-                                height: number;
-                                width: number;
-                                x: number;
-                                y: number;
-                            };
-                            page_index: number;
-                            /** @enum {string} */
-                            role?: "prompt" | "answer_area" | "continuation";
-                        }[];
-                        question_kind: string;
-                        source_block_ids: string[];
-                    }[];
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        mistake_ids: string[];
-                        question_ids: string[];
-                        record_ids: string[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20824,7 +21327,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;
@@ -22785,7 +23288,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22822,7 +23325,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -22847,7 +23350,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23020,7 +23523,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23057,7 +23560,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23082,7 +23585,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -23412,7 +23915,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -23449,7 +23952,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -23474,7 +23977,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -24103,7 +24606,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -24140,7 +24643,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -24165,7 +24668,7 @@ export interface operations {
                                     issues: {
                                         /** @enum {string} */
                                         code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                        path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                         path_truncated: boolean;
                                     }[];
                                     issues_truncated: boolean;
@@ -24345,7 +24848,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -24382,7 +24885,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -24407,7 +24910,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25036,7 +25539,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25073,7 +25576,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -25098,1080 +25601,7 @@ export interface operations {
                                 issues: {
                                     /** @enum {string} */
                                     code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "resolve_unknown_outcome";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "unknown";
-                            subject_id: string | null;
-                        })[];
-                        unresolved_items?: {
-                            issuance_id: string;
-                            question_id: string;
-                            /** @enum {string} */
-                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
-                        }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    endPlacementSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /**
-                     * @default completed
-                     * @enum {string}
-                     */
-                    status?: "completed" | "abandoned";
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        ok: true;
-                        /** @enum {string} */
-                        status: "completed" | "abandoned";
-                        unresolved_items?: {
-                            issuance_id: string;
-                            question_id: string;
-                            /** @enum {string} */
-                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
-                        }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createPlacementQuestionSelectionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    cap?: number;
-                    knowledgeIds?: string[];
-                    seThreshold?: number | null;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        answeredCount: number;
-                        /** @enum {boolean} */
-                        done: true;
-                        /** @enum {string} */
-                        reason: "cap" | "se_converged";
-                        starterSupply?: ({
-                            /** @enum {string|null} */
-                            claim_id: null;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "provide_goal" | "source_questions";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "absent";
-                            subject_id: string | null;
-                        } | {
-                            claim_id: string;
-                            failure_reason: ({
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            }) | null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "wait_for_supply";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "pending";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "continue_placement";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "satisfied";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "review_supply_failure";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "exhausted";
-                            subject_id: string;
-                        } | {
-                            claim_id: string | null;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "resolve_unknown_outcome";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "unknown";
-                            subject_id: string | null;
-                        })[];
-                        unresolved_items?: {
-                            issuance_id: string;
-                            question_id: string;
-                            /** @enum {string} */
-                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
-                        }[];
-                    } | {
-                        answeredCount: number;
-                        /** @enum {boolean} */
-                        done: false;
-                        no_item?: {
-                            options: ("recheck" | "end")[];
-                            preparing_subjects: string[];
-                            /** @enum {string} */
-                            reason: "no_servable_item";
-                        } | null;
-                        question: {
-                            assessment: {
-                                evaluation_group_id: string;
-                                held_exit?: {
-                                    continue_url: string;
-                                    end_url: string;
-                                    issuance_id: string;
-                                } | null;
-                                idempotency_key: string;
-                                issuance_id: string;
-                                pending_run: {
-                                    poll_url: string;
-                                    run_id: string;
-                                } | null;
-                                /** @enum {string} */
-                                phase: "answering" | "retry" | "pending" | "held";
-                                state: {
-                                    admission_generation_observed: number | null;
-                                    draft: {
-                                        evaluation_group_ref: string | null;
-                                        group_evidence: {
-                                            evidence: {
-                                                asset: {
-                                                    asset_id: string;
-                                                    digest: string;
-                                                };
-                                                bytes: number;
-                                                evidence_id: string;
-                                                /** @enum {string} */
-                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                mime_type: string;
-                                                /** Format: date-time */
-                                                uploaded_at: string;
-                                            };
-                                            target: {
-                                                /** @enum {string} */
-                                                scope: "all_units";
-                                            } | {
-                                                /** @enum {string} */
-                                                scope: "units";
-                                                scoring_unit_ids: string[];
-                                            };
-                                        }[];
-                                        response_set: {
-                                            /** @default [] */
-                                            entries: ({
-                                                /** @enum {string} */
-                                                kind: "choice";
-                                                /** @default [] */
-                                                option_ids: string[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                raw_input?: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                value: number | null;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                latex: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                /** @default [] */
-                                                pairs: {
-                                                    item_id: string;
-                                                    option_id: string;
-                                                }[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_order: string[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                evidence: {
-                                                    asset: {
-                                                        asset_id: string;
-                                                        digest: string;
-                                                    };
-                                                    bytes: number;
-                                                    evidence_id: string;
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    mime_type: string;
-                                                    /** Format: date-time */
-                                                    uploaded_at: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "open";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @default  */
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                /** @default [] */
-                                                positions: number[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_ids: string[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                                /** @default  */
-                                                text: string;
-                                            })[];
-                                        };
-                                        save_epoch: number;
-                                        updated_at: string;
-                                    } | null;
-                                    issuance: {
-                                        binding: {
-                                            /** @default [] */
-                                            material_bindings: {
-                                                asset_digest: string;
-                                                material_id: string;
-                                            }[];
-                                            /** @default [] */
-                                            option_order: {
-                                                option_ids: string[];
-                                                slot_id: string;
-                                            }[];
-                                            part_ids: string[];
-                                            revision_id: string;
-                                        };
-                                        claim: {
-                                            claimed_by_ref: string | null;
-                                            /** @enum {string} */
-                                            policy: "one_time" | "unbounded";
-                                            /** @enum {string} */
-                                            status: "unclaimed" | "claimed" | "released";
-                                        };
-                                        issuance_id: string;
-                                        /** Format: date-time */
-                                        issued_at: string;
-                                    } | null;
-                                    practice_dto: {
-                                        faces: {
-                                            blank_order?: string[];
-                                            material_ids: string[];
-                                            part_id: string;
-                                            prompt_md: string;
-                                            question_no?: string;
-                                        }[];
-                                        issuance_id: string;
-                                        /** Format: date-time */
-                                        issued_at: string;
-                                        materials: {
-                                            alt_text?: string;
-                                            asset_id: string;
-                                            caption?: string;
-                                            content_md?: string;
-                                            /** @enum {string} */
-                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
-                                            material_id: string;
-                                        }[];
-                                        presentation?: {
-                                            [key: string]: unknown;
-                                        };
-                                        response_requirements?: {
-                                            evidence_unit_ids: string[];
-                                            slot_id: string;
-                                        }[];
-                                        response_spec: {
-                                            slots: ({
-                                                /** @enum {string} */
-                                                kind: "single_choice";
-                                                options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "multi_choice";
-                                                max_select: number;
-                                                min_select: number;
-                                                options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                /** @default false */
-                                                math_preview: boolean;
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                precision?: number;
-                                                slot_id: string;
-                                                unit_hint?: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                /** @enum {string} */
-                                                notation: "latex";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                cells: {
-                                                    col: number;
-                                                    row: number;
-                                                    slot_id: string;
-                                                }[];
-                                                column_headers: string[];
-                                                /** @enum {string} */
-                                                kind: "table";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                row_labels: string[];
-                                                slot_id: string;
-                                            } | {
-                                                /** @default false */
-                                                allow_left_unmatched: boolean;
-                                                has_distractors?: boolean;
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                left_items: {
-                                                    item_id: string;
-                                                    label: string;
-                                                    text: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                pairing?: "one_to_one" | "many_to_one";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                right_options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                slot_id: string;
-                                            } | {
-                                                items: {
-                                                    item_id: string;
-                                                    label: string;
-                                                    text: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                accepted_evidence: {
-                                                    allowed_mime_patterns: string[];
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    max_bytes: number;
-                                                    requires_security_scan: boolean;
-                                                }[];
-                                                /** @default false */
-                                                evidence_required: boolean;
-                                                /** @enum {string} */
-                                                kind: "open_response";
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                text: string;
-                                            } | {
-                                                at_most_per_coordinate?: {
-                                                    [key: string]: number;
-                                                };
-                                                axes?: {
-                                                    [key: string]: {
-                                                        id: string;
-                                                        label_md: string;
-                                                    }[];
-                                                };
-                                                items: {
-                                                    coordinates?: {
-                                                        [key: string]: string;
-                                                    };
-                                                    gap_after_codepoint?: number;
-                                                    item_id: string;
-                                                    label_md?: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                part_id: string;
-                                                /**
-                                                 * @default many
-                                                 * @enum {string}
-                                                 */
-                                                pick: "one" | "many";
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                text?: string;
-                                            } | {
-                                                answer_shape?: {
-                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
-                                                    value: {
-                                                        /** @enum {string} */
-                                                        kind: "number";
-                                                        unit?: {
-                                                            accepts_bare_number: boolean;
-                                                            unit: string;
-                                                        };
-                                                    } | {
-                                                        binding: string;
-                                                        /** @enum {string} */
-                                                        kind: "interval_set";
-                                                    } | {
-                                                        axes: string[];
-                                                        /** @enum {string} */
-                                                        kind: "point";
-                                                    } | {
-                                                        /** @enum {string} */
-                                                        kind: "affine_line";
-                                                        variables: string[];
-                                                    } | {
-                                                        axes?: string[];
-                                                        /** @enum {string} */
-                                                        duplicates: "forbidden";
-                                                        /** @enum {string} */
-                                                        item: "number" | "point" | "affine_line";
-                                                        /** @enum {string} */
-                                                        kind: "finite_set";
-                                                        /** @enum {string} */
-                                                        order: "unordered";
-                                                        variables?: string[];
-                                                    };
-                                                    /** @enum {string} */
-                                                    version: "k1-math-v1";
-                                                };
-                                                /**
-                                                 * @default text
-                                                 * @enum {string}
-                                                 */
-                                                format: "text" | "math";
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                unit_hint?: string;
-                                            })[];
-                                        };
-                                        revision_id: string;
-                                    } | null;
-                                    submissions: {
-                                        evaluation_group_id: string;
-                                        group_evidence: {
-                                            evidence: {
-                                                asset: {
-                                                    asset_id: string;
-                                                    digest: string;
-                                                };
-                                                bytes: number;
-                                                evidence_id: string;
-                                                /** @enum {string} */
-                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                mime_type: string;
-                                                /** Format: date-time */
-                                                uploaded_at: string;
-                                            };
-                                            target: {
-                                                /** @enum {string} */
-                                                scope: "all_units";
-                                            } | {
-                                                /** @enum {string} */
-                                                scope: "units";
-                                                scoring_unit_ids: string[];
-                                            };
-                                        }[];
-                                        idempotency_key: string;
-                                        response_set: {
-                                            /** @default [] */
-                                            entries: ({
-                                                /** @enum {string} */
-                                                kind: "choice";
-                                                /** @default [] */
-                                                option_ids: string[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                raw_input?: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                value: number | null;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                latex: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                /** @default [] */
-                                                pairs: {
-                                                    item_id: string;
-                                                    option_id: string;
-                                                }[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_order: string[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                evidence: {
-                                                    asset: {
-                                                        asset_id: string;
-                                                        digest: string;
-                                                    };
-                                                    bytes: number;
-                                                    evidence_id: string;
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    mime_type: string;
-                                                    /** Format: date-time */
-                                                    uploaded_at: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "open";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @default  */
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                /** @default [] */
-                                                positions: number[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_ids: string[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                                /** @default  */
-                                                text: string;
-                                            })[];
-                                        };
-                                        submission_id: string;
-                                        submitted_at: string;
-                                    }[];
-                                    /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
-                                };
-                                submission_id: string;
-                            };
-                            questionId: string;
-                            score: number;
-                            /** @enum {string} */
-                            scoreKind: "mfi" | "klp" | "klp_grid";
-                        } | null;
-                        sourcingNeeded: boolean;
-                        starterSupply?: ({
-                            /** @enum {string|null} */
-                            claim_id: null;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "provide_goal" | "source_questions";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "absent";
-                            subject_id: string | null;
-                        } | {
-                            claim_id: string;
-                            failure_reason: ({
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            }) | null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "wait_for_supply";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "pending";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "continue_placement";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "satisfied";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "review_supply_failure";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "exhausted";
-                            subject_id: string;
-                        } | {
-                            claim_id: string | null;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "reason" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
                                     path_truncated: boolean;
                                 }[];
                                 issues_truncated: boolean;
@@ -26400,1124 +25830,6 @@ export interface operations {
                             theta_precision: number;
                             theta_se: number;
                         }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createPlacementSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    goalId?: string | null;
-                    knowledgeIds?: string[];
-                    leanings?: string[];
-                    /** @enum {string} */
-                    pace?: "light" | "medium" | "dense";
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        answeredCount: number;
-                        knowledgeIds: string[];
-                        no_item?: {
-                            options: ("recheck" | "end")[];
-                            preparing_subjects: string[];
-                            /** @enum {string} */
-                            reason: "no_servable_item";
-                        } | null;
-                        question: {
-                            assessment: {
-                                evaluation_group_id: string;
-                                held_exit?: {
-                                    continue_url: string;
-                                    end_url: string;
-                                    issuance_id: string;
-                                } | null;
-                                idempotency_key: string;
-                                issuance_id: string;
-                                pending_run: {
-                                    poll_url: string;
-                                    run_id: string;
-                                } | null;
-                                /** @enum {string} */
-                                phase: "answering" | "retry" | "pending" | "held";
-                                state: {
-                                    admission_generation_observed: number | null;
-                                    draft: {
-                                        evaluation_group_ref: string | null;
-                                        group_evidence: {
-                                            evidence: {
-                                                asset: {
-                                                    asset_id: string;
-                                                    digest: string;
-                                                };
-                                                bytes: number;
-                                                evidence_id: string;
-                                                /** @enum {string} */
-                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                mime_type: string;
-                                                /** Format: date-time */
-                                                uploaded_at: string;
-                                            };
-                                            target: {
-                                                /** @enum {string} */
-                                                scope: "all_units";
-                                            } | {
-                                                /** @enum {string} */
-                                                scope: "units";
-                                                scoring_unit_ids: string[];
-                                            };
-                                        }[];
-                                        response_set: {
-                                            /** @default [] */
-                                            entries: ({
-                                                /** @enum {string} */
-                                                kind: "choice";
-                                                /** @default [] */
-                                                option_ids: string[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                raw_input?: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                value: number | null;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                latex: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                /** @default [] */
-                                                pairs: {
-                                                    item_id: string;
-                                                    option_id: string;
-                                                }[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_order: string[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                evidence: {
-                                                    asset: {
-                                                        asset_id: string;
-                                                        digest: string;
-                                                    };
-                                                    bytes: number;
-                                                    evidence_id: string;
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    mime_type: string;
-                                                    /** Format: date-time */
-                                                    uploaded_at: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "open";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @default  */
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                /** @default [] */
-                                                positions: number[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_ids: string[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                                /** @default  */
-                                                text: string;
-                                            })[];
-                                        };
-                                        save_epoch: number;
-                                        updated_at: string;
-                                    } | null;
-                                    issuance: {
-                                        binding: {
-                                            /** @default [] */
-                                            material_bindings: {
-                                                asset_digest: string;
-                                                material_id: string;
-                                            }[];
-                                            /** @default [] */
-                                            option_order: {
-                                                option_ids: string[];
-                                                slot_id: string;
-                                            }[];
-                                            part_ids: string[];
-                                            revision_id: string;
-                                        };
-                                        claim: {
-                                            claimed_by_ref: string | null;
-                                            /** @enum {string} */
-                                            policy: "one_time" | "unbounded";
-                                            /** @enum {string} */
-                                            status: "unclaimed" | "claimed" | "released";
-                                        };
-                                        issuance_id: string;
-                                        /** Format: date-time */
-                                        issued_at: string;
-                                    } | null;
-                                    practice_dto: {
-                                        faces: {
-                                            blank_order?: string[];
-                                            material_ids: string[];
-                                            part_id: string;
-                                            prompt_md: string;
-                                            question_no?: string;
-                                        }[];
-                                        issuance_id: string;
-                                        /** Format: date-time */
-                                        issued_at: string;
-                                        materials: {
-                                            alt_text?: string;
-                                            asset_id: string;
-                                            caption?: string;
-                                            content_md?: string;
-                                            /** @enum {string} */
-                                            kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
-                                            material_id: string;
-                                        }[];
-                                        presentation?: {
-                                            [key: string]: unknown;
-                                        };
-                                        response_requirements?: {
-                                            evidence_unit_ids: string[];
-                                            slot_id: string;
-                                        }[];
-                                        response_spec: {
-                                            slots: ({
-                                                /** @enum {string} */
-                                                kind: "single_choice";
-                                                options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "multi_choice";
-                                                max_select: number;
-                                                min_select: number;
-                                                options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                /** @default false */
-                                                math_preview: boolean;
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                precision?: number;
-                                                slot_id: string;
-                                                unit_hint?: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                /** @enum {string} */
-                                                notation: "latex";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                cells: {
-                                                    col: number;
-                                                    row: number;
-                                                    slot_id: string;
-                                                }[];
-                                                column_headers: string[];
-                                                /** @enum {string} */
-                                                kind: "table";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                row_labels: string[];
-                                                slot_id: string;
-                                            } | {
-                                                /** @default false */
-                                                allow_left_unmatched: boolean;
-                                                has_distractors?: boolean;
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                left_items: {
-                                                    item_id: string;
-                                                    label: string;
-                                                    text: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                pairing?: "one_to_one" | "many_to_one";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                right_options: {
-                                                    label: string;
-                                                    option_id: string;
-                                                    text: string;
-                                                }[];
-                                                slot_id: string;
-                                            } | {
-                                                items: {
-                                                    item_id: string;
-                                                    label: string;
-                                                    text: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                accepted_evidence: {
-                                                    allowed_mime_patterns: string[];
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    max_bytes: number;
-                                                    requires_security_scan: boolean;
-                                                }[];
-                                                /** @default false */
-                                                evidence_required: boolean;
-                                                /** @enum {string} */
-                                                kind: "open_response";
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                text: string;
-                                            } | {
-                                                at_most_per_coordinate?: {
-                                                    [key: string]: number;
-                                                };
-                                                axes?: {
-                                                    [key: string]: {
-                                                        id: string;
-                                                        label_md: string;
-                                                    }[];
-                                                };
-                                                items: {
-                                                    coordinates?: {
-                                                        [key: string]: string;
-                                                    };
-                                                    gap_after_codepoint?: number;
-                                                    item_id: string;
-                                                    label_md?: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                part_id: string;
-                                                /**
-                                                 * @default many
-                                                 * @enum {string}
-                                                 */
-                                                pick: "one" | "many";
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                text?: string;
-                                            } | {
-                                                answer_shape?: {
-                                                    notation: ("fraction" | "decimal" | "interval" | "inequality" | "set_builder" | "roster" | "tuple" | "equation")[];
-                                                    value: {
-                                                        /** @enum {string} */
-                                                        kind: "number";
-                                                        unit?: {
-                                                            accepts_bare_number: boolean;
-                                                            unit: string;
-                                                        };
-                                                    } | {
-                                                        binding: string;
-                                                        /** @enum {string} */
-                                                        kind: "interval_set";
-                                                    } | {
-                                                        axes: string[];
-                                                        /** @enum {string} */
-                                                        kind: "point";
-                                                    } | {
-                                                        /** @enum {string} */
-                                                        kind: "affine_line";
-                                                        variables: string[];
-                                                    } | {
-                                                        axes?: string[];
-                                                        /** @enum {string} */
-                                                        duplicates: "forbidden";
-                                                        /** @enum {string} */
-                                                        item: "number" | "point" | "affine_line";
-                                                        /** @enum {string} */
-                                                        kind: "finite_set";
-                                                        /** @enum {string} */
-                                                        order: "unordered";
-                                                        variables?: string[];
-                                                    };
-                                                    /** @enum {string} */
-                                                    version: "k1-math-v1";
-                                                };
-                                                /**
-                                                 * @default text
-                                                 * @enum {string}
-                                                 */
-                                                format: "text" | "math";
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                max_chars?: number;
-                                                part_id: string;
-                                                placement?: {
-                                                    col?: number;
-                                                    label?: string;
-                                                    row?: number;
-                                                };
-                                                slot_id: string;
-                                                unit_hint?: string;
-                                            })[];
-                                        };
-                                        revision_id: string;
-                                    } | null;
-                                    submissions: {
-                                        evaluation_group_id: string;
-                                        group_evidence: {
-                                            evidence: {
-                                                asset: {
-                                                    asset_id: string;
-                                                    digest: string;
-                                                };
-                                                bytes: number;
-                                                evidence_id: string;
-                                                /** @enum {string} */
-                                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                mime_type: string;
-                                                /** Format: date-time */
-                                                uploaded_at: string;
-                                            };
-                                            target: {
-                                                /** @enum {string} */
-                                                scope: "all_units";
-                                            } | {
-                                                /** @enum {string} */
-                                                scope: "units";
-                                                scoring_unit_ids: string[];
-                                            };
-                                        }[];
-                                        idempotency_key: string;
-                                        response_set: {
-                                            /** @default [] */
-                                            entries: ({
-                                                /** @enum {string} */
-                                                kind: "choice";
-                                                /** @default [] */
-                                                option_ids: string[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "text";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "numeric";
-                                                raw_input?: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                value: number | null;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "formula";
-                                                latex: string;
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "matching";
-                                                /** @default [] */
-                                                pairs: {
-                                                    item_id: string;
-                                                    option_id: string;
-                                                }[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_order: string[];
-                                                /** @enum {string} */
-                                                kind: "ordering";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                evidence: {
-                                                    asset: {
-                                                        asset_id: string;
-                                                        digest: string;
-                                                    };
-                                                    bytes: number;
-                                                    evidence_id: string;
-                                                    /** @enum {string} */
-                                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                                    mime_type: string;
-                                                    /** Format: date-time */
-                                                    uploaded_at: string;
-                                                }[];
-                                                /** @enum {string} */
-                                                kind: "open";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @default  */
-                                                text_md: string;
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "sentence_breaks";
-                                                /** @default [] */
-                                                positions: number[];
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                            } | {
-                                                /** @default [] */
-                                                item_ids: string[];
-                                                /** @enum {string} */
-                                                kind: "select";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                            } | {
-                                                /** @enum {string} */
-                                                kind: "blank";
-                                                self_confidence?: number;
-                                                slot_id: string;
-                                                /** @enum {string} */
-                                                state: "answered" | "blank" | "unknown";
-                                                /** @default  */
-                                                text: string;
-                                            })[];
-                                        };
-                                        submission_id: string;
-                                        submitted_at: string;
-                                    }[];
-                                    /** @enum {string|null} */
-                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation" | null;
-                                };
-                                submission_id: string;
-                            };
-                            questionId: string;
-                            score: number;
-                            /** @enum {string} */
-                            scoreKind: "mfi" | "klp" | "klp_grid";
-                        } | null;
-                        sessionId: string;
-                        sourcingNeeded: boolean;
-                        starterSupply?: ({
-                            /** @enum {string|null} */
-                            claim_id: null;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "provide_goal" | "source_questions";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "absent";
-                            subject_id: string | null;
-                        } | {
-                            claim_id: string;
-                            failure_reason: ({
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            }) | null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "wait_for_supply";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "pending";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            /** @enum {string|null} */
-                            failure_reason: null;
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "continue_placement";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "satisfied";
-                            subject_id: string;
-                        } | {
-                            claim_id: string;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string;
-                            /** @enum {string} */
-                            next_action: "review_supply_failure";
-                            semantic_goal_revision_id: string;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "exhausted";
-                            subject_id: string;
-                        } | {
-                            claim_id: string | null;
-                            failure_reason: {
-                                /** @enum {string} */
-                                code: "schema_invalid";
-                                issue_count: number;
-                                issues: {
-                                    /** @enum {string} */
-                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
-                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "presentation" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "schema_version" | "renderer_contract" | "root" | "block_id" | "gap" | "children" | "material_ref" | "layout" | "passage_width" | "part_ref" | "bind" | "marker" | "print" | "unit_id" | "slot_id" | "response_class" | "height_mm" | "min_lines" | "sandbox" | "binds" | "frame_height_px" | "asset" | "entry" | "contract" | "asset_id" | "digest" | "[redacted]") | number)[];
-                                    path_truncated: boolean;
-                                }[];
-                                issues_truncated: boolean;
-                            } | {
-                                /** @enum {string} */
-                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
-                            };
-                            goal_id: string | null;
-                            /** @enum {string} */
-                            next_action: "resolve_unknown_outcome";
-                            semantic_goal_revision_id: string | null;
-                            session_id: string;
-                            /** @enum {string} */
-                            state: "unknown";
-                            subject_id: string | null;
-                        })[];
-                        unresolved_items?: {
-                            issuance_id: string;
-                            question_id: string;
-                            /** @enum {string} */
-                            reason: "held_released" | "awaiting_evaluation" | "unanswered";
-                        }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    listPapersLegacy: {
-        parameters: {
-            query?: {
-                cursor?: string;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        data: {
-                            artifact_id: string;
-                            /** Format: date-time */
-                            created_at: string;
-                            generation_status: string;
-                            intent_source: string;
-                            knowledge: {
-                                id: string;
-                                name: string;
-                            }[];
-                            knowledge_ids: string[];
-                            session: {
-                                id: string;
-                                pos: number;
-                                right: number;
-                                status: string;
-                                wrong: number;
-                            } | null;
-                            /** @enum {string} */
-                            source: "coach" | "custom" | "note" | "other";
-                            title: string;
-                            total_slots: number;
-                        }[];
-                        next_cursor: string | null;
-                        page: {
-                            limit: number;
-                            next_cursor: string | null;
-                        };
-                        papers: {
-                            artifact_id: string;
-                            /** Format: date-time */
-                            created_at: string;
-                            generation_status: string;
-                            intent_source: string;
-                            knowledge: {
-                                id: string;
-                                name: string;
-                            }[];
-                            knowledge_ids: string[];
-                            session: {
-                                id: string;
-                                pos: number;
-                                right: number;
-                                status: string;
-                                wrong: number;
-                            } | null;
-                            /** @enum {string} */
-                            source: "coach" | "custom" | "note" | "other";
-                            title: string;
-                            total_slots: number;
-                        }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createPaperReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    artifact_id: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session_id: string;
                     };
                 };
             };
@@ -28112,555 +26424,6 @@ export interface operations {
                             /** @enum {string} */
                             reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | "no_input_renderer" | "invalid_presentation";
                         }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createPaperAnswerDraftLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    /** @default  */
-                    content_md?: string;
-                    expected_save_epoch?: number;
-                    /** @default [] */
-                    image_refs?: string[];
-                    /**
-                     * @default text
-                     * @enum {string}
-                     */
-                    input_kind?: "text" | "option" | "image" | "voice";
-                    part_ref?: string | null;
-                    question_id: string;
-                    session_id: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        answer_id: string;
-                        created: boolean;
-                        save_epoch?: number;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createPaperSubmissionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    answer_md: string;
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    /** @default [] */
-                    image_refs?: string[];
-                    latency_ms?: number | null;
-                    part_ref?: string | null;
-                    question_id: string;
-                    reasoning_trace?: string | null;
-                    self_confidence?: number | null;
-                    session_id: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        answer_id: string;
-                        attempt_event_id: string;
-                        coarse_outcome: string;
-                        evaluation_id?: string;
-                        judge_event_id: string | null;
-                        partial_units?: {
-                            correct_count: number;
-                            scoring_unit_id: string;
-                            total_count: number;
-                        }[];
-                        score: number | null;
-                        /** @enum {string} */
-                        status?: "effective" | "review_required";
-                        /** @enum {boolean} */
-                        visible_to_user: true;
-                    } | {
-                        answer_id: string;
-                        attempt_event_id: string;
-                        evaluation_id?: string;
-                        /** @enum {boolean} */
-                        feedback_buffered: true;
-                        judge_event_id: string | null;
-                        /** @enum {string} */
-                        status?: "effective" | "review_required";
-                        /** @enum {boolean} */
-                        visible_to_user: false;
                     };
                 };
             };
@@ -32637,139 +30400,6 @@ export interface operations {
             };
         };
     };
-    decideProposalLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @enum {string} */
-                    decision: "accept" | "reverse" | "change_type" | "dismiss";
-                    new_relation_type?: ("prerequisite" | "related_to" | "contrasts_with" | "applied_in" | "derived_from") | string;
-                    user_note?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        kind: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     createProposalDecision: {
         parameters: {
             query?: never;
@@ -32870,141 +30500,6 @@ export interface operations {
                         /** @enum {string} */
                         proposal_status: "pending";
                         result?: unknown;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    retractProposalLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    affected_refs?: {
-                        id: string;
-                        /** @enum {string} */
-                        kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
-                    }[];
-                    reason_md?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        correction_event_id: string;
-                        /** @enum {string} */
-                        kind: "retracted";
                     };
                 };
             };
@@ -34491,567 +31986,6 @@ export interface operations {
                             } | null;
                             servable: boolean;
                         };
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    startQuestionSolveLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    issuance_id?: string;
-                } | null;
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        evaluation_group_id?: string;
-                        idempotency_key?: string;
-                        issuance_id: string;
-                        session_id: string;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    requestQuestionSolveHintLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-                sid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /** @default 0 */
-                    hint_index?: number;
-                    issuance_id?: string;
-                } | null;
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        hint_request_id: string;
-                        text_md: string;
-                    } | {
-                        elapsed_ms: number;
-                        help: {
-                            disclosure_md?: string;
-                            /** @enum {boolean} */
-                            generated_on_demand: false;
-                            /** @enum {string} */
-                            kind: "reference" | "deterministic_next_step";
-                            /** @enum {string} */
-                            source: "frozen_revision_solution" | "frozen_scoring_basis" | "legacy_reference_md" | "deterministic";
-                            text_md: string;
-                        };
-                        hint_request_id: string;
-                        /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
-                        reference_available: boolean;
-                        reference_revealed: boolean;
-                        /** @enum {string} */
-                        status: "fallback";
-                        text_md: string;
-                    } | {
-                        elapsed_ms: number;
-                        hint_request_id: string;
-                        options: ("retry" | "skip")[];
-                        /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
-                        /** @enum {string} */
-                        status: "unavailable";
-                        text_md: string;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    submitQuestionSolveLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-                sid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    activation_intent?: {
-                        evaluation_id: string;
-                        expected_effective_id: string | null;
-                        expected_generation: number;
-                    };
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    final_hint_level?: number;
-                    hints_used?: number;
-                    self_report?: boolean;
-                    student_final_answer_text?: string;
-                    student_image_refs?: string[];
-                    student_text_steps?: string[];
-                    /** @enum {string} */
-                    user_rating?: "again" | "hard" | "good";
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        attempt_event_id: string;
-                        judge?: unknown;
-                        mistake_id?: string;
-                        revealed_solution_md: string | null;
-                    } & {
-                        [key: string]: unknown;
                     };
                 };
             };
@@ -36761,137 +33695,6 @@ export interface operations {
             };
         };
     };
-    createReviewAppealLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    evaluation_id: string;
-                    idempotency_key?: string;
-                    reason_md?: string;
-                } | {
-                    judge_event_id: string;
-                    reason_md?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        appeal_event_id: string;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     listReviewDrafts: {
         parameters: {
             query?: {
@@ -37527,1689 +34330,6 @@ export interface operations {
                             question_id: string;
                             reference_md: string | null;
                         }[];
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    paper_id?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        session_id: string;
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    endReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /**
-                     * @default completed
-                     * @enum {string}
-                     */
-                    status?: "completed" | "abandoned";
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        ok: true;
-                        /** @enum {string} */
-                        status: "started" | "paused" | "completed" | "abandoned";
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    pauseReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        ok: true;
-                        /** @enum {string} */
-                        status: "started" | "paused" | "completed" | "abandoned";
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    reopenReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        ok: true;
-                        /** @enum {string} */
-                        status: "started" | "paused" | "completed" | "abandoned";
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    resumeReviewSessionLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        /** @enum {boolean} */
-                        ok: true;
-                        /** @enum {string} */
-                        status: "started" | "paused" | "completed" | "abandoned";
-                    };
-                };
-            };
-            /** @description Malformed request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description State or version conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Semantic validation failed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Rate limited */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Internal error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    createReviewAttemptLegacy: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    activation_intent?: {
-                        evaluation_id: string;
-                        expected_effective_id: string | null;
-                        expected_generation: number;
-                    };
-                    activity_ref: {
-                        id: string;
-                        /** @enum {string} */
-                        kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
-                    };
-                    /** @default [] */
-                    answer_image_refs?: string[];
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    /** @default false */
-                    auto_rate?: boolean;
-                    judge_provenance_token?: string;
-                    judge_result_v2?: {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "correct";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "incorrect";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {number} */
-                        score: 0;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "unsupported";
-                        /** @enum {number} */
-                        confidence: 0;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial_unknown";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        partial_units: {
-                            correct_count: number;
-                            scoring_unit_id: string;
-                            total_count: number;
-                        }[];
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    };
-                    judge_task_run_id?: string;
-                    latency_ms?: number | null;
-                    mistake_id?: string;
-                    part_ref?: string | null;
-                    question_id?: string;
-                    /** @enum {string} */
-                    rating: "again" | "hard" | "good";
-                    reasoning_trace?: string | null;
-                    /** @default [] */
-                    referenced_knowledge_ids?: string[];
-                    response_md?: string | null;
-                    self_confidence?: number | null;
-                    self_report?: boolean;
-                    session_id?: string | null;
-                    stream_item_id?: string | null;
-                } | {
-                    activation_intent?: {
-                        evaluation_id: string;
-                        expected_effective_id: string | null;
-                        expected_generation: number;
-                    };
-                    activity_ref?: {
-                        id: string;
-                        /** @enum {string} */
-                        kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
-                    };
-                    /** @default [] */
-                    answer_image_refs?: string[];
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    /** @default false */
-                    auto_rate?: boolean;
-                    judge_provenance_token?: string;
-                    judge_result_v2?: {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "correct";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "incorrect";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {number} */
-                        score: 0;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "unsupported";
-                        /** @enum {number} */
-                        confidence: 0;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial_unknown";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        partial_units: {
-                            correct_count: number;
-                            scoring_unit_id: string;
-                            total_count: number;
-                        }[];
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    };
-                    judge_task_run_id?: string;
-                    latency_ms?: number | null;
-                    mistake_id?: string;
-                    part_ref?: string | null;
-                    question_id: string;
-                    /** @enum {string} */
-                    rating: "again" | "hard" | "good";
-                    reasoning_trace?: string | null;
-                    /** @default [] */
-                    referenced_knowledge_ids?: string[];
-                    response_md?: string | null;
-                    self_confidence?: number | null;
-                    self_report?: boolean;
-                    session_id?: string | null;
-                    stream_item_id?: string | null;
-                } | {
-                    activation_intent?: {
-                        evaluation_id: string;
-                        expected_effective_id: string | null;
-                        expected_generation: number;
-                    };
-                    activity_ref?: {
-                        id: string;
-                        /** @enum {string} */
-                        kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
-                    };
-                    /** @default [] */
-                    answer_image_refs?: string[];
-                    assessment?: {
-                        evaluation_group_id: string;
-                        /** @default [] */
-                        group_evidence?: {
-                            evidence: {
-                                asset: {
-                                    asset_id: string;
-                                    digest: string;
-                                };
-                                bytes: number;
-                                evidence_id: string;
-                                /** @enum {string} */
-                                kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                mime_type: string;
-                                /** Format: date-time */
-                                uploaded_at: string;
-                            };
-                            target: {
-                                /** @enum {string} */
-                                scope: "all_units";
-                            } | {
-                                /** @enum {string} */
-                                scope: "units";
-                                scoring_unit_ids: string[];
-                            };
-                        }[];
-                        idempotency_key: string;
-                        issuance_id: string;
-                        response_set: {
-                            /** @default [] */
-                            entries?: ({
-                                /** @enum {string} */
-                                kind: "choice";
-                                /** @default [] */
-                                option_ids?: string[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "text";
-                                self_confidence?: number;
-                                slot_id: string;
-                                text_md: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "numeric";
-                                raw_input?: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                                value: number | null;
-                            } | {
-                                /** @enum {string} */
-                                kind: "formula";
-                                latex: string;
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "matching";
-                                /** @default [] */
-                                pairs?: {
-                                    item_id: string;
-                                    option_id: string;
-                                }[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_order?: string[];
-                                /** @enum {string} */
-                                kind: "ordering";
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                evidence?: {
-                                    asset: {
-                                        asset_id: string;
-                                        digest: string;
-                                    };
-                                    bytes: number;
-                                    evidence_id: string;
-                                    /** @enum {string} */
-                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
-                                    mime_type: string;
-                                    /** Format: date-time */
-                                    uploaded_at: string;
-                                }[];
-                                /** @enum {string} */
-                                kind: "open";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @default  */
-                                text_md?: string;
-                            } | {
-                                /** @enum {string} */
-                                kind: "sentence_breaks";
-                                /** @default [] */
-                                positions?: number[];
-                                self_confidence?: number;
-                                slot_id: string;
-                            } | {
-                                /** @default [] */
-                                item_ids?: string[];
-                                /** @enum {string} */
-                                kind: "select";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                            } | {
-                                /** @enum {string} */
-                                kind: "blank";
-                                self_confidence?: number;
-                                slot_id: string;
-                                /** @enum {string} */
-                                state: "answered" | "blank" | "unknown";
-                                /** @default  */
-                                text?: string;
-                            })[];
-                        };
-                        submission_id?: string;
-                    };
-                    /** @default false */
-                    auto_rate?: boolean;
-                    judge_provenance_token?: string;
-                    judge_result_v2?: {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "correct";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        score: number;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "incorrect";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {number} */
-                        score: 0;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "unsupported";
-                        /** @enum {number} */
-                        confidence: 0;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    } | {
-                        capability_ref: {
-                            id: string;
-                            version: string;
-                        };
-                        /** @enum {string} */
-                        coarse_outcome: "partial_unknown";
-                        confidence: number;
-                        evidence_json: {
-                            [key: string]: unknown;
-                        };
-                        feedback_md: string;
-                        partial_units: {
-                            correct_count: number;
-                            scoring_unit_id: string;
-                            total_count: number;
-                        }[];
-                        /** @enum {string|null} */
-                        score: null;
-                        /** @enum {string} */
-                        score_meaning: "correctness" | "mastery_estimate" | "rubric_weighted" | "external_verdict" | "steps_v1_weighted" | "unit_dimension_v1";
-                    };
-                    judge_task_run_id?: string;
-                    latency_ms?: number | null;
-                    mistake_id: string;
-                    part_ref?: string | null;
-                    question_id?: string;
-                    /** @enum {string} */
-                    rating: "again" | "hard" | "good";
-                    reasoning_trace?: string | null;
-                    /** @default [] */
-                    referenced_knowledge_ids?: string[];
-                    response_md?: string | null;
-                    self_confidence?: number | null;
-                    self_report?: boolean;
-                    session_id?: string | null;
-                    stream_item_id?: string | null;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        assessment: {
-                            activation_intent: {
-                                evaluation_id: string;
-                                expected_effective_id: string | null;
-                                expected_generation: number;
-                            };
-                            candidate_id: string;
-                            /** @enum {string|null} */
-                            effect: "applied" | "ineligible" | "failed_pending" | "idempotent_replay" | null;
-                            evaluation_group_id: string;
-                            submission_id: string;
-                        };
-                        judge: (({
-                            auto_rated: boolean;
-                            capability_ref: {
-                                id: string;
-                                version: string;
-                            };
-                            /** @enum {string} */
-                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
-                            confidence: number;
-                            evidence_json: {
-                                [key: string]: unknown;
-                            };
-                            feedback_md: string;
-                            judge_event_id: string | null;
-                            route: string;
-                            score: number | null;
-                            /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
-                            telemetry?: unknown;
-                        } & {
-                            [key: string]: unknown;
-                        }) | ({
-                            auto_rated: boolean;
-                            capability_ref: {
-                                id: string;
-                                version: string;
-                            };
-                            /** @enum {string} */
-                            coarse_outcome: "partial_unknown";
-                            confidence: number;
-                            evidence_json: {
-                                [key: string]: unknown;
-                            };
-                            feedback_md: string;
-                            judge_event_id: string | null;
-                            partial_units: {
-                                correct_count: number;
-                                scoring_unit_id: string;
-                                total_count: number;
-                            }[];
-                            route: string;
-                            /** @enum {string|null} */
-                            score: null;
-                            /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
-                            telemetry?: unknown;
-                        } & {
-                            [key: string]: unknown;
-                        })) | null;
-                        review_event: {
-                            id: string;
-                        };
-                        /** @enum {string} */
-                        status: "effective" | "review_required";
-                    } | {
-                        judge: (({
-                            auto_rated: boolean;
-                            capability_ref: {
-                                id: string;
-                                version: string;
-                            };
-                            /** @enum {string} */
-                            coarse_outcome: "correct" | "partial" | "incorrect" | "unsupported";
-                            confidence: number;
-                            evidence_json: {
-                                [key: string]: unknown;
-                            };
-                            feedback_md: string;
-                            judge_event_id: string | null;
-                            route: string;
-                            score: number | null;
-                            /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
-                            telemetry?: unknown;
-                        } & {
-                            [key: string]: unknown;
-                        }) | ({
-                            auto_rated: boolean;
-                            capability_ref: {
-                                id: string;
-                                version: string;
-                            };
-                            /** @enum {string} */
-                            coarse_outcome: "partial_unknown";
-                            confidence: number;
-                            evidence_json: {
-                                [key: string]: unknown;
-                            };
-                            feedback_md: string;
-                            judge_event_id: string | null;
-                            partial_units: {
-                                correct_count: number;
-                                scoring_unit_id: string;
-                                total_count: number;
-                            }[];
-                            route: string;
-                            /** @enum {string|null} */
-                            score: null;
-                            /** @enum {string|null} */
-                            suggested_rating: "again" | "hard" | "good" | null;
-                            telemetry?: unknown;
-                        } & {
-                            [key: string]: unknown;
-                        })) | null;
-                        new_state: {
-                            difficulty: number;
-                            /** Format: date-time */
-                            due: string;
-                            elapsed_days?: number;
-                            lapses: number;
-                            /** Format: date-time */
-                            last_review: string | null;
-                            learning_steps: number;
-                            reps: number;
-                            scheduled_days: number;
-                            stability: number;
-                            /** @enum {string} */
-                            state: "new" | "learning" | "review" | "relearning";
-                        } & {
-                            [key: string]: unknown;
-                        };
-                        next_due_at: number;
-                        review_event: {
-                            activity_ref: {
-                                id: string;
-                                /** @enum {string} */
-                                kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
-                            };
-                            correction_state: {
-                                chain: {
-                                    correction_event_id: string | null;
-                                    event_id: string;
-                                    replacement_event_id: string | null;
-                                    /** @enum {string} */
-                                    state: "active" | "retracted" | "marked_wrong" | "superseded";
-                                }[];
-                                correction_event_id: string | null;
-                                effective_event_id: string | null;
-                                original_event_id: string;
-                                replacement_event_id: string | null;
-                                /** @enum {string} */
-                                state: "active" | "retracted" | "marked_wrong" | "superseded" | "missing" | "cycle";
-                                /** @enum {string} */
-                                terminal_state: "active" | "retracted" | "marked_wrong" | "missing" | "cycle";
-                            };
-                            /** Format: date-time */
-                            created_at: string;
-                            /** Format: date-time */
-                            due_at_next: string;
-                            fsrs_state_after: {
-                                difficulty: number;
-                                /** Format: date-time */
-                                due: string;
-                                elapsed_days?: number;
-                                lapses: number;
-                                /** Format: date-time */
-                                last_review: string | null;
-                                learning_steps: number;
-                                reps: number;
-                                scheduled_days: number;
-                                stability: number;
-                                /** @enum {string} */
-                                state: "new" | "learning" | "review" | "relearning";
-                            } & {
-                                [key: string]: unknown;
-                            };
-                            fsrs_subject_ids: string[];
-                            /** @enum {string} */
-                            fsrs_subject_kind: "question" | "knowledge";
-                            id: string;
-                            latency_ms: number | null;
-                            question_id: string;
-                            /** @enum {string} */
-                            rating: "again" | "hard" | "good";
-                            response_md: string | null;
-                        };
-                    };
-                };
-            };
-            /** @description Successful response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        backfill: {
-                            /** @enum {string} */
-                            channel: "sse";
-                            poll_url: string;
-                            url: string;
-                        };
-                        run_id: string;
-                        /** @enum {string} */
-                        verdict: "pending";
                     };
                 };
             };

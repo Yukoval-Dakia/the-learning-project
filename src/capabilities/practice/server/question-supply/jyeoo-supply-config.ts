@@ -1,81 +1,51 @@
-// jyeoo-rs 供给常量与环境读取（YUK-986 / Supply-Agent/1 瘦身版）。
-//
-// YUK-697 的旧机器面（JYEOO_FETCH_ENABLED kill switch、subject-profile jyeooSupply
-// 声明、--dg 难度 token、dispatcher 可派性闸）已随 queue 形态退役——producer 经济学
-// （grade 路线无 keyword/无 --dg，无法按 KC 定向；40 题/日/账号谨慎档）与逐目标
-// dispatcher 派发根本不兼容。供给改由 agent tool 链承载：
-//   server/tools/jyeoo-fetch-candidates.ts  → grade 路线抓自包含候选（budget 租约）
-//   server/tools/store-sourced-question.ts  → 统一 commit seam（dedup/verify 权威）
-// 本文件只剩 tool 链消费的常量与 producer binary/spawn 环境读取。
+// Constants and spawn env for the jyeoo agent tool chain. The producer's grade route
+// cannot target a KC and its daily account budget does not fit per-target dispatch;
+// candidates are fetched by tools/jyeoo-fetch-candidates.ts and committed through
+// tools/store-sourced-question.ts.
 
-// 来源路由常量（与 sourcing_web / quiz_gen 同族）——difficulty_evidence.source_route、
-// provenance 与 SupplyProducerRoute 词表沿用该字面量（retirement 后仍是合法值）。
+// Shared route literal with sourcing_web / quiz_gen; still a valid provenance value.
 export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch';
-// jyeoo 题面里的本地/远程图在入库前必须本地化到 loom 资产；URL 不允许引用外站图床。
+// Question images must be localized into loom assets before ingestion; no off-site URLs.
 export const JYEOO_SOURCE_HOST = 'www.jyeoo.com';
 
 import { homedir } from 'node:os';
 import { getConfig, resolveConfigValue } from '@/core/config/store';
 
-// Binary resolution: JYEOO_RS_BINARY wins; otherwise use the repo default
-// (~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs). 本地 smoke 与生产 worker
-// 同一路径约定。
+// JYEOO_RS_BINARY wins; otherwise the path shared by local smoke runs and the worker.
 export function jyeooBinaryPath(): string {
-  // YUK-1007：DB > env > code-default(仓库默认路径)。
   const resolved = getConfig('JYEOO_RS_BINARY');
   if (typeof resolved === 'string' && resolved.trim().length > 0) return resolved;
   return `${homedir()}/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs`;
 }
 
-// Spawn bounds (functions, not module-load consts, so tests can set env per-case).
-//
-// 超时按 caller 语义区分（YUK-998）：grade 路线内容拉取 ~45s+/题串行（YUK-989 复验
-// 实测 `pnpm jyeoo:backfill --max 4` 在 120s 默认下被 SIGKILL、丢 2 题已烧预算；
-// JYEOO_SPAWN_TIMEOUT_MS=900000 复验 4/4 inserted）。
-//   - in-band caller（jyeoo_fetch_candidates tool / supply_execute executor 路由）
-//     走 jyeooSpawnTimeoutMs —— JYEOO_SPAWN_TIMEOUT_MS 默认 120s 是反卡死上界：
-//     拉 N 题的会话须由 operator 把该 env 抬到 ≥ N×90s 档（见下方每题配额注释）。
-//   - 手动批量 backfill（pnpm jyeoo:backfill）走 jyeooBackfillSpawnTimeoutMs ——
-//     自带按批大小适配的默认，不再默默继承 120s 在内容拉取中途 SIGKILL 丢整批。
-//
-// 所有 JYEOO_SPAWN_* / JYEOO_BACKFILL_TIMEOUT_MS 均 Number.parseInt 直通：非数字
-// 垃圾值 → NaN、非正值 → spawnJyeooFetch 边界校验拒绝（fail-closed，记 'spawn'
-// failure）——该语义经 YUK-990 裁决接受，仅文档化，不做 env 侧纠偏。
+// Functions rather than module-load constants so tests can vary env per case.
+// Grade-route fetches run ~45s+/question serially, so callers fetching N questions must
+// raise JYEOO_SPAWN_TIMEOUT_MS to at least N×90s; the 120s default is only an anti-hang
+// bound. Manual backfill uses jyeooBackfillSpawnTimeoutMs, which scales with batch size.
+// Numeric env values pass through Number.parseInt: garbage becomes NaN and non-positive
+// values are rejected at the spawn boundary (fail-closed, recorded as a spawn failure).
 export function jyeooSpawnTimeoutMs(): number {
-  // YUK-1007：DB > env > code-default(120s)；NaN 直通保 YUK-990 fail-closed。
   const v = getConfig('JYEOO_SPAWN_TIMEOUT_MS');
   return typeof v === 'number' ? v : 120_000;
 }
 
-/**
- * backfill 默认超时的每题配额：producer 题间节奏实测 ~45s/题（含 jitter），×2 覆盖
- * 发现侧 pages/papers 遍历开销。默认 `--max 10` ⇒ 900s，即 YUK-989 复验实证可通过
- * 的 900000ms 档。
- */
+/** Per-question backfill budget: observed ~45s/question including jitter, doubled for discovery. */
 export const JYEOO_BACKFILL_PER_QUESTION_MS = 90_000;
 
 /**
- * `pnpm jyeoo:backfill`（批量 caller）的 spawn 超时解析，优先级：
- *   1. JYEOO_BACKFILL_TIMEOUT_MS —— backfill 专属显式覆盖（最高优先）；
- *   2. JYEOO_SPAWN_TIMEOUT_MS —— 共享 spawn 边界；operator 显式设置时对 backfill
- *      同样生效（YUK-989 复验即用此 env=900000）；
- *   3. sessionMax × JYEOO_BACKFILL_PER_QUESTION_MS —— 按批大小自适配默认，
- *      覆盖默认参数下的典型运行（--max 10 ⇒ 900s；--max 40 ⇒ 3600s）。
- * 空串视同未设置（继续下探）；非数字/非正值直通 NaN → spawn fail-closed（同上注释）。
- * 手动给值的推荐下界：本批 session_max × 90s。
+ * Backfill spawn timeout, in priority order: explicit JYEOO_BACKFILL_TIMEOUT_MS, then a
+ * configured JYEOO_SPAWN_TIMEOUT_MS, then sessionMax × JYEOO_BACKFILL_PER_QUESTION_MS.
+ * An empty string counts as unset; garbage or non-positive values fail closed at spawn.
  */
 export function jyeooBackfillSpawnTimeoutMs(sessionMax: number): number {
-  // YUK-1007：DB(BACKFILL) > env(BACKFILL) > DB(SPAWN) > env(SPAWN) > 派生默认。
-  // 「未设置」= source 非 db/env（code-default）→ 下探一层。
+  // Unset means neither DB nor env supplied the key; code defaults fall through.
   const backfill = resolveConfigValue('JYEOO_BACKFILL_TIMEOUT_MS');
   if (backfill.source === 'db' || backfill.source === 'env') return backfill.value as number;
   const spawn = resolveConfigValue('JYEOO_SPAWN_TIMEOUT_MS');
   if (spawn.source === 'db') return spawn.value as number;
   if (spawn.source === 'env') {
-    // SPAWN 键的双面语义（迁移前 `env.BACKFILL || env.SPAWN` 链）：直读 reader
-    // （jyeooSpawnTimeoutMs）对 '' 是 YUK-990 的 NaN 直通；本链把 '' 当未设置
-    // 下探推导默认。DB 层不可能是 ''（zod int positive），只有 env 层需要这支；
-    // 非数字垃圾仍 NaN 直通 fail-closed（registry envParse 语义）。
+    // The direct reader passes '' through as NaN; the backfill chain treats it as unset
+    // and derives a default. Only env can hold '', since DB values are positive ints.
     if (process.env.JYEOO_SPAWN_TIMEOUT_MS !== '') return spawn.value as number;
   }
   return sessionMax * JYEOO_BACKFILL_PER_QUESTION_MS;

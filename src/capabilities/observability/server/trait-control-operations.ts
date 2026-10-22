@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { Db } from '@/db/client';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
-import * as writers from '@/server/subjects/trait-write';
+import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import type { SubjectTraitKind } from '@/subjects/trait-schemas';
 import {
   AdminSubjectTraitParamsSchema,
@@ -11,6 +10,7 @@ import {
   ResetAdminTraitBodySchema,
   RollbackAdminTraitBodySchema,
 } from '../api/trait-write-contracts';
+import * as writers from './trait-write';
 
 export {
   AdminSubjectTraitParamsSchema,
@@ -21,8 +21,8 @@ export {
   RollbackAdminTraitBodySchema,
 };
 
-// The HTTP edit shells accept absent/unknown payloads. The writer validates them
-// in its existing order and returns invalid (422), rather than a body error (400).
+// The edit shells accept absent or unknown payloads; the writer validates them and
+// returns 422 rather than a body error.
 export const EditSubjectTraitInputSchema = z.object({
   expectedSubjectRevision: z.number().int().nonnegative(),
   expectedTraitRevision: z.number().int().nonnegative(),
@@ -41,14 +41,13 @@ export type RebindSubjectTraitInput = SubjectTraitInput &
 export type EditSharedTraitInput = { traitId: string } & z.infer<typeof EditSharedTraitInputSchema>;
 export type RollbackTraitInput = { traitId: string } & z.infer<typeof RollbackAdminTraitBodySchema>;
 export type ResetTraitToSeedInput = { traitId: string } & z.infer<typeof ResetAdminTraitBodySchema>;
-export type { FanoutIssue, TraitWriteResult } from '@/server/subjects/trait-write';
+export type { FanoutIssue, TraitWriteResult } from './trait-write';
 
 async function hydrateCommittedResult(
   db: Db,
   result: writers.TraitWriteResult,
 ): Promise<writers.TraitWriteResult> {
-  // Each original writer resolves after its own transaction commits. The original
-  // hydrator catches query failures and preserves last-good; never retry here.
+  // Hydrate after the writer's commit; the hydrator preserves last-good on failure.
   if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
   return result;
 }

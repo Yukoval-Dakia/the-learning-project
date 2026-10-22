@@ -13,9 +13,8 @@ export async function GET(
     });
     if (!parsed.success) return Response.json({ error: 'validation_error' }, { status: 400 });
     const rows = await loadTreeSnapshot(db, parsed.data.subject);
-    // YUK-897 — learner-facing projection: the shared snapshot intentionally
-    // retains synthetic:* seed scaffolding for internal jobs; exclusion happens
-    // here, at the API boundary, after snapshot enrichment.
+    // The snapshot keeps synthetic seed scaffolding for internal jobs; hide it at
+    // the learner-facing boundary.
     const learnerRows = rows.filter((r) => isLearnerVisibleKnowledgeId(r.id));
     return Response.json({ rows: learnerRows });
   } catch (err) {

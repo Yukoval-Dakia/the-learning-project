@@ -1,15 +1,15 @@
-// YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask LLM 输出形状。
+// SelectionOrchestratorTask LLM 输出形状。
 //
-// 档2（ADR-0042 编排档2 amendment, docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）：LLM 是**主脑**。
+// 档2（ADR-0042 编排档2, docs/adr/0042-mfi-selection-signal-three-layer-engine.md:46-68）：LLM 是**主脑**。
 // 它对每个**非到期**候选输出 { weight≥0, role, arrangement?, reason }——选哪些、怎么排、
-// 为什么。一个薄 tempered-softmax sampler（Step C）把 weight → π_i（inclusion prob）。
+// 为什么。一个薄 tempered-softmax sampler 把 weight → π_i（inclusion prob）。
 // 只要 T>0，每个正权重候选 π_i>0（满足 positivity）。
 //
 // 范围铁律（ADR-0042:58）：LLM **不碰到期项**（due 项相对序 + presence 是 L1 确定性
 // 契约）。本 task 只给**非到期候选**加权/排序。到期项不在 candidates 输入里、也不该
 // 出现在输出里——parse barrier 用 inputRefIds 做 ⊆ 校验兜底。
 //
-// 解析 barrier + 分桶输入格式化器在 src/server/ai/selection-orchestrator.ts。
+// 解析 barrier + 分桶输入格式化器在 src/capabilities/practice/server/selection-orchestrator.ts。
 // schema 名（StructuredOutput / brace-slice 两路都用）= SelectionOrchestratorDraft。
 
 import { z } from 'zod';

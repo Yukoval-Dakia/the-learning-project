@@ -140,7 +140,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge (LIVE) ----
   {
     table: 'knowledge',
-    file: 'src/server/projections/knowledge.ts',
+    file: 'src/kernel/records/knowledge-node-materialization.ts',
     marker: '.insert(knowledge)',
     role: 'throat',
     note: 'projection write-through shell — the fold row writer for knowledge (ADR-0044 W1, LIVE).',
@@ -189,7 +189,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- learning_item (canonical, YUK-973) ----
   {
     table: 'learning_item',
-    file: 'src/server/projections/learning_item.ts',
+    file: 'src/kernel/records/learning-items.ts',
     marker: '.insert(learning_item)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -312,24 +312,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- question_block (switchable; actual deployment flags are checked separately) ----
   {
     table: 'question_block',
-    file: 'src/server/projections/question_block.ts',
+    file: 'src/kernel/records/question-block-projection.ts',
     marker: '.insert(question_block)',
     role: 'throat',
     note: 'QuestionBlock projection write-through shell; activation is runtime-specific.',
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/auto-enroll.ts',
+    file: 'src/kernel/records/question-block-transitions.ts',
     marker: '.update(question_block)',
     role: 'event-native-by-caller',
-    note: 'Enrollment transaction pairs imported block links/status/version with a lifecycle event using the same timestamp.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/revert-auto-enroll.ts',
-    marker: '.update(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Revert transaction pairs restored block status/version with a lifecycle event, preserving nullable import references.',
+    note: 'Accepted import, ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
   },
   {
     table: 'question_block',
@@ -387,6 +380,13 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
     marker: '.update(item_calibration)',
     role: 'off-path-writer',
     note: 'recalibrateQuestion b_calib firm-up UPDATE (OFF-path sole writer — post-anchor writes surface as audit drift, the documented 方案 A boundary).',
+  },
+  {
+    table: 'item_calibration',
+    file: 'src/server/mastery/joint-calibration.ts',
+    marker: '.update(item_calibration)',
+    role: 'off-path-writer',
+    note: 'YUK-439 joint-calibration batch posterior UPDATE (b_post/posterior_variance/calibration_n/calibration_weight/calibration_source/last_calibrated_at — the production b writer; post-anchor writes surface as audit drift, the documented 方案 A boundary, same as the retired b_calib firm-up).',
   },
 ];
 

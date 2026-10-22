@@ -1,12 +1,10 @@
-// YUK-1445 (Stage 1 / G1) — dual independent solve + source cross-check.
-//
+// (Stage 1 / G1) — dual independent solve + source cross-check.
 // 两次解题互相隔离：各自经 runTask 起全新任务（不复用 session/replay，
 // 第二次看不到第一次输出，也看不到参考答案/学习者作答/印出判分规则文本 ——
 // solve 输入里根本不携带这些面：rule_reference.statement_md 等印出文本
 // 只进独立的 source_crosscheck lane）。第二解的模型/提供方可由 caller 覆盖
 // （异源与否是 owner 决策，配置面在 job 层；缺省同一 registry 模型、独立
 // 上下文）。
-//
 // 已有作者键时，模型的最终答案交给这道题的生产判分器决定是否接受。
 // 没有作者键时，两次求解仍只比 typed 键来铸键。印出答案原文只在独立的
 // source_crosscheck mode 里作交叉核验 —— conflict/unknown 都阻断准入。
@@ -35,8 +33,10 @@ import type {
   ScoringUnitCriterionT,
   ScoringUnitT,
 } from '@/core/schema/assessment/scoring';
+import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   QuestionAdmissionSolveInput,
@@ -49,11 +49,9 @@ import {
   type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// YUK-1445 — Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
-// server/ai 边持有者）取，taskInputHash 经 judge-execution-provenance 的既有
-// 复导出取 —— 不新增 capability→server/ai 依赖边（audit:capability-boundaries）。
-import { taskInputHash } from '../judge/judge-execution-provenance';
-import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
+// Provider/TaskTextResult 经 verify-framework（既有
+// server/ai 边持有者）取；输入 hash 直接使用 core 的完整规范化算法。
+import type { Provider, TaskTextResult } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 
@@ -121,7 +119,7 @@ class UnparsedSolveError extends Error {
 const SUBMIT_TOOL_NAME = 'mcp__structured_output__submit';
 
 /**
- * YUK-1547 — when a structured submit reaches the capability but fails the
+ * when a structured submit reaches the capability but fails the
  * schema/parse layer, keep the exact submit arguments (bounded) as a
  * tool_call_log row attached to that task run, and return the full-payload
  * digest so the thrown error / unresolved_reason can be matched back to it.
@@ -232,7 +230,7 @@ function solverUnits(
               format: slot.format,
               ...(slot.unit_hint != null ? { unit_hint: slot.unit_hint } : {}),
               ...(answerKind != null ? { answer_kind: answerKind } : {}),
-              // YUK-1568 第 2 片：公开输入语义随 solve 载荷下发（不携带任何
+              // 第 2 片：公开输入语义随 solve 载荷下发（不携带任何
               // 答案/端点/容差 —— 那些在私有 scoring key 里）。
               ...(slot.answer_shape != null ? { answer_shape: slot.answer_shape } : {}),
             }
@@ -347,7 +345,7 @@ function privateKeyOf(key: AdmissionKey): DeclaredPrivateKey | null {
 }
 
 /**
- * 已声明槽的 A/B 键一致性（YUK-1568 第 2 片）：两侧【全部】别名经同一
+ * 已声明槽的 A/B 键一致性（第 2 片）：两侧【全部】别名经同一
  * compileDeclaredKey 编译，每个别名必须完整解析且为同一数学对象（别名数
  * 可不同）；铸出的键携带全部已验证别名 —— 实际 grade 逐一接受。
  * 返回 null = 交由既有分支（numeric/numeric 容差铸键，单位相容已验）。
@@ -468,7 +466,7 @@ export function keysAgree(
     // numeric/numeric 且单位/形态已验相容 → 落到既有容差铸键分支。
   }
   if (a.kind !== b.kind) {
-    // YUK-1547 — blank_text vs blank_numeric may still describe ONE key: every
+    // blank_text vs blank_numeric may still describe ONE key: every
     // accepted text form must read as a plain number under the SAME
     // deterministic parse the minted numeric key later applies in grading
     // (parseBlankNumericText; NFKC + trim + plain number, no units/separators),
@@ -669,7 +667,7 @@ function authorKeyAcceptsGrade(result: ScoringUnitResultT, points: number | null
 
 /**
  * 作者键是否接受模型的最终答案：走这道题自己的判分器，不另定相等。
- * YUK-1568 第 2 片：已声明槽位不只检查模型 accepted[0] —— 模型键与作者键
+ * 第 2 片：已声明槽位不只检查模型 accepted[0] —— 模型键与作者键
  * 的【全部】别名都必须被实际 grade 接受（作者键自身别名的编译完整性在
  * runDualSolve 的 seed 分支单独校验）。
  */
@@ -891,7 +889,7 @@ export async function runDualSolve(
       }
     }
     const authorKey = authorAdmissionKey(unit.seeded_criterion);
-    // YUK-1568 第 2 片：该槽冻结的 answer_shape（同一比较核心；无声明 → null
+    // 第 2 片：该槽冻结的 answer_shape（同一比较核心；无声明 → null
     // → 旧路径逐字不变）。
     const shapeSlot = definition.response_spec.slots.find((s) => s.slot_id === unit.slot_refs[0]);
     const declaredShape =
@@ -900,7 +898,7 @@ export async function runDualSolve(
         : null;
     if (unit.seeded_criterion != null) {
       // 作者键自身别名先过同一编译器：任一别名不完整/互不一致/与声明冲突
-      //（单位缺项等）→ 契约级冲突，不铸键、不进入后续核验。
+      // （单位缺项等）→ 契约级冲突，不铸键、不进入后续核验。
       if (declaredShape != null && unit.seeded_criterion.kind === 'blank_key') {
         const authorCompile = compileDeclaredKey(declaredShape, unit.seeded_criterion.key);
         if (!authorCompile.ok) {

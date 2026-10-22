@@ -1,21 +1,19 @@
-// YUK-390 kind Step 3 — idempotent answer_class backfill. Materializes the
-// answer-class verification tag (deriveAnswerClass) into question.answer_class
-// for rows where it IS NULL. Pure derivation (no API call), unlike embed_backfill.
-// Idempotent: only touches answer_class IS NULL rows; a second run with none left
-// is a no-op.
+// Idempotent answer_class backfill. Materializes the answer-class verification
+// tag (deriveAnswerClass) into question.answer_class for rows where it IS NULL.
+// Pure derivation (no API call), unlike embed_backfill. Only NULL rows are
+// touched, so a second run with none left is a no-op.
 //
-// Dirty-kind handling (read-side only): question.kind has leaked profile-vocab
-// values (e.g. 'single_choice'/'calculation', see question-kind.ts:120-126). We
-// normalize to canonical IN-MEMORY via normalizeToCanonicalKind purely to derive
-// the right answer_class — this job does NOT rewrite the kind column (that cleanup
-// is Step 3 PR B). choices-first in deriveAnswerClass means choice-typed dirty
-// rows classify correctly regardless; unknown kinds fall through to semantic.
+// question.kind has leaked profile-vocab values (e.g. 'single_choice' /
+// 'calculation'); we normalize to canonical IN-MEMORY purely to derive the right
+// answer_class and never rewrite the kind column. choices-first in
+// deriveAnswerClass means choice-typed dirty rows classify correctly regardless;
+// unknown kinds fall through to semantic.
 //
-// SCOPE — NULL-backfill only. answer_class is DERIVED from kind/choices_md/
-// rubric_json; an editQuestion that rewrites those leaves answer_class stale until
-// re-derived. on-write@insert (the 12 insert(question) sites) + re-derive@edit are
-// a deferred follow-up — deriveAnswerClass is pure+cheap, so a future insert-site
-// hook / trigger / re-derive pass can keep it fresh trivially. Do not bolt on here.
+// NULL-backfill only: answer_class is DERIVED from kind/choices_md/rubric_json,
+// so an editQuestion that rewrites those leaves it stale until re-derived.
+// on-write@insert + re-derive@edit are a deferred follow-up — deriveAnswerClass
+// is pure and cheap, so a future hook can keep it fresh trivially. Do not bolt
+// that on here.
 
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';

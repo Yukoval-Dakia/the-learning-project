@@ -1,19 +1,5 @@
-// YUK-471 Wave 1 PR-A1 — knowledge_edge fold reducer (PURE, behavior-preserving).
-//
-// This is the EASY half of the first structural fold (PR-A1): a pure reducer that
-// projects a `knowledge_edge` row from the event log. It is NOT YET WIRED into any
-// runtime path — no double-write, no SoT flip (those land in PR-A2/PR-B). PR-A2's
-// IO shell will: read events for (subject_kind='knowledge_edge', subject_id=edgeId),
-// wrap each DB row as a FoldEvent, read the live-edge set for topology, and call
-// this reducer.
-//
-// PURE contract: no IO / no DB / no newId / no Date. The `created_at`/`id` row
-// metadata and the live topology mesh are PASSED IN. Event ordering is handled
-// internally (see byCreatedThenId) so the caller does not have to pre-sort.
-//
-// The projected-row shape is imported from genesis.ts (ONE shared contract — the
-// seed and the fold output cannot drift). KnowledgeEdgeRowSnapshot has NO `version`
-// column (unlike knowledge); edges have no embed_* columns.
+// Pure knowledge-edge reducer. No IO or clocks: the live mesh is passed in and events
+// are sorted internally. The row shape is shared with genesis; edges have no version.
 
 import { z } from 'zod';
 import {
@@ -24,18 +10,7 @@ import {
 import { checkEdgeTopology } from '@/core/topology-gate';
 import type { FoldEvent } from './fold-event';
 
-// ---------- FoldEvent ----------
-//
-// The reducer consumes the flat `event`-row projection from ./fold-event (the SAME
-// shape the node reducer consumes and PR-A2's IO shell builds — ONE shared envelope,
-// no divergence between the two folds). The parsed Event-union member is
-// reconstructed per-branch via safeParse (toParseInput), mirroring corrections.ts
-// rowToCorrectEventInput, rather than trusting an unvalidated payload.
-
-// toParseInput — reconstruct the Zod parse input from the flat FoldEvent columns
-// (mirrors the node reducer's helper + corrections.ts rowToCorrectEventInput) so the
-// genesis branch can feed the dedicated GenesisExperimental schema (which enforces
-// the subject_kind<->row-shape + subject_id<->row.id superRefine coherence).
+// Rebuild the parse input from the flat row; genesis's superRefine checks coherence.
 function toParseInput(fe: FoldEvent): unknown {
   return {
     actor_kind: fe.actor_kind,
@@ -49,9 +24,7 @@ function toParseInput(fe: FoldEvent): unknown {
   };
 }
 
-// Stable (created_at asc, id asc) comparator — the canonical event read order
-// (identical tiebreak to the node reducer + corrections.ts). The reducer sorts
-// internally so a caller that forgets to pre-sort still gets a correct projection.
+// Canonical event order; sorting internally means callers need not pre-sort.
 function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
   const ta = a.created_at.getTime();
   const tb = b.created_at.getTime();
@@ -59,15 +32,8 @@ function byCreatedThenId(a: FoldEvent, b: FoldEvent): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-// ---------- generate-edge payload schema ----------
-//
-// The `generate`(knowledge_edge) event payload (actions.ts:509-516). Validated via
-// safeParse at the reducer boundary (consistency with the genesis branch + the node
-// reducer's per-branch safeParse) so a malformed payload is rejected rather than
-// silently producing an invalid row. All fields optional here; the create/archive
-// branches assert the ones THEY require (a create with a missing endpoint is skipped,
-// never projected with an empty-string field — an empty relation_type would also
-// make a malformed prerequisite edge silently bypass the topology gate).
+// Validate at the boundary; create/archive branches require their own fields. An empty
+// relation_type would bypass the topology gate, so it is never projected.
 const GenerateEdgePayload = z.object({
   edge_op: z.enum(['create', 'archive']).optional(),
   from_knowledge_id: z.string().min(1).optional(),
@@ -82,40 +48,13 @@ type GenerateEdgePayloadT = z.infer<typeof GenerateEdgePayload>;
 
 const ARCHIVE_EDGE_OP = 'archive';
 
-// ---------- ADR-0034 topology at fold-apply ----------
-//
-// ADR-0034 §2 — the write-time structural consistency gate (TOPOLOGY layer) is reused
-// VERBATIM here (checkEdgeTopology is a pure fn). The fold applies it when a
-// `generate`(create) event ADDS a LIVE prerequisite edge — the forward write path —
-// to catch a cycle / direction contradiction. This is STRUCTURAL only — NO LLM, NO
-// reconcile ring (reconcile lands at the live write chokepoint in PR-A2 per owner
-// fork (c); it is NOT a fold-apply concern, fold must stay deterministic).
-//
-// genesis seeds are TRUSTED ground truth and are NOT re-gated: a genesis backfill
-// reproduces an EXISTING already-live row (it passed whatever gate applied when it
-// was created); re-running topology during replay could reject a historically-valid
-// row and break the fold(genesis)==row invariant. So topology runs on `generate`
-// creates ONLY, never on genesis seeds or archive events.
-//
-// Verdict contract (src/core/topology-gate.ts:45-48):
-//   | { status: 'ok' } | { status: 'reject'; gate; reason } | { status: 'warn'; gate; reason }
-//   - 'reject' (cycle / direction_contradiction) → THROW (caller tx aborts).
-//   - 'warn' (transitive_redundancy) → proceed (row has no verdict column to stamp).
-//   - non-prerequisite → checkEdgeTopology returns ok; we skip the call entirely.
+// ADR-0034 topology gate runs only when a create adds a live prerequisite edge. Genesis
+// seeds are trusted and never re-gated; replay could reject a historically valid row.
+// Reject throws; warn proceeds because there is no verdict column.
 
 /**
- * Project a single `knowledge_edge` row from its event log.
- *
- * @param edgeId   The edge id to project (subject_id filter).
- * @param events   The edge's candidate events. Sorted INTERNALLY by (created_at asc,
- *                 id asc); caller order is not load-bearing. Events whose subject_id
- *                 !== edgeId are skipped.
- * @param liveMesh The set of currently-LIVE edges (archived_at IS NULL) to check
- *                 topology against when a create adds a LIVE prerequisite edge.
- *                 Supplied by the IO shell; kept pure.
- * @returns the projected row, or null if the edge has no matching (well-formed) events.
- * @throws when a create event adds a LIVE prerequisite edge that closes a cycle or
- *         reverses an existing prerequisite (ADR-0034 reject verdict).
+ * Project one edge; caller order is irrelevant. `liveMesh` is the currently live edge
+ * set used for topology. Throws when a prerequisite create violates ADR-0034.
  */
 export function foldKnowledgeEdge(
   edgeId: string,
@@ -127,21 +66,15 @@ export function foldKnowledgeEdge(
   let row: KnowledgeEdgeRowSnapshotT | null = null;
 
   for (const ev of ordered) {
-    // Subject filter — only fold events keyed to THIS edge.
     if (ev.subject_id !== edgeId) continue;
 
-    // genesis seed — TRUSTED ground truth. Validate the WHOLE event through
-    // GenesisExperimental (enforces subject_kind<->row-shape + subject_id<->row.id
-    // superRefine, matching the node reducer) so a seed whose id disagrees with the
-    // envelope, or whose row is the wrong shape, is rejected — not blindly cast.
+    // Genesis is trusted, but validate the whole event rather than casting blindly.
     if (ev.action === 'experimental:genesis' && ev.subject_kind === 'knowledge_edge') {
       const g = GenesisExperimental.safeParse(toParseInput(ev));
       if (!g.success) {
         warnMalformed('experimental:genesis', ev.id, g.error);
         continue;
       }
-      // Narrow the union row to the edge shape (subject_kind==='knowledge_edge' means
-      // superRefine already guaranteed it; this parse is the type-level narrowing).
       const seed = KnowledgeEdgeRowSnapshot.safeParse(g.data.payload.row);
       if (!seed.success) {
         warnMalformed('experimental:genesis(row)', ev.id, seed.error);
@@ -162,17 +95,11 @@ export function foldKnowledgeEdge(
       // ARCHIVE signal — generate event with payload.edge_op === 'archive'.
       if (payload.edge_op === ARCHIVE_EDGE_OP) {
         if (row !== null) {
-          // Stamp archived_at from the archive event's own created_at (mirrors
-          // archiveKnowledgeEdge's `new Date()` written in the same tx). Preserves
-          // the existing row's weight/reasoning/created_by.
+          // Archive time comes from the event; other columns are preserved.
           row = { ...row, archived_at: ev.created_at };
           continue;
         }
-        // Archive on an edge with no preceding create/seed in this slice (edge
-        // predates W1 and its genesis seed wasn't included). Defensive best-effort:
-        // PR-A2's IO shell is expected to always include the genesis seed, so this
-        // path should not trigger in practice. Require the structural fields — never
-        // project an empty-string row.
+        // No seed in the slice: best-effort row. Never project empty structural fields.
         if (!payload.from_knowledge_id || !payload.to_knowledge_id || !payload.relation_type) {
           warnMalformed('generate(archive)', ev.id, 'missing required edge fields, no prior row');
           continue;
@@ -181,17 +108,14 @@ export function foldKnowledgeEdge(
         continue;
       }
 
-      // CREATE — require the structural fields. Skip (do not project '') if absent:
-      // an empty relation_type would also make isPrerequisite a false-negative that
-      // silently bypasses the topology gate.
+      // CREATE — require structural fields; empty relation_type would bypass the gate.
       if (!payload.from_knowledge_id || !payload.to_knowledge_id || !payload.relation_type) {
         warnMalformed('generate(create)', ev.id, 'missing required edge fields');
         continue;
       }
 
       const projected = rowFromGenerateEvent(edgeId, ev, payload);
-      // ADR-0034 topology at fold-apply: a create ALWAYS yields a live edge
-      // (archived_at=null), so the gate runs on every prerequisite create.
+      // A create always yields a live edge, so the gate applies to every prerequisite create.
       if (projected.relation_type === 'prerequisite') {
         const verdict = checkEdgeTopology(
           {
@@ -204,9 +128,7 @@ export function foldKnowledgeEdge(
             to_knowledge_id: e.to_knowledge_id,
             relation_type: e.relation_type,
           })),
-          // This pure historical fold has no knowledge-node snapshot. The guarded
-          // write-through enforces the tree-pair invariant against live nodes; pass
-          // the empty fixture explicitly so omission can never disable the check by accident.
+          // No node snapshot in a historical fold; pass [] explicitly, never by omission.
           [],
         );
         if (verdict.status === 'reject') {
@@ -215,41 +137,23 @@ export function foldKnowledgeEdge(
               `(gate=${verdict.gate}): ${verdict.reason}`,
           );
         }
-        // 'warn' (transitive_redundancy) → proceed (no verdict column to stamp).
-        // 'ok' → proceed.
+        // 'warn' and 'ok' both proceed.
       }
       row = projected;
     }
-
-    // Unknown / irrelevant action for an edge row → skip (e.g. a rate event on the
-    // edge's proposal does not mutate the edge projection).
   }
 
   return row;
 }
 
-// ---------- row builders (pure) ----------
-
-// reasonOrNull — coerce an absent (null | undefined) reasoning to null. YUK-471 W1 PR-A2b
-// closed the lossy-encoding residual: the generate-event writer (actions.ts) now encodes
-// absent reasoning as `null` (matching the ROW's `?? null`), and GenerateKnowledgeEdge's
-// payload accepts `string | null | undefined`, so the event and the row agree byte-for-byte.
-// The fold no longer needs the old `'' → null` workaround — an explicitly-empty-string
-// reasoning is now a GENUINE '' (not a stand-in for absent) and is preserved verbatim, which
-// is the lossless behavior. This is a plain `?? null`.
+// Absent reasoning is null; an explicit empty string is genuine and preserved.
 function reasonOrNull(reasoning: string | null | undefined): string | null {
   return reasoning ?? null;
 }
 
 /**
- * Build a live edge row from a validated generate-CREATE payload.
- *
- * The generate event payload carries from/to/relation_type/weight/reasoning/
- * propose_event_id but NOT `created_by` (the row's created_by object, actions.ts:492-496
- * = `{ actor_kind, actor_ref, propose_event_id }`) — reconstructed here from the event
- * envelope's actor fields + the payload's propose_event_id. created_at is the event
- * row's own created_at (same-tx write). archived_at starts null (a create is live).
- * Callers guarantee from/to/relation_type are present (the create branch guards them).
+ * Build a live row from a validated create payload. created_by comes from the envelope
+ * plus propose_event_id; timestamps come from the same-tx event.
  */
 function rowFromGenerateEvent(
   edgeId: string,
@@ -277,12 +181,8 @@ function rowFromGenerateEvent(
 }
 
 /**
- * Best-effort archived row from an archive event with no preceding create/seed in the
- * slice. Defensive only — PR-A2's IO shell is expected to always include the genesis
- * seed for pre-W1 edges, making this unreachable. Callers guarantee from/to/relation_type
- * are present (the archive branch guards them). `weight` is unknown here (the archive
- * payload carries none), so it defaults to 1 like the table default; created_at falls
- * back to the archive event's own created_at (the true create timestamp was lost).
+ * Defensive archived row when no seed is in the slice. Weight and true create time are
+ * unknown, so created_at falls back to the archive event.
  */
 function archiveRowFromArchiveEvent(
   edgeId: string,

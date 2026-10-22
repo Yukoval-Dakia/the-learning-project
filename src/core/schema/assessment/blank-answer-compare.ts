@@ -7,7 +7,7 @@ import type { ResponseSpecT } from './response';
 import type { BlankKeyCriterionT, ScoringBasisT } from './scoring';
 
 // ====================================================================
-// YUK-1568（第 2 片）— 已声明 answer_shape 的封闭数学解释与比较核心
+// YUK-1568 — 已声明 answer_shape 的封闭数学解释与比较核心
 // ====================================================================
 //
 // 单一共享核心（设计 yuk1568-k1-answer-semantics-plan.md §3）：同一份解析/
@@ -44,7 +44,7 @@ const MAX_LINE_TERMS = 24;
 /**
  * 本比较器已实现的输入语法（按 value kind）。声明携带未实现的 notation
  * （如 finite_set 的 set_builder）即【未支持】—— 付费/发题闸继续拒绝，
-// 不因 schema 合法就视为已准入（设计 §5 切片 2 出口）。
+// 不因 schema 合法就视为已准入（设计 §5）。
  */
 const IMPLEMENTED_NOTATIONS: Readonly<
   Record<BlankAnswerShapeT['value']['kind'], readonly string[]>
@@ -205,7 +205,7 @@ const fail = (reason: string): DeclaredParseFailure => ({ ok: false, reason });
  * Unicode 减号 → '-'、乘号 → '*'、剥离全部空白（"5 / 2" → "5/2"）。
  * 保号保括号保否定：不删任何非空白字符、不做任何"容错"改写。
  *
- * R1 P1-2 修复：NFKC 会把上标/下标/分数字符折叠成普通数字（x²→x2、
+ * NFKC 会把上标/下标/分数字符折叠成普通数字（x²→x2、
  * 2²→22、½→1⁄2、x₀→x0）——那是"先丢语义再猜"。这些字符在规范化【之前】
  * 显式拒绝（准入编译与作答两入口共用本函数），绝不改写后继续解释；
  * 封闭语法解释不了的输入返回 undecidable/invalid 带具体 reason。
@@ -230,18 +230,18 @@ function normalizeMathInput(raw: string): DeclaredParseResult<string> {
 }
 
 /**
- * R2 单位 lane 分流（仅 compareDeclaredBlank 在 number + 声明 expected_unit
+ * 单位 lane 分流（仅 compareDeclaredBlank 在 number + 声明 expected_unit
  * 时使用；准入编译入口不消费作答，不受影响）。
  *
  * mathjs Unit.parse 的单位名允许数字（内建 m2=SURFACE、m3=VOLUME），旧路
  * 径在 convertUnitTo 内部 NFKC 后令 `3 m²`→`3 m2` 正确换算。整串上标拒绝
- * 先于单位换算运行会把这类旧支持作答全部打成 pending —— R2 判定的回归。
+ * 先于单位换算运行会把这类旧支持作答全部打成 pending。
  *
  * 但不能直接对带单位作答绕过 raw guard：mathjs 从串首读数值词法区
  * （[±][0-9.eE] 及前导空白），折叠字符落在该区内或紧邻其后时，NFKC 产物
  * 并入数值本身 —— `3² m`→`32 m`、`3e² m`→`3e2 m`、`²m`→`2 m`、
  * `３² m`→`32 m`（全角数字同样属数值区）、`3⁄4`→`3/4` —— 先丢语义再给
- * 分，与 P1-2 同类，必须仍拒绝。
+ * 分，必须仍拒绝。
  *
  * 判定：逐折叠字符检查其【之前】的全部 raw 前缀经 NFKC 后是否整段仍属数
  * 值区字符类 [+-0-9.eE\s]。若是（前缀可含全角数字/±/空白，均折回数值区字
@@ -294,7 +294,7 @@ function intervalIsEmpty(iv: Interval): boolean {
 }
 
 /** 规范化区间并集：丢空区间、排序、只合并真正相接/重叠的区间（缺点不吞）。
- * R1 P1-1 修复：并集语义下【同下端点的闭性必须合并】——`(0,1)∪[0,2)` 的
+ * 并集语义下【同下端点的闭性必须合并】——`(0,1)∪[0,2)` 的
  * 真实并集是 `[0,2)`（含 0），不能只改 hi 丢 loClosed；prev 已覆盖到 +∞ 的
  * 早 continue 分支同样先合并同下端点闭性（`(0,+∞)∪[0,+∞)=[0,+∞)`）。
  * 相邻双开区间的缺点仍保留不吞。 */
@@ -552,7 +552,7 @@ type LinearToken =
   | { type: 'id'; name: string }
   | { type: 'op'; op: string };
 
-/** R1 P1-3：compound 标记该数字 token 是词法层吸收了内部 '/' 的分数
+/** compound 标记该数字 token 是词法层吸收了内部 '/' 的分数
  * （源串含 "a/b"）。作为【独立系数】合法（3/2x），作为【除法除数】
  * 意味着源串是连续除法（x/2/3）——结合性有歧义，一律拒绝。 */
 function tokenizeLinear(text: string): DeclaredParseResult<LinearToken[]> {
@@ -661,7 +661,7 @@ function parseLinearExpression(
         i += 1;
         const d = tokens[i];
         if (d?.type !== 'num' || ratIsZero(d.value)) return fail('line_var_divisor_invalid');
-        // R1 P1-3：除数是词法层吸收了内部 '/' 的分数 token（源串形如 x/2/3）
+        // 除数是词法层吸收了内部 '/' 的分数 token（源串形如 x/2/3）
         // ——连续除法的结合性有歧义（左结合 x/6 ≠ 右除 x÷(2/3)=3x/2），
         // 一律拒绝，绝不选括号解释；分数作为【独立系数】（3/2x）仍支持。
         if (d.compound) return fail('line_consecutive_division_not_supported');
@@ -680,7 +680,7 @@ function parseLinearExpression(
     }
     return fail('line_term_shape_invalid');
   };
-  // R1 P1-2：项与项之间必须有显式 +/- 分隔。首个项可以无符号开头，其后
+  // 项与项之间必须有显式 +/- 分隔。首个项可以无符号开头，其后
   // 任何不是 +/- 的 token 直接进入 readTerm 的旧路径会把相邻 token 暗作
   // 加法（NFKC 把 y=x² 折成 y=x2 后被读成 x+2）——那类输入现在必须拒绝
   // （line_term_separator_missing → undecidable），绝不猜成加项。
@@ -1073,7 +1073,7 @@ export async function compareDeclaredBlank(
         reason: norm.ok ? 'numeric_response_unparseable' : norm.reason,
       };
     }
-    // R2 分流：声明单位作答恢复经 convertUnitTo 的原 mathjs 解析（m²/m³
+    // 声明单位作答恢复经 convertUnitTo 的原 mathjs 解析（m²/m³
     // 等旧支持写法），但折叠字符落在数值词法区的输入仍按同一 reason 拒绝
     // （3² m→32 m 类数值改写绝不放行）；见 declaredUnitResponseCorruptsValue。
     if (declaredUnitResponseCorruptsValue(rawResponse)) {

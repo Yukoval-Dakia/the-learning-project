@@ -20,12 +20,12 @@
 // 候选 parse/kind 门/活 knowledge 校验与全部后续正确性路径。本模块不写 DB、
 // 不写事件——除 runAgentTask 自身的运行留痕（ai_task_runs/cost ledger 不变）。
 
+import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
-import { parseJsonObjectLoose } from '@/server/ai/json-extract';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,
@@ -75,7 +75,7 @@ export const runWebSourcingOperation: RunWebSourcingAgentFn = async (params) => 
       toolNames: SOURCING_READ_TOOLS,
       taskKind: 'SourcingTask',
     }),
-    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES),
+    piRemoteMcpMount(EXA_MCP_SERVER_NAME, exaCfg, EXA_SCOPED_TOOL_NAMES, db),
   ];
   const allowedTools = [
     ...SOURCING_READ_TOOLS.map((name) => toMcpAllowedToolName(name)),

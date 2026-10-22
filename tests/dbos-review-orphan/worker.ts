@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -16,6 +17,7 @@ import {
   schedulerPollMs,
 } from './fixture';
 import { fixtureErrorMessage } from './fixture-process';
+import { unavailableSqlClass } from './unavailable-primary-diagnostics';
 
 let stage = 'validate-database';
 let database: string | undefined;
@@ -24,7 +26,41 @@ const diagnosticSecrets = [
   process.env.DATABASE_URL ?? '',
   process.env.TLP_REVIEW_APP_DATABASE_URL ?? '',
 ];
+let unavailableDiagnostics = false;
+let diagnosticSequence = 0;
+function reportUnavailableError(
+  event: 'caught' | 'fatal',
+  error: unknown,
+  atStage = stage,
+  origin?: NodeJS.UncaughtExceptionOrigin,
+) {
+  if (!unavailableDiagnostics) return;
+  try {
+    const object = typeof error === 'object' && error !== null ? error : {};
+    const code: unknown = Reflect.get(object, 'code');
+    const stack: unknown = Reflect.get(object, 'stack');
+    writeSync(
+      2,
+      `${JSON.stringify({
+        kind: 'unavailable-primary-diagnostic',
+        event,
+        sequence: ++diagnosticSequence,
+        at: new Date().toISOString(),
+        monotonicNs: process.hrtime.bigint().toString(),
+        pid: process.pid,
+        stage: atStage,
+        origin,
+        sqlstate: typeof code === 'string' && /^[A-Z0-9]{5}$/.test(code) ? code : null,
+        errorQueryClass: unavailableSqlClass(Reflect.get(object, 'query')),
+        fetchArrayTypesFrame: typeof stack === 'string' && /\bat fetchArrayTypes\b/.test(stack),
+      })}\n`,
+    );
+  } catch {
+    // A diagnostic write must not replace the original error or its default fatal exit.
+  }
+}
 function reportError(kind: string, error: unknown, atStage = stage) {
+  reportUnavailableError('caught', error, atStage);
   const message = fixtureErrorMessage({
     kind,
     error,
@@ -56,6 +92,12 @@ async function main() {
   )
     throw new Error('Application proxy must target the same disposable DB');
   diagnosticSecrets.push(appUrl.password, decodeURIComponent(appUrl.password));
+  unavailableDiagnostics = process.env.TLP_REVIEW_UNAVAILABLE_DIAGNOSTICS === '1';
+  if (unavailableDiagnostics)
+    // Observe Node's fatal path synchronously; no uncaughtException/unhandledRejection handler.
+    process.on('uncaughtExceptionMonitor', (error, origin) =>
+      reportUnavailableError('fatal', error, stage, origin),
+    );
   stage = 'load-host';
   const cron = process.env.TLP_REVIEW_CRON_TEST === '1';
   const appClient = postgres(appUrl.toString(), {

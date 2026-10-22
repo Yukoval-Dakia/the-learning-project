@@ -13,10 +13,9 @@
 import type {
   ArtifactRowSnapshotT,
   ItemCalibrationRowSnapshotT,
-  KnowledgeRowSnapshotT,
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
-import type { artifact, item_calibration, knowledge, question_block } from '@/db/schema';
+import type { artifact, item_calibration, question_block } from '@/db/schema';
 
 /**
  * Map a live `knowledge` row to its structural snapshot. The embed_* columns are derived search-index
@@ -24,21 +23,7 @@ import type { artifact, item_calibration, knowledge, question_block } from '@/db
  * and the migrate-time subject-root seed (YUK-587); sharing this mapper prevents their genesis payloads
  * from drifting apart.
  */
-export function knowledgeRowToSnapshot(row: typeof knowledge.$inferSelect): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
+export { knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 
 /**
  * Map a live `artifact` DB row to ArtifactRowSnapshotT. artifact has NO derived/embed columns
@@ -140,6 +125,10 @@ export function itemCalibrationRowToSnapshot(
     calibration_n: row.calibration_n,
     calibration_weight: row.calibration_weight,
     last_calibrated_at: row.last_calibrated_at,
+    // YUK-439 — 后验列随锚快照携带（历史 genesis 无这些键，optional 解析）。
+    b_post: row.b_post,
+    posterior_variance: row.posterior_variance,
+    calibration_source: row.calibration_source,
     irt_a: row.irt_a,
     irt_c: row.irt_c,
     cdm_json: row.cdm_json ?? null,

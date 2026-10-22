@@ -1,22 +1,7 @@
-// YUK-127 / T-88 P4-A — pg-boss handler for NoteRefineTask.
-//
-// Wave 6 Living Note v0 pipeline entrypoint. A trigger producer (P4-E) sends
-// `{ artifact_id, trigger: { kind, context_md, evidence_ids? } }` onto the
-// `note_refine` queue; this handler loads the artifact + knowledge context,
-// calls `NoteRefineTask` for a NotePatch, then routes to apply (mutator) or
-// proposal (propose).
-//
-// P4-A scope: queue plumbing, loading context, parsing NotePatch, calling
-// `persistNoteRefineApply`. The mutator-vs-propose runtime gate is now LIVE:
-// `defaultGate` = `decideNoteRefineMode` (count threshold `≤ 3 patch ops AND
-// ≤ 2 new blocks → mutator`, else propose) and `runNoteRefine` additionally
-// diverts to propose when the patch touches a user-verified block
-// (`patchTouchesVerifiedBlock`). The gate stays injectable via
-// `deps.gate?.(summary) => 'mutator' | 'propose'` for tests / future tuning.
-//
-// P4-C wires editing-session deferral; P4-D handles undo UI; P4-E adds the
-// trigger producers. See
-// `docs/superpowers/plans/2026-05-26-yuk88-block-tree-rebuild-phase.md` §P4.
+// pg-boss entry for Living Note refine. A trigger producer sends
+// `{ artifact_id, trigger }`; the runner loads the artifact and knowledge
+// context, calls NoteRefineTask for a NotePatch, then applies small patches or
+// files larger ones as proposals for human approval.
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq, inArray } from 'drizzle-orm';
@@ -50,14 +35,6 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 
 export { type ParsedNoteRefineOutput, parseNoteRefineOutput };
 
-// M3 (YUK-317, D6)：error_rate kind 已删——内嵌自测全链路裁撤后该信号源死亡；
-// 流作答信号 = mastery_change（practice submit persist 接入）。
-// YUK-358 决定6 (ADR-0040)：'dwell' kind 已裁撤——editing presence 不再触发 refine，
-// /api/editing-session/heartbeat 退化为纯 presence 写（editing_presence DEFER 仲裁
-// 仍在，决定1 A-track auto-apply 依赖它）。
-// YUK-358 决定7 (ADR-0040)：'verify' 是新 trigger kind——note_verify 的 needs_review
-// 分支不再写死提议，而是（flag-gated, default-OFF）enqueue 一个 verify-kind refine，
-// 让 verify 发现的问题经 NORMAL refine gate（count + patchTouchesVerifiedBlock）流转。
 export type NoteRefineTriggerKind = 'mark_wrong' | 'mastery_change' | 'dreaming' | 'verify';
 
 export interface NoteRefineJobData {
@@ -68,9 +45,7 @@ export interface NoteRefineJobData {
     kind: NoteRefineTriggerKind;
     context_md?: string;
     evidence_ids?: string[];
-    // P4-E producers may attach a trigger event id so the apply event can
-    // chain caused_by to the trigger (mark_wrong attempt event, mastery
-    // delta event, etc.).
+    // Chains the apply event's caused_by to the originating trigger.
     trigger_event_id?: string;
   };
 }
@@ -83,31 +58,18 @@ export type NoteRefineGate = (
 
 type DepsOverride = {
   runTaskFn?: RunTaskFn;
-  // Override the live gate (`defaultGate` = `decideNoteRefineMode`, the count
-  // threshold). Tests inject a fixed 'mutator'/'propose' decision here to drive
-  // a specific path deterministically; production leaves it unset.
+  // Test seam: forces a decision instead of the count gate.
   gate?: NoteRefineGate;
-  // Override the propose-path writer. Unset (production default) →
-  // `runNoteRefine` calls `writeNoteRefineProposal`, landing the patch in the
-  // inbox for human approval. Tests pass a spy here to assert what would be
-  // proposed without writing a proposal row.
+  // Test seam for the propose writer; production lands a real inbox proposal.
   onPropose?: (input: {
     artifactId: string;
     patch: NotePatchT;
     summary: ReturnType<typeof summarizeNotePatch>;
     triggerEventId: string | null;
-    // YUK-358 (ADR-0040 决定1) — F2: thread the breaker-tripped flag through the
-    // test seam too, mirroring writeNoteRefineProposal's `breakerTripped` param.
-    // `false` = routine over-threshold / user_verified propose; `true` = the
-    // A-track rate breaker's runaway-rate fallback. Without this the onPropose
-    // spy could not tell the two propose origins apart (asymmetric with the
-    // production writer path, which already stamps breaker_tripped).
+    // Distinguishes a rate-breaker fallback from a routine propose.
     breakerTripped: boolean;
   }) => Promise<void>;
-  // YUK-358 (ADR-0040 决定1) — override the A-track rate breaker's window count.
-  // Unset (production default) → `countRecentAutoApplies` derives the count from
-  // the event log. Tests inject a fixed number to drive ok / warned / tripped
-  // deterministically without seeding a full window.
+  // Test seam for the breaker's window count.
   countRecentAutoApplies?: (input: { now: Date }) => Promise<number>;
 };
 
@@ -118,8 +80,6 @@ export interface RunNoteRefineParams {
   runTaskFn: RunTaskFn;
   gate?: NoteRefineGate;
   onPropose?: DepsOverride['onPropose'];
-  // YUK-358 (ADR-0040 决定1) — inject the A-track rate breaker's window count.
-  // See DepsOverride.countRecentAutoApplies.
   countRecentAutoApplies?: DepsOverride['countRecentAutoApplies'];
   now?: Date;
 }
@@ -134,10 +94,8 @@ export type RunNoteRefineResult =
       skipped_ops?: number;
     }
   | { status: 'proposed'; ops_count: number; new_blocks: number; skipped_ops?: number }
-  // YUK-358 (ADR-0040 决定1) — A-track rate breaker tripped: a mutator-eligible
-  // patch was diverted to a propose (退回人审) because auto-apply rate exceeded
-  // the hard cap in the window. Distinct from plain 'proposed' so callers /
-  // tests can tell a runaway-rate fallback from a routine over-threshold propose.
+  // The rate breaker diverted a mutator-eligible patch to human review; kept
+  // distinct from a routine propose so callers can tell them apart.
   | {
       status: 'proposed:breaker_tripped';
       ops_count: number;
@@ -155,9 +113,7 @@ export type RunNoteRefineResult =
 const defaultGate: NoteRefineGate = decideNoteRefineMode;
 
 /**
- * Pure runner — extracted so unit tests can call without pg-boss. Loads the
- * artifact + knowledge context, calls NoteRefineTask, parses the NotePatch,
- * then routes to apply (mutator) or proposal (propose) per the gate.
+ * Loads context, calls NoteRefineTask, and routes the patch to apply or propose.
  */
 export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNoteRefineResult> {
   const { db, artifactId, trigger, runTaskFn } = params;
@@ -218,10 +174,9 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     return { status: 'skipped:empty_patch' };
   }
 
-  // YUK-301 — validate target references before routing. Apply the model's ops left-to-right
-  // against the snapshot it was shown, dropping only target_not_found ops. A ghost reference must
-  // neither inflate the count gate nor poison independent ops in the same patch. The persistence
-  // layer repeats this check against the transaction's latest snapshot for deferred/concurrent edits.
+  // Drop ghost targets before the gate: a dead reference must not inflate the
+  // count or poison independent ops. Persistence re-checks against the latest
+  // snapshot for deferred edits.
   const filtered = filterMissingNotePatchTargets(row.body_blocks, modelPatch, {
     enforceUserVerifiedGuard: false,
   });
@@ -234,11 +189,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
 
   const triggerEventId = trigger.trigger_event_id ?? null;
 
-  // F3 (DRY): both the count/user_verified-gate propose path and the A-track
-  // rate-breaker tripped path dispatch the SAME way — onPropose spy (tests) else
-  // writeNoteRefineProposal (production inbox). The only difference is the
-  // breaker-tripped stamp (F2). One helper, breakerTripped threaded through both
-  // sinks, so the two call sites can never drift apart again.
+  // Both propose paths share one dispatcher; only the breaker stamp differs.
   const dispatchPropose = async (breakerTripped: boolean): Promise<void> => {
     if (onPropose) {
       await onPropose({ artifactId, patch, summary, triggerEventId, breakerTripped });
@@ -255,11 +206,8 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     }
   };
 
-  // C1a (YUK-358, ADR-0040 决定1): divert to propose when the count-gate says so
-  // OR the patch would overwrite/delete a user-verified block. The patch-carrying
-  // proposal producer (writeNoteRefineProposal) lands the same patch in the inbox
-  // so a human approves it — never a silent overwrite. This is the PRIMARY guard;
-  // applyNotePatch's `user_verified_protected` throw is the cross-caller safety net.
+  // A patch that would overwrite a user-verified block goes to the inbox rather
+  // than applying silently. applyNotePatch's guard remains the cross-caller net.
   const decision =
     gate(summary) === 'propose' || patchTouchesVerifiedBlock(row.body_blocks, patch)
       ? 'propose'
@@ -275,14 +223,8 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
     };
   }
 
-  // YUK-358 (ADR-0040 决定1) — A-track auto-apply rate breaker. Past the
-  // count/user_verified gate the patch is mutator-eligible; now check the
-  // per-unit-time auto-apply rate before the actual apply. Two-layer guard
-  // (mirrors stream-composer R5):
-  //   ok      → auto-apply (normal A-track)
-  //   warned  → STILL auto-apply, just emit one observe-only event (零干预只告知)
-  //   tripped → divert to propose (退回人审 — NOT block; the user can still accept
-  //             the inbox proposal). breaker_tripped:true stamps the fallback.
+  // Rate breaker: warn still applies (observe only), trip files a proposal the
+  // user can accept. It never blocks the change outright.
   const breakerNow = params.now ?? new Date();
   const recentCount = params.countRecentAutoApplies
     ? await params.countRecentAutoApplies({ now: breakerNow })
@@ -300,16 +242,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   }
 
   if (breaker.status === 'warned') {
-    // 零干预只告知：emit one observability event so the owner can watch the rate
-    // climbing, but DO NOT change behaviour — the apply proceeds below. This is
-    // the warn water-mark layer of the two-layer guard.
-    //
-    // F1 (OCR MAJOR): the warn event is OBSERVE-ONLY and must NEVER break the
-    // mutator apply that follows. writeEvent runs parseEvent (schema validation)
-    // + a DB INSERT, either of which can throw; an unhandled throw here would
-    // abort the apply path this comment promises to preserve. Swallow + warn so
-    // the apply always proceeds — losing one observability breadcrumb is strictly
-    // better than dropping a user-facing refine because of a telemetry hiccup.
+    // Observe-only: an event failure must never block the apply below.
     try {
       await writeEvent(db, {
         id: createId(),

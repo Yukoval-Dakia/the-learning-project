@@ -1,6 +1,4 @@
-// M5-T5a (YUK-321)：平移自 app/api/events/[id]/correct/route.ts（统一事件流
-// keep 行的唯一撤回 HTTP 面；裸查/rate 面退役见 Task 9「/api/events 面处置」）。
-// [id] 由 toHonoPath 转 :id 捕获后以 Record 透传。
+// The only correction HTTP surface. The id arrives as a Hono param.
 
 import { db } from '@/db/client';
 import {

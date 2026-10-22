@@ -1,5 +1,4 @@
-// M5-T5a (YUK-321)：平移自 app/api/_/export/route.ts（spec §3.6 L320 备份恢复
-// keep 行；HTTP 路径沿旧 /api/_/export 不变；旧壳 Task 9 拆）。
+// Backup export. The existing HTTP path is unchanged.
 
 import { db } from '@/db/client';
 import { buildBackupArchive } from '@/server/export/archive';

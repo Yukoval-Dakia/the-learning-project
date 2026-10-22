@@ -1,17 +1,11 @@
-// M2 (YUK-316) — composeDailyStream：流编排器纯函数核心（P2 spec §2.1）。
-// 零 IO：输入由薄壳（stream-store.ts）收集——FSRS 到期投影来自 due-list（现有
-// 逻辑降级为输入信号，不删除）、错题变体轮换、新学待检、当日待做卷。
-// 跨学科 round-robin 不在此重做：due-list 内部已对到期池做过学科平衡。
+// composeDailyStream: pure stream composition core. No IO; input is collected by
+// stream-store.
 //
-// 混排规则（与 stream-composer.unit.test.ts 互为 spec；顺序习惯源自设计稿
-// docs/design/loom-refresh 的 PFACE.items 形状）：
-//   R1 热身：有 decay 时流首必是 decay
-//   R2 variant 穿插散题段中（decay 主轴每 2 道插 1 变式，剩余追加段尾）
-//   R3 卷置于散题之后；new_check 永远收尾
-//   R4 同 questionId 去重（decay 先到先得）
-//   R5 容量护栏两层：分钟预算先保到期前缀再填其余；item max 仍作事故硬顶
-//   R6 position 从 1 连续；R7 reasoning 模板非空（M4 夜链 AI 化后替换模板）
-//   R8 L3 learning-mix：同 KC/题型 fatigue 稳定重排；frontier floor 退化产结构化诊断
+// Order: decay warm-up first; variants interleaved every two decay items with the rest at
+// the tail; papers after loose items; new_check last; question ids deduped; the minutes
+// budget protects the due prefix then fills the rest; positions are contiguous from 1 and
+// reasoning templates are never empty. L3 learning-mix repairs repetition fatigue and adds
+// frontier-floor diagnostics.
 
 import {
   type LearningMixDiagnostic,
@@ -19,6 +13,11 @@ import {
   learningMixContextFromInputs,
 } from './post-filter';
 import { fitStreamToTimeBudget } from './stream-budget';
+import {
+  presentDueQuestion,
+  presentNonDueQuestion,
+  presentPracticePaper,
+} from './stream-item-presentation';
 
 interface ComposerQuestionMetadata {
   knowledgeId?: string;
@@ -50,7 +49,7 @@ export interface ComposerInputs {
     { questionId: string; knowledgeId: string; knowledgeLabel?: string } & ComposerQuestionMetadata
   >;
   /**
-   * B3 learnable_frontier（YUK-349 #3，ADR-0037 #4）——前置全掌握、自身未掌握的「可学前沿」
+   * B3 learnable_frontier（#3， #4）——前置全掌握、自身未掌握的「可学前沿」
    * KC 各取一道题。**OPTIONAL**：现有 caller/测试不传 → undefined → 零新增项（NO-OP，
    * 输出 byte-identical）。稀疏先决图上 learnableFrontier 返 [] → 此处恒空（defer-flip）。
    */
@@ -65,8 +64,10 @@ export interface ComposerInputs {
   }>;
   /** 容量护栏（两层语义：warn 零干预只告知；max 防事故硬顶） */
   capacity?: { warn?: number; max?: number };
-  /** YUK-622：用户 daily pace 映射出的分钟预算；缺省仅供旧测试/显式 DI 保持旧行为。 */
+  /** 用户 daily pace 映射出的分钟预算；缺省仅供旧测试/显式 DI 保持旧行为。 */
   dailyBudgetMinutes?: number;
+  /** 实测/默认单题用时；缺省时沿用 的 2 分钟。 */
+  questionMinutes?: number;
 }
 
 export interface StreamPlanItem {
@@ -83,9 +84,9 @@ export interface StreamPlanItem {
     | 'frontier'
     | 'intervention';
   reasoning: string;
-  // YUK-361 Phase 1（观测先行）— 选题信号快照（SelectionCandidateSignal 形态）。
+  // （观测先行）— 选题信号快照（SelectionCandidateSignal 形态）。
   // **零行为变更**：本 lane 不计算、不据此排序，materializeStream 落库时缺省 {}；
-  // 值由 Phase 3 候选收集层填充。
+  // 值由 候选收集层填充。
   signals?: Record<string, unknown>;
 }
 
@@ -94,16 +95,12 @@ export interface StreamPlan {
   items: StreamPlanItem[];
   truncated: boolean;
   warned: boolean;
-  /** YUK-673: structured stream-level L3 degradation signals; omitted when the mix is healthy. */
+  /** structured stream-level L3 degradation signals; omitted when the mix is healthy. */
   diagnostics?: LearningMixDiagnostic[];
 }
 
 const DEFAULT_WARN = 12;
 const DEFAULT_MAX = 30;
-
-function kpSuffix(label?: string): string {
-  return label ? `「${label}」` : '这一块';
-}
 
 export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const warn = inputs.capacity?.warn ?? DEFAULT_WARN;
@@ -131,19 +128,14 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     solo.push({
       item_kind: 'question',
       ref_id: d.questionId,
-      source: d.source ?? 'decay',
-      reasoning:
-        d.source === 'intervention'
-          ? '这份针对当前薄弱点的材料已经准备好；先阅读，再完成检验。'
-          : `我看了你的曲线：${kpSuffix(d.knowledgeLabel)}到了复习边缘，先把它咬住。`,
+      ...presentDueQuestion(d.knowledgeLabel, d.source),
     });
     if ((i + 1) % 2 === 0 && vi < vars.length) {
       const v = vars[vi++];
       solo.push({
         item_kind: 'question',
         ref_id: v.questionId,
-        source: 'variant',
-        reasoning: `之前${kpSuffix(v.knowledgeLabel)}翻过车，这道换了说法再来一次。`,
+        ...presentNonDueQuestion('variant', v.knowledgeLabel),
       });
     }
   }
@@ -152,8 +144,7 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     solo.push({
       item_kind: 'question',
       ref_id: v.questionId,
-      source: 'variant',
-      reasoning: `之前${kpSuffix(v.knowledgeLabel)}翻过车，这道换了说法再来一次。`,
+      ...presentNonDueQuestion('variant', v.knowledgeLabel),
     });
   }
 
@@ -161,33 +152,25 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const papers: Draft[] = inputs.pendingPapers.map((p) => ({
     item_kind: 'paper',
     ref_id: p.paperId,
-    source: p.source,
-    reasoning:
-      p.source === 'on_demand'
-        ? `你点播的「${p.title}」排好了——卷内不给即时反馈，交卷统一判。`
-        : p.source === 'import'
-          ? `你导入的「${p.title}」在待做里——交卷后统一判分。`
-          : `散题做完后用「${p.title}」收口——卷内不给即时反馈，交卷统一判。`,
+    ...presentPracticePaper(p.title, p.source),
   }));
 
   // new_check 收尾。
   const tail: Draft[] = checks.map((n) => ({
     item_kind: 'question',
     ref_id: n.questionId,
-    source: 'new_check',
-    reasoning: `你刚学了${kpSuffix(n.knowledgeLabel)}，自测一道确认真的进脑子了。`,
+    ...presentNonDueQuestion('new_check', n.knowledgeLabel),
   }));
 
   // B3 frontier 尾（在 new_check 之后追加）。fronts 空 → 零项 → all 与改前逐字相同。
   const frontierTail: Draft[] = fronts.map((f) => ({
     item_kind: 'question',
     ref_id: f.questionId,
-    source: 'frontier',
-    reasoning: `${kpSuffix(f.knowledgeLabel)}的前置你都拿下了，可以开这块新内容了。`,
+    ...presentNonDueQuestion('frontier', f.knowledgeLabel),
   }));
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];
-  const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes);
+  const budgeted = fitStreamToTimeBudget(all, inputs.dailyBudgetMinutes, inputs.questionMinutes);
   const protectedIndexes = budgeted.kept.flatMap((item, index) =>
     item.source === 'intervention' ? [index] : [],
   );

@@ -1,22 +1,11 @@
-// YUK-203 P1 (ADR-0027) — GET /api/notes/[id] aggregator (NoteReader backend).
-//
-// A note(artifact) is now a first-class knowledge-labeled entity with its own
-// canonical reader page (/notes/[id], 2b brief §G2). This aggregates everything
-// the NoteReader needs into one server call: content blocks + resolved labels +
-// verification + version history + inbound backlinks + related learning_items.
-// Mirrors loadKnowledgeNodePage's read patterns (XC-5 backlink read-time
-// filters) but is keyed on the note id, not a knowledge id. Label model only
-// (ADR-0020 §3): a note's knowledge association is `knowledge_ids`, never
-// learning_item ownership.
-// (YUK-358 决定3: embedded-check question projection removed with the orphan chain.)
+// Aggregates everything the NoteReader page needs in one read. A note's knowledge
+// association is its knowledge_ids, never learning_item ownership.
 
 import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
-  listBacklinks,
-  resolveOwningLearningItemIds,
 } from '@/capabilities/notes/server/block-refs';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import {
@@ -33,14 +22,11 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
-import { getArtifactCorrectionStates } from './artifact-corrections';
+import { readVisibleArtifactBacklinks } from './visible-artifact-backlinks';
 
-const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
-// ADR-0033 D5 — /notes/[id] doubles as the interactive artifact's reader shell:
-// 'interactive' is readable by this page, but it is NOT a note type (NOTE_TYPES
-// stays narrow so note-only machinery — editing / embedded-check / cross-link —
-// never perceives it).
+// The interactive artifact reads through this page too, but NOTE_TYPES stays
+// narrow so note-only machinery never treats it as a note.
 const READER_TYPES = [...NOTE_TYPES, 'interactive'] as const;
 const RELATED_ITEMS_LIMIT = 30;
 
@@ -63,18 +49,17 @@ export interface NotePageRelatedItem {
   id: string;
   title: string;
   status: string;
-  // 'primary' = references this note via primary_artifact_id; 'label' = shares
-  // ≥1 knowledge label with this note (study material). primary wins on dedupe.
+  // 'primary' references this note; 'label' only shares a knowledge label. Primary
+  // wins on dedupe.
   relation: 'primary' | 'label';
 }
 
 export interface NotePage {
   id: string;
-  // note_atomic | note_hub | note_long | interactive
   type: string;
   title: string;
   knowledge_ids: string[];
-  // resolved non-archived label names (archived/missing knowledge dropped).
+  // Resolved non-archived label names.
   labels: NotePageLabel[];
   body_blocks: ArtifactBodyBlocksT | null;
   sections: NotePageSection[];
@@ -82,10 +67,8 @@ export interface NotePage {
   generation_failure: NoteGenerationFailure | null;
   verification_status: string;
   verification_summary: NoteVerificationResultT | null;
-  // ADR-0033 — non-null only when type='interactive' (attrs.html feeds the
-  // sandboxed renderer); note types are always null; an interactive row whose
-  // attrs fails schema validation is also null (the page renders a degraded
-  // notice instead of 404ing the whole artifact).
+  // Only for interactive artifacts; a row whose attrs fail validation yields null
+  // so the page can degrade instead of 404.
   interactive: { html: string } | null;
   subject_profile: SlimSubjectProfile;
   version: number;
@@ -98,17 +81,11 @@ export interface NotePage {
 }
 
 /**
- * Aggregate every read the /notes/[id] NoteReader page needs into one server
- * call. Returns null when the artifact doesn't exist, is archived, or is not a
- * READER_TYPES kind (tool_quiz / other artifact kinds are not NoteReader pages)
- * so the route can 404 instead of rendering an empty shell. READER_TYPES =
- * note types + 'interactive' (ADR-0033 D5): the interactive artifact reuses
- * this page as its reader shell, but stays invisible to note-only machinery —
- * its body_blocks is null, so sections resolve to empty and the client never
- * mounts the editor for it.
+ * Returns null for a missing, archived, or non-reader artifact so the route can
+ * 404. Interactive artifacts read here but have no body, so they resolve to no
+ * sections and no editor.
  */
 export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | null> {
-  // 1. the artifact (non-archived, reader types only).
   const rows = await db
     .select({
       id: artifact.id,
@@ -134,8 +111,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
 
   const knowledgeIds = note.knowledge_ids ?? [];
 
-  // 2. resolved labels — non-archived knowledge names (archived/missing dropped,
-  // mirroring the node page's archived-link avoidance).
+  // Archived or missing knowledge is dropped, mirroring the node page.
   const labels: NotePageLabel[] =
     knowledgeIds.length === 0
       ? []
@@ -146,25 +122,17 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
             .where(and(inArray(knowledge.id, knowledgeIds), isNull(knowledge.archived_at)))
         ).map((r) => ({ id: r.id, name: r.name }));
 
-  // 3. sections — the note five-section view. The `check` section stays as the
-  // Phase-3 self-explanation anchor (ADR-0040 决定3); the graded embedded-check
-  // projection was removed with the orphan chain (YUK-358 决定3).
+  // 3. sections — the five-section view; `check` remains the self-explanation anchor.
   const sections = bodyBlocksToNoteSections(note.body_blocks);
 
-  // 4. backlinks — inbound cross_links pointing AT this note, with the same XC-5
-  // read-time filters as the node page / backlink panel (archived / non-ready /
-  // retracted sources dropped).
-  const backlinks = await loadBacklinks(db, noteId);
+  // 4. backlinks — inbound cross_links with the same read-time filters as the panel.
+  const backlinks = await readVisibleArtifactBacklinks(db, noteId);
 
-  // 5. related learning_items — items referencing this note as primary + items
-  // sharing ≥1 knowledge label (study material). Deduped, primary wins.
+  // 5. related items — primary references plus label overlap, deduped.
   const related = await loadRelatedLearningItems(db, noteId, knowledgeIds);
   const profile = await resolveSubjectProfileForKnowledgeIds(db, knowledgeIds);
 
-  // 6. interactive payload (ADR-0033) — only for type='interactive'. attrs is
-  // opaque jsonb; this safeParse is the read-side schema barrier. On failure the
-  // page still loads (title/labels/version chrome) with interactive=null so the
-  // client can render a degraded notice instead of a 404.
+  // 6. interactive payload — attrs is opaque jsonb, so this is the read barrier.
   let interactive: NotePage['interactive'] = null;
   if (note.type === 'interactive') {
     const parsed = InteractiveArtifactAttrs.safeParse(note.attrs);
@@ -195,58 +163,11 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   };
 }
 
-async function loadBacklinks(db: Db, noteId: string): Promise<NotePageBacklink[]> {
-  const inbound = (await listBacklinks(db, { toArtifactId: noteId })).filter(
-    (ref) => ref.ref_kind === CROSS_LINK_REF_KIND,
-  );
-  if (inbound.length === 0) return [];
-
-  const sourceIds = Array.from(new Set(inbound.map((ref) => ref.from_artifact_id)));
-  const sourceRows = await db
-    .select({
-      id: artifact.id,
-      archived_at: artifact.archived_at,
-      generation_status: artifact.generation_status,
-    })
-    .from(artifact)
-    .where(inArray(artifact.id, sourceIds));
-  const sourceById = new Map(sourceRows.map((row) => [row.id, row]));
-  const correctionStates = await getArtifactCorrectionStates(db, sourceIds);
-  const owningByArtifact = await resolveOwningLearningItemIds(db, sourceIds);
-
-  const out: NotePageBacklink[] = [];
-  for (const ref of inbound) {
-    const source = sourceById.get(ref.from_artifact_id);
-    if (!source) continue;
-    if (source.archived_at != null) continue;
-    if (source.generation_status !== 'ready') continue;
-    const correction = correctionStates.get(ref.from_artifact_id);
-    if (correction) {
-      if (correction.whole.state === 'retracted' || correction.whole.state === 'superseded') {
-        continue;
-      }
-      const blockState = correction.blocks.get(ref.from_block_id);
-      if (blockState && (blockState.state === 'retracted' || blockState.state === 'superseded')) {
-        continue;
-      }
-    }
-    out.push({
-      from_artifact_id: ref.from_artifact_id,
-      from_learning_item_id: owningByArtifact.get(ref.from_artifact_id) ?? null,
-      from_title: ref.from_artifact_title,
-      from_type: ref.from_artifact_type,
-      from_block_id: ref.from_block_id,
-    });
-  }
-  return out;
-}
-
 async function loadRelatedLearningItems(
   db: Db,
   noteId: string,
   knowledgeIds: string[],
 ): Promise<NotePageRelatedItem[]> {
-  // primary: non-archived items referencing this note via primary_artifact_id.
   const primaryRows = await db
     .select({ id: learning_item.id, title: learning_item.title, status: learning_item.status })
     .from(learning_item)
@@ -260,8 +181,7 @@ async function loadRelatedLearningItems(
     relation: 'primary' as const,
   }));
 
-  // label: non-archived items sharing ≥1 knowledge label (study material). OR of
-  // `@>` per label reuses the established containment pattern (no `?|` operator).
+  // Label overlap uses @> per label (no ?| operator).
   if (knowledgeIds.length > 0 && out.length < RELATED_ITEMS_LIMIT) {
     const overlap = knowledgeIds.map(
       (kid) => sql`${learning_item.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,

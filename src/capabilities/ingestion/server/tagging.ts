@@ -1,18 +1,9 @@
 import { and, inArray, isNull, or } from 'drizzle-orm';
 import { TaggingTaskError, parseTaggingOutput } from '@/capabilities/ingestion/tasks/tagging';
 /**
- * TaggingTask invoker — T-OC slice 3 (YUK-145, OC-4).
- *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` (OC-4) +
- * `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md` §5 + ADR-0026.
- *
- * Single-shot structured-output AI task (NOT multimodal): builds a knowledge-grid
- * snapshot (nodes + mesh edges), renders the extracted question text + optional
- * knowledge_hint, calls `runTask('TaggingTask', ...)`, parses strict JSON via the
- * `TaggingOutput` Zod schema, and FILTERS OUT any suggestion whose knowledge_id
- * is not in the grid (anti-hallucination belt-and-suspenders — the prompt also
- * forbids it). Mirrors `runStructureTask` / `runStepsJudge`: injectable
- * `runTaskFn` for testability.
+ * TaggingTask invoker: a single-shot, text-only structured task over a knowledge
+ * grid snapshot. Suggestions outside the grid are dropped even though the prompt
+ * also forbids them. The runner is injectable for tests.
  */
 import {
   TaggingInput as TaggingInputSchema,
@@ -148,7 +139,7 @@ export async function runTaggingTask(params: RunTaggingTaskParams): Promise<Tagg
   const grid = await buildTaggingGrid(params.db, params.subjectId);
 
   const input: TaggingInputT = TaggingInputSchema.parse({
-    // YUK-1408 — extracted text is deterministically redacted before the model
+    // Extracted text is redacted before the model
     // sees it. The grid (KC names/ids) is internal vocabulary and stays as-is.
     question_md: redactIngestionText(params.questionMd).text,
     knowledge_hint: params.knowledgeHint

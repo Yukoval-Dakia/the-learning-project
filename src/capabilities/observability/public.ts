@@ -1,26 +1,9 @@
 /**
- * Observability cross-capability ports.
- *
- * - YUK-1007: the admin config read face's runtime-facts injection seam. The
- *   composition root (server layer) aggregates server-side truth sources
- *   (provider registry, infra cron declarations, runtime constants) and each
- *   capability's consumer-effective facts, then injects the factory here.
- *   The config read face receives runtime facts through that factory.
+ * Observability cross-capability ports. The composition root gathers server-side
+ * truth sources and injects the config facts factory; the read face consumes it here.
  */
 
-export {
-  type AdminSubjectListRow,
-  type AdminSubjectTraits,
-  type AdminTraitBindingRow,
-  type AdminTraitCatalogRow,
-  type TraitJournalPage,
-  type TraitJournalPageOptions,
-  type TraitJournalRow,
-  getAdminSubjectTraits,
-  getTraitJournalPage,
-  listAdminSubjects,
-  listAdminTraits,
-} from '@/server/subjects/admin-read';
+export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
 export {
@@ -28,7 +11,6 @@ export {
   AdminConfigWriteBodySchema,
   AdminConfigWriteResponseSchema,
 } from './api/admin-config-write-contracts';
-
 export {
   AdminCostQuerySchema,
   AdminCostResponseSchema,
@@ -90,6 +72,7 @@ export {
   parseAdminFailuresQuery,
   parseAdminRunsQuery,
 } from './server/ai-observability';
+export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {
   type AdminConfigKeyRow,
@@ -113,6 +96,7 @@ export {
   type SubjectCoverage,
   loadCoverageLattice,
 } from './server/coverage-lattice';
+export { loadEffectivenessTrend } from './server/effectiveness-trend';
 export {
   type EventCorrectionInput,
   type EventCorrectionResult,
@@ -121,7 +105,19 @@ export {
   readEventDetail,
 } from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
-export { readProviderCostWindow } from './server/provider-cost-projection';
+export {
+  type AdminSubjectListRow,
+  type AdminSubjectTraits,
+  type AdminTraitBindingRow,
+  type AdminTraitCatalogRow,
+  type TraitJournalPage,
+  type TraitJournalPageOptions,
+  type TraitJournalRow,
+  getAdminSubjectTraits,
+  getTraitJournalPage,
+  listAdminSubjects,
+  listAdminTraits,
+} from './server/subject-admin-read';
 export {
   AdminSubjectCasBodySchema,
   type AdminSubjectCasInput,
@@ -138,8 +134,12 @@ export {
   retireAdminSubject,
   validateAdminSubject,
 } from './server/subject-control-operations';
+export { thinCreateSubject } from './server/subject-create';
+export {
+  auditProfilesFromDb,
+  formatDbProfileAuditReport,
+} from './server/subject-profile-audit';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
-
 export {
   AdminSubjectTraitParamsSchema,
   AdminTraitWriteParamsSchema,

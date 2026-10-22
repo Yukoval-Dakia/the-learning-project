@@ -1,9 +1,9 @@
 // Both attempts are pinned, so runner transient retry stays disabled and this
 // helper remains the only cross-lane retry layer.
 
+import { AgentRunError } from '@/ai/agent-run-error';
 import { type Provider, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
-import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx } from '@/server/ai/runner';
 import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 
@@ -57,7 +57,7 @@ type LaneFallbackRunResult<T> =
   | { ok: false; hardFailure: ProviderHardFailure };
 
 function effectiveUnconfiguredLane(kind: LaneFallbackTaskKind): string {
-  // YUK-1007：与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
+  // 与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
   // DB lane.global.provider > registry default。
   return (
     process.env.AI_PROVIDER_OVERRIDE ||

@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
+import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
-import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
 import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
@@ -12,7 +12,7 @@ export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
 export const COPILOT_STOPPED_REPLY = '已停止这次运行。';
 const COPILOT_UNFINISHED_NOTE = '上面是已经拿到的结果，结论还没写完。';
 
-/** Prose and completed tool summaries, plus the unfinished note. Undefined when both are empty. */
+/** Prose and completed tool summaries plus the unfinished note; undefined when both are empty. */
 export function copilotPartialReply(input: {
   prose?: string;
   toolSummaries?: readonly string[];
@@ -53,8 +53,8 @@ export interface PersistedCopilotRunCancellation {
 
 /**
  * Persist the one domain reply that closes a cancelled user ask. Both a
- * pre-fence API Stop and an in-loop worker Stop use this shape so future
- * conversation history never contains a phantom, unanswered ask.
+ * pre-fence API Stop and an in-loop worker Stop use this shape so conversation
+ * history never contains a phantom, unanswered ask.
  */
 export async function persistCopilotRunCancellationMarker(
   tx: Tx,
@@ -105,7 +105,7 @@ export interface CopilotRunCancellationControl {
   probe(): Promise<CopilotCancellationProbeResult>;
   beforeTool(): Promise<string | undefined>;
   /**
-   * The pi `beforeToolCall` gate: abort signal short-circuit → probe → deny
+   * The pi `beforeToolCall` gate: abort-signal short-circuit → probe → deny
    * reason. `beforeTool()` remains the DomainTool-side gate.
    */
   piBeforeToolCall: PiBeforeToolCall;
@@ -134,8 +134,8 @@ async function readCancelRequest(db: Db, runId: string): Promise<boolean> {
 
 /**
  * Bridge the cross-process job-event truth into one caller-owned AbortSignal.
- * Polling, the pi beforeToolCall gate and local DomainTool gates share a
- * single non-overlapping probe and a monotonic cancellation latch.
+ * Polling and both tool gates share a single non-overlapping probe and a
+ * monotonic cancellation latch.
  */
 export function createCopilotRunCancellationControl(options: {
   db: Db;

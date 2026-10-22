@@ -2,45 +2,22 @@ import {
   issuedLearningKnowledgeIds,
   loadAssessmentLearningScopes,
 } from './assessment-learning-scope';
-// YUK-1054 — 双轨裁决读模型（grounding §9–§10 read-model 切分）。
+// Shared resolver for "what did this attempt/evaluation finally receive".
 //
-// 所有「某次作答/评估最终判了什么」的消费面共享这一个 resolver：
+// Legacy lane (judge events): candidates are pulled by subject_id OR
+// caused_by_event_id. Appeals set caused_by to the appeal and subject_id to the
+// attempt, so either anchor alone loses rows.
+//   original: the earliest judge event, never rewritten by a re-judgment.
+//   effective: the newest judge still live after chain resolution, so a supersede
+//     points at the new judge.
+//   newest_raw: newest by time regardless of correction, for callers comparing
+//     supersede behavior.
 //
-//   LEGACY LANE（judge event 家族，action='judge' / subject_kind='event'）
-//     锚定面（writer 已核实）：
-//       - 判分 judge：  subject_id = attemptEventId AND caused_by = attemptEventId
-//         （review-settlement.ts settleSoloReview :578-610 / settlePaperAttempt :993-1019）
-//       - 申诉重判 judge：subject_id = attemptEventId（继承被改判 judge 的 subject），
-//         caused_by = appeal.id（jobs/rejudge.ts :236-265 + correct supersede :268-285）
-//       - 归因 judge：  subject_id = attemptEventId AND caused_by = attemptEventId
-//         （failure-learning-attribution.ts :275-313）
-//     ⇒ 拉取必须 subject_id ∪ caused_by 双通道：只查 caused_by 会漏掉申诉重判
-//       （question-activity / failure-attempts 的历史 gap），只查 subject_id 会漏掉
-//       假想 caused_by-only 锚。行分组键 = subject_id 命中 attemptIds 优先，否则
-//       caused_by_event_id 命中项。
+// Contract lane (evaluation_group): effective is the head's evaluation; original is
+// the first active activation, then the earliest applied settlement, then attempt 1.
 //
-//     original 轨：该 attempt 的【第一条】judge event（created_at/dispatch_seq/id
-//       最老）——历史第一判收据，永不因改判改写。
-//     effective 轨：每条候选 judge 行跑 getEffectiveTruths 链解析，只留
-//       terminal_state='active' 且 effective_event_id 指回同 action/subject_kind/
-//       subject_id 的 live 行（镜像 failure-attempts.ts resolveEffectiveActiveRows），
-//       取最新一条 —— 改判（supersede→新 judge）后 effective 指向新判。
-//     newest_raw：纯 newest-wins 无视 correction 状态（旧消费面的既有语义），
-//       供调用方判「是否被 supersede」差异。
-//
-//   CONTRACT LANE（evaluation_group_id 锚定）
-//     effective = evaluation_effective_head.effective_evaluation_id 指向的
-//       evaluation 行；original = 第一条 active
-//       `experimental:assessment_activation` 事件的 evaluation_id（回退：最早
-//       applied settlement 的 evaluation_id，再退 attempt=1 行）。verdict 经
-//       deriveCoarseVerdict（submission 的冻结 revision + issuance 范围）。
-//
-// replay 结构性保证（read 侧约束）：settlement replay 只写
-//   `experimental:assessment_settlement`（replay_of + reverted_settlement_event_ids
-//   标记，liveAppliedSettlements 视被 replay 者为 dead），不写任何 attempt/judge/
-//   mastery 事件 ⇒ 订阅链不会 refire，ingest_at 预填使 memory outbox 天然跳过，
-//   actor_kind='system' 过不了 shouldExtractToMemory 的 user 门。本模块不依赖
-//   replay 产生的新行做判定。
+// Replay only writes settlement events, so this module never depends on replay to
+// produce attempt/judge rows.
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { ZodError } from 'zod';
@@ -85,16 +62,12 @@ type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
 type EvaluationRow = typeof evaluation.$inferSelect;
 
-// 任何 IN 列表的每查询参数上限。copilot nudge-triggers 把评估快照读封装为「每
-// 查询 ≤104 参数」回归锚（nudge-streak.db.test.ts:caps parameters）；本 resolver
-// 是共享读模型，必须在自己的 inArray 处做 chunk（getEffectiveTruths 的
-// subject_id 拉取是最大爆点：单 attempt 可有数百 judge 行）。64 留出
-// action/subject_kind 等字面量参数 headroom。
+// Per-query IN cap. Some callers assert <=104 parameters, and one attempt can have
+// hundreds of judge rows, so chunk every list. 64 leaves headroom for literals.
 const QUERY_ID_CHUNK = 64;
 
-// Wire action 常量 —— 与 writer 模块保持一致（src/server/assessment/activate.ts
-// ASSESSMENT_ACTIVATION_ACTION / settle.ts ASSESSMENT_SETTLEMENT_ACTION）。本地
-// 声明以避免把编排模块图拉进本读模型的 import 面；writer 改常量时必须同步。
+// Wire actions duplicated locally so this read model does not import the
+// orchestration graph; keep them in sync with the writers.
 const ASSESSMENT_ACTIVATION_ACTION = 'experimental:assessment_activation';
 const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 
@@ -102,7 +75,7 @@ const ASSESSMENT_SETTLEMENT_ACTION = 'experimental:assessment_settlement';
 // Legacy lane — judge-event 双轨投影
 // ============================================================================
 
-/** judge payload 中本读模型消费的字段（known.ts JudgeOnEvent 的读取侧子集）。 */
+/** Judge payload fields this read model consumes. */
 export interface JudgeVerdictPayload {
   coarse_outcome: string | null;
   score: number | null;
@@ -111,43 +84,40 @@ export interface JudgeVerdictPayload {
   cause: CauseSchemaT | null;
   referenced_knowledge_ids: string[];
   judge_route: string | null;
-  /** 申诉重判来源（payload.appeal_event_id，非 envelope 字段）。 */
+  /** Appeal source stored in the payload, not an envelope field. */
   appeal_event_id: string | null;
   attribution_pending: boolean | null;
 }
 
-/** 一条 judge event 行 + 其链解析状态 + 规范化 payload 视图。 */
+/** A judge row plus its chain state and normalized payload view. */
 export interface JudgeVerdictProjection {
   judge_event_id: string;
   /**
-   * 该投影对应链的**源**行 id：original 投影 = 该行自身；effective 投影 =
-   * 解析到该 effective 行的**最早链来源**（链根）——例如 j_old supersede→
-   * j_new 时 effective.original_event_id=j_old（改判来源保留，YUK-1106 钉
-   * 死，与候选返回顺序无关）。
+   * Chain root: the row itself for an original projection, the earliest chain
+   * source for an effective one. Preserved across supersede.
    */
   original_event_id: string;
   created_at: Date;
-  /** original 行的链解析状态（effective 投影上 = 指向它的 original 链）。 */
+  /** Chain state of the original row. */
   correction_state: EffectiveTruth;
   verdict: JudgeVerdictPayload;
-  /** 原始行引用（消费面需要未投影字段时用）。 */
+  /** Raw row for consumers that need unprojected fields. */
   row: EventRow;
 }
 
 export interface AttemptVerdict {
   attempt_event_id: string;
   /**
-   * 执行期嵌入收据（attempt/review event 的 payload.judge）。solve-session
-   * （YUK-193）等 lane 把判分嵌在 attempt payload 里、并不另写 judge event —
-   * 「embedded grade」历史分歧（grounding §9 行），本轨显式保留它：无 judge
-   * 行时它是唯一的判收据；有 judge 行时它仍代表「执行时写下的那一判」。
+   * Judge embedded in the attempt payload (solve-session style). It is the only
+   * receipt when no judge event exists and still represents what was written at
+   * execution time.
    */
   embedded: JudgeVerdictPayload | null;
-  /** 历史第一判（最早 judge event 行）；无 judge 时 null。 */
+  /** Historical first judge event; null without a judge. */
   original: JudgeVerdictProjection | null;
-  /** 当前生效判（链解析后最新 live judge）；全被 supersede/retract 时 null。 */
+  /** Current effective judge after chain resolution; null when all were superseded or retracted. */
   effective: JudgeVerdictProjection | null;
-  /** newest-wins 无视 correction（旧读面语义）；无 judge 时 null。 */
+  /** Newest by time regardless of correction, matching the older read semantics. */
   newest_raw: JudgeVerdictProjection | null;
 }
 
@@ -169,9 +139,8 @@ function judgePayloadFromRow(row: EventRow): JudgeVerdictPayload {
 }
 
 /**
- * embedded 判（attempt payload.judge）→ JudgeVerdictPayload。嵌入形状用
- * route/reason_md（solve-session responseJudge），不是 judge event 的
- * judge_route/feedback_md —— 字段映射，其余字段缺省为 null。
+ * Embedded judge shape uses route/reason_md; map them onto
+ * judge_route/feedback_md and leave the rest null.
  */
 function judgePayloadFromEmbedded(raw: unknown): JudgeVerdictPayload {
   const p = (raw ?? {}) as Record<string, unknown>;
@@ -195,7 +164,7 @@ function judgePayloadFromEmbedded(raw: unknown): JudgeVerdictPayload {
   };
 }
 
-/** 行 → attempt 锚分组键：subject_id 命中优先，否则 caused_by_event_id 命中。 */
+/** Group key: subject_id wins, otherwise caused_by_event_id. */
 function attemptAnchorKey(row: EventRow, attemptIds: Set<string>): string | null {
   if (row.subject_id !== null && attemptIds.has(row.subject_id)) return row.subject_id;
   if (row.caused_by_event_id !== null && attemptIds.has(row.caused_by_event_id)) {
@@ -216,8 +185,8 @@ async function rowsById(db: DbLike, ids: string[]): Promise<Map<string, EventRow
   return out;
 }
 
-// 并发安全批链解析：candidate id 列表分块喂 getEffectiveTruths。单调用方
-// 一次调 4 个 inArray(事件 id) —— 分块后每查询 ≤64 ids（cap 104，含字面量）。
+// Chunk candidate ids: one caller issues four event-id IN lists, and each query
+// must stay under the 104-parameter cap.
 async function effectiveTruthsChunked(
   db: DbLike,
   eventIds: string[],
@@ -231,17 +200,10 @@ async function effectiveTruthsChunked(
   return out;
 }
 
-// judge 候选行双通道拉取（subject_id ∪ caused_by）。分两查询各自 chunk——
-// or(inArray,inArray) 单语句把两通道的 id 都塞进同一次参数计数，是 104-cap
-// 违规最快路径；拆分后每查询只带一条 ≤64 的 IN 列表。
-//
-// YUK-1106：返回前按规范序（created_at, dispatch_seq, id）**升序排序**。
-// 原实现无 ORDER BY ⇒ 返回顺序由 planner/堆序决定；当多个候选链解析到同一
-// effective 行（j_old supersede→j_new 与 j_new 自链）时，聚合 loop 的
-// comparison 不更新、先到者 truth 保留 ⇒ effective.original_event_id 取决于
-// 返回顺序（CI run 36444482025 的 flaky RED）。升序处理保证同一 effective
-// 端点的**最早链来源**（链根）先到并保留；original（最老）/newest_raw（最新）
-// 在全序下本就与处理顺序无关，排序对它们零语义变化。
+// Pull candidates through both anchors in separate queries: a combined
+// or(inArray, inArray) would put both id lists in one parameter count. Sort
+// ascending before returning so an effective row reached by two chains keeps the
+// earliest chain root deterministically.
 async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Promise<EventRow[]> {
   const uniqueIds = [...new Set(attemptIds)];
   const byId = new Map<string, EventRow>();
@@ -272,13 +234,13 @@ async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Pro
     for (const row of bySubject) byId.set(row.id, row);
     for (const row of byCausedBy) byId.set(row.id, row);
   }
-  // YUK-1106：去重后的候选按规范序升序处理（见函数头注释）。
+  // Ascending canonical order; see the function comment.
   return [...byId.values()].sort(compareEventRowsAsc);
 }
 
 /**
- * 批量解析一批 attempt/review event 的 original/effective/newest_raw 三轨裁决。
- * 单次调用固定 3 个 round-trip（候选拉取 + 链解析 + effective 行回填）。
+ * Resolve original/effective/newest_raw for a batch of attempts in three
+ * round-trips.
  */
 export async function resolveVerdictsForAttempts(
   db: DbLike,
@@ -297,8 +259,7 @@ export async function resolveVerdictsForAttempts(
   }
   if (uniqueIds.length === 0) return out;
 
-  // embedded 轨：attempt 行自身 payload.judge（solve-session 等 embedded-grade
-  // 分歧面）。只在 attempt 行确实存在、且 payload.judge 是非空对象时填。
+  // Embedded track: the attempt payload's judge when it is an object.
   const attemptRows = await rowsById(db, uniqueIds);
   for (const [id, row] of attemptRows) {
     const entry = out.get(id);
@@ -314,7 +275,7 @@ export async function resolveVerdictsForAttempts(
   const candidates = await judgeCandidatesForAttempts(db, uniqueIds);
   if (candidates.length === 0) return out;
 
-  // 链解析：每条候选 original 行 → effective 行。
+  // Chain resolution: every candidate original -> effective row.
   const truthByOriginal = await effectiveTruthsChunked(
     db,
     candidates.map((row) => row.id),
@@ -327,8 +288,8 @@ export async function resolveVerdictsForAttempts(
     rowById.set(id, row);
   }
 
-  // per-attempt 聚合：original = 最早候选行；newest_raw = 最新候选行；
-  // effective = 链解析后仍 live（terminal active + effective 行锚一致）里的最新行。
+  // original = earliest candidate; newest_raw = newest; effective = newest still
+  // live with a matching anchor.
   type Acc = {
     original: EventRow | null;
     newestRaw: EventRow | null;
@@ -348,7 +309,7 @@ export async function resolveVerdictsForAttempts(
     const key = attemptAnchorKey(row, anchorSet);
     if (key === null) continue;
     const acc = accFor(key);
-    // original 取最老：acc.original 为空或 row 不比它新（!newerEventRow）则替换。
+    // Keep the earliest row.
     if (acc.original === null || !newerEventRow(row, acc.original)) {
       acc.original = row;
     }
@@ -360,8 +321,8 @@ export async function resolveVerdictsForAttempts(
     if (truth.terminal_state !== 'active' || !truth.effective_event_id) continue;
     const effectiveRow = rowById.get(truth.effective_event_id);
     if (!effectiveRow) continue;
-    // 镜像 resolveEffectiveActiveRows：锚一致性只比 action/subject_kind/
-    // subject_id（不比 caused_by —— rejudge 的 caused_by=appeal.id 合法）。
+    // Match action/subject_kind/subject_id only; rejudge's caused_by=appeal.id is
+    // valid.
     if (effectiveRow.action !== row.action) continue;
     if (effectiveRow.subject_kind !== row.subject_kind) continue;
     if (effectiveRow.subject_id !== row.subject_id) continue;
@@ -413,7 +374,7 @@ export async function resolveVerdictsForAttempts(
   return out;
 }
 
-/** 单 id 便捷封装。 */
+/** Single-id convenience wrapper. */
 export async function resolveVerdictForAttempt(
   db: DbLike,
   attemptEventId: string,
@@ -437,7 +398,7 @@ export async function resolveVerdictForAttempt(
 export interface EvaluationVerdict {
   scoring_basis: ScoringBasisT | null;
   evaluation_id: string;
-  /** evaluation.attempt（重试序号）。 */
+  /** evaluation.attempt (retry ordinal). */
   attempt: number;
   status: EvaluationRecordT['status'];
   verdict: CoarseVerdict;
@@ -446,19 +407,18 @@ export interface EvaluationVerdict {
 
 export interface GroupVerdict {
   evaluation_group_id: string;
-  /** head 指向的当前生效 evaluation + verdict；head 缺行/effective NULL ⇒ null。 */
+  /** Current effective evaluation from the head; null when head or effective is missing. */
   effective: EvaluationVerdict | null;
-  /** 第一条 activation 生效的 evaluation + verdict；从未激活 ⇒ null。 */
+  /** First activated evaluation; null when never activated. */
   original: EvaluationVerdict | null;
-  /** head 行（含 generation）；无 head ⇒ null。 */
+  /** Head row, including generation; null when absent. */
   head: typeof evaluation_effective_head.$inferSelect | null;
 }
 
 /**
- * 批量解析 evaluation_group 的 original/effective 裁决。
- * verdict 经 deriveCoarseVerdict；分母来自 submission 冻结 revision 与
- * issuance 范围。缺失或不可投影的范围返回 unsupported/issuance_scope_unavailable，
- * 不退回完整 revision，也不从缺少的 unit result 猜发题范围。
+ * Resolve original/effective per group. Missing or unprojectable scope returns
+ * unsupported/issuance_scope_unavailable rather than guessing from the full
+ * revision or absent unit results.
  */
 export async function resolveVerdictsForGroups(
   db: DbLike,
@@ -471,7 +431,7 @@ export async function resolveVerdictsForGroups(
   }
   if (uniqueIds.length === 0) return out;
 
-  // 每 inArray 分组 id 都走 chunk（同 QUERY_ID_CHUNK）；五路独立 round-trip。
+  // Chunk every group IN list; five independent round-trips per chunk.
   const heads: (typeof evaluation_effective_head.$inferSelect)[] = [];
   const evalRows: EvaluationRow[] = [];
   const submissions: (typeof assessment_submission.$inferSelect)[] = [];
@@ -505,14 +465,15 @@ export async function resolveVerdictsForGroups(
     submissions.push(...sub);
     activationRows.push(...act);
   }
-  // settlement 拉取不分组（action 扫描，非 inArray）——块外单跑，避免每 chunk
-  // 重复拉同一全集。original 轨只需「组内最早 applied」，行数小，接受 action-scan。
+  // Settlements are fetched once by action, not per chunk: the original track only
+  // needs each group's earliest applied row.
   const settlementRows = await db
     .select({ id: event.id, created_at: event.created_at, payload: event.payload })
     .from(event)
     .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
 
-  // 冻结 revision + issuance：不能只用完整 revision 的分母。
+  // Use the submission's frozen revision and issuance, not the full revision
+  // denominator.
   const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
   const revisionRows: Pick<
     typeof question_revision.$inferSelect,
@@ -635,23 +596,21 @@ export function projectGroupVerdicts(input: {
     }
   };
 
-  // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
-  // activation 收据不算「第一判生效」）。
+  // original = the first active activation's evaluation. A retracted activation
+  // does not count as the first effective verdict.
 
   const firstActivationByGroup = new Map<string, string>();
   for (const row of activeActivationRows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;
     const evalId = typeof p.evaluation_id === 'string' ? p.evaluation_id : null;
     if (evalId === null) continue;
-    // activationRows 已按 (created_at, id) 升序 —— 首见即最早。
+    // activeActivationRows are ascending, so the first seen is earliest.
     if (!firstActivationByGroup.has(row.subject_id)) {
       firstActivationByGroup.set(row.subject_id, evalId);
     }
   }
-  // 回退：最早 applied settlement 的 evaluation_id（结算事件载荷含
-  // evaluation_group_id + evaluation_id + effect；replay/supersede 关系不在
-  // original 轨语义内 —— original 是「第一判」而非「当前 live」，取最早的
-  // applied 行即可）。
+  // Fallback: the earliest applied settlement's evaluation. original means first,
+  // not current, so replay and supersede do not matter here.
   const firstSettlementEvalByGroup = new Map<string, string>();
   const sortedSettlementRows = [...settlementRows].sort(
     (a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id),
@@ -676,7 +635,7 @@ export function projectGroupVerdicts(input: {
       status: row.status,
       verdict: basis
         ? deriveCoarseVerdict({ status: row.status, aggregate: row.aggregate }, basis)
-        : // 无 basis 无法派生 —— 如实回 unsupported/pending 面，不造判定。
+        : // Without a basis, report unsupported honestly rather than inventing a verdict.
           {
             verdict: 'unsupported' as AssessmentVerdict,
             reason: 'issuance_scope_unavailable' as const,
@@ -705,7 +664,7 @@ export function projectGroupVerdicts(input: {
       if (originalRow) entry.original = project(originalRow);
     }
     if (entry.original === null) {
-      // 再退：组内最早 attempt 序（attempt=1 优先，否则最小 attempt）。
+      // Last fallback: earliest attempt in the group.
       const groupEvals = evalsByGroup.get(groupId) ?? [];
       const earliest = [...groupEvals].sort(
         (a, b) =>
@@ -719,7 +678,7 @@ export function projectGroupVerdicts(input: {
   return out;
 }
 
-/** 单 group 便捷封装。 */
+/** Single-group convenience wrapper. */
 export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promise<GroupVerdict> {
   const map = await resolveVerdictsForGroups(db, [groupId]);
   return (
@@ -732,8 +691,7 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
   );
 }
 
-/** Native participation anchors carry no verdict bit. Resolve their frozen
- * coordinates before reading the group's currently selected evaluation. */
+/** Native attempt anchors carry no verdict; resolve their frozen coordinates first. */
 export type NativeAttemptVerdict = GroupVerdict & {
   knowledge_ids: string[];
   issuance: typeof assessment_issuance.$inferSelect;
