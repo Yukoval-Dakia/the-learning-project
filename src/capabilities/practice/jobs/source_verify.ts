@@ -64,10 +64,6 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
-import { promoteVerifiedGroupPartRows } from '@/kernel/records/assessment-publication';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   type AdmissionVerificationWrite,
   type PublishAdmission,
@@ -75,9 +71,13 @@ import {
   type SuspensionUpdate,
   archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
+  promoteVerifiedGroupPartRows,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+} from '@/kernel/records/assessment-publication';
+import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
 import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
@@ -284,6 +284,10 @@ export async function publishVerifyLifecycleUpdate(
     .limit(1);
   const result = await publishQuestionGroup(tx, {
     group_id: groupRootId,
+    readAssetBytes: async (storageKey) => {
+      const { getR2 } = await import('@/server/r2');
+      return getR2().get(storageKey);
+    },
     contract: {
       // F1：冻结四层（含 presentation/digest）逐字回送——同 digest ⇒ 不铸
       // 新 revision；声明与非声明的 typed 契约都被字节级保留。
@@ -1171,6 +1175,10 @@ export async function runSourceVerify(
                   }
                   const cleared = await publishQuestionGroup(tx, {
                     group_id: groupRootId,
+                    readAssetBytes: async (storageKey) => {
+                      const { getR2 } = await import('@/server/r2');
+                      return getR2().get(storageKey);
+                    },
                     contract: {
                       structure: currentRevision.structure,
                       response_spec: currentRevision.response_spec,

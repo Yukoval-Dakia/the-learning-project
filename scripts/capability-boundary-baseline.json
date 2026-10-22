@@ -1678,6 +1678,27 @@
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> r2",
+      "date": "2026-10-22",
+      "from": 4,
+      "to": 6,
+      "direction": "increase",
+      "reason": "Native measurement replaces the two job imports of server/questions/publisher with the already-consumed kernel publisher owner and adds one lazy R2 dependency per same file: practice -> questions 14 -> 12 offsets practice -> r2 4 -> 6; total remains 343.",
+      "exitCondition": "Remove this direct R2 edge when these existing consumers receive the storage-key reader through an established runtime composition port; this record covers only the two measured YUK-1513 job edges.",
+      "justification": {
+        "kind": "offset"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-22",
+      "from": 14,
+      "to": 12,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -2578,6 +2599,26 @@
       "issue": "YUK-1570",
       "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/jobs/quiz_verify.ts",
+      "module": "src/server/r2.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1513",
+      "owns": "Existing R2 client owns storage-key byte retrieval for the original kernel publisher asset barrier. Import and getR2 initialization occur only when that barrier invokes readAssetBytes; this same consumer exits the old publisher compatibility module.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/jobs/source_verify.ts",
+      "module": "src/server/r2.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1513",
+      "owns": "Existing R2 client owns storage-key byte retrieval for the original kernel publisher asset barrier. Import and getR2 initialization occur only when that barrier invokes readAssetBytes; this same consumer exits the old publisher compatibility module.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -2778,6 +2819,24 @@
       "to": 1045,
       "issue": "YUK-1570",
       "responsibilityReason": "One direct import replaces the same binding in a mixed verify-framework import. The complete tool-call evidence owner replaces the retired forwarding export; no solve business body or responsibility grows."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_verify.ts",
+      "date": "2026-10-22",
+      "baseBlob": "8f6f6b8b4f7d7591bd613d0342b567ddea71f24e",
+      "from": 1729,
+      "to": 1736,
+      "issue": "YUK-1513",
+      "responsibilityReason": "Connect the existing optional storage-key reader at only the authorized frozen-contract publish call(s), with lazy R2 import inside the callback, and consolidate all existing publisher bindings into the already-consumed kernel owner. No new operation, wrapper or module; paid, identity, transaction, CAS, FSRS and legacy FromRow bodies are unchanged."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-10-22",
+      "baseBlob": "861c3a2a45ebdd21b432d6c67e4410b5b86b0052",
+      "from": 1514,
+      "to": 1522,
+      "issue": "YUK-1513",
+      "responsibilityReason": "Connect the existing optional storage-key reader at only the authorized frozen-contract publish call(s), with lazy R2 import inside the callback, and consolidate all existing publisher bindings into the already-consumed kernel owner. No new operation, wrapper or module; paid, identity, transaction, CAS, FSRS and legacy FromRow bodies are unchanged."
     }
   ],
   "compatShims": [
@@ -3185,8 +3244,8 @@
         "practice -> memory": 1,
         "practice -> projections": 4,
         "practice -> proposals": 5,
-        "practice -> questions": 14,
-        "practice -> r2": 4,
+        "practice -> questions": 12,
+        "practice -> r2": 6,
         "practice -> runtime-env": 4,
         "practice -> session": 6,
         "shell -> boss": 1,
