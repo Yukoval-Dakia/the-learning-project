@@ -156,7 +156,7 @@ export type ExecuteCopilotTurn = (
 type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
 type StreamResult = Pick<
   StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
+  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'failure'
 > & { finishReason?: string };
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
@@ -565,7 +565,10 @@ export function createCopilotExecutionOwner(
       const finalization = await observeTaskOperation(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
-          const finalized = await finalizer.finalizeTerminal(terminalText);
+          const finalized = await finalizer.finalizeTerminal(
+            partial ? '' : terminalText,
+            partial ? result.failure : undefined,
+          );
           reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
         },

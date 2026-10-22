@@ -3255,6 +3255,24 @@
       "to": 1522,
       "issue": "YUK-1513",
       "responsibilityReason": "Connect the existing optional storage-key reader at only the authorized frozen-contract publish call(s), with lazy R2 import inside the callback, and consolidate all existing publisher bindings into the already-consumed kernel owner. No new operation, wrapper or module; paid, identity, transaction, CAS, FSRS and legacy FromRow bodies are unchanged."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-23",
+      "baseBlob": "9a2fe852c2e5073f4eda36eded1dd9ce81182d80",
+      "from": 1478,
+      "to": 1490,
+      "issue": "YUK-1413",
+      "responsibilityReason": "Carry the typed root provider-rejection field from the existing onResultError callback through the already-settled collecting partial return to the live Copilot finalizer. Collection, failure settlement and identity remain owned by the same module; no new scheduling, retry, budget, paid logic or dependency edge."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-23",
+      "baseBlob": "e80dff53956931495437f788dd95ae94cfb1e4c3",
+      "from": 2051,
+      "to": 2125,
+      "issue": "YUK-1413",
+      "responsibilityReason": "Bind the original root invocation's actual fetch Response to that stream's failed assistant and then the identical final root assistant, emitting only optional literal HTTP400 metadata. The existing stream/fetch/terminal closure owns this association; no new collector, publisher, file, tracing system, send, payload, retry, timeout or paid responsibility. Splitting it would lose the per-invocation and object-identity boundary; query snapshots only reject ambiguity."
     }
   ],
   "compatShims": [

@@ -1293,6 +1293,8 @@ export interface StreamCollectResult extends RunTaskResult {
   partial?: boolean;
   /** Present on a partial result — the underlying error message. */
   error?: string;
+  /** Safe classification from this attempt's observed provider response. */
+  failure?: { kind: 'provider_request_rejected'; httpStatus: 400 };
 }
 
 export async function streamTaskCollecting(
@@ -1346,6 +1348,7 @@ async function streamTaskCollectingImpl(
   });
   let resultText = '';
   let terminalText: string | undefined;
+  let failure: StreamCollectResult['failure'];
 
   return lifecycle.withTracing(async () => {
     let usagePromptText = '';
@@ -1410,6 +1413,14 @@ async function streamTaskCollectingImpl(
             });
           },
           apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
+          onResultError: (msg) => {
+            if (
+              msg.subtype === 'error_during_execution' &&
+              msg.provider_request_rejection?.http_status === 400
+            ) {
+              failure = { kind: 'provider_request_rejected', httpStatus: 400 };
+            }
+          },
           abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
         });
       };
@@ -1470,6 +1481,7 @@ async function streamTaskCollectingImpl(
         cost_ref: lifecycle.costRef,
         partial: true,
         error: error instanceof Error ? error.message : String(error),
+        ...(!lifecycle.aborted && failure ? { failure } : {}),
       };
     } finally {
       lifecycle.dispose();
