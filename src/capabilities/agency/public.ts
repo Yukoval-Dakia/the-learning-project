@@ -38,6 +38,7 @@ export {
 } from './server/conjecture/probe-lifecycle';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
+export { createGoal } from './server/goals/create';
 export { rewriteGoalScopeOnMerge } from './server/goals/merge-attribution';
 export { updateGoalScope } from './server/goals/queries';
 export type { InterventionAuthoringContextT } from './server/intervention/contracts';
