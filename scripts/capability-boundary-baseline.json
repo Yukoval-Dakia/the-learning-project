@@ -1846,6 +1846,26 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "CreatePlacementSessionBodySchema",
+      "targetModule": "src/capabilities/practice/api/placement-contracts.ts",
+      "targetSymbol": "CreatePlacementSessionBodySchema",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-start-operation.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "The authenticated host operation imports the public schema at AST line 13 (path line 14) and validates at line 24 inside the callback invoked after the existing placement flag gate. HTTP imports the internal schema directly; context references are type-only.",
+      "rationale": "Practice owns the existing placement-start input contract and preserves object strip, optional/null fields and self-report semantics. The complete canonical operation retains cold claim/session creation, dispatch, locks, ensure and supply snapshot order; HTTP retains 201 and Location. Start keeps the host graph and original 90-second ALS scope without adding execution permissions.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e89adebb-7c57-46c4-8889-a5cbb402efcf",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/knowledge/server/edges.ts",
       "siteKind": "site",
       "symbol": "createKnowledgeEdge",
@@ -2943,7 +2963,9 @@
       "file": "src/capabilities/knowledge/server/edge-topology-write.ts",
       "module": "src/kernel/records/knowledge-edge-facts.ts",
       "kind": "value",
-      "symbols": ["runEdgeTopologyGate"],
+      "symbols": [
+        "runEdgeTopologyGate"
+      ],
       "issue": "YUK-1570",
       "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
       "date": "2026-10-22"
@@ -3722,7 +3744,13 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "knowledge", "practice"]]
+      "nontrivialSccs": [
+        [
+          "agency",
+          "knowledge",
+          "practice"
+        ]
+      ]
     }
   }
 }
