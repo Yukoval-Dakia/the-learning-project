@@ -78,6 +78,8 @@ export interface Recording {
   status: string;
   phase: Phase;
   lane: 'agent' | 'extract' | 'unknown';
+  /** The server's own lane verdict from history (null until read, or nothing ran). */
+  path: 'agent' | 'extract' | null;
   /** 'loading' until the run's own record is read; 'unreadable' when that read failed. */
   read: 'live' | 'history' | 'loading' | 'unreadable';
   runState: RunState | null;
@@ -253,6 +255,7 @@ export function deriveRecording(input: {
     status,
     phase,
     lane,
+    path: h?.session.path ?? null,
     read,
     runState,
     stage: live?.stage ?? h?.run?.stage ?? null,

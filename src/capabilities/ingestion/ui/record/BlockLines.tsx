@@ -2,6 +2,8 @@ import { Button } from '@/ui-next/public';
 import { BlockLine } from './BlockLine';
 import { IMPORTABLE_STATUS, useImportDraft } from './import-draft';
 import type { Block } from './record-api';
+import { reviewLine } from './record-copy';
+import { useReviewCheck } from './review-check';
 
 /** Statuses in which a question can still be read again from its page (server rescue rule). */
 const RESCUABLE = new Set(['partial', 'extracted']);
@@ -19,18 +21,22 @@ export function BlockLines({
   photos,
   onHoverPage,
   navigate,
+  reviewable,
 }: {
   sessionId: string;
   status: string;
   blocks: Block[];
+  /** A classic recording read only in part: the learner checks every question before import. */
+  reviewable: boolean;
   /** The material is photos or PDF pages, which a question can be read again from. */
   photos: boolean;
   onHoverPage: (page: number | null) => void;
   navigate: (to: string) => void;
 }) {
   const draft = useImportDraft(sessionId, blocks);
+  const check = useReviewCheck(sessionId, blocks);
   const open = IMPORTABLE_STATUS.has(status);
-  const locked = draft.send.isPending;
+  const locked = draft.send.isPending || (reviewable && check.locked);
   const left = blocks.filter((b) => b.status === 'draft').length;
   const waiting = draft.waiting.length;
 
@@ -51,6 +57,15 @@ export function BlockLines({
             rescuable={photos && RESCUABLE.has(status)}
             onRead={() => draft.forgetText(block)}
             onHoverPage={onHoverPage}
+            check={
+              reviewable
+                ? {
+                    marked: check.isMarked(block),
+                    disabled: !check.canMark(block),
+                    onToggle: () => check.toggle(block),
+                  }
+                : undefined
+            }
           />
         ))}
       </ol>
@@ -65,6 +80,22 @@ export function BlockLines({
             去看看
           </button>
         </p>
+      )}
+      {reviewable && (
+        <div className="rc-bar rc-bar-sticky">
+          <span className="rc-quiet" aria-live="polite">
+            {reviewLine(check)}
+          </span>
+          <div className="rc-actions">
+            <Button variant="primary" disabled={!check.canConfirm} onClick={check.confirm}>
+              {check.sending
+                ? '正在记下…'
+                : check.lookingUp
+                  ? '查一下结果'
+                  : `都看过了 · ${check.marked} / ${check.total}`}
+            </Button>
+          </div>
+        </div>
       )}
       {open && left > 0 && (
         <div className="rc-bar rc-bar-sticky">

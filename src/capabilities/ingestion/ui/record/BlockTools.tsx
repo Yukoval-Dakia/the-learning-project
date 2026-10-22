@@ -6,7 +6,16 @@ import { type Block, rescueBlock, revertBlock } from './record-api';
 import { recordKeys } from './recording-read';
 
 /** Takes a question the helper put in automatically back out, after one confirm. */
-export function RevertButton({ sessionId, blockId }: { sessionId: string; blockId: string }) {
+export function RevertButton({
+  sessionId,
+  blockId,
+  disabled = false,
+}: {
+  sessionId: string;
+  blockId: string;
+  /** Held while a review is being recorded, like 再认一次. */
+  disabled?: boolean;
+}) {
   const [asking, setAsking] = useState(false);
   const qc = useQueryClient();
   const undo = useMutation({
@@ -20,7 +29,7 @@ export function RevertButton({ sessionId, blockId }: { sessionId: string; blockI
         <button
           type="button"
           className="rc-link"
-          disabled={undo.isPending}
+          disabled={disabled || undo.isPending}
           onClick={() => undo.mutate()}
         >
           再撤回一次
@@ -32,7 +41,7 @@ export function RevertButton({ sessionId, blockId }: { sessionId: string; blockI
     <button
       type="button"
       className="rc-link"
-      disabled={undo.isPending}
+      disabled={disabled || undo.isPending}
       onClick={() => (asking ? undo.mutate() : setAsking(true))}
       onBlur={() => setAsking(false)}
     >

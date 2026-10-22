@@ -66,6 +66,8 @@ export interface PageSpan {
  */
 export interface Block {
   id: string;
+  /** The row's real version. An older server leaves it out; then nothing can be confirmed. */
+  version?: number;
   source_asset_ids: string[] | null;
   page_spans: PageSpan[] | null;
   extracted_prompt_md: string | null;
@@ -220,6 +222,23 @@ export async function answerAsk(id: string, askId: string, answer: AskAnswerBody
 /** Puts recognised questions into the library; resolves once the server finished. */
 export const importBlocks = (id: string, blocks: ImportBlockBody[]) =>
   runIngestionOperation(id, { kind: 'import', input: { blocks } });
+
+export interface CheckedBlock {
+  block_id: string;
+  version: number;
+}
+
+/**
+ * Records that the learner checked every question of a classic recording (YUK-1522). Resolves
+ * only once the operation finished; the caller owns the key so an unknown outcome is looked up
+ * with the same key and body instead of sending a second one.
+ */
+export const reviewBlocks = (id: string, checked: CheckedBlock[], key: string) =>
+  runIngestionOperation<{ status?: string }>(
+    id,
+    { kind: 'review', input: { checked_blocks: checked } },
+    { idempotencyKey: key },
+  );
 
 /**
  * Reads one recognised question again from its page with a stronger reader (paid, learner-pressed).
