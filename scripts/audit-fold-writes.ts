@@ -198,7 +198,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- artifact (switchable; actual deployment flags are checked separately) ----
   {
     table: 'artifact',
-    file: 'src/server/projections/artifact.ts',
+    file: 'src/kernel/records/artifact-history.ts',
     marker: '.insert(artifact)',
     role: 'throat',
     note: 'Artifact projection write-through shell; activation is runtime-specific.',
