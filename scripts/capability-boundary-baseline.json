@@ -1040,6 +1040,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-917fc4aa-edcc-4272-917c-327a960047a9",
       "date": "2026-10-21"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/onboarding/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "httpPlacementClient",
+      "targetModule": "src/capabilities/onboarding/ui/placement-client.tsx",
+      "targetSymbol": "httpPlacementClient",
+      "owner": "onboarding",
+      "consumers": [
+        {
+          "file": "server/start/routes/placement.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The Start placement route imports the existing complete client and spreads it at line 14, overriding only getPlacementSession. ScreenPlacement and the original client methods are unchanged.",
+      "rationale": "Onboarding owns the placement transport contract and HTTP fallback. Reusing the existing client preserves start, next, submit, end, held-release and draft function identities while the live session recovery read uses the authenticated Start operation.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6d09a9fe-60af-418a-9de1-42cef84f4e91",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
