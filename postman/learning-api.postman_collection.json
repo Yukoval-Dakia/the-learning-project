@@ -946,6 +946,31 @@
       ]
     },
     {
+      "name": "assets",
+      "item": [
+        {
+          "name": "DELETE /api/assets/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/assets/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "assets", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "删除普通源资产；共享不可变自定义代码资产拒绝删除\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 需 x-internal-token。普通 source/image 资产沿现有 owner 协议删除，成功返回 200 {ok:true}，不存在返回 404 not_found。锁内重读的资产 provenance.source_kind=custom_block_code 或 storage_key 位于 assets/custom-code/ 保留命名空间时，返回 409 {error:immutable_asset_delete_forbidden,message:可读原因}，不删除 blob/row、不伪装成功或不存在。这类资产可能被多个 session 以同一行引用，当前保留对象；未来删除须先定义明确的引用生命周期，预演/serving 状态不改变此保护。"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "attempts",
       "item": [
         {

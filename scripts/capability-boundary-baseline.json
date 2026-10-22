@@ -1122,6 +1122,46 @@
       "date": "2026-10-22"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "getIssuanceState",
+      "targetModule": "src/capabilities/practice/server/assessment/submit.ts",
+      "targetSymbol": "getIssuanceState",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/issuance-state-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host-bound Start reader imports getIssuanceState at line 11. The retained HTTP getIssuance adapter directly calls the same owner at assessment-route.ts:133; that direct call is not a public consumer. The complete issuance, serving decision, live draft and submission projection remains unchanged.",
+      "rationale": "Practice owns the complete issuance state read. The existing practice client seam replaces only recovery and conflict reads; host binding retains the current config and task registry graph, and the original not-found mapping preserves the UI branch that permits issuance only after an ApiError 404.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0bae01-0c81-4ed2-93a4-7a955a039105",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readPaperList",
+      "targetModule": "src/capabilities/practice/server/papers-list.ts",
+      "targetSymbol": "readPaperList",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/papers-list-reader.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "The authenticated host-bound Start reader imports readPaperList at line 7. The retained HTTP papers-list adapter directly imports and calls the same operation; those direct calls are not public consumers. Original pagination validation and collection projection are shared, while practice-read aggregation remains unchanged.",
+      "rationale": "Practice owns the complete paper-list request and response contract. HTTP and Start reuse its limit validation, cursor handling and collection envelope without duplicating aggregation, visibility, ordering or counts. The live shelf changes only its transport and preserves its existing cache and display behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ffd3a960-01e5-46f8-ac27-e815442f7297",
+      "date": "2026-10-22"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "agency -> ai",
       "date": "2026-10-22",
@@ -1698,6 +1738,26 @@
       "symbols": ["getArtifactCorrectionStates"],
       "issue": "YUK-1572",
       "owns": "Kernel projects whole-artifact and block correction state; Notes uses those facts to decide visible backlinks without duplicating correction history.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/custom-code-assets.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["ImmutableAssetError", "persistImmutableCustomCodeAsset"],
+      "issue": "YUK-1513",
+      "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/papers-list.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "collectionPayload"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error and collection envelopes; Practice owns paper-list validation and response assembly. The original API retains ApiError for POST, so this adds a physical error-port reference while its collectionPayload import moves to the shared operation.",
       "date": "2026-10-22"
     }
   ],
