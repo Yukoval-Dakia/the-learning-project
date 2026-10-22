@@ -13,6 +13,7 @@ import type {
   releaseHeldPlacement,
   saveResponseDraft,
   selectNextPlacementQuestion,
+  startPlacementProbe,
   transitionPlacementSession,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
@@ -20,6 +21,7 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;
   selectNextPlacementQuestion: (
     sessionId: string,
