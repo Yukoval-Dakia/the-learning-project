@@ -1100,6 +1100,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-96e2663d-a1d6-4bbe-b215-341ead04b8ea",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "PracticeClientProvider",
+      "targetModule": "src/capabilities/practice/ui/practice-client.tsx",
+      "targetSymbol": "PracticeClientProvider",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/routes/practice.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The Start practice route imports the provider at line 3 (module path line 7) and mounts it at line 53 with the existing draft and judge-status Start clients. The live usePracticeSubmit hook consumes the same context.",
+      "rationale": "Practice owns this narrow transport selection seam with the original HTTP default. The provider changes only the two existing consumers transport; autosave, conflict handling, polling, navigation and visual behavior remain in their existing owners.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-100d7a81-b1f3-4925-b56d-3fac936f9672",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -1836,6 +1856,15 @@
       "to": 1146,
       "issue": "YUK-1563",
       "responsibilityReason": "Route the existing /models reader and check reconciliation through catalogProviderFor so custom providers resolve their own bucket id, plus protocol-shaped auth headers for the custom-provider branch. The listing still goes through the same listOne call site; no new fetch site."
+    },
+    {
+      "path": "src/capabilities/practice/ui/use-practice-submit.ts",
+      "date": "2026-10-22",
+      "baseBlob": "5864076c2468ae888ee81561e5c1746fe6256573",
+      "from": 1402,
+      "to": 1404,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Inject the existing draft-save and judge-status transports through the Practice client context, including the necessary saveResponseDraft callback dependency and existing poller readStatus argument. The two net lines add no business responsibility: autosave epochs, conflicts, lifecycle, submission and presentation behavior stay unchanged; no lines are compressed to evade the size gate."
     }
   ],
   "compatShims": [
