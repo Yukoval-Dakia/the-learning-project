@@ -16,6 +16,7 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { item_calibration, question_block } from '@/db/schema';
 
+export { artifactRowToSnapshot } from '@/kernel/records/artifact-history';
 /**
  * Map a live `knowledge` row to its structural snapshot. The embed_* columns are derived search-index
  * state, not fold truth, so they are deliberately omitted. Used by both the one-shot genesis backfill
@@ -23,8 +24,6 @@ import type { item_calibration, question_block } from '@/db/schema';
  * from drifting apart.
  */
 export { knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot } from '@/kernel/records/knowledge-node-history';
-
-export { artifactRowToSnapshot } from '@/kernel/records/artifact-history';
 
 /**
  * Map a live `question_block` DB row to QuestionBlockRowSnapshotT, EXCLUDING the LEGACY

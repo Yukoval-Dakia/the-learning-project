@@ -64,10 +64,7 @@ import {
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
 import { projectQuestionBlockGuarded } from './question_block';
-import {
-  itemCalibrationRowToSnapshot,
-  questionBlockRowToSnapshot,
-} from './snapshot-mappers';
+import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 import type { ProjectionEntity } from './sot-flag';
 
 type DbLike = Db | Tx;
