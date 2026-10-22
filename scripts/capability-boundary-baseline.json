@@ -1160,6 +1160,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-ffd3a960-01e5-46f8-ac27-e815442f7297",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "releaseHeldPlacement",
+      "targetModule": "src/capabilities/practice/server/session-operations/placement-held-release.ts",
+      "targetSymbol": "releaseHeldPlacement",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-held-release-operation.ts",
+          "line": 18
+        }
+      ],
+      "evidence": "The authenticated host-bound Start adapter imports releaseHeldPlacement at line 18. The retained HTTP handler directly consumes the same operation, not through public. Original schema validation, locked advance, post-commit starter supply snapshot and response projection are shared.",
+      "rationale": "Practice owns the complete stateful held-release operation. Both transports preserve non-strict stripping, deterministic replay, unresolved semantics, late settlement and the independent read-only supply transaction after advance commits. The live placement client replaces only this method without exposing actor, time, event or selection controls.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0d97c4-f2a1-425a-a1c4-59488f147b9d",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "selectNextPlacementQuestion",
+      "targetModule": "src/capabilities/practice/server/session-operations/placement-next.ts",
+      "targetSymbol": "selectNextPlacementQuestion",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-next-operation.ts",
+          "line": 12
+        }
+      ],
+      "evidence": "The authenticated host-bound Start adapter imports selectNextPlacementQuestion at line 12 and calls it with the live client empty body. The retained HTTP next adapter directly consumes the same operation. The original locked advance core is unchanged; next and held-release share the post-commit supply snapshot and selection projection.",
+      "rationale": "Practice owns input validation and the complete advance-plus-projection sequence. HTTP retains its existing optional policy inputs and deprecated adapter, while Start exposes only sessionId. Shared projection preserves the independent read-only supply transaction after the stateful advance commits, without adding retry or policy controls.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3d59274f-0ac4-4879-a8e1-476e1ccd60d6",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -1742,6 +1782,26 @@
       "symbols": ["ApiError", "collectionPayload"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic API error and collection envelopes; Practice owns paper-list validation and response assembly. The original API retains ApiError for POST, so this adds a physical error-port reference while its collectionPayload import moves to the shared operation.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-operations/placement-held-release.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error envelope; Practice owns held-release validation and complete operation sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this is an additional physical reference, not a net-zero move.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-operations/placement-next.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic API error envelope; Practice owns next-question validation and complete advance/projection sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this adds a physical reference rather than a net-zero move.",
       "date": "2026-10-22"
     }
   ],

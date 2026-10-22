@@ -7,6 +7,8 @@ import {
   loadPlacementPage,
 } from '@/capabilities/onboarding/ui-public';
 import { startJudgeRunStatusClient } from '../judge-status-client';
+import { startPlacementHeldReleaseClient } from '../placement-held-release-client';
+import { startPlacementNextClient } from '../placement-next-client';
 import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
 import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
@@ -15,6 +17,8 @@ const Page = lazy(() => loadPlacementPage().then((defaultPage) => ({ default: de
 const placementClient: PlacementClient = {
   ...httpPlacementClient,
   getPlacementSession: startPlacementSessionClient,
+  placementNext: startPlacementNextClient,
+  releaseHeldPlacement: startPlacementHeldReleaseClient,
   placementEnd: startPlacementEndClient,
   readJudgeRunStatus: startJudgeRunStatusClient,
   saveResponseDraft: startResponseDraftClient,
