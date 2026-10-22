@@ -137,6 +137,8 @@ export function groupMistakes(rows: readonly MistakeRow[]): MistakeQuestion[] {
 /**
  * Split by what the records say: some record still stands; every record's grading was corrected
  * (the only case labelled 「判分已更正」); or the rest (withdrawn / unresolved records).
+ * Over partially loaded pages this is only "corrected so far": a later page may hold a record that
+ * still stands, so callers must word `gradingCorrected` as partial while more pages exist.
  */
 export function splitByEffect(groups: readonly MistakeQuestion[]) {
   const standing: MistakeQuestion[] = [];

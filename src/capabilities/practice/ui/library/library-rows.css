@@ -18,9 +18,15 @@
     box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
   }
 
-  & .ql-line-main {
+  & .ql-line-body {
     display: grid;
     flex: 1;
+    gap: var(--un-sp-1);
+    min-width: 0;
+  }
+
+  & .ql-line-main {
+    display: grid;
     gap: var(--un-sp-1);
     min-width: 0;
     margin: calc(-1 * var(--un-sp-2));

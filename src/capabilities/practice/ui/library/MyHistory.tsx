@@ -29,17 +29,36 @@ function minutes(ms: number | null): string | null {
 
 function Summary({
   summary,
+  records,
+  partial,
   causeLabel,
 }: {
   summary: MistakeQuestionSummary;
+  records: readonly MistakeRecord[];
+  /** More records exist than are loaded, so numbers cover only the loaded ones. */
+  partial: boolean;
   causeLabel: (id: string) => string;
 }) {
+  const scope = partial ? '已加载的记录里' : '';
   if (summary.effective_wrong_attempt_count === 0) {
-    return <p className="qd-summary">做错的记录都已判分更正或撤回，不算做错。</p>;
+    const tally = (standing: MistakeRecord['standing']) =>
+      records.filter((r) => r.standing === standing).length;
+    const parts = [
+      [tally('grading_corrected'), '判分已更正'],
+      [tally('withdrawn'), '已撤回'],
+      [tally('unknown'), '状态还不确定'],
+    ]
+      .filter(([n]) => Number(n) > 0)
+      .map(([n, word]) => `${word} ${n} 条`);
+    return (
+      <p className="qd-summary">
+        {scope}没有算作做错的记录：{parts.join('，')}。
+      </p>
+    );
   }
   return (
     <p className="qd-summary">
-      做错 <span className="un-num">{summary.effective_wrong_attempt_count}</span> 次
+      {scope}做错 <span className="un-num">{summary.effective_wrong_attempt_count}</span> 次
       {summary.last_effective_wrong_at
         ? `，最近一次 ${shortDay(summary.last_effective_wrong_at)}`
         : ''}
@@ -144,7 +163,12 @@ export function MyHistory({
       )}
       {group && (
         <>
-          <Summary summary={group.summary} causeLabel={causeLabel} />
+          <Summary
+            summary={group.summary}
+            records={group.records}
+            partial={Boolean(mistakes.data?.next_cursor)}
+            causeLabel={causeLabel}
+          />
           <h3 className="qd-label">做错过的记录</h3>
           <CollapsibleList
             className="qd-wrongs"

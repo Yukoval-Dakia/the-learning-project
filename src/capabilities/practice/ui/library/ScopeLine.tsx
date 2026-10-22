@@ -36,9 +36,20 @@ export function ScopeLine({
   /** Apply a change on top of the address as it is when the change lands. */
   onPatch: (patch: Partial<LibraryScope>) => void;
 }) {
-  // Clearing remounts the uncontrolled search box (key) so typing never fights the address.
-  const [searchEpoch, setSearchEpoch] = useState(0);
+  // The box follows the address: when the address's search changes from outside (back/forward,
+  // clear), the box takes it; while typing, the box keeps what was typed until the address
+  // catches up.
+  const [draft, setDraft] = useState(scope.search);
+  const [seen, setSeen] = useState(scope.search);
   const timer = useRef<number | null>(null);
+  if (scope.search !== seen) {
+    setSeen(scope.search);
+    if (scope.search !== draft.trim()) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+      setDraft(scope.search);
+    }
+  }
 
   // Cancel a pending search when the box leaves (e.g. the learner opened a question).
   const attachSearch = useCallback((node: HTMLInputElement | null) => {
@@ -51,13 +62,14 @@ export function ScopeLine({
 
   const options: Record<ScopeField, ReadonlyArray<{ id: string; label: string }>> = {
     subject: lookups.subjectOptions,
-    knowledgeId: lookups.knowledgeOptions.map((k) => ({ id: k.id, label: k.name })),
+    knowledgeId: lookups.knowledgeOptions.map((k) => ({ id: k.id, label: k.label })),
     kind: KIND_CHOICES,
     source: SOURCE_CHOICES,
   };
   const fields = VIEW_SCOPE[view];
 
   const typed = (value: string) => {
+    setDraft(value);
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       timer.current = null;
@@ -68,7 +80,7 @@ export function ScopeLine({
   const clear = () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
-    setSearchEpoch((n) => n + 1);
+    setDraft('');
     onPatch(EMPTY_SCOPE);
   };
 
@@ -78,12 +90,11 @@ export function ScopeLine({
         <Search aria-hidden="true" className="ql-search-icon" />
         <span className="un-sr-only">搜索题目</span>
         <input
-          key={searchEpoch}
           ref={attachSearch}
           type="search"
           className="ql-search-input"
           placeholder="搜题目里的字"
-          defaultValue={scope.search}
+          value={draft}
           onChange={(event) => typed(event.currentTarget.value)}
         />
       </label>

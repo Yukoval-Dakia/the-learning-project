@@ -1,4 +1,5 @@
-/* One question (YUK-1473): the in-place editor and form fields. Split from question.css. */
+/* One question (YUK-1473): the in-place editor, form fields and the question's pictures. Split
+   from question.css. */
 
 [data-ui-next].qd-page {
   /* ── Editor fields ── */
@@ -53,5 +54,66 @@
     align-items: baseline;
     gap: var(--un-sp-2);
     color: var(--un-text-1);
+  }
+
+  /* ── Options: one box each ── */
+  & .qd-choice-edit {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  & .qd-choice-inputs {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-choice-input {
+    display: grid;
+    grid-template-columns: 1.5em minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--un-sp-3);
+  }
+
+  & .qd-choice-add {
+    justify-self: start;
+  }
+
+  /* After a clash: what happened and the one way forward. */
+  & .qd-stale {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+  }
+
+  /* ── Pictures under the stem ── */
+  & .qd-figures {
+    display: grid;
+    gap: var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-figure {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+  }
+
+  & .qd-figure img {
+    max-width: 100%;
+    max-height: 420px;
+    border-radius: var(--un-r-1);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .qd-figure-caption,
+  & .qd-figure-missing {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
   }
 }

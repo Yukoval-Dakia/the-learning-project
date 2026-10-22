@@ -51,11 +51,11 @@
   [data-ui-next].un-toasts .un-toast {
     animation: un-toast-in var(--un-t-ui) var(--un-ease-spring-soft) both;
   }
-}
 
-@keyframes un-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.985);
+  @keyframes un-toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
   }
 }

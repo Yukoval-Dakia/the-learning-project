@@ -53,8 +53,8 @@ export function AllView({
             stem={item.prompt_md}
             notation={item.notation}
             navigate={navigate}
+            knowledge={item.knowledge_labels ?? undefined}
             facts={[
-              item.knowledge_labels?.map((k) => k.name).join('、') || null,
               item.is_composite
                 ? item.children.length > 0
                   ? `大题 · ${item.children.length} 小题`

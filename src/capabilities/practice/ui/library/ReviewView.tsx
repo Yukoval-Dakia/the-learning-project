@@ -3,7 +3,7 @@ import { Card } from '@/ui-next/primitives/Card';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button } from '@/ui-next/public';
-import { VERIFY_WORDS, kindWord, sourceWord } from './library-copy';
+import { VERIFY_WORDS, kindWord, sourceWord, verifyReasonWords } from './library-copy';
 import type { LibraryScope } from './library-url';
 import { LoadMore, QuestionLine, shortDay } from './QuestionLine';
 import { ReviewBar } from './ReviewBar';
@@ -32,6 +32,15 @@ export function ReviewView({
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const batch = useBatchVerify(() => setPicked(new Set()));
   const shown = rows.filter((row) => !skipped.has(row.id));
+  // A new scope or search starts a fresh selection, so nothing hidden stays ticked.
+  const scopeKey = JSON.stringify(scope);
+  const [pickedFor, setPickedFor] = useState(scopeKey);
+  if (pickedFor !== scopeKey) {
+    setPickedFor(scopeKey);
+    setPicked(new Set());
+  }
+  const shownIds = new Set(shown.map((row) => row.id));
+  const pickedShown = [...picked].filter((id) => shownIds.has(id));
 
   const toggle = (id: string, on: boolean) =>
     setPicked((prev) => {
@@ -41,9 +50,21 @@ export function ReviewView({
       return next;
     });
   const allPicked = shown.length > 0 && shown.every((row) => picked.has(row.id));
+  const more = (
+    <LoadMore
+      shown={shown.length}
+      total={scoped ? undefined : total}
+      hasMore={q.hasNextPage}
+      loading={q.isFetchingNextPage}
+      onMore={() => void q.fetchNextPage()}
+    />
+  );
 
   if (q.isLoading) return <SkeletonLines rows={5} label="正在载入待审核的题" />;
   if (q.isError) return <RetryLine message="待审核的题没取到。" onRetry={() => void q.refetch()} />;
+  // Filters apply to loaded pages only, so an empty result means "nothing yet" while more pages
+  // exist.
+  if (rows.length === 0 && q.hasNextPage) return more;
   if (rows.length === 0) {
     return (
       <Card tone="sunk" className="ql-empty">
@@ -104,11 +125,13 @@ export function ReviewView({
               }
               detail={
                 row.verify_reason ? (
-                  <span className="ql-reason">没通过的原因：{row.verify_reason}</span>
+                  <span className="ql-reason">
+                    没通过的原因：{verifyReasonWords(row.verify_reason)}
+                  </span>
                 ) : null
               }
+              knowledge={row.knowledge.map((k) => ({ id: k.id, name: k.label }))}
               facts={[
-                row.knowledge.map((k) => k.label).join('、') || null,
                 kindWord(row.kind),
                 sourceWord(row.source),
                 shortDay(Date.parse(row.created_at) / 1000),
@@ -122,20 +145,14 @@ export function ReviewView({
           );
         })}
       </ol>
-      <LoadMore
-        shown={shown.length}
-        total={scoped ? undefined : total}
-        hasMore={q.hasNextPage}
-        loading={q.isFetchingNextPage}
-        onMore={() => void q.fetchNextPage()}
-      />
+      {more}
       <ReviewBar
-        count={picked.size}
+        count={pickedShown.length}
         progress={batch.progress}
         onCancel={() => setPicked(new Set())}
-        onVerify={() => void batch.run([...picked])}
+        onVerify={() => void batch.run(pickedShown)}
         onSkip={() => {
-          setSkipped((prev) => new Set([...prev, ...picked]));
+          setSkipped((prev) => new Set([...prev, ...pickedShown]));
           setPicked(new Set());
         }}
       />

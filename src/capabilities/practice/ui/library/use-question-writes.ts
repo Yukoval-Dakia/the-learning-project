@@ -87,6 +87,18 @@ export function useDeletePreview(id: string) {
   });
 }
 
+/**
+ * Restore failures: a live question already holding the same content is its own sentence (the
+ * route sends it as a 409 'conflict' whose message names the content claim).
+ */
+export function restoreErrorText(err: unknown): string {
+  if (err instanceof ApiError && err.status === 409 && err.message.includes('same content claim'))
+    return '没能恢复：题库里已经有一道内容相同的题在用。要恢复这道，先处理那道题。';
+  if (err instanceof ApiError && err.status === 409 && err.message.includes('not archived'))
+    return '这道题已经不在删除状态了。';
+  return writeErrorText(err);
+}
+
 async function restoreLatest(id: string) {
   const fresh = await getQuestionFull(id);
   return restoreQuestion(id, fresh.version);
@@ -97,7 +109,7 @@ export function useRestore(id: string) {
   return useMutation({
     mutationFn: () => restoreLatest(id),
     onSuccess: () => showToast({ message: '已恢复，题目回到待审核' }),
-    onError: (err) => showToast({ message: writeErrorText(err) }),
+    onError: (err) => showToast({ message: restoreErrorText(err) }),
     onSettled: () => void refresh(),
   });
 }
@@ -121,7 +133,7 @@ export function useDelete(id: string) {
           run: () => {
             void restoreLatest(id)
               .then(() => showToast({ message: '已恢复，题目回到待审核' }))
-              .catch((err: unknown) => showToast({ message: writeErrorText(err) }))
+              .catch((err: unknown) => showToast({ message: restoreErrorText(err) }))
               .finally(() => void refresh());
           },
         },

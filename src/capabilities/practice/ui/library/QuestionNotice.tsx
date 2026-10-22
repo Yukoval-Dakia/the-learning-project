@@ -4,7 +4,7 @@ import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
 import { getDraftDetail } from '../practice-api';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
-import { VERIFY_WORDS, holdWords } from './library-copy';
+import { VERIFY_WORDS, holdWords, verifyReasonWords } from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';
 import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './use-question-writes';
@@ -28,7 +28,7 @@ function DraftNotice({ id }: { id: string }) {
     verify.mutate(id, {
       onSuccess: (r) =>
         showToast({
-          message: r.promoted ? '核验通过，已开始出给你' : `没通过：${r.reason ?? '原因还不确定'}`,
+          message: r.promoted ? '核验通过，已开始出给你' : `没通过：${verifyReasonWords(r.reason)}`,
         }),
       onError: (err) => showToast({ message: writeErrorText(err) }),
     });
@@ -40,7 +40,7 @@ function DraftNotice({ id }: { id: string }) {
           showToast({
             message: r.promoted
               ? '已启用。没有核验，这次的理由记下了。'
-              : `没能启用：${r.reason ?? '原因还不确定'}`,
+              : `没能启用：${verifyReasonWords(r.reason)}`,
           }),
         onError: (err) => showToast({ message: writeErrorText(err) }),
       },
@@ -52,7 +52,7 @@ function DraftNotice({ id }: { id: string }) {
       <p className="qd-notice-text">
         {words ? `${words.word}。` : ''}
         {check.data?.verify_reason
-          ? `上次没通过的原因：${check.data.verify_reason}`
+          ? `上次没通过的原因：${verifyReasonWords(check.data.verify_reason)}`
           : '核验会检查题目和答案，通过后就开始出给你，可能要等一会儿。'}
       </p>
       <div className="qd-notice-actions">

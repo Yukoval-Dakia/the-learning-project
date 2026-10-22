@@ -78,8 +78,8 @@ export function HeldView({
                   stem={item.prompt_md}
                   notation={item.notation}
                   navigate={navigate}
+                  knowledge={item.knowledge_labels ?? undefined}
                   facts={[
-                    item.knowledge_labels?.map((k) => k.name).join('、') || null,
                     kindWord(item.kind),
                     item.draft_status === 'draft' && '草稿',
                     item.serving.held_since &&

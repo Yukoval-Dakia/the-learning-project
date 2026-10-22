@@ -5,6 +5,7 @@ import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { Expand } from '@/ui-next/public';
 import type { QuestionFullDetail } from './library-api';
 import { kindWord } from './library-copy';
+import { QuestionFigures } from './QuestionFigures';
 import { questionHref } from './QuestionLine';
 
 const LETTERS = 'ABCDEFGHIJ';
@@ -50,6 +51,7 @@ export function QuestionPaper({
       <MathMarkdown className="qd-stem" notation={detail.notation}>
         {detail.prompt_md.trim() || '（这道题没有文字题面）'}
       </MathMarkdown>
+      <QuestionFigures detail={detail} />
 
       {choices.length > 0 && (
         <ol className="qd-choices">

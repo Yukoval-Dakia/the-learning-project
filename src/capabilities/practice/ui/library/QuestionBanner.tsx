@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
 import { difficultyWord, holdWords, kindWord, sourceWord } from './library-copy';
-import { questionHref, shortDay } from './QuestionLine';
+import { KnowledgeLinks, questionHref, shortDay } from './QuestionLine';
 
 function stateWord(detail: QuestionFullDetail): { word: string; tone: string } | null {
   if (isDeleted(detail)) return { word: '已删除', tone: 'critical' };
@@ -22,7 +22,6 @@ export function QuestionBanner({
   detail: QuestionFullDetail;
   navigate: (to: string) => void;
 }) {
-  const title = detail.labels.map((l) => l.name).join('、') || '还没归到知识点的题';
   const state = stateWord(detail);
   const parentHref = detail.parent_question_id ? questionHref(detail.parent_question_id) : null;
   const goParent = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -44,7 +43,17 @@ export function QuestionBanner({
           这是一道大题的第 {(detail.part_index ?? 0) + 1} 小题 · 看整道题
         </a>
       )}
-      <h1 className="qd-title">{title}</h1>
+      <h1 className="qd-title">
+        {detail.labels.length > 0 ? (
+          <KnowledgeLinks
+            knowledge={detail.labels}
+            navigate={navigate}
+            className="qd-title-links"
+          />
+        ) : (
+          '还没归到知识点的题'
+        )}
+      </h1>
       <p className="qd-facts">
         {state && (
           <span className="ql-state" data-tone={state.tone}>

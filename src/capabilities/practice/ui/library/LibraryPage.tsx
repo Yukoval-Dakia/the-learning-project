@@ -39,7 +39,7 @@ const VIEW_LEADS: Readonly<Record<LibraryView, string>> = {
 
 function stateSentence(counts: ReturnType<typeof useViewCounts>): string {
   if (counts.all === undefined) return ' ';
-  const parts = [`能出给你的题 ${counts.all} 道`];
+  const parts = [`已启用的题 ${counts.all} 道`];
   if (counts.review) parts.push(`${counts.review} 道等你审核`);
   if (counts.held) parts.push(`${counts.held} 道暂不出题`);
   return `${parts.join('，')}。`;

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { randomId } from '@/ui/lib/random-id';
 import { Button } from '@/ui-next/public';
 import type { QuestionFullDetail } from './library-api';
@@ -18,6 +19,8 @@ export function ServingButton({
   variant?: 'primary' | 'secondary';
 }) {
   const run = useServingAction();
+  // Set in the click handler, so a second click before the re-render cannot send twice.
+  const inFlight = useRef(false);
   if (serving.pending_action) {
     return <span className="ql-note">已提交，排队处理中</span>;
   }
@@ -28,7 +31,18 @@ export function ServingButton({
       size="sm"
       variant={variant}
       disabled={run.isPending}
-      onClick={() => run.mutate({ action, key: randomId() })}
+      onClick={() => {
+        if (inFlight.current) return;
+        inFlight.current = true;
+        run.mutate(
+          { action, key: randomId() },
+          {
+            onSettled: () => {
+              inFlight.current = false;
+            },
+          },
+        );
+      }}
     >
       {run.isPending ? '正在提交…' : (SERVING_COMMAND_WORDS[action.command] ?? '处理')}
     </Button>

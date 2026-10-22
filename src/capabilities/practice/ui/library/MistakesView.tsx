@@ -21,10 +21,13 @@ function plainAnswer(md: string): string {
 function MistakeLine({
   group,
   lookups,
+  partial,
   navigate,
 }: {
   group: MistakeQuestion;
   lookups: LibraryLookups;
+  /** More mistake pages exist, so counts cover only what is loaded. */
+  partial: boolean;
   navigate: (to: string) => void;
 }) {
   const { summary } = group;
@@ -39,6 +42,10 @@ function MistakeLine({
       stem={group.promptMd}
       notation={notation}
       navigate={navigate}
+      knowledge={group.knowledgeIds.flatMap((id) => {
+        const name = lookups.knowledgeName(id);
+        return name ? [{ id, name }] : [];
+      })}
       detail={
         <span className="ql-mine">
           <span className="ql-mine-label">当时答</span>
@@ -59,13 +66,9 @@ function MistakeLine({
         </span>
       }
       facts={[
-        group.knowledgeIds
-          .map((id) => lookups.knowledgeName(id))
-          .filter(Boolean)
-          .join('、') || null,
         counted
-          ? `做错 ${summary.effective_wrong_attempt_count} 次`
-          : `${group.records.length} 条记录`,
+          ? `${partial ? '已加载的记录里' : ''}做错 ${summary.effective_wrong_attempt_count} 次`
+          : `${partial ? '已加载 ' : ''}${group.records.length} 条记录`,
         summary.last_effective_wrong_at
           ? `最近 ${shortDay(summary.last_effective_wrong_at)}`
           : `最近 ${shortDay(group.latestRecordAtSec)}`,
@@ -89,12 +92,14 @@ function FoldedGroup({
   title,
   why,
   groups,
+  partial,
   render,
 }: {
   id: string;
   title: string;
   why: string;
   groups: readonly MistakeQuestion[];
+  partial: boolean;
   render: (group: MistakeQuestion) => ReactNode;
 }) {
   if (groups.length === 0) return null;
@@ -102,7 +107,10 @@ function FoldedGroup({
     <section className="ql-group" aria-labelledby={id}>
       <header className="ql-group-head">
         <h2 id={id} className="ql-group-title">
-          {title} <span className="ql-group-count un-num">{groups.length}</span>
+          {title}{' '}
+          <span className="ql-group-count un-num">
+            {partial ? `目前加载到 ${groups.length} 道` : groups.length}
+          </span>
         </h2>
         <p className="ql-group-why">{why}</p>
       </header>
@@ -152,12 +160,14 @@ export function MistakesView({
     );
   }
 
+  const partial = q.hasNextPage;
   const { standing, gradingCorrected, other } = splitByEffect(groups);
   const render = (group: MistakeQuestion) => (
     <MistakeLine
       key={group.summary.question_id}
       group={group}
       lookups={lookups}
+      partial={partial}
       navigate={navigate}
     />
   );
@@ -167,9 +177,14 @@ export function MistakesView({
       {standing.length > 0 && <ol className="ql-list">{standing.map(render)}</ol>}
       <FoldedGroup
         id="ql-m-corrected"
-        title="判分已更正"
-        why="这些题当时判成错，后来判分更正了，不算做错。"
+        title={partial ? '目前加载到的记录都已判分更正' : '判分已更正'}
+        why={
+          partial
+            ? '这些题已加载的记录都是判分更正过的。更早的记录还没加载，加载完才能确定。'
+            : '这些题当时判成错，后来判分更正了，不算做错。'
+        }
         groups={gradingCorrected}
+        partial={partial}
         render={render}
       />
       <FoldedGroup
@@ -177,6 +192,7 @@ export function MistakesView({
         title="其他记录"
         why="这些记录已撤回或状态还不确定，没有算进做错次数。"
         groups={other}
+        partial={partial}
         render={render}
       />
       <LoadMore

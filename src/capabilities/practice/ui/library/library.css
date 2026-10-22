@@ -3,6 +3,32 @@
    (T1 semantic tokens, T3 glass only on floating layers, M1 motion only on change, A2 hit areas). */
 
 [data-ui-next].ql-page {
+  /* ── Knowledge-point links (rows and the question banner) ── */
+  & .ql-kn-line {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-kn-link,
+  & .qd-kn-link {
+    color: inherit;
+    text-decoration: none;
+    border-radius: var(--un-r-1);
+  }
+
+  & .ql-kn-link:hover,
+  & .qd-kn-link:hover {
+    color: var(--un-text-1);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  & .ql-kn-link:focus-visible,
+  & .qd-kn-link:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 1px;
+  }
+
   & .ql-main,
   & .qd-main {
     display: grid;
