@@ -7,6 +7,7 @@ export {
   PlacementClientProvider,
   type PlacementProfileClient,
   PlacementProfileClientProvider,
+  httpPlacementClient,
   usePlacementProfileClient,
 } from './ui/placement-client';
 export type {

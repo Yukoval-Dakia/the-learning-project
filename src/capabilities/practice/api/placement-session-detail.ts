@@ -8,12 +8,7 @@ import { UpdatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const { session, starterSupply, unresolvedItems } = await readPlacementSession(params.id);
-    return Response.json({
-      ...session,
-      starterSupply,
-      ...unresolvedField(unresolvedItems),
-    });
+    return Response.json(await readPlacementSession(params.id));
   } catch (err) {
     return errorResponse(err);
   }

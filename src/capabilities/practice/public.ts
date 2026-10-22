@@ -310,3 +310,8 @@ export {
 } from './server/judge-engine-client';
 export { readPlacementProfile } from './server/placement-profile';
 export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';
+
+// Resolve the existing session operation in the initialized host graph after auth.
+export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
