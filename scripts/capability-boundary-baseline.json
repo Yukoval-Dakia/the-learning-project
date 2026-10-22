@@ -2001,14 +2001,6 @@
       "date": "2026-10-22"
     },
     {
-<<<<<<< HEAD
-      "debt": "capabilityToServer",
-      "pair": "practice -> boss",
-      "date": "2026-10-22",
-      "from": 18,
-      "to": 15,
-      "direction": "decrease"
-=======
       "type": "stable_contract",
       "file": "src/capabilities/copilot/ui-public.ts",
       "siteKind": "module",
@@ -2027,7 +2019,14 @@
       "issue": "YUK-1473",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1473#comment-4147d4be-d0cf-4a41-a803-0096118d534d",
       "date": "2026-10-22"
->>>>>>> origin/main
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-22",
+      "from": 18,
+      "to": 15,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
