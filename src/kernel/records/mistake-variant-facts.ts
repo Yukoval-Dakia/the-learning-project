@@ -287,11 +287,8 @@ async function upsertProjectedMistakeVariant(
 ): Promise<void> {
   const values = pickMistakeVariantFields(projected);
   const { id: _id, ...fields } = values;
-  await db
-    .insert(mistake_variant)
-    .values(values)
-    .onConflictDoUpdate({
-      target: mistake_variant.id,
-      set: fields,
-    });
+  await db.insert(mistake_variant).values(values).onConflictDoUpdate({
+    target: mistake_variant.id,
+    set: fields,
+  });
 }
