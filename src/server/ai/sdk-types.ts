@@ -149,6 +149,8 @@ export interface SDKResultSuccess {
 export interface SDKResultError {
   type: 'result';
   usage_observed?: boolean;
+  /** Observed HTTP rejection bound to this root assistant response. */
+  provider_request_rejection?: { http_status: 400 };
   subtype:
     | 'error_during_execution'
     | 'error_max_turns'
