@@ -52,7 +52,7 @@
       "reason": "Event-fold projection applier for knowledge nodes (upsert/delete on replay); trigger fan-out covers each applied write."
     },
     {
-      "path": "src/server/projections/knowledge_edge.ts",
+      "path": "src/kernel/records/knowledge-edge-facts.ts",
       "tables": ["knowledge_edge"],
       "reason": "Event-fold projection applier for knowledge edges (upsert/delete on replay); trigger fan-out covers each applied write."
     },
