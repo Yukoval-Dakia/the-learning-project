@@ -1,5 +1,6 @@
 // Grade the persisted probe original; only answerProbe writes its terminal outcome.
 import { eq } from 'drizzle-orm';
+import { previewFormalAttempt } from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
@@ -14,7 +15,6 @@ import {
   question_revision,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { previewFormalAttempt } from '@/kernel/judge';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import { ProbeAnswerBodySchema, ProbeAnswerParamsSchema } from '../../api/contracts';
 import { validateIssuedProbeProvenance } from './completed-probe-provenance';
