@@ -47,7 +47,7 @@
       "reason": "Learning-intent KC materialization inserts knowledge; trigger fan-out covers it."
     },
     {
-      "path": "src/server/projections/knowledge.ts",
+      "path": "src/kernel/records/knowledge-node-materialization.ts",
       "tables": ["knowledge"],
       "reason": "Event-fold projection applier for knowledge nodes (upsert/delete on replay); trigger fan-out covers each applied write."
     },
@@ -65,16 +65,6 @@
       "path": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
       "tables": ["knowledge"],
       "reason": "YUK-452 placement cold-starter admission: inserts the deterministic starter KC under the subject root (identity-keyed, onConflictDoNothing, admission-gated single writer). Topology trigger fan-out applies exactly as for the other inventoried knowledge writers."
-    },
-    {
-      "path": "src/server/subjects/ensure-subject-root.ts",
-      "tables": ["knowledge"],
-      "reason": "Bootstraps the per-subject root knowledge node; trigger fan-out covers the insert."
-    },
-    {
-      "path": "src/server/subjects/subject-control-write.ts",
-      "tables": ["knowledge"],
-      "reason": "Subject control-plane knowledge edits; trigger fan-out covers the update."
     },
     {
       "path": "src/server/rehearsal/corpus.ts",

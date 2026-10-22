@@ -72,7 +72,12 @@ export {
   archiveMisconceptionEdge,
   createMisconceptionEdge,
 } from './server/misconception-edges';
-export { createKnowledgeNodeFromEvents } from './server/node-creation';
+export {
+  createKnowledgeNodeFromEvents,
+  ensureSubjectRoot,
+  subjectRootId,
+  updateSubjectRootNameFromControl,
+} from './server/node-creation';
 export {
   type MasteryDecayBucket,
   masteryDecayBucket,

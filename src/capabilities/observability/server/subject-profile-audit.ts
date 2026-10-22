@@ -7,8 +7,8 @@
 import { asc } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { subject } from '@/db/schema';
-import { validateSubject } from '@/server/subjects/subject-control-write';
 import { auditEvaluationSemantics } from '@/subjects/evaluation-semantics-audit';
+import { validateSubject } from './subject-control-write';
 
 export interface DbProfileAuditEntry {
   id: string;
