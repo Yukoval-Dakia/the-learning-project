@@ -101,6 +101,8 @@ function observeCommittedHydration(id: string, expectedRevisions: number[]) {
 }
 
 describe.each(['domain', 'HTTP'])('%s committed control operations', (transport) => {
+  // @invariant concurrency: a committed subject change survives post-commit hydration failure without retry or rollback
+  // @fails-if hydration failure retries or rolls back the committed mutation or replaces the last-good registry
   it('a real post-commit hydrate query failure preserves last-good without retry or rollback', async () => {
     const id = await createCustom();
     const lastGood = registry.get(id);
