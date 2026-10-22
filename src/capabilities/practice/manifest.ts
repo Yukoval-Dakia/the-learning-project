@@ -828,7 +828,7 @@ export const practiceCapability = defineCapability({
       {
         // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
         // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
-        // write-once 存档。由 createWorksheetExportRoute（created/replayed）入队。
+        // write-once 存档。submitWorksheetExport 经创建 route 对 created/replayed 入队。
         // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
         name: WORKSHEET_RENDER_QUEUE,
         queue: 'agent',
