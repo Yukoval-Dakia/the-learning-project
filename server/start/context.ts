@@ -5,6 +5,7 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   getIssuanceState,
+  projectIssuanceResult,
   projectReviewAnswerResponse,
   readJudgeRunStatus,
   readPaperList,
@@ -28,6 +29,7 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof releaseHeldPlacement>>>;
   readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
+  createIssuance: (body: string) => Promise<ReturnType<typeof projectIssuanceResult>>;
   readIssuanceState: (issuanceId: string) => Promise<Awaited<ReturnType<typeof getIssuanceState>>>;
   saveResponseDraft: (input: {
     issuanceId: string;

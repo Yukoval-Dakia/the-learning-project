@@ -1,9 +1,16 @@
 import { createContext, useContext } from 'react';
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
-import { getIssuanceState, getPapers, saveResponseDraft, submitReview } from './practice-api';
+import {
+  getIssuanceState,
+  getPapers,
+  issueAssessment,
+  saveResponseDraft,
+  submitReview,
+} from './practice-api';
 
 export type PracticeClient = {
   getPapers: typeof getPapers;
+  issueAssessment: typeof issueAssessment;
   getIssuanceState: typeof getIssuanceState;
   saveResponseDraft: typeof saveResponseDraft;
   submitReview: typeof submitReview;
@@ -13,6 +20,7 @@ export type PracticeClient = {
 const httpPracticeClient: PracticeClient = {
   getIssuanceState,
   getPapers,
+  issueAssessment,
   saveResponseDraft,
   submitReview,
 };
