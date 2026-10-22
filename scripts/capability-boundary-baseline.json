@@ -1364,6 +1364,26 @@
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-412e95c1-f79c-4ab2-b44f-1fc76c57871f",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/observability/public.ts",
+      "siteKind": "module",
+      "symbol": "thinCreateSubject",
+      "targetModule": "src/capabilities/observability/server/subject-create.ts",
+      "targetSymbol": "thinCreateSubject",
+      "owner": "observability",
+      "consumers": [
+        {
+          "file": "src/capabilities/observability/api/admin-subjects-create.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "The existing HTTP create adapter consumes this public operation at line 8 and calls it with the validated displayName. The Start caller is in preparation and is not recorded as an existing consumer.",
+      "rationale": "Observability owns complete controlled subject creation: control lock, canonical claim, six bindings, root genesis, journal, unique-conflict replay and post-commit hydration. The original result union and HTTP status mapping remain unchanged.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-b13a980e-3c43-4e7e-97f9-5cf4af06c786",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
