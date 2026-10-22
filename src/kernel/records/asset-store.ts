@@ -1,5 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, ne, sql } from 'drizzle-orm';
+import {
+  CUSTOM_ASSET_MAX_BYTES,
+  CUSTOM_ASSET_MIME_TYPES,
+  customAssetIdForDigest,
+} from '@/core/schema/assessment/presentation';
 import type { Db, Tx } from '@/db/client';
 import { source_asset } from '@/db/schema';
 
@@ -135,6 +140,154 @@ export function persistImageAsset(
   input: Omit<Parameters<typeof persistSourceAsset>[2], 'kind'>,
 ): Promise<SourceAssetRow> {
   return persistSourceAsset(db, r2, { ...input, kind: 'image' });
+}
+
+/** Separate from the mutable source/image adapter; existing clients stay compatible. */
+export interface ImmutableAssetBlobClient {
+  get(key: string): Promise<Uint8Array | null>;
+  putIfAbsent?(key: string, body: Uint8Array, contentType?: string): Promise<'created' | 'exists'>;
+}
+
+export class ImmutableAssetError extends Error {
+  constructor(
+    readonly code: 'immutable_asset_conflict' | 'immutable_asset_unverifiable',
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ImmutableAssetError';
+  }
+}
+
+/**
+ * Complete write-once custom-code protocol. The caller only supplies bytes and
+ * server-owned provenance/authorization; this owner derives every content identity.
+ * Never use persistSourceAsset's unconditional put for this path.
+ */
+export async function persistImmutableCustomCodeAsset(
+  db: Db,
+  blob: ImmutableAssetBlobClient,
+  input: {
+    bytes: Uint8Array;
+    provenance: typeof source_asset.$inferInsert.provenance;
+    authorize: (tx: Tx) => Promise<void>;
+  },
+): Promise<{ row: SourceAssetRow; reused: boolean }> {
+  const putIfAbsent = blob.putIfAbsent?.bind(blob);
+  if (!putIfAbsent) {
+    throw new ImmutableAssetError(
+      'immutable_asset_unverifiable',
+      'blob adapter does not support conditional creation; no write attempted',
+    );
+  }
+  // Own a stable view across asynchronous hashing, authorization and storage IO.
+  const bytes = input.bytes.slice();
+  if (bytes.byteLength === 0 || bytes.byteLength > CUSTOM_ASSET_MAX_BYTES) {
+    throw new ImmutableAssetError('immutable_asset_conflict', 'custom code size is invalid');
+  }
+  const sha = await sha256Hex(bytes);
+  const id = customAssetIdForDigest(`sha256:${sha}`);
+  if (!id) throw new Error('SHA-256 did not produce a custom-code asset identity');
+  // Keep old unconditional source writers away from this immutable namespace.
+  const storageKey = `assets/custom-code/${sha}`;
+  const mime = CUSTOM_ASSET_MIME_TYPES[0];
+  const verifyRow = (row: SourceAssetRow) => {
+    if (
+      row.id !== id ||
+      row.sha256 !== sha ||
+      row.storage_key !== storageKey ||
+      row.kind !== 'text' ||
+      row.mime_type !== mime ||
+      row.byte_size !== bytes.byteLength ||
+      row.width !== null ||
+      row.height !== null ||
+      row.provenance.source_kind !== 'custom_block_code'
+    ) {
+      throw new ImmutableAssetError(
+        'immutable_asset_conflict',
+        'existing custom-code asset identity or metadata differs; original retained',
+      );
+    }
+  };
+
+  return db.transaction(async (tx) => {
+    // Authorization locks remain held until the reference's owner row commits.
+    await input.authorize(tx);
+    await lockImageStorageKey(tx, storageKey);
+    const [existing] = await tx.select().from(source_asset).where(eq(source_asset.id, id)).limit(1);
+    if (existing) verifyRow(existing);
+    const [foreignOwner] = await tx
+      .select({ id: source_asset.id })
+      .from(source_asset)
+      .where(and(eq(source_asset.storage_key, storageKey), ne(source_asset.id, id)))
+      .limit(1);
+    if (foreignOwner) {
+      throw new ImmutableAssetError(
+        'immutable_asset_conflict',
+        'immutable storage key has a different logical owner; original retained',
+      );
+    }
+
+    let stored: Uint8Array | null;
+    try {
+      // Replays with a row are read-only. An orphaned object after a failed or
+      // unknown commit can be adopted only after conditional create + byte proof.
+      if (!existing) await putIfAbsent(storageKey, bytes, mime);
+      stored = await blob.get(storageKey);
+    } catch (cause) {
+      throw new ImmutableAssetError(
+        'immutable_asset_unverifiable',
+        'custom-code blob could not be persisted and verified; no reference issued',
+        { cause },
+      );
+    }
+    if (stored === null) {
+      throw new ImmutableAssetError(
+        'immutable_asset_unverifiable',
+        'custom-code blob is missing; no repair or reference issued',
+      );
+    }
+    if (
+      stored.byteLength !== bytes.byteLength ||
+      !stored.every((byte, index) => byte === bytes[index])
+    ) {
+      throw new ImmutableAssetError(
+        'immutable_asset_conflict',
+        'stored custom-code bytes differ; original object and row retained',
+      );
+    }
+    if (existing) return { row: existing, reused: true };
+
+    const inserted = await tx
+      .insert(source_asset)
+      .values({
+        id,
+        kind: 'text',
+        storage_key: storageKey,
+        mime_type: mime,
+        byte_size: bytes.byteLength,
+        sha256: sha,
+        width: null,
+        height: null,
+        provenance: input.provenance,
+        created_at: new Date(),
+      })
+      .onConflictDoNothing()
+      .returning({ id: source_asset.id });
+    // A conflicting INSERT is never proof that this payload was stored. A
+    // truncated-id collision may have committed under a different storage lock.
+    const [row] = await tx.select().from(source_asset).where(eq(source_asset.id, id)).limit(1);
+    if (!row) {
+      throw new ImmutableAssetError(
+        'immutable_asset_unverifiable',
+        'custom-code owner row could not be verified; no reference issued',
+      );
+    }
+    verifyRow(row);
+    // No compensation delete: blob success + DB failure/unknown outcome retains
+    // an immutable object for verification on retry, never deletes shared data.
+    return { row, reused: inserted.length === 0 };
+  });
 }
 
 /**

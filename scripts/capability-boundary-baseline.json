@@ -1643,6 +1643,16 @@
       "issue": "YUK-1572",
       "owns": "Kernel projects whole-artifact and block correction state; Notes uses those facts to decide visible backlinks without duplicating correction history.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/custom-code-assets.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["ImmutableAssetError", "persistImmutableCustomCodeAsset"],
+      "issue": "YUK-1513",
+      "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
