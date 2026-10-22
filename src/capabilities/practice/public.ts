@@ -326,9 +326,10 @@ export const transitionPlacementSession: typeof import('./server/session-operati
     );
 
 export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
-
+export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
 export { readPaperList } from './server/papers-list';
-
 export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
-
 export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
+export const startPlacementProbe: typeof import('./server/session-operations/placement-session').startPlacementProbe =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
