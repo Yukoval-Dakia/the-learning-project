@@ -2963,9 +2963,7 @@
       "file": "src/capabilities/knowledge/server/edge-topology-write.ts",
       "module": "src/kernel/records/knowledge-edge-facts.ts",
       "kind": "value",
-      "symbols": [
-        "runEdgeTopologyGate"
-      ],
+      "symbols": ["runEdgeTopologyGate"],
       "issue": "YUK-1570",
       "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
       "date": "2026-10-22"
@@ -3744,13 +3742,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [
-        [
-          "agency",
-          "knowledge",
-          "practice"
-        ]
-      ]
+      "nontrivialSccs": [["agency", "knowledge", "practice"]]
     }
   }
 }
