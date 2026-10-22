@@ -23,7 +23,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
 import {
-  DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
   type RtCorrectBuffer,
@@ -31,7 +30,6 @@ import {
   SRT_FISHER_WEIGHT_ENABLED,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
-  difficultyToLogitB,
   eloK,
   expectedScore,
   pushRtCorrectSample,
@@ -46,21 +44,19 @@ import {
   uniformPrior,
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, mastery_state } from '@/db/schema';
+import { mastery_state } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   ABILITY_GLOBAL_SUBJECT_KIND,
   type AbilityGlobalByKnowledgeId,
   getMasteryState,
 } from '@/kernel/read-models/mastery-state';
+import { readAttemptDifficulty } from '@/kernel/read-models/question-difficulty';
 import {
   acquireLearningStateWriteLock,
   acquireSortedAdvisoryLocks,
   withLearningStateLock,
 } from '@/server/advisory-locks';
-import { resolveFamilyKeyForQuestion } from './family-key';
-import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
-import { effectiveB } from './recalibration';
 
 type DbLike = Db | Tx;
 
@@ -336,63 +332,15 @@ export async function updateThetaForAttempt(
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
   }
 
-  // 1. Read the b anchor (READ-ONLY — b 的写者是标定批/锚写者，在线路径只读). track='hard'
-  //    only — soft track never reaches p(L)/scheduling (ADR-0035). YUK-439 (ADR-0043
-  //    Amendment A2): 读 effectiveB = b_post ?? b_anchor ?? b（后验优先）。在线 θ̂ 路径
-  //    **只 READS** effectiveB，**绝不**写 b——b 单写者由标定批保（G4 改写后红线）。
-  //    无证据时 b_post = b_anchor（锚写者初始化/migration 回填），读侧零跳变。
-  const calRows = await tx
-    .select({
-      b: item_calibration.b,
-      b_anchor: item_calibration.b_anchor,
-      b_calib: item_calibration.b_calib,
-      b_post: item_calibration.b_post,
-    })
-    .from(item_calibration)
-    .where(
-      and(eq(item_calibration.question_id, input.questionId), eq(item_calibration.track, 'hard')),
-    )
-    .limit(1);
-  const calB = effectiveB(calRows[0]);
-  // Resolve the columnar b first (incl. the weak difficulty-proxy fallback), matching
-  // recalibration.ts:77-81's order.
-  const columnarB = calB ?? difficultyToLogitB(input.difficulty);
-  // Weak difficulty-proxy anchor → down-weight the update (D2 / VERIFY). bWeight stays keyed on
-  // the COLUMNAR anchor source — the family delta does NOT change the weak-anchor down-weight
-  // (G4: no double down-weight; family delta is an additive shift on b, not an anchor-quality
-  // change).
-  const bWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;
-
-  // YUK-361 Phase 5 (effectiveFamilyB) — YUK-372 L3: 把家族 b_delta 叠在去偏/弱锚 b 之上
-  //   b = effectiveFamilyB(columnarB, familyRow) = columnarB + shrunk_family_delta
-  // G4 NO-OP-safe：家族门未过 → b_delta=0 → effectiveFamilyB 原样返回 columnarB → θ̂ bit-identical。
-  // 缺 kind/source（caller-less / 直测）→ 跳过家族查询 → b = columnarB（纯 effectiveB，NO-OP）。
-  // G1：家族查询是主 tx 内的纯 SELECT（无写）。subject 派生的 **orphan-domain 应用级 throw**
-  //   （node-not-found / root-null-domain，SELECT 成功返回后由 new Error 抛出）被
-  //   resolveFamilyKeyForQuestion 内 try/catch 兜成 'unknown'，绝不冒泡 abort θ̂。
-  //   注意：若该 SELECT 本身发生**真 PG-error**（statement timeout / 序列化失败 / 连接断），tx
-  //   会进 25P02 aborted 态、后续 θ̂ 写连带失败——这是**正确行为**（与本 tx 内其它裸 SELECT 同
-  //   语义：连接已注定失败时整个 attempt 本就该 rollback，θ̂/FSRS/event 全 commit 或全 rollback，
-  //   不存在「读失败但主写应保留」的语义）。这不是新的 tx-abort 漏洞，红线 #1 只针对 best-effort
-  //   **写**毒化 tx，而非读。
-  // G3：只读，绝不写任何 b。
-  let b = columnarB;
-  if (input.kind && input.source) {
-    // Codex review F2 — family_key 用 **question 规范 primary KC**（caller 透传的
-    // familyPrimaryKnowledgeId = q.knowledge_ids[0]），回落 knowledgeIds[0]。paper submit 的
-    // knowledgeIds[0] 是 slot 指派的 primary，可能 ≠ 题 primary；family 写/读两侧都按
-    // q.knowledge_ids[0] 成键，用 slot primary 会让 family delta READ 错配别的 family（或 miss）。
-    const familyPrimaryKnowledgeId = input.familyPrimaryKnowledgeId ?? knowledgeIds[0];
-    const familyKey = await resolveFamilyKeyForQuestion(tx, {
-      primaryKnowledgeId: familyPrimaryKnowledgeId,
-      kind: input.kind,
-      source: input.source,
-    });
-    if (familyKey !== null) {
-      const familyRow = await getFamilyCalibration(tx, familyKey);
-      b = effectiveFamilyB(columnarB, familyRow);
-    }
-  }
+  // Read inside the locked attempt tx, before mastery state, using frozen question metadata.
+  const { b, bWeight } = await readAttemptDifficulty(tx, {
+    questionId: input.questionId,
+    difficulty: input.difficulty,
+    kind: input.kind,
+    source: input.source,
+    familyPrimaryKnowledgeId: input.familyPrimaryKnowledgeId,
+    knowledgeIds,
+  });
 
   // 2. Read every KC's current state (null → cold start: θ=0, counts=0).
   const existing = await tx
