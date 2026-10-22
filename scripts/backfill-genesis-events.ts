@@ -52,6 +52,10 @@ import {
   question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
+  knowledgeNodesWithGenesisAnchor,
+} from '@/kernel/records/knowledge-node-history';
 import { learningItemsWithGenesisAnchor } from '@/kernel/records/learning-items';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 // Reuse the SAME genesis-anchor checks the accept-time parity assert uses, so "event-sourced"
@@ -61,7 +65,6 @@ import {
   artifactsWithGenesisAnchor,
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
-  knowledgeNodesWithGenesisAnchor,
   mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
@@ -71,7 +74,6 @@ import {
 import {
   artifactRowToSnapshot,
   itemCalibrationRowToSnapshot,
-  knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
 

@@ -3,8 +3,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { getAnchorEventId, upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { getAnchorEventId, upsertMaterializedIdIndex } from './materialized-id-index';
 
 describe('materialized_id_index helpers', () => {
   beforeEach(async () => {

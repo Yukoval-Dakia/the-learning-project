@@ -21,6 +21,14 @@ import {
   question_block,
 } from '@/db/schema';
 import {
+  gatherAndFoldKnowledgeNode,
+  knowledgeLiveRowToSnapshot,
+  knowledgeNodesWithGenesisAnchor,
+  prefetchKnowledgeMergeEvents,
+  prefetchKnowledgeRates,
+} from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNode } from '@/kernel/records/knowledge-node-materialization';
+import {
   gatherAndFoldLearningItem,
   learningItemsWithGenesisAnchor,
   prefetchLearningItemMergeEvents,
@@ -33,15 +41,11 @@ import {
   gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
-  gatherAndFoldKnowledgeNode,
   gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
-  prefetchKnowledgeMergeEvents,
-  prefetchKnowledgeRates,
 } from './gather';
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectKnowledgeNode } from './knowledge';
 import { projectKnowledgeEdge } from './knowledge_edge';
 import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
@@ -50,8 +54,6 @@ import {
   goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
-  knowledgeLiveRowToSnapshot,
-  knowledgeNodesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
   mistakeVariantLiveRowToSnapshot,
   mistakeVariantsWithGenesisAnchor,
