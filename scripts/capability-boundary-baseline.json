@@ -2803,6 +2803,26 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns only the generic error/status/details envelope; Practice owns the complete issuance domain-result mapping. The original HTTP adapter still needs ApiError, so this is an additional physical reference, not a net-zero move.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/worksheet/submission.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["getStartedBoss"],
+      "issue": "YUK-1572",
+      "owns": "Existing process-local pg-boss lifecycle; Worksheet submission owns its post-commit scheduling and unchanged best-effort failure policy.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/worksheet/submission.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["WORKSHEET_RENDER_QUEUE"],
+      "issue": "YUK-1572",
+      "owns": "The single queue identity shared by worksheet submission and the existing render worker registration.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
