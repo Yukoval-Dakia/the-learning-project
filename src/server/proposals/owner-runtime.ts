@@ -4,11 +4,13 @@ export { archiveProposalArtifacts } from '@/capabilities/notes/public';
 
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { projectLearningItemGuarded } from '@/server/projections/learning_item';
+import {
+  hasLearningItemGenesisAnchor,
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
 import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
   assertKnowledgeNodeParity,
-  hasLearningItemGenesisAnchor,
   hasMistakeVariantGenesisAnchor,
   knowledgeLiveRowToSnapshot,
 } from '@/server/projections/parity';

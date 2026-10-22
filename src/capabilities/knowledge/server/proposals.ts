@@ -32,6 +32,7 @@ import { ApiError } from '@/kernel/http';
 import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
@@ -41,7 +42,6 @@ import {
   projectKnowledgeNodeGuarded,
   requireKnowledgeHistory,
 } from '@/server/projections/knowledge';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   archiveKnowledgeEdgeFromEvents,
