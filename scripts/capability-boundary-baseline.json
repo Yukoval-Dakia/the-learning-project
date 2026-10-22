@@ -1707,6 +1707,82 @@
       "from": 6,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/parity.ts",
+      "siteKind": "site",
+      "symbol": "hasQuestionBlockGenesisAnchor",
+      "targetModule": "src/kernel/records/question-block-projection.ts",
+      "targetSymbol": "hasQuestionBlockGenesisAnchor",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+          "line": 23
+        }
+      ],
+      "evidence": "Structured block editing calls the same anchor fact at lines154/685/816 after its existing guards.",
+      "rationale": "Canonical kernel owns the complete anchor fact. Caller eligibility, locks and business policies remain unchanged.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/parity.ts",
+      "siteKind": "site",
+      "symbol": "questionBlocksWithGenesisAnchor",
+      "targetModule": "src/kernel/records/question-block-projection.ts",
+      "targetSymbol": "questionBlocksWithGenesisAnchor",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/server/projections/entity-registry.ts",
+          "line": 51
+        },
+        {
+          "file": "scripts/backfill-genesis-events.ts",
+          "line": 64
+        }
+      ],
+      "evidence": "The projection registry uses this binding at405; genesis backfill uses it at587. Import declaration start lines are recorded.",
+      "rationale": "Share the complete batch anchor fact without moving script environment/await order or registry responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/question_block.ts",
+      "siteKind": "module",
+      "symbol": "projectQuestionBlockGuarded",
+      "targetModule": "src/kernel/records/question-block-projection.ts",
+      "targetSymbol": "projectQuestionBlockGuarded",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/server/questions/edit-question.ts",
+          "line": 39
+        },
+        {
+          "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+          "line": 24
+        },
+        {
+          "file": "src/server/projections/entity-registry.ts",
+          "line": 63
+        },
+        {
+          "file": "src/server/projections/canonical-migration.db.test.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "Existing edit calls793/844, structured edit calls199/753/842, registry use404 and canonical migration test201 retain the guarded operation.",
+      "rationale": "The canonical kernel owner preserves deletion for null folds with anchors and retention of imperative rows without anchors. Acceptance/retraction policies stay with callers.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -3210,6 +3286,35 @@
       "exitCondition": "After Owner approves the exact seed test named import and alias, consume knowledgeLiveRowToSnapshot from the canonical history owner and remove this compatibility alias. Other three snapshot mappers remain in place.",
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldQuestionBlock",
+      "targetModule": "src/kernel/records/question-block-projection.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/parity.ts",
+          "line": 22
+        },
+        {
+          "file": "src/server/projections/entity-registry.ts",
+          "line": 38
+        },
+        {
+          "file": "src/server/projections/parity-writers-c3.db.test.ts",
+          "line": 17
+        },
+        {
+          "file": "src/capabilities/ingestion/server/tools/question-block-edits.db.test.ts",
+          "line": 21
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports, migrate only the two production question-block bindings and these named test pins to the canonical owner, then delete this old gather export. Preserve other mixed gather imports/mock members. The deadline does not authorize deleting an in-use export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-dedd6003-12b2-4cd2-a0a7-c63945c229b9",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
     }

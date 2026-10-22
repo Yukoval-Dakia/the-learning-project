@@ -1,4 +1,1 @@
-export {
-  projectQuestionBlock,
-  projectQuestionBlockGuarded,
-} from '@/kernel/records/question-block-projection';
+export { projectQuestionBlockGuarded } from '@/kernel/records/question-block-projection';

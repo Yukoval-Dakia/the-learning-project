@@ -312,24 +312,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- question_block (switchable; actual deployment flags are checked separately) ----
   {
     table: 'question_block',
-    file: 'src/server/projections/question_block.ts',
+    file: 'src/kernel/records/question-block-projection.ts',
     marker: '.insert(question_block)',
     role: 'throat',
     note: 'QuestionBlock projection write-through shell; activation is runtime-specific.',
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/auto-enroll.ts',
+    file: 'src/kernel/records/question-block-transitions.ts',
     marker: '.update(question_block)',
     role: 'event-native-by-caller',
-    note: 'Enrollment transaction pairs imported block links/status/version with a lifecycle event using the same timestamp.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/revert-auto-enroll.ts',
-    marker: '.update(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Revert transaction pairs restored block status/version with a lifecycle event, preserving nullable import references.',
+    note: 'Accepted import, ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
   },
   {
     table: 'question_block',
