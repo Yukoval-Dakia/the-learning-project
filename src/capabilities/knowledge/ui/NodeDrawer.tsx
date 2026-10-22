@@ -23,6 +23,7 @@ import {
   decideEdgeProposal,
   edgeProposalOperation,
 } from './knowledge-api';
+import { useKnowledgeClient } from './knowledge-client';
 import { isKnowledgeContainer } from './knowledge-node-kind';
 import { knowledgeNodeDrawerQueryOptions } from './knowledge-node-query';
 import { REL_CUE } from './relation-cue';
@@ -160,6 +161,7 @@ export function NodeDrawer({
   go: (to: string) => void;
 }) {
   const qc = useQueryClient();
+  const { getNodePage } = useKnowledgeClient();
   const trapRef = useFocusTrap(open, onClose);
   const [rel, setRel] = useState<string>('related_to');
   const [target, setTarget] = useState('');
@@ -183,7 +185,7 @@ export function NodeDrawer({
   // interactive_artifacts. Best-effort: enabled only while open; on error/empty
   // the section renders nothing (InteractiveArtifactDiscovery gates on length).
   const nodePageQ = useQuery({
-    ...knowledgeNodeDrawerQueryOptions(node?.id ?? ''),
+    ...knowledgeNodeDrawerQueryOptions(node?.id ?? '', getNodePage),
     enabled: open && node != null,
   });
   const interactiveArtifacts = nodePageQ.data?.interactive_artifacts ?? [];

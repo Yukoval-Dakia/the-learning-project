@@ -81,6 +81,7 @@ export {
 } from './server/node-creation';
 export {
   type MasteryDecayBucket,
+  loadKnowledgeNodePage,
   masteryDecayBucket,
 } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';

@@ -1,12 +1,23 @@
 import { Outlet, createFileRoute, useRouterState } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
-import { loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
+import {
+  type KnowledgeClient,
+  KnowledgeClientProvider,
+  loadKnowledgePage,
+} from '@/capabilities/knowledge/ui-public';
+import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
+import { startKnowledgeNodePageClient } from '../knowledge-node-client';
 import {
   startKnowledgeFrontierClient,
   startKnowledgeReviewDueClient,
   startWorkbenchClient,
 } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
+
+const knowledgeClient: KnowledgeClient = {
+  getMisconceptions: startKnowledgeMisconceptionsClient,
+  getNodePage: startKnowledgeNodePageClient,
+};
 
 const Page = lazy(() => loadKnowledgePage().then((defaultPage) => ({ default: defaultPage })));
 export const Route = createFileRoute('/knowledge')({
@@ -21,14 +32,16 @@ function KnowledgePage() {
   if (hasDetail) return <Outlet />;
   return (
     <StartWorkbenchShell pathname="/knowledge">
-      <Suspense>
-        <Page
-          navigate={startNavigate}
-          readTree={startWorkbenchClient.getTree}
-          readFrontier={startKnowledgeFrontierClient}
-          readReviewDue={startKnowledgeReviewDueClient}
-        />
-      </Suspense>
+      <KnowledgeClientProvider value={knowledgeClient}>
+        <Suspense>
+          <Page
+            navigate={startNavigate}
+            readTree={startWorkbenchClient.getTree}
+            readFrontier={startKnowledgeFrontierClient}
+            readReviewDue={startKnowledgeReviewDueClient}
+          />
+        </Suspense>
+      </KnowledgeClientProvider>
     </StartWorkbenchShell>
   );
 }

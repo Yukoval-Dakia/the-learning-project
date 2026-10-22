@@ -6,10 +6,12 @@ import {
   loadKnowledgeDetailPage,
 } from '@/capabilities/knowledge/ui-public';
 import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
+import { startKnowledgeNodePageClient } from '../knowledge-node-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const knowledgeClient: KnowledgeClient = {
   getMisconceptions: startKnowledgeMisconceptionsClient,
+  getNodePage: startKnowledgeNodePageClient,
 };
 
 const Page = lazy(() =>

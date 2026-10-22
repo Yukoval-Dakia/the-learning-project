@@ -144,10 +144,10 @@ export default function KnowledgeDetailPage({
   navigate: (to: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const { getMisconceptions } = useKnowledgeClient();
+  const { getMisconceptions, getNodePage } = useKnowledgeClient();
   // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
   // navigating here after any cross-surface mutation still performs the existing refetch.
-  const pageQ = useQuery(knowledgeNodeQueryOptions(id));
+  const pageQ = useQuery(knowledgeNodeQueryOptions(id, getNodePage));
 
   // A5 S4 (YUK-531 PR-5) — 「指向此点的误区」per-KC funnel（confirmed RT1 误区 + candidate 猜想/候选）。
   const miscQ = useQuery({
