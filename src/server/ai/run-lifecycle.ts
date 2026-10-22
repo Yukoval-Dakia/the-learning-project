@@ -9,6 +9,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import {
   type AttemptCostTruth,
   resolveAttemptCostTruth,
@@ -28,7 +29,6 @@ import {
   writeAiTaskAttemptFinished,
   writeAiTaskRunRetried,
   writeAiTaskRunStarted,
-  writeToolCallLog,
 } from './log';
 import {
   type ModelProfile,
