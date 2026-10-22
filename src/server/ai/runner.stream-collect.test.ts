@@ -6,6 +6,11 @@
 // (both live in fastTestInclude).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  SPAWN_TOOL_ALIASES,
+  SPAWN_TOOL_NAME,
+  createPiSpawnContract,
+} from '@/core/subagent-contract';
 
 // Captures the startup args the runner hands the adapter (chiefly the
 // AbortController inside options) and lets a test feed an arbitrary frame
@@ -125,8 +130,6 @@ import {
 import { __setTraceExporterForTests } from './laminar-tracing';
 import { memoryTraceExporter, traceField } from './laminar-tracing.test-support';
 import { type TaskEventMessage, runTask, streamTaskCollecting } from './runner';
-import { SPAWN_TOOL_ALIASES, SPAWN_TOOL_NAME } from './spawn-contract';
-import { createPiSpawnContract } from './tools/pi-subagent';
 
 const fakeDb = {} as never;
 
