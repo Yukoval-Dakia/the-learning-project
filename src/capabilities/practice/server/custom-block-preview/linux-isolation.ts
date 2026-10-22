@@ -118,6 +118,8 @@ export async function createLinuxIsolation(limits: PreviewLimits) {
         const renderers = processes.filter((p) => p?.args.includes('--type=renderer'));
         const hostNet = await readlink('/proc/self/ns/net');
         const filters = (s: string) => Number(/^Seccomp_filters:\s*(\d+)$/m.exec(s)?.[1] ?? 0);
+        // Chromium may nest the zygote/renderer network namespace inside the browser's.
+        // Independently require every checked process to remain outside the worker host net.
         if (
           !browser ||
           renderers.length === 0 ||
@@ -125,7 +127,7 @@ export async function createLinuxIsolation(limits: PreviewLimits) {
           renderers.some(
             (p) =>
               !p ||
-              p.net !== browser.net ||
+              p.net === hostNet ||
               p.user === browser.user ||
               !/^NoNewPrivs:\s*1$/m.test(p.status) ||
               !/^Seccomp:\s*2$/m.test(p.status) ||

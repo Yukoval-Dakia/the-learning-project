@@ -50,7 +50,15 @@ iframe 只获本 block 的公开 binds / select item_id+label 与空 entries，�
 
 只运行经 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh` 串行包裹、global2 / lane1 / Node≤3072MiB 的 install、format、typecheck、lint、build 和必要架构 audits。没有新增/修改/运行测试或断言脚本；没有运行资源准备、/proc 检查、Chromium、浏览器、DB、Docker、provider、paid、runtime probe 或部署。最终命令与 exit 在交接中列明；本地日志留 ignored `.remember/`。
 
-本片本地结果：`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`（181 warnings）、`pnpm build`、`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` 均 exit 0，`git diff --check` 通过。两架构审计实测新增依赖边 0、capability→server/server→capability deep/cross-capability 总数 384/0/36、new pass-through 0；只追加 shared-submit 1162→1164 的真实 sourceSizeRecord。build 完成现有 web/Start/server/worker/migrate 包装链；这不是浏览器或隔离机制实测。首次边界审计因缺该两行 sourceSizeRecord exit 1，补准确登记后通过，未调整审计器或阈值。首次父独立 R1 和 exact-head CI 仍待交接。
+首片 e58880173 的本地结果：`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm lint`（181 warnings）、`pnpm build`、`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` 均 exit 0，`git diff --check` 通过。两架构审计实测新增依赖边 0、capability→server/server→capability deep/cross-capability 总数 384/0/36、new pass-through 0；只追加 shared-submit 1162→1164 的真实 sourceSizeRecord。build 完成现有 web/Start/server/worker/migrate 包装链；这不是浏览器或隔离机制实测。首次边界审计因缺该两行 sourceSizeRecord exit 1，补准确登记后通过，未调整审计器或阈值。
+
+### 首次 R1 窄修与主线组合
+
+首次独立 R1 对固定 e58880173 报 P0=0/P1=1：`confirmSandbox` 原先要求 renderer 与 browser 的 network namespace 相等，错误拒绝正常 Chromium 的嵌套隔离。固定 Chromium 156.0.8078.4 的 [NamespaceSandbox 默认选项](https://github.com/chromium/chromium/blob/156.0.8078.4/sandbox/linux/services/namespace_sandbox.cc) 包含 CLONE_NEWUSER / CLONE_NEWPID / CLONE_NEWNET，[zygote 启动路径](https://github.com/chromium/chromium/blob/156.0.8078.4/content/browser/zygote_host/zygote_host_impl_linux.cc) 消费该操作。本轮只将该判定改为 browser 与每个待检查 renderer 的 net namespace 分别不等于 worker hostNet，允许合法嵌套；实际 cgroup membership、额外 user namespace、NoNewPrivs、Seccomp/filters、读取失败拒绝与 OS 前置 failclosed 保持原样。没有修改 runner/admission 或 resolved-publication。
+
+正常 fetch 后将 actual origin/main **4613240143517779a20bd13a34beab31ef0eba48** 合入原分支；与本片只交集 baseline，自动合并无冲突。保留该 main 的 changes/edgeRecords 全前缀及本片真实 shared-submit sourceSizeRecord，不重写 ledger、不调整审计器或上限。父记录的旧 Circle architecture **9449** 失败为分支未纳入其比较基线 4d73 的新增前缀而触发 append-only 拒绝，原失败保留，不称 infra 故障、不重跑旧 Circle；旧 e588 GitHub 绿色不替代新组合的 exact-head CI。修后静态门、唯一 R2 与新 CI 分别交接，仍未运行资源或浏览器验收。
+
+修后与 main4613240 组合的 `pnpm typecheck`、`pnpm lint`（181 warnings）、`pnpm build`、`pnpm audit:capability-boundaries`、`pnpm audit:architecture-deepening` 均经指定 heavy.sh 串行执行并 exit 0；没有重装依赖。审计实测新增依赖边 0、new pass-through 0，384/0/36 不变。日志留本树 ignored `.remember/yuk1513-checks/r1-fix-4613240/`。上述结果只覆盖源码静态门；修后唯一 R2、新组合 exact-head CI 和运行验收尚未由本 writer 验收，本轮不 watch/poll/merge/resolve 或启动审查。
 
 custom serving 继续 withheld；没有改 UI、kernel/schema/publish/serving、manifest、paid/receipt/预算协议。所有其他生命周期 publisher 的 readAssetBytes 全接线仍留原 YUK-1513，不把本片两处 reader 当作全库闭环。真实录入→预演→发行→作答判分、故障和并发恢复、资源隔离可用性均未验收，不关闭整票或另建重复票。
 
