@@ -6,6 +6,7 @@ export {
   getQuestion,
   saveResponseDraft,
 } from './ui/practice-api';
+export { type PracticeClient, PracticeClientProvider } from './ui/practice-client';
 
 export const loadPracticeFacePage = () =>
   import('./ui/PracticeFacePage').then((module) => module.default);

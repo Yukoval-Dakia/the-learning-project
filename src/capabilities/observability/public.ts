@@ -85,6 +85,7 @@ export {
   parseAdminFailuresQuery,
   parseAdminRunsQuery,
 } from './server/ai-observability';
+export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {
   type AdminConfigKeyRow,
@@ -108,6 +109,7 @@ export {
   type SubjectCoverage,
   loadCoverageLattice,
 } from './server/coverage-lattice';
+export { loadEffectivenessTrend } from './server/effectiveness-trend';
 export {
   type EventCorrectionInput,
   type EventCorrectionResult,
@@ -133,7 +135,6 @@ export {
   validateAdminSubject,
 } from './server/subject-control-operations';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
-
 export {
   AdminSubjectTraitParamsSchema,
   AdminTraitWriteParamsSchema,

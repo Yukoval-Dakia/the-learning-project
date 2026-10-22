@@ -2,7 +2,7 @@
 
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
-export { type EffectiveTruth } from '@/kernel/events';
+export type { EffectiveTruth } from '@/kernel/events';
 export {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
@@ -15,7 +15,7 @@ export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
-export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
+export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
 
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
@@ -296,6 +296,7 @@ export async function executeJudgeWorkflow(
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
 
+export type { PlacementProfileResponse } from './api/placement-contracts';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -307,3 +308,25 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
+export { readPlacementProfile } from './server/placement-profile';
+export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';
+
+// Resolve the existing session operation in the initialized host graph after auth.
+export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
+
+export { UpdatePlacementSessionBodySchema } from './api/placement-contracts';
+export const transitionPlacementSession: typeof import('./server/session-operations/placement-session').transitionPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).transitionPlacementSession(
+      ...args,
+    );
+
+export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
+
+export { readPaperList } from './server/papers-list';
+
+export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
+
+export { selectNextPlacementQuestion } from './server/session-operations/placement-next';

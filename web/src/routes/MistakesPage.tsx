@@ -281,7 +281,7 @@ export default function MistakesPage({ navigate, list = listMistakes }: Mistakes
     queryFn: () =>
       list({ limit: MISTAKES_LIMIT, subject: subject === 'all' ? undefined : subject }),
   });
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => getTree() });
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
 

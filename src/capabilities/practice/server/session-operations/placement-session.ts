@@ -15,7 +15,7 @@ import { db } from '@/db/client';
 import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Placement } from '@/server/session';
-import { recordPlacementNoItem } from '../placement-advance';
+import { recordPlacementNoItem, unresolvedField } from '../placement-advance';
 import {
   ensurePlacementAssessment,
   placementAssessmentProgress,
@@ -277,10 +277,10 @@ export async function readPlacementSession(sessionId: string) {
         throw new ApiError('not_found', `placement session ${sessionId} not found`, 404);
       }
       return {
-        session,
+        ...session,
         starterSupply: await readPlacementStarterOutcomes(tx, sessionId),
-        // L1 — issued items with no verdict at read time.
-        unresolvedItems: await readPlacementUnresolvedItems(tx, sessionId),
+        // Preserve the HTTP projection, including omission when nothing is unresolved.
+        ...unresolvedField(await readPlacementUnresolvedItems(tx, sessionId)),
       };
     },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
@@ -292,10 +292,7 @@ export async function readPlacementSession(sessionId: string) {
 export async function transitionPlacementSession(
   sessionId: string,
   target: 'completed' | 'abandoned',
-): Promise<{
-  transition: Placement.PlacementSessionTransition;
-  unresolvedItems: Awaited<ReturnType<typeof readPlacementUnresolvedItems>>;
-}> {
+) {
   const transition = await Placement.transitionPlacementSession(db, sessionId, target);
   // L1 — the honest end result marks every item that closed without a
   // verdict (held-release 'end' half lands here: no new route needed).
@@ -303,5 +300,13 @@ export async function transitionPlacementSession(
     (tx) => readPlacementUnresolvedItems(tx, sessionId),
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
-  return { transition, unresolvedItems };
+  return {
+    id: sessionId,
+    type: 'placement' as const,
+    previous_status: transition.previousStatus,
+    status: transition.status,
+    changed: transition.changed,
+    allowed_statuses: transition.allowedStatuses,
+    ...unresolvedField(unresolvedItems),
+  };
 }

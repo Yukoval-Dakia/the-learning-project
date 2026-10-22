@@ -33,6 +33,7 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+export { KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
@@ -60,6 +61,7 @@ export type { FrontierResolution } from './server/frontier-read';
 export {
   isMasteredForFrontier,
   learnableFrontierResolved,
+  loadFrontierRail,
 } from './server/frontier-read';
 export type {
   CreateLearningIntentKnowledgeNodeFn,
@@ -82,6 +84,7 @@ export {
   dismissProposal,
   writeKnowledgeProposeEvent,
 } from './server/proposals';
+export { loadReviewDueSummary } from './server/review-due-summary';
 export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';

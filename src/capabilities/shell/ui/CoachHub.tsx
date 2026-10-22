@@ -34,10 +34,10 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { CoachCalibrationView } from './CoachCalibrationView';
+import { type CoachCalibrationReader, CoachCalibrationView } from './CoachCalibrationView';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
-import { EffectivenessTrendPanel } from './EffectivenessTrendPanel';
+import { type CoachEffectivenessReader, EffectivenessTrendPanel } from './EffectivenessTrendPanel';
 
 interface WeeklyResponse {
   window: { days: number; from: number; to: number; time_zone: string };
@@ -54,6 +54,10 @@ interface WeeklyResponse {
   top_causes: Array<{ category: string; category_label: string | null; count: number }>;
   top_knowledge: Array<{ id: string; name: string; failure_count: number }>;
 }
+
+export type CoachWeeklyReader = (days: number, timeZone: string) => Promise<WeeklyResponse>;
+const readHttpWeekly: CoachWeeklyReader = (days, timeZone) =>
+  apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone));
 
 type Window = 7 | 30 | 90;
 
@@ -113,7 +117,17 @@ const VIEW_LEDE: Record<CoachView, ReactNode> = {
 };
 
 // 复盘中枢外壳 —— 三视图分段切换，绝不合并。默认视图 = 成效趋势（DEFAULT_COACH_VIEW）。
-export default function CoachHub({ navigate }: { navigate: (to: string) => void }) {
+export default function CoachHub({
+  navigate,
+  readWeekly = readHttpWeekly,
+  readCalibration,
+  readEffectiveness,
+}: {
+  navigate: (to: string) => void;
+  readWeekly?: CoachWeeklyReader;
+  readCalibration?: CoachCalibrationReader;
+  readEffectiveness?: CoachEffectivenessReader;
+}) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
   const tabRefs = useRef<Record<CoachView, HTMLButtonElement | null>>({
     activity: null,
@@ -188,9 +202,17 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
         aria-labelledby={`coach-tab-${view}`}
         className="coachhub-panel"
       >
-        {view === 'activity' && <CoachActivityView navigate={hubGo} />}
-        {view === 'calibration' && <CoachCalibrationView navigate={hubGo} />}
-        {view === 'efficacy' && <EffectivenessTrendPanel navigate={hubGo} embedded />}
+        {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
+        {view === 'calibration' && (
+          <CoachCalibrationView navigate={hubGo} readCalibration={readCalibration} />
+        )}
+        {view === 'efficacy' && (
+          <EffectivenessTrendPanel
+            navigate={hubGo}
+            embedded
+            readEffectiveness={readEffectiveness}
+          />
+        )}
       </section>
     </main>
   );
@@ -198,13 +220,19 @@ export default function CoachHub({ navigate }: { navigate: (to: string) => void 
 
 // 活动量视图 = 原 CoachPage 周报，逻辑零改（query / Stateful / CoachReport 逐字保留）。只把自己的
 // page-head 让给复盘中枢壳；时间窗 seg 下沉到 coachhub-subhead（设计 CoachActivity 形态）。
-function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
+function CoachActivityView({
+  navigate,
+  readWeekly,
+}: {
+  navigate: (to: string) => void;
+  readWeekly: CoachWeeklyReader;
+}) {
   const [days, setDays] = useState<Window>(7);
   const timeZone = browserTimeZone();
 
   const q = useQuery({
     queryKey: ['weekly-review', days, timeZone],
-    queryFn: () => apiJson<WeeklyResponse>(weeklyReviewPath(days, timeZone)),
+    queryFn: () => readWeekly(days, timeZone),
   });
 
   // Empty only when the window has NO signal at all — a failure-only window
