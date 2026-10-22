@@ -2019,6 +2019,26 @@
       "issue": "YUK-1473",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1473#comment-4147d4be-d0cf-4a41-a803-0096118d534d",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/agency/public.ts",
+      "siteKind": "module",
+      "symbol": "submitConjectureProbeAnswer",
+      "targetModule": "src/capabilities/agency/server/conjecture/probe-answer-operation.ts",
+      "targetSymbol": "submitConjectureProbeAnswer",
+      "owner": "agency",
+      "consumers": [
+        {
+          "file": "server/start/probe-answer-operation.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "The authenticated host imports this complete operation at AST line 16 and calls it at line 18. HTTP imports the internal operation directly; context references are type-only.",
+      "rationale": "Agency owns the complete probe validation, provenance/admission, evidence freezing, paid claim, preview, terminal recording, response projection and failure-release sequence. Practice retains formal submission/evaluation and possible provider execution; existing locks, recovery, signal and 90-second host ALS remain unchanged. This classification does not authorize dependency-count growth.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-73616f47-678a-4652-b8fe-5ac1357f0504",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -3026,6 +3046,36 @@
       "symbols": ["getNotePage"],
       "issue": "YUK-1473",
       "owns": "Notes owns the note page read. Copilot only renders an interactive artifact inline from it; this edge moves from the deleted copilot/ui/CopilotHeroCard.tsx with the companion rebuild, so the copilot -> notes pair total does not change.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/agency/server/conjecture/probe-answer-operation.ts",
+      "module": "src/capabilities/practice/public.ts",
+      "kind": "value",
+      "symbols": ["previewFormalAttempt"],
+      "issue": "YUK-1358",
+      "owns": "Practice owns formal submission saving followed by evaluation and possible provider execution. Agency owns probe orchestration and its paid claim/terminal recording. This directly exposes the existing real dependency previously hidden by kernel/judge; dependency-count growth requires separate Owner approval.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-answer-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error/status/details/header envelope; Agency owns probe domain validation and outcomes. The HTTP adapter retains errorResponse, so this is not an all-edge net-zero claim.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-answer-operation.ts",
+      "module": "src/kernel/records/assessment-evidence.ts",
+      "kind": "value",
+      "symbols": ["freezeImageEvidence"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns freezing image evidence from the supplied asset references. The original HTTP import exits as the complete probe operation moves to its Agency owner; image admission and grading policy are unchanged.",
       "date": "2026-10-22"
     }
   ],
