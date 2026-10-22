@@ -7,6 +7,7 @@ import { createStartGoal } from './start/goal-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
+import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartPapers } from './start/papers-list-reader';
 import { releaseStartHeldPlacement } from './start/placement-held-release-operation';
 import { selectStartPlacementQuestion } from './start/placement-next-operation';
@@ -57,6 +58,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readPapers: readStartPapers,
+    readKnowledgeMisconceptions: readStartKnowledgeMisconceptions,
     createIssuance: createStartIssuance,
     readIssuanceState: readStartIssuanceState,
     readJudgeRunStatus: readStartJudgeRunStatus,

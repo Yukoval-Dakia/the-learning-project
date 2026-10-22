@@ -2091,6 +2091,66 @@
       "from": 5,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "KnowledgeIdParamsSchema",
+      "targetModule": "src/capabilities/knowledge/api/contracts.ts",
+      "targetSymbol": "KnowledgeIdParamsSchema",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-misconceptions-reader.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Authenticated host imports the original schema at AST line 7 (public path line 8) and parses the knowledge id at line 10. Context imports are type-only; the retained HTTP adapter consumes the internal schema directly.",
+      "rationale": "Knowledge owns the original trim/min1 validation. Both transports reuse the same schema and preserve the original validation error; this adds no SQL or domain owner.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3b04ae86-4f19-4819-91a0-750256b27e7a",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadMisconceptionsForKc",
+      "targetModule": "src/capabilities/knowledge/server/misconception-read.ts",
+      "targetSymbol": "loadMisconceptionsForKc",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-misconceptions-reader.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Authenticated host imports the canonical reader at AST line 7 (public path line 8) and calls it at line 15. HTTP consumes the internal reader directly and is not a public consumer.",
+      "rationale": "Knowledge owns the complete confirmed/candidate read and qualitative projection. The original scan window, ordering, empty-list and unknown semantics remain unchanged; Start shares the original rows body.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3b04ae86-4f19-4819-91a0-750256b27e7a",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "KnowledgeClientProvider",
+      "targetModule": "src/capabilities/knowledge/ui/knowledge-client.tsx",
+      "targetSymbol": "KnowledgeClientProvider",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/routes/knowledge.$id.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The Start route imports the provider at ImportDeclaration line 3 (public path line 7) and wraps the existing page at line 27. KnowledgeClient is type-only.",
+      "rationale": "Knowledge owns the stable transport injection seam and retained HTTP fallback. The existing page reads misconceptions through this context while preserving query keys, veto invalidation and UI behavior; the provider adds no business or SQL rules.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3b04ae86-4f19-4819-91a0-750256b27e7a",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [

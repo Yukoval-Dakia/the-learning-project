@@ -1,7 +1,16 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
-import { loadKnowledgeDetailPage } from '@/capabilities/knowledge/ui-public';
+import {
+  type KnowledgeClient,
+  KnowledgeClientProvider,
+  loadKnowledgeDetailPage,
+} from '@/capabilities/knowledge/ui-public';
+import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
+
+const knowledgeClient: KnowledgeClient = {
+  getMisconceptions: startKnowledgeMisconceptionsClient,
+};
 
 const Page = lazy(() =>
   loadKnowledgeDetailPage().then((defaultPage) => ({ default: defaultPage })),
@@ -15,9 +24,11 @@ function KnowledgeDetailPage() {
   const { id } = Route.useParams();
   return (
     <StartWorkbenchShell pathname={`/knowledge/${encodeURIComponent(id)}`}>
-      <Suspense>
-        <Page id={id} navigate={startNavigate} />
-      </Suspense>
+      <KnowledgeClientProvider value={knowledgeClient}>
+        <Suspense>
+          <Page id={id} navigate={startNavigate} />
+        </Suspense>
+      </KnowledgeClientProvider>
     </StartWorkbenchShell>
   );
 }
