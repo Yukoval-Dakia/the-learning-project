@@ -2019,6 +2019,14 @@
       "issue": "YUK-1473",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1473#comment-4147d4be-d0cf-4a41-a803-0096118d534d",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-22",
+      "from": 18,
+      "to": 15,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3708,7 +3716,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 337,
+      "total": 334,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3764,7 +3772,7 @@
         "practice -> advisory-locks": 5,
         "practice -> ai": 48,
         "practice -> assessment": 1,
-        "practice -> boss": 18,
+        "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
