@@ -8,3 +8,5 @@ export const loadKnowledgePage = () =>
   import('./ui/KnowledgePage').then((module) => module.default);
 export const loadKnowledgeDetailPage = () =>
   import('./ui/KnowledgeDetailPage').then((module) => module.default);
+
+export { type KnowledgeClient, KnowledgeClientProvider } from './ui/knowledge-client';
