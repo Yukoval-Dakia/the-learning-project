@@ -5,10 +5,10 @@ import { AgentLines } from './AgentLines';
 import { BlockLines } from './BlockLines';
 import { PageStrip } from './PageStrip';
 import { PriorRuns } from './PriorRuns';
-import { GAP_WORDS, materialWords, receiptWords, whenWords } from './record-copy';
+import { GAP_WORDS, materialWords, receiptWords, warningWords, whenWords } from './record-copy';
 import { useStartState } from './record-start';
-import { recordingTitle } from './recording-model';
 import { useRecording } from './recording-read';
+import { recordingTitle } from './recording-title';
 import { StartTrouble } from './StartTrouble';
 import { statusWords } from './status-words';
 
@@ -57,6 +57,8 @@ export function RecordingSheet({
     rec.items.some((i) => i.status === 'withheld' || i.status === 'admitted' || i.now !== null) ||
     rec.blocks.some((b) => b.status === 'imported' || b.status === 'auto_enrolled');
   const working = rec.phase === 'working';
+  const warning = rec.phase === 'failed' ? null : warningWords(facts.warnings ?? []);
+  const agentAllowed = receipt?.derivation_policy !== 'answer_only';
   const meter =
     working && rec.pages && rec.pages.total > 0 ? rec.pages.done / rec.pages.total : null;
 
@@ -82,6 +84,7 @@ export function RecordingSheet({
         {status.text}
       </p>
       {status.detail && <p className="rc-quiet">{status.detail}</p>}
+      {warning && <p className="rc-quiet">{warning}</p>}
       {working && (
         <div className="rc-meter" data-indeterminate={meter === null} aria-hidden="true">
           <span
@@ -92,7 +95,11 @@ export function RecordingSheet({
 
       <PageStrip assetIds={facts.source_asset_ids} litPage={litPage} />
 
-      <StartTrouble rec={rec} start={start} paper={facts.entrypoint === 'vision_paper'} />
+      <StartTrouble
+        rec={rec}
+        start={start}
+        paper={facts.entrypoint === 'vision_paper' && agentAllowed}
+      />
 
       {rec.read === 'loading' && <SkeletonLines rows={3} label="正在找回这次的过程" />}
       {rec.read === 'unreadable' && (
@@ -106,7 +113,13 @@ export function RecordingSheet({
         </ul>
       )}
 
-      {rec.lane === 'agent' && (
+      {rec.blocksRead === 'failed' && (
+        <RetryLine message="认出的题暂时读不出来。" onRetry={retry} />
+      )}
+      {rec.blocksRead === 'loading' && rec.read !== 'loading' && (
+        <SkeletonLines rows={3} label="正在找回认出的题" />
+      )}
+      {(rec.blocksRead === 'none' || rec.blocksRead === 'ready') && (
         <AgentLines
           sessionId={rec.id}
           items={rec.items}
@@ -115,11 +128,12 @@ export function RecordingSheet({
           stopped={rec.phase === 'failed' || rec.phase === 'finished'}
         />
       )}
-      {rec.lane !== 'agent' && (
+      {rec.blocks.length > 0 && (
         <BlockLines
           sessionId={rec.id}
           status={rec.status}
           blocks={rec.blocks}
+          photos={facts.entrypoint === 'vision_single' || facts.entrypoint === 'vision_paper'}
           onHoverPage={setLitPage}
           navigate={navigate}
         />

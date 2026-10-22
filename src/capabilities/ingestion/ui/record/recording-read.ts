@@ -3,7 +3,10 @@
 // - GET /history (what each question was at the finish, what it is now, asks, earlier runs,
 //   missing evidence), re-read whenever the status moves;
 // - the event stream, only while a run is still going;
-// - the extract lane's blocks, the action surface for putting recognised questions in.
+// - the recording's own blocks, the action surface for putting recognised questions in. They are
+//   read whenever the status can have them, whichever lane ran: an agent start that was turned
+//   down still marks the recording as an agent one, and the blocks of the reading that followed
+//   must still show.
 
 import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
@@ -52,26 +55,41 @@ export function useRecording(id: string): RecordingRead {
     enabled: status !== '',
     placeholderData: (prev) => prev,
   });
-  const runState = historyQ.data?.run?.run_state ?? null;
+  const runState = SETTLED.has(status) ? null : (historyQ.data?.run?.run_state ?? null);
   const going =
     (status !== '' && status !== 'uploaded' && !SETTLED.has(status)) ||
     runState === 'in_progress' ||
     runState === 'waiting';
   const stream = useIngestionSSE(going ? id : null);
-  const lane = historyQ.data?.session.path ?? null;
+  const hasBlocks = HAS_BLOCKS.has(status);
   const blocksQ = useQuery({
     queryKey: recordKeys.blocks(id),
     queryFn: () => listBlocks(id),
-    enabled: lane !== 'agent' && HAS_BLOCKS.has(status),
+    enabled: hasBlocks,
   });
+  const blocksRead = !hasBlocks
+    ? 'none'
+    : blocksQ.data
+      ? 'ready'
+      : blocksQ.isError
+        ? 'failed'
+        : 'loading';
   const replayed = stream.status !== 'connecting' && stream.status !== 'idle';
+  const live = going && replayed ? foldLive(stream.events) : null;
+  // The helper's run state is about the helper's run: it is left out once the recording has
+  // settled, and while a plain reading is what is running now (a run that failed earlier stays
+  // in the record but no longer describes this recording).
+  const runCounts =
+    runState !== null && start?.lane !== 'extract' && (live === null || live.agent === true);
   const recording = deriveRecording({
     id,
     detail: detailQ.data,
     history: historyQ.data,
     historyFailed: historyQ.isError,
-    live: going && replayed ? foldLive(stream.events) : null,
+    live,
+    runCounts,
     blocks: blocksQ.data ?? [],
+    blocksRead,
     now: Date.now(),
   });
   return {

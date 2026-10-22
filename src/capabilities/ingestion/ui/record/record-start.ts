@@ -3,6 +3,7 @@
 // start instead of starting twice). Read by components through useSyncExternalStore.
 
 import { useSyncExternalStore } from 'react';
+import type { AgentBudgetUnavailableReason } from '@/capabilities/ingestion/server/agent/budget-state';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import {
@@ -93,6 +94,8 @@ export interface DraftState {
   lane: Lane;
   done: number;
   failed: string | null;
+  /** Pages already uploaded; a retry reuses them instead of sending the files again. */
+  assetIds?: string[];
 }
 
 const starts = new Map<string, StartState>();
@@ -114,16 +117,22 @@ export function useDraft(): DraftState | null {
   return useSyncExternalStore(subscribe, () => draft);
 }
 
+/** The server's 503 reasons (budget-state.ts), one by one; a new reason fails typecheck here. */
+const UNAVAILABLE: Record<AgentBudgetUnavailableReason, StartProblem> = {
+  another_ingestion_in_flight: 'quota_busy',
+  unsettled_cost: 'quota_settling',
+  budget_read_unavailable: 'quota_unknown',
+};
+
 function problemOf(err: unknown): StartProblem {
   if (!(err instanceof ApiError)) return 'other';
   if (err.status === 429 && err.code === 'ingestion_weekly_budget_exceeded') return 'quota_used';
   if (err.status === 503 && err.code === 'ingestion_weekly_budget_unavailable') {
-    const reason = String(
-      err.details.reason ?? (err.details.details as { reason?: string })?.reason ?? '',
-    );
-    if (/run|progress|active|concurr|busy/i.test(reason)) return 'quota_busy';
-    if (/settl|pending|unsettled|reconcil/i.test(reason)) return 'quota_settling';
-    return 'quota_unknown';
+    const nested = err.details.details as { reason?: unknown } | undefined;
+    const reason = String(err.details.reason ?? nested?.reason ?? '');
+    return Object.hasOwn(UNAVAILABLE, reason)
+      ? UNAVAILABLE[reason as AgentBudgetUnavailableReason]
+      : 'quota_unknown';
   }
   if (err.status === 422 && err.code === 'derivation_policy_forbids_agent') {
     return 'agent_not_allowed';
@@ -140,8 +149,12 @@ async function run(sessionId: string, state: StartState) {
   } catch (err) {
     // 409 conflict = this recording is already running or done; nothing to fix.
     const already = err instanceof ApiError && err.status === 409 && err.code === 'conflict';
+    // Same key only while the answer was lost on the way; once the server has said no, the
+    // next try is a new request (the old key would only replay the same refusal).
+    const refused = err instanceof ApiError;
     starts.set(sessionId, {
       ...state,
+      key: refused ? randomId() : state.key,
       status: already ? 'started' : 'failed',
       problem: already ? null : problemOf(err),
       at: Date.now(),
@@ -155,7 +168,10 @@ export function startRecording(sessionId: string, lane: Lane) {
   return run(sessionId, { lane, key: randomId(), status: 'starting', problem: null, at: 0 });
 }
 
-/** A learner-pressed retry: same lane, same key, so the server returns the original handle. */
+/**
+ * A learner-pressed retry in the same lane. After a lost answer it keeps the key, so the server
+ * returns the original handle; after a refusal the key was already renewed.
+ */
 export function retryStart(sessionId: string) {
   const prev = starts.get(sessionId);
   if (prev) return run(sessionId, prev);
@@ -173,18 +189,30 @@ export function dropDraft() {
   setDraft(null);
 }
 
-/** Uploads the material, creates the recording and starts its lane. Resolves to its id. */
+let sending = false;
+
+/**
+ * Uploads the material, creates the recording and starts its lane. Resolves to its id, or null
+ * when it failed or another send is still going (one at a time, so a double press cannot create
+ * two recordings). The create routes take no Idempotency-Key, so a create whose answer was lost
+ * can still leave one extra recording behind; the uploaded pages are at least never sent twice.
+ */
 export async function recordMaterial(input: Omit<DraftState, 'done' | 'failed'>) {
-  setDraft({ ...input, done: 0, failed: null });
+  if (sending) return null;
+  sending = true;
+  setDraft({ ...input, done: input.assetIds?.length ?? 0, failed: null });
   const { material, policy, lane } = input;
   try {
     let sessionId: string;
     if (material.kind === 'docx') {
       sessionId = await createDocxSession(material.files[0], policy);
     } else {
-      const assetIds = await uploadPages(material.files, (done) => {
-        if (draft) setDraft({ ...draft, done });
-      });
+      const assetIds =
+        input.assetIds ??
+        (await uploadPages(material.files, (done) => {
+          if (draft) setDraft({ ...draft, done });
+        }));
+      if (draft) setDraft({ ...draft, assetIds });
       sessionId = await createSession({
         entrypoint: material.kind === 'photo' ? 'vision_single' : 'vision_paper',
         assetIds,
@@ -199,5 +227,7 @@ export async function recordMaterial(input: Omit<DraftState, 'done' | 'failed'>)
     const message = err instanceof Error && !(err instanceof ApiError) ? err.message : null;
     if (draft) setDraft({ ...draft, failed: message ?? '没有传上去。检查一下网络，再试一次。' });
     return null;
+  } finally {
+    sending = false;
   }
 }

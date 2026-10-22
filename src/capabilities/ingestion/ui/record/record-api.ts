@@ -1,9 +1,13 @@
 // Record page transport (YUK-1473). Thin calls over the ingestion routes in
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
-import { type ApiOperationJsonResponse, apiFetch, apiOperationJson } from '@/ui/lib/api';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
+import { ApiError, type ApiOperationJsonResponse, apiFetch, apiOperationJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
-import { runIngestionOperation } from '@/ui/lib/ingestion-operations';
+import {
+  type IngestionOperationResource,
+  runIngestionOperation,
+} from '@/ui/lib/ingestion-operations';
 
 export type Entrypoint = 'vision_single' | 'vision_paper' | 'docx';
 export type UsePolicy = 'allow' | 'answer_only';
@@ -56,14 +60,19 @@ export interface PageSpan {
   role?: string;
 }
 
+/**
+ * A recognised question as GET /blocks returns it. Current extraction leaves extracted_prompt_md
+ * and reference_md null and keeps the question in `structured`; older rows may lack spans or refs.
+ */
 export interface Block {
   id: string;
-  source_asset_ids: string[];
-  page_spans: PageSpan[];
-  extracted_prompt_md: string;
+  source_asset_ids: string[] | null;
+  page_spans: PageSpan[] | null;
+  extracted_prompt_md: string | null;
+  structured: StructuredQuestionT | null;
   reference_md: string | null;
   wrong_answer_md: string | null;
-  image_refs: string[];
+  image_refs: string[] | null;
   layout_quality: 'structured' | 'partial' | 'text_only';
   status: 'draft' | 'imported' | 'ignored' | 'auto_enrolled';
   auto_enroll_observation: {
@@ -98,8 +107,6 @@ export type AskAnswerBody =
   | { kind: 'text'; text: string; via_option?: 'none_of_these' }
   | { kind: 'skipped'; by: 'learner' };
 
-const enc = encodeURIComponent;
-
 export async function listSessions(): Promise<SessionRow[]> {
   const body = await apiOperationJson('listIngestionSessions', {
     url: '/api/ingestion-sessions?limit=30',
@@ -110,14 +117,14 @@ export async function listSessions(): Promise<SessionRow[]> {
 
 export const getHistory = (id: string) =>
   apiOperationJson('getIngestionSessionHistory', {
-    url: `/api/ingestion-sessions/${enc(id)}/history`,
+    url: `/api/ingestion-sessions/${encodeURIComponent(id)}/history`,
     method: 'GET',
     init: { cache: 'no-store' },
   });
 
 export async function getSession(id: string): Promise<SessionDetail> {
   const body = await apiOperationJson('getIngestionSession', {
-    url: `/api/ingestion-sessions/${enc(id)}`,
+    url: `/api/ingestion-sessions/${encodeURIComponent(id)}`,
     method: 'GET',
     init: { cache: 'no-store' },
   });
@@ -126,7 +133,7 @@ export async function getSession(id: string): Promise<SessionDetail> {
 
 export async function listBlocks(id: string): Promise<Block[]> {
   const body = await apiOperationJson('listIngestionSessionBlocks', {
-    url: `/api/ingestion/${enc(id)}/blocks`,
+    url: `/api/ingestion/${encodeURIComponent(id)}/blocks`,
     method: 'GET',
   });
   return body.rows as Block[];
@@ -181,29 +188,52 @@ export async function createDocxSession(file: File, policy: UsePolicy): Promise<
   return body.session_id;
 }
 
-/** Starts a lane. The caller owns the key, so a manual retry replays the same start. */
+/**
+ * Starts a lane. The caller owns the key, so a manual retry replays the same start. A replay of a
+ * start the server already refused comes back 200 with status 'failed'; that is thrown as the
+ * refusal it was, never read as started.
+ */
 export async function startLane(id: string, kind: 'extract' | 'agent', key: string) {
-  await apiFetch(`/api/ingestion-sessions/${enc(id)}/operations`, {
+  const res = await apiFetch(`/api/ingestion-sessions/${encodeURIComponent(id)}/operations`, {
     method: 'POST',
     headers: { 'Idempotency-Key': key },
     body: JSON.stringify({ kind }),
   });
+  const op = (await res.json().catch(() => null)) as IngestionOperationResource | null;
+  if (op?.status === 'failed') {
+    const e = op.error;
+    throw new ApiError(e?.message ?? 'start refused', e?.status ?? 500, e?.code, { ...e });
+  }
 }
 
 export async function answerAsk(id: string, askId: string, answer: AskAnswerBody, key: string) {
-  await apiFetch(`/api/ingestion-sessions/${enc(id)}/asks/${enc(askId)}/answers`, {
-    method: 'POST',
-    headers: { 'Idempotency-Key': key },
-    body: JSON.stringify({ answer }),
-  });
+  await apiFetch(
+    `/api/ingestion-sessions/${encodeURIComponent(id)}/asks/${encodeURIComponent(askId)}/answers`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify({ answer }),
+    },
+  );
 }
 
 /** Puts recognised questions into the library; resolves once the server finished. */
 export const importBlocks = (id: string, blocks: ImportBlockBody[]) =>
   runIngestionOperation(id, { kind: 'import', input: { blocks } });
 
+/**
+ * Reads one recognised question again from its page with a stronger reader (paid, learner-pressed).
+ * The key is the caller's, so a retry after a lost response replays the same read.
+ */
+export const rescueBlock = (id: string, blockId: string, page: number, tier: 2 | 3, key: string) =>
+  runIngestionOperation(
+    id,
+    { kind: 'rescue', input: { block_id: blockId, page, tier } },
+    { idempotencyKey: key },
+  );
+
 export async function revertBlock(id: string, blockId: string) {
-  await apiFetch(`/api/ingestion/${enc(id)}/revert`, {
+  await apiFetch(`/api/ingestion/${encodeURIComponent(id)}/revert`, {
     method: 'POST',
     body: JSON.stringify({ block_id: blockId }),
   });

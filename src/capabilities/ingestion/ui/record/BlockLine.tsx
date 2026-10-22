@@ -1,10 +1,10 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { RescueButton, RevertButton } from './BlockTools';
+import { promptOf } from './block-text';
 import type { QuestionEdit, Readiness } from './import-draft';
 import { readiness } from './import-draft';
 import { KnowledgePick } from './KnowledgePick';
-import { type Block, revertBlock } from './record-api';
-import { recordKeys } from './recording-read';
+import type { Block } from './record-api';
 
 const READY_WORDS: Record<Readiness, { text: string; tone: string }> = {
   ready: { text: '可以收', tone: 'positive' },
@@ -13,27 +13,6 @@ const READY_WORDS: Record<Readiness, { text: string; tone: string }> = {
   needs_text: { text: '没有题目文字', tone: 'caution' },
   skipped: { text: '不收', tone: 'neutral' },
 };
-
-function RevertButton({ sessionId, blockId }: { sessionId: string; blockId: string }) {
-  const [asking, setAsking] = useState(false);
-  const qc = useQueryClient();
-  const undo = useMutation({
-    mutationFn: () => revertBlock(sessionId, blockId),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: recordKeys.blocks(sessionId) }),
-  });
-  if (undo.isError) return <span className="rc-problem">没撤回成功，再试一次。</span>;
-  return (
-    <button
-      type="button"
-      className="rc-link"
-      disabled={undo.isPending}
-      onClick={() => (asking ? undo.mutate() : setAsking(true))}
-      onBlur={() => setAsking(false)}
-    >
-      {asking ? '确定撤回？' : '撤回'}
-    </button>
-  );
-}
 
 /** One recognised question: its text, and only what the library still needs from the learner. */
 export function BlockLine({
@@ -44,6 +23,8 @@ export function BlockLine({
   onEdit,
   locked,
   closed,
+  rescuable,
+  onRead,
   onHoverPage,
 }: {
   sessionId: string;
@@ -54,10 +35,14 @@ export function BlockLine({
   locked: boolean;
   /** The recording no longer takes questions in; a left-over draft just reads as not taken. */
   closed: boolean;
+  /** The recording still lets a question be read again from its page. */
+  rescuable: boolean;
+  onRead: () => void;
   onHoverPage: (page: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const page = block.page_spans[0] ? block.page_spans[0].page_index + 1 : null;
+  const first = block.page_spans?.[0];
+  const page = first ? first.page_index + 1 : null;
   const hover = {
     onPointerEnter: () => onHoverPage(page),
     onPointerLeave: () => onHoverPage(null),
@@ -69,14 +54,19 @@ export function BlockLine({
         ? { text: '已进题库', tone: 'positive' }
         : block.status === 'auto_enrolled'
           ? { text: '已自动进题库', tone: 'positive' }
-          : { text: '没收', tone: 'neutral' };
+          : block.status === 'draft'
+            ? { text: '还没收', tone: 'neutral' }
+            : { text: '没收', tone: 'neutral' };
     return (
       <li className="rc-line" {...hover}>
         <span className="rc-line-no un-num">{no}</span>
         <div className="rc-line-main">
-          <p className="rc-line-text">{block.extracted_prompt_md}</p>
+          <p className="rc-line-text">{promptOf(block) || '（没认出文字）'}</p>
           {block.status === 'auto_enrolled' && (
             <RevertButton sessionId={sessionId} blockId={block.id} />
+          )}
+          {block.status === 'draft' && rescuable && (
+            <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
           )}
         </div>
         <span className="rc-state rc-line-state" data-tone={done.tone}>
@@ -140,6 +130,9 @@ export function BlockLine({
           >
             {edit.skip ? '还是收' : '不收这道'}
           </button>
+          {rescuable && !edit.skip && (
+            <RescueButton sessionId={sessionId} block={block} disabled={locked} onRead={onRead} />
+          )}
         </div>
         {edit.wrong && !edit.skip && (
           <label className="rc-field">

@@ -1,28 +1,46 @@
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
 import { Button } from '@/ui-next/public';
 import { KnowledgePick } from './KnowledgePick';
 import { createWrongAnswer } from './record-api';
 
+/** What the learner filled in under a typed-out question. Held by the composer. */
+export interface Hand {
+  answer: string;
+  knowledge: string[];
+}
+
+export const HAND_EMPTY: Hand = { answer: '', knowledge: [] };
+
 /**
  * The rest of a typed-out question: the learner's own answer and its knowledge point. A typed
  * question goes into the library together with the answer, as one they got wrong.
+ *
+ * The mistake route takes no Idempotency-Key, so the only guard against saving twice is here:
+ * one save at a time, and nothing to press again once it went in.
  */
-export function HandFields({ prompt, onSaved }: { prompt: string; onSaved: () => void }) {
-  const [answer, setAnswer] = useState('');
-  const [knowledge, setKnowledge] = useState<string[]>([]);
+export function HandFields({
+  prompt,
+  hand,
+  onHand,
+  onSaved,
+}: {
+  prompt: string;
+  hand: Hand;
+  onHand: (next: Hand) => void;
+  onSaved: () => void;
+}) {
   const save = useMutation({
     mutationFn: () =>
-      createWrongAnswer({ prompt: prompt.trim(), answer: answer.trim(), knowledgeIds: knowledge }),
-    onSuccess: () => {
-      setAnswer('');
-      setKnowledge([]);
-      onSaved();
-    },
+      createWrongAnswer({
+        prompt: prompt.trim(),
+        answer: hand.answer.trim(),
+        knowledgeIds: hand.knowledge,
+      }),
+    onSuccess: onSaved,
   });
-  const missing = !answer.trim()
+  const missing = !hand.answer.trim()
     ? '写下你当时的答案'
-    : knowledge.length === 0
+    : hand.knowledge.length === 0
       ? '选一个知识点'
       : null;
 
@@ -33,12 +51,17 @@ export function HandFields({ prompt, onSaved }: { prompt: string; onSaved: () =>
         <textarea
           className="rc-area rc-area-sm"
           rows={2}
-          value={answer}
+          value={hand.answer}
           placeholder="照着当时写的抄下来，错的也照抄"
-          onChange={(e) => setAnswer(e.target.value)}
+          disabled={save.isPending}
+          onChange={(e) => onHand({ ...hand, answer: e.target.value })}
         />
       </label>
-      <KnowledgePick value={knowledge} onChange={setKnowledge} disabled={save.isPending} />
+      <KnowledgePick
+        value={hand.knowledge}
+        onChange={(knowledge) => onHand({ ...hand, knowledge })}
+        disabled={save.isPending}
+      />
       <div className="rc-bar">
         <span className="rc-quiet">
           {save.isError ? '没收进去，再试一次。' : (missing ?? '会记成一道做错过的题。')}
@@ -46,7 +69,9 @@ export function HandFields({ prompt, onSaved }: { prompt: string; onSaved: () =>
         <Button
           variant="primary"
           disabled={missing !== null || save.isPending}
-          onClick={() => save.mutate()}
+          onClick={() => {
+            if (!save.isPending) save.mutate();
+          }}
         >
           {save.isPending ? '正在收…' : '收进题库'}
         </Button>

@@ -71,6 +71,7 @@ export type Gap =
   | 'nothing_kept';
 
 export type Phase = 'not_started' | 'working' | 'finished' | 'failed';
+export type BlocksRead = 'none' | 'loading' | 'ready' | 'failed';
 
 export interface Recording {
   id: string;
@@ -88,12 +89,13 @@ export interface Recording {
   priorRuns: PriorRun[];
   gaps: Gap[];
   blocks: Block[];
+  /** Whether the recording's blocks are read: none to read, still reading, read, or failed. */
+  blocksRead: BlocksRead;
   createdAt: number | null;
 }
 
 const WORKING = new Set(['queued', 'extracting']);
 const FINISHED = new Set(['extracted', 'partial', 'reviewed', 'imported']);
-const DAY = 86_400_000;
 
 function nowOf(c: HistoryItem['current']): Now | null {
   return c ? { servable: c.servable, holdReason: c.hold_reason } : null;
@@ -157,15 +159,20 @@ function priorRun(r: HistoryPriorRun): PriorRun {
   };
 }
 
-function gapsOf(h: SessionHistory, settled: boolean): Gap[] {
+function gapsOf(
+  h: SessionHistory,
+  settled: boolean,
+  lane: Recording['lane'],
+  blocks: number,
+): Gap[] {
   const missing = new Set(h.evidence.missing);
   const gaps: Gap[] = [];
   if (missing.has('unparsed_history')) gaps.push('unparsed');
-  if (h.session.path === null) {
+  if (h.session.path === null && blocks === 0) {
     if (settled) gaps.push('nothing_kept');
     return gaps;
   }
-  if (h.session.path !== 'agent') return gaps;
+  if (lane !== 'agent') return gaps;
   // No run record and nothing left of the event window: the process aged out, the questions stay.
   const aged = missing.has('run') && !h.evidence.snapshot && !h.evidence.live_events;
   if (aged) gaps.push('expired');
@@ -181,44 +188,63 @@ export function deriveRecording(input: {
   history: SessionHistory | undefined;
   historyFailed: boolean;
   live: LiveFold | null;
+  /** False when the stored run state is left over and must not decide anything. */
+  runCounts: boolean;
   blocks: Block[];
+  blocksRead: BlocksRead;
   now: number;
 }): Recording {
   const { detail, history: h, live, blocks, now } = input;
   const status = detail?.session.status ?? h?.session.status ?? 'queued';
   const created = Date.parse(detail?.session.created_at ?? h?.session.started_at ?? '');
   const createdAt = Number.isFinite(created) ? created : null;
-  const runState = h?.run?.run_state ?? null;
+  const runState = input.runCounts ? (h?.run?.run_state ?? null) : null;
 
+  // The recording's own status decides first; a run's state (which can be left over from an
+  // earlier attempt) only speaks while the status has not settled.
   let phase: Phase = 'working';
   if (status === 'uploaded') phase = 'not_started';
-  else if (status === 'failed' || runState === 'failed' || runState === 'lost') phase = 'failed';
+  else if (status === 'failed') phase = 'failed';
+  else if (FINISHED.has(status)) phase = 'finished';
+  else if (runState === 'failed' || runState === 'lost') phase = 'failed';
   else if (live?.stop && !WORKING.has(status)) phase = 'failed';
-  else if (FINISHED.has(status) || runState === 'done') phase = 'finished';
+  else if (runState === 'done') phase = 'finished';
   else if (live?.ended && !WORKING.has(status)) phase = 'finished';
   const settled = phase === 'finished' || phase === 'failed';
 
   const problems = new Map(
     (h?.run?.errors ?? []).flatMap((e) => (e.item_id ? [[e.item_id, e.code] as const] : [])),
   );
-  const items = new Map((h?.items ?? []).map((i) => [i.item_id, historyItem(i, problems)]));
+  // History also lists the recording's own blocks as lines; those show as blocks, with their
+  // actions, so they are left out of the helper's lines here.
+  const blockIds = new Set(blocks.map((b) => b.id));
+  const items = new Map(
+    (h?.items ?? [])
+      .filter((i) => !blockIds.has(i.item_id))
+      .map((i) => [i.item_id, historyItem(i, problems)]),
+  );
   const asks = new Map((h?.asks ?? []).map((a) => [a.ask_id, historyAsk(a)]));
   // A run still going: the stream's view of this run overlays the stored one, row by row.
   if (live && !settled) {
     for (const [id, item] of live.items)
       items.set(id, { ...item, now: items.get(id)?.now ?? null });
-    const young = createdAt === null || now - createdAt < 7 * DAY;
+    // Each ask's own expiry decides; no expiry means it waits until answered.
     for (const [id, a] of live.asks) {
       const expired = a.expiresAt !== null && Date.parse(a.expiresAt) <= now;
-      asks.set(id, { ...a, open: a.answer === null && young && !expired });
+      asks.set(id, { ...a, open: a.answer === null && !expired });
     }
   } else {
     for (const a of asks.values()) a.open = false;
   }
 
   const stopCode = h?.run?.errors.find((e) => e.scope === 'session');
-  const lane =
-    h?.session.path ?? (live?.agent ? 'agent' : blocks.length > 0 || live ? 'extract' : 'unknown');
+  // The lane is what the recording shows, not which start was tried: blocks with no helper lines
+  // or asks read as a plain reading even when an agent start was attempted (and turned down).
+  const helperShown = items.size > 0 || asks.size > 0 || live?.agent === true;
+  const lane: Recording['lane'] =
+    blocks.length > 0 && !helperShown
+      ? 'extract'
+      : (h?.session.path ?? (live?.agent ? 'agent' : live ? 'extract' : 'unknown'));
   const read: Recording['read'] =
     live && !settled ? 'live' : h ? 'history' : input.historyFailed ? 'unreadable' : 'loading';
 
@@ -238,41 +264,11 @@ export function deriveRecording(input: {
       (stopCode ? { code: stopCode.code, retryable: stopCode.retryable } : (live?.stop ?? null)),
     priorRuns: (h?.prior_runs ?? []).map(priorRun),
     // A run still going has not left its record yet; only an unreadable old record is worth saying.
-    gaps: h ? gapsOf(h, settled).filter((g) => settled || g === 'unparsed') : [],
+    gaps: h
+      ? gapsOf(h, settled, lane, blocks.length).filter((g) => settled || g === 'unparsed')
+      : [],
     blocks,
+    blocksRead: input.blocksRead,
     createdAt,
   };
-}
-
-const TITLE_MAX = 20;
-export const NO_TEXT_TITLE = '没认出题目文字';
-
-/** The opening words of a question as a title: markup and line breaks dropped, about 20 characters. */
-export function shortTitle(text: string | null | undefined): string | null {
-  const plain = (text ?? '')
-    .replace(/[#*_`>$\\]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!plain) return null;
-  const chars = Array.from(plain);
-  return chars.length > TITLE_MAX ? `${chars.slice(0, TITLE_MAX).join('')}…` : plain;
-}
-
-/**
- * The sheet's title after the time: the server's title when it has one, else the first question's
- * frozen opening words. Null while unknown — an unreadable record never reads as "no text".
- */
-export function recordingTitle(rec: Recording, serverTitle: string | null): string | null {
-  if (serverTitle) return serverTitle;
-  const byNo = [...rec.items].sort(
-    (a, b) => (Number.parseInt(a.no ?? '', 10) || 0) - (Number.parseInt(b.no ?? '', 10) || 0),
-  );
-  const text =
-    shortTitle(byNo.find((i) => i.preview)?.preview) ??
-    shortTitle(rec.blocks[0]?.extracted_prompt_md);
-  if (text) return text;
-  const known = rec.read === 'history' && rec.gaps.length === 0;
-  return known && rec.phase === 'finished' && (rec.items.length > 0 || rec.blocks.length > 0)
-    ? NO_TEXT_TITLE
-    : null;
 }

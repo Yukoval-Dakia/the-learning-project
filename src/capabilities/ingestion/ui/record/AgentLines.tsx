@@ -53,8 +53,9 @@ export function AgentLines({
 }) {
   if (items.length === 0 && asks.length === 0) return null;
   const known = new Set(items.map((i) => i.id));
-  // When no line kept its at-finish state, the sheet says so once; each line only says it came in
-  // (a durable link exists), instead of repeating "state not recorded" on every line.
+  // When no line kept its at-finish state, the sheet says so once; each line only says whether it
+  // came in (a durable link into the library exists) or not, instead of repeating "state not
+  // recorded" on every line.
   const allUnknown = items.every((i) => i.status === 'unknown');
   // Asks whose question is not among the lines (or about the whole material) still show, last.
   const loose = asks.filter((a) => a.itemId === null || !known.has(a.itemId));
@@ -79,7 +80,9 @@ export function AgentLines({
             : cut
               ? '没做完'
               : allUnknown
-                ? '收进来了'
+                ? item.now !== null
+                  ? '收进来了'
+                  : ITEM_WORDS.draft
                 : ITEM_WORDS[item.status];
         const tone = asking || held ? 'caution' : cut ? 'neutral' : TONE[item.status];
         return (

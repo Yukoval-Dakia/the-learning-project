@@ -14,6 +14,7 @@ export function StartTrouble({
 }: {
   rec: Recording;
   start: StartState | null;
+  /** A paper the learner allows the helper to read; only then is the helper offered. */
   paper: boolean;
 }) {
   const busy = start?.status === 'starting';
@@ -78,7 +79,7 @@ export function StartTrouble({
 
   if (rec.phase === 'failed') {
     const agentStopped = rec.lane === 'agent';
-    const canRetryAgent = agentStopped && (rec.stop?.retryable ?? true);
+    const canRetryAgent = agentStopped && paper && (rec.stop?.retryable ?? true);
     return (
       <div className="rc-trouble" role="alert">
         <p className="rc-trouble-title">

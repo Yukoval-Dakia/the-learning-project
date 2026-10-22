@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button } from '@/ui-next/public';
-import { HandFields } from './HandFields';
+import { HAND_EMPTY, type Hand, HandFields } from './HandFields';
 import { MaterialTiles } from './MaterialTiles';
 import type { UsePolicy } from './record-api';
 import {
@@ -35,6 +35,9 @@ export function Composer({
   const [agentOn, setAgentOn] = useState(PAPER_DEFAULT_LANE === 'agent');
   const [over, setOver] = useState(false);
   const [handSaved, setHandSaved] = useState(false);
+  // The typed question's answer and knowledge points live here, so material dropped in mid-typing
+  // hides them for a moment instead of throwing them away.
+  const [hand, setHand] = useState<Hand>(HAND_EMPTY);
   const pickRef = useRef<HTMLInputElement>(null);
   const draft = useDraft();
 
@@ -134,11 +137,17 @@ export function Composer({
       {typing && (
         <HandFields
           prompt={text}
+          hand={hand}
+          onHand={setHand}
           onSaved={() => {
             setText('');
+            setHand(HAND_EMPTY);
             setHandSaved(true);
           }}
         />
+      )}
+      {files.length > 0 && text.trim() !== '' && (
+        <p className="rc-quiet">打好的那道题还在，把这些文件移走就能接着写。</p>
       )}
 
       {!typing && (

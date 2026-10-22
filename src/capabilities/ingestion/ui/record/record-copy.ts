@@ -158,6 +158,24 @@ export function receiptWords(input: {
   return [masked, pages, use].filter(Boolean).join(' ');
 }
 
+/** Known notes the server keeps on a recording; anything else reads as the generic one. */
+const WARNING_WORDS: Record<string, string> = {
+  已忽略外部链接: 'Word 里的外部链接没有带进来。',
+};
+
+/**
+ * The recording's stored notes (session.warnings) as one plain line, or null when there are none.
+ * Most notes are internal reader messages, so they are never shown as they are.
+ */
+export function warningWords(warnings: string[]): string | null {
+  if (warnings.length === 0) return null;
+  const known = [...new Set(warnings.flatMap((w) => (WARNING_WORDS[w] ? [WARNING_WORDS[w]] : [])))];
+  const other = warnings.some((w) => !WARNING_WORDS[w]);
+  return [...known, other ? '部分内容识别质量不高，建议逐题核对。' : null]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export function answerRejectWords(status: number, code: string | undefined): string {
   if (status === 409 && code === 'ask_already_resolved') return '这一问已经有结果了。';
   if (status === 409) return '这次回答和刚才的不一样，刷新一下再答。';

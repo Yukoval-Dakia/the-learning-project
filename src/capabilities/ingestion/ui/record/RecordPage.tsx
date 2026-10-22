@@ -25,7 +25,19 @@ export interface RecordPageProps {
 export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageProps) {
   const [openId, setOpenId] = useState<string | null>(() => getQuery('ingest'));
   const [visited, setVisited] = useState<string[]>([]);
-  const topRef = useRef<HTMLElement>(null);
+  const topRef = useRef<HTMLElement | null>(null);
+  // Set while the page is on screen. An upload that finishes after the learner left must not
+  // open its recording, or it would rewrite the query of whatever page is showing now.
+  const onPage = useRef(false);
+  const holdMain = (el: HTMLElement | null) => {
+    topRef.current = el;
+    if (!el) return;
+    onPage.current = true;
+    return () => {
+      onPage.current = false;
+      topRef.current = null;
+    };
+  };
   const qc = useQueryClient();
 
   const open = (id: string) => {
@@ -40,13 +52,14 @@ export default function RecordPage({ navigate, getQuery, setQuery }: RecordPageP
     setQuery('ingest', null);
   };
   const started = (id: string) => {
+    if (!onPage.current) return;
     open(id);
     void qc.invalidateQueries({ queryKey: recordKeys.list });
   };
 
   return (
     <UiNextRoot className="rc-page">
-      <main className="rc-main" ref={topRef}>
+      <main className="rc-main" ref={holdMain}>
         <header className="rc-head">
           <div className="rc-head-text">
             <h1 className="rc-title">把题放进来</h1>
