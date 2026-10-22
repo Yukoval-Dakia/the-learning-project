@@ -8,8 +8,10 @@ import { ArtifactBodyBlocks } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { projectArtifactGuarded } from '@/server/projections/artifact';
-import { hasArtifactGenesisAnchor } from '@/server/projections/parity';
+import {
+  hasArtifactGenesisAnchor,
+  projectArtifactGuarded,
+} from '@/kernel/records/artifact-history';
 
 // Block-tree editing is note-only. Opaque types (tool_quiz, interactive) must
 // keep body_blocks null and never become mesh sources, so a hand-crafted PATCH

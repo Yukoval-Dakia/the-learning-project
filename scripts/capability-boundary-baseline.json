@@ -2027,6 +2027,54 @@
       "from": 18,
       "to": 15,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/parity.ts",
+      "siteKind": "site",
+      "symbol": "artifactsWithGenesisAnchor",
+      "targetModule": "src/kernel/records/artifact-history.ts",
+      "targetSymbol": "artifactsWithGenesisAnchor",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "scripts/backfill-genesis-events.ts",
+          "line": 64
+        }
+      ],
+      "evidence": "The current genesis backfill imports this complete batch event/index anchor read for its idempotency pre-scan.",
+      "rationale": "Canonical kernel owns the complete Artifact history fact. Backfill loadEnv, await order, transaction and event policy remain with the script; the old module retains its other real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/snapshot-mappers.ts",
+      "siteKind": "site",
+      "symbol": "artifactRowToSnapshot",
+      "targetModule": "src/kernel/records/artifact-history.ts",
+      "targetSymbol": "artifactRowToSnapshot",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "scripts/backfill-genesis-events.ts",
+          "line": 74
+        }
+      ],
+      "evidence": "The current genesis backfill imports the complete live structural snapshot mapper with its existing three collection fallbacks.",
+      "rationale": "Canonical kernel owns the complete Artifact history fact. Backfill loadEnv, await order, transaction and event policy remain with the script; the old module retains its other real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> projections",
+      "date": "2026-10-22",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3045,6 +3093,16 @@
       "issue": "YUK-1431",
       "owns": "Approved first slice: batch v0-incumbent read-only adaptation owns the shared snapshot, incumbent mastery and retention reads, provenance and explicit unknowns. Copilot replaces its direct mastery value dependency with this complete read; no new capability-to-server or cross-capability edge, stable-contract ruling or compat shim.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/body-blocks-edit.ts",
+      "module": "src/kernel/records/artifact-history.ts",
+      "kind": "value",
+      "symbols": ["hasArtifactGenesisAnchor", "projectArtifactGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -3730,11 +3788,53 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2c167220-6d1e-49a0-80f7-3b2c060e5d59",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldArtifact",
+      "targetModule": "src/kernel/records/artifact-history.ts",
+      "consumers": [
+        {
+          "file": "src/capabilities/notes/server/hub-sync-reconciliation.db.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/projections/parity-writers-c3.db.test.ts",
+          "line": 17
+        },
+        {
+          "file": "src/server/proposals/retract-clock.db.test.ts",
+          "line": 13
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and only the corresponding entity mock binding, migrate these pins to gatherAndFoldArtifact in the canonical kernel owner and remove this old export. preserve other mixed imports/mock members and real responsibilities. The deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "artifactLiveRowToSnapshot",
+      "targetModule": "src/kernel/records/artifact-history.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/parity-writers-c3.db.test.ts",
+          "line": 18
+        }
+      ],
+      "exitCondition": "After Owner separately approves the exact named test imports and only the corresponding entity mock binding, migrate these pins to artifactRowToSnapshot in the canonical kernel owner and remove this old export. preserve other mixed imports/mock members and real responsibilities. The deadline does not authorize deleting a still-used export.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 334,
+      "total": 332,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3780,7 +3880,6 @@
         "notes -> ai": 8,
         "notes -> artifacts": 2,
         "notes -> boss": 2,
-        "notes -> projections": 2,
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,
