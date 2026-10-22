@@ -39,7 +39,7 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-} from '@/server/projections/mistake-variant-runtime';
+} from '@/kernel/records/mistake-variant-facts';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantVerifyJobData {

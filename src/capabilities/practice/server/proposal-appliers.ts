@@ -48,7 +48,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-} from '@/server/projections/mistake-variant-runtime';
+} from '@/kernel/records/mistake-variant-facts';
 import {
   type ProposalInboxRow,
   acquireProposalDecisionLock,

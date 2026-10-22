@@ -9,11 +9,11 @@ import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
 import {
-  assertKnowledgeNodeParity,
   hasMistakeVariantGenesisAnchor,
-} from '@/server/projections/parity';
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
+import { assertKnowledgeNodeParity } from '@/server/projections/parity';
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 export {

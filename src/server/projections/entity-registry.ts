@@ -35,6 +35,12 @@ import {
   prefetchLearningItemMergeEvents,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
+import {
+  gatherAndFoldMistakeVariant,
+  mistakeVariantLiveRowToSnapshot,
+  mistakeVariantsWithGenesisAnchor,
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
 import { projectArtifactGuarded } from './artifact';
 import {
   edgeRowToSnapshot,
@@ -42,12 +48,10 @@ import {
   gatherAndFoldGoal,
   gatherAndFoldItemCalibration,
   gatherAndFoldKnowledgeEdgeWithMesh,
-  gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { projectGoalGuarded } from './goal';
 import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectMistakeVariantGuarded } from './mistake_variant';
 import {
   artifactsWithGenesisAnchor,
   goalLiveRowToSnapshot,
@@ -55,8 +59,6 @@ import {
   itemCalibrationsWithGenesisAnchor,
   knowledgeEdgesWithGenesisAnchor,
   learningItemLiveRowToSnapshot,
-  mistakeVariantLiveRowToSnapshot,
-  mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
