@@ -1140,6 +1140,30 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9f0bae01-0c81-4ed2-93a4-7a955a039105",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-22",
+      "from": 24,
+      "to": 23,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-22",
+      "from": 10,
+      "to": 9,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-22",
+      "from": 49,
+      "to": 48,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -1713,6 +1737,36 @@
       "issue": "YUK-1513",
       "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/scout/evidence-mcp.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/tools/proposal-tools.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/admission/solve.ts",
+      "module": "src/kernel/tools/call-evidence.ts",
+      "kind": "value",
+      "symbols": ["writeToolCallLog"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
+      "date": "2026-10-22"
     }
   ],
   "sourceSizeRecords": [
@@ -1895,6 +1949,15 @@
       "to": 1404,
       "issue": "YUK-1358",
       "responsibilityReason": "Inject the existing draft-save and judge-status transports through the Practice client context, including the necessary saveResponseDraft callback dependency and existing poller readStatus argument. The two net lines add no business responsibility: autosave epochs, conflicts, lifecycle, submission and presentation behavior stay unchanged; no lines are compressed to evade the size gate."
+    },
+    {
+      "path": "src/capabilities/practice/server/admission/solve.ts",
+      "date": "2026-10-22",
+      "baseBlob": "d9bca1631d6838aa769f065c0b6e458ea7340bd7",
+      "from": 1044,
+      "to": 1045,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One direct import replaces the same binding in a mixed verify-framework import. The complete tool-call evidence owner replaces the retired forwarding export; no solve business body or responsibility grows."
     }
   ],
   "compatShims": [
@@ -2064,9 +2127,9 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 384,
+      "total": 381,
       "byOwnerPair": {
-        "agency -> ai": 24,
+        "agency -> ai": 23,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
@@ -2099,7 +2162,7 @@
         "ingestion -> records": 1,
         "ingestion -> session": 8,
         "knowledge -> advisory-locks": 5,
-        "knowledge -> ai": 10,
+        "knowledge -> ai": 9,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
@@ -2120,7 +2183,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 49,
+        "practice -> ai": 48,
         "practice -> assessment": 1,
         "practice -> boss": 18,
         "practice -> calibration": 3,
