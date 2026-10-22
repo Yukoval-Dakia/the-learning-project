@@ -1,5 +1,5 @@
 // YUK-577 (Codex P2-1) — one-shot nudge-focus lifecycle, extracted pure so it is unit-testable
-// without a CopilotDock render harness. design: docs/design/2026-07-07-yuk577-proactive-triggers.md §3.5.
+// without a companion render harness. design: docs/design/2026-07-07-yuk577-proactive-triggers.md §3.5.
 //
 // When a 「看看」click opens the drawer, the nudge's ingestion session becomes the ambient
 // focused_entity for the FIRST reply so the agent knows the turn is about that material. It must be
