@@ -105,10 +105,10 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
     // instead: recomputing would make the server reject the original key with a 409.
     const route = typeof window === 'undefined' ? '' : window.location.pathname;
     const page = readCompanionFocus();
-    const focus = resolveTurnAmbientFocus(
-      skill?.ref ?? (page ? { kind: page.kind, id: page.id } : undefined),
-      internals.nudgeSession,
-    );
+    // An active skill wins, then a nudge's material (one-shot), then what the page shows.
+    const focus =
+      resolveTurnAmbientFocus(skill?.ref, internals.nudgeSession) ??
+      (page ? { kind: page.kind, id: page.id } : undefined);
     return {
       session_id: sessionId,
       user_message: text,
@@ -216,7 +216,12 @@ export function createTurnSender(ctx: CompanionCtx): TurnSender {
           return m.role === 'ai' ? { ...cleared, text: copy, streaming: false } : cleared;
         }),
       );
-      ctx.set({ refreshFailed: false, error: copy });
+      // Nothing was sent: give the words back to the composer unless the learner already typed more.
+      ctx.set({
+        refreshFailed: false,
+        error: copy,
+        ...(!recovery && ctx.get().draft === '' ? { draft: raw } : {}),
+      });
       ctx.sessions.revalidateAutomaticSelection();
     }
   }
