@@ -13,6 +13,7 @@ import { transitionStartPlacementSession } from './start/placement-session-opera
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
+import { createStartSubject } from './start/subject-create-operation';
 import { readStartSubjects } from './start/subject-reader';
 
 export function buildLegacySpa(root: string): Hono {
@@ -63,6 +64,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
+    createSubject: createStartSubject,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };
