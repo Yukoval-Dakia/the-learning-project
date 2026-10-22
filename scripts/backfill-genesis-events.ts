@@ -34,7 +34,6 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { newId } from '@/core/ids';
 import type {
-  GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   LearningItemRowSnapshotT,
 } from '@/core/schema/event/genesis';
@@ -51,6 +50,7 @@ import {
   question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { goalRowToSnapshot, goalsWithGenesisAnchor } from '@/kernel/records/goal-history';
 import {
   knowledgeNodesWithGenesisAnchor,
   knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
@@ -66,7 +66,6 @@ import {
 // anchor, only a generate / genesis event (edgesWithOriginatingEvent below).
 import {
   artifactsWithGenesisAnchor,
-  goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
@@ -81,7 +80,6 @@ import {
 
 type DbLike = Db | Tx;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
-type GoalRow = typeof goal.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
@@ -222,28 +220,6 @@ export async function backfillKnowledgeEdgeGenesis(
     seeded += 1;
   }
   return { seeded, skipped };
-}
-
-// The FULL row — goal has no derived/embed columns. Dates stay Date (z.coerce.date() accepts
-// both); scope_knowledge_ids defaults to [] at the column.
-function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
-  return {
-    id: row.id,
-    title: row.title,
-    subject_id: row.subject_id,
-    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // Snapshot the CURRENT scope_mode / declared_stage: omitting them would fold to the
-    // column defaults ('explicit' / null) and drift parity against the live row.
-    scope_mode: row.scope_mode,
-    sequence_hint: row.sequence_hint,
-    declared_stage: row.declared_stage,
-    status: row.status,
-    source: row.source,
-    source_ref: row.source_ref,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
 }
 
 /**
