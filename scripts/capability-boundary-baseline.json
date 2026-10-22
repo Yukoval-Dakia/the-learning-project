@@ -2321,7 +2321,7 @@
       "issue": "YUK-1570",
       "responsibilityReason": "One direct import replaces the same binding in a mixed verify-framework import. The complete tool-call evidence owner replaces the retired forwarding export; no solve business body or responsibility grows."
     }
-  ]
+  ],
   "compatShims": [
     {
       "path": "src/capabilities/ingestion/server/persist-image-asset.ts",
