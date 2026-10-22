@@ -1,7 +1,7 @@
 // Record page transport (YUK-1473). Thin calls over the ingestion routes in
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
-import { type ApiOperationJsonResponse, apiFetch, apiJson, apiOperationJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiFetch, apiOperationJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { runIngestionOperation } from '@/ui/lib/ingestion-operations';
 
@@ -115,17 +115,29 @@ export const getHistory = (id: string) =>
     init: { cache: 'no-store' },
   });
 
-export const getSession = (id: string) =>
-  apiJson<SessionDetail>(`/api/ingestion-sessions/${enc(id)}`, { cache: 'no-store' });
+export async function getSession(id: string): Promise<SessionDetail> {
+  const body = await apiOperationJson('getIngestionSession', {
+    url: `/api/ingestion-sessions/${enc(id)}`,
+    method: 'GET',
+    init: { cache: 'no-store' },
+  });
+  return body as SessionDetail;
+}
 
 export async function listBlocks(id: string): Promise<Block[]> {
-  const body = await apiJson<{ rows: Block[] }>(`/api/ingestion/${enc(id)}/blocks`);
-  return body.rows;
+  const body = await apiOperationJson('listIngestionSessionBlocks', {
+    url: `/api/ingestion/${enc(id)}/blocks`,
+    method: 'GET',
+  });
+  return body.rows as Block[];
 }
 
 export async function listKnowledge(): Promise<KnowledgeNode[]> {
-  const body = await apiJson<{ rows: KnowledgeNode[] }>('/api/knowledge');
-  return body.rows;
+  const body = await apiOperationJson('getKnowledgeTreeSnapshot', {
+    url: '/api/knowledge',
+    method: 'GET',
+  });
+  return body.rows as KnowledgeNode[];
 }
 
 /** Photos and PDF pages become image assets; returns their ids in page order. */
@@ -149,13 +161,14 @@ export async function createSession(input: {
   assetIds: string[];
   policy: UsePolicy;
 }): Promise<string> {
-  const body = await apiJson<{ session: { id: string } }>('/api/ingestion-sessions', {
+  const body = await apiOperationJson('createIngestionSession', {
+    url: '/api/ingestion-sessions',
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       entrypoint: input.entrypoint,
       asset_ids: input.assetIds,
-      ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' } : {}),
-    }),
+      ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' as const } : {}),
+    },
   });
   return body.session.id;
 }
@@ -201,9 +214,10 @@ export async function createWrongAnswer(input: {
   answer: string;
   knowledgeIds: string[];
 }) {
-  return apiJson<{ question_id: string }>('/api/mistakes', {
+  return apiOperationJson('createMistake', {
+    url: '/api/mistakes',
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       prompt_md: input.prompt,
       reference_md: null,
       wrong_answer_md: input.answer,
@@ -213,6 +227,6 @@ export async function createWrongAnswer(input: {
       question_kind: 'short_answer',
       prompt_image_refs: [],
       wrong_answer_image_refs: [],
-    }),
+    },
   });
 }

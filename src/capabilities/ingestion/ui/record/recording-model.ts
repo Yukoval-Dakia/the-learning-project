@@ -237,7 +237,8 @@ export function deriveRecording(input: {
       (live && !settled ? live.stop : null) ??
       (stopCode ? { code: stopCode.code, retryable: stopCode.retryable } : (live?.stop ?? null)),
     priorRuns: (h?.prior_runs ?? []).map(priorRun),
-    gaps: h ? gapsOf(h, settled) : [],
+    // A run still going has not left its record yet; only an unreadable old record is worth saying.
+    gaps: h ? gapsOf(h, settled).filter((g) => settled || g === 'unparsed') : [],
     blocks,
     createdAt,
   };
