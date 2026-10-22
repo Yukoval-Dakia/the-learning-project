@@ -1,7 +1,8 @@
 // Client-only public contribution surface.
 
 export type { CopilotSkillContextT } from './server/chat-contracts';
-export { CopilotDock } from './ui/CopilotDock';
+export { CompanionMount } from './ui/companion/CompanionMount';
+export type { CompanionLayout } from './ui/companion/CompanionPanel';
 export {
   type CopilotCancelResult,
   type CopilotClient,

@@ -33,3 +33,25 @@ export function ChipToggle({
     </button>
   );
 }
+
+export type ChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  tone?: 'neutral' | 'accent';
+};
+
+/** A one-shot action chip (a suggested prompt, a quick reply). Not a toggle: no pressed state. */
+export function ChipButton({
+  tone = 'neutral',
+  className,
+  type = 'button',
+  ...rest
+}: ChipButtonProps) {
+  return (
+    <button
+      type={type}
+      className={['un-chip', `un-chip-${tone}`, 'un-chip-action', 'un-hit', className]
+        .filter(Boolean)
+        .join(' ')}
+      {...rest}
+    />
+  );
+}

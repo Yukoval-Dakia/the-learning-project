@@ -2,7 +2,7 @@
  * Copilot session reuse-window predicate for the UI bootstrap auto-selection.
  *
  * `COPILOT_REUSE_WINDOW_MS` is defined once in `@/core/limits` and reached here
- * via the `@/kernel/limits` facade, so the browser-side CopilotDock pulls only
+ * via the `@/kernel/limits` facade, so the browser-side companion pulls only
  * this pure leaf — no server module enters the SPA graph. The server predicate
  * (`findReusableCopilotConversation`) reads the SAME number from `@/core/limits`
  * without deep-importing this capability.
