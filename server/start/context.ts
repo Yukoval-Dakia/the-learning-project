@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import type { createGoal } from '@/capabilities/agency/public';
+import type { createGoal, submitConjectureProbeAnswer } from '@/capabilities/agency/public';
 import type { MistakeListQuery, MistakeListResponse } from '@/capabilities/ingestion/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
@@ -22,6 +22,10 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  submitConjectureProbeAnswer: (
+    input: { probeId: string; body: string },
+    signal: AbortSignal,
+  ) => Promise<Awaited<ReturnType<typeof submitConjectureProbeAnswer>>>;
   createGoal: (body: string) => Promise<Awaited<ReturnType<typeof createGoal>>>;
   startPlacement: (body: string) => Promise<Awaited<ReturnType<typeof startPlacementProbe>>>;
   readPlacementSession: typeof readPlacementSession;
