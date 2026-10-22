@@ -73,9 +73,11 @@ export function BlockLines({
               ? '没收进去，再试一次。'
               : waiting > 0
                 ? `还有 ${waiting} 道差一点，补好再收；收的时候没收的题就不再留了。`
-                : draft.wrongCount > 0
-                  ? `${draft.wrongCount} 道记成做错过`
-                  : '都可以收了'}
+                : draft.skippedCount > 0
+                  ? `另外 ${draft.skippedCount} 道不收，收完就不再留了。`
+                  : draft.wrongCount > 0
+                    ? `${draft.wrongCount} 道记成做错过`
+                    : '都可以收了'}
           </span>
           <div className="rc-actions">
             {waiting > 0 && (

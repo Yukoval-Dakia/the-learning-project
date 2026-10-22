@@ -81,7 +81,8 @@ export function statusWords(rec: Recording, start: StartState | null): StatusWor
     return {
       text: `认出 ${drafts} 道题，有的没认全`,
       tone: 'caution',
-      detail: '这次只认出了一部分，暂时还收不进题库。没认对的题可以点「再认一次」。',
+      detail:
+        '这次只认出了一部分，这次录入收不进题库。「再认一次」能让题目读得更准，但不能让它收进去。',
     };
   }
   if (drafts > 0 && (rec.status === 'extracted' || rec.status === 'reviewed')) {

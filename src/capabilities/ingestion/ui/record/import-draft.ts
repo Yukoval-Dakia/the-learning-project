@@ -26,11 +26,9 @@ function startingEdit(block: Block): QuestionEdit {
   return {
     prompt: promptOf(block),
     knowledgeIds: block.auto_enroll_observation?.suggested_knowledge_ids ?? [],
-    // The judge's verdict is not the learner's answer. Only 'failure' means a mistake; 'partial'
-    // counts as a worked example on the server, so it does not switch this on by itself.
-    wrong:
-      answer.trim() !== '' ||
-      block.auto_enroll_observation?.mistake_draft?.wrong_answer === 'failure',
+    // The judge's verdict decides: wrong_answer_md holds the learner's answer whether it was right
+    // or wrong, so only a 'failure' verdict switches this on ('partial' is a worked example).
+    wrong: block.auto_enroll_observation?.mistake_draft?.wrong_answer === 'failure',
     answer,
     skip: false,
   };
@@ -58,7 +56,8 @@ function body(block: Block, edit: QuestionEdit): ImportBlockBody {
     page_spans: spans.length > 0 ? spans : FULL_PAGE,
     // A block with no image refs points at its own pages (Word blocks rely on this).
     image_refs: refs.length > 0 ? refs : (block.source_asset_ids ?? []),
-    final_prompt_md: edit.prompt.trim(),
+    // Untouched text goes back exactly as read, so the server keeps its structured form.
+    final_prompt_md: edit.prompt === promptOf(block) ? edit.prompt : edit.prompt.trim(),
     final_reference_md: referenceOf(block),
     final_wrong_answer_md: edit.wrong ? edit.answer.trim() : '',
     outcome: edit.wrong ? 'failure' : 'unanswered',
@@ -124,6 +123,7 @@ export function useImportDraft(sessionId: string, blocks: Block[]) {
     skipWaiting,
     forgetText,
     wrongCount: ready.filter((b) => editOf(b).wrong).length,
+    skippedCount: open.filter((b) => readiness(editOf(b)) === 'skipped').length,
     send,
   };
 }
