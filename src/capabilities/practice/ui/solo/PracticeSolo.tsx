@@ -43,7 +43,6 @@ import { nativeResponseEntry, nativeResponseValue } from '@/ui/components/respon
 import { SaveStateChip } from '@/ui/components/response/SaveStateChip';
 import { ApiError } from '@/ui/lib/api';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import {
   Button,
@@ -75,7 +74,7 @@ import {
 } from '../use-practice-submit';
 import { DraftConflictPanel } from './DraftConflictPanel';
 import { FigureLightbox } from './FigureLightbox';
-import { QuoteBubble, clipQuote, useQuotableSelection } from './QuoteSelection';
+import { QuoteBubble, clipQuote, quoteToCompanion, useQuotableSelection } from './QuoteSelection';
 import { SoloCoach } from './SoloCoach';
 import './practice-solo.css';
 
@@ -355,12 +354,7 @@ export function PracticeSolo({
     // M3: a new quote takes over; the one in the air fades where it is.
     flight.current?.();
     flight.current = null;
-    // The companion shows 「正在看：题目 · …」 and offers 讲讲这题 / 出一道类似的.
-    if (item.item_kind === 'question') {
-      const title = clipped.length > 28 ? `${clipped.slice(0, 27)}…` : clipped;
-      setCompanionFocus({ kind: 'question', id: item.ref_id, title });
-    }
-    openCopilot(`「${clipped}」\n`, { send: false });
+    quoteToCompanion(item, clipped);
     const scope = pageRoot.current?.closest('[data-ui-next]');
     // Reduced motion: the quote is simply in the composer.
     if (!scope || !from || prefersReducedMotion()) return;

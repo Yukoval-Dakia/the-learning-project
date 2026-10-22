@@ -9,8 +9,8 @@ import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { Button, Chip } from '@/ui-next/public';
 import type { CompanionController } from './companion-controller';
 import { visibleSessions } from './companion-state';
+import { toRecentConversation } from './recent-conversation';
 import { useCompanion, useCompanionShallow } from './use-companion';
-import { toRecentConversation } from './use-recent-conversations';
 
 function shortDate(iso: string): string {
   const date = new Date(iso);

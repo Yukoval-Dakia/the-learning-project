@@ -2753,6 +2753,16 @@
       "issue": "YUK-1570",
       "owns": "Complete accepted question-block status/link/version and lifecycle-event persistence in the caller transaction; eligibility, locking and surrounding enrollment/revert orchestration remain with the caller.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/copilot/ui/companion/HeroBlock.tsx",
+      "module": "src/capabilities/notes/ui-public.ts",
+      "kind": "value",
+      "symbols": ["getNotePage"],
+      "issue": "YUK-1473",
+      "owns": "Notes owns the note page read. Copilot only renders an interactive artifact inline from it; this edge moves from the deleted copilot/ui/CopilotHeroCard.tsx with the companion rebuild, so the copilot -> notes pair total does not change.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [

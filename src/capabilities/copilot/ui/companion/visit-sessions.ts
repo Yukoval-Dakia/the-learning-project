@@ -13,7 +13,6 @@ import {
   visitFreshSessions,
 } from './companion-state';
 import { plainError } from './plain-errors';
-import { RECENT_CONVERSATIONS_KEY } from './use-recent-conversations';
 
 export interface VisitSessions {
   openVisit: () => void;
@@ -45,8 +44,6 @@ export function createVisitSessions(ctx: CompanionCtx): VisitSessions {
         retainedSessions: snapshot.sessions,
         ...(forVisit ? { freshSessions: snapshot, sessionsStatus: 'ready' as const } : {}),
       });
-      // The shell's 最近 list reads the same response; keep it current without a second request.
-      ctx.queryClient.setQueryData(RECENT_CONVERSATIONS_KEY, snapshot);
       return snapshot;
     } catch (cause) {
       if (ctx.get().visit.epoch === epoch) ctx.set({ sessionsStatus: 'error' });
