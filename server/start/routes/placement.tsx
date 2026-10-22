@@ -10,6 +10,7 @@ import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPlacementHeldReleaseClient } from '../placement-held-release-client';
 import { startPlacementNextClient } from '../placement-next-client';
 import { startPlacementEndClient, startPlacementSessionClient } from '../placement-session-client';
+import { startPlacementStartClient } from '../placement-start-client';
 import { startPlacementSubmitClient } from '../placement-submit-client';
 import { startResponseDraftClient } from '../response-draft-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
@@ -17,6 +18,7 @@ import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 const Page = lazy(() => loadPlacementPage().then((defaultPage) => ({ default: defaultPage })));
 const placementClient: PlacementClient = {
   ...httpPlacementClient,
+  startPlacement: startPlacementStartClient,
   getPlacementSession: startPlacementSessionClient,
   placementNext: startPlacementNextClient,
   releaseHeldPlacement: startPlacementHeldReleaseClient,
