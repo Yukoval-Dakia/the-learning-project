@@ -2022,6 +2022,14 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-22",
+      "from": 18,
+      "to": 15,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "agency -> projections",
       "date": "2026-10-22",
       "from": 5,
@@ -3038,6 +3046,16 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/learner-state.ts",
+      "module": "src/kernel/read-models/learner-judgment.ts",
+      "kind": "value",
+      "symbols": ["readLearnerJudgments"],
+      "issue": "YUK-1431",
+      "owns": "Approved first slice: batch v0-incumbent read-only adaptation owns the shared snapshot, incumbent mastery and retention reads, provenance and explicit unknowns. Copilot replaces its direct mastery value dependency with this complete read; no new capability-to-server or cross-capability edge, stable-contract ruling or compat shim.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/kernel/records/goal-history.ts",
       "kind": "value",
@@ -3754,7 +3772,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 335,
+      "total": 332,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -3810,7 +3828,7 @@
         "practice -> advisory-locks": 5,
         "practice -> ai": 48,
         "practice -> assessment": 1,
-        "practice -> boss": 18,
+        "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
