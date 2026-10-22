@@ -8,7 +8,7 @@
  */
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 // Enrollment routes by outcome signal (ADR-0024), not a hardcoded failure shape.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
 import { canonicalHash } from '@/core/migration/canonical';
@@ -28,9 +28,12 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
+import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
+import { hasAgentEvidence } from './agent/history';
 import { capturedQuestionShape } from './captured-question-shape';
 import {
   isTerminalIngestionOperation,
+  matchesAcceptedIngestionOperationInput,
   readIngestionOperation,
   writeIngestionOperationEvent,
 } from './operation-store';
@@ -515,6 +518,101 @@ export async function completeIngestionImportOperation(
       operationId: input.operationId,
       eventType: 'operation.completed',
       payload: { result },
+    });
+  });
+}
+
+/**
+ * Classic review owns the full checked set and its completion receipt. Lock order:
+ * operation → session → blocks ordered by id. No publishing or paid work occurs.
+ */
+export async function completeIngestionReviewOperation(
+  db: Db,
+  input: { operationId: string; sessionId: string; body: ReviewBodyParsed },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('ingestion-review-settlement'), hashtext(${input.operationId}))`,
+    );
+    const operation = await readIngestionOperation(tx, input.operationId);
+    if (!operation || isTerminalIngestionOperation(operation)) return;
+    const parsed = ReviewBody.safeParse(input.body);
+    if (
+      !parsed.success ||
+      operation.operation_kind !== 'review' ||
+      operation.session_id !== input.sessionId ||
+      !(await matchesAcceptedIngestionOperationInput(tx, {
+        operationId: input.operationId,
+        sessionId: input.sessionId,
+        request: { kind: 'review', input: parsed.data },
+      }))
+    ) {
+      // A foreign delivery must not terminalize the real accepted operation.
+      throw new ApiError('conflict', 'Review delivery does not match its reserved operation', 409);
+    }
+    const body = parsed.data;
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.running',
+    });
+    try {
+      // The savepoint rolls back every review write before a domain failure receipt.
+      // Infrastructure errors escape the outer transaction for pg-boss retry.
+      await tx.transaction(async (reviewTx) => {
+        const [session] = await reviewTx
+          .select({ id: learning_session.id })
+          .from(learning_session)
+          .where(
+            and(eq(learning_session.id, input.sessionId), eq(learning_session.type, 'ingestion')),
+          )
+          .for('update');
+        if (!session) {
+          throw new ApiError('not_found', `ingestion session ${input.sessionId} not found`, 404);
+        }
+        // This is the same live classifier used by history, including historical
+        // drafts, grants and unknown paid runs. Partial status never proves classic.
+        if (await hasAgentEvidence(reviewTx, input.sessionId)) {
+          throw new ApiError('conflict', 'Agent sessions cannot use classic block review', 409);
+        }
+        const blocks = await reviewTx
+          .select({ id: question_block.id, version: question_block.version })
+          .from(question_block)
+          .where(eq(question_block.ingestion_session_id, input.sessionId))
+          .orderBy(asc(question_block.id))
+          .for('update');
+        // No draft/status filter or limit: ignored and auto-enrolled rows count too.
+        const checked = new Map(
+          body.checked_blocks.map((block) => [block.block_id, block.version]),
+        );
+        if (
+          blocks.length === 0 ||
+          blocks.length !== checked.size ||
+          blocks.some((block) => checked.get(block.id) !== block.version)
+        ) {
+          throw new ApiError(
+            'conflict',
+            'Checked blocks must match every current session block and version; review again',
+            409,
+          );
+        }
+        // Preserve the state owner's extracted/partial guard and reviewed event.
+        await Ingestion.markReviewedInTx(reviewTx, input.sessionId);
+      });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status >= 500) throw error;
+      await writeIngestionOperationEvent(tx, {
+        operationId: input.operationId,
+        eventType: 'operation.failed',
+        payload: { error: { code: error.code, message: error.message, status: error.status } },
+      });
+      return;
+    }
+    // DONE failures roll back reviewed and ingestion.reviewed together; they can
+    // never be caught above and downgraded into a false failed operation.
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.completed',
+      payload: { result: { status: 'reviewed' } },
     });
   });
 }

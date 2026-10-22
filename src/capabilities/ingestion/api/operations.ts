@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { and, eq } from 'drizzle-orm';
 
 import { newId } from '@/core/ids';
@@ -20,6 +18,7 @@ import {
 } from '../server/agent/budget-state';
 import {
   hasQueuedIngestionOperationEvent,
+  ingestionOperationInputHash,
   isTerminalIngestionOperation,
   readIngestionOperation,
   reserveIngestionOperation,
@@ -38,10 +37,6 @@ const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 
 function resourcePath(operationId: string): string {
   return `/api/ingestion-operations/${encodeURIComponent(operationId)}`;
-}
-
-function inputHash(request: IngestionOperationRequestParsed): string {
-  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
 }
 
 function operationError(err: unknown): { code: string; message: string; status: number } {
@@ -82,6 +77,7 @@ async function validateSessionState(
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
     agent: ['uploaded', 'failed'],
+    review: ['extracted', 'partial'],
     import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
@@ -297,7 +293,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const request = parsed.data;
-    const hash = inputHash(request);
+    const hash = ingestionOperationInputHash(request);
 
     // Replay, session validation and reservation share the real key lock.
     const operationId = `ingop_${newId()}`;

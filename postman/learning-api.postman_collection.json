@@ -1444,6 +1444,31 @@
       ]
     },
     {
+      "name": "ingestion",
+      "item": [
+        {
+          "name": "GET /api/ingestion/:id/blocks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion/:id/blocks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion", ":id", "blocks"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取 classic session 全部 block 与真实复核版本\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 {rows:[...]}，每行 version 为 question_block.version；无抽样/状态过滤（含 ignored/auto_enrolled）。客户端须保留用户实际检查的版本，缺 version 不可默认 0。agent 历史 draft 不在 classic 集合；需 x-internal-token。"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "ingestion-sessions",
       "item": [
         {
@@ -1535,10 +1560,10 @@
                 }
               ]
             },
-            "description": "创建可轮询的录入 operation（kind=extract|agent|import|make_paper|rescue）；同 key 同请求幂等\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 201→202 {operation 资源} + Location；session 状态不符 → 409。kind=agent 走 YUK-1522 周额度门：本周已用 ≥ 额度（默认 20 USD，system_config 键 ingestion.agent_weekly_budget_usd，0=关闭启动）→ 429 ingestion_weekly_budget_exceeded；另一录入在途/排队/待结算、本周成本含无法定额记录或额度读不到 → 503 ingestion_weekly_budget_unavailable（details.reason ∈ another_ingestion_in_flight|unsettled_cost|budget_read_unavailable）。UI 不自动重试。需 x-internal-token",
+            "description": "创建可轮询的录入 operation（kind=extract|agent|review|import|make_paper|rescue）；同 key 同请求幂等\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 201→202 {operation 资源} + Location；session 状态不符 → 409。kind=agent 走 YUK-1522 周额度门：本周已用 ≥ 额度（默认 20 USD，system_config 键 ingestion.agent_weekly_budget_usd，0=关闭启动）→ 429 ingestion_weekly_budget_exceeded；另一录入在途/排队/待结算、本周成本含无法定额记录或额度读不到 → 503 ingestion_weekly_budget_unavailable（details.reason ∈ another_ingestion_in_flight|unsettled_cost|budget_read_unavailable）。UI 不自动重试。需 x-internal-token；kind=review input={checked_blocks:[{block_id,version}]}：非空、无重复、block_id 排序归一化。必须提交当前 classic session 全部 block（含 ignored/auto_enrolled）的真实 version；GET blocks 缺 version 时不可默认 0。仅 extracted/partial 首次可复核，agent evidence、集合/归属/版本变化 → failed resource error.status=409；成功 result={status:\"reviewed\"}，不代表已发布或准入。原 key 重放返回原资源，用户重新检查后才可用新 key 提交。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"agent\"\n}",
+              "raw": "{\n  \"kind\": \"review\",\n  \"input\": {\n    \"checked_blocks\": [\n      {\n        \"block_id\": \"{{ingestionBlockId}}\",\n        \"version\": 0\n      }\n    ]\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

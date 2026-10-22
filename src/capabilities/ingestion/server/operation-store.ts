@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto';
+
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
-import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operation-schema';
+import type {
+  IngestionOperationKind,
+  IngestionOperationRequestParsed,
+} from '@/capabilities/ingestion/api/operation-schema';
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
@@ -15,6 +20,35 @@ import {
 } from './operation-identity';
 
 export const INGESTION_OPERATION_TABLE = 'ingestion_operation';
+
+/** Shared by reservation and delivery; callers supply the schema-normalized request. */
+export function ingestionOperationInputHash(request: IngestionOperationRequestParsed): string {
+  return createHash('sha256').update(JSON.stringify(request)).digest('hex');
+}
+
+/** Bind delivery to the original accepted identity, never a replacement queue body. */
+export async function matchesAcceptedIngestionOperationInput(
+  db: Db | Tx,
+  input: { operationId: string; sessionId: string; request: IngestionOperationRequestParsed },
+): Promise<boolean> {
+  const [accepted] = await db
+    .select({ payload: job_events.payload })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, INGESTION_OPERATION_TABLE),
+        eq(job_events.business_id, input.operationId),
+        eq(job_events.event_type, 'operation.accepted'),
+      ),
+    )
+    .orderBy(asc(job_events.id))
+    .limit(1);
+  return (
+    accepted?.payload.session_id === input.sessionId &&
+    accepted.payload.operation_kind === input.request.kind &&
+    accepted.payload.input_hash === ingestionOperationInputHash(input.request)
+  );
+}
 
 export type IngestionOperationStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 

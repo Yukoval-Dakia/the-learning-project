@@ -655,29 +655,32 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
  * domain event, since per-question review events come later via the FSRS flow.
  */
 export async function markReviewed(db: Db, sessionId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const current = await loadSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
-    }
-    assertFromState(
-      current.status,
-      ['extracted', 'partial'] as const,
-      sessionId,
-      'Ingestion.markReviewed',
-    );
+  await db.transaction((tx) => markReviewedInTx(tx, sessionId));
+}
 
-    await tx
-      .update(learning_session)
-      .set({ status: 'reviewed', updated_at: new Date() })
-      .where(eq(learning_session.id, sessionId));
+/** Same review transition, composed with the caller's checks and completion receipt. */
+export async function markReviewedInTx(tx: Tx, sessionId: string): Promise<void> {
+  const current = await loadSessionForUpdate(tx, sessionId);
+  if (!current) {
+    throw new ApiError('not_found', `learning_session ${sessionId} not found`, 404);
+  }
+  assertFromState(
+    current.status,
+    ['extracted', 'partial'] as const,
+    sessionId,
+    'Ingestion.markReviewed',
+  );
 
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'ingestion.reviewed',
-      payload: {},
-    });
+  await tx
+    .update(learning_session)
+    .set({ status: 'reviewed', updated_at: new Date() })
+    .where(eq(learning_session.id, sessionId));
+
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: sessionId,
+    event_type: 'ingestion.reviewed',
+    payload: {},
   });
 }
 
