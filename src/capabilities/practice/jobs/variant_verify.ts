@@ -25,13 +25,6 @@ import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  aiAgentRef,
-  costUsdToMicroUsd,
-} from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
 // mistake_variant verify write-through. verify already writes the
 // experimental:variant_verify event; the per-entity flag gates whether the projection (ON) or the
 // imperative UPDATE (OFF) writes the row (broken+failure_reasons on fail / touch updated_at on
@@ -39,7 +32,14 @@ import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-} from '@/server/projections/mistake-variant-runtime';
+} from '@/kernel/records/mistake-variant-facts';
+import {
+  type TaskTextResult,
+  type TaskTextRunFn,
+  aiAgentRef,
+  costUsdToMicroUsd,
+} from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export interface VariantVerifyJobData {
