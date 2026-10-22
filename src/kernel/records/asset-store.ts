@@ -290,9 +290,19 @@ export async function persistImmutableCustomCodeAsset(
   });
 }
 
+export class ImmutableAssetDeleteForbiddenError extends Error {
+  readonly code = 'immutable_asset_delete_forbidden';
+
+  constructor() {
+    super('Shared immutable custom-code assets cannot be removed by generic asset deletion');
+    this.name = 'ImmutableAssetDeleteForbiddenError';
+  }
+}
+
 /**
- * Remove one logical owner; delete the object only after its final owner. Shares
- * the write lock protocol.
+ * Remove one source/image owner; delete the object only after its final owner.
+ * Shared single-row custom-code assets require an explicit reference lifecycle,
+ * so this generic deletion protocol rejects them under the storage-key lock.
  */
 export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string): Promise<boolean> {
   return db.transaction(async (tx) => {
@@ -307,11 +317,21 @@ export async function deleteImageAsset(db: Db, r2: AssetBlobClient, id: string):
 
     // The target may have disappeared while waiting for the key lock; re-read.
     const [live] = await tx
-      .select({ id: source_asset.id })
+      .select({
+        id: source_asset.id,
+        storageKey: source_asset.storage_key,
+        provenance: source_asset.provenance,
+      })
       .from(source_asset)
       .where(eq(source_asset.id, id))
       .limit(1);
     if (!live) return false;
+    if (
+      live.provenance?.source_kind === 'custom_block_code' ||
+      live.storageKey.startsWith('assets/custom-code/')
+    ) {
+      throw new ImmutableAssetDeleteForbiddenError();
+    }
 
     const [otherOwner] = await tx
       .select({ id: source_asset.id })
