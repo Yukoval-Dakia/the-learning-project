@@ -5,6 +5,7 @@ import type {
   PlacementProfileResponse,
   getIssuanceState,
   readJudgeRunStatus,
+  readPaperList,
   readPlacementSession,
   saveResponseDraft,
   transitionPlacementSession,
@@ -15,6 +16,7 @@ export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
   readPlacementSession: typeof readPlacementSession;
+  readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
   readIssuanceState: (issuanceId: string) => Promise<Awaited<ReturnType<typeof getIssuanceState>>>;
   saveResponseDraft: (input: {
     issuanceId: string;
