@@ -38,17 +38,16 @@ import {
   computeLatencyMs,
   fileAppeal,
   getAdvice,
-  getIssuanceState,
   getQuestionFull,
   isSubmitPending,
   issueAssessment,
   submitReview,
 } from './practice-api';
-import { usePracticeClient } from './practice-client';
+import { type PracticeClient, usePracticeClient } from './practice-client';
 
 export type Rating = 'again' | 'hard' | 'good';
 type IssuanceMode = 'auto_score' | 'manual';
-type IssuanceState = Awaited<ReturnType<typeof getIssuanceState>>;
+type IssuanceState = Awaited<ReturnType<PracticeClient['getIssuanceState']>>;
 export type JudgeFeedback = Pick<
   JudgePreview,
   'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
@@ -416,7 +415,7 @@ export function usePracticeSubmit({
   addToast,
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
-  const { saveResponseDraft, readJudgeRunStatus } = usePracticeClient();
+  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus } = usePracticeClient();
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
@@ -546,7 +545,7 @@ export function usePracticeSubmit({
         detached = true;
       };
     },
-    [q, issuanceId, issuanceMode],
+    [q, issuanceId, issuanceMode, getIssuanceState],
   );
   // The command's settled result for the current mode; null while it is in flight.
   const issued = issuance?.mode === issuanceMode ? issuance : null;
@@ -671,7 +670,7 @@ export function usePracticeSubmit({
         if (conflictRead.current === read) setDraftConflict({ status: 'failed' });
       },
     );
-  }, [issuanceId]);
+  }, [issuanceId, getIssuanceState]);
   const autosave = useResponseDraftAutosave({
     save: saveDraft,
     holdOnConflict: true,
