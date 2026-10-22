@@ -11,6 +11,7 @@ import { releaseStartHeldPlacement } from './start/placement-held-release-operat
 import { selectStartPlacementQuestion } from './start/placement-next-operation';
 import { transitionStartPlacementSession } from './start/placement-session-operation';
 import { readStartPlacementSession } from './start/placement-session-reader';
+import { submitStartPlacementAnswer } from './start/placement-submit-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
 import { createStartSubject } from './start/subject-create-operation';
@@ -64,6 +65,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
+    submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,

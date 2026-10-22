@@ -1701,6 +1701,26 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "projectReviewAnswerResponse",
+      "targetModule": "src/capabilities/practice/server/review-answer-response.ts",
+      "targetSymbol": "projectReviewAnswerResponse",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/placement-submit-operation.ts",
+          "line": 21
+        }
+      ],
+      "evidence": "The authenticated host adapter imports the existing schema, canonical submit operation and this response projection at line 20 (public path line 21), and consumes the projection at line 31. HTTP api/submit.ts directly consumes the internal module; context is type-only.",
+      "rationale": "Practice owns the complete synchronous and pending JSON projection, including nulls, omitted partial_unknown fields and pending URLs. The original createAttempt HTTP body remains 200, resource wrapper 201 with Location, and pending 202 with divert headers; RPC shares only the body. Submission, grading, locks, idempotency, dispatch and paid policy remain with the unchanged canonical operation.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9d881588-1844-4e3c-9f69-1763c16ad66d",
+      "date": "2026-10-22"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> projections",
       "date": "2026-10-22",
