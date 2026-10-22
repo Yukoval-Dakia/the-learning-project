@@ -3839,7 +3839,7 @@
       "consumers": [
         {
           "file": "src/server/projections/parity.ts",
-          "line": 22
+          "line": 24
         },
         {
           "file": "src/server/proposals/retract-clock.db.test.ts",
