@@ -1634,6 +1634,50 @@
         "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-93ac79f4-3107-44bb-9987-16c8327c9f95",
         "quote": "批准这三条精确增长及36→39"
       }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> subjects",
+      "date": "2026-10-22",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-22",
+      "from": 11,
+      "to": 8,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> subjects",
+      "date": "2026-10-22",
+      "from": 9,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/projections/knowledge.ts",
+      "siteKind": "site",
+      "symbol": "projectKnowledgeNodeGuarded",
+      "targetModule": "src/kernel/records/knowledge-node-materialization.ts",
+      "targetSymbol": "projectKnowledgeNodeGuarded",
+      "owner": "kernel/records/knowledge-node-materialization",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/proposals.ts",
+          "line": 41
+        }
+      ],
+      "evidence": "The existing Knowledge merge proposal imports the guarded node materializer and strict requireKnowledgeHistory together. The guarded materializer is canonical kernel-owned fact materialization; requireKnowledgeHistory remains implemented in this server module.",
+      "rationale": "Preserve the actual B proposal consumer while moving complete structural materialization only. B locks, strict history authority, merge policy and paid behavior do not migrate or change.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
+      "date": "2026-10-22"
     }
   ],
   "edgeRecords": [
@@ -2380,9 +2424,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "HTTP error identity and status semantics shared by existing administrative readers.",
       "date": "2026-10-22"
@@ -2392,11 +2434,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "TraitDegradation",
-        "getSubjectTraitResolutions",
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["TraitDegradation", "getSubjectTraitResolutions", "isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -2406,9 +2444,7 @@
       "file": "src/capabilities/observability/server/subject-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2418,9 +2454,7 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2430,9 +2464,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2442,9 +2474,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -2454,9 +2484,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2466,9 +2494,7 @@
       "file": "src/capabilities/observability/server/trait-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -2478,9 +2504,7 @@
       "file": "src/capabilities/observability/server/trait-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -2490,9 +2514,7 @@
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "ensureSubjectRoot"
-      ],
+      "symbols": ["ensureSubjectRoot"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns complete idempotent subject-root event creation and materialization; Agency retains its goal transaction.",
       "date": "2026-10-22"
@@ -2502,10 +2524,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "ensureSubjectRoot",
-        "subjectRootId"
-      ],
+      "symbols": ["ensureSubjectRoot", "subjectRootId"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns root identity and complete idempotent creation; Observability retains subject control, canonical claim, bindings and post-commit hydration.",
       "date": "2026-10-22"
@@ -2515,11 +2534,49 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "updateSubjectRootNameFromControl"
-      ],
+      "symbols": ["updateSubjectRootNameFromControl"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns locked root history validation, versioned name event and projection inside the caller control transaction.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/knowledge-node-history.ts",
+      "kind": "value",
+      "symbols": ["gatherAndFoldKnowledgeNode"],
+      "issue": "YUK-1570",
+      "owns": "Complete knowledge-node event history, anchor facts and folding with original query order.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/knowledge-node-materialization.ts",
+      "kind": "value",
+      "symbols": ["projectKnowledgeNodeGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposal-appliers.ts",
+      "module": "src/kernel/records/knowledge-node-materialization.ts",
+      "kind": "value",
+      "symbols": ["projectKnowledgeNodeGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
+      "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "module": "src/kernel/records/knowledge-node-materialization.ts",
+      "kind": "value",
+      "symbols": ["projectKnowledgeNodeGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
       "date": "2026-10-22"
     }
   ],
@@ -2982,11 +3039,78 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-8b60784c-f74d-4814-a9f4-56c15547b887",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/gather.ts",
+      "kind": "site",
+      "symbol": "gatherAndFoldKnowledgeNode",
+      "targetModule": "src/kernel/records/knowledge-node-history.ts",
+      "consumers": [
+        {
+          "file": "src/server/projections/parity.ts",
+          "line": 22
+        },
+        {
+          "file": "src/capabilities/knowledge/server/seed.db.test.ts",
+          "line": 4
+        },
+        {
+          "file": "src/capabilities/knowledge/server/proposals.db.test.ts",
+          "line": 24
+        },
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 16
+        },
+        {
+          "file": "src/server/projections/parity.unit.test.ts",
+          "line": 19
+        }
+      ],
+      "exitCondition": "After Owner separately approves precise named test imports and node-specific mocks, migrate only the parity node binding and named consumers to the canonical history owner, then delete this export. Do not retarget the old gather mock that also contains KnowledgeEdge; retain other real module responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/parity.ts",
+      "kind": "site",
+      "symbol": "knowledgeLiveRowToSnapshot",
+      "targetModule": "src/kernel/records/knowledge-node-history.ts",
+      "consumers": [
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 21
+        }
+      ],
+      "exitCondition": "After Owner approves this exact named test import, consume the canonical history owner and delete the old export; retain parity assertions and other real responsibilities.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/projections/snapshot-mappers.ts",
+      "kind": "site",
+      "symbol": "knowledgeRowToSnapshot",
+      "targetModule": "src/kernel/records/knowledge-node-history.ts",
+      "consumers": [
+        {
+          "file": "src/capabilities/knowledge/server/seed.db.test.ts",
+          "line": 5
+        }
+      ],
+      "exitCondition": "After Owner approves the exact seed test named import and alias, consume knowledgeLiveRowToSnapshot from the canonical history owner and remove this compatibility alias. Other three snapshot mappers remain in place.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-cdf6d5dd-6f58-44fc-887c-606c323b3ecf",
+      "date": "2026-10-22",
+      "deadline": "2026-11-05"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 356,
+      "total": 343,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -2997,7 +3121,6 @@
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "agency -> subjects": 1,
         "copilot -> advisory-locks": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
@@ -3028,7 +3151,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 11,
+        "knowledge -> projections": 8,
         "knowledge -> proposals": 3,
         "notes -> ai": 8,
         "notes -> artifacts": 2,
@@ -3040,7 +3163,6 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
         "practice -> ai": 48,
         "practice -> assessment": 1,
