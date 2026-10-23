@@ -18,6 +18,7 @@ import { transitionStartPlacementSession } from './start/placement-session-opera
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
+import { updateStartPracticeStreamItem } from './start/practice-stream-item-operation';
 import { getStartPracticeStream } from './start/practice-stream-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
@@ -63,6 +64,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readPapers: readStartPapers,
     getPracticeStream: getStartPracticeStream,
+    updatePracticeStreamItem: updateStartPracticeStreamItem,
     createKnowledgeEdge: createStartKnowledgeEdge,
     readKnowledgeEdges: readStartKnowledgeEdges,
     readKnowledgeMisconceptions: readStartKnowledgeMisconceptions,
