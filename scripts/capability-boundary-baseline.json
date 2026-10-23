@@ -2231,6 +2231,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-cfa9f2f5-4515-4bf1-8ab9-34bd73926654",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "getPracticeStream",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "getPracticeStream",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host operation imports getPracticeStream at AST and path line 11 and calls it at line 13. Context imports are type-only; the retained HTTP adapter directly consumes the internal operation. HTTP, schema, domain operation and stream store are unchanged.",
+      "rationale": "Practice owns query validation, date resolution, invocation identity and the complete stateful stream operation, including composition, scoped materialization, budget trimming and refill. Start preserves the original 65-second explicit deadline, seed and operation anchor inside the host 90-second provider ALS scope, without copying decisions, narrowing the JSON DTO or adding a business request signal. This boundary may perform writes and paid work; it is not a pure read.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e9aab9c7-d658-4cb0-89ac-e96c004edbd0",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
