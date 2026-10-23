@@ -311,8 +311,8 @@ export const PROVIDER_LANES = [
     configuration: {
       endpoint: {
         summary:
-          'resolved model wire baseUrl via nativePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
-        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['nativePiModel'] },
+          'resolved model wire baseUrl via executablePiModel — single endpoint literal lives in src/server/ai/opencode-go.ts',
+        source: { path: 'scripts/yuk1547-admission-reopen.ts', calls: ['executablePiModel'] },
       },
       credential: {
         summary: 'resolved lane credential via resolveTaskProvider, never printed',
@@ -525,7 +525,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
+          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
       },
       credential: {
@@ -678,7 +678,7 @@ export const PROVIDER_LANES = [
         source: {
           path: 'src/server/memory/llm-config.ts',
           contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
-          calls: ['resolveGlobalProviderSwitch', 'nativePiModel', 'resolveModelProfile'],
+          calls: ['resolveGlobalProviderSwitch', 'executablePiModel', 'resolveModelProfile'],
         },
       },
       credential: {

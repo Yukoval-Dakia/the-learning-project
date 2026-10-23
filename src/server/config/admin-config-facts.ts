@@ -22,7 +22,11 @@ import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
-import { nativePiModel, nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
+import {
+  executablePiModel,
+  executablePiModels,
+  piProviderId,
+} from '@/server/ai/pi-provider-catalog';
 import {
   isProviderLaneReady,
   providerAuthSurface,
@@ -71,8 +75,8 @@ function visionOverrideFacts(): { provider: ConfigEffectiveFact; model: ConfigEf
     const bindings = VISION_JUDGE_TASK_KINDS.map((kind) => {
       try {
         const binding = resolveTaskProvider(kind, override);
-        if (!nativePiModel(binding.provider, binding.model))
-          throw new Error('native model unavailable');
+        if (!executablePiModel(binding.provider, binding.model))
+          throw new Error('model is not executable in the runtime catalog');
         assertModelProfileCapabilityFit(tasks[kind], binding.provider, binding.model);
         // Project only public catalog identities; never return an auth-bearing binding.
         return { kind, provider: binding.provider, model: binding.model };
@@ -202,10 +206,10 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       typed: typedBindings.some((binding) => binding.provider === row.name),
     },
     pi_provider: row.implemented ? piProviderId(row.name) : null,
-    models: Object.entries(nativePiModels(row.name)).map(([id, model]) => ({
+    models: executablePiModels(row.name).map(({ id, api, input }) => ({
       id,
-      api: model.api,
-      input: model.input,
+      api,
+      input,
     })),
   }));
 

@@ -1,6 +1,6 @@
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
-import { nativePiModel } from '@/server/ai/pi-provider-catalog';
+import { executablePiModel } from '@/server/ai/pi-provider-catalog';
 import {
   LEGACY_GLM_MODEL_ID,
   isOauthProvider,
@@ -36,13 +36,8 @@ export function resolveMemoryLlmConfig(
     };
   }
   const credentialEnv = providerCredentialEnvName(pin.provider);
-  const native = pin.model ? nativePiModel(pin.provider, pin.model, env) : undefined;
-  if (
-    isOauthProvider(pin.provider) ||
-    native?.api !== 'openai-completions' ||
-    !native.baseUrl ||
-    !pin.model
-  ) {
+  const native = pin.model ? executablePiModel(pin.provider, pin.model, env) : undefined;
+  if (isOauthProvider(pin.provider) || !pin.model || native?.api !== 'openai-completions') {
     throw new Error(
       `Memory LLM requires a key-auth OpenAI completions model for the global pin (${pin.provider}/${pin.model ?? 'unset'}); no legacy LLM fallback`,
     );
