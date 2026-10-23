@@ -2211,6 +2211,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b8bb58-5926-4b0f-9b14-2f1f16e7095c",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-23",
+      "from": 11,
+      "to": 9,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3334,6 +3342,116 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing learner knowledge visibility predicate. Knowledge retains its filtering order and aggregation within the complete list operation.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1522",
+      "owns": "Append the original manual attempt and optional user-cause event envelopes in the creation transaction; replay never invokes this writer.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/cause-overlay.ts",
+      "kind": "value",
+      "symbols": ["withActiveCauseCategoryOverlays"],
+      "issue": "YUK-1522",
+      "owns": "Resolve active owner-accepted cause overlays for the original manual capture validation on receipt miss in the actual Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/question-evidence-snapshot.ts",
+      "kind": "value",
+      "symbols": ["loadAttemptQuestionSnapshot"],
+      "issue": "YUK-1522",
+      "owns": "Read the frozen published question snapshot for the original attempt after publication in the same Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["assertCauseAllowedForSubjectProfile", "resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1522",
+      "owns": "Resolve the existing knowledge subject profile and enforce its allowed cause policy on receipt miss in the actual Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1522",
+      "owns": "Derive the original manual question answer_class at write time using the existing complete kernel operation, replacing the retired route-to-server re-export import.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1522",
+      "owns": "Run the original same-transaction question-group publication through the existing kernel owner, preserving actorRef, revision, event and admission behavior; replaces the retired route-to-server publisher re-export import.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/queries.ts",
+      "kind": "value",
+      "symbols": ["createLearningRecord"],
+      "issue": "YUK-1522",
+      "owns": "Create the original manual learning_record with the existing active-KC validation and insert owner in the creation transaction.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-session.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/create-session.ts",
+      "module": "src/server/session/index.ts",
+      "kind": "value",
+      "symbols": ["Ingestion"],
+      "issue": "YUK-1522",
+      "owns": "The complete session-create consumer moves from api/sessions.ts to server/create-session.ts and still calls the unchanged Ingestion.initiateUpload owner with the actual Tx. The prior sessions.ts -> session/index edge is removed, ingestion -> session remains 8, and two manual server re-export edges are removed; no new server responsibility or facade.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/creation-receipts.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -3579,6 +3697,15 @@
       "to": 1527,
       "issue": "YUK-1570",
       "responsibilityReason": "Owner-approved execution dependency contract: the default grounding branch now receives the same runTaskFn as source verification, while the explicit whole-grounding override receives only its original business parameters. The five added lines document this deliberate scope change and branch at the existing grounding call; image acquisition, vision routing, paid/retry/lock/publication policies remain in their existing owners. No new dependency, factory or public operation."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-23",
+      "baseBlob": "db4b0f1e40f6b03728036f3c02bf5721599c2434",
+      "from": 5002,
+      "to": 5028,
+      "issue": "YUK-1522",
+      "responsibilityReason": "Owner-approved independent ingestion_creation_receipt table after learning_session and before event: 26 additive lines, composite PK and closed actor/scope checks. No existing column changes; the two active creation owners write this long-lived identity and FK_ORDER backs it up at 4.33. Splitting the central schema would change unrelated ownership; receipt behavior lives in the new small complete owners."
     }
   ],
   "compatShims": [
@@ -4146,7 +4273,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 327,
+      "total": 325,
       "byOwnerPair": {
         "agency -> ai": 20,
         "agency -> boss": 10,
@@ -4175,7 +4302,7 @@
         "ingestion -> events": 5,
         "ingestion -> projections": 3,
         "ingestion -> proposals": 3,
-        "ingestion -> questions": 11,
+        "ingestion -> questions": 9,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 8,

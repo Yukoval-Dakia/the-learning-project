@@ -787,7 +787,7 @@ export type InitiateUploadParams = {
  * "user picked a file" is not an extract action yet.
  */
 export async function initiateUpload(
-  db: Db,
+  db: Db | Tx,
   params: InitiateUploadParams,
 ): Promise<{ sessionId: string; sourceDocumentId: string }> {
   return db.transaction(async (tx) => {

@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { learning_session, source_asset, source_document } from '@/db/schema';
 import { persistSourceAsset, sha256Hex } from '@/kernel/records/asset-store';
 import type { PdfPageText } from './pdf-text';
@@ -272,7 +272,7 @@ export function pdfPageImageProvenance(stamp: PdfPackageDraftStamp): Record<stri
 
 // ---------- materialize (session create / docx attach) ----------
 
-async function loadPackageAssets(db: Db, assetIds: string[]): Promise<SourceAssetRow[]> {
+async function loadPackageAssets(db: Db | Tx, assetIds: string[]): Promise<SourceAssetRow[]> {
   if (assetIds.length === 0) return [];
   const rows = await db.select().from(source_asset).where(inArray(source_asset.id, assetIds));
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -298,7 +298,7 @@ function draftStamp(row: SourceAssetRow): PdfPackageDraftStamp | null {
  * otherwise 'images'. Word documents use attachWordSourcePackage.
  */
 export async function materializeSourcePackage(
-  db: Db,
+  db: Db | Tx,
   sourceDocumentId: string,
 ): Promise<SourcePackageV1 | null> {
   const [doc] = await db
@@ -628,7 +628,7 @@ export async function attachWordSourcePackage(
  * error is recorded on document provenance instead.
  */
 export async function markSessionPackageFailed(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   err: unknown,
 ): Promise<'kept_extracted' | 'marked_failed' | 'missing'> {

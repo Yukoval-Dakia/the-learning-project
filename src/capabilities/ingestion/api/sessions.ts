@@ -1,27 +1,9 @@
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
-import {
-  markSessionPackageFailed,
-  materializeSourcePackage,
-} from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
-import {
-  event,
-  learning_session,
-  question,
-  question_block,
-  source_asset,
-  source_document,
-} from '@/db/schema';
-import {
-  ApiError,
-  canonicalResourceResponse,
-  collectionPayload,
-  deprecatedRouteResponse,
-  errorResponse,
-} from '@/kernel/http';
-import { Ingestion } from '@/server/session';
-import { resolveSelectableSubjectId } from '@/subjects/profile';
+import { event, learning_session, question, question_block, source_document } from '@/db/schema';
+import { ApiError, collectionPayload, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { agentEvidenceSql } from '../server/agent/history';
+import { createIngestionSession } from '../server/create-session';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -266,58 +248,16 @@ export async function POST(req: Request): Promise<Response> {
         400,
       );
     }
-    const body = parsed.data;
-
-    // Optional subject, validated before any write. Null means unknown and is not
-    // persisted; a value must resolve through the selectable registry or 400.
-    const requestedSubjectId = body.subject_id ?? null;
-    const canonicalSubjectId =
-      requestedSubjectId === null ? null : resolveSelectableSubjectId(requestedSubjectId);
-    if (requestedSubjectId !== null && canonicalSubjectId === null) {
-      throw new ApiError(
-        'validation_error',
-        `subject_id: unknown or not currently selectable subject '${requestedSubjectId}'`,
-        400,
-      );
-    }
-
-    // Validate that asset ids exist.
-    const foundRows = await db
-      .select({ id: source_asset.id })
-      .from(source_asset)
-      .where(inArray(source_asset.id, body.asset_ids));
-    const foundIds = new Set(foundRows.map((r) => r.id));
-    const missing = body.asset_ids.filter((id) => !foundIds.has(id));
-    if (missing.length > 0) {
-      throw new ApiError('validation_error', `unknown asset_ids: ${missing.join(', ')}`, 400);
-    }
-
-    // Single owner for ingestion session writes.
-    const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(db, {
-      assetIds: body.asset_ids,
-      entrypoint: body.entrypoint,
-      // Validated subject (null persists as absent) and consent (absent = allow).
-      learnerSelectedSubjectId: canonicalSubjectId,
-      derivationPolicy: body.derivation_policy ?? null,
-    });
-
-    // Materialize the source package on the document. It is read back through the
-    // session, not the response body.
-    try {
-      await materializeSourcePackage(db, sourceDocumentId);
-    } catch (err) {
-      // The session row exists, so mark it failed rather than orphaning it.
-      await markSessionPackageFailed(db, sessionId, err);
-      throw err;
-    }
-
-    return Response.json({
-      session: {
-        id: sessionId,
-        source_document_id: sourceDocumentId,
-        status: 'uploaded',
-        source_asset_ids: body.asset_ids,
-        entrypoint: body.entrypoint,
+    const result = await createIngestionSession(
+      db,
+      parsed.data,
+      req.headers.get('Idempotency-Key'),
+    );
+    return Response.json(result.body, {
+      status: result.status === 201 ? 200 : result.status,
+      headers: {
+        Location: result.location,
+        ...(result.replayed ? { 'Idempotency-Replayed': 'true' } : {}),
       },
     });
   } catch (err) {
@@ -327,13 +267,9 @@ export async function POST(req: Request): Promise<Response> {
 
 /** Canonical POST /api/ingestion-sessions resource contract. */
 export async function createIngestionSessionResource(req: Request): Promise<Response> {
-  return canonicalResourceResponse(await POST(req), {
-    outcome: 'created',
-    location: (body) => {
-      const sessionId = (body as { session: { id: string } }).session.id;
-      return `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`;
-    },
-  });
+  const response = await POST(req);
+  if (!response.ok) return response;
+  return new Response(response.body, { status: 201, headers: response.headers });
 }
 
 export async function legacyListIngestionSessions(req: Request): Promise<Response> {
