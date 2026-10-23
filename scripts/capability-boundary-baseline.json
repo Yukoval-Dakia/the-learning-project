@@ -2351,6 +2351,26 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "previewReviewAdvice",
+      "targetModule": "src/capabilities/practice/server/advice-operation.ts",
+      "targetSymbol": "previewReviewAdvice",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-advice-operation.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated host imports previewReviewAdvice at AST and path line 17 and calls it at line 19 with the parsed body and real request signal inside the original 90-second ALS scope. Context imports are type-only; the HTTP advice adapter directly consumes the internal operation.",
+      "rationale": "Practice owns the complete schema, identity, question and diagnostic gate, subject profile, previewFormalAttempt invocation, suggested rating, post-evaluation cause reread, advisor and complete response projection. The public entry exposes that same complete operation for HTTP and Start rather than making callers reconstruct it from the inner evaluator. This stateful operation can persist submissions, paid evidence and candidates; cancellation or response failure does not prove non-execution, and the existing Jev deadline behavior is unchanged.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e8e7a62d-ef7a-47a8-9e91-123bd2c1de38",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
@@ -3693,6 +3713,26 @@
       "symbols": ["persistCapturedQuestionBlock"],
       "issue": "YUK-1570",
       "owns": "Kernel owns captured question-block row creation/overwrite and the complete RETURNING-to-policy-to-create-event operation; ingestion supplies validated source facts and retains qualification, transaction and import transitions.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/advice-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error status and envelope; Practice retains all business input, admission and orchestration decisions. The original HTTP adapter still references this module for errorResponse, so this records the new physical consumer rather than claiming all references are net zero.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/advice-operation.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing knowledge-to-subject profile resolution and default fallback protocol, preserving the first knowledge id and warning before default on strict resolution failure. Practice retains the diagnostic-gate-before-profile-before-preview ordering and advice projection; this reference moves from the HTTP adapter without introducing a subject policy.",
       "date": "2026-10-23"
     }
   ],

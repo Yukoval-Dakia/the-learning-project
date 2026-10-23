@@ -37,7 +37,6 @@ import {
   type SubmitReviewInput,
   computeLatencyMs,
   fileAppeal,
-  getAdvice,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
@@ -416,6 +415,7 @@ export function usePracticeSubmit({
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
   const {
+    getAdvice,
     getQuestionDetail,
     getIssuanceState,
     saveResponseDraft,

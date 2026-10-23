@@ -12,6 +12,7 @@ import type {
   PlacementProfileResponse,
   getIssuanceState,
   getPracticeStream,
+  previewReviewAdvice,
   projectIssuanceResult,
   projectReviewAnswerResponse,
   readJudgeRunStatus,
@@ -76,6 +77,10 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  previewReviewAdvice: (
+    body: string,
+    signal: AbortSignal,
+  ) => Promise<Awaited<ReturnType<typeof previewReviewAdvice>>>;
   submitPlacementAnswer: (
     body: string,
     signal: AbortSignal,
