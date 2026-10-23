@@ -2681,6 +2681,66 @@
       "from": 15,
       "to": 14,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_COMPLETE_ACTION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_COMPLETE_ACTION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 83/169/179/202/240/273. Canonical declaration line 14; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_INTENT_ACTION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_INTENT_ACTION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 62. Canonical declaration line 13; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_VERSION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_VERSION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 68. Canonical declaration line 15; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
