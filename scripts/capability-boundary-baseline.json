@@ -2821,6 +2821,30 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c80824b6-033d-4db7-91d8-bb00b559f939",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> http",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> http",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> http",
+      "date": "2026-10-23",
+      "from": 3,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5308,12 +5332,11 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 301,
+      "total": 296,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
-        "agency -> http": 1,
         "agency -> learning-items": 1,
         "agency -> projections": 3,
         "agency -> proposals": 4,
@@ -5322,7 +5345,6 @@
         "copilot -> ai": 12,
         "copilot -> boss": 6,
         "copilot -> events": 5,
-        "copilot -> http": 1,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
@@ -5364,7 +5386,6 @@
         "practice -> coldstart": 1,
         "practice -> events": 1,
         "practice -> fsrs": 2,
-        "practice -> http": 3,
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> projections": 1,
