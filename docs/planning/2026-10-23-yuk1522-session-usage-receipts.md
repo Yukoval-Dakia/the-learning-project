@@ -1,0 +1,96 @@
+# 录入会话完整持久隐私使用回执（YUK-1522）
+
+交付阶段：第一天能用。Refs YUK-1522，沿用原票已批准的完整历史/隐私回执后续 G10；
+原评论 `298b5270-393f-45c4-a6bf-a22d689310c0` 将此项排在 G1–G7 后，本片只实现独立后端读取。
+
+## 固定对象与职责
+
+- 隔离树：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-9cfc1840`。
+- 初始分支 `t3/9cfc1840`，初始 ref `ee4b92bea329dde7d88609469e217dd2bb473c1d` 保留。
+- `git fetch origin` 后落后 307 commits；从 fresh `origin/main`
+  `8b3054f4abf1b3712dd6888f0a1706e25abb33d3` 建立
+  `feat/yuk-1522-session-usage-receipts-20261023`，不整合其它开放 PR。
+- 相对父核 `0e17eca060d484118d090f9609872d1832a2d7ba`，owned 读取源码与 contracts 未变；
+  fresh main 台账增加 Practice paper reader 记录，完整保留其前缀。
+- 新 `ingestion/server/session-detail.ts` 拥有 ingestion session 查询、原 404、完整归属回执读取、
+  聚合及 live policy。`api/session-detail.ts` 仅作现有 HTTP consumer 和 `errorResponse` 映射。
+  新模块不是无职责 wrapper，没有新增 public export、manifest 入口或共享事件引擎。
+
+## 旧行为与真实 consumer
+
+原 GET 在 session 查询之后，经 `getEvents(db, {subject_id: document, limit: 1})` 读最新一张。
+既漏掉同会话旧段，又没有限定 `event.session_id` 与可信 writer；session、event、policy 也不在同一快照。
+`server/agent/run.ts` 的 `writeRunReceipt` 每段调用 `privacy-guard.ts` 的
+`writeIngestionUsageReceipt`，该 writer 创建独立不可变 event。
+
+真实读取链保持为：现有 manifest `getIngestionSession` → `GET /api/ingestion-sessions/[id]`
+→ `record/record-api.ts#getSession` → `recording-read.ts#useRecording`
+→ `RecordingSheet` 的 `detail.usage_receipt` → 原 counts/channels/current policy 显示。
+没有新增入口、UI 或演示页面。Postman 原未描述这条已有 GET，本片仅补其描述并由原生成器生成 collection。
+
+## 读取与聚合契约
+
+1. 使用一个 `db.transaction`，设置 `isolationLevel: 'repeatable read'` 和
+   `accessMode: 'read only'`。session、全部 receipts、document live policy 均用该 `tx`。
+   缺 session 或非 ingestion 类型维持原 `not_found / ingestion session not found / 404`。
+   session wire 字段与日期格式不变；全局 token 授权与 `errorResponse` 不变。
+2. 直接只读 event 表，仅取 id、payload、created_at；同时限定本 session id、当前绑定的 source document id、
+   `subject_kind=source_document`、`action=experimental:ingestion_usage_receipt`、
+   `actor_kind=system`、`actor_ref=ingestion_privacy_guard`、`outcome=success`。
+   这些 envelope 值来自原可信 writer。其它 session 共用 document 也不会计入。
+3. 无 receipt limit、无默认事件上限、无时间窗或 run/segment 推测。单表无 join、event.id 是主键，
+   每个真实持久 event 恰一次；按 created_at/id 升序读取至完整结果。
+4. `redaction_counts` 按分类累加各次已记录使用的 mutated-span 数；同原文在不同段/不同 run
+   再次使用仍计入。segment 号跨 run 可重复，不作去重键。不是唯一原文位置、模型调用数或费用。
+   `redacted_fields` 分类并集并排序；`recorded_at` 为已读事件实际最大 created_at。
+5. 所有 engine 相同且已记录时保留原值；混合或任一缺失返回 null。
+   channels 各维度取已记录使用并集：曾 raw/redacted 则保留，否则所有都记录 none 才为 none；
+   任一 receipt 缺 channels，整个 channels=null，不把缺失猜成 none。
+6. 无 receipt 返回 `usage_receipt=null`。任一合法 `redaction_accounting=unavailable`
+   （writer 的 fields/counts 为 null）也使整体 null，后来的正常 receipt 不能抹掉旧缺账。
+   仍验证所有已归属 payload；非法 payload、负数/非整数/不安全 counts 或求和溢出明确失败，
+   通过原 errorResponse 返回通用 500；错误中不携带 payload、原值或 Zod diagnostics。
+7. `derivation_policy` 使用同快照内 document 的 live policy；保留历史 event 的 policy_version、
+   derivation_policy 和授权撤回事实，不写回或以历史值覆盖 live policy。
+8. wire 字段与类型不变，contracts 只更新现有 receipt 语义注释。经典 OCR、DOCX 与单段
+   合法回执仍按原 engine/channels/counts/policy/time 读取；分类数组表达同一集合。
+
+## 边界与缺证
+
+只汇总已持久事实，不证明所有实际模型调用都已记账；没有 receipt 的调用不能靠 run、时间或费用反推。
+完整查询不截断，结果量随该 session 持久回执数增长；本片没有数据库或性能实测。
+未改 privacy guard、run/history/ledger、receipt identity/写入、source 内容、policy、预算、paid、provider、
+manifest/schema/migration、UI/useEffect 或测试。台账只追加真实迁移到新 owner 的 kernel 消费边，
+不改 gate、计数范围、规则或例外。
+
+本片唯一 writer，不委派、不启动 R1/R2。按授权禁止新增/修改/运行 tests、fixtures、断言、probe、driver；
+DB/SQL、HTTP 业务、browser/Chromium、provider/paid、Docker、部署和运行验收均 NOT_RUN。
+源码与 bundle 检查成功不代表生产行为通过；父需按真实 diff 接续独立审查和实际验收。
+
+## 本地检查证据
+
+所有 install/generator/typecheck/lint/build/audit 命令均逐个通过
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh`，本线同时最多一个重活，
+不覆盖其 Node old-space 3072。日志和退出码位于本树 ignored
+`.remember/yuk1522-session-usage-receipts/`；不提交 PLAN/.remember。
+执行命令与实际结果（log 同名，退出码另存 `.exit`）：
+
+- `pnpm install --frozen-lockfile` → exit 0，`install.log`；依赖缺失时唯一一次 install。
+- `pnpm gen:postman` → exit 0，`gen-postman.log`；38 folders / 103 paths / 111 requests。
+- `pnpm exec biome check --write`（仅本片五个手改 TS/JSON 文件）→ exit 0，`format.log`。
+- `pnpm typecheck` → exit 0，`typecheck.log`。
+- `pnpm lint` → exit 0，`lint.log`；2772 files / 165 warnings，无 errors。
+- `pnpm audit:api-contracts` → exit 0，`audit-api-contracts.log`；165/165 declared / 0 legacy / 155 paths。
+- `pnpm audit:api-client` → exit 0，`audit-api-client.log`；原生成器执行后 client 类型无 diff。
+- `pnpm audit:api-client-usage` → exit 0，`audit-api-client-usage.log`。
+- `pnpm audit:capability-boundaries` → exit 0，`audit-capability-boundaries.log`；
+  debt totals 318/0/39、新边恰为两条登记的 kernel 消费边，深层跨域 import 为 0。
+- `pnpm audit:architecture-deepening` → exit 0，`audit-architecture-deepening.log`；
+  新 pass-through 0，dependency totals 318/0/39。
+- `pnpm build` → exit 0，`build.log`；web、Start、server、worker、migrate bundles 完成，
+  日志保留 bundle size / ineffective dynamic import 等 warnings。未启动任何产物或迁移。
+
+所有授权的本地检查均成功，无任务造成的未修复失败。构建产物与 API 生成临时文件不提交。
+Linear capture 已按 `YUK-1522` 和 `usage receipt` 去重；本片为原票既定范围，缺证与后续真实验收
+仍归原票，没有新增已验证的独立 actionable follow-up，不另开重复票。draft PR 交父继续，
+不观察/等待 CI，不发起 review，不 resolve/merge/deploy。
