@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import {
   advanceStreamItem,
+  getAdvice,
   getIssuanceState,
   getPapers,
   getQuestionFull,
@@ -14,6 +15,7 @@ import {
 
 export type PracticeClient = {
   advanceStreamItem: typeof advanceStreamItem;
+  getAdvice: typeof getAdvice;
   getStream: typeof getStream;
   recomposeStream: typeof recomposeStream;
   getPapers: typeof getPapers;
@@ -26,6 +28,7 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  getAdvice,
   advanceStreamItem,
   getStream,
   recomposeStream,

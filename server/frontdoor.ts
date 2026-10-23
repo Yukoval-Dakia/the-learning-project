@@ -18,6 +18,7 @@ import { transitionStartPlacementSession } from './start/placement-session-opera
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
+import { previewStartReviewAdvice } from './start/practice-advice-operation';
 import { readStartPracticeQuestionDetail } from './start/practice-question-detail-operation';
 import { updateStartPracticeStreamItem } from './start/practice-stream-item-operation';
 import { getStartPracticeStream } from './start/practice-stream-operation';
@@ -84,6 +85,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
+    previewReviewAdvice: previewStartReviewAdvice,
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
     createGoal: createStartGoal,
