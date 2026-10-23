@@ -3,59 +3,16 @@
 // Buffered replies expose receipt identities without grading feedback.
 
 import { db } from '@/db/client';
-import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { submitPaperSlot } from '../server/paper-submit';
-import { LegacyPaperSubmissionBodySchema } from './paper-contracts';
+import { deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import { submitLegacyPaperSubmission } from '../server/paper-submission-operation';
 
 export async function createPaperSubmission(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { id: paperArtifactId } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = LegacyPaperSubmissionBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      const message = parsed.error.issues
-        .map((i) => `${i.path.join('.')}: ${i.message}`)
-        .join('; ');
-      throw new ApiError('validation_error', message, 400);
-    }
-    const body = parsed.data;
-
-    const result = await submitPaperSlot(
-      {
-        sessionId: body.session_id,
-        paperArtifactId,
-        questionId: body.question_id,
-        partRef: body.part_ref,
-        assessment: body.assessment,
-        answerMd: body.answer_md,
-        answerImageRefs: body.image_refs,
-        latencyMs: body.latency_ms,
-        reasoningTrace: body.reasoning_trace,
-        selfConfidence: body.self_confidence,
-      },
-      db,
-    );
-    const identity = {
-      attempt_event_id: result.attemptEventId,
-      judge_event_id: null,
-      evaluation_id: result.evaluationId,
-      answer_id: result.answerId,
-    };
-    return Response.json(
-      result.visibleToUser
-        ? {
-            ...identity,
-            status: result.status,
-            visible_to_user: true,
-            coarse_outcome: result.coarseOutcome,
-            score: result.score,
-            ...(result.partialUnits ? { partial_units: result.partialUnits } : {}),
-          }
-        : { ...identity, visible_to_user: false, feedback_buffered: true },
-    );
+    return Response.json(await submitLegacyPaperSubmission(db, params.id, raw));
   } catch (err) {
     return errorResponse(err);
   }
