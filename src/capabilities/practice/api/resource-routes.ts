@@ -1,13 +1,10 @@
 import type { ZodType } from 'zod';
 import { db } from '@/db/client';
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
+import { createPracticePaperSubmission } from '../server/paper-submission-operation';
 import { createPracticeHintRequest, createPracticeSolveSession } from '../server/solve-operations';
 import { createAnswerDraft } from './paper-answer-route';
-import {
-  CreatePaperAnswerDraftBodySchema,
-  CreatePaperSubmissionBodySchema,
-} from './paper-contracts';
-import { createPaperSubmission } from './paper-submit-route';
+import { CreatePaperAnswerDraftBodySchema } from './paper-contracts';
 import { CreateSolveSubmissionBodySchema } from './question-solve-contracts';
 import { createSolveSubmission } from './solve-submit';
 
@@ -136,18 +133,9 @@ export async function createPaperSubmissionResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { paper_id: paperId, ...body } = await parseJsonBody(
-      req,
-      CreatePaperSubmissionBodySchema,
-    );
+    const raw = await req.json().catch(() => null);
     return canonicalResourceResponse(
-      await createPaperSubmission(
-        forwardedJsonRequest(req, {
-          ...body,
-          session_id: params.id,
-        }),
-        { id: paperId },
-      ),
+      Response.json(await createPracticePaperSubmission(db, params.id, raw)),
       {
         outcome: 'created',
         location: (responseBody) =>
