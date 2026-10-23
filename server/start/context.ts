@@ -11,6 +11,7 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   createPracticeHintRequest,
+  createPracticePaperSubmission,
   createPracticeSolveSession,
   createReviewSession,
   getIssuanceState,
@@ -59,6 +60,10 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof releaseHeldPlacement>>>;
   readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
+  submitPaperSlot: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof createPracticePaperSubmission>>>;
   endPaperSession: (sessionId: string) => Promise<{
     id: string;
     type: 'review';

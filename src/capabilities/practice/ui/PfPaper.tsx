@@ -54,7 +54,6 @@ import {
   paperAnswerDraftBodyBytes,
   pausePaperSession,
   savePaperAnswer,
-  submitPaperSlot,
 } from './practice-api';
 import { usePracticeClient } from './practice-client';
 // YUK-784 — 采集判据与装配复用 PfSolo 先例（YUK-444 / #1069），不在本面重写判据：
@@ -423,7 +422,8 @@ function PaperVisit({
   /** YUK-1566 — the latest re-read failed; the paper read earlier in this entry stays. */
   refreshFailed: boolean;
 }) {
-  const { getPaperDetail, startPaperSession, endPaperSession } = usePracticeClient();
+  const { getPaperDetail, startPaperSession, endPaperSession, submitPaperSlot } =
+    usePracticeClient();
   const qc = useQueryClient();
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
   // The visit's restored drafts, computed once at mount (pure).
