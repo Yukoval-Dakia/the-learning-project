@@ -1,7 +1,7 @@
-// Session-scoped domain-event writer.
+// Ingestion extraction domain-event writer.
 //
-// `writeSessionEvent` is the only place in this directory that writes domain
-// `event` rows; it delegates to `writeEvent` (ADR-0005 single owner). Action is
+// `writeSessionEvent` owns the extraction event envelope for the ingestion lifecycle
+// and delegates to `writeEvent` (ADR-0005 single owner). Action is
 // locked to 'extract' because the other transitions are state-only: their async
 // observability already rides on job_events. Review/conversation domain events
 // belong to their route handlers, not to session transitions.

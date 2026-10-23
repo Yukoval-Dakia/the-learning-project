@@ -5,6 +5,7 @@ import {
   isProviderSessionWallClockBudgetError,
   isTransientAgentFailure,
 } from '@/ai/agent-run-error';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
@@ -20,7 +21,6 @@ import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admi
 // pulls providers/task-catalog/schema into its cone and breaks vitest module order.
 import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
-import { Ingestion } from '@/server/session';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,

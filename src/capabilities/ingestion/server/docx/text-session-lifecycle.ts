@@ -18,8 +18,8 @@ import {
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
-import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
-import { writeSessionEvent } from './events';
+import { writeSessionEvent } from '../events/session-extract';
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './omission';
 
 // YUK-258 — DOCX text-line session lifecycle owner.
 //
@@ -71,7 +71,7 @@ export interface InitiateDocxTextUploadParams {
 }
 
 // Re-exported so existing consumers of this module keep a stable type import.
-export type { DocxExternalRefOmissionFacts } from './docx-omission';
+export type { DocxExternalRefOmissionFacts } from './omission';
 
 export interface InitiateDocxTextUploadResult {
   sessionId: string;
