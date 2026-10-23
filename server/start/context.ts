@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
 import type {
+  createManualKnowledgeEdge,
   loadKnowledgeNodePage,
   loadMisconceptionsForKc,
   readKnowledgeEdges,
@@ -26,6 +27,9 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  createKnowledgeEdge: (
+    body: string,
+  ) => Promise<Awaited<ReturnType<typeof createManualKnowledgeEdge>>>;
   readKnowledgeEdges: (subject?: string) => Promise<Awaited<ReturnType<typeof readKnowledgeEdges>>>;
   readKnowledgeNodePage: (
     id: string,

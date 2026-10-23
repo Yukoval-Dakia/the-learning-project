@@ -7,6 +7,7 @@ import { createStartGoal } from './start/goal-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
 import { readStartJudgeRunStatus } from './start/judge-status-reader';
+import { createStartKnowledgeEdge } from './start/knowledge-edge-create-operation';
 import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
@@ -60,6 +61,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readPapers: readStartPapers,
+    createKnowledgeEdge: createStartKnowledgeEdge,
     readKnowledgeEdges: readStartKnowledgeEdges,
     readKnowledgeMisconceptions: readStartKnowledgeMisconceptions,
     readKnowledgeNodePage: readStartKnowledgeNodePage,

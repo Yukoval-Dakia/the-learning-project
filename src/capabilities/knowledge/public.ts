@@ -36,6 +36,7 @@ export {
 export { KnowledgeIdParamsSchema, KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
+export { createManualKnowledgeEdge } from './server/edge-create';
 export type {
   EdgeProposalDecision,
   EdgeProposalDecisionInput,
