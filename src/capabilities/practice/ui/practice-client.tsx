@@ -2,9 +2,11 @@ import { createContext, useContext } from 'react';
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import {
   advanceStreamItem,
+  endPaperSession,
   fileAppeal,
   getAdvice,
   getIssuanceState,
+  getPaperDetail,
   getPapers,
   getQuestionFull,
   getStream,
@@ -14,10 +16,16 @@ import {
   saveResponseDraft,
   solveHint,
   solveStart,
+  startPaperSession,
+  submitPaperSlot,
   submitReview,
 } from './practice-api';
 
 export type PracticeClient = {
+  submitPaperSlot: typeof submitPaperSlot;
+  endPaperSession: typeof endPaperSession;
+  startPaperSession: typeof startPaperSession;
+  getPaperDetail: typeof getPaperDetail;
   solveStart: typeof solveStart;
   solveHint: typeof solveHint;
   revealStudyReference: typeof revealStudyReference;
@@ -36,6 +44,10 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  submitPaperSlot,
+  endPaperSession,
+  startPaperSession,
+  getPaperDetail,
   solveStart,
   solveHint,
   revealStudyReference,

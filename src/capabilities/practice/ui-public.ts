@@ -2,6 +2,7 @@
 
 export type { QuestionDetail } from './ui/practice-api';
 export {
+  buildPaperSubmissionBody,
   computeLatencyMs,
   getQuestion,
   saveResponseDraft,
