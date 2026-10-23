@@ -7,9 +7,11 @@ import {
 } from '@/capabilities/practice/ui-public';
 import { startLibraryDraftDetailClient } from '../library-draft-detail-client';
 import { startLibraryQuestionDetailClient } from '../library-question-detail-client';
+import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const libraryClient: LibraryClient = {
+  getQuestionKnowledgeOptions: () => startWorkbenchClient.getTree(),
   getDraftDetail: startLibraryDraftDetailClient,
   getQuestionFull: startLibraryQuestionDetailClient,
 };
