@@ -1,6 +1,6 @@
 import type { CopilotExecutionActivity } from './copilot-execution';
 
-/** Must stay aligned with SPAWN_TOOL_NAME in src/server/ai/spawn-contract.ts */
+/** Must stay aligned with SPAWN_TOOL_NAME in src/core/subagent-contract.ts */
 const NATIVE_SPAWN_TOOL_NAME = 'Task';
 
 export interface ToolUseSseCall {

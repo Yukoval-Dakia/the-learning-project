@@ -98,7 +98,7 @@ owner 原话：「quiz_gen.ts 单独存在就很奇怪。」本节把出题要�
 | [精确重复与并发冲突](../../src/capabilities/practice/jobs/quiz_gen.ts#L1289-L1472) 以含 `composite` 区分位的 canonical hash 合并 KC；唯一索引冲突后重读协调。重复分支跳过插入和 parts，保留旧题状态及旧 parts。 | 保留结构区分、重复合并和竞态处理，不把同文本无子题的平题当作篇题，不重复造子行。当前普通 `runQuizGen` **没有按 trigger 的全程 exactly-once 保证**；不能把内容去重说成付费调用幂等。新路径复用 store 的 request_id 回执约束，不承诺模型天然 exactly-once。 |
 | [组发布与验证意图](../../src/capabilities/practice/jobs/quiz_gen.ts#L1536-L1568) 同事务落地。`createQuestionPart` 每次会重发组 revision，末尾 publish 再确保整组发布；并非“一组恰好只有一次 publisher 调用”。父子都显式 draft，仅父题有验证意图。 | “一次写入”指一个提交、原子可见，不另写第二套 revision writer。初版 withheld；父题质检与后续整组判分准入未完成前不得把 part 单独送进可练池。 |
 | [`promoteCompositeChildren`](../../src/capabilities/practice/jobs/quiz_verify.ts#L239-L341) 与父题同事务级联，写时再次排除 archived/dismissed；子题证据写明继承父题，不伪称独立核验。FSRS 只 enroll-if-absent，排除 synthetic root，不重置旧复习历史。 | 统一门保留组级结论与墓碑保护，所有计分单元过准入才能服务。调度状态与验证结论分别保留，不靠删旧 handler 顺手清理数据。 |
-| [`dispatchQuizVerification`](../../src/capabilities/practice/jobs/quiz_gen.ts#L1707-L1742) 在提交后派发，失败留 durable intent 给恢复，不因 enqueue 失败重跑生成。placement 的重复题还须登记 authority 并排空验证意图。 | 复用 [`verify-dispatch-outbox`](../../src/server/boss/verify-dispatch-outbox.ts)，迁移期间处理既有意图；保留 claim、attempt、租约与费用结算，不重复花费来“恢复”已落库题。 |
+| [`dispatchQuizVerification`](../../src/capabilities/practice/jobs/quiz_gen.ts#L1707-L1742) 在提交后派发，失败留 durable intent 给恢复，不因 enqueue 失败重跑生成。placement 的重复题还须登记 authority 并排空验证意图。 | 复用 [`verify-dispatch-outbox`](../../src/capabilities/practice/server/verify-dispatch-outbox.ts)，迁移期间处理既有意图；保留 claim、attempt、租约与费用结算，不重复花费来“恢复”已落库题。 |
 
 `experimental:quiz_gen` 运行事件在事务后写，不能把它描述成与题组同事务；`tool_quiz` 只在新题非空时创建，全部重复不能生成空卷（同一 `persistQuizDrafts` / `emitQuizGenerationEvent`）。推荐保留这些可观察结果；只收敛供题 owner，不改组卷与历史读取契约。
 

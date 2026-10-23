@@ -3,10 +3,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { db } from '@/db/client';
-import { event, question } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
-import { resetDb } from '../../../tests/helpers/db';
 import {
   VERIFY_DISPATCH_COMPLETE_ACTION,
   VERIFY_DISPATCH_INTENT_ACTION,
@@ -14,7 +10,11 @@ import {
   dispatchPendingVerifyIntents,
   recoverOrphanVerifyDispatches,
   writeVerifyDispatchIntent,
-} from './verify-dispatch-outbox';
+} from '@/capabilities/practice/public';
+import { db } from '@/db/client';
+import { event, question } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { resetDb } from '../../../tests/helpers/db';
 
 // The un-versioned id the outbox used before intent ids were version-scoped. A stale intent left by
 // a different schema version lands here — the same id the synthesizer would reuse if it were not

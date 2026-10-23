@@ -11,11 +11,7 @@ import { event, knowledge, learning_session, practice_stream_item, question } fr
 import { ApiError } from '@/kernel/http';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { Review } from '@/server/session';
-import {
-  type CandidateInput,
-  type CollectedSignal,
-  collectCandidateSignals,
-} from './candidate-signals';
+import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
 import { readQuestionPace } from './question-pace';
 // 取题瞬间动态供题 refill（池见底补题）。compose 后 best-effort 调用，flag-off 默认 no-op。
@@ -30,24 +26,25 @@ import {
   recordSelectionObservation,
 } from './selection-observations';
 import { sampleByWeight } from './selection-sampler';
+import { statisticalWeights } from './selection-weights';
 import {
   type ComposeSoftmaxDeps,
   type ComposeSoftmaxResult,
   composeSoftmaxStream,
-  newCheckReasoning,
-  statisticalWeights,
-  variantReasoning,
 } from './softmax-selection';
-import { estimateStreamItemMinutes, fitStreamToTimeBudget } from './stream-budget';
+import { planStoredStreamBudgetTrim, storedStreamExceedsBudget } from './stored-stream-budget';
+import { estimateStreamItemMinutes } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
 import { collectComposerInputs, resolveDailyPracticeBudget } from './stream-inputs';
+import { presentNonDueQuestion } from './stream-item-presentation';
+import { planStreamReplacement, prepareStreamReplacement } from './stream-replacement-plan';
+import { readStreamSelectionCandidates } from './stream-selection-candidates';
 import {
   type StreamScope,
   type StreamView,
   buildStreamView,
   filterProspectiveStreamQuestions,
 } from './stream-view';
-import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
 // 候选收集 / 预算解析已迁 stream-inputs.ts，视图类型与单行投影已迁
@@ -632,38 +629,12 @@ async function trimStoredPendingItemsToBudget(
       .orderBy(asc(practice_stream_item.position));
 
     const { rows: eligible, recoveryRowIds } = await filterProspectiveStreamQuestions(tx, current);
-    // Recovery rows (unsupported pinned contract + accepted submission) are not
-    // prospective work: they stay visible as the settlement/recovery entry point
-    // but sit outside the budget economy entirely — never a trimmable tail, and
-    // never consuming the minutes that decide other rows' fate.
-    const frozen = eligible.filter(
-      (row) => row.status !== 'pending' && !recoveryRowIds.has(row.id),
-    );
-    const frozenMinutes = frozen.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
-      0,
-    );
-    const pending = eligible.filter(
-      (row) => row.status === 'pending' && !recoveryRowIds.has(row.id),
-    );
-    // An intervention row is the learner-visible delivery of approved material,
-    // not an ordinary recommendation tail. Never trim it merely because it was
-    // appended after the day's budget was composed; instead budget the remaining
-    // pending rows around this protected delivery.
-    const protectedPending = pending.filter((row) => row.source === 'intervention');
-    const budgetablePending = pending.filter((row) => row.source !== 'intervention');
-    const protectedMinutes = protectedPending.reduce(
-      (sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionMinutes),
-      0,
-    );
-    const remaining = Math.max(0, budgetMinutes - frozenMinutes - protectedMinutes);
-    const keptBudgetable =
-      remaining === 0
-        ? []
-        : fitStreamToTimeBudget(budgetablePending, remaining, questionMinutes).kept;
-    const keptPending = [...protectedPending, ...keptBudgetable];
-    const keptIds = new Set(keptPending.map((row) => row.id));
-    const deleteIds = pending.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
+    const deleteIds = planStoredStreamBudgetTrim({
+      rows: eligible,
+      recoveryRowIds,
+      budgetMinutes,
+      questionMinutes,
+    });
     if (deleteIds.length > 0) {
       await tx.delete(practice_stream_item).where(inArray(practice_stream_item.id, deleteIds));
     }
@@ -751,12 +722,13 @@ export async function getStream(
   ]);
   const gated = await filterProspectiveStreamQuestions(db, rows);
   rows = gated.rows;
-  // Recovery rows are visible but not prospective: their minutes must neither
-  // trigger the trim nor decide other rows' fate (same carve-out as the trim).
-  const storedMinutes = rows
-    .filter((row) => !gated.recoveryRowIds.has(row.id))
-    .reduce((sum, row) => sum + estimateStreamItemMinutes(row.item_kind, questionPace.minutes), 0);
-  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && storedMinutes > budget.minutes) {
+  const exceedsBudget = storedStreamExceedsBudget({
+    rows,
+    recoveryRowIds: gated.recoveryRowIds,
+    budgetMinutes: budget.minutes,
+    questionMinutes: questionPace.minutes,
+  });
+  if ((opts.enforceBudget ?? opts.composeIfEmpty ?? false) && exceedsBudget) {
     rows = await trimStoredPendingItemsToBudget(db, date, budget.minutes, questionPace.minutes);
   }
 
@@ -1007,13 +979,6 @@ function rowIsRecallLocked(signals: unknown): boolean {
   return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
 }
 
-/** 把 DB question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成可旋转分类的标签或
- * undefined（同 softmax 侧）。：边界从「enum 成员」改为
- * 「rotationClassForKind 可分类」——同一张 KNOWN 标签表，行为不变。 */
-function resolveRotatableKind(kind: string | null | undefined): string | undefined {
-  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
-}
-
 /**
  * 作答后有界增量重排（hybrid 运行时）。**永不 throw 出 compose 逻辑级别**——纯统计 sampler，
  * 无 LLM。若无受影响待做项（θ̂ 移动不触及任何待做非到期诊断项）→ no-op（不动流、不写观测）。
@@ -1119,117 +1084,50 @@ export async function reRankAfterAnswer(
     );
     if (eligibleRaws.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
-    // Enrich candidates in one batch. question.source feeds family_key resolution and is
-    // distinct from the slot `source` (stream origin) used above.
-    const poolQids = eligibleRaws.map((r) => r.questionId);
-    const candQRows = await tx
-      .select({
-        id: question.id,
-        kind: question.kind,
-        knowledge_ids: question.knowledge_ids,
-        difficulty: question.difficulty,
-        // question.source, not the stream-slot origin, for family_key resolution.
-        source: question.source,
-      })
-      .from(question)
-      .where(inArray(question.id, poolQids));
-    const candQById = new Map(candQRows.map((q) => [q.id, q]));
+    const candidateInputs = await readStreamSelectionCandidates(
+      tx,
+      eligibleRaws.map((r) => ({ questionId: r.questionId, role: r.source })),
+    );
 
     // Rerank only when the eligible pool touches an affected KC.
-    const poolTouchesAffected = eligibleRaws.some((r) => {
-      const kids = candQById.get(r.questionId)?.knowledge_ids ?? [];
-      return kids.some((k) => affectedKnowledgeIds.has(k));
-    });
+    const poolTouchesAffected = candidateInputs.some((candidate) =>
+      (candidate.knowledgeIds ?? []).some((k) => affectedKnowledgeIds.has(k)),
+    );
     if (!poolTouchesAffected) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Fresh θ̂: collectCandidateSignals reads current mastery_state.
     const sourceByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.source]));
     const labelByRef = new Map(eligibleRaws.map((r) => [r.questionId, r.knowledgeLabel]));
-    const candidateInputs: CandidateInput[] = eligibleRaws.map((r) => {
-      const q = candQById.get(r.questionId);
-      return {
-        refKind: 'question' as const,
-        refId: r.questionId,
-        role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-        kind: resolveRotatableKind(q?.kind),
-        knowledgeIds: q?.knowledge_ids,
-        difficulty: q?.difficulty,
-        // question.source, not the slot source, for family_key resolution.
-        source: q?.source,
-      };
-    });
     const signals: CollectedSignal[] = await collectCandidateSignals(tx, candidateInputs);
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
-    // A row that freshly classifies as recall stays in place (fail-closed); never drop it
-    // into a freed slot.
-    const freshRecallRefs = new Set(
-      signals.filter((s) => s.recallLocked === true).map((s) => s.refId),
-    );
-    // Candidates that are not recall-locked.
-    const samplable = signals.filter((s) => s.recallLocked !== true);
-
-    // Pending non-due rows that may be swapped out. Actual deletion is bounded by how many
-    // new refs really insert.
-    const replaceableRows = pendingNonDue
-      .filter((r) => !freshRecallRefs.has(r.ref_id))
-      .sort((a, b) => a.position - b.position);
-    if (replaceableRows.length === 0)
-      return { added: 0, observations: [] } satisfies ComposeOutcome;
-    const replaceableRefs = new Set(replaceableRows.map((r) => r.ref_id));
-
-    // Refs already in the stream and not being deleted must not be reinserted. Compute the
-    // base set before deciding deletions; kept refs are added back below.
-    const baseKeptRefs = new Set(
-      rows.filter((r) => !replaceableRefs.has(r.ref_id)).map((r) => r.ref_id),
-    );
+    const basis = prepareStreamReplacement(rows, pendingNonDue, signals);
+    if (basis === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Statistical sampler with fresh θ̂. targetCount is the replaceable slot count, not the
     // pool size, so sampling is real IPPS (π_i < 1).
-    const weighted = statisticalWeights(samplable);
+    const weighted = statisticalWeights(basis.samplable);
     const sampled =
       weighted.length === 0
         ? []
         : sampleByWeight(weighted, {
             temperature: DEFAULT_TEMPERATURE,
-            targetCount: replaceableRows.length,
+            targetCount: basis.targetCount,
             rng: opts.rng,
           });
 
-    // Sample sizes fluctuate around targetCount. Delete only slots that will actually be
-    // refilled: min(new refs, replaceable slots), lowest position first. Kept rows stay put,
-    // so the stream never shrinks or leaves holes. π_i stays the true inclusion probability
-    // (same targetCount, no top-up), and kept slots reuse their original observation.
-    const newRefPicks: string[] = [];
-    const seenNewRef = new Set<string>();
-    for (const s of sampled) {
-      if (baseKeptRefs.has(s.refId)) continue; // 已在流里且不删 → 不是「换进的新项」。
-      if (seenNewRef.has(s.refId)) continue; // 去重（同 ref 只占一个 slot）。
-      seenNewRef.add(s.refId);
-      newRefPicks.push(s.refId);
-    }
-    // Never delete more slots than can be refilled.
-    const deleteCount = Math.min(newRefPicks.length, replaceableRows.length);
-    const rowsToDelete = replaceableRows.slice(0, deleteCount); // 最低 position 的 deleteCount 个。
-    const deletedRefs = new Set(rowsToDelete.map((r) => r.ref_id));
-    const vacatedPositions = rowsToDelete.map((r) => r.position).sort((a, b) => a - b);
-
-    // Rows that survive this rerank cannot be reinserted.
-    const keptRefs = new Set(rows.filter((r) => !deletedRefs.has(r.ref_id)).map((r) => r.ref_id));
-
-    // Nothing to delete means nothing to insert.
-    if (rowsToDelete.length === 0) return { added: 0, observations: [] } satisfies ComposeOutcome;
+    const plan = planStreamReplacement(basis, sampled);
+    if (plan === null) return { added: 0, observations: [] } satisfies ComposeOutcome;
 
     // Delete only slots that will be refilled; frozen and kept rows stay untouched.
-    await tx.delete(practice_stream_item).where(
-      and(
-        streamPartitionPredicate(date, sessionId),
-        inArray(
-          practice_stream_item.id,
-          rowsToDelete.map((r) => r.id),
+    await tx
+      .delete(practice_stream_item)
+      .where(
+        and(
+          streamPartitionPredicate(date, sessionId),
+          inArray(practice_stream_item.id, plan.deleteIds),
         ),
-      ),
-    );
+      );
 
     // Fill vacated positions first, then append after max(position). Skip refs kept in the
     // stream, and record π_i only for rows that actually insert.
@@ -1239,12 +1137,11 @@ export async function reRankAfterAnswer(
     const now = new Date();
     const observations: SelectionObservationInput[] = [];
     let added = 0;
-    for (const s of sampled) {
-      if (keptRefs.has(s.refId)) continue;
-      const pos = slot < vacatedPositions.length ? vacatedPositions[slot] : tailPos++;
+    for (const s of plan.insertCandidates) {
+      const pos = slot < plan.vacatedPositions.length ? plan.vacatedPositions[slot] : tailPos++;
       slot++;
       const signal = signalByRef.get(s.refId);
-      const source = sourceByRef.get(s.refId) ?? 'variant';
+      const presentation = presentNonDueQuestion(sourceByRef.get(s.refId), labelByRef.get(s.refId));
       const newRowId = newId();
       const inserted = await tx
         .insert(practice_stream_item)
@@ -1255,13 +1152,10 @@ export async function reRankAfterAnswer(
           position: pos,
           item_kind: 'question' as const,
           ref_id: s.refId,
-          source,
+          source: presentation.source,
           status: 'pending' as const,
           // Rerank changes order only; keep the original reasoning template.
-          reasoning:
-            source === 'new_check'
-              ? newCheckReasoning(labelByRef.get(s.refId))
-              : variantReasoning(labelByRef.get(s.refId)),
+          reasoning: presentation.reasoning,
           added_by: 'composer_live' as const,
           signals: toSignalsJson(signal),
           created_at: now,

@@ -40,6 +40,10 @@ export interface ItemLedgerEntry {
   readonly preview_md?: string;
   readonly draft_ref?: string;
   readonly question_id?: string;
+  /** Model-written reason on the latest item event (withheld/failed context). */
+  readonly reason?: string;
+  /** ISO time of the latest session-stream item event. */
+  readonly status_at?: string;
 }
 
 export interface AgentRunLedger {
@@ -58,37 +62,17 @@ export interface AgentRunLedger {
 type RawEventRow = {
   readonly event_type: string;
   readonly payload: Record<string, unknown>;
+  readonly occurred_at: string | Date;
 };
 
-export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promise<AgentRunLedger> {
-  const floor = await readAgentEventFloor(db, sessionId);
-  const sessionRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
-    FROM job_events
-    WHERE business_table = ${SESSION_TABLE}
-      AND business_id = ${sessionId}
-      AND id > ${floor}
-      AND event_type IN (${INGESTION_AGENT_STAGE}, ${INGESTION_AGENT_ITEM})
-    ORDER BY id ASC
-  `);
-  const runRows = await db.execute<RawEventRow>(sql`
-    SELECT event_type, payload
-    FROM job_events
-    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
-      AND business_id = ${sessionId}
-      AND id > ${floor}
-      AND event_type IN (${AGENT_ITEM_STATE}, ${AGENT_RUN_SEGMENT}, ${AGENT_TERMINAL_REQUEST})
-    ORDER BY id ASC
-  `);
-
-  let stage: IngestionAgentStageT | null = null;
+/** Frozen item fold shared by the full ledger and the narrow history read. */
+export function foldAgentItemEvents(
+  sessionRows: readonly RawEventRow[],
+  runRows: readonly RawEventRow[],
+): ItemLedgerEntry[] {
   const items = new Map<string, ItemLedgerEntry>();
   for (const row of sessionRows) {
-    if (row.event_type === INGESTION_AGENT_STAGE) {
-      const parsed = IngestionAgentStagePayload.safeParse(row.payload);
-      if (parsed.success) stage = parsed.data.stage;
-      continue;
-    }
+    if (row.event_type !== INGESTION_AGENT_ITEM) continue;
     const parsed = IngestionAgentItemPayload.safeParse(row.payload);
     if (!parsed.success) continue;
     const p = parsed.data;
@@ -100,7 +84,54 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
       status: p.status,
       ...(p.page !== undefined ? { page: p.page } : {}),
       ...(p.preview_md !== undefined ? { preview_md: p.preview_md } : {}),
+      ...(p.reason !== undefined ? { reason: p.reason } : {}),
+      status_at: new Date(row.occurred_at).toISOString(),
     });
+  }
+  for (const row of runRows) {
+    if (row.event_type !== AGENT_ITEM_STATE) continue;
+    const parsed = AgentItemStatePayload.safeParse(row.payload);
+    if (!parsed.success) continue;
+    const p = parsed.data;
+    const prev = items.get(p.item_id);
+    if (prev == null) continue;
+    items.set(p.item_id, {
+      ...prev,
+      draft_ref: p.draft_ref ?? prev.draft_ref,
+      question_id: p.question_id ?? prev.question_id,
+    });
+  }
+  return [...items.values()];
+}
+
+export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promise<AgentRunLedger> {
+  const floor = await readAgentEventFloor(db, sessionId);
+  const sessionRows = await db.execute<RawEventRow>(sql`
+    SELECT event_type, payload, occurred_at
+    FROM job_events
+    WHERE business_table = ${SESSION_TABLE}
+      AND business_id = ${sessionId}
+      AND id > ${floor}
+      AND event_type IN (${INGESTION_AGENT_STAGE}, ${INGESTION_AGENT_ITEM})
+    ORDER BY id ASC
+  `);
+  const runRows = await db.execute<RawEventRow>(sql`
+    SELECT event_type, payload, occurred_at
+    FROM job_events
+    WHERE business_table = ${INGESTION_AGENT_RUN_TABLE}
+      AND business_id = ${sessionId}
+      AND id > ${floor}
+      AND event_type IN (${AGENT_ITEM_STATE}, ${AGENT_RUN_SEGMENT}, ${AGENT_TERMINAL_REQUEST})
+    ORDER BY id ASC
+  `);
+
+  let stage: IngestionAgentStageT | null = null;
+  const items = foldAgentItemEvents(sessionRows, runRows);
+  for (const row of sessionRows) {
+    if (row.event_type === INGESTION_AGENT_STAGE) {
+      const parsed = IngestionAgentStagePayload.safeParse(row.payload);
+      if (parsed.success) stage = parsed.data.stage;
+    }
   }
 
   let lastSegment: AgentRunLedger['lastSegment'] = null;
@@ -117,16 +148,6 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
       continue;
     }
     if (row.event_type === AGENT_ITEM_STATE) {
-      const parsed = AgentItemStatePayload.safeParse(row.payload);
-      if (!parsed.success) continue;
-      const p = parsed.data;
-      const prev = items.get(p.item_id);
-      if (prev == null) continue;
-      items.set(p.item_id, {
-        ...prev,
-        draft_ref: p.draft_ref ?? prev.draft_ref,
-        question_id: p.question_id ?? prev.question_id,
-      });
       continue;
     }
     const parsed = AgentRunSegmentPayload.safeParse(row.payload);
@@ -141,7 +162,7 @@ export async function readAgentRunLedger(db: Db | Tx, sessionId: string): Promis
   const asks = await readSessionAsks(db, sessionId, floor);
   return {
     stage,
-    items: [...items.values()],
+    items,
     asks,
     openAsks: asks.filter((ask) => ask.resolved == null),
     resolvedAsks: asks.filter((ask) => ask.resolved != null),

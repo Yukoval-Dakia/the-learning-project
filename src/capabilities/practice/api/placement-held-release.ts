@@ -17,9 +17,7 @@
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { noItemField, placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
-import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
-import { CreatePlacementHeldReleaseBodySchema } from './placement-contracts';
+import { releaseHeldPlacement } from '../server/session-operations/placement-held-release';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -31,35 +29,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     } catch {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
-    const parsed = CreatePlacementHeldReleaseBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-
-    const { selection, release } = await runPlacementAdvanceTx(db, id, {
-      releaseIssuanceId: parsed.data.issuance_id,
-    });
-
-    const starterSupply = await db.transaction((tx) => readPlacementStarterOutcomes(tx, id), {
-      isolationLevel: 'repeatable read',
-      accessMode: 'read only',
-    });
-    const selectionBody = selection.done
-      ? { ...selection, starterSupply }
-      : {
-          ...selection,
-          starterSupply,
-          ...noItemField(selection.question === null ? placementNoItem(starterSupply) : null),
-        };
-    return Response.json({
-      released: true,
-      replayed: release?.replayed ?? false,
-      selection: selectionBody,
-    });
+    return Response.json(await releaseHeldPlacement(db, id, raw));
   } catch (err) {
     return errorResponse(err);
   }

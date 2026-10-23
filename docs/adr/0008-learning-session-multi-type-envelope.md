@@ -52,3 +52,11 @@ ADR-0006 v2（event-driven 核）落定后，本 ADR 的 `type` enum 中 `'conve
 - Copilot 调 propose/generate 等 tool 时直接写 event，与后台 Backend Purpose Agent 共享 schema
 
 Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**——Sub 0d refresh 时按此调整。
+
+## 归属修订（2026-10-23，YUK-1570）
+
+`learning_session` 继续共用一张表，状态操作按 type 保留唯一业务 owner。type=ingestion 的现役状态命令归 `src/capabilities/ingestion/server/session-lifecycle.ts`，DOCX 文本初始化归同域 `docx/text-session-lifecycle.ts`；仅两者消费的 extract 事件写入与 DOCX omission 事实归同域叶子模块。其余 type 及共享 `server/session/guards.ts` 保持原位，旧混合入口退出 Ingestion 导出。
+
+这次只归位已有完整操作。`markSessionPackageFailed` 的既有补偿也随状态 owner 迁入：已有产出时保留状态并尽力记录 provenance，否则沿原分支标记失败。它原本没有的事务、锁、事件和 type 筛选均不补加。各操作的 Db/Tx 合同、队列发送方式、调用顺序及付费/恢复边界保持；不能把历史“同事务”的描述外推到接受裸 Db 的所有调用。
+
+录入 caller 直接消费同域实现，不新增跨能力状态写接口。共享题块事实继续调用已有 kernel 操作。本修订不授权 #2037 尚在途的 Db→Db|Tx 签名变化；该片后续在新 canonical 路径接线，沿各自原批准范围交付。

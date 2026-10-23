@@ -14,7 +14,6 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { noItemField, placementNoItem } from '../server/placement-advance';
 import { startPlacementProbe } from '../server/session-operations/placement-session';
 import { CreatePlacementSessionBodySchema } from './placement-contracts';
 
@@ -37,19 +36,7 @@ export async function createPlacementSession(req: Request): Promise<Response> {
       }
       return parsed.data;
     });
-    // Keep sourcingNeeded for compatibility. starterSupply distinguishes pending
-    // supply from terminal failure; neither outcome completes the placement session.
-    return Response.json({
-      sessionId: result.sessionId,
-      knowledgeIds: result.knowledgeIds,
-      question: result.question,
-      answeredCount: 0,
-      sourcingNeeded: result.question === null,
-      starterSupply: result.starterSupply,
-      // a fresh session has nothing unresolved (field omitted);
-      // the typed alternative is present only when no question was served.
-      ...noItemField(result.question === null ? placementNoItem(result.starterSupply) : null),
-    });
+    return Response.json(result);
   } catch (err) {
     return errorResponse(err);
   }

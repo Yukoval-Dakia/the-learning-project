@@ -7,6 +7,7 @@
 // differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
 
 import { createId } from '@paralleldrive/cuid2';
+import type { RunTaskResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
@@ -18,7 +19,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { ContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
-import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
 

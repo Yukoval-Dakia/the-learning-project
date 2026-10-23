@@ -5,7 +5,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge, learning_session, question } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';

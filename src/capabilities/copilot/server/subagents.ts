@@ -1,21 +1,21 @@
 import { getConfigFlag } from '@/core/config/store';
+import {
+  type AgentDefinition,
+  type PiSpawnContract,
+  SPAWN_TOOL_ALIASES,
+  SPAWN_TOOL_NAME,
+  type SpawnBudgetObservation,
+  createPiSpawnContract,
+  isSpawnToolName,
+} from '@/core/subagent-contract';
 import { READ_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
 import { EXA_MCP_ALLOWED_TOOLS } from '@/server/ai/mcp/exa';
 import type {
-  AgentDefinition,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
 } from '@/server/ai/sdk-types';
-import {
-  SPAWN_TOOL_ALIASES,
-  SPAWN_TOOL_NAME,
-  type SpawnBudgetObservation,
-  createSpawnDecider,
-  isSpawnToolName,
-} from '@/server/ai/spawn-contract';
-import { type PiSpawnContract, createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
 
 export type { PiSpawnContract, SpawnBudgetObservation };
 
@@ -116,8 +116,7 @@ export function buildCopilotNativeResearchConfig(
     }),
     onBudgetObservation: options.onBudgetObservation,
   };
-  const decider = options.enabled ? createSpawnDecider(contractOptions) : undefined;
-  const piSpawnContract = decider ? createPiSpawnContract(contractOptions, decider) : undefined;
+  const piSpawnContract = options.enabled ? createPiSpawnContract(contractOptions) : undefined;
   return {
     allowedTools,
     ...(piSpawnContract ? { piSpawnContract } : {}),

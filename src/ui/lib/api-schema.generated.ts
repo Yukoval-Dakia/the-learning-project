@@ -116,6 +116,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/custom-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCustomProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/custom-providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putCustomProvider"];
+        post?: never;
+        delete: operations["deleteCustomProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/failures": {
         parameters: {
             query?: never;
@@ -1073,6 +1105,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["answerIngestionAsk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingestion-sessions/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestionSessionHistory"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3655,6 +3703,462 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listCustomProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        facts_injected?: boolean;
+                        providers: {
+                            api_key_env: string;
+                            auth: string;
+                            base_url: string;
+                            display_name: string;
+                            findings: number;
+                            id: string;
+                            key_present: boolean;
+                            /** @enum {string} */
+                            protocol: "openai-completions" | "anthropic-messages";
+                            runnable_models: string[];
+                            unknown_models: string[];
+                        }[];
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    putCustomProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    api_key_env: string;
+                    /** Format: uri */
+                    base_url: string;
+                    display_name: string;
+                    /** @enum {string} */
+                    protocol: "openai-completions" | "anthropic-messages";
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        catalog: {
+                            /** @enum {string} */
+                            outcome: "stored";
+                            version: string;
+                        } | {
+                            detail: string;
+                            /** @enum {string} */
+                            outcome: "kept";
+                            reason: string;
+                        } | {
+                            /** @enum {string} */
+                            outcome: "not_wired";
+                        };
+                        provider: {
+                            api_key_env: string;
+                            auth: string;
+                            base_url: string;
+                            display_name: string;
+                            findings: number;
+                            id: string;
+                            key_present: boolean;
+                            /** @enum {string} */
+                            protocol: "openai-completions" | "anthropic-messages";
+                            runnable_models: string[];
+                            unknown_models: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deleteCustomProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        catalog_version?: string;
+                        removed: boolean;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8103,7 +8607,7 @@ export interface operations {
                         content: ({
                             attrs?: {
                                 artifact_id?: string;
-                                block_id?: string;
+                                block_id?: string | null;
                                 id?: string;
                                 prompt_preview?: string;
                                 question_id?: string;
@@ -8144,7 +8648,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;
@@ -13536,11 +14040,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -13681,11 +14193,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -13809,13 +14329,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Malformed request */
@@ -13938,11 +14521,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: ({
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -14083,11 +14674,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14213,11 +14812,19 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
+                            ended_at?: number | null;
                             entrypoint: string | null;
                             id: string;
+                            item_count?: number;
+                            /** @enum {string|null} */
+                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
                             source_document_id?: string | null;
+                            started_at?: number;
                             status: string;
+                            title?: string | null;
+                            /** @enum {string|null} */
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14489,6 +15096,332 @@ export interface operations {
             };
         };
     };
+    getIngestionSessionHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        asks: {
+                            /** @enum {string} */
+                            answer_kind: "choice" | "short";
+                            ask_id: string;
+                            created_at: string;
+                            expired_unresolved: boolean;
+                            expires_at: string | null;
+                            item_id: string | null;
+                            options?: {
+                                id: string;
+                                label_md: string;
+                            }[];
+                            placeholder: string;
+                            prompt_md: string;
+                            question_no: string | null;
+                            resolved: {
+                                answer: {
+                                    /** @enum {string} */
+                                    kind: "choice";
+                                    option_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "text";
+                                    text: string;
+                                    /** @enum {string} */
+                                    via_option?: "none_of_these";
+                                } | {
+                                    /** @enum {string} */
+                                    by: "learner" | "timeout";
+                                    /** @enum {string} */
+                                    kind: "skipped";
+                                };
+                                at: string;
+                                /** @enum {string} */
+                                via: "answer" | "timeout";
+                            } | null;
+                            unresolved: boolean;
+                        }[];
+                        evidence: {
+                            live_events: boolean;
+                            missing: string[];
+                            snapshot: boolean;
+                        };
+                        items: {
+                            current: {
+                                draft_status: string | null;
+                                held_since: string | null;
+                                hold_reason: string | null;
+                                next_action: {
+                                    command: string;
+                                    method: string;
+                                    path: string;
+                                } | null;
+                                pending_action: {
+                                    command: string;
+                                    since: string;
+                                } | null;
+                                servable: boolean;
+                            } | null;
+                            draft_block_id: string | null;
+                            draft_ref: string | null;
+                            item_id: string;
+                            ordinal: number;
+                            page: number | null;
+                            preview_md: string | null;
+                            preview_truncated: boolean;
+                            question_id: string | null;
+                            question_no: string | null;
+                            reason: string | null;
+                            source_asset_ids: string[];
+                            /** @enum {string} */
+                            state_at_finish: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
+                            status_at: string | null;
+                        }[];
+                        prior_runs: {
+                            asks: {
+                                /** @enum {string} */
+                                answer_kind: "choice" | "short";
+                                ask_id: string;
+                                created_at: string;
+                                expired_unresolved: boolean;
+                                expires_at: string | null;
+                                item_id: string | null;
+                                options?: {
+                                    id: string;
+                                    label_md: string;
+                                }[];
+                                placeholder: string;
+                                prompt_md: string;
+                                question_no: string | null;
+                                resolved: {
+                                    answer: {
+                                        /** @enum {string} */
+                                        kind: "choice";
+                                        option_id: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "text";
+                                        text: string;
+                                        /** @enum {string} */
+                                        via_option?: "none_of_these";
+                                    } | {
+                                        /** @enum {string} */
+                                        by: "learner" | "timeout";
+                                        /** @enum {string} */
+                                        kind: "skipped";
+                                    };
+                                    at: string;
+                                    /** @enum {string} */
+                                    via: "answer" | "timeout";
+                                } | null;
+                                unresolved: boolean;
+                            }[];
+                            captured_at: string;
+                            errors: {
+                                at: string;
+                                code: string;
+                                item_id: string | null;
+                                retryable: boolean;
+                                /** @enum {string} */
+                                scope: "session" | "item";
+                            }[];
+                            errors_truncated: boolean;
+                            event_floor: number | null;
+                            execution_closed: boolean;
+                            items: {
+                                draft_ref: string | null;
+                                item_id: string;
+                                page: number | null;
+                                preview_md: string | null;
+                                question_id: string | null;
+                                question_no: string;
+                                reason: string | null;
+                                /** @enum {string} */
+                                status: "queued" | "structuring" | "solving" | "calibrating" | "admitted" | "withheld" | "failed" | "draft" | "imported" | "ignored" | "auto_enrolled" | "unknown";
+                                status_at: string | null;
+                            }[];
+                            paid_outcome_unknown: boolean;
+                            run_ref: string | null;
+                            /** @enum {string} */
+                            run_state: "in_progress" | "waiting" | "done" | "failed" | "lost";
+                            segments: {
+                                at: string;
+                                outcome: string | null;
+                                segment: number;
+                                task_run_id: string | null;
+                                /** @enum {string} */
+                                trigger: "start" | "resume" | "continue";
+                            }[];
+                            session_status: string;
+                            stage: string | null;
+                        }[];
+                        run: {
+                            captured_at: string | null;
+                            counts: {
+                                items_done: number;
+                                items_failed: number;
+                                items_total: number;
+                                items_withheld: number;
+                            } | null;
+                            errors: {
+                                at: string;
+                                code: string;
+                                item_id: string | null;
+                                retryable: boolean;
+                                /** @enum {string} */
+                                scope: "session" | "item";
+                            }[];
+                            errors_truncated: boolean;
+                            execution_closed: boolean | null;
+                            finished_at: string | null;
+                            paid_outcome_unknown: boolean;
+                            run_ref: string | null;
+                            /** @enum {string|null} */
+                            run_state: "in_progress" | "waiting" | "done" | "failed" | "lost" | null;
+                            segment_count: number;
+                            segments: {
+                                at: string;
+                                outcome: string | null;
+                                segment: number;
+                                task_run_id: string | null;
+                                /** @enum {string} */
+                                trigger: "start" | "resume" | "continue";
+                            }[];
+                            stage: string | null;
+                            started_at: string | null;
+                        } | null;
+                        session: {
+                            created_at: string;
+                            ended_at: string | null;
+                            entrypoint: string | null;
+                            error_message: string | null;
+                            id: string;
+                            /** @enum {string|null} */
+                            path: "agent" | "extract" | null;
+                            source_asset_ids: string[];
+                            source_document_id: string | null;
+                            started_at: string;
+                            status: string;
+                            title: string | null;
+                            /** @enum {string|null} */
+                            title_source: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
+                            updated_at: string;
+                            warnings: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     createIngestionOperation: {
         parameters: {
             query?: never;
@@ -14506,6 +15439,15 @@ export interface operations {
                 } | {
                     /** @enum {string} */
                     kind: "agent";
+                } | {
+                    input: {
+                        checked_blocks: {
+                            block_id: string;
+                            version: number;
+                        }[];
+                    };
+                    /** @enum {string} */
+                    kind: "review";
                 } | {
                     input: {
                         blocks: {
@@ -14570,13 +15512,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Successful response */
@@ -14585,13 +15590,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
+                    "application/json": ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
                         id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "extract" | "agent" | "import" | "make_paper" | "rescue";
+                        result?: unknown;
                         session_id: string;
-                        status: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "succeeded" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
                     } & {
                         [key: string]: unknown;
-                    };
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result?: unknown;
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "queued" | "running" | "failed";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    }) | ({
+                        /** Format: date-time */
+                        created_at: string;
+                        error?: {
+                            code: string;
+                            message: string;
+                            status: number;
+                        };
+                        events_url: string;
+                        id: string;
+                        /** @enum {string} */
+                        kind: "ingestion_operation";
+                        /** @enum {string} */
+                        operation_kind: "review";
+                        result: {
+                            /** @enum {string} */
+                            status: "reviewed";
+                        };
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded";
+                        /** Format: date-time */
+                        updated_at: string;
+                    } & {
+                        [key: string]: unknown;
+                    });
                 };
             };
             /** @description Malformed request */
@@ -14974,6 +16042,7 @@ export interface operations {
                                 student_answer_present?: boolean;
                                 sub_questions?: unknown[];
                             } | null;
+                            version: number;
                             wrong_answer_md: string | null;
                         } & {
                             [key: string]: unknown;
@@ -20464,7 +21533,7 @@ export interface operations {
                             content: ({
                                 attrs?: {
                                     artifact_id?: string;
-                                    block_id?: string;
+                                    block_id?: string | null;
                                     id?: string;
                                     prompt_preview?: string;
                                     question_id?: string;

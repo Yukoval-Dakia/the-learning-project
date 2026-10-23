@@ -1,7 +1,7 @@
 // YUK-307 (presentation layer §2.3/§2.5) — pure, React-free hero-nomination
-// routing for the Copilot Dock, extracted here so it is unit-testable in the
+// routing for the companion, extracted here so it is unit-testable in the
 // node vitest env without jsdom (same precedent as replay.ts; the unit env is
-// 'node' and @testing-library is not installed). CopilotHeroCard.tsx imports
+// 'node' and @testing-library is not installed). companion/HeroBlock.tsx imports
 // resolveArtifactHero to build the reference card; the rendering + sandbox live
 // in the component.
 //
@@ -9,11 +9,12 @@
 // ref ALONE — it never fetches the artifact. The link target opens the
 // artifact's own page, which does the real load.
 
-import type { LoomIconName } from '@/ui/primitives/LoomIcon';
+/** Which glyph the card shows; the component maps it to an icon. */
+export type ArtifactHeroIcon = 'note' | 'interactive' | 'question' | 'practice';
 
 export interface ArtifactHero {
   label: string;
-  icon: LoomIconName;
+  icon: ArtifactHeroIcon;
   /** The artifact's own page; opening the link loads it (no re-fetch here). */
   href: string;
 }
@@ -28,7 +29,7 @@ export interface ArtifactHero {
 //                            already links 「去练习」→ /practice/art_*)
 interface KindRoute {
   label: string;
-  icon: LoomIconName;
+  icon: ArtifactHeroIcon;
   path: (id: string) => string;
 }
 // id is encodeURIComponent'd into the path: the server caps it (z.string().max
@@ -38,21 +39,29 @@ interface KindRoute {
 // (no protocol/host breakout); normal ids (note_*, q_*, art_*) round-trip
 // unchanged through encodeURIComponent. (YUK-307 review LOW.)
 const KIND_ROUTES: Record<string, KindRoute> = {
-  note: { label: '笔记', icon: 'doc', path: (id) => `/notes/${encodeURIComponent(id)}` },
-  笔记: { label: '笔记', icon: 'doc', path: (id) => `/notes/${encodeURIComponent(id)}` },
+  note: { label: '笔记', icon: 'note', path: (id) => `/notes/${encodeURIComponent(id)}` },
+  笔记: { label: '笔记', icon: 'note', path: (id) => `/notes/${encodeURIComponent(id)}` },
   interactive: {
     label: '互动内容',
-    icon: 'sparkle',
+    icon: 'interactive',
     path: (id) => `/notes/${encodeURIComponent(id)}`,
   },
-  互动: { label: '互动内容', icon: 'sparkle', path: (id) => `/notes/${encodeURIComponent(id)}` },
-  question: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
-  题: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
-  题目: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
-  quiz: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  paper: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  卷: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  试卷: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
+  互动: {
+    label: '互动内容',
+    icon: 'interactive',
+    path: (id) => `/notes/${encodeURIComponent(id)}`,
+  },
+  question: {
+    label: '题目',
+    icon: 'question',
+    path: (id) => `/questions/${encodeURIComponent(id)}`,
+  },
+  题: { label: '题目', icon: 'question', path: (id) => `/questions/${encodeURIComponent(id)}` },
+  题目: { label: '题目', icon: 'question', path: (id) => `/questions/${encodeURIComponent(id)}` },
+  quiz: { label: '练习', icon: 'practice', path: (id) => `/practice/${encodeURIComponent(id)}` },
+  paper: { label: '练习', icon: 'practice', path: (id) => `/practice/${encodeURIComponent(id)}` },
+  卷: { label: '练习', icon: 'practice', path: (id) => `/practice/${encodeURIComponent(id)}` },
+  试卷: { label: '练习', icon: 'practice', path: (id) => `/practice/${encodeURIComponent(id)}` },
 };
 
 /**

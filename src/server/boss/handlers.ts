@@ -10,7 +10,7 @@ import { buildPromoteConversationIdleHandler } from './handlers/promote_conversa
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
-} from './verify-dispatch-outbox';
+} from './verify-dispatch-recovery';
 
 // 只挂基础设施。域 job 在各 capability manifest，经 register-capability-jobs 挂载，不要迁回这里。
 // 留在这里的是 echo、会话空闲、memory 模块自己的队列，以及校验补发。

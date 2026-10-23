@@ -17,7 +17,12 @@ import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/cl
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
-import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
+import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-recovery';
+import {
+  CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
+  hydrateCustomProviders,
+  startCustomProvidersWatch,
+} from '@/server/config/custom-providers-hydrate';
 import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
@@ -42,6 +47,9 @@ export async function startBossWorker(
   await hydrateSubjectRegistryFromDb(db);
   // Never throws. A missing table or a down database leaves an empty snapshot, which is env-only behavior.
   await hydrateConfigFromDb(db);
+  // YUK-1563 part 4 — definitions before the catalog: buckets and task
+  // resolution read the registry synchronously.
+  await hydrateCustomProviders(db);
   await hydrateModelCatalog(db);
   // Validate the effective brief lane after config hydration, without a paid call.
   try {
@@ -121,9 +129,13 @@ export async function startBossWorker(
   // The refresh lock serializes writers. This watch reloads the row another
   // worker stored, so this process does not keep a stale merge in memory.
   const catalogWatch = startModelCatalogWatch(db);
+  // The worker has no custom-provider write path either; this window is how a
+  // new definition arrives. unref, same cadence as the catalog watch.
+  const customProvidersWatch = startCustomProvidersWatch(db, CUSTOM_PROVIDERS_WATCH_INTERVAL_MS);
   boss.once('stopped', () => {
     clearInterval(catalogRefresh);
     catalogWatch.stop();
+    customProvidersWatch.stop();
   });
   // A crash is the usual reason a run stays 'running'. Restart converges those rows.
   // The nightly cron covers a database outage where nobody restarts. A sweep failure must not abort boot.

@@ -18,9 +18,12 @@ import {
   isCandidateState,
 } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+} from '@/db/learning-state-lock';
 import { event, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
 import { restoreStateSnapshot } from './restore-snapshot';
 

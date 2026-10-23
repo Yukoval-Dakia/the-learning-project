@@ -226,3 +226,5 @@ export const PlacementProfileResponseSchema = z.object({
   // The empty-scope fast path predates sigma-mode reporting and intentionally omits it.
   sigma_mode: z.enum(['poly', 'libm']).optional(),
 });
+
+export type PlacementProfileResponse = z.infer<typeof PlacementProfileResponseSchema>;

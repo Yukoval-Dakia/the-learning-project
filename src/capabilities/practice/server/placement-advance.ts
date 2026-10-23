@@ -33,6 +33,7 @@ import {
   evaluatePlacementTermination,
 } from './placement-termination';
 import type { PlacementStarterOutcome } from './question-supply/placement-starter-outcome';
+import { readPlacementStarterOutcomes } from './question-supply/placement-starter-outcome-reader';
 
 /** Once-per-session marker for the first "no servable item" outcome. */
 export const PLACEMENT_NO_ITEM_ACTION = 'experimental:assessment_placement_no_item';
@@ -211,6 +212,27 @@ export async function runPlacementAdvanceTx(
       release,
     };
   });
+}
+
+/** Advance commits before the independent supply snapshot; both commands share this projection. */
+export async function runPlacementAdvance(
+  db: Db,
+  sessionId: string,
+  options: PlacementAdvanceOptions = {},
+) {
+  const { selection, release } = await runPlacementAdvanceTx(db, sessionId, options);
+  const starterSupply = await db.transaction((tx) => readPlacementStarterOutcomes(tx, sessionId), {
+    isolationLevel: 'repeatable read',
+    accessMode: 'read only',
+  });
+  const selectionBody = selection.done
+    ? { ...selection, starterSupply }
+    : {
+        ...selection,
+        starterSupply,
+        ...noItemField(selection.question === null ? placementNoItem(starterSupply) : null),
+      };
+  return { selection: selectionBody, release };
 }
 
 async function readGoalSubjectId(tx: Tx, goalId: string): Promise<string | null> {

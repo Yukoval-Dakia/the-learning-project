@@ -1,0 +1,21 @@
+/* Section heading (YUK-1473). Loaded by SectionHead only. */
+[data-ui-next] {
+  & .un-section-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+    margin-bottom: var(--un-sp-3);
+  }
+
+  & .un-section-title {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .un-section-aside {
+    margin-left: auto;
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+  }
+}

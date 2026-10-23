@@ -8,6 +8,7 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
+import { type MasteryDecayBucket, masteryDecayBucket } from '@/core/mastery-freshness';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
@@ -35,7 +36,6 @@ import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profil
 const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_ATOMIC_TYPE = 'note_atomic';
 const TIMELINE_LIMIT = 30;
-export type MasteryDecayBucket = 'untrained' | 'fresh' | 'mild' | 'stale' | 'unknown';
 
 export interface NodePagePrimaryAtomic {
   id: string;
@@ -412,19 +412,6 @@ export async function loadKnowledgeNodePage(
     backlinks_by_type: groupBacklinksByArtifactType(backlinks),
     timeline,
   };
-}
-
-export function masteryDecayBucket(
-  evidenceCount: number,
-  lastEvidenceAt: Date | null,
-  now = new Date(),
-): MasteryDecayBucket {
-  if (evidenceCount <= 0) return 'untrained';
-  if (!lastEvidenceAt) return 'unknown';
-  const ageDays = Math.max(0, Math.floor((now.getTime() - lastEvidenceAt.getTime()) / 86_400_000));
-  if (ageDays >= 30) return 'stale';
-  if (ageDays >= 7) return 'mild';
-  return 'fresh';
 }
 
 // Archived and invisible ids are omitted so their chips can be dropped.
