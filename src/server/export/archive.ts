@@ -717,6 +717,19 @@ export async function restoreFromArchive({
     };
   }
 
+  // Preserve existing malformed-table/row/column diagnostics before this new
+  // completeness check. Missing creation identity must still reject before any
+  // database or memory wipe, even for an exact-version archive.
+  if (!Array.isArray(rawData.ingestion_creation_receipt)) {
+    return {
+      status: 400,
+      body: {
+        error: 'invalid_data',
+        message: 'ingestion_creation_receipt must be present as an array; DB was NOT wiped.',
+      },
+    };
+  }
+
   const stats: Record<string, { deleted: number; inserted: number }> = {};
 
   // A strict new epoch must exceed this process's published epoch, or its hydrate guard

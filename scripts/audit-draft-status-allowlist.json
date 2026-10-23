@@ -8,7 +8,7 @@
       "expected_by": "2027-06-30"
     }
   },
-  "src/capabilities/ingestion/api/mistakes.ts": {
+  "src/capabilities/ingestion/server/create-manual-mistake.ts": {
     "reason": "Mistake-recorded questions are active pool items (the user got them wrong; they belong in review) — NULL≡active is correct.",
     "resolves_when": {
       "kind": "manual",

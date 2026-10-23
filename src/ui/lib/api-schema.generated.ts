@@ -14161,7 +14161,9 @@ export interface operations {
     createLegacyIngestionSession: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14186,21 +14188,13 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
-                            ended_at?: number | null;
-                            entrypoint: string | null;
+                            /** @enum {string} */
+                            entrypoint: "vision_single" | "vision_paper" | "docx";
                             id: string;
-                            item_count?: number;
-                            /** @enum {string|null} */
-                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
-                            source_document_id?: string | null;
-                            started_at?: number;
-                            status: string;
-                            title?: string | null;
-                            /** @enum {string|null} */
-                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
-                        } & {
-                            [key: string]: unknown;
+                            source_document_id: string;
+                            /** @enum {string} */
+                            status: "uploaded";
                         };
                     };
                 };
@@ -14254,10 +14248,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "idempotency_conflict";
+                        /** @enum {string} */
+                        message: "Idempotency-Key was used with a different creation input";
                     };
                 };
             };
@@ -14296,10 +14290,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "internal_error";
+                        /** @enum {string} */
+                        message: "Internal Server Error";
+                    } | {
+                        details: {
+                            session_id: string;
+                            source_document_id: string;
+                        };
+                        /** @enum {string} */
+                        error: "ingestion_source_package_failed";
+                        /** @enum {string} */
+                        message: "Source package materialization failed";
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        error: "creation_receipt_unavailable";
+                        /** @enum {string} */
+                        message: "Creation receipt unavailable; retry with the same key and original input";
                     };
                 };
             };
@@ -14642,7 +14659,9 @@ export interface operations {
     createIngestionSession: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14667,21 +14686,13 @@ export interface operations {
                 content: {
                     "application/json": {
                         session: {
-                            ended_at?: number | null;
-                            entrypoint: string | null;
+                            /** @enum {string} */
+                            entrypoint: "vision_single" | "vision_paper" | "docx";
                             id: string;
-                            item_count?: number;
-                            /** @enum {string|null} */
-                            path?: "agent" | "extract" | null;
                             source_asset_ids: string[];
-                            source_document_id?: string | null;
-                            started_at?: number;
-                            status: string;
-                            title?: string | null;
-                            /** @enum {string|null} */
-                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
-                        } & {
-                            [key: string]: unknown;
+                            source_document_id: string;
+                            /** @enum {string} */
+                            status: "uploaded";
                         };
                     };
                 };
@@ -14735,10 +14746,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "idempotency_conflict";
+                        /** @enum {string} */
+                        message: "Idempotency-Key was used with a different creation input";
                     };
                 };
             };
@@ -14777,10 +14788,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "internal_error";
+                        /** @enum {string} */
+                        message: "Internal Server Error";
+                    } | {
+                        details: {
+                            session_id: string;
+                            source_document_id: string;
+                        };
+                        /** @enum {string} */
+                        error: "ingestion_source_package_failed";
+                        /** @enum {string} */
+                        message: "Source package materialization failed";
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        error: "creation_receipt_unavailable";
+                        /** @enum {string} */
+                        message: "Creation receipt unavailable; retry with the same key and original input";
                     };
                 };
             };
@@ -21217,7 +21251,9 @@ export interface operations {
     createMistake: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -21304,10 +21340,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "idempotency_conflict";
+                        /** @enum {string} */
+                        message: "Idempotency-Key was used with a different creation input";
                     };
                 };
             };
@@ -21346,10 +21382,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        error: string;
-                        message?: string;
-                    } & {
-                        [key: string]: unknown;
+                        /** @enum {string} */
+                        error: "internal_error";
+                        /** @enum {string} */
+                        message: "Internal Server Error";
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        error: "creation_receipt_unavailable";
+                        /** @enum {string} */
+                        message: "Creation receipt unavailable; retry with the same key and original input";
                     };
                 };
             };

@@ -2489,6 +2489,32 @@ export const learning_session = pgTable('learning_session', {
   version: integer('version').notNull().default(0),
 });
 
+// Long-lived creation identity: INSERT-only, independent of resource deletion.
+export const ingestion_creation_receipt = pgTable(
+  'ingestion_creation_receipt',
+  {
+    actor_ref: text('actor_ref').notNull(),
+    operation_scope: text('operation_scope', {
+      enum: ['ingestion_session.create.v1', 'manual_mistake.create.v1'],
+    }).notNull(),
+    idempotency_key: text('idempotency_key').notNull(),
+    input_version: integer('input_version').notNull(),
+    input_digest: text('input_digest').notNull(),
+    response_status: integer('response_status').notNull(),
+    response_body: jsonb('response_body').$type<unknown>().notNull(),
+    response_location: text('response_location').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.actor_ref, table.operation_scope, table.idempotency_key] }),
+    check('ingestion_creation_receipt_actor_check', sql`${table.actor_ref} = 'self'`),
+    check(
+      'ingestion_creation_receipt_scope_check',
+      sql`${table.operation_scope} IN ('ingestion_session.create.v1', 'manual_mistake.create.v1')`,
+    ),
+  ],
+);
+
 export const event = pgTable(
   'event',
   {
