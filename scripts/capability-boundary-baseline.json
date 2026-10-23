@@ -2576,15 +2576,12 @@
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
-      "date": "2026-10-23",
       "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
       "symbol": "createPracticePaperSubmission",
       "targetModule": "src/capabilities/practice/server/paper-submission-operation.ts",
       "targetSymbol": "createPracticePaperSubmission",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/paper-submit-operation.ts",
@@ -2592,19 +2589,19 @@
         }
       ],
       "evidence": "The authenticated host imports createPracticePaperSubmission at AST and path line 17 and calls it at line 19. Context imports are type-only; canonical and legacy HTTP adapters consume the same internal operation without becoming public runtime consumers.",
-      "rationale": "Practice owns the complete canonical schema, paper/session identity mapping, original JSON normalization, legacy schema, paper submission invocation and visible/buffered result projection. HTTP and Start share this complete operation; buffered results do not expose grading fields. Original HTTP status, Location, deprecation and error transport remain at HTTP. The host retains auth-first loading and the 90-second ALS scope, while original stateful paid, locking, receipt and partial-completion protocols remain unchanged; no runtime acceptance or full HTTP protocol equivalence is claimed."
+      "rationale": "Practice owns the complete canonical schema, paper/session identity mapping, original JSON normalization, legacy schema, paper submission invocation and visible/buffered result projection. HTTP and Start share this complete operation; buffered results do not expose grading fields. Original HTTP status, Location, deprecation and error transport remain at HTTP. The host retains auth-first loading and the 90-second ALS scope, while original stateful paid, locking, receipt and partial-completion protocols remain unchanged; no runtime acceptance or full HTTP protocol equivalence is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
-      "date": "2026-10-23",
       "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
       "symbol": "buildPaperSubmissionBody",
       "targetModule": "src/capabilities/practice/ui/practice-api.ts",
       "targetSymbol": "buildPaperSubmissionBody",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/paper-submit-client.ts",
@@ -2612,7 +2609,18 @@
         }
       ],
       "evidence": "The mixed import starts at AST and path line 1; buildPaperSubmissionBody is called at line 14. PracticeClient is type-only. HTTP and Start invoke the unchanged same wire builder.",
-      "rationale": "Practice owns one paper submission body mapping: assessment, paper id, question, part and answer, nonempty images, defined latency and reasoning, and numeric confidence. Sharing the original builder prevents a second field-policy copy while retaining the existing UI loop, parameter construction and recovery behavior."
+      "rationale": "Practice owns one paper submission body mapping: assessment, paper id, question, part and answer, nonempty images, defined latency and reasoning, and numeric confidence. Sharing the original builder prevents a second field-policy copy while retaining the existing UI loop, parameter construction and recovery behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5051,7 +5059,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 316,
+      "total": 314,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5112,7 +5120,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 2,
         "practice -> http": 3,
-        "practice -> mastery": 5,
+        "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> projections": 1,
         "practice -> proposals": 5,

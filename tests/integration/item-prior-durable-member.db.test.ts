@@ -7,6 +7,7 @@ import { Client } from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { setFixedAnchor } from '@/capabilities/practice/server/fixed-anchor';
 import {
   type ItemPriorPreparedWork,
   type ItemPriorStagedItem,
@@ -52,7 +53,6 @@ import {
   runItemPriorDurableMember,
   runItemPriorDurableMemberExecution,
 } from '@/server/durable/item-prior-family';
-import { setFixedAnchor } from '@/server/mastery/fixed-anchor';
 import { resetDb, testDb } from '../helpers/db';
 
 const db = testDb();

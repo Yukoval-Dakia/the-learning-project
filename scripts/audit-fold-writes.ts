@@ -355,7 +355,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/fixed-anchor.ts',
+    file: 'src/capabilities/practice/server/fixed-anchor.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',

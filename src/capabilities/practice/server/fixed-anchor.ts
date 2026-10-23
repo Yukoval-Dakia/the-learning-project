@@ -15,9 +15,9 @@
 // （recalibration.ts:90）——非 NULL 锚自动被优先读，**无需任何读路径改动**。在线 θ̂ Elo
 // **永不回写 b**（G4），本写路径也绝不在 attempt 路径上跑（owner 录入面专用）。
 //
-// ─── 单写者契约（tests/integration/step9-invariant-audit.test.ts）────────────────────
-// item_calibration 的 db.insert/update **只允许出现在 src/server/mastery/**。本模块落在
-// 这里，故 API route handler 只 CALL setFixedAnchor，绝不直接 db.insert(item_calibration)
+// ─── 固定锚写入归属（scripts/audit-fold-writes.ts sanctioned writer）────────────────
+// 本模块拥有 Practice 固定锚登记/修订，是 fold 政策中的 sanctioned off-path writer。
+// API route handler 只 CALL setFixedAnchors，绝不直接 db.insert(item_calibration)
 // （镜像 submit.ts 只 CALL updateThetaForAttempt 的纪律）。
 //
 // ─── upsert 而非 write-once（与 applyItemPrior 的对照）─────────────────────────────────
@@ -148,7 +148,7 @@ export async function setFixedAnchor(db: DbLike, input: FixedAnchorInput): Promi
  * 一次提交「这 5-10 道锚题」的**语义原子性**——锚题集合是给难度尺度定共同原点+单位的整体
  * （§4.1 缓解 1），半套锚比无锚更坏（尺度被一半 owner 真值 + 一半 LLM offset 污染）。
  *
- * 接收 `Db`（非 DbLike）因为只有 `Db` 暴露 `.transaction`；唯一调用方（calibration-anchors
+ * 接收 `Db`（非 DbLike）因为只有 `Db` 暴露 `.transaction`；唯一生产调用方（calibration-anchors
  * route）传 db 单例。单道 `setFixedAnchor` 仍收 `DbLike`，故 standalone + 在本 tx 内（收 tx）
  * 两种调用都成立（镜像 verify-and-promote.ts:180 的 db.transaction(tx => fn(tx)) 纪律）。
  * Returns the written rows in input order.
