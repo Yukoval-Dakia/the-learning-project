@@ -2485,6 +2485,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-bdb823e1-416a-46e3-a2a4-52785525cde9",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "getPaperDetail",
+      "targetModule": "src/capabilities/practice/server/paper-detail.ts",
+      "targetSymbol": "getPaperDetail",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-detail-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports getPaperDetail at await-import AST/path line 11 and calls it at line 13. Context references are type-only; the HTTP paper-detail route directly consumes the internal owner, and PfRetro remains unchanged.",
+      "rationale": "Practice retains the complete artifact/section, latest review session, native binding and frozen/legacy aggregation, including faces, drafts, submissions, verdicts, feedback visibility and session summary. Start calls the same complete reader, maps its nullable result to the existing 404, and preserves full JSON and domain errors without copying SQL, disclosure rules or session binding. This is a stable host contract, not a compatibility shim or another state owner.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-88191dba-45c5-4cef-a8ec-304a1cb47e72",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
@@ -4308,6 +4328,15 @@
       "to": 1410,
       "issue": "YUK-1358",
       "responsibilityReason": "Existing Practice submission and recovery responsibilities are unchanged. The eight net lines only add the typed reader parameter and queryFn to questionDetailQuery, remove the direct getQuestionFull import, add the reader to the existing client destructuring with formatter expansion, and inject it into the existing useQuery. No business rule, Effect or recovery branch is added; no line compression or helper split is used to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/practice/ui/PfPaper.tsx",
+      "date": "2026-10-23",
+      "baseBlob": "c501a7cdc716b26c0a41054297dbaf60ad1b70dc",
+      "from": 2231,
+      "to": 2233,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Existing paper display, stale-draft conflict recovery and pre-submit reconciliation responsibilities are unchanged. The two net lines only destructure getPaperDetail from the existing PracticeClient in the already-live PfPaper and PaperVisit component scopes; replacing the direct named import with the client hook import has zero net lines. Reversing those two scope bindings and the import swap restores the complete base file byte-for-byte. No business rule, Effect, recovery branch or dependency-array change is added; unrelated lines are not compressed or helpers split to evade the size ratchet."
     }
   ],
   "compatShims": [
