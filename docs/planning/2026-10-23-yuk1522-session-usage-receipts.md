@@ -65,7 +65,7 @@ manifest/schema/migration、UI/useEffect 或测试。台账只追加真实迁移
 
 本片唯一 writer，不委派、不启动 R1/R2。按授权禁止新增/修改/运行 tests、fixtures、断言、probe、driver；
 DB/SQL、HTTP 业务、browser/Chromium、provider/paid、Docker、部署和运行验收均 NOT_RUN。
-源码与 bundle 检查成功不代表生产行为通过；父需按真实 diff 接续独立审查和实际验收。
+源码与 bundle 检查成功不代表生产行为通过；父接真实 diff 核对和最终组合，本轮不追加独立审查。
 
 ## 本地检查证据
 
@@ -94,3 +94,22 @@ DB/SQL、HTTP 业务、browser/Chromium、provider/paid、Docker、部署和运�
 Linear capture 已按 `YUK-1522` 和 `usage receipt` 去重；本片为原票既定范围，缺证与后续真实验收
 仍归原票，没有新增已验证的独立 actionable follow-up，不另开重复票。draft PR 交父继续，
 不观察/等待 CI，不发起 review，不 resolve/merge/deploy。
+
+## 父接线核对与实际 main 组合
+
+父读取原固定七文件差量、原可信 receipt writer 及现役 record-api/RecordingSheet consumer，
+核对 session/document/writer 归属、所有记录读取、event 主键单次计数和 unavailable 持续缺账分支；
+没有修改产品语义或新开审查。原日志和 `.exit` 已实际读取，所有命令均0。
+
+实际 main 前进至 `8f76ea89c5c81ea18c7de14a02a2828ee3b47006`（#2057）；
+相对原 base 仅卷复盘 `PfRetro.tsx` 的4行 UI 改动，与本片无交集。父正常 merge，
+上游完整保留，本片六个非文档文件与作者固定 `1142a8ad` 全同。
+新组合经同一 heavy limiter 串行完成 typecheck、lint、build、capability-boundaries、
+architecture-deepening，五门均0；lint165 warnings，边界318/0/39，新pass-through0。
+日志 `.remember/yuk1522-session-usage-receipts/parent-main8f76/`。
+API三门沿原固定源码结果，没有为未变合同重复执行生成器/检查或安装。
+
+新 exact-head CI 与本地门分开，原1142 CI不外推到新组合。原Circle镜像architecture/policy
+红状态保留，未重跑、未据状态归因；不写成全绿。本轮不追加R1/R2，不watch或合PR。
+测试代码/本机测试、DB/SQL/业务HTTP/browser/provider/paid/runtime/部署均NOT_RUN；
+原2037/1969测试TEXT与0133/0134安排未动，YUK1522继续In Progress。
