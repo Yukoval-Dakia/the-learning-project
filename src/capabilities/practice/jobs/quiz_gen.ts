@@ -78,7 +78,7 @@ import {
 import {
   dispatchPendingVerifyIntents,
   writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
+} from '../server/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { createQuestionPart } from '@/server/questions/parts';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';

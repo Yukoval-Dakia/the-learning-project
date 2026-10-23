@@ -1,5 +1,15 @@
 // Stable server contract for consumers outside the practice capability.
 
+export {
+  type EnqueueVerifyFn,
+  VERIFY_DISPATCH_COMPLETE_ACTION,
+  VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
+  dispatchPendingVerifyIntents,
+  recoverOrphanVerifyDispatches,
+  writeVerifyDispatchIntent,
+} from './server/verify-dispatch-outbox';
+
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';

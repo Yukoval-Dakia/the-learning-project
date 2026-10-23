@@ -2,18 +2,16 @@ import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import type { PlacementVerificationAuthority } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 import { writeEvent, writeEvents } from '@/kernel/events';
-import { fromPgBossDrizzleTx } from './pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import type { PlacementVerificationAuthority } from './question-supply/placement-starter-attempts';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';
 export const VERIFY_DISPATCH_COMPLETE_ACTION = 'experimental:verify_dispatch';
-export const VERIFY_DISPATCH_RECOVERY_QUEUE = 'verify_dispatch_recover';
 export const VERIFY_DISPATCH_VERSION = 1 as const;
 
 export const verifyKindSchema = z.enum(['quiz_verify', 'source_verify']);
@@ -513,22 +511,4 @@ export async function recoverOrphanVerifyDispatches(
     now,
   });
   return { ...dispatched, synthesized: synthesizedIds.length };
-}
-
-export function buildVerifyDispatchRecoveryHandler(
-  db: Db,
-  enqueue: EnqueueVerifyFn,
-): (jobs: Job<object>[]) => Promise<void> {
-  return async () => {
-    await recoverOrphanVerifyDispatches(db, { enqueue });
-  };
-}
-
-/**
- * start-worker calls this after the verifier queues exist. The consumer is mounted earlier.
- * A send before those queues exist throws, and the drain waits for the nightly cron.
- * No send dedupe. Completion makes a repeat pass a no-op, and skipping a later boot would wait for that cron.
- */
-export async function sendVerifyDispatchStartupRecovery(boss: PgBoss): Promise<void> {
-  await boss.send(VERIFY_DISPATCH_RECOVERY_QUEUE, { trigger: 'startup' });
 }
