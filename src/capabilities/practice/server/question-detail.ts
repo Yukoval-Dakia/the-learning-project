@@ -15,7 +15,10 @@ import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/s
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
-import { type QuestionTimelineEntry, getQuestionTimeline } from '@/kernel/read-models/question-activity';
+import {
+  type QuestionTimelineEntry,
+  getQuestionTimeline,
+} from '@/kernel/read-models/question-activity';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
 import {
   batchResolveSubjectDisplayIds,
