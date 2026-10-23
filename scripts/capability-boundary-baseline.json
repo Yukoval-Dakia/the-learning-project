@@ -3579,6 +3579,46 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the existing acceptance, conflict, admission and dispatch error codes/status/details; HTTP keeps presentation and errorResponse.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Read the existing session derivation policy at the same agent dispatch point before authorization; no policy or paid permission changes.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["getStartedBoss"],
+      "issue": "YUK-1570",
+      "owns": "Acquire the existing lazy-started boss at the original review/nonreview dispatch points, preserving singleton send, null deduplication and transaction lifetime behavior.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/server/session/index.ts",
+      "kind": "value",
+      "symbols": ["Ingestion"],
+      "issue": "YUK-1570",
+      "owns": "Consume existing importable statuses and extraction/agent enqueue operations with the original authorization callback, transaction, identity and recovery ordering.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/agent/history.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
