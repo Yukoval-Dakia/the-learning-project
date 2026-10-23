@@ -45,10 +45,6 @@ import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
 // capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
 // 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
 // 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
@@ -65,6 +61,7 @@ import {
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
+import { dispatchPendingVerifyIntents, writeVerifyDispatchIntent } from '../verify-dispatch-outbox';
 
 export type {
   EditQuestionInputT,

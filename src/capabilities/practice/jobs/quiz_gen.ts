@@ -75,10 +75,6 @@ import {
   piDomainMount,
   piRemoteMcpMount,
 } from '@/server/ai/tools/pi-tools';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { createQuestionPart } from '@/server/questions/parts';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
@@ -139,6 +135,10 @@ import {
   synthesizeMaterialSourceRefs,
 } from '../server/quiz/quiz-gen-material';
 import { QuizGenOutputFailure, parseOutput } from '../server/quiz/quiz-gen-output';
+import {
+  dispatchPendingVerifyIntents,
+  writeVerifyDispatchIntent,
+} from '../server/verify-dispatch-outbox';
 import {
   QUIZ_PLAN_MAX_ATTEMPTS,
   checkPlanKnowledgeIds,
