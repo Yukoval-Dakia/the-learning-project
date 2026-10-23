@@ -20,6 +20,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
+// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
+// the collector/writer lives with the ai server modules).
+import type { ProviderTransportEvidence } from '@/ai/task-result';
 // YUK-1044 — 统一评估契约真相源表的 jsonb 列形状（type-only，运行时零依赖：
 // schema.ts 保持 zod-free）。真相源：docs/planning/2026-09-24-question-assessment-
 // implementation-grounding.md §3/§11 + src/core/schema/assessment（YUK-1046 契约基座）。
@@ -58,9 +61,6 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
-// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
-// the collector/writer lives with the ai server modules).
-import type { ProviderTransportEvidence } from '../server/ai/provider-transport';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';

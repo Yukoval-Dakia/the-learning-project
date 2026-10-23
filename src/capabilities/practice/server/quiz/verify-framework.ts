@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
+import type { TaskTextResult } from '@/ai/task-result';
 import {
   type JudgeAnswerParams,
   runSemanticJudge,
@@ -22,17 +23,11 @@ import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/sch
 import { SolutionGenerateOutput, type SolutionGenerateOutputT } from '@/core/schema/solution';
 import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  sumAllKnownCostUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import type { Provider } from '@/server/ai/providers';
 import type { SubjectProfile } from '@/subjects/profile';
 
-// admission lane 经本模块（既有 server/ai 边持有者）复导出
-// Provider/TaskTextResult，不新增 capability→ai 依赖边。
-export type { TaskTextResult } from '@/server/ai/provenance';
+// admission lane 经本模块复导出 Provider；TaskTextResult 直接取共享结果契约。
 export type { Provider } from '@/server/ai/providers';
 
 import {

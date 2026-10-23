@@ -529,12 +529,12 @@
       "direction": "decrease"
     },
     {
-      "direction": "decrease",
       "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-21",
       "from": 13,
-      "to": 12
+      "to": 12,
+      "direction": "decrease"
     },
     {
       "debt": "capabilityToServer",
@@ -2271,6 +2271,38 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-aeb95ce1-cca4-4ca6-a726-2c5a8cf2aaf1",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-23",
+      "from": 20,
+      "to": 19,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-23",
+      "from": 15,
+      "to": 14,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> ai",
+      "date": "2026-10-23",
+      "from": 8,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-23",
+      "from": 48,
+      "to": 46,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3507,6 +3539,26 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-refine-apply.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1570",
+      "owns": "Keep the existing USD-to-micro-USD conversion at the same refinement publication site while removing the empty Notes provenance re-export.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1570",
+      "owns": "Keep the existing USD-to-micro-USD conversion at the same generation publication site while consuming result facts from the shared AI contract.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/agent/history.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
@@ -3768,6 +3820,33 @@
       "to": 1034,
       "issue": "YUK-1570",
       "responsibilityReason": "The approved complete draft presentation validation/save operation absorbs the existing v2/legacy validation and legacy contract derivation from compose. Removing the optional validator intentionally closes the bypass/custom-replacement contract while retaining replay-first locking, CAS, effective save, legacy overload, issue ordering and the existing save/event/notification body. The 189 added lines belong to the existing edit owner; no new module or unrelated edit responsibility is introduced. Decision: https://linear.app/yukoval-studios/issue/YUK-1570#comment-aadbee63-9db3-4317-ba7e-83630102a4de."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "date": "2026-10-23",
+      "baseBlob": "03ae3563692de6ad190bb69a0b99c5f208a16d80",
+      "from": 1940,
+      "to": 1941,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-10-23",
+      "baseBlob": "da8f8a3314517dedc7974586e6fb9b7b165c4cec",
+      "from": 1527,
+      "to": 1528,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/server/admission/solve.ts",
+      "date": "2026-10-23",
+      "baseBlob": "e5d18e8d1aa93354ebadbbb29895b538e32a5c87",
+      "from": 1045,
+      "to": 1046,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
     }
   ],
   "compatShims": [
@@ -4335,9 +4414,9 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 327,
+      "total": 321,
       "byOwnerPair": {
-        "agency -> ai": 20,
+        "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
@@ -4359,7 +4438,7 @@
         "copilot -> session": 6,
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
-        "ingestion -> ai": 15,
+        "ingestion -> ai": 14,
         "ingestion -> boss": 6,
         "ingestion -> events": 5,
         "ingestion -> projections": 3,
@@ -4378,7 +4457,7 @@
         "knowledge -> memory": 2,
         "knowledge -> projections": 5,
         "knowledge -> proposals": 3,
-        "notes -> ai": 8,
+        "notes -> ai": 6,
         "notes -> artifacts": 2,
         "notes -> boss": 2,
         "notes -> proposals": 1,
@@ -4388,7 +4467,7 @@
         "observability -> export": 2,
         "observability -> r2": 2,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 48,
+        "practice -> ai": 46,
         "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,
