@@ -7,11 +7,13 @@ import {
 } from '@/capabilities/knowledge/ui-public';
 import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
 import { startKnowledgeNodePageClient } from '../knowledge-node-client';
+import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const knowledgeClient: KnowledgeClient = {
   getMisconceptions: startKnowledgeMisconceptionsClient,
   getNodePage: startKnowledgeNodePageClient,
+  vetoMisconception: (id) => startWorkbenchClient.decideProposal(id, 'dismiss'),
 };
 
 const Page = lazy(() =>

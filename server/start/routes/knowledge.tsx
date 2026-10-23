@@ -17,6 +17,7 @@ import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 const knowledgeClient: KnowledgeClient = {
   getMisconceptions: startKnowledgeMisconceptionsClient,
   getNodePage: startKnowledgeNodePageClient,
+  vetoMisconception: (id) => startWorkbenchClient.decideProposal(id, 'dismiss'),
 };
 
 const Page = lazy(() => loadKnowledgePage().then((defaultPage) => ({ default: defaultPage })));
