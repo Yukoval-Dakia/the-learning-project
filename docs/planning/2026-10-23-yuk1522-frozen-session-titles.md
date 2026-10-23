@@ -96,3 +96,26 @@ baseline 仅追加该机器真实报项的精确 file/module/symbol/issue/owns�
 模型/paid、runtime、部署、配置或运维操作。首轮独立审查与 exact-head CI 交父线程。
 Linear 原票和全局状态由父线程维护；本片没有发现需另开票的独立 actionable follow-up，
 未创建重复票。未知标题与运行验证缺口已是原票范围，不另算完成。未 watch/poll/merge/resolve PR。
+
+## 父侧正常整合与静态验证
+
+父已读取完整 11 文件差量和原始日志。实际 main 前进至
+`6ab35c4b372797b5426f6f3f670dd5932ba10fca`（含 DOCX 完整操作与 Practice Start 交付），
+正常 merge 为 `c1107623609459f94ef960407f54539f8cc6dc02`。
+唯一冲突为 baseline 追加位置：完整保留 main 历史及 DOCX 登记后，追加本片原 ApiError 边；
+不放宽 audit。Git 原生对照确认本片产品和生成物与原 `6a7abffc8` 全同。
+
+组合后父以 external heavy limiter 串行运行 typecheck、lint、build、
+capability-boundaries 和 architecture-deepening，五项均 exit 0；lint 164 warnings。
+原始日志位于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-frozen-titles-20261023/parent-c110-*.log`。
+两架构门固定比较上述实际 main，依赖总数 327/0/39，新增 kernel 边 1，新增 pass-through 0。
+
+原 `6a7abffc8` 的 Circle architecture job 11708 实际 audit 失败，原日志保留为
+`pr2045-6a7-circle-architecture.log`（同目录）：其原始 head 未包含新 main 的 DOCX 迁移和
+追加记录，报 append-only 及对应边登记冲突；没有重跑或称原结果通过。
+父正常整合后只认可新组合的真实门与后续 exact-head CI，不外推旧绿。
+
+本片唯一独立 R1 已固定 `c11076236` 启动，尚无结论；此后仅文档记录不改变受审产品。
+测试、DB、产品 HTTP、provider、browser、paid、runtime 和部署仍为 NOT_RUN。
+2037、1969 的待批测试与迁移顺序均保持原样。
