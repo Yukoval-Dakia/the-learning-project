@@ -3,12 +3,20 @@ import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { type SessionAskRow, readSessionAsks } from './asks';
-import { readAgentBudget, writeAgentBudgetPath } from './budget-state';
 import {
+  AGENT_BUDGET_UNAVAILABLE_CODE,
+  parseAgentBudget,
+  readAgentBudget,
+  writeAgentBudgetPath,
+} from './budget-state';
+import {
+  AGENT_ITEM_STATE,
   AGENT_RUN_SEGMENT,
   AgentRunSegmentPayload,
   INGESTION_AGENT_ERROR,
+  INGESTION_AGENT_ITEM,
   INGESTION_AGENT_RUN_TABLE,
   IngestionAgentErrorCode,
   IngestionAgentErrorPayload,
@@ -18,7 +26,7 @@ import {
   IngestionAskAnswer,
   IngestionAskOption,
 } from './contract';
-import { readAgentRunLedger } from './ledger';
+import { foldAgentItemEvents, readAgentRunLedger } from './ledger';
 
 // Durable run-history owner. job_events carry the live timeline but are pruned at
 // ~30 days; this module checkpoints the run's final facts into the session's
@@ -217,6 +225,88 @@ function mergeItems(
   for (const item of persisted) items.set(item.item_id, item);
   for (const item of live) items.set(item.item_id, { ...items.get(item.item_id), ...item });
   return [...items.values()];
+}
+
+/**
+ * Narrow, batched CURRENT-run item projection. The caller supplies a single
+ * REPEATABLE READ / READ ONLY transaction for owner, snapshot and event reads.
+ * No identity/floor means no attributable live window, even if old rows survive.
+ * A rejected snapshot never supplies items; valid live rows remain independent
+ * evidence. This projection makes no claim that the full history is complete.
+ */
+export async function readAgentRunItems(
+  tx: Tx,
+  sessionIds: readonly string[],
+): Promise<Map<string, AgentHistoryItemT[]>> {
+  const items = new Map<string, AgentHistoryItemT[]>();
+  if (sessionIds.length === 0) return items;
+  const sessions = await tx.execute<{ id: string; agent_budget: unknown }>(sql`
+    SELECT id, agent_budget FROM learning_session
+    WHERE type = 'ingestion' AND id IN (${sql.join([...sessionIds], sql`, `)})
+  `);
+  const runs: { id: string; floor: number; snapshot: AgentRunHistorySnapshotT | null }[] = [];
+  for (const session of sessions) {
+    let budget: ReturnType<typeof parseAgentBudget>;
+    try {
+      budget = parseAgentBudget(session.agent_budget);
+    } catch (error) {
+      // Malformed ownership is unknown for this read, never permission to read
+      // the entire event window at floor zero. Independent block text can win.
+      if (error instanceof ApiError && error.code === AGENT_BUDGET_UNAVAILABLE_CODE) continue;
+      throw error;
+    }
+    const owner = budget?.execution_owner;
+    if (!owner?.run_ref || owner.event_floor == null || owner.event_floor < 0) continue;
+    const parsed = AgentRunHistorySnapshot.safeParse(budget?.history);
+    const snapshot = parsed.success ? parsed.data : null;
+    runs.push({
+      id: session.id,
+      floor: owner.event_floor,
+      snapshot:
+        snapshot?.version === 2 && snapshotMatchesRun(snapshot, owner.run_ref, owner.event_floor)
+          ? snapshot
+          : null,
+    });
+  }
+  if (runs.length === 0) return items;
+
+  type ItemEvent = {
+    session_id: string;
+    business_table: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+    occurred_at: string | Date;
+  };
+  const rows = await tx.execute<ItemEvent>(sql`
+    SELECT e.business_id AS session_id, e.business_table, e.event_type, e.payload, e.occurred_at
+    FROM job_events e
+    JOIN (VALUES ${sql.join(
+      runs.map((run) => sql`(${run.id}::text, ${run.floor}::bigint)`),
+      sql`, `,
+    )}) AS runs(session_id, event_floor)
+      ON e.business_id = runs.session_id AND e.id > runs.event_floor
+    WHERE (e.business_table = ${SESSION_TABLE} AND e.event_type = ${INGESTION_AGENT_ITEM})
+       OR (e.business_table = ${INGESTION_AGENT_RUN_TABLE} AND e.event_type = ${AGENT_ITEM_STATE})
+    ORDER BY e.id ASC
+  `);
+  const events = new Map<string, { session: ItemEvent[]; run: ItemEvent[] }>();
+  for (const row of rows) {
+    const group = events.get(row.session_id) ?? { session: [], run: [] };
+    if (row.business_table === SESSION_TABLE) group.session.push(row);
+    else group.run.push(row);
+    events.set(row.session_id, group);
+  }
+  for (const run of runs) {
+    const group = events.get(run.id);
+    items.set(
+      run.id,
+      mergeItems(
+        run.snapshot?.items ?? [],
+        foldAgentItemEvents(group?.session ?? [], group?.run ?? []),
+      ),
+    );
+  }
+  return items;
 }
 
 function mergeAsks(persisted: AgentHistoryAskT[], live: AgentHistoryAskT[]): AgentHistoryAskT[] {

@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 
 import { parseDraftRef } from '@/core/question-draft-ref';
 import { db } from '@/db/client';
-import { learning_session, question, question_block, source_document } from '@/db/schema';
+import { learning_session, question, question_block } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { UNKNOWN_SERVING, readQuestionServing } from '@/kernel/read-models/question-serving';
 import {
@@ -11,6 +11,7 @@ import {
   hasAgentEvidence,
   readAgentRunHistory,
 } from '../server/agent/history';
+import { readSessionTitles } from '../server/session-titles';
 import type { IngestionHistoryItem, IngestionSessionHistoryResponse } from './contracts';
 
 /** Server-side cap for the wire preview; full bodies stay on their own routes. */
@@ -75,13 +76,13 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         ended_at: learning_session.ended_at,
         created_at: learning_session.created_at,
         updated_at: learning_session.updated_at,
-        doc_title: source_document.title,
       })
       .from(learning_session)
-      .leftJoin(source_document, eq(learning_session.source_document_id, source_document.id))
       .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'ingestion')))
       .limit(1);
     if (!session) throw new ApiError('not_found', 'ingestion session not found', 404);
+
+    const title = (await readSessionTitles(db, [sessionId])).get(sessionId);
 
     const agentEvidence = await hasAgentEvidence(db, sessionId);
 
@@ -420,8 +421,8 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         entrypoint: session.entrypoint,
         source_document_id: session.source_document_id,
         source_asset_ids: sourceAssetIds,
-        title: session.doc_title ?? null,
-        title_source: session.doc_title != null ? 'source_document' : null,
+        title: title?.title ?? null,
+        title_source: title?.title_source ?? null,
         started_at: session.started_at.toISOString(),
         ended_at: session.ended_at?.toISOString() ?? null,
         created_at: session.created_at.toISOString(),

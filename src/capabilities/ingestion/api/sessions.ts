@@ -4,14 +4,7 @@ import {
   materializeSourcePackage,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
-import {
-  event,
-  learning_session,
-  question,
-  question_block,
-  source_asset,
-  source_document,
-} from '@/db/schema';
+import { event, learning_session, question, question_block, source_asset } from '@/db/schema';
 import {
   ApiError,
   canonicalResourceResponse,
@@ -22,6 +15,7 @@ import {
 import { Ingestion } from '@/server/session';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import { agentEvidenceSql } from '../server/agent/history';
+import { readSessionTitles } from '../server/session-titles';
 import { CreateIngestionSessionBody } from './contracts';
 
 const DEFAULT_LIMIT = 20;
@@ -56,11 +50,9 @@ export async function GET(req: Request): Promise<Response> {
         started_at: learning_session.started_at,
         ended_at: learning_session.ended_at,
         created_at: learning_session.created_at,
-        doc_title: source_document.title,
         agent_lane: sql<boolean>`${agentEvidenceSql(learning_session.id)}`,
       })
       .from(learning_session)
-      .leftJoin(source_document, eq(learning_session.source_document_id, source_document.id))
       .where(
         and(
           eq(learning_session.type, 'ingestion'),
@@ -99,6 +91,8 @@ export async function GET(req: Request): Promise<Response> {
         collectionPayload([], { limit, next_cursor: null }, { rows: [], next_cursor: null }),
       );
     }
+
+    const titles = await readSessionTitles(db, sessionIds);
 
     // Blocks grouped by session: total and auto-enrolled counts.
     const blockAgg = await db
@@ -189,8 +183,8 @@ export async function GET(req: Request): Promise<Response> {
         entrypoint: s.entrypoint,
         status: s.status,
         path: s.agent_lane ? ('agent' as const) : ('extract' as const),
-        title: s.doc_title ?? null,
-        title_source: s.doc_title != null ? ('source_document' as const) : null,
+        title: titles.get(s.id)?.title ?? null,
+        title_source: titles.get(s.id)?.title_source ?? null,
         source_asset_ids: s.source_asset_ids,
         observation_count: Number(obsBySid.get(s.id) ?? 0),
         auto_enrolled_count: Number(agg?.enrolled ?? 0),

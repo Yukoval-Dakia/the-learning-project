@@ -14045,7 +14045,7 @@ export interface operations {
                             status: string;
                             title?: string | null;
                             /** @enum {string|null} */
-                            title_source?: "source_document" | null;
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -14198,7 +14198,7 @@ export interface operations {
                             status: string;
                             title?: string | null;
                             /** @enum {string|null} */
-                            title_source?: "source_document" | null;
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14526,7 +14526,7 @@ export interface operations {
                             status: string;
                             title?: string | null;
                             /** @enum {string|null} */
-                            title_source?: "source_document" | null;
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         })[];
@@ -14679,7 +14679,7 @@ export interface operations {
                             status: string;
                             title?: string | null;
                             /** @enum {string|null} */
-                            title_source?: "source_document" | null;
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -14817,7 +14817,7 @@ export interface operations {
                             status: string;
                             title?: string | null;
                             /** @enum {string|null} */
-                            title_source?: "source_document" | null;
+                            title_source?: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                         } & {
                             [key: string]: unknown;
                         };
@@ -15308,7 +15308,7 @@ export interface operations {
                             status: string;
                             title: string | null;
                             /** @enum {string|null} */
-                            title_source: "source_document" | null;
+                            title_source: "source_document" | "agent_item_preview" | "extracted_prompt_md" | "question_block_create" | null;
                             updated_at: string;
                             warnings: string[];
                         };
