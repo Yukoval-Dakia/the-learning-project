@@ -13,10 +13,7 @@ import {
   authorizeAgentRunStart,
   settleAgentRunBudget,
 } from './agent/budget';
-import {
-  AGENT_BUDGET_EXCEEDED_CODE,
-  AGENT_BUDGET_UNAVAILABLE_CODE,
-} from './agent/budget-state';
+import { AGENT_BUDGET_EXCEEDED_CODE, AGENT_BUDGET_UNAVAILABLE_CODE } from './agent/budget-state';
 import {
   type IngestionOperationResource,
   hasQueuedIngestionOperationEvent,
