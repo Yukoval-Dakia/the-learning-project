@@ -10,6 +10,8 @@ import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
   PlacementProfileResponse,
+  createPracticeHintRequest,
+  createPracticeSolveSession,
   getIssuanceState,
   getPracticeStream,
   previewReviewAdvice,
@@ -78,6 +80,13 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  createSolveSession: (
+    body: string,
+  ) => Promise<Awaited<ReturnType<typeof createPracticeSolveSession>>>;
+  createHintRequest: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof createPracticeHintRequest>>>;
   revealStudyReference: (
     issuanceId: string,
   ) => Promise<Awaited<ReturnType<typeof revealFrozenStudyReference>>>;

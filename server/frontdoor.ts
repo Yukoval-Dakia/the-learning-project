@@ -26,6 +26,7 @@ import { getStartPracticeStream } from './start/practice-stream-operation';
 import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
+import { createStartHintRequest, createStartSolveSession } from './start/solve-operation';
 import { revealStartStudyReference } from './start/study-reference-operation';
 import { createStartSubject } from './start/subject-create-operation';
 import { readStartSubjects } from './start/subject-reader';
@@ -88,6 +89,8 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
     revealStudyReference: revealStartStudyReference,
+    createSolveSession: createStartSolveSession,
+    createHintRequest: createStartHintRequest,
     createPracticeAppeal: createStartPracticeAppeal,
     previewReviewAdvice: previewStartReviewAdvice,
     submitPlacementAnswer: submitStartPlacementAnswer,
