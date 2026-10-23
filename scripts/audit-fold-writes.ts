@@ -333,24 +333,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/import-completion.ts',
+    file: 'src/kernel/records/question-block-creation.ts',
     marker: '.insert(question_block)',
     role: 'event-native-by-caller',
-    note: 'Import completion owns one transaction for create snapshots, import-link and ignore-sweep lifecycle events; extracted_prompt_md/ordinal remain explicit non-fold fields.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/docx-ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'DOCX session transaction emits create snapshots for inserted blocks; extraction text/ordinal are explicitly outside fold truth.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Extraction create/replacement writes emit full question_block_create snapshots on the caller transaction; extraction text/ordinal are non-fold fields.',
+    note: 'Captured OCR, DOCX, virtual/manual import and edit-draft creation pair actual RETURNING rows with complete create snapshots; rescue UPDATE pairs its after-row likewise. The supplied Tx keeps row/event (and edit-draft projection) atomic; a bare Db retains its existing non-atomic boundary. extracted_prompt_md/ordinal remain explicit non-fold fields.',
   },
   // ---- item_calibration (YUK-496 方案 A — anchor-only coverage, default OFF, no flip planned) ----
   {
