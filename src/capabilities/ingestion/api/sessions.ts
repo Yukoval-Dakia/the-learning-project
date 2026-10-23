@@ -1,8 +1,5 @@
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
-import {
-  markSessionPackageFailed,
-  materializeSourcePackage,
-} from '@/capabilities/ingestion/server/source-package';
+import { materializeSourcePackage } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { event, learning_session, question, question_block, source_asset } from '@/db/schema';
 import {
@@ -12,7 +9,7 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { Ingestion } from '@/server/session';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import { agentEvidenceSql } from '../server/agent/history';
 import { readSessionTitles } from '../server/session-titles';
@@ -301,7 +298,7 @@ export async function POST(req: Request): Promise<Response> {
       await materializeSourcePackage(db, sourceDocumentId);
     } catch (err) {
       // The session row exists, so mark it failed rather than orphaning it.
-      await markSessionPackageFailed(db, sessionId, err);
+      await Ingestion.markSessionPackageFailed(db, sessionId, err);
       throw err;
     }
 

@@ -20,7 +20,7 @@ import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admi
 // pulls providers/task-catalog/schema into its cone and breaks vitest module order.
 import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
-import { Ingestion } from '@/server/session';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,

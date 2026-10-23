@@ -11,15 +11,14 @@ import {
 import { redactIngestionText } from '@/capabilities/ingestion/server/privacy-guard';
 import {
   attachWordSourcePackage,
-  markSessionPackageFailed,
   persistPackageMedia,
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { getR2 } from '@/server/r2';
-import { Ingestion } from '@/server/session';
-import { initiateDocxTextUpload } from '@/server/session/docx-ingestion';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
+import { initiateDocxTextUpload } from './text-session-lifecycle';
 
 // Complete DOCX upload operation, private to the ingestion capability.
 export async function uploadDocx(input: {
@@ -84,7 +83,7 @@ export async function uploadDocx(input: {
       });
     } catch (err) {
       // The session row exists, so mark it failed rather than orphaning it.
-      await markSessionPackageFailed(db, sessionId, err);
+      await Ingestion.markSessionPackageFailed(db, sessionId, err);
       throw err;
     }
     const boss = await getStartedBoss();
@@ -157,7 +156,7 @@ export async function uploadDocx(input: {
     // Do not orphan the session. The text line already committed blocks and
     // reached extracted, so record a package failure on the document and still
     // answer 201; a 500 would invite a duplicate upload. Pre-output sessions fail.
-    const outcome = await markSessionPackageFailed(db, sessionId, err);
+    const outcome = await Ingestion.markSessionPackageFailed(db, sessionId, err);
     if (outcome !== 'kept_extracted') throw err;
   }
 

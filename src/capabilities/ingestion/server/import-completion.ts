@@ -26,7 +26,7 @@ import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-cr
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { Ingestion } from '@/server/session';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
 import { hasAgentEvidence } from './agent/history';

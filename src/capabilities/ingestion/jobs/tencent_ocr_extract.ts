@@ -62,7 +62,7 @@ import { learning_session, source_asset } from '@/db/schema';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import type { R2Client } from '@/server/r2';
-import { Ingestion } from '@/server/session';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 
 // ---------- helpers ----------
 

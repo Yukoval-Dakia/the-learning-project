@@ -4,15 +4,15 @@ import type { PgBoss } from 'pg-boss';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { learning_session, question_block } from '@/db/schema';
+import { learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { writeJobEvent } from '@/server/events/writer';
-import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
-import { assertFromState } from './guards';
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
+import { assertFromState } from '@/server/session/guards';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
 // single-owner ingestion-session module. Writes to `learning_session(type='ingestion')`
@@ -34,7 +34,7 @@ const OPERATION_DISPATCH_SINGLETON_SECONDS = 24 * 60 * 60;
 // business_table stays 'ingestion_session' for SSE replay continuity: existing
 // job_events rows already carry that label and renaming would need a migration.
 
-import { writeSessionEvent } from './events';
+import { writeSessionEvent } from './events/session-extract';
 
 // ---------- Load helpers ----------
 //
@@ -823,4 +823,62 @@ export async function initiateUpload(
 
     return { sessionId, sourceDocumentId };
   });
+}
+
+/**
+ * A package failure must not leave a session orphaned: pre-output sessions are
+ * marked failed, while sessions with extracted output are never downgraded and the
+ * error is recorded on document provenance instead.
+ */
+export async function markSessionPackageFailed(
+  db: Db,
+  sessionId: string,
+  err: unknown,
+): Promise<'kept_extracted' | 'marked_failed' | 'missing'> {
+  const msg = err instanceof Error ? err.message : String(err);
+  const [session] = await db
+    .select({
+      status: learning_session.status,
+      source_document_id: learning_session.source_document_id,
+    })
+    .from(learning_session)
+    .where(eq(learning_session.id, sessionId))
+    .limit(1);
+  if (!session) return 'missing';
+  // Extracted output must not be downgraded: record the attach failure on document
+  // provenance and still propagate the original error.
+  if (['extracted', 'partial', 'reviewed', 'imported'].includes(session.status)) {
+    if (session.source_document_id) {
+      try {
+        const [doc] = await db
+          .select({ provenance: source_document.provenance })
+          .from(source_document)
+          .where(eq(source_document.id, session.source_document_id))
+          .limit(1);
+        await db
+          .update(source_document)
+          .set({
+            provenance: {
+              ...((doc?.provenance as Record<string, unknown> | null) ?? {}),
+              source_package_attach_error: msg.slice(0, 500),
+            },
+          })
+          .where(eq(source_document.id, session.source_document_id));
+      } catch {
+        // Best-effort marker; the attach error still propagates.
+      }
+    }
+    return 'kept_extracted';
+  }
+  // No extracted output yet: mark failed so it is not orphaned. Materialization
+  // sits outside the session guard, so the route writes this transition.
+  await db
+    .update(learning_session)
+    .set({
+      status: 'failed',
+      error_message: `source_package: ${msg.slice(0, 500)}`,
+      updated_at: new Date(),
+    })
+    .where(eq(learning_session.id, sessionId));
+  return 'marked_failed';
 }
