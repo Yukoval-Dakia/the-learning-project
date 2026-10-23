@@ -19,3 +19,5 @@ export const loadQuestionPage = () =>
   import('./ui/library/QuestionPage').then((module) => module.default);
 export const loadWorksheetPrintPage = () =>
   import('./ui/worksheet/WorksheetPrintPage').then((module) => module.default);
+
+export { type LibraryClient, LibraryClientProvider } from './ui/library/library-client';

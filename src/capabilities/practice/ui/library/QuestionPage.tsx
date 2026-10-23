@@ -11,8 +11,8 @@ import { Card } from '@/ui-next/primitives/Card';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { Button, UiNextRoot } from '@/ui-next/public';
-import { getQuestionFull } from '../practice-api';
 import { type QuestionFullDetail, focusTitle, isDeleted, isDraft } from './library-api';
+import { useLibraryClient } from './library-client';
 import { MyHistory } from './MyHistory';
 import { NextSteps } from './NextSteps';
 import { QuestionBanner } from './QuestionBanner';
@@ -79,6 +79,7 @@ export default function QuestionPage({
   id: string;
   navigate: (to: string) => void;
 }) {
+  const { getQuestionFull } = useLibraryClient();
   const q = useQuery({ queryKey: questionKey(id), queryFn: () => getQuestionFull(id) });
   const missing = q.error instanceof ApiError && q.error.status === 404;
 
