@@ -2553,6 +2553,26 @@
       "from": 9,
       "to": 7,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "transitionReviewSession",
+      "targetModule": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "targetSymbol": "transitionReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-end-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports transitionReviewSession at AST and path line 11 and calls it at line 12 with the requested session id and fixed completed target. Context imports are type-only; the canonical HTTP adapter directly consumes the internal owner. The six response fields preserve the existing HTTP result projection.",
+      "rationale": "Practice owns the complete canonical transition through withFrozenPaperReopen, the Review state transaction and changed-only completed summary enqueue after commit. Start does not use legacy close or reconstruct state and recovery rules. The id-only consumer has no variable body or status, so the unchanged HTTP schema remains internal and arbitrary HTTP protocol equivalence is not claimed. Same-state replay does not repair a missed summary send; conditional summary, MemoryBrief and attribution/variant paid effects remain governed by the original protocol. Auth precedes the host 90-second ALS and public import; no business signal, id normalization, new idempotency or runtime acceptance is added.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-846e4137-d5af-4966-8712-b5c9f089aaa3",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
