@@ -32,6 +32,7 @@ src/capabilities/
 - 包间走 manifest 公共接口；禁深层 import。
 - 任务声明由各包 `task-public.ts` 公开且由 `public.ts` 复导出；仅 `task-catalog.ts` 静态组合根消费窄入口，`task-registry.ts` 向共享 ai/ 工厂注入冻结目录。不要通过应用 public barrel 装配任务而触发 DB 初始化/循环。
 - 迁移期豁免：kernel facade 可包装遗留 `src/server/**`；capability 暂可 import `@/db/client`/`@/db/schema`。
+- 共享学习写入事务锁的唯一 canonical 是 `@/db/learning-state-lock`，capability 可直接消费其既有四项 API：`LEARNING_STATE_WRITE_LOCK`、`acquireLearningStateWriteLock`、`withLearningStateLock`、`acquireSortedAdvisoryLocks`；各业务 owner 仍负责原取锁时机、顺序与事务范围。此例外仅限该锁机制，不扩展为任意 db 内部模块的消费许可。
 - 测试命名：`src/kernel/**` 与 `src/capabilities/**` 的 `*.unit.test.ts` 自动进无 DB 车道，`*.db.test.ts` 自动进 testcontainer 车道。
 
 ## ANTI-PATTERNS

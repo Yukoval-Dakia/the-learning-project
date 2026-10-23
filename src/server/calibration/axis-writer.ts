@@ -7,8 +7,8 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { event, learner_axis_state, question } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type EzResult, ezFromResponses } from './ez-diffusion';
 
 /** Below this, no row. A sparser KC stays absent rather than getting a made-up descriptor. */

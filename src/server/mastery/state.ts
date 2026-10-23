@@ -44,6 +44,11 @@ import {
   uniformPrior,
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+  withLearningStateLock,
+} from '@/db/learning-state-lock';
 import { mastery_state } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
@@ -52,11 +57,6 @@ import {
   getMasteryState,
 } from '@/kernel/read-models/mastery-state';
 import { readAttemptDifficulty } from '@/kernel/read-models/question-difficulty';
-import {
-  acquireLearningStateWriteLock,
-  acquireSortedAdvisoryLocks,
-  withLearningStateLock,
-} from '@/server/advisory-locks';
 
 type DbLike = Db | Tx;
 

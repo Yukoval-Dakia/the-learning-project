@@ -26,6 +26,7 @@ import { and, eq, sql } from 'drizzle-orm';
 
 import { SchedulingStateSchema } from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   assessment_issuance,
   assessment_submission,
@@ -35,7 +36,6 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
