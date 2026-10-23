@@ -170,3 +170,10 @@ writer 未登记及旧 API 条目悬空失败；policy 因原 NULL≡active 例�
 `parent-draft-status-registration.log`。首轮 CI 原件保留为
 `pr2037-contracts-first.log`、`pr2037-policy-first.log`。旧 CI 不覆盖补登记后的 head，
 以新 exact-head CI 为准；独立 R1 仍固定审查原产品 head，不因路径登记重开审查。
+
+父随后正常 merge 实际 main `e821a7592`（仅五个 Knowledge/Start 文件，与本片无
+产品 hunk 交集），组合提交为 `85e908db67e4d5cce74877c2fdaaef61827396c2`。
+合并后 typecheck、lint（164 warnings）、build、capability-boundaries 和
+architecture-deepening 经同一 limiter 串行执行全部 exit 0，对应日志为
+`parent-main-{typecheck,lint,build,boundaries,architecture}.log`。
+该上游组合保留同一0133及4.33，未修改本片创建行为；审查与新 CI 结论另记。
