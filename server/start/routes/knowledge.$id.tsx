@@ -13,6 +13,8 @@ import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const knowledgeClient: KnowledgeClient = {
+  decideEdgeProposal: (id, decision, newRelationType) =>
+    startWorkbenchClient.decideProposal(id, decision, { newRelationType }),
   getEdgeProposals: startKnowledgeEdgeProposalsClient,
   getEdges: startKnowledgeEdgesClient,
   getMisconceptions: startKnowledgeMisconceptionsClient,
