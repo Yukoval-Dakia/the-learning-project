@@ -3394,6 +3394,26 @@
       "issue": "YUK-1358",
       "owns": "Platform owns the existing best-effort send-capable boss and queue wake protocol, with durable trigger and minute recovery unchanged. Knowledge invokes it only after its creation transaction commits; this import moves out of the HTTP adapter.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "module": "src/kernel/records/assessment-normalization.ts",
+      "kind": "value",
+      "symbols": ["NormalizableQuestionRow", "normalizeQuestionRowToContract"],
+      "issue": "YUK-1570",
+      "owns": "The existing locked draft presentation owner now derives the legacy assessment contract and validates presentation before save; the same normalizer and figure-digest read move from compose without changing normalization failure or transaction semantics.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "module": "src/server/questions/draft-contract.ts",
+      "kind": "value",
+      "symbols": ["draftDocumentToContract"],
+      "issue": "YUK-1570",
+      "owns": "Complete v2 draft conversion is consumed by the locked presentation validation/save owner instead of compose. This replaces the prior compose dependency; version, declared shape, ordered validation issues and no-legacy-fallback policy remain together.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -3639,6 +3659,15 @@
       "to": 1527,
       "issue": "YUK-1570",
       "responsibilityReason": "Owner-approved execution dependency contract: the default grounding branch now receives the same runTaskFn as source verification, while the explicit whole-grounding override receives only its original business parameters. The five added lines document this deliberate scope change and branch at the existing grounding call; image acquisition, vision routing, paid/retry/lock/publication policies remain in their existing owners. No new dependency, factory or public operation."
+    },
+    {
+      "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "date": "2026-10-23",
+      "baseBlob": "3a125ac91b6d95a4f81dd31603d27d463d50ee0b",
+      "from": 845,
+      "to": 1034,
+      "issue": "YUK-1570",
+      "responsibilityReason": "The approved complete draft presentation validation/save operation absorbs the existing v2/legacy validation and legacy contract derivation from compose. Removing the optional validator intentionally closes the bypass/custom-replacement contract while retaining replay-first locking, CAS, effective save, legacy overload, issue ordering and the existing save/event/notification body. The 189 added lines belong to the existing edit owner; no new module or unrelated edit responsibility is introduced. Decision: https://linear.app/yukoval-studios/issue/YUK-1570#comment-aadbee63-9db3-4317-ba7e-83630102a4de."
     }
   ],
   "compatShims": [
