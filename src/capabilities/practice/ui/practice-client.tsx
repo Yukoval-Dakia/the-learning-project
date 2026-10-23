@@ -10,11 +10,17 @@ import {
   getStream,
   issueAssessment,
   recomposeStream,
+  revealStudyReference,
   saveResponseDraft,
+  solveHint,
+  solveStart,
   submitReview,
 } from './practice-api';
 
 export type PracticeClient = {
+  solveStart: typeof solveStart;
+  solveHint: typeof solveHint;
+  revealStudyReference: typeof revealStudyReference;
   fileAppeal: typeof fileAppeal;
   advanceStreamItem: typeof advanceStreamItem;
   getAdvice: typeof getAdvice;
@@ -30,6 +36,9 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  solveStart,
+  solveHint,
+  revealStudyReference,
   fileAppeal,
   getAdvice,
   advanceStreamItem,

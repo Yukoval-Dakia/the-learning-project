@@ -342,3 +342,5 @@ export const startPlacementProbe: typeof import('./server/session-operations/pla
 
 export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
+export { revealFrozenStudyReference } from './server/assessment/study-context';
+export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';
