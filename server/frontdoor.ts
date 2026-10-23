@@ -11,6 +11,7 @@ import { createStartKnowledgeEdge } from './start/knowledge-edge-create-operatio
 import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
+import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
 import { readStartLibraryQuestionDetail } from './start/library-question-detail-reader';
 import { readStartPaperDetail } from './start/paper-detail-reader';
 import { endStartPaperSession } from './start/paper-end-operation';
@@ -80,6 +81,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readPaperDetail: readStartPaperDetail,
     readPracticeQuestionDetail: readStartPracticeQuestionDetail,
     readLibraryQuestionDetail: readStartLibraryQuestionDetail,
+    readLibraryDraftDetail: readStartLibraryDraftDetail,
     getPracticeStream: getStartPracticeStream,
     recomposePracticeStream: recomposeStartPracticeStream,
     updatePracticeStreamItem: updateStartPracticeStreamItem,

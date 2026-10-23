@@ -5,10 +5,14 @@ import {
   LibraryClientProvider,
   loadQuestionPage,
 } from '@/capabilities/practice/ui-public';
+import { startLibraryDraftDetailClient } from '../library-draft-detail-client';
 import { startLibraryQuestionDetailClient } from '../library-question-detail-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
-const libraryClient: LibraryClient = { getQuestionFull: startLibraryQuestionDetailClient };
+const libraryClient: LibraryClient = {
+  getDraftDetail: startLibraryDraftDetailClient,
+  getQuestionFull: startLibraryQuestionDetailClient,
+};
 const Page = lazy(() => loadQuestionPage().then((defaultPage) => ({ default: defaultPage })));
 export const Route = createFileRoute('/questions/$id')({
   ssr: false,

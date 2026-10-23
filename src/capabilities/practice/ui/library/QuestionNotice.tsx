@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { Button, Expand } from '@/ui-next/public';
-import { getDraftDetail } from '../practice-api';
 import { type QuestionFullDetail, isDeleted, isDraft } from './library-api';
+import { useLibraryClient } from './library-client';
 import { VERIFY_WORDS, holdWords, verifyReasonWords } from './library-copy';
 import { ServingButton } from './ServingButton';
 import { LIBRARY_KEY } from './use-library';
@@ -12,6 +12,7 @@ import { useForceEnable, useRestore, useVerifyDraft, writeErrorText } from './us
 const MIN_REASON = 2;
 
 function DraftNotice({ id }: { id: string }) {
+  const { getDraftDetail } = useLibraryClient();
   const check = useQuery({
     queryKey: [LIBRARY_KEY, 'draft-check', id],
     queryFn: () => getDraftDetail(id),
