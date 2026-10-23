@@ -9,7 +9,6 @@ import {
   subjectDisplayName,
   subjectIdentityKey,
 } from '@/ui/lib/subject';
-import { getQuestionKnowledgeOptions } from '../practice-api';
 import {
   countDrafts,
   countQuestions,
@@ -17,6 +16,7 @@ import {
   listMistakePage,
   listQuestionPage,
 } from './library-api';
+import { useLibraryClient } from './library-client';
 import type { LibraryScope } from './library-url';
 import { groupMistakes } from './mistake-read';
 
@@ -140,6 +140,7 @@ function labelOptions(
 }
 
 export function useLookups(): LibraryLookups {
+  const { getQuestionKnowledgeOptions } = useLibraryClient();
   const knowledge = useQuery({
     queryKey: [LIBRARY_KEY, 'knowledge'],
     queryFn: getQuestionKnowledgeOptions,
