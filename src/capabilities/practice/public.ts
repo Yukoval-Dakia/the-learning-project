@@ -1,15 +1,5 @@
 // Stable server contract for consumers outside the practice capability.
 
-export {
-  type EnqueueVerifyFn,
-  VERIFY_DISPATCH_COMPLETE_ACTION,
-  VERIFY_DISPATCH_INTENT_ACTION,
-  VERIFY_DISPATCH_VERSION,
-  dispatchPendingVerifyIntents,
-  recoverOrphanVerifyDispatches,
-  writeVerifyDispatchIntent,
-} from './server/verify-dispatch-outbox';
-
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
 export type { EffectiveTruth } from '@/kernel/events';
@@ -88,6 +78,15 @@ export {
   parseHintTurn,
 } from './server/solve-session';
 export type { PracticeTaskRunFn } from './server/task-runtime';
+export {
+  type EnqueueVerifyFn,
+  VERIFY_DISPATCH_COMPLETE_ACTION,
+  VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
+  dispatchPendingVerifyIntents,
+  recoverOrphanVerifyDispatches,
+  writeVerifyDispatchIntent,
+} from './server/verify-dispatch-outbox';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 // Coach's nightly daily-plan inputs share the practice due queue and
