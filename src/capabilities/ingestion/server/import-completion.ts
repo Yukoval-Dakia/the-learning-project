@@ -22,8 +22,8 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
+import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { Ingestion } from '@/server/session';
@@ -244,41 +244,24 @@ export async function completeIngestionImport(
             ? Math.min(...sourceRows.map((r) => r.ordinal))
             : manualOrdinalBase + blockIndex;
 
-        const [insertedRow] = await tx
-          .insert(question_block)
-          .values({
-            id: importedBlockId,
-            ingestion_session_id: sessionId,
-            source_document_id: sessionSourceDocumentId,
-            source_asset_ids: block.image_refs,
-            page_spans: block.page_spans,
+        await persistCapturedQuestionBlock(
+          tx,
+          {
+            origin: 'import',
+            blockId: importedBlockId,
+            sessionId,
+            sourceDocumentId: sessionSourceDocumentId,
             ordinal,
-            extracted_prompt_md: block.final_prompt_md,
-            reference_md: block.final_reference_md,
-            wrong_answer_md: block.final_wrong_answer_md,
-            image_refs: block.image_refs,
-            crop_refs: [],
-            visual_complexity: visualComplexity,
-            extraction_confidence: 1,
-            status: 'imported',
-            knowledge_hint: null,
-            merged_from_block_ids: block.source_block_ids,
-            imported_question_id: null,
-            imported_attempt_event_id: null,
-            created_at: now,
-            updated_at: now,
-            version: 0,
-          })
-          .returning();
-        // Canonical create event for the virtual card, built from `.returning()` so
-        // DB defaults are captured. The later import-link UPDATE is not event-sourced.
-        await writeQuestionBlockCreateEvent(tx, {
-          row: insertedRow,
-          origin: 'import',
-          actorKind: 'user',
-          actorRef: 'block_import',
+            visualComplexity,
+            pageSpans: block.page_spans,
+            imageRefs: block.image_refs,
+            sourceBlockIds: block.source_block_ids,
+            finalPromptMd: block.final_prompt_md,
+            finalReferenceMd: block.final_reference_md,
+            finalWrongAnswerMd: block.final_wrong_answer_md,
+          },
           now,
-        });
+        );
 
         for (const sid of block.source_block_ids) {
           if (!directlyImportedIds.has(sid)) {
