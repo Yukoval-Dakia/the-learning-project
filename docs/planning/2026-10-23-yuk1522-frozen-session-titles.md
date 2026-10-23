@@ -119,3 +119,22 @@ capability-boundaries 和 architecture-deepening，五项均 exit 0；lint 164 w
 本片唯一独立 R1 已固定 `c11076236` 启动，尚无结论；此后仅文档记录不改变受审产品。
 测试、DB、产品 HTTP、provider、browser、paid、runtime 和部署仍为 NOT_RUN。
 2037、1969 的待批测试与迁移顺序均保持原样。
+
+## 独立审查及合前主线更新
+
+唯一 R1 已读回：固定 `c11076236` 的 Standards / Spec 均 P0/P1=0/0，APPROVE；
+报告为仓库外 `review/stage1-yuk1522-frozen-titles-20261023/pr2045-r1-c1107623.md`。
+旧 `534c9a94c` 自身 GitHub exact CI39891783062 attempt1 全18项成功，
+required Gate120213691652成功，实际 review threads 为0；没有运行第二轮审查或重跑。
+
+合前 main 新增 #2046，实际为 `d6c6b86006075ddf363affb6d5f5e9a670b0f8fe`。
+父停止合入旧组合，正常 merge 为 `0f05a1ed2b0ec7f4208804f9f87d17d0e29d3553`；
+唯一冲突仍是 baseline 追加位置，保留 main 的 notes/quiz kernel 记录及全部前缀，
+然后追加本片原记录。标准 Git 对照确认九个产品/生成物文件相对受审产品全同，
+上游 AI result-facts 组合完整保留，无本片测试、lock、schema 或 migration 差量。
+
+新组合再次以 external limiter 串行运行 typecheck、lint（164 warnings）、build、
+capability-boundaries、architecture-deepening，五项全部 exit0。日志同一外置 review 目录
+`parent-0f05-*.log`；依赖数321/0/39、kernel新边1、pass-through新增0。
+R1结论只覆盖固定的本片产品，旧534 CI不冒称覆盖新组合；推送新head后重新取得其exact CI。
+未扩大为上游产品复审、第三审、测试或任何运行权限，原 NOT_RUN 保持。
