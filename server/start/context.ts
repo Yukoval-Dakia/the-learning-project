@@ -12,6 +12,7 @@ import type {
   PlacementProfileResponse,
   createPracticeHintRequest,
   createPracticeSolveSession,
+  createReviewSession,
   getIssuanceState,
   getPaperDetail,
   getPracticeStream,
@@ -57,6 +58,9 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof releaseHeldPlacement>>>;
   readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
+  startPaperSession: (
+    body: string,
+  ) => Promise<{ session_id: Awaited<ReturnType<typeof createReviewSession>>['sessionId'] }>;
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
