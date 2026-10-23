@@ -5,6 +5,7 @@ import {
   KnowledgeClientProvider,
   loadKnowledgeDetailPage,
 } from '@/capabilities/knowledge/ui-public';
+import { startKnowledgeEdgeCreateClient } from '../knowledge-edge-create-client';
 import { startKnowledgeEdgeProposalsClient } from '../knowledge-edge-proposals-client';
 import { startKnowledgeEdgesClient } from '../knowledge-edges-client';
 import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
@@ -13,6 +14,9 @@ import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const knowledgeClient: KnowledgeClient = {
+  createEdge: startKnowledgeEdgeCreateClient,
+  decideEdgeProposal: (id, decision, newRelationType) =>
+    startWorkbenchClient.decideProposal(id, decision, { newRelationType }),
   getEdgeProposals: startKnowledgeEdgeProposalsClient,
   getEdges: startKnowledgeEdgesClient,
   getMisconceptions: startKnowledgeMisconceptionsClient,

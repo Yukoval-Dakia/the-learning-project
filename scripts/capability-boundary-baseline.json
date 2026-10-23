@@ -2213,6 +2213,26 @@
       "date": "2026-10-23"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "createManualKnowledgeEdge",
+      "targetModule": "src/capabilities/knowledge/server/edge-create.ts",
+      "targetSymbol": "createManualKnowledgeEdge",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-edge-create-operation.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated host operation imports the complete manual-create command at AST line 17 and calls it at line 19. Context imports are type-only; the retained HTTP adapter directly imports the internal operation.",
+      "rationale": "Knowledge owns the original schema validation, timestamp, manual actor, endpoint locks and retry, transaction, kernel creation, post-commit wake and id result. HTTP and Start share the full command without copying SQL or changing stateful recovery and error semantics; platform trigger and minute recovery stay with their existing owners.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-cfa9f2f5-4515-4bf1-8ab9-34bd73926654",
+      "date": "2026-10-23"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> questions",
       "date": "2026-10-23",
@@ -3341,6 +3361,26 @@
       "symbols": ["isLearnerVisibleKnowledgeId"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing learner knowledge visibility predicate. Knowledge retains its filtering order and aggregation within the complete list operation.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/edge-create.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error envelope. Knowledge retains validation and the complete manual edge creation sequence.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/knowledge/server/edge-create.ts",
+      "module": "src/server/boss/hub-sync-wake.ts",
+      "kind": "value",
+      "symbols": ["wakeHubSyncAfterCommit"],
+      "issue": "YUK-1358",
+      "owns": "Platform owns the existing best-effort send-capable boss and queue wake protocol, with durable trigger and minute recovery unchanged. Knowledge invokes it only after its creation transaction commits; this import moves out of the HTTP adapter.",
       "date": "2026-10-23"
     },
     {
