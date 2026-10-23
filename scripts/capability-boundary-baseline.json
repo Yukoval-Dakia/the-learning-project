@@ -2271,6 +2271,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-aeb95ce1-cca4-4ca6-a726-2c5a8cf2aaf1",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "recomposePracticeStream",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "recomposePracticeStream",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-recompose-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host operation imports recomposePracticeStream at AST and path line 11 and calls it at line 14. The live client has no arguments or body, so Start passes the equivalent empty object to the complete owner. Context imports are type-only; HTTP directly consumes the internal operation.",
+      "rationale": "Practice owns schema and date resolution, the shared host rate limiter, each invocation nonce and seed, the 65-second explicit provider deadline, paid-lock preparation and materialization, observations and complete response projection. Start retains the host 90-second ALS scope and full JSON/errors without exposing date or policy inputs. This stateful operation may perform paid work, and the separate UI refresh may trigger refill; no cancellation, command deduplication or retry guarantee is added. Arbitrary HTTP body and null semantics remain with the unchanged HTTP adapter and schema.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-957008f1-e884-4145-bbac-362d45115ee1",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
