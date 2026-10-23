@@ -2425,6 +2425,26 @@
       "from": 8,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "revealFrozenStudyReference",
+      "targetModule": "src/capabilities/practice/server/assessment/study-context.ts",
+      "targetSymbol": "revealFrozenStudyReference",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/study-reference-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports revealFrozenStudyReference at AST and path line 11 and calls it at line 13. Context imports are type-only; the existing HTTP assessment route and solve-session consume the internal owner rather than this public entry.",
+      "rationale": "Practice owns the complete frozen-context load, conditional awaited assistance-exposure write for a truthy reference, and reference response. The existing kernel reads the pinned issuance revision and preserves issued scope, admission and frozen projection. The public entry re-exports that same operation so Start does not split reference loading from exposure recording or introduce another assistance-state owner. This is stateful and may reach asynchronous paid work; no request idempotency, cancellation, new ID validation or inherited worker budget is promised.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-82aa7374-7575-4bae-a985-52c12a8f52b8",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
