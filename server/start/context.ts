@@ -20,6 +20,7 @@ import type {
   previewReviewAdvice,
   projectIssuanceResult,
   projectReviewAnswerResponse,
+  readDraftReviewDetail,
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
@@ -78,6 +79,9 @@ export type FrontdoorContext = {
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
+  readLibraryDraftDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
   readLibraryQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;

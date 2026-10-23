@@ -2803,6 +2803,26 @@
       "date": "2026-10-23"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readDraftReviewDetail",
+      "targetModule": "src/capabilities/practice/server/draft-review.ts",
+      "targetSymbol": "readDraftReviewDetail",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/library-draft-detail-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host dynamically imports readDraftReviewDetail at AST and path line 11 and invokes it at line 13. Context references are type-only; the HTTP handler consumes the same internal owner rather than a second public runtime site.",
+      "rationale": "Practice owns the complete draft detail read: the original ID trim and empty-ID validation, unchanged nullable aggregate and missing-draft error, followed by the complete detail result. HTTP and Start share this entry without duplicating SQL or error decisions. The original draft filters, verify projection and nullable aggregate remain unchanged; QuestionNotice keeps its key, retry policy, write actions and visual behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c80824b6-033d-4db7-91d8-bb00b559f939",
+      "date": "2026-10-23"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "practice -> questions",
       "date": "2026-10-23",
