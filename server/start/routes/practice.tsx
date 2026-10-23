@@ -10,6 +10,7 @@ import { startIssuanceStateClient } from '../issuance-state-client';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPaperListClient } from '../papers-list-client';
 import { startPracticeAdviceClient } from '../practice-advice-client';
+import { startPracticeAppealClient } from '../practice-appeal-client';
 import { startPracticeQuestionDetailClient } from '../practice-question-detail-client';
 import { startPracticeStreamClient } from '../practice-stream-client';
 import { startPracticeStreamItemClient } from '../practice-stream-item-client';
@@ -20,6 +21,7 @@ import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
 const practiceClient: PracticeClient = {
+  fileAppeal: startPracticeAppealClient,
   getAdvice: startPracticeAdviceClient,
   advanceStreamItem: startPracticeStreamItemClient,
   getStream: startPracticeStreamClient,

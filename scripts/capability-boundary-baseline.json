@@ -2373,6 +2373,26 @@
       "date": "2026-10-23"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createPracticeAppeal",
+      "targetModule": "src/capabilities/practice/server/appeal-operation.ts",
+      "targetSymbol": "createPracticeAppeal",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-appeal-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports createPracticeAppeal at AST and path line 11 and calls it at line 13. HTTP consumes the internal operation directly; the context string port adds no runtime public consumer. Start throws non-ok Responses unchanged and returns successful JSON text for the client to parse.",
+      "rationale": "Practice owns the complete loadBody parse-failure handling, strict schema and special JSON, native event creation followed by conditional enqueue after commit, legacy rejection branches and original Response projection. The callback only supplies JSON input rather than making callers assemble state or dispatch order. HTTP and Start share this complete operation, not a bare native writer or HTTP forwarding wrapper. Existing commit/send failure windows and asynchronous paid rejudge behavior remain unchanged.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-68ee6a62-53c4-4e6a-adca-fac91dbb489e",
+      "date": "2026-10-23"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> boss",
       "date": "2026-10-23",
@@ -3767,6 +3787,26 @@
       "symbols": ["resolveSubjectProfileForKnowledgeIds"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing knowledge-to-subject profile resolution and default fallback protocol, preserving the first knowledge id and warning before default on strict resolution failure. Practice retains the diagnostic-gate-before-profile-before-preview ordering and advice projection; this reference moves from the HTTP adapter without introducing a subject policy.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["errorResponse"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing generic native error envelope; Practice retains special JSON/schema and native/legacy rules. HTTP still consumes canonicalResourceResponse and deprecatedRouteResponse from this module, so the new physical consumer is recorded without claiming all references are net zero.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/server/runtime-env.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1358",
+      "owns": "The server platform owns the existing NODE_ENV/VITEST background-enqueue environment protocol. Practice retains the business ordering after the native creation transaction returns, followed by getPracticeBoss and send; this moved HTTP reference does not relocate queue implementation or add a paid policy.",
       "date": "2026-10-23"
     },
     {
