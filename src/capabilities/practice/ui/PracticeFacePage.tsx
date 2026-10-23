@@ -108,7 +108,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
-  const { advanceStreamItem, getStream } = usePracticeClient();
+  const { advanceStreamItem, getStream, getQuestionDetail } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -571,7 +571,7 @@ export default function PracticeFacePage({
       // Read the next question's text (a GET; usually already prefetched) while it is started,
       // so it arrives without a blank wait; after 8s it moves on and loads in place.
       const ready = Promise.race([
-        qc.ensureQueryData(questionDetailQuery(next.ref_id)).then(
+        qc.ensureQueryData(questionDetailQuery(next.ref_id, getQuestionDetail)).then(
           () => undefined,
           () => undefined,
         ),
@@ -605,6 +605,7 @@ export default function PracticeFacePage({
       endAdvance,
       exitToList,
       fetchFreshStream,
+      getQuestionDetail,
       openQuestionUrl,
       qc,
       recordFailure,
@@ -639,9 +640,9 @@ export default function PracticeFacePage({
       );
       if (!next || prefetched.current.has(next.ref_id)) return;
       prefetched.current.add(next.ref_id);
-      void qc.prefetchQuery(questionDetailQuery(next.ref_id));
+      void qc.prefetchQuery(questionDetailQuery(next.ref_id, getQuestionDetail));
     },
-    [items, qc],
+    [getQuestionDetail, items, qc],
   );
 
   // YUK-432 (Bugbot FINDING 1) — 客观题自动 commit 后「返回流」的退出。review 已落库 → 该 slot

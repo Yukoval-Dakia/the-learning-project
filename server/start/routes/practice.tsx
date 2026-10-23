@@ -9,6 +9,7 @@ import { startIssuanceCreateClient } from '../issuance-create-client';
 import { startIssuanceStateClient } from '../issuance-state-client';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPaperListClient } from '../papers-list-client';
+import { startPracticeQuestionDetailClient } from '../practice-question-detail-client';
 import { startPracticeStreamClient } from '../practice-stream-client';
 import { startPracticeStreamItemClient } from '../practice-stream-item-client';
 import { startPracticeRecomposeClient } from '../practice-stream-recompose-client';
@@ -22,6 +23,7 @@ const practiceClient: PracticeClient = {
   getStream: startPracticeStreamClient,
   recomposeStream: startPracticeRecomposeClient,
   getPapers: startPaperListClient,
+  getQuestionDetail: startPracticeQuestionDetailClient,
   getIssuanceState: startIssuanceStateClient,
   issueAssessment: startIssuanceCreateClient,
   saveResponseDraft: startResponseDraftClient,
