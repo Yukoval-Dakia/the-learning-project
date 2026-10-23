@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import {
+  decideEdgeProposal,
   getEdgeProposals,
   getEdges,
   getMisconceptions,
@@ -8,6 +9,7 @@ import {
 } from './knowledge-api';
 
 export type KnowledgeClient = {
+  decideEdgeProposal: typeof decideEdgeProposal;
   getEdgeProposals: typeof getEdgeProposals;
   getEdges: typeof getEdges;
   getMisconceptions: typeof getMisconceptions;
@@ -15,6 +17,7 @@ export type KnowledgeClient = {
   vetoMisconception: typeof vetoMisconception;
 };
 const httpKnowledgeClient: KnowledgeClient = {
+  decideEdgeProposal,
   getEdgeProposals,
   getEdges,
   getMisconceptions,

@@ -20,7 +20,6 @@ import {
   type KnowledgeEdgeRow,
   type KnowledgeTreeNode,
   createEdge,
-  decideEdgeProposal,
   edgeProposalOperation,
 } from './knowledge-api';
 import { useKnowledgeClient } from './knowledge-client';
@@ -161,7 +160,7 @@ export function NodeDrawer({
   go: (to: string) => void;
 }) {
   const qc = useQueryClient();
-  const { getNodePage } = useKnowledgeClient();
+  const { decideEdgeProposal, getNodePage } = useKnowledgeClient();
   const trapRef = useFocusTrap(open, onClose);
   const [rel, setRel] = useState<string>('related_to');
   const [target, setTarget] = useState('');
