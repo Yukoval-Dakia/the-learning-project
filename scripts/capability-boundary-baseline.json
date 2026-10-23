@@ -2553,6 +2553,74 @@
       "from": 9,
       "to": 7,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "writeVerifyDispatchIntent",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "writeVerifyDispatchIntent",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/shared-submit.ts",
+          "line": 36
+        }
+      ],
+      "evidence": "Practice public export starts at AST line81. shared-submit imports at AST36 and writes at837; canonical142-188 owns payload schema, authority conflict, deterministic identity and intent append.",
+      "rationale": "Practice owns the complete verification intent protocol. The existing shared submission operation uses this public operation within its original transaction; caller authority, paid and publishing responsibilities remain unchanged.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "dispatchPendingVerifyIntents",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "dispatchPendingVerifyIntents",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/shared-submit.ts",
+          "line": 36
+        }
+      ],
+      "evidence": "Practice public export starts at AST81; shared-submit imports atAST36 and drains at892. canonical249-411 owns SKIP LOCKED, eligibility, same-Tx queue/completion and post-rollback failure evidence.",
+      "rationale": "A stable shared submission consumer uses the existing complete verification dispatch protocol without reconstructing its batch, transaction or recovery internals. This records ownership, not new hidden behavior.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "recoverOrphanVerifyDispatches",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "recoverOrphanVerifyDispatches",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-recovery.ts",
+          "line": 2
+        }
+      ],
+      "evidence": "Practice public export starts at AST81; recovery adapter imports atAST2/path5 and calls at15. canonical418-514 owns legacy orphan intent synthesis followed by verification-only drain.",
+      "rationale": "The existing infrastructure Job adapter consumes the complete Practice verification recovery operation for startup/nightly repair. Queue registration, fencing, boot order and cron remain infrastructure responsibilities; no new runtime equivalence is claimed.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-23",
+      "from": 15,
+      "to": 14,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4106,6 +4174,26 @@
       "issue": "YUK-1570",
       "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["WriteEventInput", "writeEvent", "writeEvents"],
+      "issue": "YUK-1570",
+      "owns": "The canonical event owner owns append-only intent/completion/failure facts; verification retains its existing transaction, identity and error rules.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "module": "src/server/boss/pg-boss-drizzle.ts",
+      "kind": "value",
+      "symbols": ["fromPgBossDrizzleTx"],
+      "issue": "YUK-1570",
+      "owns": "The existing adapter binds pg-boss sends to the lock-owning Drizzle transaction; verification preserves same-Tx queue and completion atomicity.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4981,7 +5069,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 316,
+      "total": 315,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5036,7 +5124,7 @@
         "practice -> advisory-locks": 5,
         "practice -> ai": 46,
         "practice -> assessment": 1,
-        "practice -> boss": 15,
+        "practice -> boss": 14,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
