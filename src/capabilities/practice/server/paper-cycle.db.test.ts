@@ -31,7 +31,7 @@ import {
   question,
 } from '@/db/schema';
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { Review } from '@/server/session';
 import {
   publishPaperModelFixture,
