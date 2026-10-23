@@ -4,6 +4,7 @@ import {
   advanceStreamItem,
   getIssuanceState,
   getPapers,
+  getQuestionFull,
   getStream,
   issueAssessment,
   recomposeStream,
@@ -16,6 +17,7 @@ export type PracticeClient = {
   getStream: typeof getStream;
   recomposeStream: typeof recomposeStream;
   getPapers: typeof getPapers;
+  getQuestionDetail: (id: string) => ReturnType<typeof getQuestionFull>;
   issueAssessment: typeof issueAssessment;
   getIssuanceState: typeof getIssuanceState;
   saveResponseDraft: typeof saveResponseDraft;
@@ -29,6 +31,7 @@ const httpPracticeClient: PracticeClient = {
   recomposeStream,
   getIssuanceState,
   getPapers,
+  getQuestionDetail: (id) => getQuestionFull(id, { surface: 'practice' }),
   issueAssessment,
   saveResponseDraft,
   submitReview,

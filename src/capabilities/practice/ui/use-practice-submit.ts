@@ -38,7 +38,6 @@ import {
   computeLatencyMs,
   fileAppeal,
   getAdvice,
-  getQuestionFull,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';
@@ -370,12 +369,15 @@ const SANDBOX_SAVE_THROTTLE_MS = 300;
  * with the host's prefetch of the next question (YUK-1473, M13), so the prefetched data lands in
  * this very cache entry. A read only: issuing the question is the attach-time command below.
  */
-export function questionDetailQuery(refId: string) {
+export function questionDetailQuery(
+  refId: string,
+  getQuestionDetail: PracticeClient['getQuestionDetail'],
+) {
   return queryOptions({
     queryKey: ['question-detail', refId],
     // Explicit Practice projection lets product-owned diagnostics expose only
     // learner-safe prompt/options while the question-bank surface remains 404.
-    queryFn: () => getQuestionFull(refId, { surface: 'practice' }),
+    queryFn: () => getQuestionDetail(refId),
   });
 }
 
@@ -413,12 +415,18 @@ export function usePracticeSubmit({
   addToast,
   hotkeysSuspended,
 }: UsePracticeSubmitOptions) {
-  const { getIssuanceState, saveResponseDraft, readJudgeRunStatus, submitReview, issueAssessment } =
-    usePracticeClient();
+  const {
+    getQuestionDetail,
+    getIssuanceState,
+    saveResponseDraft,
+    readJudgeRunStatus,
+    submitReview,
+    issueAssessment,
+  } = usePracticeClient();
   // 题面聚合 /api/questions/:id（getQuestionFull）。注意 getQuestion 与 getQuestionFull 命中同一
   // URL、同一 loadQuestionDetail 全聚合——「轻」query 只是类型窄了子集，服务端并不更省；故这里直接
   // 用全投影，YUK-617 W1 的 timeline 从同一份 data.timeline 白拿，不再二次请求（避免同题双取全聚合）。
-  const qQ = useQuery(questionDetailQuery(item.ref_id));
+  const qQ = useQuery(questionDetailQuery(item.ref_id, getQuestionDetail));
   // YUK-1051 — 选项身份从数组下标换成内容派生的 stable option id（response-types）：
   // 重渲染 / 草稿恢复 / 复盘里同一选项文本恒同 id；选项数不硬编码（1–9 数字键随选项数）。
   const [nativeResponses, setNativeResponses] = useState<ResponseSetT>({ entries: [] });
