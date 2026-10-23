@@ -1,7 +1,7 @@
 // YUK-1473 — 「引用到学习伙伴」 for selected question text (design doc R6, R7, M6). Selecting text
 // inside a `[data-quotable]` region raises a small glass bubble (T3, bubble layer per T7);
 // pressing it hands the selection, with formulas turned back into their TeX source, to the page,
-// which puts it into the global Copilot drawer's composer. The keyboard path is the page's quote
+// which puts it into the companion's composer. The keyboard path is the page's quote
 // buttons beside each block of question text; this bubble is the pointer path (A4).
 //
 // No effect: the document listeners belong to the quotable root element. They are attached by
@@ -9,6 +9,8 @@
 
 import { MessageSquareQuote } from 'lucide-react';
 import { useCallback, useState } from 'react';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
+import type { StreamItem } from '../practice-api';
 
 /** A quote is a handful of sentences, not the whole page. */
 export const QUOTE_MAX_CHARS = 600;
@@ -34,6 +36,18 @@ function selectionText(range: Range): string {
 export function clipQuote(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > QUOTE_MAX_CHARS ? `${flat.slice(0, QUOTE_MAX_CHARS)}…` : flat;
+}
+
+/**
+ * Put an already clipped quote into the companion's composer (never sent on its own). For a
+ * question the companion also shows 「正在看：题目 · …」 and offers 讲讲这题 / 出一道类似的.
+ */
+export function quoteToCompanion(item: StreamItem, clipped: string): void {
+  if (item.item_kind === 'question') {
+    const title = clipped.length > 28 ? `${clipped.slice(0, 27)}…` : clipped;
+    setCompanionFocus({ kind: 'question', id: item.ref_id, title });
+  }
+  openCopilot(`「${clipped}」\n`, { send: false });
 }
 
 /**

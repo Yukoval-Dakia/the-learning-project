@@ -1,10 +1,9 @@
-// YUK-1497 (K5) — compose_presentation：录入 agent 的展示层工具（spec §5）。
+// compose_presentation：录入 agent 的展示层工具（spec §5）。
 //
 // 给定 draft question_block 或已发布 revision 的引用 + 一份 presentation 文档：
 //   1. 解析该题的契约（structure / response_spec / scoring_basis）——
-//      revision 直接读冻结字段；draft 经与发布同一 normalizer
-//      （normalizeQuestionRowToContract，导入块发布走的单行路径）从
-//      structured 树推导（会得到的契约）；
+//      revision 直接读冻结字段；v2 draft 复用 submit 的 draftDocumentToContract；
+//      legacy 树保留 normalizeQuestionRowToContract 的单行路径；
 //   2. 过 zod 形状门 + validatePresentation（与发布 barrier 同一道绑定校验）；
 //   3. 有问题返回 typed issues（不写）；干净时按 save 决定写回 draft 容器
 //      question_block.structured 的【presentation 一个键】—— 其它键一概不碰
@@ -12,45 +11,73 @@
 //
 // revision 不可变：revision 引用只做校验，不接受 save。
 //
-// 写纪律（review R1）：save 走 block-structured-edit 的 canonical 事件通道
+// 写纪律：save 走 block-structured-edit 的 canonical 事件通道
 // （setPresentation → persistStructured：experimental:edit_question_block_structured
 // op=set_presentation + job event + genesis-anchor 检查 + 投影 write-through）——
-// raw tx.update 对 fold 不可见，rebuild 会抹掉展示层；旧的自查 raw 写已删。
+// raw tx.update 对 fold 不可见，rebuild 会抹掉展示层。
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { setPresentation } from '@/capabilities/ingestion/server/block-structured-edit';
-import { capturedQuestionShape } from '@/capabilities/ingestion/server/captured-question-shape';
-import {
-  Presentation,
-  type PresentationIssue,
-  type PresentationT,
-  validatePresentation,
-} from '@/core/schema/assessment';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
-import type { Db, Tx } from '@/db/client';
-import { question_block, question_revision, source_asset } from '@/db/schema';
-import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
-import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import { writeCustomCodeAsset } from '@/capabilities/ingestion/server/custom-code-assets';
+import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
+import { Presentation, type PresentationT, validatePresentation } from '@/core/schema/assessment';
+import { question_revision } from '@/db/schema';
 import { OpaqueJsonInput } from '@/kernel/tools/types';
 import type { DomainTool, ToolContext } from './types';
 
 const ComposePresentationInputSchema = z
   .object({
+    /** 独立惰性代码资产写入；省略 action 保持既有 presentation 模式。 */
+    action: z.literal('write_custom_code').optional(),
+    /** 仅代码模式；asset_id/digest/mime/归属全部由服务端生成。 */
+    code: z.string().min(1).optional(),
     /** DRAFT question_block id（validate；save=true 时写回 structured.presentation）。 */
     block_id: z.string().min(1).optional(),
+    /** edit_question 返回的版本化草稿身份；v2 save 必须携带版本。 */
+    draft_ref: z.string().min(1).optional(),
+    expected_draft_version: z.number().int().min(0).optional(),
+    /** v2 save 必填；同 key 同输入重放原回执，同 key 异输入冲突。 */
+    request_id: z.string().min(1).optional(),
     /** 已发布 revision id（只校验 —— revision 不可变，不接受 save）。 */
     revision_id: z.string().min(1).optional(),
     /** presentation 文档（blocks-v1）；先过形状门，再过绑定校验。 */
-    presentation: OpaqueJsonInput,
+    presentation: OpaqueJsonInput.optional(),
     /** 缺省 false = 只校验；true 需要 block_id（revision 引用拒绝 save）。 */
     save: z.boolean().optional(),
   })
-  .refine((input) => (input.block_id != null) !== (input.revision_id != null), {
-    message: 'exactly one of block_id / revision_id is required',
-  });
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.action === 'write_custom_code') {
+      if (
+        input.code == null ||
+        input.draft_ref == null ||
+        input.block_id != null ||
+        input.revision_id != null ||
+        input.expected_draft_version != null ||
+        input.request_id != null ||
+        input.presentation !== undefined ||
+        input.save !== undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'write_custom_code accepts only action, current draft_ref and code',
+        });
+      }
+    } else if (input.code !== undefined || input.presentation === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'presentation mode requires presentation and never accepts code',
+      });
+    }
+  })
+  .refine(
+    (input) =>
+      [input.block_id, input.draft_ref, input.revision_id].filter((ref) => ref != null).length ===
+      1,
+    { message: 'exactly one of block_id / draft_ref / revision_id is required' },
+  );
 type ComposePresentationInput = z.infer<typeof ComposePresentationInputSchema>;
 
 const PresentationIssueSchema = z.object({
@@ -69,6 +96,9 @@ const ComposePresentationOutputSchema = z.object({
     'skipped:revision_readonly',
     'rejected_input',
     'unresolvable_contract',
+    'unsupported_contract',
+    'conflict',
+    'custom_code_saved',
   ]),
   block_id: z.string().optional(),
   revision_id: z.string().optional(),
@@ -76,60 +106,23 @@ const ComposePresentationOutputSchema = z.object({
   issues: z.array(PresentationIssueSchema),
   /** save 成功后的新 block.version。 */
   block_version: z.number().int().min(0).optional(),
+  draft_ref: z.string().optional(),
+  draft_version: z.number().int().min(0).optional(),
+  request_id: z.string().optional(),
+  replayed: z.boolean().optional(),
+  reason: z.string().optional(),
+  current_draft_ref: z.string().optional(),
+  current_draft_version: z.number().int().min(0).optional(),
+  /** Only write_custom_code returns these server-verified immutable asset fields. */
+  asset_id: z.string().optional(),
+  digest: z.string().optional(),
+  byte_size: z.number().int().min(1).optional(),
+  mime: z.literal('text/javascript').optional(),
+  reused: z.boolean().optional(),
+  preview: z.literal('not_run').optional(),
+  serving: z.literal('withheld').optional(),
 });
 type ComposePresentationOutput = z.infer<typeof ComposePresentationOutputSchema>;
-
-/** draft block → normalizer 行投影（与导入/发布同一形状来源，review R1）。 */
-function draftRowProjection(
-  blockId: string,
-  structured: StructuredQuestionT,
-  payload: {
-    reference_md: string | null;
-    figures: { asset_id: string }[];
-  },
-): NormalizableQuestionRow {
-  const shape = capturedQuestionShape(structured);
-  return {
-    id: blockId,
-    kind: shape.kind,
-    // 导入把块铸成 question 行时 prompt_md = structuredToPromptMarkdown(
-    // structured)（auto-enroll / import-completion 同一派生函数），reference_md
-    // 取块列 —— 与发布读到的行逐字同源，stem material id 因此与真实发布一致。
-    prompt_md: structuredToPromptMarkdown(structured),
-    reference_md: payload.reference_md,
-    rubric_json: null,
-    choices_md: shape.choices_md,
-    judge_kind_override: null,
-    structured,
-    figures: payload.figures as NormalizableQuestionRow['figures'],
-  };
-}
-
-/** 与发布同一 normalizer（单行路径）推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
-async function deriveDraftContract(
-  db: Db | Tx,
-  blockId: string,
-  structured: StructuredQuestionT,
-  payload: { reference_md: string | null; figures: { asset_id: string }[] },
-) {
-  const assetIds = [...new Set(payload.figures.map((figure) => figure.asset_id))];
-  const figureDigests: Record<string, string> = {};
-  if (assetIds.length > 0) {
-    const assetRows = await db
-      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-      .from(source_asset)
-      .where(inArray(source_asset.id, assetIds));
-    for (const row of assetRows) figureDigests[row.assetId] = row.sha256;
-  }
-  try {
-    return normalizeQuestionRowToContract({
-      ...draftRowProjection(blockId, structured, payload),
-      figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null,
-    });
-  } catch {
-    return null;
-  }
-}
 
 export const composePresentationTool: DomainTool<
   ComposePresentationInput,
@@ -137,7 +130,7 @@ export const composePresentationTool: DomainTool<
 > = {
   name: 'compose_presentation',
   description:
-    "Validate (and optionally save) a blocks-v1 presentation for one question: a draft question_block (block_id) or a frozen published revision (revision_id — validate only, revisions are immutable). Validates against that question's structure/response_spec/scoring_basis with the same binding validation as the publish barrier; returns typed issues on failure. With save=true on a block_id it writes the presentation into question_block.structured under the single `presentation` key (nothing else).",
+    "With no action, validate (and optionally save) a blocks-v1 presentation for a draft (draft_ref from edit_question, or legacy block_id) or frozen revision (revision_id, validate only). Supply presentation, not prose. v2 drafts use submit's contract conversion and binding validators; malformed/unsupported declarations fail explicitly. For v2 save=true, provide draft_ref (or block_id + expected_draft_version) and request_id. Save changes only presentation through canonical edit events, returns the new draft_ref/draft_version for subsequent edit_question/submit_question. Reuse the same request_id and input only to replay the original receipt; conflicts must be resolved explicitly. Separately, action=write_custom_code accepts only the current own R8 draft_ref and code (1..256 KiB UTF-8, no script-closing/comment/NUL sequences). It stores inert immutable bytes and returns server-derived asset_id/digest/byte_size/mime; reuse those exact refs in a subsequent presentation compose. It never changes the draft version. No code execution or preview occurs; custom blocks remain withheld. Neither saved code nor presentation validity grants admission.",
   effect: 'write',
   inputSchema: ComposePresentationInputSchema,
   outputSchema: ComposePresentationOutputSchema,
@@ -146,6 +139,26 @@ export const composePresentationTool: DomainTool<
     ctx: ToolContext,
     input: ComposePresentationInput,
   ): Promise<ComposePresentationOutput> {
+    const parsedInput = ComposePresentationInputSchema.safeParse(input);
+    if (!parsedInput.success) {
+      return {
+        status: 'rejected_input',
+        issues: parsedInput.error.issues.slice(0, 10).map((issue) => ({
+          code: 'invalid_compose_input',
+          detail: `${issue.path.join('.')}: ${issue.message}`,
+        })),
+      };
+    }
+    input = parsedInput.data;
+    if (input.action === 'write_custom_code') {
+      if (input.draft_ref == null || input.code == null) {
+        return {
+          status: 'rejected_input',
+          issues: [{ code: 'missing_code_input', detail: 'requires draft_ref and code' }],
+        };
+      }
+      return writeCustomCodeAsset(ctx, { draftRef: input.draft_ref, code: input.code });
+    }
     const shaped = Presentation.safeParse(input.presentation);
     if (!shaped.success) {
       return {
@@ -194,70 +207,61 @@ export const composePresentationTool: DomainTool<
       };
     }
 
-    // draft 引用：锁定行后在同一事务内推导契约 → 校验 → （save）写回。
-    const blockId = input.block_id as string;
-    return ctx.db.transaction(async (tx) => {
-      const [block] = await tx
-        .select()
-        .from(question_block)
-        .where(eq(question_block.id, blockId))
-        .for('update')
-        .limit(1);
-      if (block == null) {
-        return { status: 'skipped:not_found' as const, block_id: blockId, issues: [] };
-      }
-      if (block.status !== 'draft') {
-        return { status: 'skipped:not_draft' as const, block_id: blockId, issues: [] };
-      }
-      if (block.structured == null) {
-        return { status: 'skipped:null_structured' as const, block_id: blockId, issues: [] };
-      }
-      const contract = await deriveDraftContract(tx, blockId, block.structured, {
-        reference_md: block.reference_md,
-        figures: block.figures ?? [],
-      });
-      if (contract == null) {
-        return { status: 'unresolvable_contract' as const, block_id: blockId, issues: [] };
-      }
-      const issues: PresentationIssue[] = validatePresentation(
-        presentation,
-        contract.structure,
-        contract.response_spec,
-        contract.scoring_basis,
-      );
-      if (issues.length > 0) {
-        return { status: 'invalid' as const, block_id: blockId, issues };
-      }
-      if (input.save !== true) {
-        return { status: 'valid' as const, block_id: blockId, issues: [] };
-      }
-      // review R1 —— save 走 canonical 事件通道（setPresentation →
-      // persistStructured：op=set_presentation 的
-      // experimental:edit_question_block_structured + job event + genesis-anchor
-      // 检查 + 投影 write-through）；raw tx.update 对 fold 不可见，rebuild 会
-      // 静默抹掉展示层。同一事务（savepoint）内执行，校验与写入原子。
-      const saved = await setPresentation(tx, {
-        blockId,
-        structured: { ...block.structured, presentation },
-        actorRef: ctx.callerActor.ref,
-      });
-      if (saved.status !== 'written') {
-        return {
-          status: saved.status as ComposePresentationOutput['status'],
-          block_id: blockId,
-          issues: [],
-        };
-      }
+    const ref = input.draft_ref != null ? parseDraftRef(input.draft_ref) : null;
+    if (
+      (input.draft_ref != null &&
+        (ref == null ||
+          ref.blockId.length === 0 ||
+          encodeDraftRef(ref.blockId, ref.version) !== input.draft_ref)) ||
+      (ref != null &&
+        input.expected_draft_version != null &&
+        input.expected_draft_version !== ref.version)
+    ) {
       return {
-        status: 'saved' as const,
-        block_id: blockId,
-        issues: [],
-        block_version: saved.version,
+        status: 'rejected_input',
+        issues: [
+          { code: 'invalid_draft_ref', detail: 'draft_ref/version must identify one version' },
+        ],
       };
+    }
+    const blockId = ref?.blockId ?? (input.block_id as string);
+    const expectedVersion = input.expected_draft_version ?? ref?.version;
+    // The owner validates the locked draft and owns lock/replay/CAS/save ordering;
+    // raw tx.update would be invisible to fold/rebuild.
+    const saved = await setPresentation(ctx.db, {
+      blockId,
+      presentation,
+      expectedVersion,
+      requestId: input.request_id,
+      save: input.save === true,
+      actorRef: ctx.callerActor.ref,
     });
+    return {
+      status:
+        saved.status === 'written'
+          ? 'saved'
+          : saved.status === 'validated'
+            ? 'valid'
+            : saved.status === 'skipped:block_not_found'
+              ? 'skipped:not_found'
+              : saved.status,
+      block_id: blockId,
+      issues: saved.issues ?? [],
+      ...(saved.version != null
+        ? { block_version: saved.version, draft_version: saved.version }
+        : {}),
+      ...(saved.draft_ref != null ? { draft_ref: saved.draft_ref } : {}),
+      ...(saved.request_id != null ? { request_id: saved.request_id } : {}),
+      ...(saved.replayed != null ? { replayed: saved.replayed } : {}),
+      ...(saved.reason != null ? { reason: saved.reason } : {}),
+      ...(saved.current_draft_ref != null ? { current_draft_ref: saved.current_draft_ref } : {}),
+      ...(saved.current_draft_version != null
+        ? { current_draft_version: saved.current_draft_version }
+        : {}),
+    };
   },
   summarize(input, output) {
-    const ref = input.block_id ?? input.revision_id ?? '?';
+    const ref = input.draft_ref ?? input.block_id ?? input.revision_id ?? '?';
     return `compose_presentation ${ref.slice(0, 8)}: ${output.status}${
       output.issues.length > 0 ? ` (${output.issues.map((issue) => issue.code).join(',')})` : ''
     }`;

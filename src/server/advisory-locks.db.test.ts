@@ -40,8 +40,8 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import {
   retireMasteryStateOnMerge,
   updateThetaForAttempt,

@@ -471,3 +471,19 @@ export async function getDraftReviewDetail(
     verify_reason: verdict?.reason ?? null,
   };
 }
+
+/** Complete single-draft read shared by HTTP and authenticated host consumers. */
+export async function readDraftReviewDetail(
+  db: DbLike,
+  rawId: string | undefined,
+): Promise<DraftReviewDetail> {
+  const id = (rawId ?? '').trim();
+  if (!id) {
+    throw new ApiError('validation_error', 'question id is required', 400);
+  }
+  const detail = await getDraftReviewDetail(db, id);
+  if (!detail) {
+    throw new ApiError('not_found', `draft ${id} not found`, 404);
+  }
+  return detail;
+}

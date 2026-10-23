@@ -49,17 +49,22 @@ import { recordAgentExecutionIntent } from './ownership';
 type AskEventRow = {
   readonly event_type: string;
   readonly payload: Record<string, unknown>;
+  readonly occurred_at: string | Date;
 };
 
 export interface AskState {
   readonly created: AskCreatedPayloadT;
   readonly claimed: { idempotency_key: string; fingerprint: string } | null;
   readonly resolved: AskResolvedPayloadT | null;
+  /** ISO time of ask.created. */
+  readonly created_at: string;
+  /** ISO time of ask.resolved; null while unresolved. */
+  readonly resolved_at: string | null;
 }
 
 async function readAskRows(db: Db | Tx, askId: string): Promise<AskEventRow[]> {
   const rows = await db.execute<AskEventRow>(sql`
-    SELECT event_type, payload
+    SELECT event_type, payload, occurred_at
     FROM job_events
     WHERE business_table = ${INGESTION_ASK_TABLE}
       AND business_id = ${askId}
@@ -84,6 +89,8 @@ export async function readAskState(db: Db | Tx, askId: string): Promise<AskState
           }
         : null,
     resolved: resolvedRow != null ? AskResolvedPayload.parse(resolvedRow.payload) : null,
+    created_at: new Date(createdRow.occurred_at).toISOString(),
+    resolved_at: resolvedRow != null ? new Date(resolvedRow.occurred_at).toISOString() : null,
   };
 }
 
@@ -92,6 +99,8 @@ export interface SessionAskRow {
   readonly ask_id: string;
   readonly created: AskCreatedPayloadT;
   readonly resolved: AskResolvedPayloadT | null;
+  readonly created_at: string;
+  readonly resolved_at: string | null;
 }
 
 export async function readSessionAsks(
@@ -112,7 +121,13 @@ export async function readSessionAsks(
   for (const row of createdRows) {
     const state = await readAskState(db, row.business_id);
     if (state == null) continue;
-    out.push({ ask_id: row.business_id, created: state.created, resolved: state.resolved });
+    out.push({
+      ask_id: row.business_id,
+      created: state.created,
+      resolved: state.resolved,
+      created_at: state.created_at,
+      resolved_at: state.resolved_at,
+    });
   }
   return out;
 }
@@ -344,6 +359,13 @@ async function writeResolution(
     ask_id: input.askId,
     answer: input.answer,
   });
+  // Refresh the durable run snapshot in the same tx so a resolution that lands
+  // after the last segment close (e.g. sweeper on an over-cap session) stays
+  // provable past the job_events window. Dynamic import: asks → history would
+  // close a module cycle (history → ledger → asks); the payload fields are
+  // left at the prior checkpoint (a dead run must not read as waiting again).
+  const { persistAgentRunHistory } = await import('./history');
+  await persistAgentRunHistory(tx, { sessionId: input.state.created.session_id });
   return recordAgentExecutionIntent(tx, input.state.created.session_id, 'resume');
 }
 

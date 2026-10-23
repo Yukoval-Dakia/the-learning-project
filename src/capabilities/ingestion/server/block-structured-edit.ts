@@ -5,19 +5,39 @@
 // the version under SELECT ... FOR UPDATE, and writes both the SSE job event and the
 // canonical edit event. Callers surface soft skip results; unexpected faults throw.
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
+import { encodeDraftRef } from '@/core/question-draft-ref';
+import {
+  type PresentationT,
+  declaredShapeSupport,
+  validatePresentation,
+  validateResponseSpec,
+  validateStructure,
+} from '@/core/schema/assessment';
 import type { QuestionKind } from '@/core/schema/business';
+import {
+  DRAFT_DOCUMENT_SCHEMA_VERSION,
+  type QuestionBlockStructuredT,
+  QuestionDraftDocument,
+  isLegacyStructuredQuestion,
+} from '@/core/schema/question-draft';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { question_block } from '@/db/schema';
+import { event, question_block, source_asset } from '@/db/schema';
+import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
+import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import { writeJobEvent } from '@/server/events/writer';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { draftDocumentToContract } from '@/server/questions/draft-contract';
+import { capturedQuestionShape } from './captured-question-shape';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -125,7 +145,7 @@ async function loadBlockForUpdate(tx: Tx, blockId: string): Promise<BlockRow | u
 interface PersistStructuredParams {
   blockId: string;
   /** The AFTER tree; single-block edits always rewrite it. */
-  structured: StructuredQuestionT;
+  structured: QuestionBlockStructuredT;
   op: SingleBlockEditOp;
   /** Orthogonal SSE transport payload. */
   jobPayload: Record<string, unknown>;
@@ -425,14 +445,34 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
   });
 }
 
-export interface SetPresentationParams extends BaseEditParams {
-  blockId: string;
-  /** The AFTER tree with the presentation already merged in. */
-  structured: StructuredQuestionT;
+export interface SetPresentationValidation {
+  status: 'valid' | 'invalid' | 'rejected_input' | 'unresolvable_contract' | 'unsupported_contract';
+  issues: { code: string; detail: string }[];
 }
+
+interface SetPresentationOptions extends BaseEditParams {
+  blockId: string;
+  expectedVersion?: number;
+  requestId?: string;
+  /** Defaults to save for existing callers. Validation runs under the same row lock. */
+  save?: boolean;
+}
+
+export type SetPresentationParams = SetPresentationOptions &
+  (
+    | { presentation: PresentationT; structured?: never }
+    // Legacy callers: consume only presentation, never their supplied AFTER tree.
+    | { structured: StructuredQuestionT; presentation?: never }
+  );
 
 export type SetPresentationStatus =
   | 'written'
+  | 'validated'
+  | 'conflict'
+  | 'invalid'
+  | 'rejected_input'
+  | 'unresolvable_contract'
+  | 'unsupported_contract'
   | 'skipped:not_draft'
   | 'skipped:block_not_found'
   | 'skipped:null_structured';
@@ -441,25 +481,265 @@ export interface SetPresentationResult {
   status: SetPresentationStatus;
   /** Set on `written`; the post-save block version. */
   version?: number;
+  draft_ref?: string;
+  request_id?: string;
+  replayed?: boolean;
+  reason?: string;
+  current_draft_ref?: string;
+  current_draft_version?: number;
+  issues?: { code: string; detail: string }[];
+}
+
+/** legacy draft block → normalizer 行投影（与导入/发布同一形状来源）。 */
+function draftRowProjection(
+  blockId: string,
+  structured: StructuredQuestionT,
+  payload: {
+    reference_md: string | null;
+    figures: { asset_id: string }[];
+  },
+): NormalizableQuestionRow {
+  const shape = capturedQuestionShape(structured);
+  return {
+    id: blockId,
+    kind: shape.kind,
+    // 导入把块铸成 question 行时 prompt_md = structuredToPromptMarkdown(
+    // structured)（auto-enroll / import-completion 同一派生函数），reference_md
+    // 取块列 —— 与发布读到的行逐字同源，stem material id 因此与真实发布一致。
+    prompt_md: structuredToPromptMarkdown(structured),
+    reference_md: payload.reference_md,
+    rubric_json: null,
+    choices_md: shape.choices_md,
+    judge_kind_override: null,
+    structured,
+    figures: payload.figures as NormalizableQuestionRow['figures'],
+  };
+}
+
+/** 与发布同一 normalizer（单行路径）推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
+async function deriveDraftContract(
+  db: Db | Tx,
+  blockId: string,
+  structured: StructuredQuestionT,
+  payload: { reference_md: string | null; figures: { asset_id: string }[] },
+) {
+  const assetIds = [...new Set(payload.figures.map((figure) => figure.asset_id))];
+  const figureDigests: Record<string, string> = {};
+  if (assetIds.length > 0) {
+    const assetRows = await db
+      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
+      .from(source_asset)
+      .where(inArray(source_asset.id, assetIds));
+    for (const row of assetRows) figureDigests[row.assetId] = row.sha256;
+  }
+  try {
+    return normalizeQuestionRowToContract({
+      ...draftRowProjection(blockId, structured, payload),
+      figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Draft presentation admission always reads the row locked by setPresentation. */
+async function validateDraftPresentation(
+  tx: Tx,
+  block: BlockRow,
+  presentation: PresentationT | undefined,
+  params: SetPresentationOptions,
+  save: boolean,
+): Promise<SetPresentationValidation> {
+  if (presentation == null) {
+    return {
+      status: 'rejected_input',
+      issues: [{ code: 'malformed_presentation', detail: 'presentation is required' }],
+    };
+  }
+  const raw: unknown = block.structured;
+  if (raw != null && typeof raw === 'object' && 'schema_version' in raw) {
+    if (raw.schema_version !== DRAFT_DOCUMENT_SCHEMA_VERSION) {
+      return {
+        status: 'unsupported_contract',
+        issues: [
+          {
+            code: 'unsupported_draft_version',
+            detail: `schema_version ${String(raw.schema_version)}`,
+          },
+        ],
+      };
+    }
+    const parsed = QuestionDraftDocument.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        status: 'rejected_input',
+        issues: parsed.error.issues.slice(0, 10).map((issue) => ({
+          code: 'invalid_draft_document',
+          detail: `${issue.path.join('.')}: ${issue.message}`,
+        })),
+      };
+    }
+    if (save && (params.expectedVersion == null || params.requestId == null)) {
+      return {
+        status: 'rejected_input',
+        issues: [
+          {
+            code: 'missing_save_identity',
+            detail: 'v2 save requires draft_ref/version and request_id',
+          },
+        ],
+      };
+    }
+    const doc = parsed.data;
+    for (const part of doc.parts) {
+      for (const unit of part.units) {
+        if (unit.response_spec.kind !== 'blank' || unit.response_spec.answer_shape == null)
+          continue;
+        const support = declaredShapeSupport(unit.response_spec.answer_shape);
+        if (!support.supported) {
+          return {
+            status: 'unsupported_contract',
+            issues: [
+              {
+                code: 'unsupported_answer_shape',
+                detail: `slot ${unit.slot_id}: ${support.reason}`,
+              },
+            ],
+          };
+        }
+      }
+    }
+    try {
+      // Submit chooses a real group id for a new question. Bindings name stable
+      // material/part/unit/slot ids, never this draft-only group placeholder.
+      const contract = draftDocumentToContract(
+        doc,
+        doc.base?.question_id ?? block.imported_question_id ?? `draft-${block.id}`,
+      );
+      const issues: SetPresentationValidation['issues'] = [
+        ...contract.conversion_issues.filter((issue) => issue.code === 'duplicate_id'),
+        ...validateStructure(contract.structure),
+        ...validateResponseSpec(contract.response_spec, contract.structure),
+        ...validatePresentation(
+          presentation,
+          contract.structure,
+          contract.response_spec,
+          contract.scoring_basis,
+        ),
+      ];
+      return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
+    } catch (error) {
+      // A recognized v2 document never drops into legacy normalization.
+      return {
+        status: 'unresolvable_contract',
+        issues: [
+          {
+            code: 'invalid_draft_contract',
+            detail: error instanceof Error ? error.message : 'v2 conversion failed',
+          },
+        ],
+      };
+    }
+  }
+  if (!isLegacyStructuredQuestion(raw)) {
+    return {
+      status: 'unresolvable_contract',
+      issues: [
+        {
+          code: 'unrecognized_draft',
+          detail: 'expected v2 document or legacy structured question',
+        },
+      ],
+    };
+  }
+  const contract = await deriveDraftContract(tx, params.blockId, raw, {
+    reference_md: block.reference_md,
+    figures: block.figures ?? [],
+  });
+  if (contract == null) return { status: 'unresolvable_contract', issues: [] };
+  const issues = validatePresentation(
+    presentation,
+    contract.structure,
+    contract.response_spec,
+    contract.scoring_basis,
+  );
+  return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
 }
 
 /**
  * Persists a validated presentation through the standard single-block edit channel.
- * Callers validate shape and binding first; this only writes the merged AFTER tree.
+ * Owns request lock → replay → row lock → CAS → validation → canonical save/receipt.
+ * Draft admission reads the locked version; only presentation is merged into that row.
  */
 export async function setPresentation(
   db: Db | Tx,
   params: SetPresentationParams,
 ): Promise<SetPresentationResult> {
   return db.transaction(async (tx) => {
+    const save = params.save !== false;
+    const presentation = params.presentation ?? params.structured?.presentation;
+    // Same request lock and receipt action as edit_question. The tool/actor-bound
+    // fingerprint keeps a reused edit/compose key from replaying another operation.
+    const fingerprint = `sha256:${sha256CanonicalJson({
+      tool: 'compose_presentation',
+      block_id: params.blockId,
+      expected_version: params.expectedVersion ?? null,
+      presentation,
+      actor_ref: params.actorRef,
+      actor_kind: params.actorKind ?? 'agent',
+    })}`;
+    if (save && params.requestId != null) {
+      // Always before the row lock, matching edit/submit's lock order.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${params.requestId}))`);
+      const [existing] = await tx
+        .select({ payload: event.payload })
+        .from(event)
+        .where(
+          and(
+            eq(event.action, 'experimental:question_draft_save'),
+            sql`${event.payload} ->> 'request_id' = ${params.requestId}`,
+          ),
+        )
+        .orderBy(desc(event.created_at))
+        .limit(1);
+      if (existing != null) {
+        const payload = existing.payload as {
+          fingerprint: string;
+          receipt: SetPresentationResult;
+        };
+        if (payload.fingerprint !== fingerprint) {
+          return { status: 'conflict', reason: 'request_id_reused', request_id: params.requestId };
+        }
+        return { ...payload.receipt, replayed: true };
+      }
+    }
     const block = await loadBlockForUpdate(tx, params.blockId);
     if (!block) return { status: 'skipped:block_not_found' };
     if (block.status !== 'draft') return { status: 'skipped:not_draft' };
     if (!block.structured) return { status: 'skipped:null_structured' };
+    if (params.expectedVersion != null && params.expectedVersion !== block.version) {
+      return {
+        status: 'conflict',
+        reason: 'draft_version_cas',
+        current_draft_ref: encodeDraftRef(block.id, block.version),
+        current_draft_version: block.version,
+      };
+    }
+    const validation = await validateDraftPresentation(tx, block, presentation, params, save);
+    if (validation.status !== 'valid') {
+      return { status: validation.status, issues: validation.issues };
+    }
+    if (!save) {
+      return {
+        status: 'validated',
+        version: block.version,
+        draft_ref: encodeDraftRef(block.id, block.version),
+      };
+    }
 
     const version = await persistStructured(tx, {
       blockId: params.blockId,
-      structured: params.structured,
+      structured: { ...block.structured, presentation },
       op: 'set_presentation',
       jobPayload: { op: 'set_presentation' },
       actorRef: params.actorRef,
@@ -467,7 +747,28 @@ export async function setPresentation(
       currentStatus: block.status,
       currentVersion: block.version,
     });
-    return { status: 'written', version };
+    const receipt: SetPresentationResult = {
+      status: 'written',
+      version,
+      draft_ref: encodeDraftRef(block.id, version),
+      ...(params.requestId != null ? { request_id: params.requestId } : {}),
+    };
+    if (params.requestId != null) {
+      // Existing draft-save receipt, atomic with the canonical edit and projection.
+      // Replays return this original version/ref even if later edits have advanced it.
+      await writeEvent(tx, {
+        id: newId(),
+        actor_kind: params.actorKind ?? 'agent',
+        actor_ref: params.actorRef,
+        action: 'experimental:question_draft_save',
+        subject_kind: 'question_block',
+        subject_id: block.id,
+        outcome: 'success',
+        payload: { request_id: params.requestId, fingerprint, receipt },
+        ingest_at: new Date(),
+      });
+    }
+    return receipt;
   });
 }
 

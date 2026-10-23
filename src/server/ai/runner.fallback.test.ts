@@ -38,6 +38,9 @@ vi.mock('@/server/ai/log', () => ({
   writeAiTaskRunRetried: logMock.retried,
   writeCostLedger: vi.fn(async () => {}),
   writeAiTaskAttemptFinished: vi.fn(async () => true),
+}));
+
+vi.mock('@/kernel/tools/call-evidence', () => ({
   writeToolCallLog: vi.fn(async () => 'tool-log-id'),
 }));
 

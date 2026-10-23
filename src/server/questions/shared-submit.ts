@@ -37,9 +37,12 @@ import {
   DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
   claimHttpSourceDuplicate,
+  dispatchPendingVerifyIntents,
   mergeExactQuestionDuplicateKnowledgeIds,
+  writeVerifyDispatchIntent,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
   QuestionDraftDocument,
@@ -53,12 +56,7 @@ import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
-import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
@@ -68,9 +66,7 @@ import {
 import {
   type EditQuestionResult,
   TxAbort,
-  encodeDraftRef,
   findDraftSaveReceipt,
-  parseDraftRef,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
 import { publishQuestionGroup } from '@/server/questions/publisher';
@@ -95,6 +91,7 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
+import { getR2 } from '@/server/r2';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 
@@ -781,6 +778,7 @@ export async function submitDraftQuestionInTx(
   // The single publish seam.
   const publishResult = await publishQuestionGroup(tx, {
     group_id: groupId,
+    readAssetBytes: (storageKey) => getR2().get(storageKey),
     contract: {
       structure: contract.structure,
       response_spec: contract.response_spec,
@@ -819,19 +817,19 @@ export async function submitDraftQuestionInTx(
       : undefined;
 
   // Draft terminal state + verify outbox for fetched sources.
-  const nextBlockVersion = block.version + 1;
-  await writeQuestionBlockLifecycleEvent(tx, {
-    blockId: block.id,
-    op: 'set_status',
-    status: 'submitted',
-    importedQuestionId: groupId,
-    importedAttemptEventId: undefined,
-    nextVersion: nextBlockVersion,
-    actorKind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
-    actorRef: ctx.actorRef,
+  await applyQuestionBlockTransition(
+    tx,
+    {
+      kind: 'complete_submit',
+      draft: { id: block.id, version: block.version },
+      questionId: groupId,
+      actor: {
+        kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
+        ref: ctx.actorRef,
+      },
+    },
     now,
-  });
-  await projectQuestionBlockGuarded(tx, block.id);
+  );
 
   let verifyEnqueued: boolean | undefined;
   const sourceKind = doc.source?.kind;

@@ -1,4 +1,3 @@
-import { initialSchedulingState } from '@/server/fsrs/state';
 // T4 — practice 包的提议 accept-applier 真身，从 dispatch 壳
 // （actions.ts @ src/server/proposals）等价平移（搬迁不改逻辑）。壳退化为
 // 纯 dispatch，按 kind 一行委托到这里。
@@ -32,6 +31,7 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   cause_category_overlay,
   evaluation,
@@ -42,15 +42,13 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
-} from '@/server/projections/mistake-variant-runtime';
+} from '@/kernel/records/mistake-variant-facts';
 import {
   type ProposalInboxRow,
   acquireProposalDecisionLock,
@@ -67,7 +65,7 @@ import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
+import { enrollPromotedQuestionScheduling } from './question-scheduling-enrollment';
 import { applyQuestionEdit } from './question-structure-edit';
 
 // swappable enqueue hook so DB tests can drive
@@ -551,38 +549,12 @@ export async function acceptQuestionDraftProposal(
       now,
     });
 
-    // FSRS enroll — copied from quiz_verify.ts (P3): per-knowledge
-    // enroll-if-absent so a node with an existing review schedule is never
-    // reset; question-level fallback when the row carries no knowledge ids.
-    const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
-    if (fsrsSubjectIds.length > 0) {
-      for (const knowledgeId of fsrsSubjectIds) {
-        // a synthetic subject root ('seed:<subj>:root') is a
-        // structural anchor, never a content KC: skip enrollment (the subject
-        // read axis already excludes it — resolveSubjectKnowledgeIds). A
-        // roots-only label set enrolls ZERO cards; the question-level fallback
-        // stays reserved for a genuinely unlabeled draft.
-        if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-        const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-        if (existing) continue;
-        await upsertFsrsState(tx, {
-          subject_kind: 'knowledge',
-          subject_id: knowledgeId,
-          ...initialSchedulingState(knowledgeId, now),
-          last_review_event_id: rateEventId,
-        });
-      }
-    } else {
-      const existing = await getFsrsState(tx, 'question', questionId);
-      if (!existing) {
-        await upsertFsrsState(tx, {
-          subject_kind: 'question',
-          subject_id: questionId,
-          ...initialSchedulingState(questionId, now),
-          last_review_event_id: rateEventId,
-        });
-      }
-    }
+    await enrollPromotedQuestionScheduling(tx, {
+      questionId,
+      knowledgeIds: row.knowledge_ids ?? [],
+      evidenceEventId: rateEventId,
+      now,
+    });
 
     await writeEvent(tx, {
       id: rateEventId,

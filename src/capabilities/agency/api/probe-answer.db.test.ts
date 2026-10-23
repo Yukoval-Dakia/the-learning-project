@@ -39,7 +39,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { withProbeSpecs } from '../../../../tests/fixtures/conjecture-probe-spec';
 import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';

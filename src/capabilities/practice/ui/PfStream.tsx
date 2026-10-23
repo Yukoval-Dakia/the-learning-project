@@ -12,13 +12,8 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 
 import type { PfToast } from './PracticeFacePage';
-import {
-  type StreamItem,
-  type StreamSource,
-  type StreamStatus,
-  type StreamView,
-  recomposeStream,
-} from './practice-api';
+import type { StreamItem, StreamSource, StreamStatus, StreamView } from './practice-api';
+import { usePracticeClient } from './practice-client';
 
 type SrcMeta = { label: string; tone: string; icon: string };
 
@@ -131,6 +126,7 @@ export function PfStream({
   ) => void | Promise<void>;
   addToast: (text: string, tone?: PfToast['tone'], icon?: string) => void;
 }) {
+  const { recomposeStream } = usePracticeClient();
   const [demand, setDemand] = useState('');
   const [recomposing, setRecomposing] = useState(false);
 

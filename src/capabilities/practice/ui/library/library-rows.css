@@ -1,0 +1,291 @@
+/* 题目 library rows (YUK-1473): reading lines, state words, groups, the floating review bar.
+   Split from library.css; same design rules. */
+
+[data-ui-next].ql-page {
+  /* ── Rows: reading lines separated by hairlines, not a table ── */
+  & .ql-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .ql-line {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4) 0;
+    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
+  }
+
+  & .ql-line-body {
+    display: grid;
+    flex: 1;
+    gap: var(--un-sp-1);
+    min-width: 0;
+  }
+
+  & .ql-line-main {
+    display: grid;
+    gap: var(--un-sp-1);
+    min-width: 0;
+    margin: calc(-1 * var(--un-sp-2));
+    padding: var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    color: inherit;
+    text-decoration: none;
+    transition: background-color var(--un-t-feedback) linear;
+  }
+
+  & .ql-line-main:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .ql-line-main:focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 0;
+  }
+
+  & .ql-stem {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-prose);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  & .ql-stem :is(p, ul, ol, h1, h2, h3, h4, blockquote, pre, table) {
+    display: inline;
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  & .ql-stem img {
+    display: none;
+  }
+
+  & .ql-facts {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-line-aside {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    padding-top: 2px;
+  }
+
+  /* A state word: a small dot and the word, coloured only when it means something. */
+  & .ql-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+  }
+
+  & .ql-state::before {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--un-text-4);
+    content: "";
+  }
+
+  & .ql-state[data-tone="accent"]::before {
+    background: var(--un-accent);
+  }
+  & .ql-state[data-tone="caution"]::before {
+    background: var(--un-caution);
+  }
+  & .ql-state[data-tone="positive"]::before {
+    background: var(--un-positive);
+  }
+  & .ql-state[data-tone="critical"] {
+    color: var(--un-critical);
+  }
+  & .ql-state[data-tone="critical"]::before {
+    background: var(--un-critical);
+  }
+
+  & .ql-note {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* My wrong answer, quoted under the stem. */
+  & .ql-mine {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-1) var(--un-sp-3);
+    margin: 2px 0;
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-mine-label {
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ql-mine-text {
+    display: -webkit-box;
+    overflow: hidden;
+    max-width: 32em;
+    color: var(--un-text-1);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  & .ql-mine-text :is(p, ul, ol, blockquote, pre) {
+    display: inline;
+    margin: 0;
+  }
+
+  & .ql-mine-cause,
+  & .ql-reason {
+    color: var(--un-text-2);
+  }
+
+  & .ql-reason {
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── Groups (做错过 by standing, 暂不出题 by reason) ── */
+  & .ql-group {
+    display: grid;
+    padding-top: var(--un-sp-4);
+  }
+
+  & .ql-group-head {
+    display: grid;
+    gap: 2px;
+    padding-bottom: var(--un-sp-2);
+    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line-strong);
+  }
+
+  & .ql-group-title {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-3);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .ql-group-count {
+    margin-left: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-weight: var(--un-fw-regular);
+  }
+
+  & .ql-group-why {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-group .cl-toggle {
+    justify-self: start;
+    margin-top: var(--un-sp-3);
+  }
+
+  & .ql-more {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-4);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  /* ── 待审核: tick boxes and the floating bar ── */
+  & .ql-review-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .ql-tick-all {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    cursor: pointer;
+  }
+
+  & .ql-tick {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--un-accent-strong);
+    cursor: pointer;
+  }
+
+  & .ql-line-tick {
+    margin-top: 4px;
+  }
+
+  /* Sticky at the bottom of the list column, so it lines up with the rows it acts on. */
+  & .ql-bar {
+    position: sticky;
+    bottom: var(--un-sp-5);
+    z-index: var(--un-z-raised);
+    justify-self: center;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3) var(--un-sp-5);
+    width: min(620px, 100%);
+    padding: var(--un-sp-3) var(--un-sp-3) var(--un-sp-3) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: color-mix(in srgb, var(--un-bg-raised) var(--un-glass-alpha), transparent);
+    box-shadow:
+      inset 0 1px 0 var(--un-glass-highlight),
+      0 0 0 var(--un-hairline) var(--un-line),
+      var(--un-shadow-float);
+    opacity: 0;
+    transform: translateY(var(--un-sp-4));
+    visibility: hidden;
+    transition:
+      opacity var(--un-t-ui) var(--un-ease-glide),
+      transform var(--un-t-ui) var(--un-ease-spring-soft),
+      visibility 0s linear var(--un-t-ui);
+    -webkit-backdrop-filter: blur(22px) saturate(1.8);
+    backdrop-filter: blur(22px) saturate(1.8);
+  }
+
+  & .ql-bar[data-open="true"] {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  & .ql-bar-text {
+    color: var(--un-text-1);
+    font-size: var(--un-fs-2);
+  }
+
+  & .ql-bar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  [data-ui-next].ql-page .ql-bar {
+    background: var(--un-bg-raised);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next].ql-page .ql-bar {
+    transition: none;
+  }
+}

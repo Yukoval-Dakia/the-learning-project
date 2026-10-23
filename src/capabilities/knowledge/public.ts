@@ -33,8 +33,10 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+export { KnowledgeIdParamsSchema, KnowledgeTreeQuerySchema } from './api/contracts';
 export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
 export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
+export { createManualKnowledgeEdge } from './server/edge-create';
 export type {
   EdgeProposalDecision,
   EdgeProposalDecisionInput,
@@ -46,6 +48,7 @@ export {
   listKnowledgeEdges,
   listKnowledgeEdgesPage,
 } from './server/edges';
+export { readKnowledgeEdges } from './server/edges-list';
 export type {
   FailureLearningKnowledgeNode,
   FailureLearningMisconceptionNode,
@@ -60,6 +63,7 @@ export type { FrontierResolution } from './server/frontier-read';
 export {
   isMasteredForFrontier,
   learnableFrontierResolved,
+  loadFrontierRail,
 } from './server/frontier-read';
 export type {
   CreateLearningIntentKnowledgeNodeFn,
@@ -70,11 +74,14 @@ export {
   archiveMisconceptionEdge,
   createMisconceptionEdge,
 } from './server/misconception-edges';
-export { createKnowledgeNodeFromEvents } from './server/node-creation';
+export { loadMisconceptionsForKc } from './server/misconception-read';
 export {
-  type MasteryDecayBucket,
-  masteryDecayBucket,
-} from './server/node-page';
+  createKnowledgeNodeFromEvents,
+  ensureSubjectRoot,
+  subjectRootId,
+  updateSubjectRootNameFromControl,
+} from './server/node-creation';
+export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,
@@ -82,10 +89,10 @@ export {
   dismissProposal,
   writeKnowledgeProposeEvent,
 } from './server/proposals';
+export { loadReviewDueSummary } from './server/review-due-summary';
 export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
 export { loadTreeSnapshot } from './server/tree';
-
 export { knowledgeTaskSpecs } from './task-public';

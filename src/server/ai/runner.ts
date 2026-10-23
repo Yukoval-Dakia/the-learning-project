@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import { installTaskOperationObserver } from '@/ai/task-observation';
+import type { RunTaskResult } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskBudgetOverride,
@@ -35,6 +36,8 @@ import {
   resolveTaskBudget,
   tasks,
 } from '@/capabilities/task-registry';
+import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
+import type { PiHookBridge } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
@@ -49,9 +52,7 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
-import type { NoteGeneratePhaseTimings } from './log';
 import { logMissingToolMountsWarning } from './log';
-import type { PiHookBridge } from './pi-hooks';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
 import type { ProviderTransportCollector } from './provider-transport';
@@ -59,7 +60,6 @@ import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
   AttemptSettlementError,
-  type LifecycleUsage,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -75,9 +75,7 @@ import type {
   SDKTaskUpdatedMessage,
   SDKUserMessage,
 } from './sdk-types';
-import { isSpawnToolName } from './spawn-contract';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
-import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
 // The runner is loaded before capability execution. Keep the shared observation
@@ -102,25 +100,7 @@ installTaskOperationObserver((observation, execute) =>
 // Public surface
 // ============================================================================
 
-export interface RunTaskResult {
-  task_run_id: string;
-  text: string;
-  finishReason: string;
-  usage: LifecycleUsage;
-  /** Known USD amount; absent when this attempt has no trustworthy price. */
-  cost_usd?: number;
-  /** Evidence class and immutable reference for cost_usd. */
-  cost_basis: 'reported' | 'estimated' | 'unknown';
-  cost_ref: string;
-  /**
-   * Adapter-provided product for opt-in schema tool output (YUK-1537).
-   * Legacy tasks retain their text parsing behavior. Runner does not interpret
-   * the product; the capability validates it before any domain publication.
-   */
-  structured_output?: unknown;
-  /** Present for NoteGenerateTask. Model phases; the job adds parse and DB. */
-  phases?: NoteGeneratePhaseTimings;
-}
+export type { RunTaskResult } from '@/ai/task-result';
 
 export interface CompiledModelPrompt {
   text: string;
@@ -1294,6 +1274,8 @@ export interface StreamCollectResult extends RunTaskResult {
   partial?: boolean;
   /** Present on a partial result — the underlying error message. */
   error?: string;
+  /** Safe classification from this attempt's observed provider response. */
+  failure?: { kind: 'provider_request_rejected'; httpStatus: 400 };
 }
 
 export async function streamTaskCollecting(
@@ -1347,6 +1329,7 @@ async function streamTaskCollectingImpl(
   });
   let resultText = '';
   let terminalText: string | undefined;
+  let failure: StreamCollectResult['failure'];
 
   return lifecycle.withTracing(async () => {
     let usagePromptText = '';
@@ -1411,6 +1394,14 @@ async function streamTaskCollectingImpl(
             });
           },
           apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
+          onResultError: (msg) => {
+            if (
+              msg.subtype === 'error_during_execution' &&
+              msg.provider_request_rejection?.http_status === 400
+            ) {
+              failure = { kind: 'provider_request_rejected', httpStatus: 400 };
+            }
+          },
           abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
         });
       };
@@ -1471,6 +1462,7 @@ async function streamTaskCollectingImpl(
         cost_ref: lifecycle.costRef,
         partial: true,
         error: error instanceof Error ? error.message : String(error),
+        ...(!lifecycle.aborted && failure ? { failure } : {}),
       };
     } finally {
       lifecycle.dispose();

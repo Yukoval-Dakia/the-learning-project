@@ -10,6 +10,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import { aiAgentRef } from '@/ai/task-result';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
   type QuestionAuthorDraftT,
@@ -24,7 +25,7 @@ import { knowledge, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import type { ToolContext } from '@/kernel/tools/types';
-import { type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   bindGeneratedQuestion,

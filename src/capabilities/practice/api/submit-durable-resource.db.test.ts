@@ -27,7 +27,7 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { issueHistoricalSoloFixture } from '../../../../tests/fixtures/assessment-solo';

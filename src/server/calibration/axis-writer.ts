@@ -4,8 +4,8 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { learner_axis_state } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 
 /** Does not average the two recoveries. Averaging would invent a descriptor. Both ids take `axis_state:` locks, sorted, on this transaction. */
 export async function retireLearnerAxisStateOnMerge(

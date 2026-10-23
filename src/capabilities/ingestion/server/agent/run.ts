@@ -5,6 +5,7 @@ import {
   isProviderSessionWallClockBudgetError,
   isTransientAgentFailure,
 } from '@/ai/agent-run-error';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
@@ -20,7 +21,6 @@ import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admi
 // pulls providers/task-catalog/schema into its cone and breaks vitest module order.
 import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';
 import { piDomainMount } from '@/server/ai/tools/pi-tools';
-import { Ingestion } from '@/server/session';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,
@@ -44,6 +44,7 @@ import {
 } from './budget';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
+import { persistAgentRunHistory } from './history';
 import {
   type AgentRunLedger,
   claimRunSegment,
@@ -274,6 +275,11 @@ export async function runIngestionAgentSegment(
         code: 'worker_lost',
         retryable: false,
       });
+      await persistAgentRunHistory(tx, {
+        sessionId,
+        runState: 'done',
+        executionClosed: true,
+      });
       return done;
     });
     return {
@@ -297,6 +303,11 @@ export async function runIngestionAgentSegment(
         trigger,
         outcome: 'waiting',
         open_asks: openAskIds,
+      });
+      await persistAgentRunHistory(tx, {
+        sessionId,
+        runState: 'waiting',
+        executionClosed: true,
       });
     });
     return { outcome: 'waiting', open_asks: openAskIds, segment };
@@ -328,6 +339,11 @@ export async function runIngestionAgentSegment(
         operationId: params.operationId,
         terminal: 'failed',
         error: { code: ledger.terminalRequest!.code },
+      });
+      await persistAgentRunHistory(tx, {
+        sessionId,
+        runState: 'failed',
+        executionClosed: true,
       });
     });
     return { outcome: 'failed', error: `terminal_request ${ledger.terminalRequest.code}` };
@@ -366,6 +382,11 @@ export async function runIngestionAgentSegment(
         operationId: params.operationId,
         terminal: 'failed',
         error: { code: 'policy_blocked', policy: derivationPolicy },
+      });
+      await persistAgentRunHistory(tx, {
+        sessionId,
+        runState: 'failed',
+        executionClosed: true,
       });
     });
     return { outcome: 'failed', error: `derivation_policy ${derivationPolicy}` };
@@ -491,6 +512,11 @@ export async function runIngestionAgentSegment(
             terminal: 'failed',
             error: { code },
           });
+          await persistAgentRunHistory(tx, {
+            sessionId,
+            runState: 'failed',
+            executionClosed: true,
+          });
         })
         .catch((secondary) =>
           console.error(
@@ -546,6 +572,11 @@ export async function runIngestionAgentSegment(
             terminal: 'failed',
             error: { code: after.terminalRequest!.code },
           });
+          await persistAgentRunHistory(tx, {
+            sessionId,
+            runState: 'failed',
+            executionClosed: true,
+          });
         });
         return {
           outcome: 'failed',
@@ -575,6 +606,11 @@ export async function runIngestionAgentSegment(
             redactionSink,
             segment,
           );
+          await persistAgentRunHistory(tx, {
+            sessionId,
+            runState: 'waiting',
+            executionClosed: true,
+          });
         });
         return { outcome: 'waiting', open_asks: afterOpen, segment };
       }
@@ -616,6 +652,11 @@ export async function runIngestionAgentSegment(
             outcome: 'done',
             ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
           });
+          await persistAgentRunHistory(tx, {
+            sessionId,
+            runState: 'done',
+            executionClosed: true,
+          });
           return completed;
         });
         const doneCounts = terminalItemCounts(after.items);
@@ -648,6 +689,11 @@ export async function runIngestionAgentSegment(
           redactionSink,
           segment,
         );
+        await persistAgentRunHistory(tx, {
+          sessionId,
+          runState: 'in_progress',
+          executionClosed: true,
+        });
         return continueMarkerId;
       });
       const enqueueContinuation = deps.enqueueContinuation ?? enqueueAgentContinuation;
@@ -740,6 +786,12 @@ export async function failSessionForUnknownPaidAttempt(
       executionClosed: false,
       error: { code: 'worker_lost', reason: 'paid_attempt_outcome_unknown' },
     });
+    await persistAgentRunHistory(tx, {
+      sessionId,
+      runState: 'lost',
+      executionClosed: false,
+      paidOutcomeUnknown: true,
+    });
   });
 }
 
@@ -784,6 +836,11 @@ async function finalizeRun(
       segment,
       trigger,
       outcome: 'done',
+    });
+    await persistAgentRunHistory(tx, {
+      sessionId,
+      runState: 'done',
+      executionClosed: true,
     });
     return completed;
   });

@@ -1,4 +1,5 @@
-import type { LifecycleUsage, ObservedRunUsage, TerminalResultEvidence } from './run-lifecycle';
+import type { AiTaskUsage as LifecycleUsage } from '@/ai/task-result';
+import type { ObservedRunUsage, TerminalResultEvidence } from './run-lifecycle';
 import type { SDKAssistantMessage, SDKMessage } from './sdk-types';
 
 type RawSdkUsage = {

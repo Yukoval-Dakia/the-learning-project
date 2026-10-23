@@ -1,4 +1,8 @@
-import type { Provider } from '@/ai/registry';
+import type { KnownProvider, Provider } from '@/ai/registry';
+import {
+  isCustomProviderConfigured,
+  looksLikeCustomProviderId,
+} from '@/core/config/custom-providers';
 import { type ParsedCatalogModel, catalogModelEntry, catalogModelFacts } from './model-catalog';
 import { modelCatalogOverride } from './model-catalog-overrides';
 import { PROVIDER_MODEL_BINDINGS } from './providers';
@@ -50,7 +54,7 @@ export interface ModelProfile {
   source: 'binding' | 'catalog' | 'defaults';
 }
 
-export const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
+export const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<KnownProvider, string>> = {
   anthropic: 'anthropic',
   'anthropic-sub': 'anthropic',
   xiaomi: 'xiaomi',
@@ -59,6 +63,18 @@ export const CATALOG_PROVIDER_BY_INTERNAL: Partial<Record<Provider, string>> = {
   openai: 'openai',
   openrouter: 'openrouter',
 };
+
+/**
+ * The runtime catalog bucket a provider's facts live in. Known providers map
+ * through the static table; a custom provider (YUK-1563 part 4) owns a
+ * synthetic bucket under its own id.
+ */
+export function catalogProviderFor(provider: Provider): string | undefined {
+  if (looksLikeCustomProviderId(provider)) {
+    return isCustomProviderConfigured(provider) ? provider : undefined;
+  }
+  return CATALOG_PROVIDER_BY_INTERNAL[provider as KnownProvider];
+}
 
 const CONSERVATIVE_EXECUTION: ModelProfileExecution = {
   timeoutClass: 'standard',
@@ -72,7 +88,7 @@ export function resolveModelProfile(
   model: string,
   env: Record<string, string | undefined> = process.env,
 ): ModelProfile {
-  const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider];
+  const catalogProvider = catalogProviderFor(provider);
   let facts: ParsedCatalogModel = catalogProvider ? catalogModelFacts(catalogProvider, model) : {};
   const override = modelCatalogOverride(provider, model, env);
   // Token Plan has no catalog bucket. Reuse model facts, never Xiaomi's endpoint or tool admission.
@@ -127,7 +143,7 @@ export function resolveModelProfile(
 
 export function resolveModelProfileByModel(model: string): ModelProfile {
   for (const [provider, catalogProvider] of Object.entries(CATALOG_PROVIDER_BY_INTERNAL)) {
-    if (catalogModelEntry(catalogProvider, model) !== undefined) {
+    if (catalogProvider && catalogModelEntry(catalogProvider, model) !== undefined) {
       return resolveModelProfile(provider as Provider, model);
     }
   }

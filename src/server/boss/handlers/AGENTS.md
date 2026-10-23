@@ -36,7 +36,7 @@
 | `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——旧表曾写「真 barrier：edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径」，该说法**已被代码证伪**（YUK-758 review ToTt717）：`runEdgeProposeAndWrite` 的 SUPERSEDE 分支只 `writeAiProposal` 落**待接受提议**，`propose_edge.ts:614-616` 自述「leaves both live accumulators unchanged **until the user accepts it**」，夜批从不自主改 live 边；本 job 侧也只是推进自己的 reconciliation cursor。故二者是各自独立的 sweep，02:45 与锚点 02:30 的先后是**时钟巧合**，不需要编边。YUK-1560 资格门：dormant 只跳过 coverage repair；abandoned edit-session presence sweep 在 `beforeEligibility` 先跑 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
 | `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
-| `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
+| `verify_dispatch_recover` | `10 4` | ../handlers.ts | `../verify-dispatch-recovery.ts` 适配 Practice 验证 intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
 | `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
@@ -65,7 +65,7 @@
 ## 事件触发链（enqueue-by-event，非 cron）
 - `note_generate` / `note_verify` 由 Notes manifest 注册；同事务 intent + 提交后 deterministic dispatch 衔接，由 `hub_sync_recovery` 每分钟补投。
 - `attribution_followup`（替代 inline `after()`）→ `variant_gen`；accept 后 → `variant_verify`
-- `quiz_gen` → `quiz_verify`、`sourcing` / `jyeoo_fetch` → `source_verify`、`variant_verify` —— YUK-868 起全部由 practice/manifest 声明注册（handler 在 `src/capabilities/practice/jobs/`），中央 handlers.ts 不再登记这三条 verify 队列；`verify_dispatch_recover` 仍在此处，只补发 queue 名不变
+- `quiz_gen` → `quiz_verify`、`sourcing` / `jyeoo_fetch` → `source_verify`、`variant_verify` —— YUK-868 起全部由 practice/manifest 声明注册（handler 在 `src/capabilities/practice/jobs/`），中央 handlers.ts 不再登记这三条 verify 队列；`verify_dispatch_recover` 仍由基础设施 `../verify-dispatch-recovery.ts` 装配，协议归 `src/capabilities/practice/server/verify-dispatch-outbox.ts`；只补发，queue 名不变
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose

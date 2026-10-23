@@ -45,13 +45,20 @@ function knowledgeTimestampJson(value: Date | string): string {
   return typeof value === 'string' ? value : value.toISOString();
 }
 
-export const readStartKnowledgeTree = () =>
-  withStartDb(async (db) => {
-    const { loadTreeSnapshot } = await import('@/capabilities/knowledge/public');
+export const readStartKnowledgeTree = async (input?: { subject?: string }) => {
+  const { KnowledgeTreeQuerySchema, loadTreeSnapshot } = await import(
+    '@/capabilities/knowledge/public'
+  );
+  const parsed = KnowledgeTreeQuerySchema.safeParse(input ?? {});
+  if (!parsed.success) {
+    // Preserve the HTTP tree route's code-only validation envelope.
+    throw Response.json({ error: 'validation_error' }, { status: 400 });
+  }
+  return withStartDb(async (db) => {
     const { isLearnerVisibleKnowledgeId } = await import(
       '@/kernel/read-models/learner-knowledge-visibility'
     );
-    const rows = await loadTreeSnapshot(db);
+    const rows = await loadTreeSnapshot(db, parsed.data.subject);
     return {
       rows: rows
         .filter((row) => isLearnerVisibleKnowledgeId(row.id))
@@ -63,6 +70,17 @@ export const readStartKnowledgeTree = () =>
           last_active_at: knowledgeTimestampJson(row.last_active_at),
         })),
     };
+  });
+};
+export const readStartKnowledgeFrontier = () =>
+  withStartDb(async (db) => {
+    const { loadFrontierRail } = await import('@/capabilities/knowledge/public');
+    return { rows: await loadFrontierRail(db) };
+  });
+export const readStartKnowledgeReviewDue = () =>
+  withStartDb(async (db) => {
+    const { loadReviewDueSummary } = await import('@/capabilities/knowledge/public');
+    return loadReviewDueSummary(db);
   });
 export const readStartConjectures = () =>
   withStartDb(async (db) => {
@@ -121,4 +139,38 @@ export const undoStartAiChange = (input: unknown) =>
       );
     }
     return undoNoteRefineApplyEvent(db, { applyEventId: eventId });
+  });
+
+export const readStartActiveProbes = () =>
+  withStartDb(async (db) => {
+    const { loadActiveProbes } = await import('@/capabilities/shell/public');
+    return loadActiveProbes(db);
+  });
+
+export const readStartTeachingBrief = () =>
+  withStartDb(async (db) => {
+    const { loadTeachingBrief } = await import('@/capabilities/shell/public');
+    return loadTeachingBrief(db);
+  });
+
+export const acknowledgeStartTeachingBrief = (body: string) =>
+  withStartDb(async (db) => {
+    const { TeachingBriefAckBodySchema, acknowledgeTeachingBriefOutcome } = await import(
+      '@/capabilities/shell/public'
+    );
+    let rawBody: unknown = null;
+    try {
+      rawBody = JSON.parse(body);
+    } catch {
+      // Match HTTP's malformed-JSON path through the shared strict body schema.
+    }
+    const parsed = TeachingBriefAckBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw new ApiError(
+        'validation_error',
+        parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+        400,
+      );
+    }
+    return acknowledgeTeachingBriefOutcome(db, parsed.data.probe_result_event_id);
   });

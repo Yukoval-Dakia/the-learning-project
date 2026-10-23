@@ -2,20 +2,21 @@
 
 // Compatibility exports; shared read models consume their owner, kernel/events,
 // directly so initialization does not re-enter the practice runtime barrel.
-export { type EffectiveTruth } from '@/kernel/events';
+export type { EffectiveTruth } from '@/kernel/events';
 export {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
   type ReviewAnswerAttachment,
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
+export { IssueAssessmentBodySchema } from './api/assessment-contracts';
 export type { QuizGenJobData } from './jobs/quiz_gen';
-
 export { runQuestionAdmissionChecks } from './server/admission/checks';
 // Writer seam for issue/draft/submit: keeping these on the barrel keeps the migrate
 // bundle on the @kernel + @db chain with no SDK import.
 export { issueAssessment } from './server/assessment/issue';
-export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
+export { projectIssuanceResult } from './server/assessment/issue-response';
+export { getIssuanceState, saveResponseDraft, saveSubmission } from './server/assessment/submit';
 
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
 export {
@@ -77,6 +78,15 @@ export {
   parseHintTurn,
 } from './server/solve-session';
 export type { PracticeTaskRunFn } from './server/task-runtime';
+export {
+  type EnqueueVerifyFn,
+  VERIFY_DISPATCH_COMPLETE_ACTION,
+  VERIFY_DISPATCH_INTENT_ACTION,
+  VERIFY_DISPATCH_VERSION,
+  dispatchPendingVerifyIntents,
+  recoverOrphanVerifyDispatches,
+  writeVerifyDispatchIntent,
+} from './server/verify-dispatch-outbox';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 // Coach's nightly daily-plan inputs share the practice due queue and
@@ -247,6 +257,7 @@ export {
   assembleScanInput,
   scanCoverageGaps,
 } from './server/question-supply/target-discovery';
+export { projectReviewAnswerResponse } from './server/review-answer-response';
 export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
@@ -296,6 +307,7 @@ export async function executeJudgeWorkflow(
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
 
+export type { PlacementProfileResponse } from './api/placement-contracts';
 // Judge engine identity and census belong to practice; the shared host consumes this seam.
 export {
   JUDGE_DBOS_QUEUE,
@@ -307,3 +319,45 @@ export {
   sealJudgeEngineInventory,
   validateJudgeEngineInventory,
 } from './server/judge-engine-client';
+export { readPlacementProfile } from './server/placement-profile';
+export { type WeeklyReportQuery, loadWeeklyReview } from './server/review-weekly';
+
+// Resolve the existing session operation in the initialized host graph after auth.
+export const readPlacementSession: typeof import('./server/session-operations/placement-session').readPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).readPlacementSession(...args);
+
+export { UpdatePlacementSessionBodySchema } from './api/placement-contracts';
+export const transitionPlacementSession: typeof import('./server/session-operations/placement-session').transitionPlacementSession =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).transitionPlacementSession(
+      ...args,
+    );
+
+export { SaveResponseDraftBodySchema } from './api/assessment-contracts';
+export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
+export { readPaperList } from './server/papers-list';
+export { readQuestionDetail } from './server/question-detail-read';
+export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
+export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
+export {
+  getPracticeStream,
+  recomposePracticeStream,
+  updatePracticeStreamItem,
+} from './server/stream-operations';
+export const startPlacementProbe: typeof import('./server/session-operations/placement-session').startPlacementProbe =
+  async (...args) =>
+    (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
+
+export { CreateReviewSessionBody } from './api/contracts';
+export { previewReviewAdvice } from './server/advice-operation';
+export { createPracticeAppeal } from './server/appeal-operation';
+export { revealFrozenStudyReference } from './server/assessment/study-context';
+export { readDraftReviewDetail } from './server/draft-review';
+export { getPaperDetail } from './server/paper-detail';
+export { createPracticePaperSubmission } from './server/paper-submission-operation';
+export {
+  createReviewSession,
+  transitionReviewSession,
+} from './server/session-operations/review-session';
+export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';

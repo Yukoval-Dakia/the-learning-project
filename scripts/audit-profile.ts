@@ -128,7 +128,7 @@ export async function runDbCli(args: string[]): Promise<number> {
   await import('./load-env');
   const { db } = await import('@/db/client');
   const { auditProfilesFromDb, formatDbProfileAuditReport } = await import(
-    '@/server/subjects/audit-profile-db'
+    '@/capabilities/observability/public'
   );
   const result = await auditProfilesFromDb(db);
   if (args.includes('--json')) {

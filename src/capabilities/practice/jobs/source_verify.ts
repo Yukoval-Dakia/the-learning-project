@@ -22,6 +22,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
@@ -43,6 +44,7 @@ import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -64,11 +66,6 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
-import { promoteVerifiedGroupPartRows } from '@/kernel/records/assessment-publication';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, initialSchedulingState, upsertFsrsState } from '@/server/fsrs/state';
 import {
   type AdmissionVerificationWrite,
   type PublishAdmission,
@@ -76,12 +73,15 @@ import {
   type SuspensionUpdate,
   archiveGroupLifecycle,
   loadQuestionGroupContractSnapshot,
+  promoteVerifiedGroupPartRows,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+} from '@/kernel/records/assessment-publication';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
+import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { readVectorNearHold, visibleSourceNeighbor } from '../server/question-supply/ingest-dedup';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
@@ -148,11 +148,13 @@ export type SourceVerifyPerQuestionStatus =
 export interface RunSourceVerifyParams {
   db: Db;
   questionId: string;
+  /** Executes solve/semantic checks and the default source-grounding task. */
   runTaskFn: RunTaskFn;
   imageFetchFn?: SolveCheckImageFetchFn;
   // source-grounding re-check seam (single_source_grounding rows only). DB tests
   // inject a stub to drive grounded / not_grounded / transient without real R2 / VLM spend;
-  // production defaults to runSourceGroundingVerify (→ SourceGroundingVerifyTask).
+  // An explicit override receives only SourceGroundingParams and takes precedence.
+  // Otherwise runSourceGroundingVerify uses the same runTaskFn for SourceGroundingVerifyTask.
   sourceGroundingFn?: SourceGroundingFn;
   /**
    * owner recheck command id. When set, the terminal-event guard
@@ -285,6 +287,10 @@ export async function publishVerifyLifecycleUpdate(
     .limit(1);
   const result = await publishQuestionGroup(tx, {
     group_id: groupRootId,
+    readAssetBytes: async (storageKey) => {
+      const { getR2 } = await import('@/server/r2');
+      return getR2().get(storageKey);
+    },
     contract: {
       // F1：冻结四层（含 presentation/digest）逐字回送——同 digest ⇒ 不铸
       // 新 revision；声明与非声明的 typed 契约都被字节级保留。
@@ -815,16 +821,19 @@ export async function runSourceVerify(
       checks.push({ check: 'source_grounding', verdict: 'fail', reason: groundingSummary });
     }
     if (singleSourceGrounding && groundingSourceAssetId && otherwisePromotable) {
-      const groundingFn = params.sourceGroundingFn ?? runSourceGroundingVerify;
+      const groundingFn = params.sourceGroundingFn;
       let outcome: SourceGroundingVerifyResult;
       try {
-        outcome = await groundingFn({
+        const groundingParams: SourceGroundingParams = {
           db,
           prompt_md: verifyInput.prompt_md,
           reference_md: verifyInput.reference_md,
           sourceAssetId: groundingSourceAssetId,
           subjectProfile,
-        });
+        };
+        outcome = groundingFn
+          ? await groundingFn(groundingParams)
+          : await runSourceGroundingVerify({ ...groundingParams, runTaskFn });
       } catch (err) {
         // a BARE throw from the grounding fn (a bug, or a future
         // change that stops returning the discriminated result) must NOT bypass fail-closed.
@@ -1055,41 +1064,12 @@ export async function runSourceVerify(
           .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
           .where(eq(question.id, questionId));
 
-        // FSRS enroll-if-absent per knowledge point (identical convention to
-        // quiz_verify): materialize an initial card only for knowledge points with no
-        // existing projection; never reset an existing schedule.
-        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
-        if (fsrsSubjectIds.length > 0) {
-          for (const knowledgeId of fsrsSubjectIds) {
-            // a synthetic subject root ('seed:<subj>:root', the
-            // plan-executor coarse-fallback binding) is a structural anchor,
-            // never a content KC: skip FSRS enrollment so the question can't
-            // mint a due card for an id the subject read axis already excludes
-            // (resolveSubjectKnowledgeIds). The raw-ids branch condition is
-            // deliberate: a roots-only label set is NOT "unlabeled", so it
-            // enrolls ZERO cards — the question-level fallback below stays
-            // reserved for a genuinely unlabeled legacy row.
-            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-            if (existing) continue;
-            await upsertFsrsState(tx, {
-              subject_kind: 'knowledge',
-              subject_id: knowledgeId,
-              ...initialSchedulingState(knowledgeId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        } else {
-          const existing = await getFsrsState(tx, 'question', questionId);
-          if (!existing) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: questionId,
-              ...initialSchedulingState(questionId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        }
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId,
+          knowledgeIds: current.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
 
         // 统一发布链：verified promote 同事务重发组 revision。
         // 来源核对通过 ≠ 判分准入。ADR-0073 四源同门：每个计分单元
@@ -1118,32 +1098,12 @@ export async function runSourceVerify(
               })
             : [];
         for (const part of promotedPartRows) {
-          // FSRS enroll-if-absent 与根同款约定（quiz_verify/owner-override
-          // 级联同款）：不重置既有排程；无 KC 绑定时走 question 级 fallback。
-          const partKnowledgeIds = Array.from(new Set(part.knowledgeIds));
-          if (partKnowledgeIds.length > 0) {
-            for (const knowledgeId of partKnowledgeIds) {
-              if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-              const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-              if (existing) continue;
-              await upsertFsrsState(tx, {
-                subject_kind: 'knowledge',
-                subject_id: knowledgeId,
-                ...initialSchedulingState(knowledgeId, now),
-                last_review_event_id: verifyEventId,
-              });
-            }
-          } else {
-            const existing = await getFsrsState(tx, 'question', part.id);
-            if (!existing) {
-              await upsertFsrsState(tx, {
-                subject_kind: 'question',
-                subject_id: part.id,
-                ...initialSchedulingState(part.id, now),
-                last_review_event_id: verifyEventId,
-              });
-            }
-          }
+          await enrollPromotedQuestionScheduling(tx, {
+            questionId: part.id,
+            knowledgeIds: part.knowledgeIds,
+            evidenceEventId: verifyEventId,
+            now,
+          });
         }
         {
           const [lifecycle] = await tx
@@ -1221,6 +1181,10 @@ export async function runSourceVerify(
                   }
                   const cleared = await publishQuestionGroup(tx, {
                     group_id: groupRootId,
+                    readAssetBytes: async (storageKey) => {
+                      const { getR2 } = await import('@/server/r2');
+                      return getR2().get(storageKey);
+                    },
                     contract: {
                       structure: currentRevision.structure,
                       response_spec: currentRevision.response_spec,
