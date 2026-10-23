@@ -16,12 +16,7 @@ import { PfPaper } from './PfPaper';
 import { PfRetro } from './PfRetro';
 import { PfShelf } from './PfShelf';
 import { PfStream, practiceMorphKey } from './PfStream';
-import {
-  type StreamItem,
-  type StreamStatus,
-  type StreamView,
-  advanceStreamItem,
-} from './practice-api';
+import type { StreamItem, StreamStatus, StreamView } from './practice-api';
 import { usePracticeClient } from './practice-client';
 import { type Running, glideToTop, leaveQuestion } from './solo/advance-motion';
 import { PracticeSolo } from './solo/PracticeSolo';
@@ -113,7 +108,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
-  const { getStream } = usePracticeClient();
+  const { advanceStreamItem, getStream } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -360,7 +355,7 @@ export default function PracticeFacePage({
       await onConfirmed(confirmed);
       return confirmed;
     },
-    [qc, recordFailure, streamQueryKey],
+    [advanceStreamItem, qc, recordFailure, streamQueryKey],
   );
 
   const clearScope = useCallback(() => {
