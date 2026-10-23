@@ -138,3 +138,34 @@ capability-boundaries、architecture-deepening，五项全部 exit0。日志同�
 `parent-0f05-*.log`；依赖数321/0/39、kernel新边1、pass-through新增0。
 R1结论只覆盖固定的本片产品，旧534 CI不冒称覆盖新组合；推送新head后重新取得其exact CI。
 未扩大为上游产品复审、第三审、测试或任何运行权限，原 NOT_RUN 保持。
+
+## 合前 P1：普通抽取的冻结标题
+
+`08a6a5d59` 已正常纳入 actual main `2088b6801`，本地五门与其 exact GitHub
+CI39894006137 attempt1 全18项成功，但新的 bot P1 证明原回退不覆盖常规抽取：
+`applyExtractionResult` 刻意令 deprecated `extracted_prompt_md` 为 null，且 source document
+初始 title 为 null。本次接受该 correctness finding；旧 R1 不冒称覆盖下面的修复。
+
+补充读面不改任何创建者或历史写者。在原 session-bound blocks 批量 SQL 内关联
+`experimental:question_block_create`、success、`origin=ocr|docx`，subject 与外层 session
+都须对应当前 block。原 canonical event 在同一次 INSERT 事务内冻结完整 row，原 payload
+按 `QuestionBlockCreateExperimental` 完整校验（包括 subject_id=payload.row.id），再校验
+冻结 row 的 ingestion_session_id。仅 legacy StructuredQuestion 的合法完整树经既有
+`structuredToPromptMarkdown` 派生公开题面；不包含 answers/analysis，不复制另一 codec。
+
+来源优先级原前三项不变，只有仍无标题时才使用该原始快照，`title_source=question_block_create`。
+沿原 block ordinal/id 排序；同 block 多个原始 capture 仅认 created_at/id 最早一条，坏快照
+不跳到后续覆盖伪称初始证据。rescue/import/edit_draft/genesis 不作原始抽取标题；
+没有合法快照、旧数据或只存 v2 声明而无合法 legacy tree 时仍双 null。
+不从今日 mutable structured、question 或 opaque 快照取文，不补写 source_document、
+extracted_prompt_md，不运行 provider；仍单个 RR/READ ONLY、最多五次 SQL，无逐会话 fanout。
+
+两个 GET 的既有 owner/live consumer、filter/count/page 边界、agent run 隔离及旧不可变
+legacy 文本回退保持。wire enum 与真实生成物同步。仅原预算内一次验证审 R2、最终静态门
+及新 exact-head CI 待完成；测试、DB、HTTP/browser、provider/paid、runtime/部署继续 NOT_RUN。
+
+上述 P1 修复最终静态门均 exit0：typecheck、lint（164 warnings）、build、
+API contracts/client/client-usage、capability-boundaries、architecture-deepening。
+两架构门固定 actual main2088；日志同外置 review 目录 `parent-p1-final-*.log`。
+生成器真实执行并仅产生新 enum 与两 GET 文档差量；未写/跑测试。无新增依赖登记、
+门放宽、schema/DDL/paid/运行改动。R2 与新 exact CI 仍待各自证据，不沿用08a绿。

@@ -45,6 +45,7 @@ export const IngestionSessionTitleSourceSchema = z.enum([
   'source_document',
   'agent_item_preview',
   'extracted_prompt_md',
+  'question_block_create',
 ]);
 export type IngestionSessionTitleSource = z.infer<typeof IngestionSessionTitleSourceSchema>;
 
