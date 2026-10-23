@@ -4813,6 +4813,15 @@
       "to": 1233,
       "issue": "YUK-1570",
       "responsibilityReason": "Three net lines are the required formatter expansion of the unchanged two-symbol advisory-lock import after its specifier moves to the approved canonical db/learning-state-lock owner. Removing that import leaves the entire caller byte-identical to the base, including all B, merge, paid, transaction and lock-order bodies. No operation or policy is added, and no unrelated lines are compressed or split to evade the size ratchet."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-23",
+      "baseBlob": "653a39710c78647c8f5fdc8d005bb533c7d7615b",
+      "from": 1267,
+      "to": 1306,
+      "issue": "YUK-1646",
+      "responsibilityReason": "The catalog document remains the single owner of models.dev endpoint truth: the added lines derive its model-endpoint hosts, install them into the shared allowlist on every document swap and on the initial snapshot, and admit freshly pulled hosts before the /models reads that precede the merge. No new responsibility or subsystem; custom:* buckets stay excluded so admin-configured URLs cannot extend the allowlist."
     }
   ],
   "compatShims": [

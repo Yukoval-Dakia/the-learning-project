@@ -114,14 +114,55 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
   },
 };
 
+/**
+ * Xiaomi Token Plan is absent from models.dev. Its three regional endpoints are
+ * the only code-owned model endpoints not listed by the catalog (the catalog
+ * also omits the Anthropic/OpenAI first-party roots; those come in through the
+ * override facts above). The endpoint host allowlist unions this set with the
+ * catalog's; an explicit `XIAOMI_TOKEN_PLAN_BASE_URL` still has to clear it.
+ */
+const TOKEN_PLAN_REGIONS = ['cn', 'sgp', 'ams'] as const;
+
+type TokenPlanRegion = (typeof TOKEN_PLAN_REGIONS)[number];
+
+function isTokenPlanRegion(value: string): value is TokenPlanRegion {
+  return (TOKEN_PLAN_REGIONS as readonly string[]).includes(value);
+}
+
+function tokenPlanEndpointFor(region: TokenPlanRegion): string {
+  return `https://token-plan-${region}.xiaomimimo.com/v1`;
+}
+
+export const BUILTIN_MODEL_ENDPOINT_HOSTS: ReadonlySet<string> = (() => {
+  const hosts = new Set<string>();
+  const add = (value: string | undefined) => {
+    if (!value) return;
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'https:' && !url.username && !url.password) hosts.add(url.hostname);
+    } catch {
+      // A malformed declared endpoint is rejected at resolution, not here.
+    }
+  };
+  for (const models of Object.values(overrides)) {
+    for (const override of Object.values(models ?? {})) add(override.facts.baseUrl);
+  }
+  for (const region of TOKEN_PLAN_REGIONS) add(tokenPlanEndpointFor(region));
+  return hosts;
+})();
+
 /** Token Plan is absent from models.dev; never borrow the pay-as-you-go endpoint. */
 export function tokenPlanEndpointOverride(env: Record<string, string | undefined>): string {
   const explicit = env.XIAOMI_TOKEN_PLAN_BASE_URL?.trim();
   const region = env.XIAOMI_TOKEN_PLAN_REGION?.trim() || 'cn';
-  if (!explicit && region !== 'cn' && region !== 'sgp' && region !== 'ams') {
+  let endpoint: string;
+  if (explicit) {
+    endpoint = explicit;
+  } else if (isTokenPlanRegion(region)) {
+    endpoint = tokenPlanEndpointFor(region);
+  } else {
     throw new Error('XIAOMI_TOKEN_PLAN_REGION must be cn, sgp, or ams');
   }
-  const endpoint = explicit || `https://token-plan-${region}.xiaomimimo.com/v1`;
   const url = new URL(endpoint);
   if (
     url.protocol !== 'https:' ||

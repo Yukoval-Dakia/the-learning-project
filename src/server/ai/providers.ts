@@ -8,6 +8,10 @@ import {
   customProviderDefinitions,
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
+import {
+  assertModelEndpointHostAllowed,
+  isModelEndpointHostAllowed,
+} from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
 import { nativePiModel, piProviderId } from './pi-provider-catalog';
@@ -352,6 +356,8 @@ export function providerModelsRoot(
   if (looksLikeCustomProviderId(provider)) {
     const definition = customProviderDefinition(provider);
     if (!definition) return null;
+    // Never send the credential to a host the catalog does not declare.
+    if (!isModelEndpointHostAllowed(definition.baseUrl)) return null;
     return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
       ? `${definition.baseUrl}/v1`
       : definition.baseUrl;
@@ -361,6 +367,7 @@ export function providerModelsRoot(
   try {
     const base = resolveModelProfile(provider, model, env).baseUrl;
     if (!base) return null;
+    if (!isModelEndpointHostAllowed(base)) return null;
     return nativePiModel(provider, model, env)?.api === 'anthropic-messages' &&
       !base.endsWith('/v1')
       ? `${base}/v1`
@@ -809,6 +816,7 @@ export function resolveTaskProvider(
         `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
       );
     }
+    assertModelEndpointHostAllowed(definition.baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,
@@ -888,12 +896,17 @@ export function resolveTaskProvider(
     );
   }
 
+  const profile = resolveModelProfile(providerName, modelId);
+  const baseUrl = profile.baseUrl;
+  if (baseUrl !== undefined) {
+    assertModelEndpointHostAllowed(baseUrl, `provider '${providerName}' model '${modelId}'`);
+  }
   return {
     authMode: 'key',
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: resolveModelProfile(providerName, modelId).baseUrl,
+    baseUrl,
     selectionRule,
     ...nativeReasoning,
   };

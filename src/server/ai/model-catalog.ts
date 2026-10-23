@@ -24,10 +24,12 @@ import {
   customProviderDefinitions,
   customProvidersRegistryHydrated,
 } from '@/core/config/custom-providers';
+import { installModelEndpointHostAllowlist } from '@/core/config/model-endpoint-allowlist';
 import type { Db, Tx } from '@/db/client';
 import { model_catalog_cache, system_config } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
 import rawSnapshot from './model-catalog.snapshot.json' with { type: 'json' };
+import { BUILTIN_MODEL_ENDPOINT_HOSTS } from './model-catalog-overrides';
 import { CATALOG_PROVIDER_BY_INTERNAL, catalogProviderFor } from './model-profiles';
 import {
   type PaidProbePosting,
@@ -281,6 +283,32 @@ function partitionProviders(providers: ProviderMap): { known: ProviderMap; custo
   return { known, custom };
 }
 
+function addEndpointHost(hosts: Set<string>, value: unknown): void {
+  const endpoint = catalogEndpoint(value);
+  if (!endpoint) return;
+  hosts.add(new URL(endpoint).hostname);
+}
+
+/**
+ * Hosts the document names for model endpoints. Synthetic `custom:*` buckets
+ * are excluded: their endpoint is admin configuration, not catalog truth, so a
+ * custom base_url must clear the allowlist rather than extend it. Code-owned
+ * first-party endpoints the catalog omits are always admitted.
+ */
+function endpointHostsOf(providers: ProviderMap): ReadonlySet<string> {
+  const hosts = new Set(BUILTIN_MODEL_ENDPOINT_HOSTS);
+  for (const [providerId, entry] of Object.entries(providers)) {
+    if (providerId.startsWith('custom:')) continue;
+    const provider = asJson(entry);
+    if (!provider) continue;
+    addEndpointHost(hosts, provider.api);
+    for (const model of Object.values(asJson(provider.models) ?? {})) {
+      addEndpointHost(hosts, asJson(asJson(model)?.provider)?.api);
+    }
+  }
+  return hosts;
+}
+
 const PROTOCOL_NPM: Record<CustomProviderProtocol, string> = {
   'openai-completions': '@ai-sdk/openai-compatible',
   'anthropic-messages': '@ai-sdk/anthropic',
@@ -472,6 +500,7 @@ function snapshotActive(): ActiveCatalog {
 }
 
 let active: ActiveCatalog = snapshotActive();
+installModelEndpointHostAllowlist(endpointHostsOf(active.providers));
 let unreadableCacheVersion: string | undefined;
 
 function warnUnreadableCache(version: string): void {
@@ -735,6 +764,7 @@ function install(
   previousChecks: readonly ProviderModelsCheck[],
 ): void {
   active = next;
+  installModelEndpointHostAllowlist(endpointHostsOf(next.providers));
   logActive(action, next, previousFindings, previousChecks);
 }
 
@@ -971,6 +1001,15 @@ export async function refreshModelCatalog(
   const env = options.env ?? process.env;
   const pulled = await pullRemote(fetchCatalog);
   const remote = 'error' in pulled ? undefined : pulled;
+  if (remote) {
+    // The /models reads below run before the merged document is installed. Admit
+    // the freshly pulled hosts now (union with the active document, whose models
+    // the merge retains) so a catalog-listed custom endpoint is not rejected
+    // against a stale snapshot-only allowlist.
+    installModelEndpointHostAllowlist(
+      new Set([...endpointHostsOf(active.providers), ...endpointHostsOf(remote.providers)]),
+    );
+  }
   const listed = await listProviderModels(fetchCatalog, env);
   const now = options.now?.() ?? new Date();
   const fingerprints = credentialFingerprints(env);

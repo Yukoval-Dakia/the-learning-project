@@ -37,7 +37,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ### AI provider 与模型选择
 
-全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
+全局 pin（`AI_PROVIDER_OVERRIDE` + `AI_PROVIDER_MODEL`）作用于非 typed 任务和 Mem0 提取/调和，但若某任务在 `system_config` 设了 `task.<kind>.override_global_pin=true` 且 provider/model 成对合法，则该任务走 task pair、压过全局 pin（`src/server/ai/providers.ts`）。模型端点 `base_url` 受 models.dev 目录端点 host allowlist 约束：内置 lane 的显式端点覆盖与 `custom_provider.base_url` 只能指向目录声明过的 host（另含代码声明的 anthropic/openai 直连根与 Xiaomi Token Plan 三区），在保存与执行解析边界报错；该约束只作用于模型端点，不影响 agent 的网页浏览 / fetch 工具（`src/core/config/model-endpoint-allowlist.ts`；`src/server/ai/model-catalog.ts`）。`MEM0_LLM_*` 只在没有全局 pin 时生效（`src/server/memory/llm-config.ts`）。`.env.example` 当前把这对值写成 `opencode-go` / `mimo-v2.6-pro`（`.env.example`）。Mem0 在 app（读）与 worker（写）进程内运行，compose 没有独立 mem0 服务；embedding 维度必须与 pgvector 列一致（`docker-compose.yml`；`src/server/memory/client.ts`）。typed 判分有专用 `openrouter` lane（只对 typed 任务开放）；OCR 由 `EXTRACT_OCR_ENGINE` 在 `glm`/`tencent` 两套实现间选择（`src/server/ai/providers.ts`；`registry`；`src/capabilities/ingestion/server/tencent_mark.ts`）。
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
@@ -51,7 +51,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `OPENROUTER_API_KEY` | app、worker（typed 判分） | 选中 `openrouter` 时必需；该 lane 只用于 typed 执行 | `src/server/ai/providers.ts` |
 | `XIAOMI_API_KEY` | app、worker | 选中 `xiaomi` 时必需 | `src/server/ai/providers.ts` |
 | `XIAOMI_TOKEN_PLAN_API_KEY` | app、worker | 选中 `xiaomi-token-plan` 时必需 | `src/server/ai/providers.ts` |
-| `XIAOMI_TOKEN_PLAN_BASE_URL` | app、worker | 按 region 拼 `https://token-plan-<region>.xiaomimimo.com/v1`；不得指向 `api.xiaomimimo.com` | `src/server/ai/xiaomi-token-plan.ts` |
+| `XIAOMI_TOKEN_PLAN_BASE_URL` | app、worker | 按 region 拼 `https://token-plan-<region>.xiaomimimo.com/v1`；不得指向 `api.xiaomimimo.com`，host 必须在模型端点 allowlist 内 | `src/server/ai/xiaomi-token-plan.ts` |
 | `XIAOMI_TOKEN_PLAN_REGION` | app、worker | `cn`；只接受 `cn`/`sgp`/`ams` | `src/server/ai/xiaomi-token-plan.ts` |
 | `ZAI_CODING_CN_API_KEY` | app、worker | 选中 `zhipuai-coding-plan` 时必需 | `src/server/ai/providers.ts` |
 | `ZHIPU_API_KEY` | worker（默认 OCR）；app、worker（Mem0） | 默认 OCR 引擎 `glm` 与无全局 pin 时的 Mem0 提取都必需，缺失时抛错 | `src/capabilities/ingestion/server/glm_ocr.ts`；`src/server/memory/llm-config.ts` |
