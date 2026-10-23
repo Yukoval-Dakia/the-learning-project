@@ -3639,6 +3639,16 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/agent/history.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "The narrow frozen-item read recognizes the existing malformed-budget ApiError as missing run-identity evidence, permitting only an independent immutable block title fallback; other errors propagate. Kernel retains the generic error type; budget parsing and all writes remain unchanged.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/question-detail-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",

@@ -41,6 +41,14 @@ export const CreateIngestionSessionBody = z.object({
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
+export const IngestionSessionTitleSourceSchema = z.enum([
+  'source_document',
+  'agent_item_preview',
+  'extracted_prompt_md',
+  'question_block_create',
+]);
+export type IngestionSessionTitleSource = z.infer<typeof IngestionSessionTitleSourceSchema>;
+
 export const IngestionSessionSchema = z
   .object({
     id: z.string(),
@@ -53,7 +61,7 @@ export const IngestionSessionSchema = z
     // lifecycle timestamps. Absent on create/detail echoes.
     path: z.enum(['agent', 'extract']).nullable().optional(),
     title: z.string().nullable().optional(),
-    title_source: z.enum(['source_document']).nullable().optional(),
+    title_source: IngestionSessionTitleSourceSchema.nullable().optional(),
     item_count: z.number().int().min(0).optional(),
     started_at: z.number().int().optional(),
     ended_at: z.number().int().nullable().optional(),
@@ -572,7 +580,7 @@ export const IngestionSessionHistoryResponseSchema = z
         source_document_id: z.string().nullable(),
         source_asset_ids: z.array(z.string()),
         title: z.string().nullable(),
-        title_source: z.enum(['source_document']).nullable(),
+        title_source: IngestionSessionTitleSourceSchema.nullable(),
         started_at: z.string(),
         ended_at: z.string().nullable(),
         created_at: z.string(),
