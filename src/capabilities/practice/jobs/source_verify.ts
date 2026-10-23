@@ -44,6 +44,7 @@ import { defaultPresentation } from '@/core/schema/assessment/presentation';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -76,7 +77,6 @@ import {
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';

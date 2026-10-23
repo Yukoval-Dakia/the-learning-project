@@ -2749,6 +2749,38 @@
       "from": 15,
       "to": 14,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4640,6 +4672,15 @@
       "to": 2240,
       "issue": "YUK-1358",
       "responsibilityReason": "Existing paper opening, timing, draft, submission and recovery responsibilities are unchanged. Removing the direct startPaperSession named import saves one line; adding the same method to the existing PracticeClient destructuring has zero net lines. Adding that injected method to attachVisit's existing dependency array requires formatter expansion from one line to nine, adding eight lines, for seven net lines. All previous dependency members and the complete callback body are preserved; reversing these three edits restores the entire base file byte-for-byte. No business rule, Effect or recovery branch is added, and no unrelated lines are compressed or helpers split to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-23",
+      "baseBlob": "26b98402c505c25a68dd24cadffd481b2494ee5a",
+      "from": 1230,
+      "to": 1233,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Three net lines are the required formatter expansion of the unchanged two-symbol advisory-lock import after its specifier moves to the approved canonical db/learning-state-lock owner. Removing that import leaves the entire caller byte-identical to the base, including all B, merge, paid, transaction and lock-order bodies. No operation or policy is added, and no unrelated lines are compressed or split to evade the size ratchet."
     }
   ],
   "compatShims": [
@@ -5207,7 +5248,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 313,
+      "total": 301,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5218,7 +5259,6 @@
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "copilot -> advisory-locks": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
         "copilot -> events": 5,
@@ -5230,7 +5270,6 @@
         "copilot -> runtime-env": 1,
         "copilot -> session": 6,
         "copilot -> today": 3,
-        "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
         "ingestion -> boss": 7,
         "ingestion -> events": 7,
@@ -5240,7 +5279,6 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,
-        "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 9,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -5259,7 +5297,6 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "practice -> advisory-locks": 5,
         "practice -> ai": 46,
         "practice -> assessment": 1,
         "practice -> boss": 14,

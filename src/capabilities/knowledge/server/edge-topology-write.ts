@@ -8,9 +8,9 @@
 import { inArray } from 'drizzle-orm';
 import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 
 export { runEdgeTopologyGate } from '@/kernel/records/knowledge-edge-facts';
 

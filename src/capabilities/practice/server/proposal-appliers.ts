@@ -31,6 +31,7 @@ import {
 } from '@/core/schema/assessment/lifecycle';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   cause_category_overlay,
   evaluation,
@@ -48,7 +49,6 @@ import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   type ProposalInboxRow,
   acquireProposalDecisionLock,
