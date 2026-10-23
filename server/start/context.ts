@@ -77,6 +77,7 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  createPracticeAppeal: (body: string) => Promise<string>;
   previewReviewAdvice: (
     body: string,
     signal: AbortSignal,
