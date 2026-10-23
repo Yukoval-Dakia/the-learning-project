@@ -6,6 +6,7 @@ import {
   getPapers,
   getStream,
   issueAssessment,
+  recomposeStream,
   saveResponseDraft,
   submitReview,
 } from './practice-api';
@@ -13,6 +14,7 @@ import {
 export type PracticeClient = {
   advanceStreamItem: typeof advanceStreamItem;
   getStream: typeof getStream;
+  recomposeStream: typeof recomposeStream;
   getPapers: typeof getPapers;
   issueAssessment: typeof issueAssessment;
   getIssuanceState: typeof getIssuanceState;
@@ -24,6 +26,7 @@ export type PracticeClient = {
 const httpPracticeClient: PracticeClient = {
   advanceStreamItem,
   getStream,
+  recomposeStream,
   getIssuanceState,
   getPapers,
   issueAssessment,
