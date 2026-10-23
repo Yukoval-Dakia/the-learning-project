@@ -4408,6 +4408,26 @@
       "issue": "YUK-1570",
       "owns": "The existing adapter binds pg-boss sends to the lock-owning Drizzle transaction; verification preserves same-Tx queue and completion atomicity.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-detail.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Kernel owns the unchanged error status and envelope. The complete ingestion reader now owns session lookup and the existing 404; the HTTP adapter retains errorResponse. This migrates ApiError from the old API read implementation without adding another error contract.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-detail.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["resolveDocumentDerivationPolicy"],
+      "issue": "YUK-1522",
+      "owns": "Kernel retains live document policy resolution. The ingestion reader moves the existing policy read from the API into the same read-only repeatable-read transaction as session lookup and all attributable persisted usage receipts, without modifying historical policy or consent.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [

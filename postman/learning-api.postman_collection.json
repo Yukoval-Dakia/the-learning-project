@@ -1500,6 +1500,26 @@
           "response": []
         },
         {
+          "name": "GET /api/ingestion-sessions/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取录入会话及同 session/source document 的完整持久隐私使用回执汇总（YUK-1522）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** getIngestionSession：200 {session, usage_receipt}。session、归属本 session/source_document 且由 system/ingestion_privacy_guard 写入的全部成功 experimental:ingestion_usage_receipt、document live derivation_policy 在同一 REPEATABLE READ/READ ONLY 快照中读取，无 latest/default limit。每个 event.id 恰一次；redaction_counts 累加各次使用/段的 mutated spans，非唯一原文位置或费用，不按 segment 跨 run 去重。redacted_fields 分类并集，recorded_at 为实际最新创建时间；engine 混合或缺失为 null；channels 取真实使用并集，任一缺失则 null，不猜 none。无回执或任一 redaction_accounting=unavailable 时 usage_receipt=null；非法 payload/counts 或安全整数聚合溢出明确失败，不返回伪 0/部分合计。live policy 不改写历史 receipt policy。该读取仅汇总已持久事实，不证明所有真实调用都有回执。session 不存在 → 原 404；需 x-internal-token。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/ingestion-sessions/:id/history",
           "request": {
             "method": "GET",
