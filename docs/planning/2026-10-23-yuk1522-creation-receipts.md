@@ -177,3 +177,22 @@ writer 未登记及旧 API 条目悬空失败；policy 因原 NULL≡active 例�
 architecture-deepening 经同一 limiter 串行执行全部 exit 0，对应日志为
 `parent-main-{typecheck,lint,build,boundaries,architecture}.log`。
 该上游组合保留同一0133及4.33，未修改本片创建行为；审查与新 CI 结论另记。
+
+## 恢复校验优先级
+
+固定 `0268a288e` 的 GitHub db3（`39879478953` / `120173119551`）真实运行失败：
+两项 paid-backup 断言仍固定版本4.32；三项既有 malformed table/row/column 检查
+被新增 receipt 缺表门提前遮蔽。前者只提交测试修改 TEXT，未经 Owner 批准不改测试。
+后者按“其余 restore 保持”的原契约，将新增 completeness check 放到既有 preflight
+之后、`stats` 和实际破坏性事务之前；原有校验顺序及新表缺失拒绝条件都保留。
+不接受缺表归档、不改版本4.33、不改变 wipe/insert/paid 恢复体。
+
+R1 固定 `7e4bb207` 的结论为 APPROVE、P0/P1=0/0，仅静态；本次新增位置变化
+不冒称已被原 R1 或旧 CI 覆盖。原 db3 日志保留在外部目录
+`pr2037-0268-db3-first.log`，不重跑原 job，不把断言失败归作08006基础设施故障。
+Circle镜像同head的 db3 job11382也已读取真实测试步骤日志，确认同一五项失败，
+外部文件为 `pr2037-circle-db3-output.log`；不是仅凭镜像状态推断。
+位置修复后的 typecheck、lint（164 warnings）与 build 经同一 limiter 串行执行均
+exit 0，日志为 `parent-restore-order-{typecheck,lint,build}.log`。本机测试仍未运行。
+Owner待裁的三个版本字面量完整TEXT在仓库外
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-creation-receipts-20261023/pr2037-backup-version-test-text.md`。

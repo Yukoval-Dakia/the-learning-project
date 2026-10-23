@@ -504,18 +504,6 @@ export async function restoreFromArchive({
   }
   const rawData = parsedData as Record<string, unknown>;
 
-  // Missing creation identity would allow old keys to create again after restore.
-  // Reject before any database or memory wipe, even for an exact-version archive.
-  if (!Array.isArray(rawData.ingestion_creation_receipt)) {
-    return {
-      status: 400,
-      body: {
-        error: 'invalid_data',
-        message: 'ingestion_creation_receipt must be present as an array; DB was NOT wiped.',
-      },
-    };
-  }
-
   // The mem0 collection key is restored through its dedicated branch, not FK_ORDER.
   const mem0Table = mem0CollectionTable();
 
@@ -725,6 +713,19 @@ export async function restoreFromArchive({
         message: `Archive has ${unresolvedEffects.length} event-subscription effect(s) whose downstream work is not proven complete; the logical ZIP has no pg-boss job or completion receipt for them. DB was NOT wiped. Use a full PostgreSQL backup when queue state must be recovered.`,
         effect_count: unresolvedEffects.length,
         effects: unresolvedEffects.slice(0, UNRESOLVED_EFFECT_PREVIEW_LIMIT),
+      },
+    };
+  }
+
+  // Preserve existing malformed-table/row/column diagnostics before this new
+  // completeness check. Missing creation identity must still reject before any
+  // database or memory wipe, even for an exact-version archive.
+  if (!Array.isArray(rawData.ingestion_creation_receipt)) {
+    return {
+      status: 400,
+      body: {
+        error: 'invalid_data',
+        message: 'ingestion_creation_receipt must be present as an array; DB was NOT wiped.',
       },
     };
   }
