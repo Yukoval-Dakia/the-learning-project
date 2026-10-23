@@ -155,3 +155,18 @@ server→capability-deep=0、cross-capability-value=39、非平凡 SCC=1 均保�
 
 无新增已验证 follow-up；本片预先列明的运行与恢复缺口、Linear 状态和独立审查统一交父线程，
 writer 不另建票、不改父树或父 Linear。
+
+## 父补同一 manual writer 的路径登记
+
+固定 `7e4bb207` 的首轮 GitHub CI `39878615639` 中，contracts 因新 manual
+writer 未登记及旧 API 条目悬空失败；policy 因原 NULL≡active 例外仍指向旧 API 路径失败。
+父将 `writer-registry.ts` 和 `audit-draft-status-allowlist.json` 中原
+`ingestion/api/mistakes.ts` 两个键改为实际完整 owner
+`ingestion/server/create-manual-mistake.ts`，其原分类、理由和退出条件全部保持。
+没有新 writer 例外、draft_status 语义变化或 audit 校验逻辑变更。
+
+`pnpm audit:question-writers` 与 `pnpm audit:draft-status` 经同一 heavy limiter
+串行执行均 exit 0；日志分别为上述外部目录的 `parent-writer-registration.log` 和
+`parent-draft-status-registration.log`。首轮 CI 原件保留为
+`pr2037-contracts-first.log`、`pr2037-policy-first.log`。旧 CI 不覆盖补登记后的 head，
+以新 exact-head CI 为准；独立 R1 仍固定审查原产品 head，不因路径登记重开审查。
