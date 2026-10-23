@@ -48,6 +48,7 @@ async function hydrateSubjectsBeforeServe(): Promise<void> {
 // tsx watch 重启时若不清会漏到旧模块域）。
 let configRefresh: { stop: () => void } | undefined;
 let catalogWatch: { stop: () => void } | undefined;
+let customProvidersWatch: { stop: () => void } | undefined;
 async function hydrateConfigBeforeServe(): Promise<void> {
   try {
     const [{ db }, { hydrateConfigFromDb, startConfigRefresh }] = await Promise.all([
@@ -66,10 +67,20 @@ async function hydrateConfigBeforeServe(): Promise<void> {
 
 async function hydrateModelCatalogBeforeServe(): Promise<void> {
   try {
-    const [{ db }, { hydrateModelCatalog, startModelCatalogWatch }] = await Promise.all([
+    const [{ db }, hydrateModule] = await Promise.all([
       import('@/db/client'),
-      import('@/server/ai/model-catalog'),
+      import('@/server/config/custom-providers-hydrate'),
     ]);
+    const definitions = await hydrateModule.hydrateCustomProviders(db);
+    if (definitions.length > 0) {
+      console.log(`[rw:api] custom providers hydrated: ${definitions.length}`);
+    }
+    // YUK-1563 part 4 — panel facts + post-write catalog refresh wiring (API process).
+    hydrateModule.registerCustomProviderCatalogIntegration(db);
+    customProvidersWatch = hydrateModule.startCustomProvidersWatch(db);
+    const { hydrateModelCatalog, startModelCatalogWatch } = await import(
+      '@/server/ai/model-catalog'
+    );
     const meta = await hydrateModelCatalog(db);
     console.log(
       `[rw:api] model catalog origin=${meta.origin} version=${meta.version} at=${meta.fetchedAt} findings=${meta.findings.length}`,
@@ -178,6 +189,7 @@ void (async () => {
     } finally {
       configRefresh?.stop();
       catalogWatch?.stop();
+      customProvidersWatch?.stop();
       try {
         await stopListenLoop();
       } finally {

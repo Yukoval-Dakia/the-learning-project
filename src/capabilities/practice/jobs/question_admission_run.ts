@@ -61,6 +61,10 @@ import {
   resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
+import {
+  applyCustomPreviewDecision,
+  prepareAdmissionCustomPreview,
+} from '../server/custom-block-preview/admission-preview';
 import { publishQuestionGroup } from '../server/quiz/verify-and-promote';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
@@ -204,7 +208,7 @@ export async function runAdmissionForQuestion(
   db: Db,
   suppliedData: QuestionAdmissionRunData,
   delivery: AdmissionDelivery = { id: randomUUID() },
-  deps: { runTask?: PracticeTaskRunFn } = {},
+  deps: { runTask?: PracticeTaskRunFn; signal?: AbortSignal } = {},
 ): Promise<QuestionAdmissionRunResult> {
   const data = AdmissionJobData.parse(suppliedData);
   let groupId = data.question_id;
@@ -393,6 +397,20 @@ export async function runAdmissionForQuestion(
   }
 
   try {
+    // The paid result is already durable. Browser/resource work never runs under
+    // a paid-effect, business or publication lock; receipt-ready replay is free.
+    const preview = await prepareAdmissionCustomPreview(
+      db,
+      batch.input,
+      receipt,
+      {
+        total_ms: 15_000,
+        ready_ms: 3_000,
+        focus_observation_ms: 3_000,
+        memory_bytes: 512 * 1024 * 1024,
+      },
+      deps.signal,
+    );
     return await db.transaction(async (tx) => {
       await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
       const control = await admitPaidEffectDeliveryControl(tx, ADMISSION_FAMILY, {
@@ -447,19 +465,20 @@ export async function runAdmissionForQuestion(
         );
         return simple('pending');
       }
-      const admitted = decision.admission.state === 'admitted' && result.resolved !== undefined;
+      const gradingAdmitted =
+        decision.admission.state === 'admitted' && result.resolved !== undefined;
       const now = new Date(receipt.recorded_at);
       // admitted publishes the PAID resolved contract (typed keys /
       // deterministic executors), bound to its paid_effect row through the
       // shared builder. Publishing the frozen base input admitted a still
       // human_review revision; a blocked build keeps the receipt (fail-closed)
       // instead of degrading to the base document.
-      const built = buildAdmissionPublishInput({
+      const candidate = buildAdmissionPublishInput({
         groupId: rootId,
         input: batch.input,
         identity: batch.identity,
         receipt,
-        admitted,
+        admitted: gradingAdmitted,
         expectedCurrentRevision: batch.input.revision_id,
         expectedAdmissionGeneration: lifecycle?.scoring_admission_generation ?? null,
         availability:
@@ -470,11 +489,23 @@ export async function runAdmissionForQuestion(
         actorRef: 'practice:question_admission',
         now,
       });
+      if (candidate.kind === 'blocked') {
+        await notePaidEffectApplicationFailure(tx, batch.identity, candidate.reason);
+        return simple('pending');
+      }
+      const built = applyCustomPreviewDecision(preview, candidate, batch.input, receipt, {
+        revision_id: lifecycle?.current_revision_id ?? null,
+        revision_digest: freshDigest,
+        admission_generation: lifecycle?.scoring_admission_generation ?? null,
+      });
       if (built.kind === 'blocked') {
         await notePaidEffectApplicationFailure(tx, batch.identity, built.reason);
         return simple('pending');
       }
+      const admitted = built.admitted;
+      if (preview.kind !== 'no_custom') deps.signal?.throwIfAborted();
       const persisted = await publishQuestionGroup(tx, built.publish);
+      if (preview.kind !== 'no_custom') deps.signal?.throwIfAborted();
       const status =
         persisted.status === 'conflict' ? 'conflict' : admitted ? 'admitted' : 'withheld';
       if (status === 'admitted') {
@@ -528,7 +559,12 @@ export function buildQuestionAdmissionRunHandler(
 ): (jobs: Job<QuestionAdmissionRunData>[]) => Promise<void> {
   return async (jobs) => {
     for (const job of jobs) {
-      const result = await runAdmissionForQuestion(db, job.data, { id: job.id, jobData: job.data });
+      const result = await runAdmissionForQuestion(
+        db,
+        job.data,
+        { id: job.id, jobData: job.data },
+        { signal: job.signal },
+      );
       console.log(
         `[question_admission_run] ${result.group_id} -> ${result.status}` +
           (result.revision_id ? ` rev=${result.revision_id}` : ''),

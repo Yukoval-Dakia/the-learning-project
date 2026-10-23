@@ -17,6 +17,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { A5_BANDS, masteryBandView } from '@/core/mastery-band';
+import type { LearnerJudgmentBatch } from '@/core/schema/learner-judgment';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -28,10 +29,8 @@ import { listActiveGoalsWithResolvedScope } from '@/kernel/read-models/active-go
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import {
-  type MasteryProjection,
-  getMasteryProjection,
-} from '@/kernel/read-models/mastery-projection';
+import { readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import {
   LEARNER_STATE_HEADER_BUDGET,
   type LearnerStateHeaderBudget,
@@ -80,6 +79,7 @@ export interface LearnerStateProjection {
   topCauseCategories: string[];
   masterySummary: string | null;
   meanTheta: number | null;
+  judgmentSentence?: string | null;
   overnightSentence: string | null;
 }
 
@@ -161,6 +161,7 @@ export function assembleLearnerStateHeaderMd(
     const theta = p.meanTheta === null ? '' : `（θ̂≈${p.meanTheta.toFixed(1)}）`;
     lines.push(`掌握度：${p.masterySummary}${theta}`);
   }
+  if (p.judgmentSentence) lines.push(p.judgmentSentence);
   if (p.overnightSentence) lines.push(`昨夜交班：${p.overnightSentence}`);
   const md = lines.join('\n');
   return md.length > budget.maxChars ? md.slice(0, budget.maxChars) : md;
@@ -236,6 +237,48 @@ function summarizeMastery(proj: Map<string, MasteryProjection>): {
   return { masterySummary: parts.join(' '), meanTheta };
 }
 
+function summarizeJudgment(batch: LearnerJudgmentBatch): {
+  masterySummary: string | null;
+  meanTheta: number | null;
+  judgmentSentence: string;
+} {
+  const observed = new Map<string, MasteryProjection>();
+  let unknownAbility = false;
+  let unknownRetention = false;
+  const readingEngines = new Set<string>();
+  for (const item of batch.items) {
+    if (item.ability.kind === 'available' && item.p_correct_now.kind === 'incumbent_pfa') {
+      observed.set(item.knowledge_id, item.ability.reading);
+    } else {
+      unknownAbility = true;
+    }
+    if (
+      item.retention.kind === 'unknown' ||
+      (typeof item.retention.reading !== 'number' && item.retention.reading.kind === 'unknown')
+    ) {
+      unknownRetention = true;
+    }
+    if (item.retention.kind === 'available') readingEngines.add(item.retention.engine);
+  }
+  const engineName =
+    readingEngines.size !== 1 || readingEngines.has('unknown')
+      ? '实际引擎混合或未知'
+      : readingEngines.has('fsrs')
+        ? 'FSRS'
+        : '候选遗忘引擎';
+  return {
+    ...summarizeMastery(observed),
+    judgmentSentence: [
+      `共用判断 ${batch.version}：尚未个人校准。`,
+      unknownAbility ? '部分掌握状态未知；关联推断不算本人作答证据。' : '',
+      unknownRetention
+        ? `保持：同范围存在未知项（${engineName}），不能据此断言记得或忘了。`
+        : `保持：同范围现役读数可用（${engineName}），尚不能据此声称已校准或保持良好。`,
+      '只作文字解读，不向学习者新增预测数字。',
+    ].join(''),
+  };
+}
+
 /** IO dependencies for the projection read. */
 export interface ReadProjectionDeps {
   loadCopilotSummaryFn?: (db: DbLike) => Promise<CopilotSummary>;
@@ -258,9 +301,6 @@ export async function readLearnerStateProjection(
   const loadFailures =
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
-  const loadMastery =
-    deps.getMasteryProjectionFn ??
-    ((d: DbLike, ids: string[]) => getMasteryProjection(d as Db, ids));
 
   const overnightSentencePromise = loadOvernightDigest(db)
     .then(formatOvernightHandoffSentence)
@@ -283,9 +323,14 @@ export async function readLearnerStateProjection(
   const scopeKcs = activeGoal?.scope_knowledge_ids ?? [];
   let masterySummary: string | null = null;
   let meanTheta: number | null = null;
+  let judgmentSentence: string | null = null;
   if (scopeKcs.length > 0) {
-    const proj = await loadMastery(db, scopeKcs);
-    ({ masterySummary, meanTheta } = summarizeMastery(proj));
+    const judgment = await readLearnerJudgments(
+      db,
+      { knowledge_ids: scopeKcs, context: 'any', as_of: new Date() },
+      { getMasteryProjectionFn: deps.getMasteryProjectionFn },
+    );
+    ({ masterySummary, meanTheta, judgmentSentence } = summarizeJudgment(judgment));
   }
 
   return {
@@ -294,6 +339,7 @@ export async function readLearnerStateProjection(
     topCauseCategories,
     masterySummary,
     meanTheta,
+    judgmentSentence,
     overnightSentence,
   };
 }

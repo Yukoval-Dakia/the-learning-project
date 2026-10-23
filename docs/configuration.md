@@ -152,8 +152,8 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
-| `AI_RATE_LIMIT_MAX` | app | `30` | `registry`；`src/server/http/rate-limit.ts` |
-| `AI_RATE_LIMIT_WINDOW_MS` | app | `10000` | `registry`；`src/server/http/rate-limit.ts` |
+| `AI_RATE_LIMIT_MAX` | app | `30` | `registry`；`src/kernel/request-rate-limit.ts` |
+| `AI_RATE_LIMIT_WINDOW_MS` | app | `10000` | `registry`；`src/kernel/request-rate-limit.ts` |
 | `JUDGE_CALIBRATION_BATCH_MAX` | worker | `20`；范围 1–50 | `registry` |
 | `JUDGE_CALIBRATION_WINDOW_DAYS` | worker | `7`；范围 1–90 | `registry` |
 | `JUDGE_CALIBRATION_REJUDGE_PROVIDER` | worker | `anthropic-sub` | `registry` |

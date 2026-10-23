@@ -59,6 +59,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
+import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
 import type {
   ExecutionAdapter,
   ExecutionAdapterStartupArgs,
@@ -90,7 +91,6 @@ import {
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
-import { isSpawnToolName } from './spawn-contract';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
   STRUCTURED_SUBMIT_REMINDER,
@@ -105,11 +105,7 @@ import {
   isToolParamContractRejection,
   repairToolArguments,
 } from './tool-param-contract';
-import {
-  type PiSubagentHost,
-  type PiSubagentSpec,
-  buildPiSpawnAgentTools,
-} from './tools/pi-subagent';
+import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
 import {
   type PiRemoteMcpMountHandle,
   type PiToolMount,
@@ -596,6 +592,8 @@ export function piTerminalResultFrame(args: {
    *  raw non-2xx body (not just pi's formatted errorMessage) reaches
    *  ai_task_runs.error_message and paid_effect.unresolved_reason. */
   providerError?: ProviderErrorEvidence;
+  /** Safe rejection bound to the same final root assistant, never query.latest. */
+  providerRequestRejection?: { http_status: 400 };
   /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained
    *  provider text. Applied to pi's errorMessage (errors[0]): the driver can
    *  embed the full unsanitized body in it, which would otherwise bypass the
@@ -716,6 +714,9 @@ export function piTerminalResultFrame(args: {
     return {
       ...base,
       subtype: 'error_during_execution',
+      ...(args.providerRequestRejection
+        ? { provider_request_rejection: args.providerRequestRejection }
+        : {}),
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
@@ -1770,7 +1771,71 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       model: this.model,
       tools: this.allTools,
     });
-    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
+    // Only this root invocation sees the observed fetch. Children keep the
+    // original streamFn; neither their responses nor query.latest prove root failure.
+    const rootRejections = new WeakMap<PiAssistantMessage, { http_status: 400 }>();
+    const rootStreamFn: StreamFn = async (model, llmContext, streamOptions) => {
+      const collector = options.transportEvidence;
+      const before = collector?.snapshot();
+      const originalFetch = streamOptions?.fetch;
+      let fetchCount = 0;
+      let rootResponse: Response | undefined;
+      const responseStream = await this.streamFn(
+        model,
+        llmContext,
+        originalFetch
+          ? {
+              ...streamOptions,
+              fetch: async (...args) => {
+                fetchCount += 1;
+                const response = await originalFetch(...args);
+                rootResponse = fetchCount === 1 ? response : undefined;
+                return response;
+              },
+            }
+          : streamOptions,
+      );
+      // Observe the same completion promise before the engine receives the stream;
+      // consuming queued message_end events can be too late to exclude tool work.
+      void responseStream
+        .result()
+        .then((assistant) => {
+          const after = collector?.snapshot();
+          if (
+            !before ||
+            !after ||
+            fetchCount !== 1 ||
+            rootResponse?.status !== 400 ||
+            rootResponse.redirected ||
+            assistant.stopReason !== 'error' ||
+            this.abort.signal.aborted ||
+            before.requests_dropped !== 0 ||
+            after.requests_dropped !== 0 ||
+            before.requests.some((request) => !request.ended_at || !request.fetch_settled_at) ||
+            after.requests_seen - before.requests_seen !== 1 ||
+            after.totals.dispatches - before.totals.dispatches !== 1
+          )
+            return;
+          const request = after.requests.at(-1);
+          if (
+            request?.lane === 'undici_agent' &&
+            request.fetch_outcome === 'response' &&
+            request.send_state === 'response_received' &&
+            request.http_status === rootResponse.status &&
+            request.response_headers_at &&
+            request.fetch_settled_at &&
+            request.ended_at &&
+            !request.signal_aborted &&
+            !request.timeout_layer &&
+            !request.error
+          ) {
+            rootRejections.set(assistant, { http_status: 400 });
+          }
+        })
+        .catch(() => {});
+      return responseStream;
+    };
+    const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
     let textStreamed = false;
     for await (const event of stream) {
       // A new assistant turn restarts the raw-arguments evidence window:
@@ -1845,6 +1910,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       }
     }
     yield* this.drainFrames();
+    const finalAssistant = lastAssistantMessage(finalMessages);
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,
@@ -1887,6 +1953,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if
       // any; the terminal frame appends it to errors[] on failure terminals.
       providerError: this.providerErrorCapture?.latest(),
+      providerRequestRejection:
+        finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
+          ? rootRejections.get(finalAssistant)
+          : undefined,
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body; it must not bypass redaction/cap.
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,

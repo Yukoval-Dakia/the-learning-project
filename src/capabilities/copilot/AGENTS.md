@@ -14,7 +14,7 @@
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
 | `server/` | 持久接纳/执行、turns 读取、summary、stream helpers 与 teaching 编排 |
 | `tasks/index.ts` | Copilot 自有 TaskSpec 目录；原生子 agent 定义在 `server/subagents.ts` |
-| `ui/CopilotDock.tsx` | 全局 Copilot 抽屉（壳层在 `web/src/router.tsx` 根挂） |
+| `ui/companion/` | 学习伙伴：`CompanionMount`（壳层根挂，side / float / sheet 三种形态）、组件与非视觉 controller（visit/会话、run 订阅、发送与恢复）；公共出口 `ui-public.ts` |
 
 ## CONVENTIONS
 - 生命周期遵循 ADR-0062：消息持久接纳后由服务端执行；断线/关抽屉只脱离订阅，只有显式 Stop 取消。

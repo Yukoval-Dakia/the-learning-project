@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { type SQL, and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { type NoteGeneratePhaseTimings, type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   emitArtifactBodyBlocksEditEvent,
   emitArtifactLifecycleEvent,
@@ -44,10 +45,7 @@ import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/b
 import type { Db } from '@/db/client';
 import { artifact, knowledge } from '@/db/schema';
 import {
-  type NoteGeneratePhaseTimings,
-  type TaskTextResult,
   type TaskTextRunFn,
-  aiAgentRef,
   costUsdToMicroUsd,
   isGenerationBudgetTimeout,
 } from '@/server/ai/provenance';

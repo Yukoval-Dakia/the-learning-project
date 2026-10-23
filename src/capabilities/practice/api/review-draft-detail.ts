@@ -5,21 +5,13 @@
 // /api/* internal-token middleware. Projection logic lives in
 // server/draft-review.ts.
 
-import { getDraftReviewDetail } from '@/capabilities/practice/server/draft-review';
+import { readDraftReviewDetail } from '@/capabilities/practice/server/draft-review';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
+import { errorResponse } from '@/kernel/http';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const id = (params.id ?? '').trim();
-    if (!id) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
-
-    const detail = await getDraftReviewDetail(db, id);
-    if (!detail) {
-      throw new ApiError('not_found', `draft ${id} not found`, 404);
-    }
+    const detail = await readDraftReviewDetail(db, params.id);
 
     return Response.json(detail);
   } catch (err) {

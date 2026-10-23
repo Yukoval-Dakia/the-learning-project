@@ -16,8 +16,17 @@ import { newId } from '@/core/ids';
 import { DIFFICULTY_PROXY_WEIGHT, difficultyToLogitB, expectedScore } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, item_family_calibration, mastery_state } from '@/db/schema';
-import { resolveFamilyKeyForQuestion } from '@/server/mastery/family-key';
-import { buildFamilyKey } from '@/server/mastery/family-key-format';
+import {
+  buildFamilyKey,
+  getFamilyCalibration,
+  resolveFamilyKeyForQuestion,
+} from '@/kernel/read-models/question-difficulty';
+
+export {
+  type FamilyCalibrationRow,
+  effectiveFamilyB,
+  getFamilyCalibration,
+} from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
 
@@ -46,7 +55,8 @@ export function isObjectiveJudgeRoute(route: string | null | undefined): boolean
 // family_key = `${subject}:${primaryKnowledgeId}:${kind}:${source}`. `subject` is derived
 // from the primary KC's effective domain; the exact question id is deliberately absent
 // because questions in a family share one delta. The format itself lives in
-// family-key-format.ts; `familyKey` keeps the existing public name as a re-export.
+// kernel/read-models/question-difficulty.ts; `familyKey` keeps the writer
+// and existing test imports on the same implementation.
 export const familyKey = buildFamilyKey;
 
 // Empirical-Bayes shrinkage: shrunk = n/(n+priorStrength)·rawDelta. n=0 → 0 (fully
@@ -92,46 +102,6 @@ export function impliedDifficultyResidual(theta: number, bAnchor: number, outcom
   return Math.max(-MAX_RESIDUAL_LOGIT, Math.min(MAX_RESIDUAL_LOGIT, raw));
 }
 
-export interface FamilyCalibrationRow {
-  family_key: string;
-  b_delta: number;
-  evidence_count: number;
-  confidence: number;
-  /**
-   * Residuals actually folded into the running mean (0 until both gates pass). Distinct
-   * from evidence_count; see schema.ts item_family_calibration.calibrated_n.
-   */
-  calibrated_n: number;
-}
-
-/**
- * Effective b after the family adjustment. b_delta is already shrunk, so an ungated family
- * contributes exactly 0; live callers apply this after resolving the columnar anchor.
- */
-export function effectiveFamilyB(bAnchor: number, familyRow: FamilyCalibrationRow | null): number {
-  if (familyRow === null) return bAnchor;
-  return bAnchor + familyRow.b_delta;
-}
-
-/** Family calibration row, or null when cold. */
-export async function getFamilyCalibration(
-  db: DbLike,
-  key: string,
-): Promise<FamilyCalibrationRow | null> {
-  const rows = await db
-    .select({
-      family_key: item_family_calibration.family_key,
-      b_delta: item_family_calibration.b_delta,
-      evidence_count: item_family_calibration.evidence_count,
-      confidence: item_family_calibration.confidence,
-      calibrated_n: item_family_calibration.calibrated_n,
-    })
-    .from(item_family_calibration)
-    .where(eq(item_family_calibration.family_key, key))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
 // Update path: accumulate one objective attempt and recompute the shrunk delta.
 // Gates: (a) objective outcome, (b) n ≥ FAMILY_MIN_EVIDENCE, (c) at least
 // FAMILY_MIN_DISTINCT_QUESTIONS distinct questions. Until all pass, only evidence_count
@@ -154,7 +124,7 @@ export interface UpdateFamilyCalibrationInput {
   isObjective: boolean;
   /** Gate (c): distinct questions in this family, including the current one. */
   distinctQuestionCount: number;
-  /** Weak probes are down-weighted, matching the θ̂ update. Default 1. */
+  /** Weak proxy anchors are down-weighted, matching the θ̂ update. Default 1. */
   anchorWeight?: number;
   now: Date;
 }

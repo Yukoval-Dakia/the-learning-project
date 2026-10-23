@@ -619,7 +619,7 @@ export async function handleDurableFailure(
     actorRef: string;
     /** Real primary provider run when graceful-degrade returned a partial. */
     taskRunId?: string;
-    /** streamTaskCollecting graceful-degrade 的半程文本（若有），作 phantom-reply 正文。 */
+    /** Legacy partial text, used only when no finalized reply was supplied. */
     partialText?: string;
     /** Byte-authoritative finalized projection for a failed or partial run. */
     preparedReply?: PreparedCopilotReply;
@@ -647,10 +647,13 @@ export async function handleDurableFailure(
   } = args;
   const message = String((err as Error)?.message ?? err);
   const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
+  // Preserve the finalizer's exact body and receipt; an unsealed draft cannot win.
   const replyText =
-    partialText && partialText.length > 0
-      ? partialText
-      : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
+    preparedReply !== undefined
+      ? preparedReply.text
+      : partialText && partialText.length > 0
+        ? partialText
+        : '这次后台运行没能在预算内收敛完成。可以换个更聚焦的问法再试。';
   try {
     const markerClaim = await ensureCopilotOutcomeMarker(
       db,

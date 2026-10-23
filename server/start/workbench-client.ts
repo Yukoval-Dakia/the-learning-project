@@ -7,13 +7,18 @@ import { ProposalDecisionResource } from '@/core/schema/proposal';
 import { ApiError } from '@/ui/lib/api';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import {
+  acknowledgeStartTeachingBriefOutcome,
   decideStartProposal,
+  getStartActiveProbes,
   getStartAutoApplied,
   getStartConjectures,
+  getStartKnowledgeFrontier,
+  getStartKnowledgeReviewDue,
   getStartKnowledgeTree,
   getStartOvernightDigest,
   getStartProposalInbox,
   getStartRecentAiChanges,
+  getStartTeachingBrief,
   getStartTodayCost,
   getStartWorkbenchSummary,
   undoStartArtifactAiChange,
@@ -60,8 +65,16 @@ export const startWorkbenchClient: WorkbenchClient = {
         input: { decision: 'retract' },
       },
     }).then((json) => ProposalDecisionResource.parse(JSON.parse(json)).result),
-  getTree: () => getStartKnowledgeTree(transport),
+  getTree: (subject) =>
+    getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
+  getActiveProbes: () => getStartActiveProbes(transport),
+  getTeachingBrief: () => getStartTeachingBrief(transport),
+  ackTeachingBriefOutcome: (probeResultEventId) =>
+    acknowledgeStartTeachingBriefOutcome({
+      ...transport,
+      data: JSON.stringify({ probe_result_event_id: probeResultEventId }),
+    }),
   getRecentAiChanges: () => getStartRecentAiChanges(transport),
   undoAiChange: async (artifactId, eventId) => {
     const result = await undoStartArtifactAiChange({ ...transport, data: { artifactId, eventId } });
@@ -71,3 +84,6 @@ export const startWorkbenchClient: WorkbenchClient = {
     return result;
   },
 };
+
+export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);
+export const startKnowledgeReviewDueClient = () => getStartKnowledgeReviewDue(transport);

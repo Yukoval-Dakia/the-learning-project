@@ -5,7 +5,7 @@ import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { checkRateLimit } from '@/server/http/rate-limit';
+import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { makeRunTaskFn } from '../server/ai-runtime';
 import { LearningIntentError, type RunTaskFn, planLearningIntent } from '../server/learning-intent';
 import { CreateLearningIntentBodySchema, LearningIntentProposalResponseSchema } from './contracts';

@@ -20,48 +20,55 @@ import {
   mistake_variant,
   question_block,
 } from '@/db/schema';
-import { projectArtifactGuarded } from './artifact';
 import {
-  edgeRowToSnapshot,
-  gatherAndFoldArtifact,
-  gatherAndFoldGoal,
-  gatherAndFoldItemCalibration,
-  gatherAndFoldKnowledgeEdgeWithMesh,
-  gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
-  gatherAndFoldMistakeVariant,
-  gatherAndFoldQuestionBlock,
-  prefetchKnowledgeMergeEvents,
-  prefetchKnowledgeRates,
-  prefetchLearningItemMergeEvents,
-} from './gather';
-import { projectGoalGuarded } from './goal';
-import { projectItemCalibrationGuarded } from './item_calibration';
-import { projectKnowledgeNode } from './knowledge';
-import { projectKnowledgeEdge } from './knowledge_edge';
-import { projectLearningItemGuarded } from './learning_item';
-import { projectMistakeVariantGuarded } from './mistake_variant';
-import {
+  artifactRowToSnapshot,
   artifactsWithGenesisAnchor,
-  goalLiveRowToSnapshot,
+  gatherAndFoldArtifact,
+  projectArtifactGuarded,
+} from '@/kernel/records/artifact-history';
+import {
+  gatherAndFoldGoal,
+  goalRowToSnapshot as goalLiveRowToSnapshot,
   goalsWithGenesisAnchor,
-  itemCalibrationsWithGenesisAnchor,
-  knowledgeEdgesWithGenesisAnchor,
+  projectGoalGuarded,
+} from '@/kernel/records/goal-history';
+import { projectKnowledgeEdge } from '@/kernel/records/knowledge-edge-facts';
+import {
+  gatherAndFoldKnowledgeNode,
   knowledgeLiveRowToSnapshot,
   knowledgeNodesWithGenesisAnchor,
-  learningItemLiveRowToSnapshot,
+  prefetchKnowledgeMergeEvents,
+  prefetchKnowledgeRates,
+} from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNode } from '@/kernel/records/knowledge-node-materialization';
+import {
+  gatherAndFoldLearningItem,
   learningItemsWithGenesisAnchor,
+  prefetchLearningItemMergeEvents,
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
+import {
+  gatherAndFoldMistakeVariant,
   mistakeVariantLiveRowToSnapshot,
   mistakeVariantsWithGenesisAnchor,
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
+import {
+  edgeRowToSnapshot,
+  gatherAndFoldItemCalibration,
+  gatherAndFoldKnowledgeEdgeWithMesh,
+  gatherAndFoldQuestionBlock,
+} from './gather';
+import { projectItemCalibrationGuarded } from './item_calibration';
+import {
+  itemCalibrationsWithGenesisAnchor,
+  knowledgeEdgesWithGenesisAnchor,
+  learningItemLiveRowToSnapshot,
   questionBlocksWithGenesisAnchor,
 } from './parity';
 import { PROJECTION_FOLDS, type PureFold } from './projection-folds';
 import { projectQuestionBlockGuarded } from './question_block';
-import {
-  artifactRowToSnapshot,
-  itemCalibrationRowToSnapshot,
-  questionBlockRowToSnapshot,
-} from './snapshot-mappers';
+import { itemCalibrationRowToSnapshot, questionBlockRowToSnapshot } from './snapshot-mappers';
 import type { ProjectionEntity } from './sot-flag';
 
 type DbLike = Db | Tx;

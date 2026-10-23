@@ -4,14 +4,12 @@ export { archiveProposalArtifacts } from '@/capabilities/notes/public';
 
 import type { Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { projectLearningItemGuarded } from '@/server/projections/learning_item';
-import { projectMistakeVariantGuarded } from '@/server/projections/mistake_variant';
+import { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 import {
-  assertKnowledgeNodeParity,
   hasLearningItemGenesisAnchor,
-  hasMistakeVariantGenesisAnchor,
-  knowledgeLiveRowToSnapshot,
-} from '@/server/projections/parity';
+  projectLearningItemGuarded,
+} from '@/kernel/records/learning-items';
+import { assertKnowledgeNodeParity } from '@/server/projections/parity';
 
 export type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 export {
@@ -27,12 +25,7 @@ export {
   requiredString,
   writeProposalRateEvent,
 } from './applier-helpers';
-export {
-  hasLearningItemGenesisAnchor,
-  hasMistakeVariantGenesisAnchor,
-  projectLearningItemGuarded,
-  projectMistakeVariantGuarded,
-};
+export { hasLearningItemGenesisAnchor, projectLearningItemGuarded };
 
 export async function assertCurrentKnowledgeNodeParity(tx: Tx, nodeId: string): Promise<void> {
   const [row] = await tx.select().from(knowledge).where(eq(knowledge.id, nodeId));

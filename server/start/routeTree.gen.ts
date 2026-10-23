@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as AgentNotesRouteImport } from './routes/agent-notes'
+import { Route as CoachRouteImport } from './routes/coach'
+import { Route as DraftsRouteImport } from './routes/drafts'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as MistakesRouteImport } from './routes/mistakes'
@@ -32,7 +34,9 @@ import { Route as AdminSubjectsRouteImport } from './routes/admin.subjects'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 import { Route as EventsIdRouteImport } from './routes/events.$id'
 import { Route as KnowledgeIdRouteImport } from './routes/knowledge.$id'
+import { Route as NotesIdRouteImport } from './routes/notes.$id'
 import { Route as OnboardingUploadRouteImport } from './routes/onboarding.upload'
+import { Route as QuestionsIdRouteImport } from './routes/questions.$id'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -48,6 +52,16 @@ const SplatRoute = SplatRouteImport.update({
 const AgentNotesRoute = AgentNotesRouteImport.update({
   id: '/agent-notes',
   path: '/agent-notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CoachRoute = CoachRouteImport.update({
+  id: '/coach',
+  path: '/coach',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DraftsRoute = DraftsRouteImport.update({
+  id: '/drafts',
+  path: '/drafts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InboxRoute = InboxRouteImport.update({
@@ -150,9 +164,19 @@ const KnowledgeIdRoute = KnowledgeIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => KnowledgeRoute,
 } as any)
+const NotesIdRoute = NotesIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => NotesRoute,
+} as any)
 const OnboardingUploadRoute = OnboardingUploadRouteImport.update({
   id: '/onboarding/upload',
   path: '/onboarding/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QuestionsIdRoute = QuestionsIdRouteImport.update({
+  id: '/questions/$id',
+  path: '/questions/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
@@ -165,10 +189,12 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
+  '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
-  '/notes': typeof NotesRoute
+  '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
@@ -185,17 +211,21 @@ export interface FileRoutesByFullPath {
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
   '/knowledge/$id': typeof KnowledgeIdRoute
+  '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
+  '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
-  '/notes': typeof NotesRoute
+  '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
@@ -212,7 +242,9 @@ export interface FileRoutesByTo {
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
   '/knowledge/$id': typeof KnowledgeIdRoute
+  '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesById {
@@ -220,10 +252,12 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agent-notes': typeof AgentNotesRoute
+  '/coach': typeof CoachRoute
+  '/drafts': typeof DraftsRoute
   '/inbox': typeof InboxRoute
   '/knowledge': typeof KnowledgeRouteWithChildren
   '/mistakes': typeof MistakesRoute
-  '/notes': typeof NotesRoute
+  '/notes': typeof NotesRouteWithChildren
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
@@ -240,7 +274,9 @@ export interface FileRoutesById {
   '/api/$': typeof ApiSplatRoute
   '/events/$id': typeof EventsIdRoute
   '/knowledge/$id': typeof KnowledgeIdRoute
+  '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRouteTypes {
@@ -249,6 +285,8 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
+    | '/drafts'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -269,13 +307,17 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/events/$id'
     | '/knowledge/$id'
+    | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
+    | '/drafts'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -296,13 +338,17 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/events/$id'
     | '/knowledge/$id'
+    | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   id:
     | '__root__'
     | '/'
     | '/$'
     | '/agent-notes'
+    | '/coach'
+    | '/drafts'
     | '/inbox'
     | '/knowledge'
     | '/mistakes'
@@ -323,7 +369,9 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/events/$id'
     | '/knowledge/$id'
+    | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   fileRoutesById: FileRoutesById
 }
@@ -331,10 +379,12 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   AgentNotesRoute: typeof AgentNotesRoute
+  CoachRoute: typeof CoachRoute
+  DraftsRoute: typeof DraftsRoute
   InboxRoute: typeof InboxRoute
   KnowledgeRoute: typeof KnowledgeRouteWithChildren
   MistakesRoute: typeof MistakesRoute
-  NotesRoute: typeof NotesRoute
+  NotesRoute: typeof NotesRouteWithChildren
   PlacementRoute: typeof PlacementRoute
   PracticeRoute: typeof PracticeRoute
   ProfileRoute: typeof ProfileRoute
@@ -351,6 +401,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
   OnboardingUploadRoute: typeof OnboardingUploadRoute
+  QuestionsIdRoute: typeof QuestionsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -374,6 +425,20 @@ declare module '@tanstack/react-router' {
       path: '/agent-notes'
       fullPath: '/agent-notes'
       preLoaderRoute: typeof AgentNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/coach': {
+      id: '/coach'
+      path: '/coach'
+      fullPath: '/coach'
+      preLoaderRoute: typeof CoachRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/drafts': {
+      id: '/drafts'
+      path: '/drafts'
+      fullPath: '/drafts'
+      preLoaderRoute: typeof DraftsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inbox': {
@@ -516,11 +581,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KnowledgeIdRouteImport
       parentRoute: typeof KnowledgeRoute
     }
+    '/notes/$id': {
+      id: '/notes/$id'
+      path: '/$id'
+      fullPath: '/notes/$id'
+      preLoaderRoute: typeof NotesIdRouteImport
+      parentRoute: typeof NotesRoute
+    }
     '/onboarding/upload': {
       id: '/onboarding/upload'
       path: '/onboarding/upload'
       fullPath: '/onboarding/upload'
       preLoaderRoute: typeof OnboardingUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/questions/$id': {
+      id: '/questions/$id'
+      path: '/questions/$id'
+      fullPath: '/questions/$id'
+      preLoaderRoute: typeof QuestionsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/subjects/$id': {
@@ -545,6 +624,16 @@ const KnowledgeRouteWithChildren = KnowledgeRoute._addFileChildren(
   KnowledgeRouteChildren,
 )
 
+interface NotesRouteChildren {
+  NotesIdRoute: typeof NotesIdRoute
+}
+
+const NotesRouteChildren: NotesRouteChildren = {
+  NotesIdRoute: NotesIdRoute,
+}
+
+const NotesRouteWithChildren = NotesRoute._addFileChildren(NotesRouteChildren)
+
 interface AdminSubjectsRouteChildren {
   AdminSubjectsIdRoute: typeof AdminSubjectsIdRoute
 }
@@ -561,10 +650,12 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   AgentNotesRoute: AgentNotesRoute,
+  CoachRoute: CoachRoute,
+  DraftsRoute: DraftsRoute,
   InboxRoute: InboxRoute,
   KnowledgeRoute: KnowledgeRouteWithChildren,
   MistakesRoute: MistakesRoute,
-  NotesRoute: NotesRoute,
+  NotesRoute: NotesRouteWithChildren,
   PlacementRoute: PlacementRoute,
   PracticeRoute: PracticeRoute,
   ProfileRoute: ProfileRoute,
@@ -581,6 +672,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
   OnboardingUploadRoute: OnboardingUploadRoute,
+  QuestionsIdRoute: QuestionsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

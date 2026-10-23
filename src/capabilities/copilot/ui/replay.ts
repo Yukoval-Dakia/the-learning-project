@@ -25,7 +25,7 @@ export interface ReplaySkillTurn {
 
 // AF S4 / YUK-203 U6 (round-2) — the originating skill selector that produced
 // this AI turn. Present on AI turns that carried a skill_context in the chat
-// request. CopilotDock restores activeSkillRef from this field on replay so
+// request. The companion restores its active skill from this field on replay so
 // composer answers after a page refresh still route to the teaching/solve skill.
 export interface ReplaySkillContext {
   // Legacy solve turns still round-trip. Mode lifetime is determined by the
@@ -73,7 +73,7 @@ export interface ReplayChatMessage {
   reply_event_id?: string;
   /** Causal Copilot run id, independent of checkpoint/revert eligibility. */
   run_id?: string;
-  // AF S4 / YUK-203 U6 (round-2) — forwarded so CopilotDock can restore
+  // AF S4 / YUK-203 U6 (round-2) — forwarded so the companion can restore
   // activeSkillRef by folding explicit state, including end barriers, on replay.
   skill_context?: ReplaySkillContext;
   // YUK-307 — forwarded so the (future) UI slice can restore the hero

@@ -15,8 +15,8 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
 import { kc_typed_state } from '@/db/schema';
-import { acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 
 export type TypedState = 'no-evidence' | 'confused-with-X' | 'mastered';
 export type Lifecycle = 'open' | 'resolved';

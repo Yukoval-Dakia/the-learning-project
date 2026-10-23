@@ -1,5 +1,5 @@
 // Delivery evidence collector — one command produces the paste-ready evidence block that
-// PLAN.md delivery entries currently assemble by hand: exact-head git SHA + CI Gate run,
+// delivery summaries currently assemble by hand: exact-head git SHA + CI Gate run,
 // compose container health/image/restart counts, API health + token contract, DB entity
 // counts, pg-boss cron registrations, migration drift, retained-golden reaudit.
 //

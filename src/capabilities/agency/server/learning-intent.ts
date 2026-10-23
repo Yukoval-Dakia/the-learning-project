@@ -16,11 +16,11 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowledge/public';
 import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
-import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
-import type { Db, Tx } from '@/db/client';
+import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
+import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import {
   getDefaultSubjectRegistry,
   resolveSelectableSubjectId,
@@ -34,9 +34,6 @@ import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
 
 export type { LearningIntentOutline } from '../tasks/learning-intent';
 export { LearningIntentError, parseLearningIntentOutline };
-
-// Each new item records a per-id genesis and index before its sole structural writer.
-import { projectLearningItem, upsertMaterializedIdIndex } from './learning-item-projection-port';
 
 // ---------- Public types ----------
 
@@ -421,34 +418,6 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
   }
 }
 
-// Hub, atomic and long items share one genesis→index→projection path. The genesis carries
-// the full initial structural state; ingest_at opts this creation seed out of the memory outbox.
-async function materializeLearningItem(
-  tx: Tx,
-  row: LearningItemRowSnapshotT,
-  now: Date,
-): Promise<void> {
-  const genesisEventId = newId();
-  await writeEvent(tx, {
-    id: genesisEventId,
-    actor_kind: 'system',
-    actor_ref: 'genesis-backfill',
-    action: 'experimental:genesis',
-    subject_kind: 'learning_item',
-    subject_id: row.id,
-    outcome: 'success',
-    payload: { row },
-    created_at: now,
-    ingest_at: now,
-  });
-  await upsertMaterializedIdIndex(tx, {
-    materialized_id: row.id,
-    anchor_event_id: genesisEventId,
-    subject_kind: 'learning_item',
-  });
-  await projectLearningItem(tx, row.id);
-}
-
 /**
  * Materializes a proposal: 1 hub LearningItem + N atomic LearningItems (parent-linked) +
  * paired hub artifact + N atomic artifact stubs (body_blocks=null, generation_status='pending'),
@@ -595,7 +564,7 @@ export async function acceptLearningIntent(
     const hubLiId = newId();
     const hubArtifactId = newId();
 
-    await materializeLearningItem(
+    await createPendingLearningItem(
       tx,
       {
         id: hubLiId,
@@ -606,15 +575,6 @@ export async function acceptLearningIntent(
         knowledge_ids: [rootKnowledgeId],
         primary_artifact_id: hubArtifactId,
         parent_learning_item_id: null,
-        status: 'pending',
-        user_pinned: false,
-        completed_at: null,
-        dismissed_at: null,
-        archived_at: null,
-        archived_reason: null,
-        created_at: now,
-        updated_at: now,
-        version: 0,
       },
       now,
     );
@@ -628,7 +588,7 @@ export async function acceptLearningIntent(
       atomicLiIds.push(atomicLiId);
       atomicArtifactIds.push(atomicArtifactId);
 
-      await materializeLearningItem(
+      await createPendingLearningItem(
         tx,
         {
           id: atomicLiId,
@@ -639,15 +599,6 @@ export async function acceptLearningIntent(
           knowledge_ids: [atomic.knowledge_id],
           primary_artifact_id: atomicArtifactId,
           parent_learning_item_id: hubLiId,
-          status: 'pending',
-          user_pinned: false,
-          completed_at: null,
-          dismissed_at: null,
-          archived_at: null,
-          archived_reason: null,
-          created_at: now,
-          updated_at: now,
-          version: 0,
         },
         now,
       );
@@ -662,7 +613,7 @@ export async function acceptLearningIntent(
       longLiIds.push(longLiId);
       longArtifactIds.push(longArtifactId);
 
-      await materializeLearningItem(
+      await createPendingLearningItem(
         tx,
         {
           id: longLiId,
@@ -673,15 +624,6 @@ export async function acceptLearningIntent(
           knowledge_ids: long.knowledge_ids,
           primary_artifact_id: longArtifactId,
           parent_learning_item_id: hubLiId,
-          status: 'pending',
-          user_pinned: false,
-          completed_at: null,
-          dismissed_at: null,
-          archived_at: null,
-          archived_reason: null,
-          created_at: now,
-          updated_at: now,
-          version: 0,
         },
         now,
       );

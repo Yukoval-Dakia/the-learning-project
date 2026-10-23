@@ -8,7 +8,6 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { LEARNING_EVENT_ACTIONS, nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
-import { WORKSHEET_RENDER_QUEUE } from '@/server/boss/queue-names';
 import {
   CreateSubmissionBodySchema,
   IssuanceCreatedSchema,
@@ -126,6 +125,7 @@ import {
   JudgeDurablePendingResponseSchema,
   JudgeRunStatusResponseSchema,
 } from './server/judge-run-status';
+import { WORKSHEET_RENDER_QUEUE } from './worksheet-render-queue';
 
 export const practiceCapability = defineCapability({
   name: 'practice',
@@ -639,7 +639,7 @@ export const practiceCapability = defineCapability({
       // YUK-453 (cold-start inc-A) — owner FIXED-ANCHOR write face. owner 钦定 ~5-10 道
       // 锚题的难度档（粗分桶）→ item_calibration source='fixed_anchor'。n=1 唯一不违红线
       // 的「校 LLM 难度系统性 offset」杠杆（cold-start day-one design §5 inc-A / §4.1）。
-      // 写真身在 src/server/mastery/fixed-anchor.ts（item_calibration 单写者契约）；handler
+      // 写真身在 src/capabilities/practice/server/fixed-anchor.ts（fold sanctioned off-path writer）；handler
       // 只 CALL setFixedAnchors。/api/* internal-token 由组合根中间件统一施加。
       {
         method: 'POST',
@@ -828,7 +828,7 @@ export const practiceCapability = defineCapability({
       {
         // YUK-1529 — 服务端作答卷渲染：无头 Chromium 开 /print/worksheet/<token>，
         // 同一 pass 量区域图 + page.pdf() → R2（content-addressed）→ #1773
-        // write-once 存档。由 createWorksheetExportRoute（created/replayed）入队。
+        // write-once 存档。submitWorksheetExport 经创建 route 对 created/replayed 入队。
         // 'agent' 档：多步浏览器任务，DLQ + 重试兜瞬时失败；不调模型零成本。
         name: WORKSHEET_RENDER_QUEUE,
         queue: 'agent',

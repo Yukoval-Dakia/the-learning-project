@@ -1,6 +1,6 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构详见 [docs/architecture.md](./docs/architecture.md)、[docs/modules/](./docs/modules/) 与 [docs/superpowers/status.md](./docs/superpowers/status.md)。
+自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md)（部分过时，采信前对照代码）为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
 
 > **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。
 
@@ -174,7 +174,21 @@ task、global 和 pin 设置均先校验必需事实，再校验任务能力，�
 OpenCode Go 已知协议路径不匹配时不执行。Anthropic 的目录 `/v1` 仅在传输适配时
 去重，避免 SDK 再追加 `/v1/messages`。目录能力不等同于应用已接线或实测准入。
 刷新不改任务选模；已选模型消失或能力/端点变化保留旧事实，并记录由 YUK-1563
-负责处理的 finding。自定义 provider 配置仍属该票第 ④ 部分，本片未实现。
+负责处理的 finding。
+
+自定义 provider（YUK-1563 ④）：`PUT /api/admin/custom-providers/:id` 填 baseURL、
+key 环境变量名与协议（openai-completions / anthropic-messages）即可接入新 provider，
+不改代码、不跑脚本。定义存 `custom_provider` 表（只有 env 变量名，key 值放
+`.env.local` / 容器 env，不进库、不进日志）；变量名必须以 `_API_KEY` / `_TOKEN`
+结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
+（值会被当作 Bearer 发到该 provider）。模型列表来自该端点自己的 `GET /models`
+（自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
+同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`
+（可列出但过不了可运行性检查，不能保存为任务模型）。每个自定义 provider 在运行时
+目录里有一个 `custom:<slug>` 合成 bucket：消失的已选模型与能力变化走同一条有主
+finding 语义。配置面板经 `GET /api/admin/custom-providers` 读列表（只显示
+已配置/未配置/认证失败 与 env 变量名），per-task 选模沿用 `PATCH /api/admin/config`
+（provider 填 `custom:<slug>`），保存时与内置 provider 过同一道 `getModel` 可运行性检查。
 
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或
@@ -206,15 +220,9 @@ pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.
 
 ## 当前部署目标：Mac 上的 Agent 开发测试环境
 
-Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL。2026-10-07 已按 owner 要求清空并重建当前业务库；只有 owner 后续明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL；只有 owner 之后明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。当前附件存储与重置证据见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)与[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续任务与进度见 [Linear](docs/agents/issue-tracker.md)；`PLAN.md` 仅为各工作树的本地记录。
 
-当前独立附件存储及真实 CRUD 验收见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)。当前用途与重置证据见[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续工作见 [PLAN](PLAN.md)。此前发布验收不代表新空库已完成业务或模型验收。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
-
-### 容器 DNS（YUK-1404）
-
-本机宿主的 fake-IP DNS 返回 198.18.0.0/15 地址，容器曾继承该解析结果，导致图题候选被 SSRF 守卫拒绝。`docker-compose.mac.yml` 的 app 和 worker 使用 `dns: [223.5.5.5, 119.29.29.29]`；2026-10-11 的同镜像隔离探针确认它们能返回 jyeoo 的公网地址。私有部署 compose 也必须保留这两个服务的 `dns` 设置，并在重建后核对 `getent hosts www.jyeoo.com`。不修改宿主代理，不放行 198.18.0.0/15。
-
-共享 IP 守卫用于图题候选下载；jyeoo Rust 子进程和 Exa 远程抓取是另外的路径，不能用 DNS 探针声称它们均已验收。候选若保存的是 `/shiti/` 网页地址，还需解析真实题图并对网页、图片及重定向逐次校验。
+compose 服务、发布与恢复顺序、备份、容器 DNS，以及 Tailscale / 局域网等访问约束统一见[运维](docs/operations.md)。远程入口是可选的 Tailscale Serve（同一 tailnet、Mac 开机且用户会话内 daemon 运行，未开 Funnel）；主机名和局域网地址属于本机私有配置。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
@@ -332,62 +340,16 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-**日级自动 dump（YUK-992 安装，YUK-1041 修复，Mac 生产）**：launchd 每日 07:15
-（Asia/Shanghai）跑 `mac-daily-dump.sh`，向 runtime 目录写
-`loom-daily-YYYYMMDD.dump`（custom format，`pg_restore` 用；保留最近 14 份 +
-每月 1 号归档）。
+**日级 dump（Mac 本机）**：launchd 每日 07:15 跑 `scripts/mac-daily-dump.sh`，写 `loom-daily-YYYYMMDD.dump`（custom format），保留最近 14 份 + 每月 1 号归档。安装、TCC 约束、失败标记与巡检命令见[运维：备份与恢复](docs/operations.md#备份与恢复)。
 
-⚠️ **launchd 子进程被 macOS TCC 拒绝对 `/Volumes/*`（外置盘）的任何 I/O**
-（exec / read / write / 建 stdout 文件全部 EPERM，表现为 `last exit code = 78`
-EX_CONFIG "spawn failed"，脚本根本跑不起来）。所以脚本与 launchd log 必须装在
-内置盘 `~/Library/Application Support/loom-daily-dump/`，对 runtime 目录的读写
-全部经 `docker run -v` 在容器内完成（OrbStack virtiofs 不走 TCC）。一次性安装：
-
-```bash
-mkdir -p ~/Library/Application\ Support/loom-daily-dump
-cp scripts/mac-daily-dump.sh ~/Library/Application\ Support/loom-daily-dump/
-chmod +x ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh
-cp scripts/launchd/studio.yukoval.loom-daily-dump.plist ~/Library/LaunchAgents/
-launchctl bootout gui/$(id -u)/studio.yukoval.loom-daily-dump  # 若已装载
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
-```
-
-失败发现面与巡检（YUK-1056 加固）：成功写 `.loom-daily-dump-last-success` epoch 戳
-（连续 2 日未更新即异常）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记 **且
-`exit 1`** —— 容器可达时写进 runtime 目录，容器/daemon 不可达时改写
-`~/Library/Application Support/loom-daily-dump/`（本地兜底，launchd `last exit code` 可见）。
-脚本日志 `loom-daily-dump.log`（runtime 目录），launchd stdout/stderr 在
-`~/Library/Application Support/loom-daily-dump/launchd.log`。环境覆盖
-`LOOM_RUNTIME_DIR`/`LOOM_PG_CONTAINER`/`LOOM_DB_USER`/`LOOM_DB_NAME`/`LOOM_KEEP_DAILY`/
-`LOOM_MIN_BYTES`（默认值=当前 Mac 生产）。巡检命令：
-
-```bash
-cat …/tlp-local-prod-*/.loom-daily-dump-last-success   # epoch 戳，>2 日即 stale
-launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
-~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh  # 手动补一份（幂等，同日覆盖）
-~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
-```
-
-**完整 Postgres 恢复演练（YUK-1359/YUK-1329）**：外部 maintenance owner 先建立并持续持有全部 writer/客户端/序列写入的隔离边界，再运行
-`scripts/cutover-final-backup.sh --target=<pg-url> --quiescence-evidence=<file> --out=<dir> --strict`。
-它使用存活的 exported snapshot 捕获 dump 和完整非 system schema/table 内容及 sequence 状态。
-`scripts/restore-drill.sh --dump=<file> --source-manifest=<file> --out=<receipt>` 在隔离 scratch 容器比较同一份 staged dump；
-最终 manifest 必须另加 `--require-restore-parity`。`--strict` 仅检查 capture 工件；旧 `verified:true` 只保留为历史报告。
-详见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。
-
-**手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
+**手动 dump / restore**：
 
 ```bash
 pnpm db:dump
-```
-
-To restore:
-
-```bash
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
 
-恢复完整 runbook（OrbStack VM wipe 等场景）：`docs/sub5-restore-cli.md`。
+**完整 Postgres 恢复演练**：外部 maintenance owner 持有 writer 边界后跑 `scripts/cutover-final-backup.sh ... --strict`，用 `scripts/restore-drill.sh` 在隔离 scratch 比较，最终 manifest 另加 `--require-restore-parity`；`--strict` 只检查 capture 工件。命令、边界与重开条件见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。Postgres dump 不含 R2 对象，需独立备份。
 
 ## 目录
 
@@ -423,7 +385,7 @@ src/
   ui-next/        # UI rewrite 的 scoped design-system 基础层（tokens/primitives/shell/mascot/motion）
 scripts/          # worker.ts（pg-boss 独立进程）+ migrate.ts + dev-local.ts + audits（schema/partition/profile）
 postman/          # api-endpoints.json 真相源 + gen:postman manifest 对账层
-docs/             # architecture, modules, ADRs, planning, configuration
+docs/             # architecture, configuration, operations, modules, ADRs, planning
 ```
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
@@ -432,8 +394,4 @@ docs/             # architecture, modules, ADRs, planning, configuration
 
 ### TEST home LAN access (owner decision 2026-10-11)
 
-The current Mac TEST app keeps both `127.0.0.1:8787:8787` and `192.168.50.76:8787:8787` in its private Compose `services.app.ports`. On the home LAN, open <http://192.168.50.76:8787>. Bind this specific LAN address, never `0.0.0.0`; retain both entries when generating the next release Compose file. Tailscale Serve continues forwarding to the loopback address.
-
-Keep the existing application sign-in and `x-internal-token` checks. Only `/api/health` and `/api/ready` are exempt. Do not inject a token in the proxy or URL. PostgreSQL remains loopback-only, and storage/worker have no public host bindings. Preserve all existing environment values when regenerating private Compose, including unused provider keys.
-
-Change app bindings under the shared deployment mkdir lock; recreate only the app with the pinned current image, then verify both addresses, API 401, health/ready 200, unchanged worker/PG/storage identities, and release the owner-matched lock. A same-Mac probe is not proof of access from the iPad. Plain LAN HTTP is currently approved; features requiring a secure context need a separate HTTPS decision.
+The current Mac TEST app keeps both `127.0.0.1:8787:8787` and a specific home-LAN address in its private Compose `services.app.ports`; never bind `0.0.0.0`. LAN addressing, Tailscale remote entry, token/health rules, and the binding-change checklist are in [docs/operations.md](docs/operations.md#网络与访问). Specific addresses and hostnames stay in owner private records, not this repo.

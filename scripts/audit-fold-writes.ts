@@ -140,7 +140,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge (LIVE) ----
   {
     table: 'knowledge',
-    file: 'src/server/projections/knowledge.ts',
+    file: 'src/kernel/records/knowledge-node-materialization.ts',
     marker: '.insert(knowledge)',
     role: 'throat',
     note: 'projection write-through shell — the fold row writer for knowledge (ADR-0044 W1, LIVE).',
@@ -162,7 +162,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- knowledge_edge (canonical) ----
   {
     table: 'knowledge_edge',
-    file: 'src/server/projections/knowledge_edge.ts',
+    file: 'src/kernel/records/knowledge-edge-facts.ts',
     marker: '.insert(knowledge_edge)',
     role: 'throat',
     note: 'Sole structural edge writer; create/archive/reactivate consumers emit events then project.',
@@ -171,7 +171,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- goal (canonical, YUK-973) ----
   {
     table: 'goal',
-    file: 'src/server/projections/goal.ts',
+    file: 'src/kernel/records/goal-history.ts',
     marker: '.insert(goal)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -180,7 +180,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- mistake_variant (canonical, YUK-973) ----
   {
     table: 'mistake_variant',
-    file: 'src/server/projections/mistake_variant.ts',
+    file: 'src/kernel/records/mistake-variant-facts.ts',
     marker: '.insert(mistake_variant)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -189,7 +189,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- learning_item (canonical, YUK-973) ----
   {
     table: 'learning_item',
-    file: 'src/server/projections/learning_item.ts',
+    file: 'src/kernel/records/learning-items.ts',
     marker: '.insert(learning_item)',
     role: 'throat',
     note: 'Sole structural row writer; business mutations append events then project in the same transaction.',
@@ -198,7 +198,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- artifact (switchable; actual deployment flags are checked separately) ----
   {
     table: 'artifact',
-    file: 'src/server/projections/artifact.ts',
+    file: 'src/kernel/records/artifact-history.ts',
     marker: '.insert(artifact)',
     role: 'throat',
     note: 'Artifact projection write-through shell; activation is runtime-specific.',
@@ -312,24 +312,17 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   // ---- question_block (switchable; actual deployment flags are checked separately) ----
   {
     table: 'question_block',
-    file: 'src/server/projections/question_block.ts',
+    file: 'src/kernel/records/question-block-projection.ts',
     marker: '.insert(question_block)',
     role: 'throat',
     note: 'QuestionBlock projection write-through shell; activation is runtime-specific.',
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/auto-enroll.ts',
+    file: 'src/kernel/records/question-block-transitions.ts',
     marker: '.update(question_block)',
     role: 'event-native-by-caller',
-    note: 'Enrollment transaction pairs imported block links/status/version with a lifecycle event using the same timestamp.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/capabilities/ingestion/server/revert-auto-enroll.ts',
-    marker: '.update(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Revert transaction pairs restored block status/version with a lifecycle event, preserving nullable import references.',
+    note: 'Accepted import, ignore and revert transitions pair status/links/version with the lifecycle event in the caller transaction; submitted keeps event then guarded projection.',
   },
   {
     table: 'question_block',
@@ -340,24 +333,10 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'question_block',
-    file: 'src/capabilities/ingestion/server/import-completion.ts',
+    file: 'src/kernel/records/question-block-creation.ts',
     marker: '.insert(question_block)',
     role: 'event-native-by-caller',
-    note: 'Import completion owns one transaction for create snapshots, import-link and ignore-sweep lifecycle events; extracted_prompt_md/ordinal remain explicit non-fold fields.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/docx-ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'DOCX session transaction emits create snapshots for inserted blocks; extraction text/ordinal are explicitly outside fold truth.',
-  },
-  {
-    table: 'question_block',
-    file: 'src/server/session/ingestion.ts',
-    marker: '.insert(question_block)',
-    role: 'event-native-by-caller',
-    note: 'Extraction create/replacement writes emit full question_block_create snapshots on the caller transaction; extraction text/ordinal are non-fold fields.',
+    note: 'Captured OCR, DOCX, virtual/manual import and edit-draft creation pair actual RETURNING rows with complete create snapshots; rescue UPDATE pairs its after-row likewise. The supplied Tx keeps row/event (and edit-draft projection) atomic; a bare Db retains its existing non-atomic boundary. extracted_prompt_md/ordinal remain explicit non-fold fields.',
   },
   // ---- item_calibration (YUK-496 方案 A — anchor-only coverage, default OFF, no flip planned) ----
   {
@@ -376,7 +355,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'item_calibration',
-    file: 'src/server/mastery/fixed-anchor.ts',
+    file: 'src/capabilities/practice/server/fixed-anchor.ts',
     marker: '.insert(item_calibration)',
     role: 'off-path-writer',
     note: 'fixed-anchor upsert (INSERT + onConflictDoUpdate; OFF-path sole writer — 方案 A keeps it imperative).',

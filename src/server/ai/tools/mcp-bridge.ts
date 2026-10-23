@@ -28,6 +28,7 @@ import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/deri
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { createAssessmentAssetLoader } from '@/kernel/records/assessment-assets';
+import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import {
   type ToolOperationRecord,
@@ -46,7 +47,6 @@ import type {
   ToolMirrorPolicy,
 } from '@/kernel/tools/types';
 import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
-import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import { getTool } from './registry';
 
 /**

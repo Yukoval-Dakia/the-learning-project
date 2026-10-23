@@ -24,6 +24,7 @@ import {
   IngestionEventsHeadersSchema,
   IngestionOperationSchema,
   IngestionSessionDetailResponseSchema,
+  IngestionSessionHistoryResponseSchema,
   IngestionSessionResponseSchema,
   IngestionSessionSchema,
   LegacyMakePaperResponseSchema,
@@ -100,6 +101,19 @@ export const ingestionCapability = defineCapability({
         responses: { 200: IngestionSessionDetailResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
         load: () => import('./api/session-detail').then((m) => m.GET),
+      },
+      {
+        // Durable read-back for reopening a finished session (YUK-1522 history).
+        // Agent runs merge the agent_budget.history snapshot with whatever
+        // job_events still survive the 30-day window; extract runs read blocks.
+        method: 'GET',
+        path: '/api/ingestion-sessions/[id]/history',
+        operationId: 'getIngestionSessionHistory',
+        request: { params: ApiIdParamsSchema },
+        responses: { 200: IngestionSessionHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/session-history').then((m) => m.GET),
       },
       {
         method: 'POST',

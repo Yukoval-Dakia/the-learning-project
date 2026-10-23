@@ -34,10 +34,8 @@ import { and, eq, inArray, or } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { newId } from '@/core/ids';
 import type {
-  GoalRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   LearningItemRowSnapshotT,
-  MistakeVariantRowSnapshotT,
 } from '@/core/schema/event/genesis';
 import { type Db, type Tx, db } from '@/db/client';
 import {
@@ -52,17 +50,23 @@ import {
   question_block,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { goalRowToSnapshot, goalsWithGenesisAnchor } from '@/kernel/records/goal-history';
+import {
+  knowledgeNodesWithGenesisAnchor,
+  knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot,
+} from '@/kernel/records/knowledge-node-history';
+import { learningItemsWithGenesisAnchor } from '@/kernel/records/learning-items';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
+import {
+  mistakeVariantsWithGenesisAnchor,
+  recordMistakeVariantGenesis,
+} from '@/kernel/records/mistake-variant-facts';
 // Reuse the SAME genesis-anchor checks the accept-time parity assert uses, so "event-sourced"
 // means exactly the same thing on both sides. Edges are the exception: they have no index
 // anchor, only a generate / genesis event (edgesWithOriginatingEvent below).
 import {
   artifactsWithGenesisAnchor,
-  goalsWithGenesisAnchor,
   itemCalibrationsWithGenesisAnchor,
-  knowledgeNodesWithGenesisAnchor,
-  learningItemsWithGenesisAnchor,
-  mistakeVariantsWithGenesisAnchor,
   questionBlocksWithGenesisAnchor,
 } from '@/server/projections/parity';
 // Shared artifact / question_block / item_calibration row→snapshot mappers — the genesis
@@ -71,14 +75,11 @@ import {
 import {
   artifactRowToSnapshot,
   itemCalibrationRowToSnapshot,
-  knowledgeRowToSnapshot,
   questionBlockRowToSnapshot,
 } from '@/server/projections/snapshot-mappers';
 
 type DbLike = Db | Tx;
 type EdgeRow = typeof knowledge_edge.$inferSelect;
-type GoalRow = typeof goal.$inferSelect;
-type MistakeVariantRow = typeof mistake_variant.$inferSelect;
 type LearningItemRow = typeof learning_item.$inferSelect;
 
 const GENESIS_ACTION = 'experimental:genesis';
@@ -221,28 +222,6 @@ export async function backfillKnowledgeEdgeGenesis(
   return { seeded, skipped };
 }
 
-// The FULL row — goal has no derived/embed columns. Dates stay Date (z.coerce.date() accepts
-// both); scope_knowledge_ids defaults to [] at the column.
-function goalRowToSnapshot(row: GoalRow): GoalRowSnapshotT {
-  return {
-    id: row.id,
-    title: row.title,
-    subject_id: row.subject_id,
-    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // Snapshot the CURRENT scope_mode / declared_stage: omitting them would fold to the
-    // column defaults ('explicit' / null) and drift parity against the live row.
-    scope_mode: row.scope_mode,
-    sequence_hint: row.sequence_hint,
-    declared_stage: row.declared_stage,
-    status: row.status,
-    source: row.source,
-    source_ref: row.source_ref,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
 /**
  * Seed genesis events + index entries for every `goal` row lacking an originating event chain.
  * Same shape as backfillKnowledgeGenesis. Only truly EVENT-LESS goals need a base — the manual
@@ -289,23 +268,6 @@ export async function backfillGoalGenesis(
   return { seeded, skipped };
 }
 
-// The FULL row — no derived/embed/version columns. The fold-blind `cause_category` is snapshotted
-// as backfill compensation (the same field the runtime create event carries). failure_reasons
-// defaults to [] at the column.
-function mistakeVariantRowToSnapshot(row: MistakeVariantRow): MistakeVariantRowSnapshotT {
-  return {
-    id: row.id,
-    parent_question_id: row.parent_question_id,
-    variant_question_id: row.variant_question_id,
-    proposal_event_id: row.proposal_event_id,
-    status: row.status as MistakeVariantRowSnapshotT['status'],
-    failure_reasons: row.failure_reasons ?? [],
-    cause_category: row.cause_category,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
-
 /**
  * Seed genesis events + index entries for every `mistake_variant` row lacking a base anchor.
  * Same shape as backfillGoalGenesis. cause_category MUST go into the snapshot (fold-blindness
@@ -330,22 +292,7 @@ export async function backfillMistakeVariantGenesis(
     }
     const genesisEventId = newId();
     await db.transaction(async (tx) => {
-      await writeEvent(tx, {
-        id: genesisEventId,
-        actor_kind: 'system',
-        actor_ref: GENESIS_ACTOR_REF,
-        action: GENESIS_ACTION,
-        subject_kind: 'mistake_variant',
-        subject_id: row.id,
-        outcome: 'success',
-        payload: { row: mistakeVariantRowToSnapshot(row) },
-        ingest_at: now,
-      });
-      await upsertMaterializedIdIndex(tx, {
-        materialized_id: row.id,
-        anchor_event_id: genesisEventId,
-        subject_kind: 'mistake_variant',
-      });
+      await recordMistakeVariantGenesis(tx, { row, genesisEventId, ingestAt: now });
     });
     seeded += 1;
   }

@@ -6,13 +6,13 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { db as httpDb } from '@/db/client';
 import * as schema from '@/db/schema';
 import { subject, subject_control_journal, subject_trait_binding } from '@/db/schema';
-import * as hydration from '@/server/subjects/hydrate';
+import * as hydration from '@/kernel/read-models/subject-hydration';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
-import { thinCreateSubject } from '@/server/subjects/thin-create';
 import { SubjectRegistry } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PATCH, RESTORE, RETIRE } from '../api/admin-subject-control';
 import { renameAdminSubject, restoreAdminSubject, retireAdminSubject } from '../public';
+import { thinCreateSubject } from './subject-create';
 
 const isolated = vi.hoisted(() => ({ getRegistry: vi.fn() }));
 vi.mock('@/subjects/profile', async (original) => ({
@@ -101,6 +101,8 @@ function observeCommittedHydration(id: string, expectedRevisions: number[]) {
 }
 
 describe.each(['domain', 'HTTP'])('%s committed control operations', (transport) => {
+  // @invariant concurrency: a committed subject change survives post-commit hydration failure without retry or rollback
+  // @fails-if hydration failure retries or rolls back the committed mutation or replaces the last-good registry
   it('a real post-commit hydrate query failure preserves last-good without retry or rollback', async () => {
     const id = await createCustom();
     const lastGood = registry.get(id);
@@ -139,6 +141,7 @@ describe.each(['domain', 'HTTP'])('%s committed control operations', (transport)
       builtinFloor: [],
       skipped: [],
       removed: [],
+      resolutions: new Map(),
     });
     expect(select).toHaveBeenCalledTimes(4);
     expect(warn).toHaveBeenCalledWith(

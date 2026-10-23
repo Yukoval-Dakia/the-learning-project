@@ -16,7 +16,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
 import type { ThetaRowSnapshotT } from '@/core/schema/event/state-snapshot';
 import {
-  DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
   type RtCorrectBuffer,
@@ -24,7 +23,6 @@ import {
   SRT_FISHER_WEIGHT_ENABLED,
   conjunctiveCredits,
   conjunctiveCreditsContinuous,
-  difficultyToLogitB,
   eloK,
   expectedScore,
   pushRtCorrectSample,
@@ -39,21 +37,19 @@ import {
   uniformPrior,
 } from '@/core/theta-grid';
 import type { Db, Tx } from '@/db/client';
-import { item_calibration, mastery_state } from '@/db/schema';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+  withLearningStateLock,
+} from '@/db/learning-state-lock';
+import { mastery_state } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   ABILITY_GLOBAL_SUBJECT_KIND,
   type AbilityGlobalByKnowledgeId,
   getMasteryState,
 } from '@/kernel/read-models/mastery-state';
-import {
-  acquireLearningStateWriteLock,
-  acquireSortedAdvisoryLocks,
-  withLearningStateLock,
-} from '@/server/advisory-locks';
-import { resolveFamilyKeyForQuestion } from './family-key';
-import { effectiveFamilyB, getFamilyCalibration } from './personalized-difficulty';
-import { effectiveB } from './recalibration';
+import { readAttemptDifficulty } from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
 
@@ -258,45 +254,15 @@ export async function updateThetaForAttempt(
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`fsrs:knowledge:${id}`}))`);
   }
 
-  // Read effectiveB = b_post ?? b_anchor ?? b, hard track only. The online path never
-  // writes b (G4); anchor writers seed b_post, so evidence-free reads see no jump.
-  const calRows = await tx
-    .select({
-      b: item_calibration.b,
-      b_anchor: item_calibration.b_anchor,
-      b_calib: item_calibration.b_calib,
-      b_post: item_calibration.b_post,
-    })
-    .from(item_calibration)
-    .where(
-      and(eq(item_calibration.question_id, input.questionId), eq(item_calibration.track, 'hard')),
-    )
-    .limit(1);
-  const calB = effectiveB(calRows[0]);
-  // Columnar b first, including the weak difficulty-proxy fallback.
-  const columnarB = calB ?? difficultyToLogitB(input.difficulty);
-  // bWeight keys on the columnar anchor source; the family delta is an additive shift,
-  // not an anchor-quality change, so it must not double down-weight.
-  const bWeight = calB !== null ? 1 : DIFFICULTY_PROXY_WEIGHT;
-
-  // Stack the family delta: b = effectiveFamilyB(columnarB, familyRow). Gated families have
-  // b_delta=0 and missing kind/source skips the lookup, so both cases are a no-op. The
-  // lookup is read-only; orphan-domain errors become 'unknown'. A real PG error aborts the
-  // tx, which is correct: the whole attempt should roll back.
-  let b = columnarB;
-  if (input.kind && input.source) {
-    // Family keys use the canonical question primary KC; the slot primary can differ.
-    const familyPrimaryKnowledgeId = input.familyPrimaryKnowledgeId ?? knowledgeIds[0];
-    const familyKey = await resolveFamilyKeyForQuestion(tx, {
-      primaryKnowledgeId: familyPrimaryKnowledgeId,
-      kind: input.kind,
-      source: input.source,
-    });
-    if (familyKey !== null) {
-      const familyRow = await getFamilyCalibration(tx, familyKey);
-      b = effectiveFamilyB(columnarB, familyRow);
-    }
-  }
+  // Read inside the locked attempt tx, before mastery state, using frozen question metadata.
+  const { b, bWeight } = await readAttemptDifficulty(tx, {
+    questionId: input.questionId,
+    difficulty: input.difficulty,
+    kind: input.kind,
+    source: input.source,
+    familyPrimaryKnowledgeId: input.familyPrimaryKnowledgeId,
+    knowledgeIds,
+  });
 
   // 2. Read every KC's current state (null → cold start: θ=0, counts=0).
   const existing = await tx

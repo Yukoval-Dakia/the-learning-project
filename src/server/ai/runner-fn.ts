@@ -1,6 +1,6 @@
+import type { RunTaskResult, TaskTextResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
-import type { TaskTextResult } from '@/server/ai/provenance';
-import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
+import type { RunTaskCtx } from '@/server/ai/runner';
 
 export type RunTaskCallCtx = Omit<RunTaskCtx, 'db' | 'enableTransientRetry'>;
 

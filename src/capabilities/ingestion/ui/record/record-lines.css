@@ -1,0 +1,299 @@
+/* 录入 (YUK-1473): the recording sheet, question lines, the helper's questions, knowledge
+   picking and earlier recordings. Same rules as record.css. */
+
+[data-ui-next].rc-page {
+  /* ── Recording sheet ── */
+  & .rc-sheet {
+    display: grid;
+    gap: var(--un-sp-4);
+    padding: var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .rc-sheet-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+  }
+
+  & .rc-sheet-title {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  & .rc-sheet-meta {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-status {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-2);
+    color: var(--un-text-1);
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-4);
+    letter-spacing: var(--un-ls-tight);
+    line-height: var(--un-lh-tight);
+    text-wrap: pretty;
+  }
+
+  & .rc-status::before,
+  & .rc-state::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--un-line-strong);
+    translate: 0 -2px;
+  }
+
+  & [data-tone="working"]::before {
+    background: var(--un-accent);
+  }
+
+  & [data-tone="positive"]::before {
+    background: var(--un-positive);
+  }
+
+  & [data-tone="caution"]::before {
+    background: var(--un-caution);
+  }
+
+  & [data-tone="critical"]::before {
+    background: var(--un-critical);
+  }
+
+  & .rc-meter {
+    height: 2px;
+    overflow: hidden;
+    border-radius: var(--un-r-3);
+    background: var(--un-line);
+  }
+
+  & .rc-meter span {
+    display: block;
+    height: 100%;
+    background: var(--un-accent);
+    transform-origin: left;
+    transition: transform var(--un-t-panel) var(--un-ease-glide);
+  }
+
+  & .rc-meter[data-indeterminate="true"] span {
+    width: 30%;
+  }
+
+  & .rc-sheet-foot {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+    padding-top: var(--un-sp-3);
+    box-shadow: inset 0 var(--un-hairline) 0 var(--un-line);
+  }
+
+  & .rc-sheet-foot:empty {
+    display: none;
+  }
+
+  & .rc-trouble {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-4);
+    border-radius: var(--un-r-1);
+    background: var(--un-caution-soft);
+    color: var(--un-text-2);
+  }
+
+  & .rc-trouble[data-tone="neutral"] {
+    background: var(--un-bg-sunk);
+  }
+
+  & .rc-trouble-title {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-semibold);
+  }
+
+  & .rc-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-1);
+  }
+
+  /* ── Question lines ── */
+  & .rc-lines {
+    display: grid;
+  }
+
+  & .rc-line {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: var(--un-sp-3);
+    align-items: start;
+    padding: var(--un-sp-3) 0;
+    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
+  }
+
+  & .rc-line:last-child {
+    box-shadow: none;
+  }
+
+  & .rc-line[data-skip="true"] .rc-line-text {
+    color: var(--un-text-4);
+    text-decoration: line-through;
+  }
+
+  & .rc-line-no {
+    padding-top: 1px;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    text-align: right;
+  }
+
+  & .rc-line-main {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+
+  & .rc-line-main > .rc-area,
+  & .rc-line-main > .rc-field,
+  & .rc-line-main > .rc-kp,
+  & .rc-line-main > .rc-ask {
+    justify-self: stretch;
+  }
+
+  & .rc-line-text {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--un-text-1);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow-wrap: anywhere;
+  }
+
+  & .rc-line-note {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--un-sp-3);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .rc-line-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-4);
+  }
+
+  & .rc-state {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding-top: 1px;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+  }
+
+  & .rc-state::before {
+    width: 6px;
+    height: 6px;
+    translate: 0 -1px;
+  }
+
+  /* ── The helper's question ── */
+  & .rc-ask {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) var(--un-sp-4);
+    border-radius: 0 var(--un-r-1) var(--un-r-1) 0;
+    background: var(--un-bg-sunk);
+    box-shadow: inset 2px 0 0 var(--un-accent);
+  }
+
+  & .rc-ask[data-done="true"] {
+    box-shadow: inset 2px 0 0 var(--un-line-strong);
+  }
+
+  & .rc-ask-q {
+    color: var(--un-text-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .rc-ask-a {
+    color: var(--un-text-2);
+  }
+
+  & .rc-ask-a[data-unanswered="true"] {
+    color: var(--un-text-3);
+  }
+
+  & .rc-ask-options,
+  & .rc-ask-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
+  & .rc-ask-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-ui-next].rc-page .rc-meter[data-indeterminate="true"] span {
+    animation: rc-sweep 1.6s var(--un-ease-glide) infinite;
+  }
+}
+
+@keyframes rc-sweep {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 340% 0;
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next].rc-page {
+    & .rc-sheet {
+      padding: var(--un-sp-4);
+    }
+
+    & .rc-status {
+      font-size: var(--un-fs-3);
+    }
+
+    & .rc-line {
+      grid-template-columns: 22px minmax(0, 1fr);
+      grid-template-areas:
+        "no state"
+        ". main";
+      row-gap: var(--un-sp-1);
+    }
+
+    & .rc-line-no {
+      grid-area: no;
+    }
+
+    & .rc-line-state {
+      grid-area: state;
+    }
+
+    & .rc-line-main {
+      grid-area: main;
+    }
+  }
+}

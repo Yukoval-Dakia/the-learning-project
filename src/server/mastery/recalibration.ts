@@ -1,9 +1,14 @@
 // YUK-361 Phase 6 (ADR-0043 §4/§6/§7) — active-PPI difficulty recalibration.
 //
-// YUK-439 起：读链 effectiveB 仍是全库 b 读取的单一真相源，但链头改为联合标定的
-// b_post；本模块的写侧机器（AIPW firm-up + 12 标签硬门 + label hook）转为离线审计/
-// 对照工具，生产夜跑改喂 joint-calibration.ts。label hook 仍被 settle 调用作审计面。
-// AIPW 估计器保留：重放对照脚本用它复刻现行方案作基线。
+// ─── YUK-439 起的定位（ADR-0043 2026-10-19 Amendment）──────────────────────────
+// 难度读链 effectiveB 由 kernel/read-models/question-difficulty 持有（此处保留旧出口），
+// 优先读取联合标定后验 b_post；本模块的**写侧机器**（recalibrateQuestion 的 AIPW firm-up + 12 标签
+// 硬门控 + label hook）自 YUK-439 起转为离线审计/对照工具：生产夜跑（recalibration_
+// nightly）改喂 src/server/mastery/joint-calibration.ts 的连续后验批（RECALIBRATION_
+// MIN_LABELS 硬门控与 b_calib 首写语义随之退出生产路径，A3）；label hook 仍被 settle
+// 调用（既有契约 pin 的审计面），但 label 账本不再喂标定。AIPW 估计器（aipwMean /
+// ppiPlusMean / estimateLambdaStar）保留：重放对照脚本（scripts/replay-joint-calibration）
+// 以它复刻现行方案作比较基线。
 //
 // 在线 θ̂ 半边锁死 b（G4）。本模块是离线/批量的 b 去偏引擎：攒够锚定 θ̂ 反推的难度
 // 标签后，用 active-PPI（AIPW）把冷启锚 b_anchor 的尺度偏差校正成 b_calib。θ̂ 快、
@@ -32,7 +37,10 @@ import {
   practice_stream_item,
   selection_observation,
 } from '@/db/schema';
+import { effectiveB } from '@/kernel/read-models/question-difficulty';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
+
+export { type ItemCalibrationBRow, effectiveB } from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
 
@@ -48,28 +56,9 @@ export function attemptLocalDate(now: Date): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// effectiveB — b 读取终态优先链：b_post ?? b_anchor ?? b。纯函数（无 IO），供
-// selection 与 θ̂ 锚统一读 b。
+// impliedBLabel — 单次 fixed-anchor IRT 反推的难度标签（Task 11 step 3，ADR-0043 §6）。
 //
-// YUK-439 起链头由 b_calib 改为 b_post：无证据时 b_post = b_anchor，读侧零跳变；
-// b_calib 冻结为历史存档。家族 delta 不在本 helper 内，由 effectiveFamilyB 叠加。
-// ─────────────────────────────────────────────────────────────────────────────
-export interface ItemCalibrationBRow {
-  b: number | null;
-  b_anchor: number | null;
-  b_calib: number | null;
-  /** 后验均值（优先于锚；无证据时 = b_anchor）。 */
-  b_post?: number | null;
-}
-
-/** b_post ?? b_anchor ?? b；三者皆 null → null。b_calib 不再入链。 */
-export function effectiveB(row: ItemCalibrationBRow | null | undefined): number | null {
-  if (row == null) return null;
-  return row.b_post ?? row.b_anchor ?? row.b ?? null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// impliedBLabel — 从 fixed-anchor IRT 反推难度标签：
+// 给定 (outcome, theta_snapshot, b_anchor)，反推「这道题对这个能力学习者隐含的难度」：
 //   b_label = b_anchor + impliedDifficultyResidual(θ, b_anchor, outcome)
 // 即从锚出发沿 1PL 对数似然对 b 走一步牛顿方向：答错 → 更难，答对 → 更易。
 // 这是锚定 θ 的反推，不是裸 outcome；单条噪声大，池上聚合去噪。

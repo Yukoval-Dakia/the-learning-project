@@ -13,8 +13,9 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { EffortLevel } from '@/ai/task-spec';
 import type { TaskKind } from '@/capabilities/task-registry';
+import type { PiSubagentSpec } from '@/core/subagent-contract';
+import type { PiHookBridge } from '@/core/tool-call-contract';
 import { PiAgentAdapter } from './pi-agent-adapter';
-import type { PiHookBridge } from './pi-hooks';
 import type { ResolvedProvider } from './providers';
 import type {
   Options,
@@ -23,7 +24,6 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from './sdk-types';
-import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
 
 /** Post-P4 the only engine id; the field stays so a future adapter has a home. */

@@ -30,6 +30,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SendOptions } from 'pg-boss';
 import { z } from 'zod';
+import { parseDraftRef } from '@/core/question-draft-ref';
 import { AgentRef } from '@/core/schema/business';
 import {
   DifficultyEvidence,
@@ -44,27 +45,23 @@ import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
-
 // capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
 // 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
 // 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
 // re-export，不经 facade 重复计数。
 import {
+  type DeclaredGroupDomainOutcome,
   type SubmitResult,
   canonicalJson,
   claimSubmitRequestId,
   insertSourcedDraft,
-  parseDraftRef,
+  persistDeclaredQuestionGroup,
   publishQuestionGroupFromRow,
   sanitizeSourcedMarkup,
-  saveDraftEdit,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
 } from '@/server/questions/submit-question';
+import { dispatchPendingVerifyIntents, writeVerifyDispatchIntent } from '../verify-dispatch-outbox';
 
 export type {
   EditQuestionInputT,
@@ -271,19 +268,15 @@ const COMMIT_ROUTE_CONFIG = {
   sourcing_web: { expectedHost: null, mergeActorRef: 'sourcing' },
 } as const;
 
-/** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。
- * request_id 幂等同 draft 路径：锁内 claim；同 id 同内容重放回执，不同内容冲突。 */
-async function executeCandidateSubmit(
-  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'> & {
-    callerActor?: ToolContext['callerActor'];
-  },
-  input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
-  deps: SubmitQuestionDeps,
-): Promise<Output> {
-  const { db } = ctx;
-  const { candidate } = input;
-  const requestId = input.request_id;
-  const fingerprint = `sha256:${createHash('sha256')
+type CandidateSubmitContext = Pick<
+  ToolContext,
+  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'
+> & {
+  callerActor?: ToolContext['callerActor'];
+};
+
+function candidateSubmitFingerprint(input: ParsedInput): string {
+  return `sha256:${createHash('sha256')
     .update(
       canonicalJson({
         candidate: input.candidate,
@@ -294,6 +287,19 @@ async function executeCandidateSubmit(
       }),
     )
     .digest('hex')}`;
+}
+
+/** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。
+ * request_id 幂等同 draft 路径：锁内 claim；同 id 同内容重放回执，不同内容冲突。 */
+async function executeCandidateSubmit(
+  ctx: CandidateSubmitContext,
+  input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
+  deps: SubmitQuestionDeps,
+): Promise<Output> {
+  const { db } = ctx;
+  const { candidate } = input;
+  const requestId = input.request_id;
+  const fingerprint = candidateSubmitFingerprint(input);
   const claim = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
     return claimSubmitRequestId(tx, requestId, fingerprint);
@@ -310,16 +316,25 @@ async function executeCandidateSubmit(
     };
   }
   const result = await runCandidateSubmit(ctx, input, deps);
-  // 回执落库：subject=产出的 question（withheld/conflict 无产出 → 候选占位）。
-  await db.transaction((tx) =>
-    writeSubmitReceiptEvent(
+  // Declared first publication already committed this receipt atomically. Recheck
+  // under the same request lock so a concurrent preflight failure cannot overwrite it.
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
+    const settled = await claimSubmitRequestId(tx, requestId, fingerprint);
+    if (settled.status === 'replay') return settled.receipt as Output;
+    if (settled.status === 'reused') {
+      return {
+        status: 'conflict',
+        reason: 'request_id_reused',
+        detail: `request_id '${requestId}' was used with different content`,
+        request_id: requestId,
+      };
+    }
+    await writeSubmitReceiptEvent(
       tx,
       {
         kind: 'question',
-        id:
-          'question_id' in result && result.question_id != null
-            ? result.question_id
-            : `candidate:${candidate.candidate_id}`,
+        id: result.question_id ?? `candidate:${candidate.candidate_id}`,
       },
       requestId,
       fingerprint,
@@ -332,13 +347,13 @@ async function executeCandidateSubmit(
         causedByEventId: ctx.causedByEventId ?? null,
       },
       new Date(),
-    ),
-  );
-  return result;
+    );
+    return result;
+  });
 }
 
 async function runCandidateSubmit(
-  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'>,
+  ctx: CandidateSubmitContext,
   input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
   deps: SubmitQuestionDeps,
 ): Promise<Output> {
@@ -706,18 +721,9 @@ async function runCandidateSubmit(
 //     durable source_verify intent）。
 // KC 活体 / host / exact hash / source-URL / near-dup / vector 判重在
 // runCandidateSubmit 里与旧路径同序位先跑；本函数只管声明文档的建存与提交。
-// 事务边界如实分段（与领域方法既有边界一致，不谎报跨步原子）：
-//   tx1  saveDraftEdit 内部：request claim + block + create event + 回执
-//   tx2  submitDraftQuestion 内部：request claim + block 锁 + 契约转换 +
-//        admission 检查 + 一页一题 URL 终态 claim（R1 F3：与 INSERT 同
-//        tx 持 advisory xact lock）+ exact-merge + question 行 + publish +
-//        verify intent + 回执
-//   tx3  （可选）向量戳投影更新——只写 embed_* + updated_at 且仅当行内
-//        投影与向量真实输入逐字段一致（R1 F4）；abstain 由 backfill 兜底
-//   tx4  executeCandidateSubmit 外层：候选级回执
-// request 派生身份固定为 `${requestId}:save` / `${requestId}:submit`：崩溃
-// 重试时 save 重放同一 draft_ref（不铸新 draft）、submit 幂等重放回执
-// （不重复发布）、外层 requestId 幂等照旧。
+// 首发事务：caller claim → bind/save → root+真实子行 → typed publish →
+// verify intent + 域/候选回执，一次 commit；之后才 drain。向量输入戳和可观测
+// canary 在 commit 后 best-effort；失败不重放已提交的业务。
 
 /** 声明 → v2 草稿文档。内容文本过 ingest markup 清洗（与旧 flat 入库同口径；
  *  确定性、不改语义）；答案键（accepted/equivalent_forms）同口径清洗——旧
@@ -818,8 +824,80 @@ interface DeclaredCandidateRun {
  * dedup 指纹、路由 created_by/difficulty 经 `sourced` 系统注入与发布同事务
  * 落行——source_verify 的确定性来源核对依赖 web_sourced.extract。
  */
+function declaredCandidateOutcome(
+  outcome: DeclaredGroupDomainOutcome,
+  requestId: string,
+  difficultyEvidence: unknown,
+): Output {
+  if (outcome.status === 'declaration_failed') {
+    return {
+      status: 'conflict',
+      reason: 'invalid_declaration',
+      detail: 'declared identity binding failed',
+      issues: outcome.issues,
+      request_id: requestId,
+    };
+  }
+  const save = outcome.save;
+  if (outcome.status === 'save_failed' || (save.status !== 'saved' && save.status !== 'noop')) {
+    if (save.status === 'conflict') {
+      return {
+        status: 'conflict',
+        reason: save.reason,
+        detail: save.detail,
+        request_id: requestId,
+      };
+    }
+    if (save.status === 'rejected') {
+      return {
+        status: 'conflict',
+        reason: 'invalid_declaration',
+        detail: save.reason,
+        issues: save.issues,
+        request_id: requestId,
+      };
+    }
+    return {
+      status: 'conflict',
+      reason: 'invalid_request',
+      detail: `unexpected draft save status '${save.status}'`,
+      request_id: requestId,
+    };
+  }
+  const submit = outcome.submit;
+  if (submit.status === 'conflict') {
+    return {
+      status: 'conflict',
+      reason: submit.reason,
+      detail: submit.detail,
+      ...(submit.existing_question_id != null
+        ? { existing_question_id: submit.existing_question_id }
+        : {}),
+      request_id: requestId,
+    };
+  }
+  if ('published' in submit) {
+    return {
+      status: 'withheld',
+      reason: 'draft_unpublishable',
+      detail: submit.detail,
+      issues: submit.issues,
+      current_draft_ref: save.draft_ref,
+      current_draft_version: save.draft_version,
+      request_id: requestId,
+    };
+  }
+  return {
+    status: 'pending',
+    question_id: submit.question_id,
+    verify_enqueued: submit.verify_enqueued === true,
+    difficulty_evidence: difficultyEvidence,
+    request_id: requestId,
+  };
+}
+
 async function runDeclaredCandidateSubmit(
-  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'>,
+  ctx: CandidateSubmitContext,
   input: ParsedInput & { candidate: NonNullable<ParsedInput['candidate']> },
   run: DeclaredCandidateRun,
 ): Promise<Output> {
@@ -880,86 +958,38 @@ async function runDeclaredCandidateSubmit(
     knowledgeIds,
   );
 
-  // ---- save（草稿创建；领域方法内部 advisory lock + request 幂等回执） ----
-  const save = await saveDraftEdit(db, {
-    input: {
-      action: 'save',
-      document,
-      request_id: `${requestId}:save`,
+  const committed = await persistDeclaredQuestionGroup(db, {
+    document,
+    idNamespace: `yuk1568-candidate:${requestId}`,
+    saveRequestId: `${requestId}:save`,
+    submitRequestId: `${requestId}:submit`,
+    ...(input.availability != null ? { availability: input.availability } : {}),
+    sourced: {
+      canonical_content_hash: canonicalHash,
+      created_by: sourcedCreatedBy(input.source_route, ctx.logTaskRunId),
+      difficulty: q.difficulty,
+      metadata: {
+        web_sourced: webSourced,
+        source_ref_kind: 'url',
+        difficulty_evidence: difficultyEvidence,
+        prompt_image_refs: candidate.image_refs ?? [],
+        knowledge_hints: candidate.knowledge_hints,
+        attribution_state: input.attribution_state,
+        ...(input.source_route === 'jyeoo_fetch'
+          ? { jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id } }
+          : { sourcing: { candidate_id: candidate.candidate_id } }),
+        ...(input.demand_id ? { demand_id: input.demand_id } : {}),
+        ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+        ...(hold ?? {}),
+        ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
+      },
+      ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
+      // YUK-1568 S3（R1 F3）—— 一页一题 URL 终态 claim 移入 seam 的新组
+      // INSERT 事务（与旧 flat persist tx 同锁域）；独立小事务会把 advisory
+      // xact lock 在真实插入前放掉，并发同页候选双双漏过。
+      source_claim: { source_url: q.source_url, actor_ref: routeConfig.mergeActorRef },
     },
     ctx: {
-      actorRef: routeConfig.mergeActorRef,
-      actorKind: 'agent',
-      taskRunId: ctx.taskRunId,
-      sessionId: ctx.sessionId ?? null,
-      now,
-    },
-  });
-  if (save.status !== 'saved' && save.status !== 'noop') {
-    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
-    if (save.status === 'conflict') {
-      return {
-        status: 'conflict',
-        reason: save.reason,
-        detail: save.detail,
-        request_id: requestId,
-      };
-    }
-    if (save.status === 'rejected') {
-      // 声明校验/未决失败 = 候选缺陷：显式冲突拒绝（附逐 unit 原因），
-      // 不回退旧 flat 解释器补全。
-      return {
-        status: 'conflict',
-        reason: 'invalid_declaration',
-        detail: save.reason,
-        issues: save.issues,
-        request_id: requestId,
-      };
-    }
-    return {
-      status: 'conflict',
-      reason: 'invalid_request',
-      detail: `unexpected draft save status '${save.status}'`,
-      request_id: requestId,
-    };
-  }
-
-  // ---- submit（唯一发布 seam；durable verify intent 由 seam 按 source.kind 写） ----
-  const submit = await submitDraftQuestion(
-    db,
-    {
-      draft_ref: save.draft_ref,
-      expected_draft_version: save.draft_version,
-      expected_revision: null,
-      request_id: `${requestId}:submit`,
-      ...(input.availability != null ? { availability: input.availability } : {}),
-      sourced: {
-        canonical_content_hash: canonicalHash,
-        created_by: sourcedCreatedBy(input.source_route, ctx.logTaskRunId),
-        difficulty: q.difficulty,
-        metadata: {
-          web_sourced: webSourced,
-          source_ref_kind: 'url',
-          difficulty_evidence: difficultyEvidence,
-          prompt_image_refs: candidate.image_refs ?? [],
-          knowledge_hints: candidate.knowledge_hints,
-          attribution_state: input.attribution_state,
-          ...(input.source_route === 'jyeoo_fetch'
-            ? { jyeoo: { id: candidate.source_id, candidate_id: candidate.candidate_id } }
-            : { sourcing: { candidate_id: candidate.candidate_id } }),
-          ...(input.demand_id ? { demand_id: input.demand_id } : {}),
-          ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
-          ...(hold ?? {}),
-          ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
-        },
-        ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
-        // YUK-1568 S3（R1 F3）—— 一页一题 URL 终态 claim 移入 seam 的新组
-        // INSERT 事务（与旧 flat persist tx 同锁域）；独立小事务会把 advisory
-        // xact lock 在真实插入前放掉，并发同页候选双双漏过。
-        source_claim: { source_url: q.source_url, actor_ref: routeConfig.mergeActorRef },
-      },
-    },
-    {
       actorRef: routeConfig.mergeActorRef,
       actorKind: 'agent',
       sessionId: ctx.sessionId ?? null,
@@ -967,34 +997,51 @@ async function runDeclaredCandidateSubmit(
       causedByEventId: ctx.causedByEventId ?? null,
       now,
     },
-  );
-
-  if (submit.status === 'conflict') {
-    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+    caller: {
+      requestId,
+      fingerprint: candidateSubmitFingerprint(input),
+      receipt: (outcome) => {
+        const receipt = declaredCandidateOutcome(outcome, requestId, difficultyEvidence);
+        return {
+          subject: {
+            kind: 'question',
+            id: receipt.question_id ?? `candidate:${candidate.candidate_id}`,
+          },
+          receipt: receipt as SubmitResult,
+          ctx: {
+            actorRef: ctx.callerActor?.ref ?? 'agent:submit_question',
+            actorKind: 'agent',
+            sessionId: ctx.sessionId ?? null,
+            taskRunId: ctx.taskRunId,
+            causedByEventId: ctx.causedByEventId ?? null,
+            now,
+          },
+        };
+      },
+    },
+  });
+  if (committed.status === 'replayed') return committed.receipt as Output;
+  if (committed.status === 'request_id_reused') {
     return {
       status: 'conflict',
-      reason: submit.reason,
-      ...(submit.detail != null ? { detail: submit.detail } : {}),
-      ...(submit.existing_question_id != null
-        ? { existing_question_id: submit.existing_question_id }
-        : {}),
+      reason: 'request_id_reused',
+      detail: committed.detail,
       request_id: requestId,
     };
   }
-  if ('published' in submit) {
-    // 声明缺项/未决（缺 key/分值/槽位/material）→ 不铸 revision，草稿保留
-    // 可修；候选如实 withheld，不回退旧 flat 解释器补全。
-    await cleanupStagedForRejected(db, candidate.staged_asset_ids);
+  if (committed.status === 'submit_rolled_back') {
     return {
-      status: 'withheld',
-      reason: 'draft_unpublishable',
-      detail: submit.detail,
-      ...(submit.issues != null ? { issues: submit.issues } : {}),
-      current_draft_ref: save.draft_ref,
-      current_draft_version: save.draft_version,
+      status: 'conflict',
+      reason: committed.submit.reason,
+      detail: committed.submit.detail,
       request_id: requestId,
     };
   }
+  const candidateResult = declaredCandidateOutcome(committed, requestId, difficultyEvidence);
+  if (committed.status !== 'completed') return candidateResult;
+  const { save, submit } = committed;
+  if (submit.status === 'conflict' || 'published' in submit) return candidateResult;
+  if (save.status !== 'saved' && save.status !== 'noop') return candidateResult;
   const questionId = submit.question_id;
 
   // 向量戳投影更新（best-effort，独立事务）：ingestVector 绑定的是 fetch 时
@@ -1088,13 +1135,7 @@ async function runDeclaredCandidateSubmit(
     console.error('[submit_question] canary event write failed; commit stands:', eventErr);
   }
 
-  return {
-    status: 'pending',
-    question_id: questionId,
-    verify_enqueued: submit.verify_enqueued === true,
-    difficulty_evidence: difficultyEvidence,
-    request_id: input.request_id,
-  };
+  return candidateResult;
 }
 
 /** 被拒/落选候选的 staged 资产即时回收。 */
@@ -1117,7 +1158,7 @@ async function cleanupStagedForRejected(db: Db, stagedAssetIds: string[]): Promi
  * candidate_id+extraction_hash 确定性合成）。工具面只有 submit_question。
  */
 export async function executeStoreSourcedQuestion(
-  ctx: Pick<ToolContext, 'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'>,
+  ctx: CandidateSubmitContext,
   legacyInput: {
     source_route: 'jyeoo_fetch' | 'sourcing_web';
     candidate: z.infer<typeof candidateParsedSchema>;
@@ -1252,7 +1293,7 @@ async function execute(ctx: ToolContext, raw: ExecInput): Promise<Output> {
 export const submitQuestionTool: DomainTool<ExecInput, Output> = {
   name: 'submit_question',
   description:
-    '统一题目提交闸。draft_ref 提交 v2 草稿文档（或 legacy 适配块）→ 契约四层 → publishQuestionGroup 单一发布 seam；编辑已发布题叠加新 revision 不覆盖原版。来源 generated/adapted/owner_material/photo_ingest/jyeoo_fetch/sourcing_web/manual — 非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash。也可提交 jyeoo_fetch/sourcing_web 候选（原 store_sourced_question 语义：dedup/KC 活体/verify outbox）；带 typed parts/units 声明的候选改走统一草稿链 saveDraftEdit→submitDraftQuestion（未声明照旧 flat 路径）。返回 admitted/withheld/conflict/pending + 逐 unit 判分准入原因。request_id 必填幂等；conflict 不重试原请求。',
+    '统一题目提交闸。draft_ref 提交 v2 草稿文档（或 legacy 适配块）→ 契约四层 → publishQuestionGroup 单一发布 seam；编辑已发布题叠加新 revision 不覆盖原版。来源 generated/adapted/owner_material/photo_ingest/jyeoo_fetch/sourcing_web/manual — 非 fetch 来源用可复现内容指纹，绝不伪造 extraction_hash。也可提交 jyeoo_fetch/sourcing_web 候选（原 store_sourced_question 语义：dedup/KC 活体/verify outbox）；带 typed parts/units 声明的候选改走统一草稿链 共享save/submit原子事务（未声明照旧 flat 路径）。返回 admitted/withheld/conflict/pending + 逐 unit 判分准入原因。request_id 必填幂等；conflict 不重试原请求。',
   effect: 'write',
   inputSchema,
   outputSchema,

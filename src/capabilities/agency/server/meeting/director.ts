@@ -22,6 +22,7 @@
 // blocks a second concurrent spend, though its documented recovery retry can re-spend once.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { RunTaskResult } from '@/ai/task-result';
 import {
   conjectureKey,
   gatherConjectureEvidence,
@@ -40,6 +41,7 @@ import { createFindingsCapture } from '@/capabilities/agency/server/scout/report
 import { buildEvidenceScoutAgentDefinition } from '@/capabilities/agency/server/scout/scout-agent';
 import { tasks } from '@/capabilities/task-registry';
 import { newId } from '@/core/ids';
+import { SPAWN_BUDGET_MODE, createPiSpawnContract } from '@/core/subagent-contract';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -49,9 +51,7 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { SPAWN_BUDGET_MODE } from '@/server/ai/spawn-contract';
-import { createPiSpawnContract } from '@/server/ai/tools/pi-subagent';
+import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,

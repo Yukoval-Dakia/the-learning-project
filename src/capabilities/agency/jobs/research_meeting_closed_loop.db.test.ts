@@ -55,7 +55,7 @@ function fakePiAdapter() {
 import { z } from 'zod';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
 

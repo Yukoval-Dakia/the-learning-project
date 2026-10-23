@@ -8,9 +8,10 @@
  */
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 // Enrollment routes by outcome signal (ADR-0024), not a hardcoded failure shape.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { canonicalHash } from '@/core/migration/canonical';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
@@ -22,15 +23,17 @@ import {
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { resolveDocumentUsage } from '@/kernel/read-models/usage-policy';
-import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
+import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
+import { hasAgentEvidence } from './agent/history';
 import { capturedQuestionShape } from './captured-question-shape';
 import {
   isTerminalIngestionOperation,
+  matchesAcceptedIngestionOperationInput,
   readIngestionOperation,
   writeIngestionOperationEvent,
 } from './operation-store';
@@ -241,41 +244,24 @@ export async function completeIngestionImport(
             ? Math.min(...sourceRows.map((r) => r.ordinal))
             : manualOrdinalBase + blockIndex;
 
-        const [insertedRow] = await tx
-          .insert(question_block)
-          .values({
-            id: importedBlockId,
-            ingestion_session_id: sessionId,
-            source_document_id: sessionSourceDocumentId,
-            source_asset_ids: block.image_refs,
-            page_spans: block.page_spans,
+        await persistCapturedQuestionBlock(
+          tx,
+          {
+            origin: 'import',
+            blockId: importedBlockId,
+            sessionId,
+            sourceDocumentId: sessionSourceDocumentId,
             ordinal,
-            extracted_prompt_md: block.final_prompt_md,
-            reference_md: block.final_reference_md,
-            wrong_answer_md: block.final_wrong_answer_md,
-            image_refs: block.image_refs,
-            crop_refs: [],
-            visual_complexity: visualComplexity,
-            extraction_confidence: 1,
-            status: 'imported',
-            knowledge_hint: null,
-            merged_from_block_ids: block.source_block_ids,
-            imported_question_id: null,
-            imported_attempt_event_id: null,
-            created_at: now,
-            updated_at: now,
-            version: 0,
-          })
-          .returning();
-        // Canonical create event for the virtual card, built from `.returning()` so
-        // DB defaults are captured. The later import-link UPDATE is not event-sourced.
-        await writeQuestionBlockCreateEvent(tx, {
-          row: insertedRow,
-          origin: 'import',
-          actorKind: 'user',
-          actorRef: 'block_import',
+            visualComplexity,
+            pageSpans: block.page_spans,
+            imageRefs: block.image_refs,
+            sourceBlockIds: block.source_block_ids,
+            finalPromptMd: block.final_prompt_md,
+            finalReferenceMd: block.final_reference_md,
+            finalWrongAnswerMd: block.final_wrong_answer_md,
+          },
           now,
-        });
+        );
 
         for (const sid of block.source_block_ids) {
           if (!directlyImportedIds.has(sid)) {
@@ -428,30 +414,16 @@ export async function completeIngestionImport(
       recordIds.push(enroll.recordId);
 
       // Link the block to the question/attempt and mark it imported.
-      const [{ version: importedBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          imported_question_id: questionId,
-          imported_attempt_event_id: enroll.attemptEventId,
-          status: 'imported',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, importedBlockId))
-        .returning({ version: question_block.version });
-
-      // Fold-visible additive double-write carrying status, imports, and version.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: importedBlockId,
-        op: 'set_status',
-        status: 'imported',
-        importedQuestionId: questionId,
-        importedAttemptEventId: enroll.attemptEventId,
-        nextVersion: importedBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
+      await applyQuestionBlockTransition(
+        tx,
+        {
+          kind: 'complete_import',
+          blockId: importedBlockId,
+          questionId,
+          attemptEventId: enroll.attemptEventId,
+        },
         now,
-      });
+      );
     }
 
     // Mark draft blocks the user dropped as ignored.
@@ -469,27 +441,7 @@ export async function completeIngestionImport(
 
     // Mark source blocks ignored.
     for (const sid of toIgnore) {
-      const [{ version: ignoredBlockVersion }] = await tx
-        .update(question_block)
-        .set({
-          status: 'ignored',
-          updated_at: now,
-          version: sql`${question_block.version} + 1`,
-        })
-        .where(eq(question_block.id, sid))
-        .returning({ version: question_block.version });
-
-      // Fold-visible ignore. Only status and version are carried, so the fold leaves
-      // imported_* unchanged.
-      await writeQuestionBlockLifecycleEvent(tx, {
-        blockId: sid,
-        op: 'set_status',
-        status: 'ignored',
-        nextVersion: ignoredBlockVersion,
-        actorKind: 'user',
-        actorRef: 'block_import',
-        now,
-      });
+      await applyQuestionBlockTransition(tx, { kind: 'ignore_source', blockId: sid }, now);
     }
 
     // Terminal transition extracted | reviewed → imported, re-asserted under the lock.
@@ -549,6 +501,103 @@ export async function completeIngestionImportOperation(
       operationId: input.operationId,
       eventType: 'operation.completed',
       payload: { result },
+    });
+  });
+}
+
+/**
+ * Classic review owns the full checked set and its completion receipt. Lock order:
+ * operation → session → blocks ordered by id. No publishing or paid work occurs.
+ */
+export async function completeIngestionReviewOperation(
+  db: Db,
+  input: { operationId: string; sessionId: string; body: ReviewBodyParsed },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    // Share dispatch's exact per-operation lock through business + receipt commit:
+    // an ambiguous send must finish its terminal write before review re-reads it.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${'ingestion-operation-dispatch'}), hashtext(${input.operationId}))`,
+    );
+    const operation = await readIngestionOperation(tx, input.operationId);
+    if (!operation || isTerminalIngestionOperation(operation)) return;
+    const parsed = ReviewBody.safeParse(input.body);
+    if (
+      !parsed.success ||
+      operation.operation_kind !== 'review' ||
+      operation.session_id !== input.sessionId ||
+      !(await matchesAcceptedIngestionOperationInput(tx, {
+        operationId: input.operationId,
+        sessionId: input.sessionId,
+        request: { kind: 'review', input: parsed.data },
+      }))
+    ) {
+      // A foreign delivery must not terminalize the real accepted operation.
+      throw new ApiError('conflict', 'Review delivery does not match its reserved operation', 409);
+    }
+    const body = parsed.data;
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.running',
+    });
+    try {
+      // The savepoint rolls back every review write before a domain failure receipt.
+      // Infrastructure errors escape the outer transaction for pg-boss retry.
+      await tx.transaction(async (reviewTx) => {
+        const [session] = await reviewTx
+          .select({ id: learning_session.id })
+          .from(learning_session)
+          .where(
+            and(eq(learning_session.id, input.sessionId), eq(learning_session.type, 'ingestion')),
+          )
+          .for('update');
+        if (!session) {
+          throw new ApiError('not_found', `ingestion session ${input.sessionId} not found`, 404);
+        }
+        // This is the same live classifier used by history, including historical
+        // drafts, grants and unknown paid runs. Partial status never proves classic.
+        if (await hasAgentEvidence(reviewTx, input.sessionId)) {
+          throw new ApiError('conflict', 'Agent sessions cannot use classic block review', 409);
+        }
+        const blocks = await reviewTx
+          .select({ id: question_block.id, version: question_block.version })
+          .from(question_block)
+          .where(eq(question_block.ingestion_session_id, input.sessionId))
+          .orderBy(asc(question_block.id))
+          .for('update');
+        // No draft/status filter or limit: ignored and auto-enrolled rows count too.
+        const checked = new Map(
+          body.checked_blocks.map((block) => [block.block_id, block.version]),
+        );
+        if (
+          blocks.length === 0 ||
+          blocks.length !== checked.size ||
+          blocks.some((block) => checked.get(block.id) !== block.version)
+        ) {
+          throw new ApiError(
+            'conflict',
+            'Checked blocks must match every current session block and version; review again',
+            409,
+          );
+        }
+        // Preserve the state owner's extracted/partial guard and reviewed event.
+        await Ingestion.markReviewedInTx(reviewTx, input.sessionId);
+      });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status >= 500) throw error;
+      await writeIngestionOperationEvent(tx, {
+        operationId: input.operationId,
+        eventType: 'operation.failed',
+        payload: { error: { code: error.code, message: error.message, status: error.status } },
+      });
+      return;
+    }
+    // DONE failures roll back reviewed and ingestion.reviewed together; they can
+    // never be caught above and downgraded into a false failed operation.
+    await writeIngestionOperationEvent(tx, {
+      operationId: input.operationId,
+      eventType: 'operation.completed',
+      payload: { result: { status: 'reviewed' } },
     });
   });
 }

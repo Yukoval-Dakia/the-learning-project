@@ -6,7 +6,7 @@
 | 文件 | 职责 |
 |------|------|
 | `src/main.tsx` | SPA 入口：QueryClient + TokenGate + RouterProvider |
-| `src/router.tsx` | TanStack Router 路由表 + `RootShell`（sidebar / topbar / mobile tabbar / CopilotDock / CommandPalette） |
+| `src/router.tsx` | TanStack Router 路由表 + `RootShell`（sidebar / topbar / mobile tabbar / 学习伙伴 CompanionMount / CommandPalette） |
 | `src/TokenGate.tsx` | `x-internal-token` 输入与本地缓存 |
 | `src/globals.css` | Tailwind v4 CSS-first 入口（含主题变量与 shell-copilot-mount 等钩子） |
 | `vite.config.ts` | root=`web/`，`@` → `../src`，dev `/api` proxy → :8787，build outDir=`dist` |
@@ -14,7 +14,7 @@
 ## CONVENTIONS
 - **capability ui 不 import 路由库**。导航以 `(to: string) => void` prop 由 `web/src/router.tsx` 注入；capability 包只负责页面组件。
 - 页面组件放在 `src/capabilities/<name>/ui/`，在 `web/src/router.tsx` 统一 import 并绑定路由。
-- 全局 chrome（sidebar/topbar/CopilotDock/CommandPalette）属于 `web/` 壳层，不归 capability 包。
+- 全局 chrome（sidebar/topbar/学习伙伴挂载位/CommandPalette）属于 `web/` 壳层，不归 capability 包。
 - 主题持久化 key = `loom-theme`，mount 时应用到 `<html data-theme>`。
 
 ## ANTI-PATTERNS
