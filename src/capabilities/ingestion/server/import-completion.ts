@@ -11,6 +11,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 // Enrollment routes by outcome signal (ADR-0024), not a hardcoded failure shape.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { canonicalHash } from '@/core/migration/canonical';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
@@ -26,7 +27,6 @@ import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-cr
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { Ingestion } from '@/server/session';
 import type { SubjectProfile } from '@/subjects/profile';
 import { ReviewBody, type ReviewBodyParsed } from '../api/operation-schema';
 import { hasAgentEvidence } from './agent/history';

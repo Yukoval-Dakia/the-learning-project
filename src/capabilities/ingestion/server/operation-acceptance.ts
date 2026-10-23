@@ -1,12 +1,11 @@
 import { and, eq } from 'drizzle-orm';
-
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { getStartedBoss } from '@/server/boss/client';
-import { Ingestion } from '@/server/session';
 import type { IngestionOperationRequestParsed } from '../api/operation-schema';
 import {
   agentOpOwnsSessionRun,

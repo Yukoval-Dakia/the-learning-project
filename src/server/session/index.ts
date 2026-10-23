@@ -1,13 +1,13 @@
 // LearningSession multi-type module entrypoint (ADR-0008).
 //
-// Callers import namespaces:
-//   import { Ingestion, Review } from '@/server/session';
+// Non-ingestion callers import namespaces:
+//   import { Conversation, Placement, Review, Tutor } from '@/server/session';
 //
-// This is the only module exporting writes to `learning_session` (ADR-0005).
+// Ingestion writes belong to @/capabilities/ingestion/server/session-lifecycle.
+// Each session type has one lifecycle owner (ADR-0005).
 
 export type { LearningSessionTypeT } from '@/core/schema/learning_session';
 export * as Conversation from './conversation';
-export * as Ingestion from './ingestion';
 export * as Placement from './placement';
 export * as Review from './review';
 export * as Tutor from './tutor';

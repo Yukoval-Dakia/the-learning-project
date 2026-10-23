@@ -2391,6 +2391,40 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-68ee6a62-53c4-4e6a-adca-fac91dbb489e",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-23",
+      "from": 6,
+      "to": 9,
+      "direction": "increase",
+      "reason": "Complete ingestion lifecycle implementations move from server to their domain owner with existing queue/event dependencies preserved. The same native candidate reduces ingestion -> session from 8 to 1, offsetting boss +3 and events +2 together; total 320 -> 318. No forwarding layer or counting scope change.",
+      "exitCondition": "Retire these direct implementation dependencies only when the actual queue or event operation owner changes through a separately scoped approved implementation; do not add facades or alter send/transaction semantics to move counts.",
+      "justification": {
+        "kind": "offset"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 7,
+      "direction": "increase",
+      "reason": "Complete ingestion lifecycle implementations move from server to their domain owner with existing queue/event dependencies preserved. The same native candidate reduces ingestion -> session from 8 to 1, offsetting boss +3 and events +2 together; total 320 -> 318. No forwarding layer or counting scope change.",
+      "exitCondition": "Retire these direct implementation dependencies only when the actual queue or event operation owner changes through a separately scoped approved implementation; do not add facades or alter send/transaction semantics to move counts.",
+      "justification": {
+        "kind": "offset"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> session",
+      "date": "2026-10-23",
+      "from": 8,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3774,6 +3808,136 @@
       "issue": "YUK-1358",
       "owns": "The server platform owns the existing NODE_ENV/VITEST background-enqueue environment protocol. Practice retains the business ordering after the native creation transaction returns, followed by getPracticeBoss and send; this moved HTTP reference does not relocate queue implementation or add a paid policy.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY", "resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1570",
+      "owns": "The existing server boss singleton owns boot and queue access; DOCX keeps both lazy post-commit imports and separate enqueue failure catches.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
+      "issue": "YUK-1570",
+      "owns": "The existing queue module owns the copilot nudge name; DOCX keeps its current observe-only notification payload and timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/events/session-extract.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns canonical domain-event persistence; ingestion owns its existing extract envelope and session consent propagation.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/events/session-extract.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the shared ApiError shape; ingestion preserves its existing lifecycle conflict/status semantics.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/boss/pg-boss-drizzle.ts",
+      "kind": "value",
+      "symbols": ["fromPgBossDrizzleTx"],
+      "issue": "YUK-1570",
+      "owns": "The existing adapter owns PgBoss transaction binding; ingestion preserves the agent-only transactional send and budget-hook order.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/session/guards.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "The existing shared guard owns allowed-state checks and conflict error shape; other session types still use this implementation.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4631,7 +4795,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 320,
+      "total": 318,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4656,14 +4820,14 @@
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
-        "ingestion -> boss": 6,
-        "ingestion -> events": 5,
+        "ingestion -> boss": 9,
+        "ingestion -> events": 7,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 11,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
-        "ingestion -> session": 8,
+        "ingestion -> session": 1,
         "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 9,
         "knowledge -> boss": 3,
