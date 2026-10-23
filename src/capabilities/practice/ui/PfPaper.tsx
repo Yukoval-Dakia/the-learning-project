@@ -51,7 +51,6 @@ import {
   type PaperDetail,
   type PaperSlot,
   allocateKeepaliveBudget,
-  endPaperSession,
   paperAnswerDraftBodyBytes,
   pausePaperSession,
   savePaperAnswer,
@@ -424,7 +423,7 @@ function PaperVisit({
   /** YUK-1566 — the latest re-read failed; the paper read earlier in this entry stays. */
   refreshFailed: boolean;
 }) {
-  const { getPaperDetail, startPaperSession } = usePracticeClient();
+  const { getPaperDetail, startPaperSession, endPaperSession } = usePracticeClient();
   const qc = useQueryClient();
   const hasNativeBindings = slots.every((slot) => slot.assessment != null);
   // The visit's restored drafts, computed once at mount (pure).
