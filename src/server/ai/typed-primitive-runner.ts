@@ -31,7 +31,7 @@
 
 import type { ZodTypeAny } from 'zod';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
-import type { AiTaskUsage as LifecycleUsage, LifecycleResult } from '@/ai/task-result';
+import type { LifecycleResult, AiTaskUsage as LifecycleUsage } from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';

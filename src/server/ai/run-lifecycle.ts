@@ -7,8 +7,8 @@ import {
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   AiTaskUsage,
-  AiTaskUsage as LifecycleUsage,
   LifecycleResult,
+  AiTaskUsage as LifecycleUsage,
   NoteGeneratePhaseTimings,
   TransportAbortInitiator,
 } from '@/ai/task-result';
@@ -30,11 +30,7 @@ import {
   traceMetadata,
   withTraceContext,
 } from './laminar-tracing';
-import {
-  writeAiTaskAttemptFinished,
-  writeAiTaskRunRetried,
-  writeAiTaskRunStarted,
-} from './log';
+import { writeAiTaskAttemptFinished, writeAiTaskRunRetried, writeAiTaskRunStarted } from './log';
 import {
   type ModelProfile,
   assertModelProfileCapabilityFit,
