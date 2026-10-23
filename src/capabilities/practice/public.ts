@@ -345,5 +345,8 @@ export { previewReviewAdvice } from './server/advice-operation';
 export { createPracticeAppeal } from './server/appeal-operation';
 export { revealFrozenStudyReference } from './server/assessment/study-context';
 export { getPaperDetail } from './server/paper-detail';
-export { createReviewSession } from './server/session-operations/review-session';
+export {
+  createReviewSession,
+  transitionReviewSession,
+} from './server/session-operations/review-session';
 export { createPracticeHintRequest, createPracticeSolveSession } from './server/solve-operations';

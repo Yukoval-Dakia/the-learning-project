@@ -9,6 +9,7 @@ import { startIssuanceCreateClient } from '../issuance-create-client';
 import { startIssuanceStateClient } from '../issuance-state-client';
 import { startJudgeRunStatusClient } from '../judge-status-client';
 import { startPaperDetailClient } from '../paper-detail-client';
+import { endPaperSessionClient } from '../paper-end-client';
 import { startPaperSessionClient } from '../paper-start-client';
 import { startPaperListClient } from '../papers-list-client';
 import { startPracticeAdviceClient } from '../practice-advice-client';
@@ -36,6 +37,7 @@ const practiceClient: PracticeClient = {
   getPapers: startPaperListClient,
   getPaperDetail: startPaperDetailClient,
   startPaperSession: startPaperSessionClient,
+  endPaperSession: endPaperSessionClient,
   getQuestionDetail: startPracticeQuestionDetailClient,
   getIssuanceState: startIssuanceStateClient,
   issueAssessment: startIssuanceCreateClient,
