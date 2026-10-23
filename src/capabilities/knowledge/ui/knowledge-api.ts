@@ -86,25 +86,29 @@ export type KnowledgeEdgeRow = Pick<
   status: 'active' | 'archived';
 };
 
+export const projectKnowledgeEdges = (
+  response: ApiOperationJsonResponse<'listKnowledgeEdges'>,
+) => ({
+  ...response,
+  rows: response.rows.map(
+    (row): KnowledgeEdgeRow => ({
+      id: row.id,
+      from_knowledge_id: row.from_knowledge_id,
+      to_knowledge_id: row.to_knowledge_id,
+      relation_type: row.relation_type,
+      weight: row.weight,
+      status: row.archived_at === null ? 'active' : 'archived',
+    }),
+  ),
+});
+
 export const getEdges = (subject?: string) =>
   apiOperationJson('listKnowledgeEdges', {
     url: subject
       ? `/api/knowledge/edges?subject=${encodeURIComponent(subject)}`
       : '/api/knowledge/edges',
     method: 'GET',
-  }).then((response) => ({
-    ...response,
-    rows: response.rows.map(
-      (row): KnowledgeEdgeRow => ({
-        id: row.id,
-        from_knowledge_id: row.from_knowledge_id,
-        to_knowledge_id: row.to_knowledge_id,
-        relation_type: row.relation_type,
-        weight: row.weight,
-        status: row.archived_at === null ? 'active' : 'archived',
-      }),
-    ),
-  }));
+  }).then(projectKnowledgeEdges);
 
 export const createEdge = (input: ApiOperationRequestBody<'createKnowledgeEdge'>) =>
   apiOperationJson('createKnowledgeEdge', {

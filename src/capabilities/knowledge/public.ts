@@ -47,6 +47,7 @@ export {
   listKnowledgeEdges,
   listKnowledgeEdgesPage,
 } from './server/edges';
+export { readKnowledgeEdges } from './server/edges-list';
 export type {
   FailureLearningKnowledgeNode,
   FailureLearningMisconceptionNode,

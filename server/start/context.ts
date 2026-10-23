@@ -3,6 +3,7 @@ import type { createGoal } from '@/capabilities/agency/public';
 import type {
   loadKnowledgeNodePage,
   loadMisconceptionsForKc,
+  readKnowledgeEdges,
 } from '@/capabilities/knowledge/public';
 import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
@@ -25,6 +26,7 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  readKnowledgeEdges: (subject?: string) => Promise<Awaited<ReturnType<typeof readKnowledgeEdges>>>;
   readKnowledgeNodePage: (
     id: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof loadKnowledgeNodePage>>>>;
