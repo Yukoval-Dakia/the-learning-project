@@ -11,7 +11,9 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   createPracticeHintRequest,
+  createPracticePaperSubmission,
   createPracticeSolveSession,
+  createReviewSession,
   getIssuanceState,
   getPaperDetail,
   getPracticeStream,
@@ -29,6 +31,7 @@ import type {
   selectNextPlacementQuestion,
   startPlacementProbe,
   transitionPlacementSession,
+  transitionReviewSession,
   updatePracticeStreamItem,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
@@ -57,9 +60,27 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof releaseHeldPlacement>>>;
   readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
+  submitPaperSlot: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof createPracticePaperSubmission>>>;
+  endPaperSession: (sessionId: string) => Promise<{
+    id: string;
+    type: 'review';
+    previous_status: Awaited<ReturnType<typeof transitionReviewSession>>['previousStatus'];
+    status: Awaited<ReturnType<typeof transitionReviewSession>>['status'];
+    changed: boolean;
+    allowed_statuses: Awaited<ReturnType<typeof transitionReviewSession>>['allowedStatuses'];
+  }>;
+  startPaperSession: (
+    body: string,
+  ) => Promise<{ session_id: Awaited<ReturnType<typeof createReviewSession>>['sessionId'] }>;
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
+  readLibraryQuestionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
   readPracticeQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;

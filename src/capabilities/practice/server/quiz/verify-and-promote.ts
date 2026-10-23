@@ -22,9 +22,9 @@ import {
   QUESTION_AVAILABILITY,
 } from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // question_admission_run 经本既有 publish seam 取 publisher API，

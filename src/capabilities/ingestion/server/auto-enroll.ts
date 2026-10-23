@@ -43,6 +43,7 @@ import {
 } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 /**
@@ -60,7 +61,6 @@ import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-over
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';

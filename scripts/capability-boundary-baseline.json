@@ -2505,6 +2505,302 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-88191dba-45c5-4cef-a8ec-304a1cb47e72",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "CreateReviewSessionBody",
+      "targetModule": "src/capabilities/practice/api/contracts.ts",
+      "targetSymbol": "CreateReviewSessionBody",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-start-operation.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "The authenticated host imports CreateReviewSessionBody at AST line 19 and path line 20 and consumes it at line 22. Context imports are type-only; the HTTP review-sessions adapter directly consumes the internal schema and owner.",
+      "rationale": "Practice owns the original strict input contract and complete review-session operation. The paper branch holds the paper advisory lock within one transaction, validates the artifact and reuses an active session with its original renderability contract, or performs preflight, session creation and complete issuance/binding. Start consumes the same schema and owner without splitting locks, creation, issuance or recovery. The host retains the original 90-second ALS scope, errors and session_id body; HTTP status and Location remain unchanged. Paused sessions are not resumed and old sessions without bindings are not backfilled. Response uncertainty and possible asynchronous paid work remain; no signal, policy or idempotency input is added, and no equivalence of the entire public evaluation graph or runtime acceptance is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8aff2582-3f9b-4001-b038-e95af3dfe776",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createReviewSession",
+      "targetModule": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "targetSymbol": "createReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-start-operation.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "The authenticated host imports createReviewSession at AST line 19 and path line 20 and consumes it at line 30. Context imports are type-only; the HTTP review-sessions adapter directly consumes the internal schema and owner.",
+      "rationale": "Practice owns the original strict input contract and complete review-session operation. The paper branch holds the paper advisory lock within one transaction, validates the artifact and reuses an active session with its original renderability contract, or performs preflight, session creation and complete issuance/binding. Start consumes the same schema and owner without splitting locks, creation, issuance or recovery. The host retains the original 90-second ALS scope, errors and session_id body; HTTP status and Location remain unchanged. Paused sessions are not resumed and old sessions without bindings are not backfilled. Response uncertainty and possible asynchronous paid work remain; no signal, policy or idempotency input is added, and no equivalence of the entire public evaluation graph or runtime acceptance is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8aff2582-3f9b-4001-b038-e95af3dfe776",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-23",
+      "from": 9,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "transitionReviewSession",
+      "targetModule": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "targetSymbol": "transitionReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-end-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports transitionReviewSession at AST and path line 11 and calls it at line 12 with the requested session id and fixed completed target. Context imports are type-only; the canonical HTTP adapter directly consumes the internal owner. The six response fields preserve the existing HTTP result projection.",
+      "rationale": "Practice owns the complete canonical transition through withFrozenPaperReopen, the Review state transaction and changed-only completed summary enqueue after commit. Start does not use legacy close or reconstruct state and recovery rules. The id-only consumer has no variable body or status, so the unchanged HTTP schema remains internal and arbitrary HTTP protocol equivalence is not claimed. Same-state replay does not repair a missed summary send; conditional summary, MemoryBrief and attribution/variant paid effects remain governed by the original protocol. Auth precedes the host 90-second ALS and public import; no business signal, id normalization, new idempotency or runtime acceptance is added.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-846e4137-d5af-4966-8712-b5c9f089aaa3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createPracticePaperSubmission",
+      "targetModule": "src/capabilities/practice/server/paper-submission-operation.ts",
+      "targetSymbol": "createPracticePaperSubmission",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-submit-operation.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated host imports createPracticePaperSubmission at AST and path line 17 and calls it at line 19. Context imports are type-only; canonical and legacy HTTP adapters consume the same internal operation without becoming public runtime consumers.",
+      "rationale": "Practice owns the complete canonical schema, paper/session identity mapping, original JSON normalization, legacy schema, paper submission invocation and visible/buffered result projection. HTTP and Start share this complete operation; buffered results do not expose grading fields. Original HTTP status, Location, deprecation and error transport remain at HTTP. The host retains auth-first loading and the 90-second ALS scope, while original stateful paid, locking, receipt and partial-completion protocols remain unchanged; no runtime acceptance or full HTTP protocol equivalence is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildPaperSubmissionBody",
+      "targetModule": "src/capabilities/practice/ui/practice-api.ts",
+      "targetSymbol": "buildPaperSubmissionBody",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-submit-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The mixed import starts at AST and path line 1; buildPaperSubmissionBody is called at line 14. PracticeClient is type-only. HTTP and Start invoke the unchanged same wire builder.",
+      "rationale": "Practice owns one paper submission body mapping: assessment, paper id, question, part and answer, nonempty images, defined latency and reasoning, and numeric confidence. Sharing the original builder prevents a second field-policy copy while retaining the existing UI loop, parameter construction and recovery behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "writeVerifyDispatchIntent",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "writeVerifyDispatchIntent",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/shared-submit.ts",
+          "line": 36
+        }
+      ],
+      "evidence": "Practice public export starts at AST line81. shared-submit imports at AST36 and writes at837; canonical142-188 owns payload schema, authority conflict, deterministic identity and intent append.",
+      "rationale": "Practice owns the complete verification intent protocol. The existing shared submission operation uses this public operation within its original transaction; caller authority, paid and publishing responsibilities remain unchanged.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "dispatchPendingVerifyIntents",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "dispatchPendingVerifyIntents",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/shared-submit.ts",
+          "line": 36
+        }
+      ],
+      "evidence": "Practice public export starts at AST81; shared-submit imports atAST36 and drains at892. canonical249-411 owns SKIP LOCKED, eligibility, same-Tx queue/completion and post-rollback failure evidence.",
+      "rationale": "A stable shared submission consumer uses the existing complete verification dispatch protocol without reconstructing its batch, transaction or recovery internals. This records ownership, not new hidden behavior.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "recoverOrphanVerifyDispatches",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "recoverOrphanVerifyDispatches",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-recovery.ts",
+          "line": 2
+        }
+      ],
+      "evidence": "Practice public export starts at AST81; recovery adapter imports atAST2/path5 and calls at15. canonical418-514 owns legacy orphan intent synthesis followed by verification-only drain.",
+      "rationale": "The existing infrastructure Job adapter consumes the complete Practice verification recovery operation for startup/nightly repair. Queue registration, fencing, boot order and cron remain infrastructure responsibilities; no new runtime equivalence is claimed.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fe27dd68-f364-4c35-a0c6-09d4ab0b667f",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_COMPLETE_ACTION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_COMPLETE_ACTION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 83/169/179/202/240/273. Canonical declaration line 14; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_INTENT_ACTION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_INTENT_ACTION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 62. Canonical declaration line 13; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "VERIFY_DISPATCH_VERSION",
+      "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "targetSymbol": "VERIFY_DISPATCH_VERSION",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Public export AST81; the Owner-approved existing DB test imports at AST6/path13 and uses this symbol at 68. Canonical declaration line 15; test body is unchanged after removing the migrated import.",
+      "rationale": "Practice owns the existing verification dispatch protocol and its stable event identity constants. This records the actual existing test consumer, not a production consumer or new operation depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-23",
+      "from": 15,
+      "to": 14,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "LibraryClientProvider",
+      "targetModule": "src/capabilities/practice/ui/library/library-client.tsx",
+      "targetSymbol": "LibraryClientProvider",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/routes/questions.$id.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The runtime import starts at AST line 3 with module path at line 7; JSX lines 22 and 26 use LibraryClientProvider. LibraryClient and the Start client import are type-only. QuestionPage and restoreLatest consume the same id-only reader through this context.",
+      "rationale": "Practice owns this stable UI injection entry for library detail reads. The default HTTP reader and authenticated Start host reuse the complete readQuestionDetail operation with the full library projection and questions-lib key. The provider owns no domain validation, SQL, write or recovery policy. Restore and delete undo still read fresh.version before the unchanged HTTP restore command; the retained SPA route can continue to use the HTTP fallback.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8e1dbd7b-c13b-4b90-8aa6-16c61460ca6b",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
@@ -4040,6 +4336,56 @@
       "date": "2026-10-23"
     },
     {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1570",
+      "owns": "The existing boss singleton owns boot and queue access; extraction follow-ups retain two lazy client imports and independent post-commit enqueue failure catches.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
+      "issue": "YUK-1570",
+      "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/paper-submission-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error status/envelope; Practice owns the complete resource and legacy input contracts, paper submission invocation and learner-visible/buffered result projection. Original HTTP adapters retain errorResponse/canonical/deprecated references, so this is the new physical owner dependency rather than a claim that all references are net zero.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["WriteEventInput", "writeEvent", "writeEvents"],
+      "issue": "YUK-1570",
+      "owns": "The canonical event owner owns append-only intent/completion/failure facts; verification retains its existing transaction, identity and error rules.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
+      "module": "src/server/boss/pg-boss-drizzle.ts",
+      "kind": "value",
+      "symbols": ["fromPgBossDrizzleTx"],
+      "issue": "YUK-1570",
+      "owns": "The existing adapter binds pg-boss sends to the lock-owning Drizzle transaction; verification preserves same-Tx queue and completion atomicity.",
+      "date": "2026-10-23"
+    },
+    {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/session-detail.ts",
       "module": "src/kernel/http.ts",
@@ -4357,6 +4703,24 @@
       "to": 2233,
       "issue": "YUK-1358",
       "responsibilityReason": "Existing paper display, stale-draft conflict recovery and pre-submit reconciliation responsibilities are unchanged. The two net lines only destructure getPaperDetail from the existing PracticeClient in the already-live PfPaper and PaperVisit component scopes; replacing the direct named import with the client hook import has zero net lines. Reversing those two scope bindings and the import swap restores the complete base file byte-for-byte. No business rule, Effect, recovery branch or dependency-array change is added; unrelated lines are not compressed or helpers split to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/practice/ui/PfPaper.tsx",
+      "date": "2026-10-23",
+      "baseBlob": "1c1934a918ea001f4919633ed064564cf0530964",
+      "from": 2233,
+      "to": 2240,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Existing paper opening, timing, draft, submission and recovery responsibilities are unchanged. Removing the direct startPaperSession named import saves one line; adding the same method to the existing PracticeClient destructuring has zero net lines. Adding that injected method to attachVisit's existing dependency array requires formatter expansion from one line to nine, adding eight lines, for seven net lines. All previous dependency members and the complete callback body are preserved; reversing these three edits restores the entire base file byte-for-byte. No business rule, Effect or recovery branch is added, and no unrelated lines are compressed or helpers split to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-23",
+      "baseBlob": "26b98402c505c25a68dd24cadffd481b2494ee5a",
+      "from": 1230,
+      "to": 1233,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Three net lines are the required formatter expansion of the unchanged two-symbol advisory-lock import after its specifier moves to the approved canonical db/learning-state-lock owner. Removing that import leaves the entire caller byte-identical to the base, including all B, merge, paid, transaction and lock-order bodies. No operation or policy is added, and no unrelated lines are compressed or split to evade the size ratchet."
     }
   ],
   "compatShims": [
@@ -4924,7 +5288,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 318,
+      "total": 301,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4935,7 +5299,6 @@
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "copilot -> advisory-locks": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
         "copilot -> events": 5,
@@ -4947,9 +5310,8 @@
         "copilot -> runtime-env": 1,
         "copilot -> session": 6,
         "copilot -> today": 3,
-        "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
-        "ingestion -> boss": 9,
+        "ingestion -> boss": 7,
         "ingestion -> events": 7,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
@@ -4957,7 +5319,6 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,
-        "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 9,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -4976,16 +5337,15 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "practice -> advisory-locks": 5,
         "practice -> ai": 46,
         "practice -> assessment": 1,
-        "practice -> boss": 15,
+        "practice -> boss": 14,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
         "practice -> events": 1,
         "practice -> fsrs": 2,
         "practice -> http": 3,
-        "practice -> mastery": 5,
+        "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> projections": 1,
         "practice -> proposals": 5,

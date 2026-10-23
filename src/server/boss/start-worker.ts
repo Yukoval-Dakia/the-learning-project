@@ -17,7 +17,7 @@ import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/cl
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
-import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
+import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-recovery';
 import {
   CUSTOM_PROVIDERS_WATCH_INTERVAL_MS,
   hydrateCustomProviders,

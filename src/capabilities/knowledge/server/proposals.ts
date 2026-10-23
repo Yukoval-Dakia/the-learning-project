@@ -26,6 +26,10 @@ import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/kno
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
 import { type TopologyEdge, checkEdgeTopology } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
+import {
+  acquireLearningStateWriteLock,
+  acquireSortedAdvisoryLocks,
+} from '@/db/learning-state-lock';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
@@ -33,7 +37,6 @@ import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/propo
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
-import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';

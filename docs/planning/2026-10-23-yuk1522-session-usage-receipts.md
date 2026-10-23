@@ -63,9 +63,10 @@
 manifest/schema/migration、UI/useEffect 或测试。台账只追加真实迁移到新 owner 的 kernel 消费边，
 不改 gate、计数范围、规则或例外。
 
-本片唯一 writer，不委派、不启动 R1/R2。按授权禁止新增/修改/运行 tests、fixtures、断言、probe、driver；
+本片实施子任务唯一 writer，未再委派或自行启动审查；父按新产品原预算安排首次独立R1，
+仅在P0/P1修复后可安排一次验证R2，不开第三审。按授权禁止新增/修改/运行 tests、fixtures、断言、probe、driver；
 DB/SQL、HTTP 业务、browser/Chromium、provider/paid、Docker、部署和运行验收均 NOT_RUN。
-源码与 bundle 检查成功不代表生产行为通过；父接真实 diff 核对和最终组合，本轮不追加独立审查。
+源码与 bundle 检查成功不代表生产行为通过；父负责真实diff、独立审查裁决与最终组合。
 
 ## 本地检查证据
 
@@ -92,8 +93,8 @@ DB/SQL、HTTP 业务、browser/Chromium、provider/paid、Docker、部署和运�
 
 所有授权的本地检查均成功，无任务造成的未修复失败。构建产物与 API 生成临时文件不提交。
 Linear capture 已按 `YUK-1522` 和 `usage receipt` 去重；本片为原票既定范围，缺证与后续真实验收
-仍归原票，没有新增已验证的独立 actionable follow-up，不另开重复票。draft PR 交父继续，
-不观察/等待 CI，不发起 review，不 resolve/merge/deploy。
+仍归原票，没有新增已验证的独立 actionable follow-up，不另开重复票。实施子任务以draft PR交父，
+未观察CI或自行review/resolve/merge/deploy；父继续既定审查、本地门与exact-head CI合入流程。
 
 ## 父接线核对与实际 main 组合
 
@@ -110,6 +111,8 @@ architecture-deepening，五门均0；lint165 warnings，边界318/0/39，新pas
 API三门沿原固定源码结果，没有为未变合同重复执行生成器/检查或安装。
 
 新 exact-head CI 与本地门分开，原1142 CI不外推到新组合。原Circle镜像architecture/policy
-红状态保留，未重跑、未据状态归因；不写成全绿。本轮不追加R1/R2，不watch或合PR。
+红状态保留，未重跑、未据状态归因；不写成全绿。此前把Sidekick“不复审”误读为开发线
+不得启动新diff首次R1并停在draft，现依Owner现行规则纠正：本片按原预算首次R1、
+必要P0/P1修复验证及最终exact-head Gate继续交付；没有更晚的2059精确禁审裁定。
 测试代码/本机测试、DB/SQL/业务HTTP/browser/provider/paid/runtime/部署均NOT_RUN；
 原2037/1969测试TEXT与0133/0134安排未动，YUK1522继续In Progress。

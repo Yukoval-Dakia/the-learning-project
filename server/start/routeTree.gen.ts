@@ -36,6 +36,7 @@ import { Route as EventsIdRouteImport } from './routes/events.$id'
 import { Route as KnowledgeIdRouteImport } from './routes/knowledge.$id'
 import { Route as NotesIdRouteImport } from './routes/notes.$id'
 import { Route as OnboardingUploadRouteImport } from './routes/onboarding.upload'
+import { Route as QuestionsIdRouteImport } from './routes/questions.$id'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -173,6 +174,11 @@ const OnboardingUploadRoute = OnboardingUploadRouteImport.update({
   path: '/onboarding/upload',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QuestionsIdRoute = QuestionsIdRouteImport.update({
+  id: '/questions/$id',
+  path: '/questions/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -207,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesByTo {
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesById {
@@ -268,6 +276,7 @@ export interface FileRoutesById {
   '/knowledge/$id': typeof KnowledgeIdRoute
   '/notes/$id': typeof NotesIdRoute
   '/onboarding/upload': typeof OnboardingUploadRoute
+  '/questions/$id': typeof QuestionsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRouteTypes {
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   id:
     | '__root__'
@@ -360,6 +371,7 @@ export interface FileRouteTypes {
     | '/knowledge/$id'
     | '/notes/$id'
     | '/onboarding/upload'
+    | '/questions/$id'
     | '/admin/subjects/$id'
   fileRoutesById: FileRoutesById
 }
@@ -389,6 +401,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
   OnboardingUploadRoute: typeof OnboardingUploadRoute
+  QuestionsIdRoute: typeof QuestionsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -582,6 +595,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OnboardingUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/questions/$id': {
+      id: '/questions/$id'
+      path: '/questions/$id'
+      fullPath: '/questions/$id'
+      preLoaderRoute: typeof QuestionsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/subjects/$id': {
       id: '/admin/subjects/$id'
       path: '/$id'
@@ -652,6 +672,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
   OnboardingUploadRoute: OnboardingUploadRoute,
+  QuestionsIdRoute: QuestionsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

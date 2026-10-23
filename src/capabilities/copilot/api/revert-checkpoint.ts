@@ -1,10 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, job_events } from '@/db/schema';
 import { getCorrectionStatus } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   COPILOT_REPLY_ACTION,
   COPILOT_USER_ASK_ACTION,
