@@ -2558,6 +2558,66 @@
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
+      "symbol": "transitionReviewSession",
+      "targetModule": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "targetSymbol": "transitionReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-end-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports transitionReviewSession at AST and path line 11 and calls it at line 12 with the requested session id and fixed completed target. Context imports are type-only; the canonical HTTP adapter directly consumes the internal owner. The six response fields preserve the existing HTTP result projection.",
+      "rationale": "Practice owns the complete canonical transition through withFrozenPaperReopen, the Review state transaction and changed-only completed summary enqueue after commit. Start does not use legacy close or reconstruct state and recovery rules. The id-only consumer has no variable body or status, so the unchanged HTTP schema remains internal and arbitrary HTTP protocol equivalence is not claimed. Same-state replay does not repair a missed summary send; conditional summary, MemoryBrief and attribution/variant paid effects remain governed by the original protocol. Auth precedes the host 90-second ALS and public import; no business signal, id normalization, new idempotency or runtime acceptance is added.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-846e4137-d5af-4966-8712-b5c9f089aaa3",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createPracticePaperSubmission",
+      "targetModule": "src/capabilities/practice/server/paper-submission-operation.ts",
+      "targetSymbol": "createPracticePaperSubmission",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-submit-operation.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated host imports createPracticePaperSubmission at AST and path line 17 and calls it at line 19. Context imports are type-only; canonical and legacy HTTP adapters consume the same internal operation without becoming public runtime consumers.",
+      "rationale": "Practice owns the complete canonical schema, paper/session identity mapping, original JSON normalization, legacy schema, paper submission invocation and visible/buffered result projection. HTTP and Start share this complete operation; buffered results do not expose grading fields. Original HTTP status, Location, deprecation and error transport remain at HTTP. The host retains auth-first loading and the 90-second ALS scope, while original stateful paid, locking, receipt and partial-completion protocols remain unchanged; no runtime acceptance or full HTTP protocol equivalence is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildPaperSubmissionBody",
+      "targetModule": "src/capabilities/practice/ui/practice-api.ts",
+      "targetSymbol": "buildPaperSubmissionBody",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-submit-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The mixed import starts at AST and path line 1; buildPaperSubmissionBody is called at line 14. PracticeClient is type-only. HTTP and Start invoke the unchanged same wire builder.",
+      "rationale": "Practice owns one paper submission body mapping: assessment, paper id, question, part and answer, nonempty images, defined latency and reasoning, and numeric confidence. Sharing the original builder prevents a second field-policy copy while retaining the existing UI loop, parameter construction and recovery behavior.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-3ef3457c-4cef-45a0-960c-3cb7cd51ba6d",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
       "symbol": "writeVerifyDispatchIntent",
       "targetModule": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
       "targetSymbol": "writeVerifyDispatchIntent",
@@ -4173,6 +4233,16 @@
       "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
       "issue": "YUK-1570",
       "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/paper-submission-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error status/envelope; Practice owns the complete resource and legacy input contracts, paper submission invocation and learner-visible/buffered result projection. Original HTTP adapters retain errorResponse/canonical/deprecated references, so this is the new physical owner dependency rather than a claim that all references are net zero.",
       "date": "2026-10-23"
     },
     {
