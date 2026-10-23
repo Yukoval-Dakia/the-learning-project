@@ -41,6 +41,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
@@ -79,12 +80,7 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  aiAgentRef,
-  costUsdToMicroUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
