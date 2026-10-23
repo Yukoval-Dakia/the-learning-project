@@ -2783,6 +2783,26 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "LibraryClientProvider",
+      "targetModule": "src/capabilities/practice/ui/library/library-client.tsx",
+      "targetSymbol": "LibraryClientProvider",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/routes/questions.$id.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The runtime import starts at AST line 3 with module path at line 7; JSX lines 22 and 26 use LibraryClientProvider. LibraryClient and the Start client import are type-only. QuestionPage and restoreLatest consume the same id-only reader through this context.",
+      "rationale": "Practice owns this stable UI injection entry for library detail reads. The default HTTP reader and authenticated Start host reuse the complete readQuestionDetail operation with the full library projection and questions-lib key. The provider owns no domain validation, SQL, write or recovery policy. Restore and delete undo still read fresh.version before the unchanged HTTP restore command; the retained SPA route can continue to use the HTTP fallback.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8e1dbd7b-c13b-4b90-8aa6-16c61460ca6b",
+      "date": "2026-10-23"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "agency -> http",
       "date": "2026-10-23",

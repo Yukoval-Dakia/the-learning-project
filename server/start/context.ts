@@ -78,6 +78,9 @@ export type FrontdoorContext = {
   readPaperDetail: (
     artifactId: string,
   ) => Promise<NonNullable<Awaited<ReturnType<typeof getPaperDetail>>>>;
+  readLibraryQuestionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
   readPracticeQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
