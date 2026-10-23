@@ -170,7 +170,9 @@ export async function persistCapturedQuestionBlock(
     }
     case 'docx': {
       // Evidence first; preserve duplicate embedded image refs on image_refs itself.
-      const blockAssetIds = Array.from(new Set([...command.evidenceAssetIds, ...command.imageRefs]));
+      const blockAssetIds = Array.from(
+        new Set([...command.evidenceAssetIds, ...command.imageRefs]),
+      );
       const [row] = await db
         .insert(question_block)
         .values({
