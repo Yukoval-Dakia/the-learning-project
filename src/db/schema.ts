@@ -385,7 +385,7 @@ export const question_block = pgTable(
     // a batch — NOT the real reading order. `ordinal` is written from the
     // extraction/import array index; historical rows were backfilled (0068) to
     // their prior on-screen order. Not fold truth — excluded from the W3
-    // question_block create-event snapshot (see question_block-create-event.ts).
+    // question_block create-event snapshot (see src/kernel/records/question-block-creation.ts).
     ordinal: integer('ordinal').notNull().default(0),
     // 2026-05-14: deviation from plan Step 0.4 —— plan 原文要求 DROP COLUMN，但
     // 当前 cascade.ts / ingestion route / import route 仍写此列，若现在 DROP 则

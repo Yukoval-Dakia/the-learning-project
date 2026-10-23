@@ -2343,6 +2343,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6e6160eb-7733-44e3-8627-f6947e3e020e",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> projections",
+      "date": "2026-10-23",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -3676,6 +3684,16 @@
       "issue": "YUK-1358",
       "owns": "The existing server loader owns complete question data and timeline aggregation, not safe admission. Practice retains input validation, diagnostic recovery and learner-safe wire projection; this reference moves from the original GET adapter.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/import-completion.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns captured question-block row creation/overwrite and the complete RETURNING-to-policy-to-create-event operation; ingestion supplies validated source facts and retains qualification, transaction and import transitions.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4533,7 +4551,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 321,
+      "total": 320,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4560,7 +4578,7 @@
         "ingestion -> ai": 14,
         "ingestion -> boss": 6,
         "ingestion -> events": 5,
-        "ingestion -> projections": 3,
+        "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 11,
         "ingestion -> r2": 13,
