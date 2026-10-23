@@ -341,3 +341,4 @@ export const startPlacementProbe: typeof import('./server/session-operations/pla
     (await import('./server/session-operations/placement-session')).startPlacementProbe(...args);
 
 export { previewReviewAdvice } from './server/advice-operation';
+export { createPracticeAppeal } from './server/appeal-operation';
