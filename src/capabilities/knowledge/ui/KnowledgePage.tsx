@@ -23,7 +23,6 @@ import { FrontierRail } from './FrontierRail';
 import { deriveGhostEndpoints } from './ghost-endpoints';
 import {
   type KnowledgeTreeNode,
-  getEdgeProposals,
   getFrontier,
   getReviewDueSummary,
   getTreeForSubject,
@@ -74,7 +73,7 @@ export default function KnowledgePage({
   readFrontier = getFrontier,
   readReviewDue = getReviewDueSummary,
 }: KnowledgePageProps) {
-  const { getEdges } = useKnowledgeClient();
+  const { getEdgeProposals, getEdges } = useKnowledgeClient();
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
   const [subject, setSubject] = useState('all');
