@@ -37,7 +37,9 @@ import {
   DEDUP_OVERLAP_THRESHOLD,
   canonicalQuestionContentHash,
   claimHttpSourceDuplicate,
+  dispatchPendingVerifyIntents,
   mergeExactQuestionDuplicateKnowledgeIds,
+  writeVerifyDispatchIntent,
 } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
@@ -55,10 +57,6 @@ import { question, question_block, question_group_lifecycle, question_revision }
 import { writeEvent } from '@/kernel/events';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import {
-  dispatchPendingVerifyIntents,
-  writeVerifyDispatchIntent,
-} from '@/server/boss/verify-dispatch-outbox';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
