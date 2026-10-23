@@ -2505,6 +2505,54 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-88191dba-45c5-4cef-a8ec-304a1cb47e72",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "CreateReviewSessionBody",
+      "targetModule": "src/capabilities/practice/api/contracts.ts",
+      "targetSymbol": "CreateReviewSessionBody",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-start-operation.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "The authenticated host imports CreateReviewSessionBody at AST line 19 and path line 20 and consumes it at line 22. Context imports are type-only; the HTTP review-sessions adapter directly consumes the internal schema and owner.",
+      "rationale": "Practice owns the original strict input contract and complete review-session operation. The paper branch holds the paper advisory lock within one transaction, validates the artifact and reuses an active session with its original renderability contract, or performs preflight, session creation and complete issuance/binding. Start consumes the same schema and owner without splitting locks, creation, issuance or recovery. The host retains the original 90-second ALS scope, errors and session_id body; HTTP status and Location remain unchanged. Paused sessions are not resumed and old sessions without bindings are not backfilled. Response uncertainty and possible asynchronous paid work remain; no signal, policy or idempotency input is added, and no equivalence of the entire public evaluation graph or runtime acceptance is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8aff2582-3f9b-4001-b038-e95af3dfe776",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createReviewSession",
+      "targetModule": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "targetSymbol": "createReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/paper-start-operation.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "The authenticated host imports createReviewSession at AST line 19 and path line 20 and consumes it at line 30. Context imports are type-only; the HTTP review-sessions adapter directly consumes the internal schema and owner.",
+      "rationale": "Practice owns the original strict input contract and complete review-session operation. The paper branch holds the paper advisory lock within one transaction, validates the artifact and reuses an active session with its original renderability contract, or performs preflight, session creation and complete issuance/binding. Start consumes the same schema and owner without splitting locks, creation, issuance or recovery. The host retains the original 90-second ALS scope, errors and session_id body; HTTP status and Location remain unchanged. Paused sessions are not resumed and old sessions without bindings are not backfilled. Response uncertainty and possible asynchronous paid work remain; no signal, policy or idempotency input is added, and no equivalence of the entire public evaluation graph or runtime acceptance is claimed.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-8aff2582-3f9b-4001-b038-e95af3dfe776",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-23",
+      "from": 9,
+      "to": 7,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4038,6 +4086,26 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error status and envelope; Practice retains resource and legacy input contracts and SolveError domain mapping. Original HTTP adapters still reference deprecatedRouteResponse/errorResponse, and other resource handlers still reference ApiError, so this records the new physical consumer without claiming all references are net zero.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1570",
+      "owns": "The existing boss singleton owns boot and queue access; extraction follow-ups retain two lazy client imports and independent post-commit enqueue failure catches.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
+      "issue": "YUK-1570",
+      "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4337,6 +4405,15 @@
       "to": 2233,
       "issue": "YUK-1358",
       "responsibilityReason": "Existing paper display, stale-draft conflict recovery and pre-submit reconciliation responsibilities are unchanged. The two net lines only destructure getPaperDetail from the existing PracticeClient in the already-live PfPaper and PaperVisit component scopes; replacing the direct named import with the client hook import has zero net lines. Reversing those two scope bindings and the import swap restores the complete base file byte-for-byte. No business rule, Effect, recovery branch or dependency-array change is added; unrelated lines are not compressed or helpers split to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/practice/ui/PfPaper.tsx",
+      "date": "2026-10-23",
+      "baseBlob": "1c1934a918ea001f4919633ed064564cf0530964",
+      "from": 2233,
+      "to": 2240,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Existing paper opening, timing, draft, submission and recovery responsibilities are unchanged. Removing the direct startPaperSession named import saves one line; adding the same method to the existing PracticeClient destructuring has zero net lines. Adding that injected method to attachVisit's existing dependency array requires formatter expansion from one line to nine, adding eight lines, for seven net lines. All previous dependency members and the complete callback body are preserved; reversing these three edits restores the entire base file byte-for-byte. No business rule, Effect or recovery branch is added, and no unrelated lines are compressed or helpers split to evade the size ratchet."
     }
   ],
   "compatShims": [
@@ -4904,7 +4981,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 318,
+      "total": 316,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4929,7 +5006,7 @@
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
-        "ingestion -> boss": 9,
+        "ingestion -> boss": 7,
         "ingestion -> events": 7,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
