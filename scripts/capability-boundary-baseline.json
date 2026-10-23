@@ -2171,6 +2171,46 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-16d8db94-67ee-4271-9872-f7d434e4908b",
       "date": "2026-10-22"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "readKnowledgeEdges",
+      "targetModule": "src/capabilities/knowledge/server/edges-list.ts",
+      "targetSymbol": "readKnowledgeEdges",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-edges-reader.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "The authenticated host reader imports the complete operation at AST line 6 and calls it at line 8. The HTTP adapter directly consumes the internal operation; context imports are type-only.",
+      "rationale": "Knowledge owns the original schema validation, paginated query, post-pagination learner visibility filtering and collection envelope. Both transports share this complete operation, retain the original unfiltered-page cursor and do not duplicate SQL or forward business HTTP requests.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b8bb58-5926-4b0f-9b14-2f1f16e7095c",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectKnowledgeEdges",
+      "targetModule": "src/capabilities/knowledge/ui/knowledge-api.ts",
+      "targetSymbol": "projectKnowledgeEdges",
+      "owner": "knowledge",
+      "consumers": [
+        {
+          "file": "server/start/knowledge-edges-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start client imports the original UI wire projection at ImportDeclaration line 1 and calls it at line 6. KnowledgeClient is type-only.",
+      "rationale": "Knowledge owns the original rows and status presentation projection. HTTP and Start share the same mapping while retaining data, page and next_cursor; this adds neither a second schema nor a second read owner.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b8bb58-5926-4b0f-9b14-2f1f16e7095c",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
@@ -3274,6 +3314,26 @@
       "issue": "YUK-1570",
       "owns": "Reconcile effective probe outcomes into typed state and deterministic score/projection anchors. The Agency execution owner recovers and persists checkpoint aggregates around this unchanged complete core operation.",
       "date": "2026-10-22"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/edges-list.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "collectionPayload"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error and collection envelopes. Knowledge retains the complete list validation, post-pagination filtering and result assembly.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/edges-list.ts",
+      "module": "src/kernel/read-models/learner-knowledge-visibility.ts",
+      "kind": "value",
+      "symbols": ["isLearnerVisibleKnowledgeId"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing learner knowledge visibility predicate. Knowledge retains its filtering order and aggregation within the complete list operation.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [

@@ -1,21 +1,15 @@
 // Knowledge-edge CRUD. Writes go through the single owner in server/edges.ts;
 // relation_type validation comes from the shared schema.
 
-import {
-  CreateKnowledgeEdgeBodySchema,
-  KnowledgeEdgeQuerySchema,
-} from '@/capabilities/knowledge/api/contracts';
+import { CreateKnowledgeEdgeBodySchema } from '@/capabilities/knowledge/api/contracts';
 import {
   acquireEdgeEndpointLocks,
   withEdgeEndpointLockRetry,
 } from '@/capabilities/knowledge/server/edge-topology-write';
-import {
-  createKnowledgeEdge,
-  getKnowledgeEdgeById,
-  listKnowledgeEdgesPage,
-} from '@/capabilities/knowledge/server/edges';
+import { createKnowledgeEdge, getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
+import { readKnowledgeEdges } from '@/capabilities/knowledge/server/edges-list';
 import { db } from '@/db/client';
-import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 
@@ -24,35 +18,7 @@ export async function GET(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const raw: Record<string, string> = {};
     for (const [key, value] of url.searchParams.entries()) raw[key] = value;
-    const parsed = KnowledgeEdgeQuerySchema.safeParse(raw);
-    if (!parsed.success) {
-      const message = parsed.error.issues
-        .map((i) => `${i.path.join('.')}: ${i.message}`)
-        .join('; ');
-      throw new ApiError('validation_error', message, 400);
-    }
-    const page = await listKnowledgeEdgesPage(db, {
-      from: parsed.data.from,
-      to: parsed.data.to,
-      relation_type: parsed.data.relation_type,
-      subject: parsed.data.subject,
-      includeArchived: parsed.data.include_archived,
-      limit: parsed.data.limit,
-      cursor: parsed.data.cursor,
-    });
-    const learnerRows = page.rows.filter(
-      (edge) =>
-        isLearnerVisibleKnowledgeId(edge.from_knowledge_id) &&
-        isLearnerVisibleKnowledgeId(edge.to_knowledge_id),
-    );
-    const learnerPage = { ...page, rows: learnerRows };
-    return Response.json(
-      collectionPayload(
-        learnerRows,
-        { limit: parsed.data.limit, next_cursor: page.next_cursor },
-        learnerPage,
-      ),
-    );
+    return Response.json(await readKnowledgeEdges(db, raw));
   } catch (err) {
     return errorResponse(err);
   }

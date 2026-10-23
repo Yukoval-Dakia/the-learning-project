@@ -5,12 +5,14 @@ import {
   KnowledgeClientProvider,
   loadKnowledgeDetailPage,
 } from '@/capabilities/knowledge/ui-public';
+import { startKnowledgeEdgesClient } from '../knowledge-edges-client';
 import { startKnowledgeMisconceptionsClient } from '../knowledge-misconceptions-client';
 import { startKnowledgeNodePageClient } from '../knowledge-node-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const knowledgeClient: KnowledgeClient = {
+  getEdges: startKnowledgeEdgesClient,
   getMisconceptions: startKnowledgeMisconceptionsClient,
   getNodePage: startKnowledgeNodePageClient,
   vetoMisconception: (id) => startWorkbenchClient.decideProposal(id, 'dismiss'),
