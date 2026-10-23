@@ -18,6 +18,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { VariantVerificationResult, type VariantVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db } from '@/db/client';
@@ -33,12 +34,7 @@ import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  aiAgentRef,
-  costUsdToMicroUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

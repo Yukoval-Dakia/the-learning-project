@@ -22,6 +22,7 @@
 // blocks a second concurrent spend, though its documented recovery retry can re-spend once.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { RunTaskResult } from '@/ai/task-result';
 import {
   conjectureKey,
   gatherConjectureEvidence,
@@ -50,7 +51,7 @@ import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
-import { type RunAgentTaskCtx, type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 import {
   type BuildDirectorServerOpts,
   DIRECTOR_ALLOWED_TOOLS,

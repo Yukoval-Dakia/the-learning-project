@@ -1,8 +1,8 @@
+import { aiAgentRef } from '@/ai/task-result';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from './artifact-events';
 import { summaryBodyBlocks } from './body-blocks';
-import { aiAgentRef } from './note-ai-provenance';
 import { writeNoteGenerationIntent } from './note-handoff';
 
 interface LearningIntentNoteBase {

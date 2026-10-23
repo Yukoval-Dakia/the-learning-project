@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
 import { installTaskOperationObserver } from '@/ai/task-observation';
+import type { RunTaskResult } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskBudgetOverride,
@@ -51,7 +52,6 @@ import {
   resolveExecutionAdapter,
 } from './execution-adapter';
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
-import type { NoteGeneratePhaseTimings } from './log';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
@@ -60,7 +60,6 @@ import type { ResolvedProvider } from './providers';
 import {
   type AiRunLifecycle,
   AttemptSettlementError,
-  type LifecycleUsage,
   classifyLifecycleRetry,
   createRunLifecycle,
   maxLifecycleAttempts,
@@ -101,25 +100,7 @@ installTaskOperationObserver((observation, execute) =>
 // Public surface
 // ============================================================================
 
-export interface RunTaskResult {
-  task_run_id: string;
-  text: string;
-  finishReason: string;
-  usage: LifecycleUsage;
-  /** Known USD amount; absent when this attempt has no trustworthy price. */
-  cost_usd?: number;
-  /** Evidence class and immutable reference for cost_usd. */
-  cost_basis: 'reported' | 'estimated' | 'unknown';
-  cost_ref: string;
-  /**
-   * Adapter-provided product for opt-in schema tool output (YUK-1537).
-   * Legacy tasks retain their text parsing behavior. Runner does not interpret
-   * the product; the capability validates it before any domain publication.
-   */
-  structured_output?: unknown;
-  /** Present for NoteGenerateTask. Model phases; the job adds parse and DB. */
-  phases?: NoteGeneratePhaseTimings;
-}
+export type { RunTaskResult } from '@/ai/task-result';
 
 export interface CompiledModelPrompt {
   text: string;
