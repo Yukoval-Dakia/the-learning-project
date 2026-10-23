@@ -6,31 +6,27 @@
 
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { type QuestionTimelineEntry, getQuestionTimeline } from '@/capabilities/copilot/public';
 import {
   type MasteryDecayBucket,
-  batchResolveSubjectDisplayIds,
   masteryDecayBucket,
-  resolveSubjectRenderNotation,
-} from '@/capabilities/knowledge/public';
+  worstMasteryDecayBucket,
+} from '@/core/mastery-freshness';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
+import {
+  type QuestionTimelineEntry,
+  getQuestionTimeline,
+} from '@/kernel/read-models/question-activity';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
-import { getMasteryProjection } from '@/server/mastery/state';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/kernel/read-models/subject-resolution';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;
-
-// The aggregate is the worst bucket across knowledge nodes: a question is only as
-// fresh as its least-fresh concept. Derived, never stored.
-const DECAY_SEVERITY: Record<MasteryDecayBucket, number> = {
-  stale: 4,
-  mild: 3,
-  fresh: 2,
-  untrained: 1,
-  unknown: 0,
-};
 
 export interface QuestionDetailLabel {
   id: string;
@@ -315,9 +311,7 @@ async function loadScheduling(
     };
   });
 
-  const aggregate = perKnowledge.reduce<MasteryDecayBucket>((worst, pk) => {
-    return DECAY_SEVERITY[pk.decay_bucket] > DECAY_SEVERITY[worst] ? pk.decay_bucket : worst;
-  }, 'unknown');
+  const aggregate = worstMasteryDecayBucket(perKnowledge.map((pk) => pk.decay_bucket));
 
   return {
     per_knowledge: perKnowledge,

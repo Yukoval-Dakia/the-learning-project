@@ -2845,6 +2845,14 @@
       "from": 3,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-23",
+      "from": 12,
+      "to": 11,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4448,6 +4456,46 @@
       "issue": "YUK-1522",
       "owns": "Kernel retains live document policy resolution. The ingestion reader moves the existing policy read from the API into the same read-only repeatable-read transaction as session lookup and all attributable persisted usage receipts, without modifying historical policy or consent.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/mastery-projection.ts",
+      "kind": "value",
+      "symbols": ["getMasteryProjection"],
+      "issue": "YUK-1570",
+      "owns": "掌握证据完整投影读取，返回 evidence_count、last_evidence_at、mastery/theta 及 provenance；调用方保留原逐 KC 求值时点。",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/question-activity.ts",
+      "kind": "value",
+      "symbols": ["QuestionTimelineEntry", "getQuestionTimeline"],
+      "issue": "YUK-1570",
+      "owns": "题目活动时间线的完整事实读取，保留来源、分页与排序语义。",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/questions.ts",
+      "kind": "value",
+      "symbols": ["loadFamilyMembers"],
+      "issue": "YUK-1570",
+      "owns": "题目家族完整成员读取，保留 root/id membership、诊断题排除、draft 开关与 depth/created/id 排序；本次未新增读操作深度。",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/subject-resolution.ts",
+      "kind": "value",
+      "symbols": ["batchResolveSubjectDisplayIds", "resolveSubjectRenderNotation"],
+      "issue": "YUK-1570",
+      "owns": "知识节点到学科显示身份的完整解析及渲染 notation，canonical 与 Knowledge 公口原转出为同一函数。",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -5332,7 +5380,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 296,
+      "total": 295,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5390,7 +5438,7 @@
         "practice -> memory": 1,
         "practice -> projections": 1,
         "practice -> proposals": 5,
-        "practice -> questions": 12,
+        "practice -> questions": 11,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
         "practice -> session": 6,

@@ -7,9 +7,9 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
-import { loadQuestionDetail } from '@/server/questions/detail';
 import { QuestionParamsSchema } from '../api/question-solve-contracts';
 import { loadCommittedInterventionDiagnosticAttempt } from './intervention-diagnostics';
+import { loadQuestionDetail } from './question-detail';
 
 const DEFAULT_TIMELINE_LIMIT = 10;
 const MAX_TIMELINE_LIMIT = 50;
