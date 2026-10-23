@@ -2485,6 +2485,38 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-bdb823e1-416a-46e3-a2a4-52785525cde9",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> advisory-locks",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4308,6 +4340,15 @@
       "to": 1410,
       "issue": "YUK-1358",
       "responsibilityReason": "Existing Practice submission and recovery responsibilities are unchanged. The eight net lines only add the typed reader parameter and queryFn to questionDetailQuery, remove the direct getQuestionFull import, add the reader to the existing client destructuring with formatter expansion, and inject it into the existing useQuery. No business rule, Effect or recovery branch is added; no line compression or helper split is used to evade the size ratchet."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-23",
+      "baseBlob": "26b98402c505c25a68dd24cadffd481b2494ee5a",
+      "from": 1230,
+      "to": 1233,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Three net lines are the required formatter expansion of the unchanged two-symbol advisory-lock import after its specifier moves to the approved canonical db/learning-state-lock owner. Removing that import leaves the entire caller byte-identical to the base, including all B, merge, paid, transaction and lock-order bodies. No operation or policy is added, and no unrelated lines are compressed or split to evade the size ratchet."
     }
   ],
   "compatShims": [
@@ -4875,7 +4916,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 318,
+      "total": 306,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4886,7 +4927,6 @@
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "copilot -> advisory-locks": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
         "copilot -> events": 5,
@@ -4898,7 +4938,6 @@
         "copilot -> runtime-env": 1,
         "copilot -> session": 6,
         "copilot -> today": 3,
-        "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
         "ingestion -> boss": 9,
         "ingestion -> events": 7,
@@ -4908,7 +4947,6 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,
-        "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 9,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -4927,7 +4965,6 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "practice -> advisory-locks": 5,
         "practice -> ai": 46,
         "practice -> assessment": 1,
         "practice -> boss": 15,
