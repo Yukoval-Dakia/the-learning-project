@@ -5,6 +5,7 @@ import {
   fileAppeal,
   getAdvice,
   getIssuanceState,
+  getPaperDetail,
   getPapers,
   getQuestionFull,
   getStream,
@@ -18,6 +19,7 @@ import {
 } from './practice-api';
 
 export type PracticeClient = {
+  getPaperDetail: typeof getPaperDetail;
   solveStart: typeof solveStart;
   solveHint: typeof solveHint;
   revealStudyReference: typeof revealStudyReference;
@@ -36,6 +38,7 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  getPaperDetail,
   solveStart,
   solveHint,
   revealStudyReference,
