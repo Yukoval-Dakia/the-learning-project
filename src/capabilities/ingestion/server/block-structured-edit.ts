@@ -10,18 +10,34 @@ import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
 import { encodeDraftRef } from '@/core/question-draft-ref';
-import type { PresentationT } from '@/core/schema/assessment';
+import {
+  type PresentationT,
+  declaredShapeSupport,
+  validatePresentation,
+  validateResponseSpec,
+  validateStructure,
+} from '@/core/schema/assessment';
 import type { QuestionKind } from '@/core/schema/business';
-import type { QuestionBlockStructuredT } from '@/core/schema/question-draft';
+import {
+  DRAFT_DOCUMENT_SCHEMA_VERSION,
+  type QuestionBlockStructuredT,
+  QuestionDraftDocument,
+  isLegacyStructuredQuestion,
+} from '@/core/schema/question-draft';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { event, question_block } from '@/db/schema';
+import { event, question_block, source_asset } from '@/db/schema';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { writeEvent } from '@/kernel/events';
+import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
+import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import { writeJobEvent } from '@/server/events/writer';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
+import { draftDocumentToContract } from '@/server/questions/draft-contract';
+import { capturedQuestionShape } from './captured-question-shape';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -440,7 +456,6 @@ interface SetPresentationOptions extends BaseEditParams {
   requestId?: string;
   /** Defaults to save for existing callers. Validation runs under the same row lock. */
   save?: boolean;
-  validate?: (tx: Tx, block: BlockRow) => Promise<SetPresentationValidation>;
 }
 
 export type SetPresentationParams = SetPresentationOptions &
@@ -475,10 +490,186 @@ export interface SetPresentationResult {
   issues?: { code: string; detail: string }[];
 }
 
+/** legacy draft block → normalizer 行投影（与导入/发布同一形状来源）。 */
+function draftRowProjection(
+  blockId: string,
+  structured: StructuredQuestionT,
+  payload: {
+    reference_md: string | null;
+    figures: { asset_id: string }[];
+  },
+): NormalizableQuestionRow {
+  const shape = capturedQuestionShape(structured);
+  return {
+    id: blockId,
+    kind: shape.kind,
+    // 导入把块铸成 question 行时 prompt_md = structuredToPromptMarkdown(
+    // structured)（auto-enroll / import-completion 同一派生函数），reference_md
+    // 取块列 —— 与发布读到的行逐字同源，stem material id 因此与真实发布一致。
+    prompt_md: structuredToPromptMarkdown(structured),
+    reference_md: payload.reference_md,
+    rubric_json: null,
+    choices_md: shape.choices_md,
+    judge_kind_override: null,
+    structured,
+    figures: payload.figures as NormalizableQuestionRow['figures'],
+  };
+}
+
+/** 与发布同一 normalizer（单行路径）推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
+async function deriveDraftContract(
+  db: Db | Tx,
+  blockId: string,
+  structured: StructuredQuestionT,
+  payload: { reference_md: string | null; figures: { asset_id: string }[] },
+) {
+  const assetIds = [...new Set(payload.figures.map((figure) => figure.asset_id))];
+  const figureDigests: Record<string, string> = {};
+  if (assetIds.length > 0) {
+    const assetRows = await db
+      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
+      .from(source_asset)
+      .where(inArray(source_asset.id, assetIds));
+    for (const row of assetRows) figureDigests[row.assetId] = row.sha256;
+  }
+  try {
+    return normalizeQuestionRowToContract({
+      ...draftRowProjection(blockId, structured, payload),
+      figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Draft presentation admission always reads the row locked by setPresentation. */
+async function validateDraftPresentation(
+  tx: Tx,
+  block: BlockRow,
+  presentation: PresentationT | undefined,
+  params: SetPresentationOptions,
+  save: boolean,
+): Promise<SetPresentationValidation> {
+  if (presentation == null) {
+    return {
+      status: 'rejected_input',
+      issues: [{ code: 'malformed_presentation', detail: 'presentation is required' }],
+    };
+  }
+  const raw: unknown = block.structured;
+  if (raw != null && typeof raw === 'object' && 'schema_version' in raw) {
+    if (raw.schema_version !== DRAFT_DOCUMENT_SCHEMA_VERSION) {
+      return {
+        status: 'unsupported_contract',
+        issues: [
+          {
+            code: 'unsupported_draft_version',
+            detail: `schema_version ${String(raw.schema_version)}`,
+          },
+        ],
+      };
+    }
+    const parsed = QuestionDraftDocument.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        status: 'rejected_input',
+        issues: parsed.error.issues.slice(0, 10).map((issue) => ({
+          code: 'invalid_draft_document',
+          detail: `${issue.path.join('.')}: ${issue.message}`,
+        })),
+      };
+    }
+    if (save && (params.expectedVersion == null || params.requestId == null)) {
+      return {
+        status: 'rejected_input',
+        issues: [
+          {
+            code: 'missing_save_identity',
+            detail: 'v2 save requires draft_ref/version and request_id',
+          },
+        ],
+      };
+    }
+    const doc = parsed.data;
+    for (const part of doc.parts) {
+      for (const unit of part.units) {
+        if (unit.response_spec.kind !== 'blank' || unit.response_spec.answer_shape == null)
+          continue;
+        const support = declaredShapeSupport(unit.response_spec.answer_shape);
+        if (!support.supported) {
+          return {
+            status: 'unsupported_contract',
+            issues: [
+              {
+                code: 'unsupported_answer_shape',
+                detail: `slot ${unit.slot_id}: ${support.reason}`,
+              },
+            ],
+          };
+        }
+      }
+    }
+    try {
+      // Submit chooses a real group id for a new question. Bindings name stable
+      // material/part/unit/slot ids, never this draft-only group placeholder.
+      const contract = draftDocumentToContract(
+        doc,
+        doc.base?.question_id ?? block.imported_question_id ?? `draft-${block.id}`,
+      );
+      const issues: SetPresentationValidation['issues'] = [
+        ...contract.conversion_issues.filter((issue) => issue.code === 'duplicate_id'),
+        ...validateStructure(contract.structure),
+        ...validateResponseSpec(contract.response_spec, contract.structure),
+        ...validatePresentation(
+          presentation,
+          contract.structure,
+          contract.response_spec,
+          contract.scoring_basis,
+        ),
+      ];
+      return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
+    } catch (error) {
+      // A recognized v2 document never drops into legacy normalization.
+      return {
+        status: 'unresolvable_contract',
+        issues: [
+          {
+            code: 'invalid_draft_contract',
+            detail: error instanceof Error ? error.message : 'v2 conversion failed',
+          },
+        ],
+      };
+    }
+  }
+  if (!isLegacyStructuredQuestion(raw)) {
+    return {
+      status: 'unresolvable_contract',
+      issues: [
+        {
+          code: 'unrecognized_draft',
+          detail: 'expected v2 document or legacy structured question',
+        },
+      ],
+    };
+  }
+  const contract = await deriveDraftContract(tx, params.blockId, raw, {
+    reference_md: block.reference_md,
+    figures: block.figures ?? [],
+  });
+  if (contract == null) return { status: 'unresolvable_contract', issues: [] };
+  const issues = validatePresentation(
+    presentation,
+    contract.structure,
+    contract.response_spec,
+    contract.scoring_basis,
+  );
+  return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
+}
+
 /**
  * Persists a validated presentation through the standard single-block edit channel.
  * Owns request lock → replay → row lock → CAS → validation → canonical save/receipt.
- * The validator reads the locked version; only presentation is merged into that row.
+ * Draft admission reads the locked version; only presentation is merged into that row.
  */
 export async function setPresentation(
   db: Db | Tx,
@@ -534,11 +725,9 @@ export async function setPresentation(
         current_draft_version: block.version,
       };
     }
-    if (params.validate != null) {
-      const validation = await params.validate(tx, block);
-      if (validation.status !== 'valid') {
-        return { status: validation.status, issues: validation.issues };
-      }
+    const validation = await validateDraftPresentation(tx, block, presentation, params, save);
+    if (validation.status !== 'valid') {
+      return { status: validation.status, issues: validation.issues };
     }
     if (!save) {
       return {
