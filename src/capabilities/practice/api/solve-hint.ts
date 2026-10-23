@@ -1,83 +1,16 @@
-// POST /api/questions/[id]/solve/[sid]/hint
-//
-// Request an escalating Socratic hint for an active solve session. Reuses the
-// teaching orchestrator's TeachingTurnTask, seeded with the worked solution, to
-// return the minimal next step WITHOUT revealing the full solution.
-import { SolveError, planSolveHintOutcome } from '@/capabilities/practice/server/solve-session';
-import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
-import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { HintRequestBodySchema } from './question-solve-contracts';
+import { deprecatedRouteResponse, errorResponse } from '@/kernel/http';
+import { requestPracticeSolveHint } from '../server/solve-operations';
 
 export async function createHintRequest(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { id, sid } = params;
     const raw = await req.json().catch(() => null);
-    const parsed = HintRequestBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      return errorResponse(
-        new ApiError(
-          'validation_error',
-          parsed.error.issues
-            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-            .join('; '),
-          400,
-        ),
-      );
-    }
-    const hintIndex = parsed.data ? parsed.data.hint_index : 0;
-
-    // generation failures resolve to typed fallback/unavailable
-    // help instead of an upstream 502; session/state errors keep their status.
-    const outcome = await planSolveHintOutcome({
-      db,
-      sessionId: sid,
-      hintIndex,
-      expectedQuestionId: id,
-      issuanceId: parsed.data?.issuance_id,
-    });
-    const hintRequestId = newId();
-    await writeEvent(db, {
-      id: hintRequestId,
-      session_id: sid,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:hint_request',
-      subject_kind: 'question',
-      subject_id: id,
-      outcome: outcome.status === 'ok' ? 'success' : 'failure',
-      payload: {
-        hint_index: hintIndex,
-        ...(outcome.status === 'ok'
-          ? {}
-          : {
-              status: outcome.status,
-              reason: outcome.reason,
-              ...(outcome.status === 'fallback' ? { help_kind: outcome.help.kind } : {}),
-            }),
-      },
-    });
-    if (outcome.status === 'ok') {
-      return Response.json({ hint_request_id: hintRequestId, text_md: outcome.text_md });
-    }
-    return Response.json({ hint_request_id: hintRequestId, ...outcome });
-  } catch (err) {
-    if (err instanceof SolveError) {
-      if (err.code === 'session_not_found' || err.code === 'question_not_found') {
-        return errorResponse(new ApiError('not_found', err.message, 404));
-      }
-      if (err.code === 'session_not_active') {
-        return errorResponse(new ApiError('conflict', err.message, 409));
-      }
-      if (err.code === 'llm_parse_failed') {
-        return errorResponse(new ApiError('upstream_error', err.message, 502));
-      }
-    }
-    return errorResponse(err);
+    return Response.json(await requestPracticeSolveHint(db, params.id, params.sid, raw));
+  } catch (error) {
+    return errorResponse(error);
   }
 }
 
