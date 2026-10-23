@@ -2251,6 +2251,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e9aab9c7-d658-4cb0-89ac-e96c004edbd0",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "updatePracticeStreamItem",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "updatePracticeStreamItem",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-item-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated host operation imports updatePracticeStreamItem at AST and path line 20 and calls it at line 22. Context imports are type-only; the retained HTTP adapter directly consumes the internal operation. HTTP, schema, domain operation and stream store are unchanged.",
+      "rationale": "Practice owns status validation, seeded advancement, the original state transition, post-commit session completion and statistical rerank, and the complete row-plus-view response. The shared operation retains its non-CAS update, missing receipt and unknown-response windows, including projection failure after commit and same-state retry conflicts. Session completion can reach asynchronous paid brief work through feedback events and the existing outbox; this is a stateful boundary, not a no-queue or no-paid read. Start preserves host auth, the 90-second provider ALS scope and the original absence of a business request signal.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-aeb95ce1-cca4-4ca6-a726-2c5a8cf2aaf1",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
