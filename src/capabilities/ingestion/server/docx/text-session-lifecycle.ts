@@ -2,11 +2,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
 import {
-  AUTO_ENROLL_SINGLETON_SECONDS,
   type IngestionRedactionField,
-  autoEnrollJobEnabled,
   writeIngestionUsageReceipt,
 } from '@/capabilities/ingestion/public';
+import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -16,7 +15,6 @@ import {
   resolveSessionDerivationPolicy,
 } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeSessionEvent } from '../events/session-extract';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './omission';
@@ -241,38 +239,7 @@ export async function initiateDocxTextUpload(
     return { sessionId, sourceDocumentId, blockCount: params.blocks.length };
   });
 
-  // Codex-3 / YUK-696 — mirror tencent_ocr_extract's post-extract hook, only when
-  // a paid mode is enabled and only after commit so the worker can see the rows.
-  // A failed enqueue must not fail an ingestion that already landed its blocks.
-  if (autoEnrollJobEnabled(process.env)) {
-    try {
-      const { getStartedBoss } = await import('@/server/boss/client');
-      const boss = await getStartedBoss();
-      // YUK-486 — same dedup as the tencent path: the key only reduces redundant
-      // runs; the per-block FOR UPDATE claim is the structural guard against
-      // double-INSERT.
-      await boss.send(
-        'auto_enroll',
-        { sessionId: result.sessionId },
-        { singletonKey: result.sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-      );
-    } catch (err) {
-      console.error('[docx_text] failed to enqueue auto_enroll', err);
-    }
-  }
-
-  // YUK-577 — observe-only nudge evaluation. Its own try/catch so neither
-  // enqueue can mask the other, and neither fails an ingestion that committed.
-  try {
-    const { getStartedBoss } = await import('@/server/boss/client');
-    const boss = await getStartedBoss();
-    await boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {
-      kind: 'ingestion_complete',
-      session_id: result.sessionId,
-    });
-  } catch (err) {
-    console.error('[docx_text] failed to enqueue copilot_nudge_evaluate', err);
-  }
+  await dispatchExtractionFollowUps(result.sessionId, 'docx_text');
 
   return result;
 }
