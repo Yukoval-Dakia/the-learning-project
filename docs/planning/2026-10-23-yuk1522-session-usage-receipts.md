@@ -116,3 +116,21 @@ API三门沿原固定源码结果，没有为未变合同重复执行生成器/�
 必要P0/P1修复验证及最终exact-head Gate继续交付；没有更晚的2059精确禁审裁定。
 测试代码/本机测试、DB/SQL/业务HTTP/browser/provider/paid/runtime/部署均NOT_RUN；
 原2037/1969测试TEXT与0133/0134安排未动，YUK1522继续In Progress。
+
+## 恢复正常首次独立审查与最终组合
+
+Owner进一步明确Sidekick限制不禁止开发线对新产品diff做原本首次独立R1；前轮停止
+措辞是父的误读，不存在更晚的2059精确禁审或仅源码准备裁定。父已启动本片首次R1：
+`stage1-pr2059-usage-receipts-sol-xhigh-r1-e9c80915-20261023-v1`，
+Codex gpt-6.1-sol xhigh/default，只读固定base8f76与heade9c80915f的真实七文件。
+本节记录时审查进行中，不预报结论；如有已证实P0/P1，仅修复后最多一次验证R2。
+
+父正常merge实际main `bacf1a0a1002d25bd168dda8a1ff32747b0ff831` 为 `cef4d0535`。
+八个上游commit完整保留，唯一冲突是baseline的edgeRecords追加位置：保实际main全部
+changes/edges/sizes/debts前缀，再追加本片原两条reader记录。两个产品TS、contracts与
+Postman生成物相对e9c均无差量；package/lock无变化，不安装或重跑生成器。
+新组合经同一heavy limiter串行typecheck、lint、build、capability-boundaries、
+architecture-deepening五门exit0，日志`parent-mainbacf-r1/`。
+最终新head的exact GitHub Gate与旧e9c结果分开，需独立R1无未决P0/P1及其余门满足后
+才按match-head合入；不设置17分钟等待，不为advisory重跑或增加审查。测试、DB、
+业务HTTP/browser、provider/paid/runtime/部署权限保持原样。
