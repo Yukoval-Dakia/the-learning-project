@@ -13,6 +13,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Agent } from 'undici';
 
+import { aiAgentRef } from '@/ai/task-result';
 import {
   type ColdStartBridgeRunTaskFn,
   runColdStartBridge,
@@ -46,7 +47,6 @@ import {
 } from '@/kernel/proposals/signals';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { writeCostLedger } from '@/server/ai/log';
-import { aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';

@@ -1,4 +1,5 @@
 import { AgentRunError } from '@/ai/agent-run-error';
+import type { TaskTextResult } from '@/ai/task-result';
 import {
   type InterventionAuthoringContextT,
   guardInterventionPreparationStage,
@@ -38,11 +39,7 @@ import {
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  taskPromptFingerprint,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   persistValidatorRunBinding,

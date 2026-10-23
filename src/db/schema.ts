@@ -60,7 +60,7 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
 // YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
 // the collector/writer lives with the ai server modules).
-import type { ProviderTransportEvidence } from '../server/ai/provider-transport';
+import type { ProviderTransportEvidence } from '@/ai/task-result';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';

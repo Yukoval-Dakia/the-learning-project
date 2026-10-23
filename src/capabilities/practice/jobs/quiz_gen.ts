@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   DifficultyEvidence,
   type DifficultyEvidenceT,
@@ -53,6 +54,7 @@ import {
   source_document,
 } from '@/db/schema';
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -65,7 +67,6 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
-import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { runAgentTask } from '@/server/ai/runner';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {

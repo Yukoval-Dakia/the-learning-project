@@ -31,6 +31,7 @@
 
 import type { ZodTypeAny } from 'zod';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
+import type { AiTaskUsage as LifecycleUsage, LifecycleResult } from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
@@ -38,12 +39,7 @@ import type { Db } from '@/db/client';
 import { bindAgentRunError } from './agent-run-error';
 import type { AttemptCostBasis } from './attempt-cost';
 import { JEV_CANONICAL_MODEL, JEV_MAX_PRICE_USD_PER_MILLION } from './pricing';
-import {
-  type LifecycleResult,
-  type LifecycleUsage,
-  classifyLifecycleRetry,
-  createRunLifecycle,
-} from './run-lifecycle';
+import { classifyLifecycleRetry, createRunLifecycle } from './run-lifecycle';
 import { emptyStreamTextStats } from './timeout-usage';
 
 /** Worst-case USD reserved per wire attempt when the endpoint's own cost truth is absent. */

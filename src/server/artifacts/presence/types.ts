@@ -1,8 +1,8 @@
+import type { TaskTextResult } from '@/ai/task-result';
 import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/public';
 import type { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
-import type { TaskTextResult } from '@/server/ai/provenance';
 
 // Editing presence is session-qualified: one `artifact_edit_session` row per
 // (artifact, editor session). A session is ACTIVE while its last heartbeat is within

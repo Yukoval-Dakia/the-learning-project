@@ -1,3 +1,4 @@
+import type { TaskTextResult } from '@/ai/task-result';
 import {
   type ConjectureHypothesisProposalDraftT,
   ConjectureProbePackageV2,
@@ -7,11 +8,7 @@ import {
   ConjectureProbeReview,
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  sumAllKnownCostUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
 import type { LoadedConjectureEvidenceImage } from './evidence';
 import { parseTaskStructuredOutput } from './structured-output';

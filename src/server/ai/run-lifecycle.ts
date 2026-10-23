@@ -5,6 +5,13 @@ import {
   isTransientAgentFailure,
 } from '@/ai/agent-run-error';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
+import type {
+  AiTaskUsage,
+  AiTaskUsage as LifecycleUsage,
+  LifecycleResult,
+  NoteGeneratePhaseTimings,
+  TransportAbortInitiator,
+} from '@/ai/task-result';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import { taskInputHash } from '@/core/task-input-hash';
@@ -24,8 +31,6 @@ import {
   withTraceContext,
 } from './laminar-tracing';
 import {
-  type AiTaskUsage,
-  type NoteGeneratePhaseTimings,
   writeAiTaskAttemptFinished,
   writeAiTaskRunRetried,
   writeAiTaskRunStarted,
@@ -45,24 +50,10 @@ import {
 } from './provider-session-admission';
 import {
   type ProviderTransportCollector,
-  type TransportAbortInitiator,
   createProviderTransportCollector,
 } from './provider-transport';
 import { type ResolvedProvider, hasGlobalProviderOverride, resolveTaskProvider } from './providers';
 import { estimateAbortedUsage } from './timeout-usage';
-
-export type LifecycleUsage = AiTaskUsage;
-
-export interface LifecycleResult {
-  task_run_id: string;
-  text: string;
-  finishReason: string;
-  usage: LifecycleUsage;
-  cost_usd?: number;
-  cost_basis: AttemptCostTruth['basis'];
-  cost_ref: string;
-  structured_output?: unknown;
-}
 
 /** Usage/cost evidence carried by either SDKResultSuccess or SDKResultError. */
 export interface TerminalResultEvidence {
