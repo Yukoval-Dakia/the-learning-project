@@ -17,6 +17,7 @@ import type {
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
+  recomposePracticeStream,
   releaseHeldPlacement,
   saveResponseDraft,
   selectNextPlacementQuestion,
@@ -53,6 +54,7 @@ export type FrontdoorContext = {
   getPracticeStream: (
     knowledgeId?: string,
   ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;
+  recomposePracticeStream: () => Promise<Awaited<ReturnType<typeof recomposePracticeStream>>>;
   updatePracticeStreamItem: (input: {
     id: string;
     body: string;
