@@ -1,10 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
+import type { AiTaskUsage } from '@/ai/task-result';
 import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
-import type { ProviderTransportEvidence } from './provider-transport';
 
 // cost_ledger is a loose-coupled correlation log (no FK); a single
 // INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
@@ -158,54 +158,6 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     started_at: entry.started_at ?? new Date(),
     finished_at: null,
   });
-}
-
-/** Millisecond phase timings for one long-note generation. Absent on other tasks. */
-export interface NoteGeneratePhaseTimings {
-  prompt_build_ms?: number;
-  /** Null when the provider sent no token before the call ended. */
-  model_ttft_ms?: number | null;
-  model_total_ms?: number;
-  stream_ms?: number;
-  parse_ms?: number;
-  validation_ms?: number;
-  retry_count?: number;
-  db_write_ms?: number;
-}
-
-export interface AiTaskUsage {
-  inputTokens: number;
-  outputTokens: number;
-  /**
-   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
-   * (0 when the lane reported no cache) so the scoreboard can compute cache
-   * share without treating absence as unknown.
-   */
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  /** YUK-1557 — completed assistant turns (provider `num_turns`, or observed frames). */
-  numTurns?: number;
-  /**
-   * `estimated` when a budget abort had to infer tokens from the prompt and
-   * any streamed text. Absent when the provider reported the counts.
-   */
-  usage_basis?: 'reported' | 'estimated';
-  phases?: NoteGeneratePhaseTimings;
-  /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
-  thinkingBlocks?: number;
-  thinkingCharacters?: number;
-  /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
-  compaction?: {
-    count: number;
-    last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
-  };
-  /**
-   * YUK-1630 — per-attempt provider transport evidence: the timeout budget
-   * receipt (task timeout source + each derived layer) plus per-request wire
-   * milestones (fetch invoked / request sent / response / failure layer).
-   * Metadata only — it never feeds token counts or cost truth.
-   */
-  transport?: ProviderTransportEvidence;
 }
 
 export interface AiTaskRunFinishEntry {

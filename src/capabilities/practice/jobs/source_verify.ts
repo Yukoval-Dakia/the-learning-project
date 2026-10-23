@@ -22,6 +22,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   type RunSourceGroundingVerifyParams,
   type SourceGroundingVerifyResult,
@@ -76,7 +77,7 @@ import {
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
+import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';

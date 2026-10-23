@@ -1,15 +1,27 @@
 import { createContext, useContext } from 'react';
 import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import {
+  advanceStreamItem,
+  fileAppeal,
+  getAdvice,
   getIssuanceState,
   getPapers,
+  getQuestionFull,
+  getStream,
   issueAssessment,
+  recomposeStream,
   saveResponseDraft,
   submitReview,
 } from './practice-api';
 
 export type PracticeClient = {
+  fileAppeal: typeof fileAppeal;
+  advanceStreamItem: typeof advanceStreamItem;
+  getAdvice: typeof getAdvice;
+  getStream: typeof getStream;
+  recomposeStream: typeof recomposeStream;
   getPapers: typeof getPapers;
+  getQuestionDetail: (id: string) => ReturnType<typeof getQuestionFull>;
   issueAssessment: typeof issueAssessment;
   getIssuanceState: typeof getIssuanceState;
   saveResponseDraft: typeof saveResponseDraft;
@@ -18,8 +30,14 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  fileAppeal,
+  getAdvice,
+  advanceStreamItem,
+  getStream,
+  recomposeStream,
   getIssuanceState,
   getPapers,
+  getQuestionDetail: (id) => getQuestionFull(id, { surface: 'practice' }),
   issueAssessment,
   saveResponseDraft,
   submitReview,

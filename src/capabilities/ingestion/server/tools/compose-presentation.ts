@@ -16,34 +16,15 @@
 // op=set_presentation + job event + genesis-anchor 检查 + 投影 write-through）——
 // raw tx.update 对 fold 不可见，rebuild 会抹掉展示层。
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { setPresentation } from '@/capabilities/ingestion/server/block-structured-edit';
-import { capturedQuestionShape } from '@/capabilities/ingestion/server/captured-question-shape';
 import { writeCustomCodeAsset } from '@/capabilities/ingestion/server/custom-code-assets';
 import { encodeDraftRef, parseDraftRef } from '@/core/question-draft-ref';
-import {
-  Presentation,
-  type PresentationT,
-  declaredShapeSupport,
-  validatePresentation,
-  validateResponseSpec,
-  validateStructure,
-} from '@/core/schema/assessment';
-import {
-  DRAFT_DOCUMENT_SCHEMA_VERSION,
-  QuestionDraftDocument,
-  isLegacyStructuredQuestion,
-} from '@/core/schema/question-draft';
-import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
-import type { Db, Tx } from '@/db/client';
-import { question_revision, source_asset } from '@/db/schema';
-import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
-import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import { Presentation, type PresentationT, validatePresentation } from '@/core/schema/assessment';
+import { question_revision } from '@/db/schema';
 import { OpaqueJsonInput } from '@/kernel/tools/types';
-import { draftDocumentToContract } from '@/server/questions/draft-contract';
 import type { DomainTool, ToolContext } from './types';
 
 const ComposePresentationInputSchema = z
@@ -142,58 +123,6 @@ const ComposePresentationOutputSchema = z.object({
   serving: z.literal('withheld').optional(),
 });
 type ComposePresentationOutput = z.infer<typeof ComposePresentationOutputSchema>;
-
-/** legacy draft block → normalizer 行投影（与导入/发布同一形状来源）。 */
-function draftRowProjection(
-  blockId: string,
-  structured: StructuredQuestionT,
-  payload: {
-    reference_md: string | null;
-    figures: { asset_id: string }[];
-  },
-): NormalizableQuestionRow {
-  const shape = capturedQuestionShape(structured);
-  return {
-    id: blockId,
-    kind: shape.kind,
-    // 导入把块铸成 question 行时 prompt_md = structuredToPromptMarkdown(
-    // structured)（auto-enroll / import-completion 同一派生函数），reference_md
-    // 取块列 —— 与发布读到的行逐字同源，stem material id 因此与真实发布一致。
-    prompt_md: structuredToPromptMarkdown(structured),
-    reference_md: payload.reference_md,
-    rubric_json: null,
-    choices_md: shape.choices_md,
-    judge_kind_override: null,
-    structured,
-    figures: payload.figures as NormalizableQuestionRow['figures'],
-  };
-}
-
-/** 与发布同一 normalizer（单行路径）推导 draft 的（未来）契约；失败返回 null（不伪造）。 */
-async function deriveDraftContract(
-  db: Db | Tx,
-  blockId: string,
-  structured: StructuredQuestionT,
-  payload: { reference_md: string | null; figures: { asset_id: string }[] },
-) {
-  const assetIds = [...new Set(payload.figures.map((figure) => figure.asset_id))];
-  const figureDigests: Record<string, string> = {};
-  if (assetIds.length > 0) {
-    const assetRows = await db
-      .select({ assetId: source_asset.id, sha256: source_asset.sha256 })
-      .from(source_asset)
-      .where(inArray(source_asset.id, assetIds));
-    for (const row of assetRows) figureDigests[row.assetId] = row.sha256;
-  }
-  try {
-    return normalizeQuestionRowToContract({
-      ...draftRowProjection(blockId, structured, payload),
-      figureDigests: Object.keys(figureDigests).length > 0 ? figureDigests : null,
-    });
-  } catch {
-    return null;
-  }
-}
 
 export const composePresentationTool: DomainTool<
   ComposePresentationInput,
@@ -297,8 +226,8 @@ export const composePresentationTool: DomainTool<
     }
     const blockId = ref?.blockId ?? (input.block_id as string);
     const expectedVersion = input.expected_draft_version ?? ref?.version;
-    // The save owner hides lock/replay/CAS ordering. The callback sees precisely the
-    // row that will be saved; raw tx.update would be invisible to fold/rebuild.
+    // The owner validates the locked draft and owns lock/replay/CAS/save ordering;
+    // raw tx.update would be invisible to fold/rebuild.
     const saved = await setPresentation(ctx.db, {
       blockId,
       presentation,
@@ -306,116 +235,6 @@ export const composePresentationTool: DomainTool<
       requestId: input.request_id,
       save: input.save === true,
       actorRef: ctx.callerActor.ref,
-      validate: async (tx, block) => {
-        const raw: unknown = block.structured;
-        if (raw != null && typeof raw === 'object' && 'schema_version' in raw) {
-          if (raw.schema_version !== DRAFT_DOCUMENT_SCHEMA_VERSION) {
-            return {
-              status: 'unsupported_contract',
-              issues: [
-                {
-                  code: 'unsupported_draft_version',
-                  detail: `schema_version ${String(raw.schema_version)}`,
-                },
-              ],
-            };
-          }
-          const parsed = QuestionDraftDocument.safeParse(raw);
-          if (!parsed.success) {
-            return {
-              status: 'rejected_input',
-              issues: parsed.error.issues.slice(0, 10).map((issue) => ({
-                code: 'invalid_draft_document',
-                detail: `${issue.path.join('.')}: ${issue.message}`,
-              })),
-            };
-          }
-          if (input.save === true && (expectedVersion == null || input.request_id == null)) {
-            return {
-              status: 'rejected_input',
-              issues: [
-                {
-                  code: 'missing_save_identity',
-                  detail: 'v2 save requires draft_ref/version and request_id',
-                },
-              ],
-            };
-          }
-          const doc = parsed.data;
-          for (const part of doc.parts) {
-            for (const unit of part.units) {
-              if (unit.response_spec.kind !== 'blank' || unit.response_spec.answer_shape == null)
-                continue;
-              const support = declaredShapeSupport(unit.response_spec.answer_shape);
-              if (!support.supported) {
-                return {
-                  status: 'unsupported_contract',
-                  issues: [
-                    {
-                      code: 'unsupported_answer_shape',
-                      detail: `slot ${unit.slot_id}: ${support.reason}`,
-                    },
-                  ],
-                };
-              }
-            }
-          }
-          try {
-            // Submit chooses a real group id for a new question. Bindings name stable
-            // material/part/unit/slot ids, never this draft-only group placeholder.
-            const contract = draftDocumentToContract(
-              doc,
-              doc.base?.question_id ?? block.imported_question_id ?? `draft-${block.id}`,
-            );
-            const issues: ComposePresentationOutput['issues'] = [
-              ...contract.conversion_issues.filter((issue) => issue.code === 'duplicate_id'),
-              ...validateStructure(contract.structure),
-              ...validateResponseSpec(contract.response_spec, contract.structure),
-              ...validatePresentation(
-                presentation,
-                contract.structure,
-                contract.response_spec,
-                contract.scoring_basis,
-              ),
-            ];
-            return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
-          } catch (error) {
-            // A recognized v2 document never drops into legacy normalization.
-            return {
-              status: 'unresolvable_contract',
-              issues: [
-                {
-                  code: 'invalid_draft_contract',
-                  detail: error instanceof Error ? error.message : 'v2 conversion failed',
-                },
-              ],
-            };
-          }
-        }
-        if (!isLegacyStructuredQuestion(raw)) {
-          return {
-            status: 'unresolvable_contract',
-            issues: [
-              {
-                code: 'unrecognized_draft',
-                detail: 'expected v2 document or legacy structured question',
-              },
-            ],
-          };
-        }
-        const contract = await deriveDraftContract(tx, blockId, raw, {
-          reference_md: block.reference_md,
-          figures: block.figures ?? [],
-        });
-        if (contract == null) return { status: 'unresolvable_contract', issues: [] };
-        const issues = validatePresentation(
-          presentation,
-          contract.structure,
-          contract.response_spec,
-          contract.scoring_basis,
-        );
-        return { status: issues.length === 0 ? 'valid' : 'invalid', issues };
-      },
     });
     return {
       status:

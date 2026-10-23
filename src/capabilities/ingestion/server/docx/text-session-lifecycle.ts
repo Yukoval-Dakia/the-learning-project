@@ -8,21 +8,18 @@ import {
   writeIngestionUsageReceipt,
 } from '@/capabilities/ingestion/public';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
-import {
-  type StructuredQuestionT,
-  structuredToPromptMarkdown,
-} from '@/core/schema/structured_question';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
-import { learning_session, question_block, source_document } from '@/db/schema';
+import { learning_session, source_document } from '@/db/schema';
 import {
   USAGE_POLICY_PROVENANCE_KEY,
   resolveSessionDerivationPolicy,
 } from '@/kernel/read-models/usage-policy';
+import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
-import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
-import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
-import { writeSessionEvent } from './events';
+import { writeSessionEvent } from '../events/session-extract';
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './omission';
 
 // YUK-258 — DOCX text-line session lifecycle owner.
 //
@@ -74,7 +71,7 @@ export interface InitiateDocxTextUploadParams {
 }
 
 // Re-exported so existing consumers of this module keep a stable type import.
-export type { DocxExternalRefOmissionFacts } from './docx-omission';
+export type { DocxExternalRefOmissionFacts } from './omission';
 
 export interface InitiateDocxTextUploadResult {
   sessionId: string;
@@ -177,51 +174,20 @@ export async function initiateDocxTextUpload(
     for (const [ordinal, blk] of params.blocks.entries()) {
       const blockId = createId();
       insertedBlockIds.push(blockId);
-      // The import route copies image_refs through, and VisionTab falls back to
-      // source_asset_ids when they are empty, so both must carry the embedded ids.
-      const blockAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...blk.imageRefs]));
-      const [insertedRow] = await tx
-        .insert(question_block)
-        .values({
-          id: blockId,
-          ingestion_session_id: sessionId,
-          source_document_id: sourceDocumentId,
-          source_asset_ids: blockAssetIds,
-          page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-          // YUK-221 — true positional order = the block array index (0-based).
+      await persistCapturedQuestionBlock(
+        tx,
+        {
+          origin: 'docx',
+          blockId,
+          sessionId,
+          sourceDocumentId,
           ordinal,
           structured: blk.structured,
-          figures: [],
-          layout_quality: 'structured',
-          // VisionTab seeds the editable prompt from extracted_prompt_md; a null
-          // opens every block empty and import fails with '题面不能空'. Derive the
-          // rendered view here; `structured` stays the source of truth.
-          extracted_prompt_md: structuredToPromptMarkdown(blk.structured),
-          reference_md: null,
-          wrong_answer_md: null,
-          image_refs: blk.imageRefs,
-          crop_refs: [],
-          visual_complexity: 'medium',
-          extraction_confidence: 1,
-          status: 'draft',
-          knowledge_hint: null,
-          merged_from_block_ids: [],
-          imported_question_id: null,
-          imported_attempt_event_id: null,
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        })
-        .returning();
-      // Canonical create event (origin='docx'); the snapshot excludes the legacy
-      // extracted_prompt_md column, which the helper drops before strict parsing.
-      await writeQuestionBlockCreateEvent(tx, {
-        row: insertedRow,
-        origin: 'docx',
-        actorKind: 'agent',
-        actorRef: 'docx_text',
+          evidenceAssetIds: params.evidenceAssetIds,
+          imageRefs: blk.imageRefs,
+        },
         now,
-      });
+      );
     }
 
     await tx

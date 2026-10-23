@@ -5,13 +5,14 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
 import { applyNotePatch, filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
 import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextResult, aiAgentRef, costUsdToMicroUsd } from './note-ai-provenance';
 
 type DbLike = Db | Tx;
 

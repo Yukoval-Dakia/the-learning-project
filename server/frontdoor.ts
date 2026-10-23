@@ -18,6 +18,12 @@ import { transitionStartPlacementSession } from './start/placement-session-opera
 import { readStartPlacementSession } from './start/placement-session-reader';
 import { createStartPlacement } from './start/placement-start-operation';
 import { submitStartPlacementAnswer } from './start/placement-submit-operation';
+import { previewStartReviewAdvice } from './start/practice-advice-operation';
+import { createStartPracticeAppeal } from './start/practice-appeal-operation';
+import { readStartPracticeQuestionDetail } from './start/practice-question-detail-operation';
+import { updateStartPracticeStreamItem } from './start/practice-stream-item-operation';
+import { getStartPracticeStream } from './start/practice-stream-operation';
+import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
 import { createStartSubject } from './start/subject-create-operation';
@@ -61,6 +67,10 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     readPapers: readStartPapers,
+    readPracticeQuestionDetail: readStartPracticeQuestionDetail,
+    getPracticeStream: getStartPracticeStream,
+    recomposePracticeStream: recomposeStartPracticeStream,
+    updatePracticeStreamItem: updateStartPracticeStreamItem,
     createKnowledgeEdge: createStartKnowledgeEdge,
     readKnowledgeEdges: readStartKnowledgeEdges,
     readKnowledgeMisconceptions: readStartKnowledgeMisconceptions,
@@ -76,6 +86,8 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     transitionPlacementSession: transitionStartPlacementSession,
     readPlacementProfile: readStartPlacementProfile,
     readSubjects: readStartSubjects,
+    createPracticeAppeal: createStartPracticeAppeal,
+    previewReviewAdvice: previewStartReviewAdvice,
     submitPlacementAnswer: submitStartPlacementAnswer,
     createSubject: createStartSubject,
     createGoal: createStartGoal,

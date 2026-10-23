@@ -7,11 +7,11 @@
 |--------|------|
 | `ai/` | Pi agent runner（唯一执行引擎，YUK-1025 后无 SDK 子进程）+ domain tool registry + tool bridge（见本目录 AGENTS.md）|
 | `boss/` | pg-boss client + handler 注册；`handlers/` 是 job/cron 目录（见 AGENTS.md）|
-| `ingestion/` | OCR / Tencent Mark / Vision rescue / 抽取 pipeline + session 状态机（见 AGENTS.md）|
+| `../capabilities/ingestion/server/` | 录入状态操作、OCR / Vision rescue 与 DOCX 文本初始化（见该域 AGENTS.md）|
 | `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|
 | `events/` | event 写入 + 查询（事件驱动核的 IO 层）|
 | `conjectures/` | 关系脑 A13 结算与分型：`reconcile.ts` 预测打分 → `typed-state.ts`（`kc_typed_state` 单写者）、`hard-confirm.ts` 硬确认判定、`accountability.ts` 候选排序、`scoring.ts` 单探针评分占位；取证聚合与归纳前 grounding 在 `src/capabilities/agency/server/conjecture/` |
-| `session/` | learning_session envelope + 状态守卫（ingestion/review/conversation）|
+| `session/` | review / placement / conversation / tutor 状态操作及共享状态守卫；录入操作归 ingestion capability |
 | `proposals/` | propose event 的 accept/dismiss/retract actions（破坏性动作落地点）|
 | `artifacts/` | Living Note body-blocks / sections / editing-session / hub-dismiss |
 | `review/` + `fsrs/` | FSRS 调度（ts-fsrs）+ review event → `material_fsrs_state` 投影 |

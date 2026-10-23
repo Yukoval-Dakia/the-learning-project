@@ -3,11 +3,11 @@ import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { Ingestion } from '@/server/session';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import type { CreateIngestionSessionBody } from '../api/contracts';
 import { type CreationResult, commitCreationReceipt } from './creation-receipts';
-import { markSessionPackageFailed, materializeSourcePackage } from './source-package';
+import { initiateUpload, markSessionPackageFailed } from './session-lifecycle';
+import { materializeSourcePackage } from './source-package';
 
 /** Complete creation owner shared by canonical and legacy HTTP consumers. */
 export async function createIngestionSession(
@@ -42,7 +42,7 @@ export async function createIngestionSession(
       }
 
       // initiateUpload's own transaction is a savepoint on this actual Tx.
-      const { sessionId, sourceDocumentId } = await Ingestion.initiateUpload(tx, {
+      const { sessionId, sourceDocumentId } = await initiateUpload(tx, {
         assetIds: body.asset_ids,
         entrypoint: body.entrypoint,
         learnerSelectedSubjectId: canonicalSubjectId,

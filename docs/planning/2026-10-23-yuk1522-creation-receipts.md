@@ -206,3 +206,40 @@ main 的稳定合同及两条边前缀，再追加本片记录；未改校验器
 组合 typecheck、lint（164 warnings）、build、capability-boundaries、architecture-deepening
 串行 limiter 全部 exit 0；外部日志 `parent-a5df-*.log`。新 exact CI 另计，
 原两处测试 case 的三个版本字面量仍待 Owner，未改测试或新开审查。
+
+## 生命周期实际归属后的串行组合（2026-10-23）
+
+主裁定1570/4f8f4b86与1522镜像d50c8822、实际释放b6fbe6ae按同一顺序执行。
+#2053已实际合main `1ab23d32ba829616f354184d404912deaf843b56` 后，原父在本2037树
+从原75b正常merge该actualmain，未取旧整tree/整文件覆盖。14个上游commit原样保留。
+
+相对新main，`ingestion/server/session-lifecycle.ts` 完整正文仅有 `initiateUpload` 与
+`markSessionPackageFailed` 两个 db 参数 `Db → Db | Tx`；不改变其中的事务、guard、catch、
+状态与事件。旧server/session/ingestion等已退文件和混合index的Ingestion出口不复活。
+`create-session.ts` 用named imports直达同一canonical的两个真身；source-package只保
+materializeSourcePackage/loadPackageAssets的原Db|Tx，不保旧packageFailed转出。
+
+原外层receipt Tx→initiate savepoint→materialize savepoint→失败session与安全terminal
+receipt同commit→commit后HTTP返回的链不变。manual-mistake、创建identity/安全回执、
+restore preflight完整性顺序及0133/真实snapshot/journal/4.33保持原产品意图。
+API POST只保一套完整创建owner；列表GET保新main的readSessionTitles与整个原读取主体，
+标题history/kernel#2050及#2053 caller真身完整保留。contracts合并creation和title两个合同，
+API/Postman从真实组合重新生成。
+
+baseline采用实际main全前缀，追加本片10条真实kernel记录，旧create-session→session/index
+记录随已删除consumer退出；原questions边下降11→9仍登记，组合总债务318→316。
+schema仍只新增26行长期receipt，实数5002→5028，baseBlob绑定实际main对应文件。
+没有放宽审计器、旧源码转出、兼容shim或新注册框架。
+
+原Owner三个备份测试字面量仍未批，测试完全不动；不以旧红CI阻止本源码组合，也不rerun
+旧workflow。0133实际合main后1969才生成后继0134并保4.33；本轮未写1969树或metadata。
+原R1仅固定原覆盖，不因新main组合新开审查或等待窗；最终本地门与新exact CI分别记录。
+本机测试/DB/migrate/restore/HTTP/browser/provider/paid/runtime/部署均NOT_RUN。
+
+该实际组合的API client/Postman重新生成均exit 0；typecheck、lint、build、schema、
+API contracts/client/client-usage、capability-boundaries、architecture-deepening九门
+均经外部heavy limiter串行执行并exit 0。lint实为165 warnings；边界实测316/0/39，
+新增依赖10条均为本片已登记kernel边，>1500文件9→9，未增加pass-through站点。
+逐门日志在外部`review/yuk1522-creation-receipts-20261023/parent-1ab-*.log`。
+这些本地静态结果不覆盖新head的CI、原R1未审的组合或任何运行验收；requiredGate已知
+红且三个测试字面量未批，因此本轮仅交付源码组合，不合PR、不重跑旧job、不新增watch。

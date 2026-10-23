@@ -1,4 +1,5 @@
 import { observeTaskOperation } from '@/ai/task-observation';
+import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
@@ -18,12 +19,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
-import {
-  type RunTaskResult,
-  type StreamCollectResult,
-  runAgentTask,
-  streamTaskCollecting,
-} from '@/server/ai/runner';
+import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import {
   type BuildMcpServerOptions,
   shouldEmitToolUseForCaller,

@@ -529,12 +529,12 @@
       "direction": "decrease"
     },
     {
-      "direction": "decrease",
       "debt": "capabilityToServer",
       "pair": "knowledge -> ai",
       "date": "2026-10-21",
       "from": 13,
-      "to": 12
+      "to": 12,
+      "direction": "decrease"
     },
     {
       "debt": "capabilityToServer",
@@ -2233,6 +2233,200 @@
       "date": "2026-10-23"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "getPracticeStream",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "getPracticeStream",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host operation imports getPracticeStream at AST and path line 11 and calls it at line 13. Context imports are type-only; the retained HTTP adapter directly consumes the internal operation. HTTP, schema, domain operation and stream store are unchanged.",
+      "rationale": "Practice owns query validation, date resolution, invocation identity and the complete stateful stream operation, including composition, scoped materialization, budget trimming and refill. Start preserves the original 65-second explicit deadline, seed and operation anchor inside the host 90-second provider ALS scope, without copying decisions, narrowing the JSON DTO or adding a business request signal. This boundary may perform writes and paid work; it is not a pure read.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e9aab9c7-d658-4cb0-89ac-e96c004edbd0",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "updatePracticeStreamItem",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "updatePracticeStreamItem",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-item-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated host operation imports updatePracticeStreamItem at AST and path line 20 and calls it at line 22. Context imports are type-only; the retained HTTP adapter directly consumes the internal operation. HTTP, schema, domain operation and stream store are unchanged.",
+      "rationale": "Practice owns status validation, seeded advancement, the original state transition, post-commit session completion and statistical rerank, and the complete row-plus-view response. The shared operation retains its non-CAS update, missing receipt and unknown-response windows, including projection failure after commit and same-state retry conflicts. Session completion can reach asynchronous paid brief work through feedback events and the existing outbox; this is a stateful boundary, not a no-queue or no-paid read. Start preserves host auth, the 90-second provider ALS scope and the original absence of a business request signal.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-aeb95ce1-cca4-4ca6-a726-2c5a8cf2aaf1",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-23",
+      "from": 20,
+      "to": 19,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-23",
+      "from": 15,
+      "to": 14,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> ai",
+      "date": "2026-10-23",
+      "from": 8,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-23",
+      "from": 48,
+      "to": 46,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "recomposePracticeStream",
+      "targetModule": "src/capabilities/practice/server/stream-operations.ts",
+      "targetSymbol": "recomposePracticeStream",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-stream-recompose-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host operation imports recomposePracticeStream at AST and path line 11 and calls it at line 14. The live client has no arguments or body, so Start passes the equivalent empty object to the complete owner. Context imports are type-only; HTTP directly consumes the internal operation.",
+      "rationale": "Practice owns schema and date resolution, the shared host rate limiter, each invocation nonce and seed, the 65-second explicit provider deadline, paid-lock preparation and materialization, observations and complete response projection. Start retains the host 90-second ALS scope and full JSON/errors without exposing date or policy inputs. This stateful operation may perform paid work, and the separate UI refresh may trigger refill; no cancellation, command deduplication or retry guarantee is added. Arbitrary HTTP body and null semantics remain with the unchanged HTTP adapter and schema.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-957008f1-e884-4145-bbac-362d45115ee1",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readQuestionDetail",
+      "targetModule": "src/capabilities/practice/server/question-detail-read.ts",
+      "targetSymbol": "readQuestionDetail",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-question-detail-operation.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "The authenticated host imports readQuestionDetail at AST and path line 13 and calls it at line 15 with only the requested id, fixed Practice surface and default timeline. Context imports are type-only; HTTP directly consumes the internal operation.",
+      "rationale": "Practice owns complete id, timeline and surface validation, diagnostic due and committed-result admission, serving composition and learner-safe wire projection. The underlying loader owns question data aggregation, not safe admission. The shared operation preserves ordinary question-bank output and diagnostic recovery while keeping private material out of the Practice cache; callers do not reconstruct these decisions.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6e6160eb-7733-44e3-8627-f6947e3e020e",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> projections",
+      "date": "2026-10-23",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "previewReviewAdvice",
+      "targetModule": "src/capabilities/practice/server/advice-operation.ts",
+      "targetSymbol": "previewReviewAdvice",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-advice-operation.ts",
+          "line": 17
+        }
+      ],
+      "evidence": "The authenticated host imports previewReviewAdvice at AST and path line 17 and calls it at line 19 with the parsed body and real request signal inside the original 90-second ALS scope. Context imports are type-only; the HTTP advice adapter directly consumes the internal operation.",
+      "rationale": "Practice owns the complete schema, identity, question and diagnostic gate, subject profile, previewFormalAttempt invocation, suggested rating, post-evaluation cause reread, advisor and complete response projection. The public entry exposes that same complete operation for HTTP and Start rather than making callers reconstruct it from the inner evaluator. This stateful operation can persist submissions, paid evidence and candidates; cancellation or response failure does not prove non-execution, and the existing Jev deadline behavior is unchanged.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e8e7a62d-ef7a-47a8-9e91-123bd2c1de38",
+      "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "createPracticeAppeal",
+      "targetModule": "src/capabilities/practice/server/appeal-operation.ts",
+      "targetSymbol": "createPracticeAppeal",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-appeal-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated host imports createPracticeAppeal at AST and path line 11 and calls it at line 13. HTTP consumes the internal operation directly; the context string port adds no runtime public consumer. Start throws non-ok Responses unchanged and returns successful JSON text for the client to parse.",
+      "rationale": "Practice owns the complete loadBody parse-failure handling, strict schema and special JSON, native event creation followed by conditional enqueue after commit, legacy rejection branches and original Response projection. The callback only supplies JSON input rather than making callers assemble state or dispatch order. HTTP and Start share this complete operation, not a bare native writer or HTTP forwarding wrapper. Existing commit/send failure windows and asynchronous paid rejudge behavior remain unchanged.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-68ee6a62-53c4-4e6a-adca-fac91dbb489e",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-23",
+      "from": 6,
+      "to": 9,
+      "direction": "increase",
+      "reason": "Complete ingestion lifecycle implementations move from server to their domain owner with existing queue/event dependencies preserved. The same native candidate reduces ingestion -> session from 8 to 1, offsetting boss +3 and events +2 together; total 320 -> 318. No forwarding layer or counting scope change.",
+      "exitCondition": "Retire these direct implementation dependencies only when the actual queue or event operation owner changes through a separately scoped approved implementation; do not add facades or alter send/transaction semantics to move counts.",
+      "justification": {
+        "kind": "offset"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 7,
+      "direction": "increase",
+      "reason": "Complete ingestion lifecycle implementations move from server to their domain owner with existing queue/event dependencies preserved. The same native candidate reduces ingestion -> session from 8 to 1, offsetting boss +3 and events +2 together; total 320 -> 318. No forwarding layer or counting scope change.",
+      "exitCondition": "Retire these direct implementation dependencies only when the actual queue or event operation owner changes through a separately scoped approved implementation; do not add facades or alter send/transaction semantics to move counts.",
+      "justification": {
+        "kind": "offset"
+      }
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> session",
+      "date": "2026-10-23",
+      "from": 8,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> questions",
       "date": "2026-10-23",
@@ -3385,6 +3579,376 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/copilot-run-cancellation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Retain the existing not-found error contract when a cancellation request cannot bind the accepted run to its canonical input and session; HTTP keeps the original error envelope.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/copilot-run-cancellation.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Persist cancellation intent and applicable pre-fence terminal job events with commit-delayed notification in the same dispatch/settlement transaction as the original business operation.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "module": "src/kernel/records/assessment-normalization.ts",
+      "kind": "value",
+      "symbols": ["NormalizableQuestionRow", "normalizeQuestionRowToContract"],
+      "issue": "YUK-1570",
+      "owns": "The existing locked draft presentation owner now derives the legacy assessment contract and validates presentation before save; the same normalizer and figure-digest read move from compose without changing normalization failure or transaction semantics.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "module": "src/server/questions/draft-contract.ts",
+      "kind": "value",
+      "symbols": ["draftDocumentToContract"],
+      "issue": "YUK-1570",
+      "owns": "Complete v2 draft conversion is consumed by the locked presentation validation/save owner instead of compose. This replaces the prior compose dependency; version, declared shape, ordered validation issues and no-legacy-fallback policy remain together.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the existing empty-text-segmentation business error inside the complete DOCX upload operation; HTTP retains wire validation and original errorResponse.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["getStartedBoss"],
+      "issue": "YUK-1570",
+      "owns": "Start the existing boss only after visual session creation and successful source-package attachment, immediately before the original extraction enqueue; the complete upload operation owns this order.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
+      "module": "src/server/r2.ts",
+      "kind": "value",
+      "symbols": ["getR2"],
+      "issue": "YUK-1570",
+      "owns": "Acquire the existing blob client after converter selection and before either DOCX route, preserving asset/evidence/package writes and failures without new storage or compensation policy.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
+      "module": "src/server/session/docx-ingestion.ts",
+      "kind": "value",
+      "symbols": ["initiateDocxTextUpload"],
+      "issue": "YUK-1570",
+      "owns": "Invoke the complete existing text session/block creation transaction and its post-commit hooks before source-package attachment, preserving kept_extracted compensation behavior.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
+      "module": "src/server/session/index.ts",
+      "kind": "value",
+      "symbols": ["Ingestion"],
+      "issue": "YUK-1570",
+      "owns": "Use the existing visual initiateUpload and enqueueExtraction operations in their original order around package attachment; preserve the namespace initialization and queue/session semantics.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-refine-apply.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1570",
+      "owns": "Keep the existing USD-to-micro-USD conversion at the same refinement publication site while removing the empty Notes provenance re-export.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1570",
+      "owns": "Keep the existing USD-to-micro-USD conversion at the same generation publication site while consuming result facts from the shared AI contract.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the existing acceptance, conflict, admission and dispatch error codes/status/details; HTTP keeps presentation and errorResponse.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Read the existing session derivation policy at the same agent dispatch point before authorization; no policy or paid permission changes.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["getStartedBoss"],
+      "issue": "YUK-1570",
+      "owns": "Acquire the existing lazy-started boss at the original review/nonreview dispatch points, preserving singleton send, null deduplication and transaction lifetime behavior.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
+      "module": "src/server/session/index.ts",
+      "kind": "value",
+      "symbols": ["Ingestion"],
+      "issue": "YUK-1570",
+      "owns": "Consume existing importable statuses and extraction/agent enqueue operations with the original authorization callback, transaction, identity and recovery ordering.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/agent/history.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "The narrow frozen-item read recognizes the existing malformed-budget ApiError as missing run-identity evidence, permitting only an independent immutable block title fallback; other errors propagate. Kernel retains the generic error type; budget parsing and all writes remain unchanged.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the common HTTP error envelope; Practice retains complete input, admission and safe response decisions. The HTTP adapter still needs ApiError for PATCH and DELETE, so this records the new physical reference.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["readQuestionServing"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing serving facts and their projection. Practice composes these facts with complete question-detail admission and safe wire output; this reference moves from the original GET adapter.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/server/questions/detail.ts",
+      "kind": "value",
+      "symbols": ["loadQuestionDetail"],
+      "issue": "YUK-1358",
+      "owns": "The existing server loader owns complete question data and timeline aggregation, not safe admission. Practice retains input validation, diagnostic recovery and learner-safe wire projection; this reference moves from the original GET adapter.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/import-completion.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns captured question-block row creation/overwrite and the complete RETURNING-to-policy-to-create-event operation; ingestion supplies validated source facts and retains qualification, transaction and import transitions.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/advice-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the generic error status and envelope; Practice retains all business input, admission and orchestration decisions. The original HTTP adapter still references this module for errorResponse, so this records the new physical consumer rather than claiming all references are net zero.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/advice-operation.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing knowledge-to-subject profile resolution and default fallback protocol, preserving the first knowledge id and warning before default on strict resolution failure. Practice retains the diagnostic-gate-before-profile-before-preview ordering and advice projection; this reference moves from the HTTP adapter without introducing a subject policy.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["errorResponse"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing generic native error envelope; Practice retains special JSON/schema and native/legacy rules. HTTP still consumes canonicalResourceResponse and deprecatedRouteResponse from this module, so the new physical consumer is recorded without claiming all references are net zero.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/server/runtime-env.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1358",
+      "owns": "The server platform owns the existing NODE_ENV/VITEST background-enqueue environment protocol. Practice retains the business ordering after the native creation transaction returns, followed by getPracticeBoss and send; this moved HTTP reference does not relocate queue implementation or add a paid policy.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY", "resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1570",
+      "owns": "The existing server boss singleton owns boot and queue access; DOCX keeps both lazy post-commit imports and separate enqueue failure catches.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
+      "issue": "YUK-1570",
+      "owns": "The existing queue module owns the copilot nudge name; DOCX keeps its current observe-only notification payload and timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/events/session-extract.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns canonical domain-event persistence; ingestion owns its existing extract envelope and session consent propagation.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/events/session-extract.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["resolveSessionDerivationPolicy"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns the shared ApiError shape; ingestion preserves its existing lifecycle conflict/status semantics.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "kind": "value",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/boss/pg-boss-drizzle.ts",
+      "kind": "value",
+      "symbols": ["fromPgBossDrizzleTx"],
+      "issue": "YUK-1570",
+      "owns": "The existing adapter owns PgBoss transaction binding; ingestion preserves the agent-only transactional send and budget-hook order.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/events/writer.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
+      "module": "src/server/session/guards.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "The existing shared guard owns allowed-state checks and conflict error shape; other session types still use this implementation.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
@@ -3471,16 +4035,6 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
-      "date": "2026-10-23"
-    },
-    {
-      "debt": "capabilityToServer",
-      "file": "src/capabilities/ingestion/server/create-session.ts",
-      "module": "src/server/session/index.ts",
-      "kind": "value",
-      "symbols": ["Ingestion"],
-      "issue": "YUK-1522",
-      "owns": "The complete session-create consumer moves from api/sessions.ts to server/create-session.ts and still calls the unchanged Ingestion.initiateUpload owner with the actual Tx. The prior sessions.ts -> session/index edge is removed, ingestion -> session remains 8, and two manual server re-export edges are removed; no new server responsibility or facade.",
       "date": "2026-10-23"
     },
     {
@@ -3739,9 +4293,54 @@
       "responsibilityReason": "Owner-approved execution dependency contract: the default grounding branch now receives the same runTaskFn as source verification, while the explicit whole-grounding override receives only its original business parameters. The five added lines document this deliberate scope change and branch at the existing grounding call; image acquisition, vision routing, paid/retry/lock/publication policies remain in their existing owners. No new dependency, factory or public operation."
     },
     {
+      "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "date": "2026-10-23",
+      "baseBlob": "3a125ac91b6d95a4f81dd31603d27d463d50ee0b",
+      "from": 845,
+      "to": 1034,
+      "issue": "YUK-1570",
+      "responsibilityReason": "The approved complete draft presentation validation/save operation absorbs the existing v2/legacy validation and legacy contract derivation from compose. Removing the optional validator intentionally closes the bypass/custom-replacement contract while retaining replay-first locking, CAS, effective save, legacy overload, issue ordering and the existing save/event/notification body. The 189 added lines belong to the existing edit owner; no new module or unrelated edit responsibility is introduced. Decision: https://linear.app/yukoval-studios/issue/YUK-1570#comment-aadbee63-9db3-4317-ba7e-83630102a4de."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "date": "2026-10-23",
+      "baseBlob": "03ae3563692de6ad190bb69a0b99c5f208a16d80",
+      "from": 1940,
+      "to": 1941,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/jobs/source_verify.ts",
+      "date": "2026-10-23",
+      "baseBlob": "da8f8a3314517dedc7974586e6fb9b7b165c4cec",
+      "from": 1527,
+      "to": 1528,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/server/admission/solve.ts",
+      "date": "2026-10-23",
+      "baseBlob": "e5d18e8d1aa93354ebadbbb29895b538e32a5c87",
+      "from": 1045,
+      "to": 1046,
+      "issue": "YUK-1570",
+      "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/ui/use-practice-submit.ts",
+      "date": "2026-10-23",
+      "baseBlob": "573d93f740b04bf44f1b5c4eb31c9e71a2fe7573",
+      "from": 1402,
+      "to": 1410,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Existing Practice submission and recovery responsibilities are unchanged. The eight net lines only add the typed reader parameter and queryFn to questionDetailQuery, remove the direct getQuestionFull import, add the reader to the existing client destructuring with formatter expansion, and inject it into the existing useQuery. No business rule, Effect or recovery branch is added; no line compression or helper split is used to evade the size ratchet."
+    },
+    {
       "path": "src/db/schema.ts",
       "date": "2026-10-23",
-      "baseBlob": "db4b0f1e40f6b03728036f3c02bf5721599c2434",
+      "baseBlob": "47c94b99805b56bb34ff99d58724acc175d9ddc8",
       "from": 5002,
       "to": 5028,
       "issue": "YUK-1522",
@@ -4313,9 +4912,9 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 325,
+      "total": 316,
       "byOwnerPair": {
-        "agency -> ai": 20,
+        "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> http": 1,
@@ -4337,15 +4936,15 @@
         "copilot -> session": 6,
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
-        "ingestion -> ai": 15,
-        "ingestion -> boss": 6,
-        "ingestion -> events": 5,
-        "ingestion -> projections": 3,
+        "ingestion -> ai": 14,
+        "ingestion -> boss": 9,
+        "ingestion -> events": 7,
+        "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 9,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
-        "ingestion -> session": 8,
+        "ingestion -> session": 1,
         "knowledge -> advisory-locks": 5,
         "knowledge -> ai": 9,
         "knowledge -> boss": 3,
@@ -4356,7 +4955,7 @@
         "knowledge -> memory": 2,
         "knowledge -> projections": 5,
         "knowledge -> proposals": 3,
-        "notes -> ai": 8,
+        "notes -> ai": 6,
         "notes -> artifacts": 2,
         "notes -> boss": 2,
         "notes -> proposals": 1,
@@ -4366,7 +4965,7 @@
         "observability -> export": 2,
         "observability -> r2": 2,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 48,
+        "practice -> ai": 46,
         "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,

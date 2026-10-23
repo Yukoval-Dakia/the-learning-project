@@ -11,16 +11,21 @@ import type { AdminControlClient } from '@/capabilities/observability/ui/admin-c
 import type {
   PlacementProfileResponse,
   getIssuanceState,
+  getPracticeStream,
+  previewReviewAdvice,
   projectIssuanceResult,
   projectReviewAnswerResponse,
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
+  readQuestionDetail,
+  recomposePracticeStream,
   releaseHeldPlacement,
   saveResponseDraft,
   selectNextPlacementQuestion,
   startPlacementProbe,
   transitionPlacementSession,
+  updatePracticeStreamItem,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
@@ -48,6 +53,17 @@ export type FrontdoorContext = {
     body: string;
   }) => Promise<Awaited<ReturnType<typeof releaseHeldPlacement>>>;
   readPapers: () => Promise<Awaited<ReturnType<typeof readPaperList>>>;
+  readPracticeQuestionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
+  getPracticeStream: (
+    knowledgeId?: string,
+  ) => Promise<Awaited<ReturnType<typeof getPracticeStream>>>;
+  recomposePracticeStream: () => Promise<Awaited<ReturnType<typeof recomposePracticeStream>>>;
+  updatePracticeStreamItem: (input: {
+    id: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof updatePracticeStreamItem>>>;
   createIssuance: (body: string) => Promise<ReturnType<typeof projectIssuanceResult>>;
   readIssuanceState: (issuanceId: string) => Promise<Awaited<ReturnType<typeof getIssuanceState>>>;
   saveResponseDraft: (input: {
@@ -61,6 +77,11 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  createPracticeAppeal: (body: string) => Promise<string>;
+  previewReviewAdvice: (
+    body: string,
+    signal: AbortSignal,
+  ) => Promise<Awaited<ReturnType<typeof previewReviewAdvice>>>;
   submitPlacementAnswer: (
     body: string,
     signal: AbortSignal,

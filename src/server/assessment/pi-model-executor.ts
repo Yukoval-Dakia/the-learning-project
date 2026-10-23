@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentRunError } from '@/ai/agent-run-error';
+import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import type {
   ModelExecutorRequest,
@@ -15,7 +16,7 @@ import {
   traceMetadata,
   traceOperation,
 } from '@/server/ai/laminar-tracing';
-import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
+import type { RunTaskCtx } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
   createAssessmentAssetLoader,
