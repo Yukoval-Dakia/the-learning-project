@@ -3,12 +3,14 @@ import type { ApiOperationJsonResponse } from '@/ui/lib/api';
 import {
   getIssuanceState,
   getPapers,
+  getStream,
   issueAssessment,
   saveResponseDraft,
   submitReview,
 } from './practice-api';
 
 export type PracticeClient = {
+  getStream: typeof getStream;
   getPapers: typeof getPapers;
   issueAssessment: typeof issueAssessment;
   getIssuanceState: typeof getIssuanceState;
@@ -18,6 +20,7 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  getStream,
   getIssuanceState,
   getPapers,
   issueAssessment,
