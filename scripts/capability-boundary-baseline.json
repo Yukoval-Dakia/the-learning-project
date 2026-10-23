@@ -3626,6 +3626,16 @@
       "issue": "YUK-1522",
       "owns": "The narrow frozen-item read recognizes the existing malformed-budget ApiError as missing run-identity evidence, permitting only an independent immutable block title fallback; other errors propagate. Kernel retains the generic error type; budget parsing and all writes remain unchanged.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "kind": "value",
+      "date": "2026-10-23",
+      "file": "src/capabilities/ingestion/server/import-completion.ts",
+      "module": "src/kernel/records/question-block-creation.ts",
+      "symbols": ["persistCapturedQuestionBlock"],
+      "issue": "YUK-1570",
+      "owns": "Kernel owns captured question-block row creation/overwrite and the complete RETURNING-to-policy-to-create-event operation; ingestion supplies validated source facts and retains qualification, transaction and import transitions."
     }
   ],
   "sourceSizeRecords": [
