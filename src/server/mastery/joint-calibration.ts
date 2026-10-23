@@ -45,9 +45,9 @@ import {
   updateDifficultyPosterior,
 } from '@/core/difficulty-posterior';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { notDraftPredicate } from '@/db/predicates';
 import { difficulty_calibration_evidence, event, item_calibration, question } from '@/db/schema';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { attemptLocalDate } from './recalibration';
 
 // ─────────────────────────────────────────────────────────────────────────────

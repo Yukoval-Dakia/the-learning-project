@@ -1,0 +1,171 @@
+# 录入历史的冻结来源标题（YUK-1522）
+
+本片服务原 R8「帮助靠谱」读面，仅交付独立后端标题读取及 draft PR。
+不代表 YUK-1522 全票、独立审查、exact-head CI 或运行验收完成。
+
+## 基线与范围
+
+- 独立 worktree：`/Users/yuqi/.t3/worktrees/the-learning-project/t3-014002e0`。
+- fresh fetch 基线：`411ad9f13cde1a363b3810e6a727eaeedbfdf894`。
+- 分支：`feat/yuk-1522-frozen-session-titles-20261023`；保留 T3 初始分支。
+- 复用准备：`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-ingestion-budget-history-20261020/title-read-prep-a59fe2cf.md`。
+- 不改 UI、创建 POST、幂等事务、DDL、manifest、public 出口、历史写者、预算协议或 paid 生命周期。
+  未触碰父树、2037 与 1969 的 worktree，也未吸入这些 PR。
+
+## 完整读取 owner 与真实消费者
+
+`server/session-titles.ts:readSessionTitles(db, sessionIds)` 是两个 GET 共用的完整标题 owner。
+调用者只提供已选页的 session IDs，不掌握身份、事件 floor、读取次序、来源选择或排序。
+列表保留原 SQL 证据筛选、排序、limit+1、cursor 和计数，选页后一次调用，最多 100 个 session。
+历史 GET 同样调用它，不改变 items、asks、current、prior_runs 或 evidence 的原读取义务。
+
+真实消费链：
+
+- `GET /api/ingestion-sessions` → generated `listIngestionSessions` →
+  `record-api.ts:listSessions` → `recording-read.ts:useRecordingList` → `HistoryList.tsx` 的 `row.title`。
+- `GET /api/ingestion-sessions/:id/history` → generated `getIngestionSessionHistory` →
+  `record-api.ts:getHistory` → `recording-read.ts:useRecording` → 现有 `recording-title.ts`。
+
+本片不复制 UI 的 20 字截断或 markdown 清理规则，所选来源文本原样返回。
+不补写 `source_document.title`，不编造文件名、题号、无文字占位，不读取 mutable question/structured 文本。
+
+## 来源与未知边界
+
+1. `source_document.title != null` 时仍优先返回它，包括空串；来源 `source_document`。
+2. 否则读取当前 execution owner 的冻结 agent items：有效且非空的 `run_ref` 与显式非负
+   `event_floor` 缺一不可。snapshot 必须通过现有完整 schema、为 v2，且经现有
+   `snapshotMatchesRun` 匹配当前 owner。只读 `id > event_floor` 的合法 item/session 与
+   item_state/run 事件。共用 ledger 的纯 item 折叠及 history 的 `mergeItems`：保留第一次
+   出现顺序，同 item_id 后续字段覆盖；再按 `parseInt(question_no, 10) || 0` 稳定升序，
+   跳过空白，首个可读 preview 原样返回，来源 `agent_item_preview`。
+3. 无可读 agent preview 时，独立读取 immutable `question_block.extracted_prompt_md`。
+   actor-scoped `draft:ingestion_agent:<sessionId>` 先按 `created_at/id`，然后 session-bound
+   captures 按 `ordinal/id`，跳过空白，来源 `extracted_prompt_md`。
+4. 无证据时 `title` 与 `title_source` 都是 null。v1、身份/floor 缺失、坏快照、prior run、
+   opaque `unparsed_previous` 不提供当前标题。合法 live items 可独立提供冻结证据；
+   独立 immutable block 也可回退。不以一个标题的存在声称完整历史已恢复。
+
+## 一致性与依赖
+
+每次 owner 调用只开启一个 `REPEATABLE READ / READ ONLY` 事务，在同一视图里读取 document、
+owner/snapshot、所需 item events 和 blocks，避免并发换 run 拼接。SQL 次数有固定上界（最多五次），
+不逐行调用 `readAgentRunHistory`，不读取 asks/errors/paid 来重建标题。
+列表选页与计数、历史其它切片保留原事务边界；本片不声称整个 HTTP 响应是一个统一数据库快照。
+
+`agent/history.ts` 只新增批量只读 item projection，复用现有 schema、身份判定和 merge；
+`agent/ledger.ts` 只提取并复用原 item 纯折叠。`persistAgentRunHistory`、预算/floor 写入、
+claim、dispatch、追问、历史保留均不变。无新增跨 capability 或 capability→server 依赖，
+无模块导入时读取或启动资源。
+
+## 验证与交接
+
+所有重命令串行通过 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/heavy.sh`，
+`NODE_OPTIONS=--max-old-space-size=3072`，不覆盖 limiter。日志目录为
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/_work/heavy/`，下表文件名均以前缀
+`yuk1522-titles-` 开始。
+
+| 命令 | exit | 日志后缀 / 结果 |
+| --- | --- | --- |
+| `pnpm install --frozen-lockfile` | 0 | `install.log`；仅一次安装 |
+| owned TS/JSON `pnpm exec biome check --write …` | 0 | `format.log` |
+| `pnpm gen:api-client` | 0 | `gen-api-client.log`；仅 ingestion title_source 六处生成差量（共享 read schema 的真实产物） |
+| `pnpm gen:postman` | 0 | `gen-postman.log`；仅两个 GET |
+| `pnpm typecheck` 首次 / 修正后 | 2 / 0 | `typecheck.log` / `typecheck-2.log`；修正 Drizzle sql.join 的 readonly 数组类型 |
+| `pnpm lint` | 0 | `lint.log`；164 warnings |
+| `pnpm build` | 0 | `build.log`；web、Start、server、worker、migrate 构建均完成 |
+| `pnpm audit:api-contracts` | 0 | `api-contracts.log`；165/165 declared，0 legacy，155 paths |
+| `pnpm audit:api-client` | 0 | `api-client.log`；生成物已暂存后重生成无 unstaged 差量 |
+| `pnpm audit:api-client-usage` | 0 | `api-client-usage.log` |
+| `pnpm audit:capability-boundaries --base 411ad9f13cde1a363b3810e6a727eaeedbfdf894` 首次 / 登记后 | 1 / 0 | `capability-boundaries.log` / `capability-boundaries-2.log` |
+| `pnpm audit:architecture-deepening --base 411ad9f13cde1a363b3810e6a727eaeedbfdf894` | 0 | `architecture-deepening.log`；0 new pass-through，依赖总数 327/0/39 |
+| baseline JSON `pnpm exec biome check …` | 0 | `baseline-format.log` |
+| `git diff --check` / `git diff --cached --check` | 0 / 0 | Git 原生静态差量检查 |
+
+boundary 首次仅报 `agent/history.ts → kernel/http.ts` 的 `ApiError` 新边未登记。
+baseline 仅追加该机器真实报项的精确 file/module/symbol/issue/owns；不改变门限、债务计数、
+分类或豁免。新 owner 105 行，history 733 行，ledger 342 行，均未跨 source-size 门限。
+
+完整交付文件：`src/capabilities/ingestion/server/session-titles.ts`、
+`src/capabilities/ingestion/server/agent/history.ts`、`src/capabilities/ingestion/server/agent/ledger.ts`、
+`src/capabilities/ingestion/api/sessions.ts`、`src/capabilities/ingestion/api/session-history.ts`、
+`src/capabilities/ingestion/api/contracts.ts`、`src/ui/lib/api-schema.generated.ts`、
+`postman/api-endpoints.json`、`postman/learning-api.postman_collection.json`、
+`scripts/capability-boundary-baseline.json`、本设计文档，共 11 个 owned 文件。
+
+本线禁止且未执行：测试/fixture/断言脚本、DB、Docker/daemon、browser、产品 HTTP、provider、
+模型/paid、runtime、部署、配置或运维操作。首轮独立审查与 exact-head CI 交父线程。
+Linear 原票和全局状态由父线程维护；本片没有发现需另开票的独立 actionable follow-up，
+未创建重复票。未知标题与运行验证缺口已是原票范围，不另算完成。未 watch/poll/merge/resolve PR。
+
+## 父侧正常整合与静态验证
+
+父已读取完整 11 文件差量和原始日志。实际 main 前进至
+`6ab35c4b372797b5426f6f3f670dd5932ba10fca`（含 DOCX 完整操作与 Practice Start 交付），
+正常 merge 为 `c1107623609459f94ef960407f54539f8cc6dc02`。
+唯一冲突为 baseline 追加位置：完整保留 main 历史及 DOCX 登记后，追加本片原 ApiError 边；
+不放宽 audit。Git 原生对照确认本片产品和生成物与原 `6a7abffc8` 全同。
+
+组合后父以 external heavy limiter 串行运行 typecheck、lint、build、
+capability-boundaries 和 architecture-deepening，五项均 exit 0；lint 164 warnings。
+原始日志位于
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-frozen-titles-20261023/parent-c110-*.log`。
+两架构门固定比较上述实际 main，依赖总数 327/0/39，新增 kernel 边 1，新增 pass-through 0。
+
+原 `6a7abffc8` 的 Circle architecture job 11708 实际 audit 失败，原日志保留为
+`pr2045-6a7-circle-architecture.log`（同目录）：其原始 head 未包含新 main 的 DOCX 迁移和
+追加记录，报 append-only 及对应边登记冲突；没有重跑或称原结果通过。
+父正常整合后只认可新组合的真实门与后续 exact-head CI，不外推旧绿。
+
+本片唯一独立 R1 已固定 `c11076236` 启动，尚无结论；此后仅文档记录不改变受审产品。
+测试、DB、产品 HTTP、provider、browser、paid、runtime 和部署仍为 NOT_RUN。
+2037、1969 的待批测试与迁移顺序均保持原样。
+
+## 独立审查及合前主线更新
+
+唯一 R1 已读回：固定 `c11076236` 的 Standards / Spec 均 P0/P1=0/0，APPROVE；
+报告为仓库外 `review/stage1-yuk1522-frozen-titles-20261023/pr2045-r1-c1107623.md`。
+旧 `534c9a94c` 自身 GitHub exact CI39891783062 attempt1 全18项成功，
+required Gate120213691652成功，实际 review threads 为0；没有运行第二轮审查或重跑。
+
+合前 main 新增 #2046，实际为 `d6c6b86006075ddf363affb6d5f5e9a670b0f8fe`。
+父停止合入旧组合，正常 merge 为 `0f05a1ed2b0ec7f4208804f9f87d17d0e29d3553`；
+唯一冲突仍是 baseline 追加位置，保留 main 的 notes/quiz kernel 记录及全部前缀，
+然后追加本片原记录。标准 Git 对照确认九个产品/生成物文件相对受审产品全同，
+上游 AI result-facts 组合完整保留，无本片测试、lock、schema 或 migration 差量。
+
+新组合再次以 external limiter 串行运行 typecheck、lint（164 warnings）、build、
+capability-boundaries、architecture-deepening，五项全部 exit0。日志同一外置 review 目录
+`parent-0f05-*.log`；依赖数321/0/39、kernel新边1、pass-through新增0。
+R1结论只覆盖固定的本片产品，旧534 CI不冒称覆盖新组合；推送新head后重新取得其exact CI。
+未扩大为上游产品复审、第三审、测试或任何运行权限，原 NOT_RUN 保持。
+
+## 合前 P1：普通抽取的冻结标题
+
+`08a6a5d59` 已正常纳入 actual main `2088b6801`，本地五门与其 exact GitHub
+CI39894006137 attempt1 全18项成功，但新的 bot P1 证明原回退不覆盖常规抽取：
+`applyExtractionResult` 刻意令 deprecated `extracted_prompt_md` 为 null，且 source document
+初始 title 为 null。本次接受该 correctness finding；旧 R1 不冒称覆盖下面的修复。
+
+补充读面不改任何创建者或历史写者。在原 session-bound blocks 批量 SQL 内关联
+`experimental:question_block_create`、success、`origin=ocr|docx`，subject 与外层 session
+都须对应当前 block。原 canonical event 在同一次 INSERT 事务内冻结完整 row，原 payload
+按 `QuestionBlockCreateExperimental` 完整校验（包括 subject_id=payload.row.id），再校验
+冻结 row 的 ingestion_session_id。仅 legacy StructuredQuestion 的合法完整树经既有
+`structuredToPromptMarkdown` 派生公开题面；不包含 answers/analysis，不复制另一 codec。
+
+来源优先级原前三项不变，只有仍无标题时才使用该原始快照，`title_source=question_block_create`。
+沿原 block ordinal/id 排序；同 block 多个原始 capture 仅认 created_at/id 最早一条，坏快照
+不跳到后续覆盖伪称初始证据。rescue/import/edit_draft/genesis 不作原始抽取标题；
+没有合法快照、旧数据或只存 v2 声明而无合法 legacy tree 时仍双 null。
+不从今日 mutable structured、question 或 opaque 快照取文，不补写 source_document、
+extracted_prompt_md，不运行 provider；仍单个 RR/READ ONLY、最多五次 SQL，无逐会话 fanout。
+
+两个 GET 的既有 owner/live consumer、filter/count/page 边界、agent run 隔离及旧不可变
+legacy 文本回退保持。wire enum 与真实生成物同步。仅原预算内一次验证审 R2、最终静态门
+及新 exact-head CI 待完成；测试、DB、HTTP/browser、provider/paid、runtime/部署继续 NOT_RUN。
+
+上述 P1 修复最终静态门均 exit0：typecheck、lint（164 warnings）、build、
+API contracts/client/client-usage、capability-boundaries、architecture-deepening。
+两架构门固定 actual main2088；日志同外置 review 目录 `parent-p1-final-*.log`。
+生成器真实执行并仅产生新 enum 与两 GET 文档差量；未写/跑测试。无新增依赖登记、
+门放宽、schema/DDL/paid/运行改动。R2 与新 exact CI 仍待各自证据，不沿用08a绿。

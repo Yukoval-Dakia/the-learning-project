@@ -17,6 +17,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     const rows = await db
       .select({
         id: question_block.id,
+        version: question_block.version,
         ingestion_session_id: question_block.ingestion_session_id,
         source_asset_ids: question_block.source_asset_ids,
         page_spans: question_block.page_spans,

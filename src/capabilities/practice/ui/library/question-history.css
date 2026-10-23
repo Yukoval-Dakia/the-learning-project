@@ -1,0 +1,109 @@
+/* One question (YUK-1473): 我和这道题 — wrong-attempt records and every attempt. Split from
+   question.css; same design rules. */
+
+[data-ui-next].qd-page {
+  /* My wrong answers: each a small block with a left rule. */
+  & .qd-wrongs {
+    display: grid;
+    gap: var(--un-sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-wrong {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding-left: var(--un-sp-4);
+    box-shadow: inset 2px 0 0 var(--un-line-strong);
+  }
+
+  & .qd-wrong-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-3);
+  }
+
+  & .qd-when {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-evidence {
+    margin-left: auto;
+  }
+
+  & .qd-wrong-body,
+  & .qd-wrong-cause {
+    display: flex;
+    align-items: baseline;
+    gap: var(--un-sp-3);
+    color: var(--un-text-1);
+  }
+
+  & .qd-wrong-label {
+    flex-shrink: 0;
+    width: 4.5em;
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-wrong-cause {
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-wrong-prompt {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-summary {
+    color: var(--un-text-1);
+  }
+
+  & .qd-wrongs + .cl-toggle {
+    justify-self: start;
+  }
+
+  & .qd-wrong-text {
+    min-width: 0;
+  }
+
+  & .qd-wrong-note {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .qd-attempts {
+    display: grid;
+    gap: var(--un-sp-2);
+    margin-top: var(--un-sp-3);
+  }
+
+  & .qd-attempt-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & .qd-attempt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--un-sp-1) var(--un-sp-4);
+    padding: var(--un-sp-2) 0;
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    box-shadow: inset 0 calc(-1 * var(--un-hairline)) 0 var(--un-line);
+  }
+
+  & .qd-attempt-outcome {
+    color: var(--un-text-1);
+  }
+
+  & .qd-attempts .cl-toggle {
+    justify-self: start;
+  }
+}

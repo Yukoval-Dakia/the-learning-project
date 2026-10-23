@@ -13,10 +13,10 @@ import {
   tool_call_log,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import type { ToolContext } from '@/kernel/tools/types';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { registerTool } from '@/server/ai/tools/registry';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
 import {
   nativeHttpRequest,

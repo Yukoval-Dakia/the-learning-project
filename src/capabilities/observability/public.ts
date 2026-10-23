@@ -4,19 +4,6 @@
  */
 
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
-export {
-  type AdminSubjectListRow,
-  type AdminSubjectTraits,
-  type AdminTraitBindingRow,
-  type AdminTraitCatalogRow,
-  type TraitJournalPage,
-  type TraitJournalPageOptions,
-  type TraitJournalRow,
-  getAdminSubjectTraits,
-  getTraitJournalPage,
-  listAdminSubjects,
-  listAdminTraits,
-} from '@/server/subjects/admin-read';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
 export {
@@ -85,6 +72,7 @@ export {
   parseAdminFailuresQuery,
   parseAdminRunsQuery,
 } from './server/ai-observability';
+export { loadCalibrationMaturity } from './server/calibration-maturity';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {
   type AdminConfigKeyRow,
@@ -108,6 +96,7 @@ export {
   type SubjectCoverage,
   loadCoverageLattice,
 } from './server/coverage-lattice';
+export { loadEffectivenessTrend } from './server/effectiveness-trend';
 export {
   type EventCorrectionInput,
   type EventCorrectionResult,
@@ -116,6 +105,19 @@ export {
   readEventDetail,
 } from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
+export {
+  type AdminSubjectListRow,
+  type AdminSubjectTraits,
+  type AdminTraitBindingRow,
+  type AdminTraitCatalogRow,
+  type TraitJournalPage,
+  type TraitJournalPageOptions,
+  type TraitJournalRow,
+  getAdminSubjectTraits,
+  getTraitJournalPage,
+  listAdminSubjects,
+  listAdminTraits,
+} from './server/subject-admin-read';
 export {
   AdminSubjectCasBodySchema,
   type AdminSubjectCasInput,
@@ -132,8 +134,12 @@ export {
   retireAdminSubject,
   validateAdminSubject,
 } from './server/subject-control-operations';
+export { thinCreateSubject } from './server/subject-create';
+export {
+  auditProfilesFromDb,
+  formatDbProfileAuditReport,
+} from './server/subject-profile-audit';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
-
 export {
   AdminSubjectTraitParamsSchema,
   AdminTraitWriteParamsSchema,

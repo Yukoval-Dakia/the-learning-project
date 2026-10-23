@@ -30,11 +30,7 @@ import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { dedupeEvidence, evidenceReadable } from './inbox-api';
 import { ProbeAnswerCard } from './ProbeAnswers';
 import type { PrepDeskProbeWire } from './probe-answer-api';
-import {
-  type TeachingBrief,
-  ackTeachingBriefOutcome,
-  getTeachingBrief,
-} from './teaching-brief-api';
+import type { TeachingBrief } from './teaching-brief-api';
 import { reportBriefInteraction } from './teaching-brief-interaction-api';
 
 // 链式三元被 OCR flag（项目规则禁链式三元）——用 if/else 函数算状态。
@@ -92,7 +88,7 @@ export function nextBriefSeenState(
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
   const client = useWorkbenchClient();
-  const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
+  const q = useQuery({ queryKey: ['teaching-brief'], queryFn: client.getTeachingBrief });
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
 
@@ -319,7 +315,7 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     setAcking(true);
     setAckFailed(false);
     try {
-      await ackTeachingBriefOutcome(brief.current_outcome.probe_result_event_id);
+      await client.ackTeachingBriefOutcome(brief.current_outcome.probe_result_event_id);
       // The acked result loses eligibility server-side; re-project to the next candidate
       // or the quiet null (same surfaces as decide).
       await invalidateBriefSurfaces(qc);

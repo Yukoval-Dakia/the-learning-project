@@ -10,6 +10,7 @@
 // source_crosscheck mode 里作交叉核验 —— conflict/unknown 都阻断准入。
 
 import { eq } from 'drizzle-orm';
+import type { TaskTextResult } from '@/ai/task-result';
 import { canonicalHash } from '@/core/migration/canonical';
 import { rawArgumentsEvidence } from '@/core/raw-arguments-evidence';
 import {
@@ -36,6 +37,7 @@ import type {
 import { taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
 import { ai_task_runs } from '@/db/schema';
+import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   QuestionAdmissionSolveInput,
@@ -48,9 +50,9 @@ import {
   type QuestionAdmissionSourceCrosscheckOutputT,
   parseQuestionAdmissionSolveModelOutput,
 } from '../../tasks/question-admission-solve';
-// Provider/TaskTextResult/writeToolCallLog 经 verify-framework（既有
-// server/ai 边持有者）取；输入 hash 直接使用 core 的完整规范化算法。
-import { type Provider, type TaskTextResult, writeToolCallLog } from '../quiz/verify-framework';
+// Provider 经 verify-framework 取；TaskTextResult 直接取共享结果契约。
+// 输入 hash 直接使用 core 的完整规范化算法。
+import type { Provider } from '../quiz/verify-framework';
 import type { PracticeTaskRunFn } from '../task-runtime';
 import type { AdmissionUnitSpec, QuestionAdmissionDefinition } from './contract';
 

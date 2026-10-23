@@ -52,8 +52,16 @@ const TIER_META: Record<CalTier, { label: string; tone: string }> = {
   blind: { label: '冷启', tone: 'neutral' },
 };
 
-export function CoachCalibrationView({ navigate }: { navigate: (to: string) => void }) {
-  const q = useQuery({ queryKey: ['calibration-maturity'], queryFn: getCalibrationMaturity });
+export type CoachCalibrationReader = typeof getCalibrationMaturity;
+
+export function CoachCalibrationView({
+  navigate,
+  readCalibration = getCalibrationMaturity,
+}: {
+  navigate: (to: string) => void;
+  readCalibration?: CoachCalibrationReader;
+}) {
+  const q = useQuery({ queryKey: ['calibration-maturity'], queryFn: readCalibration });
 
   if (q.isLoading) {
     return (

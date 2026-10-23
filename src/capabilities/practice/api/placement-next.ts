@@ -27,9 +27,7 @@
 
 import { db } from '@/db/client';
 import { ApiError, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
-import { noItemField, placementNoItem, runPlacementAdvanceTx } from '../server/placement-advance';
-import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
-import { CreatePlacementQuestionSelectionBodySchema } from './placement-contracts';
+import { selectNextPlacementQuestion } from '../server/session-operations/placement-next';
 
 export async function createPlacementQuestionSelection(
   req: Request,
@@ -44,36 +42,7 @@ export async function createPlacementQuestionSelection(
     } catch {
       throw new ApiError('validation_error', 'request body must be valid JSON', 400);
     }
-    const parsed = CreatePlacementQuestionSelectionBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-    const { knowledgeIds: clientScopeOverride, cap, seThreshold } = parsed.data;
-
-    const { selection } = await runPlacementAdvanceTx(db, id, {
-      scopeOverride: clientScopeOverride,
-      cap,
-      seThreshold,
-    });
-
-    const starterSupply = await db.transaction((tx) => readPlacementStarterOutcomes(tx, id), {
-      isolationLevel: 'repeatable read',
-      accessMode: 'read only',
-    });
-    const body = selection.done
-      ? { ...selection, starterSupply }
-      : {
-          ...selection,
-          starterSupply,
-          // the typed alternative when nothing servable exists:
-          // what is being prepared (pending subjects) + recheck/end options.
-          ...noItemField(selection.question === null ? placementNoItem(starterSupply) : null),
-        };
-    return Response.json(body);
+    return Response.json(await selectNextPlacementQuestion(db, id, raw));
   } catch (err) {
     return errorResponse(err);
   }

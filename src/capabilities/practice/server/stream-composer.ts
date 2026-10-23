@@ -13,6 +13,11 @@ import {
   learningMixContextFromInputs,
 } from './post-filter';
 import { fitStreamToTimeBudget } from './stream-budget';
+import {
+  presentDueQuestion,
+  presentNonDueQuestion,
+  presentPracticePaper,
+} from './stream-item-presentation';
 
 interface ComposerQuestionMetadata {
   knowledgeId?: string;
@@ -97,10 +102,6 @@ export interface StreamPlan {
 const DEFAULT_WARN = 12;
 const DEFAULT_MAX = 30;
 
-function kpSuffix(label?: string): string {
-  return label ? `「${label}」` : '这一块';
-}
-
 export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const warn = inputs.capacity?.warn ?? DEFAULT_WARN;
   const max = inputs.capacity?.max ?? DEFAULT_MAX;
@@ -127,19 +128,14 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     solo.push({
       item_kind: 'question',
       ref_id: d.questionId,
-      source: d.source ?? 'decay',
-      reasoning:
-        d.source === 'intervention'
-          ? '这份针对当前薄弱点的材料已经准备好；先阅读，再完成检验。'
-          : `我看了你的曲线：${kpSuffix(d.knowledgeLabel)}到了复习边缘，先把它咬住。`,
+      ...presentDueQuestion(d.knowledgeLabel, d.source),
     });
     if ((i + 1) % 2 === 0 && vi < vars.length) {
       const v = vars[vi++];
       solo.push({
         item_kind: 'question',
         ref_id: v.questionId,
-        source: 'variant',
-        reasoning: `之前${kpSuffix(v.knowledgeLabel)}翻过车，这道换了说法再来一次。`,
+        ...presentNonDueQuestion('variant', v.knowledgeLabel),
       });
     }
   }
@@ -148,8 +144,7 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
     solo.push({
       item_kind: 'question',
       ref_id: v.questionId,
-      source: 'variant',
-      reasoning: `之前${kpSuffix(v.knowledgeLabel)}翻过车，这道换了说法再来一次。`,
+      ...presentNonDueQuestion('variant', v.knowledgeLabel),
     });
   }
 
@@ -157,29 +152,21 @@ export function composeDailyStream(inputs: ComposerInputs): StreamPlan {
   const papers: Draft[] = inputs.pendingPapers.map((p) => ({
     item_kind: 'paper',
     ref_id: p.paperId,
-    source: p.source,
-    reasoning:
-      p.source === 'on_demand'
-        ? `你点播的「${p.title}」排好了——卷内不给即时反馈，交卷统一判。`
-        : p.source === 'import'
-          ? `你导入的「${p.title}」在待做里——交卷后统一判分。`
-          : `散题做完后用「${p.title}」收口——卷内不给即时反馈，交卷统一判。`,
+    ...presentPracticePaper(p.title, p.source),
   }));
 
   // new_check 收尾。
   const tail: Draft[] = checks.map((n) => ({
     item_kind: 'question',
     ref_id: n.questionId,
-    source: 'new_check',
-    reasoning: `你刚学了${kpSuffix(n.knowledgeLabel)}，自测一道确认真的进脑子了。`,
+    ...presentNonDueQuestion('new_check', n.knowledgeLabel),
   }));
 
   // B3 frontier 尾（在 new_check 之后追加）。fronts 空 → 零项 → all 与改前逐字相同。
   const frontierTail: Draft[] = fronts.map((f) => ({
     item_kind: 'question',
     ref_id: f.questionId,
-    source: 'frontier',
-    reasoning: `${kpSuffix(f.knowledgeLabel)}的前置你都拿下了，可以开这块新内容了。`,
+    ...presentNonDueQuestion('frontier', f.knowledgeLabel),
   }));
 
   const all = [...solo, ...papers, ...tail, ...frontierTail];

@@ -210,6 +210,10 @@ async function main() {
           repair.applyResolvedRepair(tx, entry, {
             operatorReason: cli.reason ?? '',
             now: new Date(),
+            readAssetBytes: async (storageKey) => {
+              const { getR2 } = await import('@/server/r2');
+              return getR2().get(storageKey);
+            },
           }),
         );
       } catch (error) {

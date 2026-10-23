@@ -15,11 +15,11 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
+import { writeToolCallLog, writeUnpricedToolCost } from '@/kernel/tools/call-evidence';
 import {
   ensureToolParametersObjectRoot,
   zodToToolParametersSchema,
 } from '@/kernel/zod-json-schema';
-import { writeToolCallLog, writeUnpricedToolCost } from '@/server/ai/log';
 import { type BuildMcpServerOptions, executeDomainToolCall } from './mcp-bridge';
 import { getTool } from './registry';
 

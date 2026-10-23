@@ -2,8 +2,8 @@
 // — active-PPI 难度重标定机器。
 //
 // ─── YUK-439 起的定位（ADR-0043 2026-10-19 Amendment）──────────────────────────
-// 本模块的**读链**（effectiveB，下方）仍是全库 b 读取的单一真相源，但读链头改为联合
-// 标定的后验 b_post；本模块的**写侧机器**（recalibrateQuestion 的 AIPW firm-up + 12 标签
+// 难度读链 effectiveB 由 kernel/read-models/question-difficulty 持有（此处保留旧出口），
+// 优先读取联合标定后验 b_post；本模块的**写侧机器**（recalibrateQuestion 的 AIPW firm-up + 12 标签
 // 硬门控 + label hook）自 YUK-439 起转为离线审计/对照工具：生产夜跑（recalibration_
 // nightly）改喂 src/server/mastery/joint-calibration.ts 的连续后验批（RECALIBRATION_
 // MIN_LABELS 硬门控与 b_calib 首写语义随之退出生产路径，A3）；label hook 仍被 settle
@@ -58,7 +58,10 @@ import {
   practice_stream_item,
   selection_observation,
 } from '@/db/schema';
+import { effectiveB } from '@/kernel/read-models/question-difficulty';
 import { impliedDifficultyResidual, isObjectiveJudgeRoute } from './personalized-difficulty';
+
+export { type ItemCalibrationBRow, effectiveB } from '@/kernel/read-models/question-difficulty';
 
 type DbLike = Db | Tx;
 
@@ -75,35 +78,6 @@ type DbLike = Db | Tx;
 // ─────────────────────────────────────────────────────────────────────────────
 export function attemptLocalDate(now: Date): string {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// effectiveB — b 读取终态优先链（YUK-439 起后验优先）。
-//
-// b_post ?? b_anchor ?? b。**纯函数**（无 IO），供 selection 的 resolveBAnchor + θ̂ 锚
-// （state.ts updateThetaForAttempt）统一读 b。〔YUK-439 / ADR-0043 2026-10-19 Amendment
-// A2：读链由 `b_calib ?? b_anchor ?? b` 改为后验 `b_post`——无证据时 b_post 数值 = b_anchor
-// （migration 回填 + 锚写者初始化），读侧零跳变；b_calib 退出读链（值由 migration 一次性
-// 承接进 b_post，列冻结为历史存档）。〕
-//
-// 家族组合（effectiveFamilyB 的接缝）：live b-resolution 的终态是
-//   b_effective = effectiveFamilyB(effectiveB(row), familyRow)
-//             = (b_post ?? b_anchor ?? b)  +  shrunk_family_delta
-// 即家族 delta 叠在后验 b 之上。本 helper 只负责列层解析，家族 delta 由 effectiveFamilyB
-// 叠加。
-// ─────────────────────────────────────────────────────────────────────────────
-export interface ItemCalibrationBRow {
-  b: number | null;
-  b_anchor: number | null;
-  b_calib: number | null;
-  /** YUK-439 后验均值（优先于锚；无证据时 = b_anchor）。可选：未迁移读面缺省 undefined。 */
-  b_post?: number | null;
-}
-
-/** b_post ?? b_anchor ?? b。三者皆 null（冷启无锚）→ null。b_calif 不再入链（YUK-439）。 */
-export function effectiveB(row: ItemCalibrationBRow | null | undefined): number | null {
-  if (row == null) return null;
-  return row.b_post ?? row.b_anchor ?? row.b ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

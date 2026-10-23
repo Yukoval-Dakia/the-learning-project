@@ -1,6 +1,17 @@
 import type { Dispatcher } from 'undici';
 import { Agent } from 'undici';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
+import type {
+  ProviderRequestEvidence,
+  ProviderTransportEvidence,
+  RequestSendState,
+  TransportAbortInitiator,
+  TransportAbortMarker,
+  TransportFailureEvidence,
+  TransportLane,
+  TransportSendState,
+  TransportTimeoutLayer,
+} from '@/ai/task-result';
 import { truncateUtf8 } from '@/core/raw-arguments-evidence';
 import { sanitizeProviderErrorText } from './provider-error-evidence';
 
@@ -27,163 +38,6 @@ import { sanitizeProviderErrorText } from './provider-error-evidence';
  * - `last_transport_error` is neutral raw evidence; `last_failure` requires a
  *   classified timeout layer or substantive non-abort evidence.
  */
-
-export type TransportLane = 'undici_agent' | 'observer_fetch';
-export type RequestSendState =
-  | 'not_sent'
-  | 'sent_without_response'
-  | 'response_received'
-  | 'unknown'
-  /** Snapshot taken while the request was still pending. */
-  | 'in_flight';
-export type TransportSendState = Exclude<RequestSendState, 'in_flight'>;
-export type TransportTimeoutLayer =
-  | 'connect'
-  | 'headers'
-  | 'body'
-  /** The SDK whole-request timer. Reserved: its abort surfaces outside fetch, so
-   *  an unattributed signal abort stays unclassified. */
-  | 'sdk'
-  /** Composed-signal abort attributed to the execution timer or session deadline. */
-  | 'signal';
-
-/** Which layer actually initiated an abort, recorded at the initiator. */
-export type TransportAbortInitiator =
-  /** The armed lifecycle execution timer — min(task budget, deadline). */
-  | 'execution_timeout'
-  /** The caller's absolute provider-session deadline elapsed. */
-  | 'session_deadline'
-  /** The caller-supplied `config.signal` fired. */
-  | 'caller_signal'
-  /** Provider-session lease fencing revoked the attempt. */
-  | 'lease_lost'
-  /** `lifecycle.abort()` — caller cancel / generic teardown abort. */
-  | 'lifecycle_abort';
-
-export interface TransportFailureEvidence {
-  readonly name: string;
-  readonly code?: string | number;
-  /** Sanitized (secrets + auth patterns) and UTF-8 truncated. */
-  readonly message: string;
-  readonly cause?: readonly TransportFailureEvidence[];
-}
-
-export interface TransportAbortMarker {
-  readonly at: string;
-  readonly kind: TransportAbortInitiator;
-}
-
-export interface ProviderRequestEvidence {
-  readonly seq: number;
-  /**
-   * Which transport carried this call, once decided (dispatcher saw it →
-   * undici_agent; settled without dispatch → observer_fetch).
-   */
-  readonly lane?: TransportLane;
-  /** Which DispatchHandler interface the fetch implementation passed. */
-  readonly handler_api?: 'modern' | 'legacy';
-  readonly fetch_invoked_at: string;
-  /** onRequestStart — the request began executing on a socket. */
-  readonly request_started_at?: string;
-  /** onRequestSent — the full request (headers+body) reached the socket. */
-  readonly request_sent_at?: string;
-  /** onResponseStarted — the peer's response began arriving. */
-  readonly response_started_at?: string;
-  /** onResponseStart — status code observed. */
-  readonly response_headers_at?: string;
-  /** onResponseEnd/onResponseError — the request lifecycle settled on the wire. */
-  readonly ended_at?: string;
-  /** The fetch promise itself resolved/rejected. */
-  readonly fetch_settled_at?: string;
-  readonly fetch_outcome?: 'response' | 'failure';
-  readonly http_status?: number;
-  /** Redirect-style retry through the same dispatcher would show >1. */
-  readonly dispatches?: number;
-  readonly send_state: RequestSendState;
-  readonly timeout_layer?: TransportTimeoutLayer;
-  /**
-   * The composed AbortSignal observably fired while the wire was live, tracked
-   * across the whole lifecycle. Never inferred from an abort-shaped error.
-   */
-  readonly signal_aborted?: boolean;
-  /** Sanitized name/code of `signal.reason` observed at abort time. */
-  readonly signal_reason?: { readonly name: string; readonly code?: string | number };
-  /** Which recorded initiator fired no later than this abort; `unknown` if none. */
-  readonly signal_initiator?: TransportAbortInitiator | 'unknown';
-  readonly error?: TransportFailureEvidence;
-}
-
-export interface ProviderTransportBudgetReceipt {
-  /** The resolved task budget — the single source every layer derives from. */
-  readonly task_timeout_ms: number;
-  readonly timeout_source?: TaskTimeoutSource;
-  /** Caller's absolute session bound, when one was supplied. */
-  readonly caller_deadline_at?: string;
-  /** The exact bound the lifecycle armed: min(task, deadline remaining). */
-  readonly execution_timeout_ms?: number;
-  /** The SDK per-request timeout actually handed to the pi drivers. */
-  readonly sdk_timeout_ms?: number;
-  readonly sdk_timeout_source?: 'task_budget' | 'sdk_default';
-  /**
-   * The undici timers installed on the attempt's dispatcher, emitted only when a
-   * dispatch actually rode it.
-   */
-  readonly connect_timeout_ms?: number;
-  readonly headers_timeout_ms?: number;
-  readonly body_timeout_ms?: number;
-  readonly http_margin_ms?: number;
-}
-
-export interface ProviderTransportEvidence {
-  readonly v: 1;
-  readonly budget: ProviderTransportBudgetReceipt;
-  /** Transport(s) this attempt's requests actually used. */
-  readonly lane: 'undici_agent' | 'observer_fetch' | 'mixed' | 'none';
-  /**
-   * Run-level rollup over every observed request; never masks an earlier send.
-   * 'not_sent' requires every invoked request to carry positive not-sent evidence
-   * with nothing pending.
-   */
-  readonly send_state: TransportSendState;
-  /** Aggregates over all requests, independent of `requests` truncation. */
-  readonly totals: {
-    readonly requests: number;
-    readonly dispatches: number;
-    readonly by_state: Record<RequestSendState, number>;
-  };
-  /**
-   * Neutral raw transport error/abort evidence — the most recent error any request
-   * produced, whatever it means. Survives `requests` truncation; on its own it is
-   * NOT a failure verdict.
-   */
-  readonly last_transport_error?: {
-    readonly seq: number;
-    readonly at?: string;
-    readonly send_state: RequestSendState;
-    /** Emitted only when the composed AbortSignal observably fired. */
-    readonly signal_aborted?: boolean;
-    readonly signal_initiator?: TransportAbortInitiator | 'unknown';
-    readonly signal_reason?: { readonly name: string; readonly code?: string | number };
-    readonly error: TransportFailureEvidence;
-  };
-  /**
-   * The most recent VERIFIED transport/timeout failure: a classified timeout layer
-   * or substantive non-abort evidence. A bare abort stays in `last_transport_error`.
-   */
-  readonly last_failure?: {
-    readonly seq: number;
-    readonly at?: string;
-    readonly send_state: RequestSendState;
-    readonly timeout_layer?: TransportTimeoutLayer;
-    readonly error?: TransportFailureEvidence;
-  };
-  /** Initiating-layer abort events this lifecycle recorded, in order. */
-  readonly abort_initiators?: readonly TransportAbortMarker[];
-  readonly requests: readonly ProviderRequestEvidence[];
-  readonly requests_seen: number;
-  readonly requests_dropped: number;
-  readonly captured_at: string;
-}
 
 const MAX_REQUEST_RECORDS = 32;
 const MAX_ABORT_MARKERS = 8;

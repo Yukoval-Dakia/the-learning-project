@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { type ReactNode, useCallback, useRef, useState, useSyncExternalStore } from 'react';
-import { CopilotDock } from '@/capabilities/copilot/ui-public';
+import { type ReactNode, useCallback, useState, useSyncExternalStore } from 'react';
+import { type CompanionLayout, CompanionMount } from '@/capabilities/copilot/ui-public';
 import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
@@ -62,8 +62,31 @@ function readServerMobileLayout(): boolean {
   return false;
 }
 
+// 学习伙伴的三种形态（ux-shell-today.md）：手机 ≤720 全高底部面板；iPad 721–1199 浮在页面上；
+// 桌面 ≥1200 内容右侧一栏。
+const COMPANION_FLOAT_QUERY = '(max-width: 1199px)';
+
+function readCompanionLayout(): CompanionLayout {
+  if (typeof window.matchMedia !== 'function') return 'side';
+  if (window.matchMedia(MOBILE_QUERY).matches) return 'sheet';
+  return window.matchMedia(COMPANION_FLOAT_QUERY).matches ? 'float' : 'side';
+}
+
+function readServerCompanionLayout(): CompanionLayout {
+  return 'side';
+}
+
+function subscribeCompanionLayout(notify: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') return () => {};
+  const queries = [window.matchMedia(MOBILE_QUERY), window.matchMedia(COMPANION_FLOAT_QUERY)];
+  for (const query of queries) query.addEventListener('change', notify);
+  return () => {
+    for (const query of queries) query.removeEventListener('change', notify);
+  };
+}
+
 // 与 copilot useCopilotNudges 的 query key 相同。RootShell 只挂一个不取数的观察者读
-// 现有缓存快照：轮询（60s）与 dismiss/opened 失效仍由 CopilotDock 的那个 query 负责，
+// 现有缓存快照：轮询（60s）与 dismiss/opened 失效仍由学习伙伴里的那个 query 负责，
 // 这里不另起第二个轮询。
 const COPILOT_NUDGES_KEY = ['copilot', 'nudges'] as const;
 
@@ -80,12 +103,12 @@ export function RootShell(props: {
   return <AppFrame {...props} />;
 }
 
-// M5-T3 (YUK-321) — 根壳：全路由共享一个 CopilotDock 实例（裁决 c：组件归
+// M5-T3 (YUK-321) — 根壳：全路由共享一个学习伙伴实例（裁决 c：组件归
 // copilot 包，路由耦合只存在于本壳层）。
 //
 // S13 (YUK-335 批次丙) — chrome 收编为设计的 sidebar-primary 五件套：
 // .app > AppSidebar + (.main > AppTopbar + <Outlet/>) + MobileTabBar + 根挂
-// CopilotDock。RootShell 持 paletteOpen（S14 已接 CommandPalette）/ mobileNavOpen /
+// CompanionMount。RootShell 持 paletteOpen（S14 已接 CommandPalette）/ mobileNavOpen /
 // railCollapsed / theme state。admin 路由照常套主 chrome（owner override 设计
 // app.jsx:106「admin separate shell」——见 docs/audit/2026-06-13-visual-gap.md）。
 function AppFrame({
@@ -102,6 +125,12 @@ function AppFrame({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [companionOpen, setCompanionOpen] = useState(false);
+  const companionLayout = useSyncExternalStore(
+    subscribeCompanionLayout,
+    readCompanionLayout,
+    readServerCompanionLayout,
+  );
 
   const theme = useSyncExternalStore(subscribeTheme, readAppliedTheme, readServerTheme);
   const toggleTheme = () => {
@@ -139,6 +168,10 @@ function AppFrame({
         e.preventDefault();
         setPaletteOpen((p) => !p);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setCompanionOpen((o) => !o);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -160,15 +193,10 @@ function AppFrame({
   const inboxCount = summaryQ.data?.proposals.decision_total;
   const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;
 
-  // Copilot 开启：CopilotDock 自带的 in-flow launcher wrapper 经
-  // .shell-copilot-mount CSS 隐藏；侧栏 / topbar 的正式按钮以编程方式点击其内部
-  // trigger（data-testid=copilot-drawer-trigger）走既有 dock-open 路径，不造新机制。
-  const copilotMountRef = useRef<HTMLDivElement | null>(null);
-  const openCopilot = useCallback(() => {
-    copilotMountRef.current
-      ?.querySelector<HTMLButtonElement>('[data-testid="copilot-drawer-trigger"]')
-      ?.click();
-  }, []);
+  // 学习伙伴：侧栏 / topbar 按钮与 ⌘J 直接改开合；页面经 openCopilot 发来的请求由
+  // CompanionMount 认领后回调 onOpenChange(true)。
+  const openCopilot = useCallback(() => setCompanionOpen(true), []);
+  const companionSide = companionLayout === 'side' && companionOpen;
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
@@ -178,6 +206,14 @@ function AppFrame({
     <div
       ref={attachShell}
       className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
+      // 桌面形态下学习伙伴是内容右侧的一栏，不覆盖正文（C1）。
+      style={
+        companionSide
+          ? {
+              gridTemplateColumns: `${railCollapsed ? 'var(--rail-w-collapsed)' : 'var(--rail-w)'} minmax(0, 1fr) auto`,
+            }
+          : undefined
+      }
       data-palette-open={paletteOpen ? '' : undefined}
       // F7 (Codex #401)：移动 nav 抽屉打开时隐藏底部 tabbar——否则 tabbar（fixed
       // z-index:40）画在 scrim（z-index:25）/ 抽屉之上仍可点，用户能在 focus trap
@@ -229,11 +265,22 @@ function AppFrame({
         onOpenMobileNav={() => setMobileNavOpen(true)}
       />
 
-      {/* CopilotDock 根挂（保留既有实例 + explicit-open + navigate/pathname 接线）。
-          .shell-copilot-mount 隐藏其 launcher wrapper；drawer 本身 fixed 渲到根。
-          nudge 数量由本壳从 nudges query 快照读给 AppTopbar 的可见 launcher。 */}
-      <div ref={copilotMountRef} className="shell-copilot-mount">
-        <CopilotDock pathname={pathname} navigate={navigate} />
+      {/* 学习伙伴根挂：全路由一个实例。桌面占内容右侧一栏（sticky 全高），iPad 浮在页面上，
+          手机是全高底部面板。nudge 数量由本壳从 nudges query 快照读给 AppTopbar。 */}
+      <div
+        className="shell-companion-slot"
+        style={
+          companionSide
+            ? { gridColumn: 3, gridRow: 1, position: 'sticky', top: 0, height: '100vh' }
+            : undefined
+        }
+      >
+        <CompanionMount
+          open={companionOpen}
+          onOpenChange={setCompanionOpen}
+          layout={companionLayout}
+          navigate={navigate}
+        />
       </div>
 
       {/* S14/YUK-329 — ⌘K 命令面板消费 paletteOpen seam。组件 fixed 渲到根；

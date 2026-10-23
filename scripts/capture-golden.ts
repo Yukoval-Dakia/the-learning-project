@@ -28,8 +28,8 @@ import { eq, inArray, or } from 'drizzle-orm';
 import type { FoldEvent } from '@/core/projections/fold-event';
 import { type Db, type Tx, db } from '@/db/client';
 import { event } from '@/db/schema';
+import { rowToFoldEvent } from '@/kernel/records/projection-events';
 import { PROJECTION_ENTITIES, type ProjectionKind } from '@/server/projections/entity-registry';
-import { rowToFoldEvent } from '@/server/projections/gather';
 import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 // PURE re-fold + diff (no side effects; golden-reaudit's CLI is import-gated so importing it here
 // never runs it, and its import of THIS module is type-only — no runtime cycle). Used by main() for

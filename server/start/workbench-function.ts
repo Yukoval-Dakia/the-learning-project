@@ -5,13 +5,18 @@ import { runAuthenticatedStartWorkbench } from './workbench-read';
 import {
   type StartAiChangeUndoRequest,
   type StartProposalDecisionRequest,
+  acknowledgeStartTeachingBrief,
   createStartProposalDecision,
+  readStartActiveProbes,
   readStartAutoApplied,
   readStartConjectures,
+  readStartKnowledgeFrontier,
+  readStartKnowledgeReviewDue,
   readStartKnowledgeTree,
   readStartOvernightDigest,
   readStartProposalInbox,
   readStartRecentAiChanges,
+  readStartTeachingBrief,
   readStartTodayCost,
   readStartWorkbenchSummary,
   undoStartAiChange,
@@ -29,12 +34,33 @@ export const getStartTodayCost = createServerFn({ method: 'GET' }).handler(({ co
 export const getStartAutoApplied = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartAutoApplied),
 );
-export const getStartKnowledgeTree = createServerFn({ method: 'GET' }).handler(({ context }) =>
-  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeTree),
+export const getStartKnowledgeTree = createServerFn({ method: 'GET' })
+  .inputValidator((input: { subject?: string } | undefined) => input)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), () => readStartKnowledgeTree(data)),
+  );
+export const getStartKnowledgeFrontier = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeFrontier),
+);
+export const getStartKnowledgeReviewDue = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartKnowledgeReviewDue),
 );
 export const getStartConjectures = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartConjectures),
 );
+export const getStartActiveProbes = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartActiveProbes),
+);
+export const getStartTeachingBrief = createServerFn({ method: 'GET' }).handler(({ context }) =>
+  runAuthenticatedStartWorkbench(context, getRequest(), readStartTeachingBrief),
+);
+export const acknowledgeStartTeachingBriefOutcome = createServerFn({ method: 'POST' })
+  .inputValidator((body: string) => body)
+  .handler(({ context, data }) =>
+    runAuthenticatedStartWorkbench(context, getRequest(), () =>
+      acknowledgeStartTeachingBrief(data),
+    ),
+  );
 export const getStartRecentAiChanges = createServerFn({ method: 'GET' }).handler(({ context }) =>
   runAuthenticatedStartWorkbench(context, getRequest(), readStartRecentAiChanges),
 );

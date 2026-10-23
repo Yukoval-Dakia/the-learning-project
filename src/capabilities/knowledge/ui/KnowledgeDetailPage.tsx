@@ -8,7 +8,7 @@
 // 「复习此点」把明确请求交给现有 Copilot；没有已交付 write path 的 AI 起草不展示假入口。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { openCopilot } from '@/ui/lib/use-copilot-dwell';
+import { openCopilot, setCompanionFocus } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -18,12 +18,8 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 
 import { BandChip } from './BandChip';
 import { humanizeActivity } from './humanize-activity';
-import {
-  type KnowledgeNodePage,
-  type NoteSummary,
-  getMisconceptions,
-  vetoMisconception,
-} from './knowledge-api';
+import type { KnowledgeNodePage, NoteSummary } from './knowledge-api';
+import { useKnowledgeClient } from './knowledge-client';
 import { knowledgeNodeQueryOptions } from './knowledge-node-query';
 import { MisconceptionList } from './MisconceptionList';
 import { DiagnosticDrill, NodeComposite, TransferList } from './NodeComposite';
@@ -148,9 +144,10 @@ export default function KnowledgeDetailPage({
   navigate: (to: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const { getMisconceptions, getNodePage, vetoMisconception } = useKnowledgeClient();
   // Keep the full route mount-fresh. The drawer alone owns a short staleTime (YUK-334), so
   // navigating here after any cross-surface mutation still performs the existing refetch.
-  const pageQ = useQuery(knowledgeNodeQueryOptions(id));
+  const pageQ = useQuery(knowledgeNodeQueryOptions(id, getNodePage));
 
   // A5 S4 (YUK-531 PR-5) — 「指向此点的误区」per-KC funnel（confirmed RT1 误区 + candidate 猜想/候选）。
   const miscQ = useQuery({
@@ -233,7 +230,11 @@ export default function KnowledgeDetailPage({
             <Btn
               variant="secondary"
               icon="review"
-              onClick={() => openCopilot(knowledgeReviewRequest(node.name))}
+              onClick={() => {
+                // The companion shows 「正在看：知识点 · <name>」 and scopes its quiz chip to it.
+                setCompanionFocus({ kind: 'knowledge', id: node.id, title: node.name });
+                openCopilot(knowledgeReviewRequest(node.name));
+              }}
             >
               复习此点
             </Btn>

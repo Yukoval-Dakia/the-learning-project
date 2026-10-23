@@ -87,7 +87,8 @@ const ArtifactBodyBlockWireSchema = z
         version: z.number().int().optional(),
         source_markdown: z.string().optional(),
         artifact_id: z.string().optional(),
-        block_id: z.string().optional(),
+        // Whole-note links use null; the canonical block writer preserves it.
+        block_id: z.string().nullish(),
         title: z.string().optional(),
         question_id: z.string().optional(),
         prompt_preview: z.string().optional(),
@@ -137,6 +138,12 @@ export const NotePageResponseSchema = z.object({
   ),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
+});
+
+// The HTTP JSON representation keeps history timestamps as ISO strings. Derive
+// the RPC client validator from the same contract without coercing them to Date.
+export const NotePageJsonResponseSchema = NotePageResponseSchema.extend({
+  history: z.array(ArtifactHistoryEntry.extend({ at: z.string().datetime() })),
 });
 
 export const EditArtifactBodyBlocksBodySchema = z.object({

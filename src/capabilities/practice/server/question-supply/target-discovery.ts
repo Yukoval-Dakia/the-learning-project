@@ -39,10 +39,10 @@ import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
-import { item_calibration, learning_item, question } from '@/db/schema';
+import { learning_item, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
-import { effectiveB } from '@/server/mastery/recalibration';
+import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import {
@@ -654,7 +654,7 @@ async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInpu
 }
 
 /**
- * 加载现有**可用**题池里挂了任一 open-goal KC 的题 + 它们的 effectiveB（= b_calib ?? b_anchor ?? b）。
+ * 加载现有**可用**题池里挂了任一 open-goal KC 的题 + 它们的 hard 列层锚（b_post ?? b_anchor ?? b）。
  * 只取与 open-goal KC 相关的题（按 KC 过滤，非全库扫描）。
  *
  * review FINDING #1——**过滤掉 draft_status='draft'**：草稿（未验证/被拒）不是可用 item，不该被当作
@@ -663,9 +663,9 @@ async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInpu
  * 题是被拒 draft 的 KC 于是正确留着缺口（R1/R2 复发），fingerprint
  * cooldown（dispatcher）节流重复派发。
  *
- * review FINDING #4——同时读 b_anchor / b_calib，PoolQuestion.calibrationB 装 effectiveB（与
- * mastery/selection 同一 b 解析，src/server/mastery/recalibration effectiveB）。无 item_calibration
- * 行 → effectiveB=null（纯 difficulty proxy，R3 不当可靠锚）。
+ * review FINDING #4——PoolQuestion.calibrationB 只装 hard 列层锚（与
+ * mastery/selection 同一列优先链）。无 item_calibration 行/全 NULL → null；
+ * 不引入 family/proxy，R3 只信可靠锚。
  */
 async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<PoolQuestion[]> {
   if (frontierKids.length === 0) return [];
@@ -694,24 +694,9 @@ async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<Po
     );
   if (rows.length === 0) return [];
 
-  // item_calibration（track='hard'）批量读：b / b_anchor / b_calib / b_post → effectiveB
-  // （FINDING #4；YUK-439 起后验 b_post 优先）。
-  const qids = rows.map((r) => r.id);
-  const calRows = await db
-    .select({
-      question_id: item_calibration.question_id,
-      b: item_calibration.b,
-      b_anchor: item_calibration.b_anchor,
-      b_calib: item_calibration.b_calib,
-      b_post: item_calibration.b_post,
-    })
-    .from(item_calibration)
-    .where(and(inArray(item_calibration.question_id, qids), eq(item_calibration.track, 'hard')));
-  const effectiveBByQid = new Map(
-    calRows.map((r) => [
-      r.question_id,
-      effectiveB({ b: r.b, b_anchor: r.b_anchor, b_calib: r.b_calib, b_post: r.b_post }),
-    ]),
+  const effectiveBByQid = await readHardCalibrationBs(
+    db,
+    rows.map((r) => r.id),
   );
 
   return rows.map((r) => {

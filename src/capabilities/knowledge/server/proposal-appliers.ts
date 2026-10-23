@@ -15,7 +15,7 @@ import type {
   ProposalRetractInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { decideKnowledgeEdgeProposal } from './edge-proposal-accept';
 import { acceptProposal, dismissProposal, prepareKnowledgeArchive } from './proposals';

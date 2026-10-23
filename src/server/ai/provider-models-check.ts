@@ -5,7 +5,11 @@
 
 import { createHash } from 'node:crypto';
 import type { Provider } from '@/ai/task-spec';
-import { CATALOG_PROVIDER_BY_INTERNAL } from './model-profiles';
+import {
+  customProviderDefinition,
+  looksLikeCustomProviderId,
+} from '@/core/config/custom-providers';
+import { catalogProviderFor } from './model-profiles';
 import { ANTHROPIC_SUB_CONTRACT_REF } from './pricing';
 import {
   implementedProviderIds,
@@ -238,6 +242,14 @@ function authHeaders(provider: Provider, credential: string): Record<string, str
       headers['x-api-key'] = credential;
     }
     return headers;
+  }
+  // A custom provider's wire shape comes from its configured protocol —
+  // never from the donor lane its endpoint may resemble.
+  if (looksLikeCustomProviderId(provider)) {
+    if (customProviderDefinition(provider)?.protocol === 'anthropic-messages') {
+      return { 'x-api-key': credential, 'anthropic-version': '2023-06-01' };
+    }
+    return { authorization: `Bearer ${credential}` };
   }
   const headers: Record<string, string> = { authorization: `Bearer ${credential}` };
   if (provider === 'opencode-go') headers['x-opencode-session'] = SESSION_HEADER;
@@ -921,7 +933,7 @@ export function claimDueProbes(input: {
     const settled = previous?.credentialFingerprint === fingerprint ? previous : undefined;
     byProvider.set(provider, {
       provider,
-      catalogProvider: CATALOG_PROVIDER_BY_INTERNAL[provider] ?? settled?.catalogProvider ?? null,
+      catalogProvider: catalogProviderFor(provider) ?? settled?.catalogProvider ?? null,
       list: listAccess(list),
       inference: { status: 'unsettled', httpStatus: null, errorType: null },
       listed: settled?.listed ?? [],
@@ -1033,7 +1045,7 @@ export function finalizeProviderModelsChecks(input: {
     };
     const fingerprint = input.fingerprints.get(provider) ?? null;
     const previous = previousByProvider.get(provider);
-    const catalogProvider = CATALOG_PROVIDER_BY_INTERNAL[provider] ?? null;
+    const catalogProvider = catalogProviderFor(provider) ?? null;
     if (fingerprint === null || list.status === 'unconfigured') {
       checks.push(
         canonicalProviderCheck({

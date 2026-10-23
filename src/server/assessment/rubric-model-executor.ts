@@ -10,6 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { AgentRunError, isProviderSessionWallClockBudgetError } from '@/ai/agent-run-error';
+import type { RunTaskResult } from '@/ai/task-result';
 import { resolveTaskBudget } from '@/capabilities/task-registry';
 import {
   ASSESSMENT_RUBRIC_TIMEOUT_RETRIES,
@@ -30,7 +31,7 @@ import {
   traceMetadata,
   traceOperation,
 } from '@/server/ai/laminar-tracing';
-import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
+import type { RunTaskCtx } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
   createAssessmentAssetLoader,

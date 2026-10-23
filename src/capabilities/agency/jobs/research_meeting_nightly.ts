@@ -21,7 +21,7 @@
 // baseline_p_at_induction; accept/edit remains with the owner.
 
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { z } from 'zod';
 import type {
@@ -49,6 +49,12 @@ import {
   type InduceConjectureResult,
   induceConjecture,
 } from '@/capabilities/agency/server/conjecture/induce';
+import {
+  RESEARCH_MEETING_ACTOR,
+  type ResearchMeetingReconciliationDeps,
+  reconcileResearchMeetingExecution,
+  scheduledEventId,
+} from '@/capabilities/agency/server/conjecture/reconciliation-execution';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event, source_asset } from '@/db/schema';
@@ -67,12 +73,6 @@ import {
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
 } from '@/server/conjectures/accountability';
-import {
-  PREDICTION_SCORE_ACTION,
-  PROBE_RESULT_PROJECTED_ACTION,
-  type ReconcileResult,
-  reconcileConjecturePredictions,
-} from '@/server/conjectures/reconcile';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 
@@ -88,8 +88,6 @@ export const RESEARCH_MEETING_MAX_IMAGE_BYTES_PER_CELL = 24 * 1024 * 1024;
 export const RESEARCH_MEETING_MAX_IMAGE_PIXELS_PER_CELL = 40_000_000;
 /** Recency window for the failure scan. */
 export const RESEARCH_MEETING_WINDOW_DAYS = 14;
-/** actor_ref stamped on the trigger / scan events + each conjecture proposal. */
-export const RESEARCH_MEETING_ACTOR = 'research_meeting';
 
 export interface ResearchMeetingResult {
   /** top-K cells inducted this run (== conjectures attempted). */
@@ -145,7 +143,6 @@ const ResearchMeetingResultSchema = z
   });
 
 type DbLike = Db | Tx;
-type WriteEventFn = (db: DbLike, input: WriteEventInput) => Promise<string>;
 type WriteAiProposalFn = (db: DbLike, input: WriteAiProposalInput) => Promise<string>;
 type RunInTransactionFn = (db: Db, fn: (tx: DbLike) => Promise<void>) => Promise<void>;
 type RunWithExecutionLockFn = <T>(db: Db, executionId: string, fn: () => Promise<T>) => Promise<T>;
@@ -153,8 +150,6 @@ type LoadCompletedRunResultFn = (
   db: Db,
   executionId: string,
 ) => Promise<ResearchMeetingResult | null>;
-type LoadReconciliationResultFn = (db: Db, executionId: string) => Promise<ReconcileResult | null>;
-type CountReconciledForExecutionFn = (db: Db, executionId: string) => Promise<number>;
 type InduceConjectureFn = typeof induceConjecture;
 type GetFailureAttemptsWithTraceFn = typeof getFailureAttemptsWithReasoningTrace;
 type GetMasteryProjectionFn = typeof getMasteryProjection;
@@ -177,14 +172,6 @@ type LoadPredictionAccountabilityFn = (
 interface PreparedConjectureCell {
   cell: EnrichedEvidenceCell;
   evidenceImages: LoadedConjectureEvidenceImage[];
-}
-
-function scheduledEventId(
-  prefix: 'trigger' | 'scan' | 'reconciliation' | 'completion',
-  executionId: string,
-): string {
-  const digest = createHash('sha256').update(executionId).digest('hex').slice(0, 32);
-  return `research_meeting_${prefix}_${digest}`;
 }
 
 function conjectureCellEventId(
@@ -258,72 +245,6 @@ async function defaultLoadCompletedRunResult(
   return parsed.data.completed_result;
 }
 
-const ReconcileResultSchema = z.object({
-  reconciled: z.number().int().nonnegative(),
-  skipped: z.number().int().nonnegative(),
-});
-
-async function defaultLoadReconciliationResult(
-  db: Db,
-  executionId: string,
-): Promise<ReconcileResult | null> {
-  const [row] = await db
-    .select({ payload: event.payload })
-    .from(event)
-    .where(eq(event.id, scheduledEventId('reconciliation', executionId)))
-    .limit(1);
-  if (!row) return null;
-  const parsed = z
-    .object({
-      execution_id: z.literal(executionId),
-      reconcile_result: ReconcileResultSchema,
-    })
-    .safeParse(row.payload);
-  if (!parsed.success) {
-    console.error('[research_meeting_nightly] reconciliation checkpoint is unreadable', {
-      execution_id: executionId,
-      issues: parsed.error.issues,
-    });
-    throw new Error(
-      `research_meeting_nightly: reconciliation checkpoint is unreadable for execution ${executionId}`,
-    );
-  }
-  return parsed.data.reconcile_result;
-}
-
-async function defaultCountReconciledForExecution(db: Db, executionId: string): Promise<number> {
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(event)
-    .where(
-      and(
-        inArray(event.action, [PREDICTION_SCORE_ACTION, PROBE_RESULT_PROJECTED_ACTION]),
-        sql`${event.payload} ->> 'research_meeting_execution_id' = ${executionId}`,
-      ),
-    );
-  return row?.count ?? 0;
-}
-
-function buildReconciliationEventInput(
-  executionId: string,
-  result: ReconcileResult,
-  now: Date,
-): WriteEventInput {
-  const id = scheduledEventId('reconciliation', executionId);
-  return {
-    id,
-    actor_kind: 'system',
-    actor_ref: RESEARCH_MEETING_ACTOR,
-    action: 'experimental:research_meeting_reconciled',
-    subject_kind: 'query',
-    subject_id: id,
-    outcome: 'success',
-    payload: { execution_id: executionId, reconcile_result: result },
-    ingest_at: now,
-    created_at: now,
-  };
-}
-
 function buildCompletionEventInput(
   executionId: string,
   result: ResearchMeetingResult,
@@ -357,7 +278,7 @@ function isOperationalAbstain(result: InduceConjectureResult): boolean {
   );
 }
 
-export interface ResearchMeetingDeps {
+export interface ResearchMeetingDeps extends ResearchMeetingReconciliationDeps {
   now?: () => Date;
   /**
    * Stable for retries of one scheduled pg-boss execution, distinct for the next
@@ -379,23 +300,16 @@ export interface ResearchMeetingDeps {
   runTaskFn?: TaskTextRunFn;
   induceConjectureFn?: InduceConjectureFn;
   writeAiProposalFn?: WriteAiProposalFn;
-  writeEventFn?: WriteEventFn;
   /** Atomic durable boundary for trigger + per-cell outcomes/health + scan + completion. */
   runInTransactionFn?: RunInTransactionFn;
   /** Serialize every delivery of one stable pg-boss execution id before any work. */
   runWithExecutionLockFn?: RunWithExecutionLockFn;
   /** Redelivery guard: a committed completion means this logical execution is complete. */
   loadCompletedRunResultFn?: LoadCompletedRunResultFn;
-  /** Retry checkpoint for the reconcile half, persisted before proposal work. */
-  loadReconciliationResultFn?: LoadReconciliationResultFn;
-  /** Recover score writes if a crash happened before the reconcile checkpoint. */
-  countReconciledForExecutionFn?: CountReconciledForExecutionFn;
   writeRetryableAiFailureLedgerFn?: WriteRetryableAiFailureLedgerFn;
   resolveSubjectProfileFn?: ResolveSubjectProfileFn;
   /** Resolve every referenced asset to real image bytes before multimodal induction. */
   loadEvidenceImagesFn?: LoadEvidenceImagesFn;
-  /** Score prior probe outcomes → prediction_score event + typed-ledger. */
-  reconcileFn?: (db: Db) => Promise<ReconcileResult>;
 }
 
 /** Pending-conjecture dedup before the owner-decision/terminal history gate. */
@@ -780,17 +694,11 @@ async function runResearchMeetingNightlyClaimed(
     deps.runInTransactionFn ??
     ((database: Db, fn: (tx: DbLike) => Promise<void>) => database.transaction(fn));
   const loadCompletedRunResultFn = deps.loadCompletedRunResultFn ?? defaultLoadCompletedRunResult;
-  const loadReconciliationResultFn =
-    deps.loadReconciliationResultFn ?? defaultLoadReconciliationResult;
-  const countReconciledForExecutionFn =
-    deps.countReconciledForExecutionFn ?? defaultCountReconciledForExecution;
   const writeRetryableAiFailureLedgerFn =
     deps.writeRetryableAiFailureLedgerFn ?? writeRetryableAiFailureLedger;
   const resolveSubjectProfileFn = deps.resolveSubjectProfileFn ?? resolveSubjectProfile;
   const loadEvidenceImagesFn = deps.loadEvidenceImagesFn ?? defaultLoadEvidenceImages;
   const runTaskFn = deps.runTaskFn ?? makeDefaultRunTaskFn(db);
-  const reconcileFn =
-    deps.reconcileFn ?? ((d: Db) => reconcileConjecturePredictions(d, { executionId }));
   const persistCompletionOnly = async (result: ResearchMeetingResult): Promise<void> => {
     await runInTransactionFn(db, async (tx) => {
       await writeEventFn(tx, buildCompletionEventInput(executionId, result, now, null));
@@ -808,19 +716,7 @@ async function runResearchMeetingNightlyClaimed(
   // results append a score-free projection anchor. Runs BEFORE the propose half:
   // deterministic, idempotent (already-scored probes are excluded by the reader), and a
   // throw here is retryable so pg-boss retries the whole job.
-  let reconcileResult = await loadReconciliationResultFn(db, executionId);
-  if (!reconcileResult) {
-    // Both derived anchor actions are individually idempotent. Count anchor rows stamped by
-    // an earlier attempt (crash after reconcile, before checkpoint), then persist one
-    // deterministic aggregate checkpoint before proposal work.
-    const previouslyReconciled = await countReconciledForExecutionFn(db, executionId);
-    const freshResult = await reconcileFn(db);
-    reconcileResult = {
-      reconciled: previouslyReconciled + freshResult.reconciled,
-      skipped: freshResult.skipped,
-    };
-    await writeEventFn(db, buildReconciliationEventInput(executionId, reconcileResult, now));
-  }
+  const reconcileResult = await reconcileResearchMeetingExecution(db, executionId, now, deps);
   // Surface the aggregate skip count — a non-zero value flags data-quality drift (dangling /
   // unreadable conjecture refs) that the per-probe console.warn alone makes easy to miss.
   if (reconcileResult.skipped > 0) {

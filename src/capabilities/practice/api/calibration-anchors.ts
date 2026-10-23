@@ -4,15 +4,15 @@
 // { b: bucketToLogit(bucket), b_anchor: same, track:'hard', source:'fixed_anchor' }。
 // 这是 n=1 唯一不违红线的「校 LLM 难度系统性 offset」杠杆。
 //
-// 写真身在 server/mastery/fixed-anchor.ts（item_calibration 单写者契约——直接
-// insert/update 只允许出现在 src/server/mastery/）；本 handler 只 CALL
-// setFixedAnchors。θ̂ 读路径优先读非 NULL 锚，故新锚自动被选题 / θ̂ 更新读到。
+// 写真身在 Practice 的 server/fixed-anchor.ts，遵循 scripts/audit-fold-writes.ts 的
+// sanctioned off-path writer 政策；本 handler 只 CALL setFixedAnchors。
+// θ̂ 读路径优先读非 NULL 锚，故新锚自动被选题 / θ̂ 更新读到。
 //
 // Auth：/api/* internal-token 由组合根（server/app.ts）统一施加。
 
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { setFixedAnchors } from '@/server/mastery/fixed-anchor';
+import { setFixedAnchors } from '../server/fixed-anchor';
 import { FixedAnchorBodySchema } from './review-planning-contracts';
 
 export async function POST(req: Request): Promise<Response> {

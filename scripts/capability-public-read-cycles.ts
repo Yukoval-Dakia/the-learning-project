@@ -25,12 +25,14 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'knowledge',
     consumer: 'agency',
     files: [
+      'src/capabilities/agency/server/goals/commands.ts',
       'src/capabilities/agency/jobs/goal_scope_propose_nightly.ts',
       'src/capabilities/agency/server/goals/scope.ts',
       'src/capabilities/agency/server/misconception-promote.ts',
       'src/capabilities/agency/server/proposal-accept-applier.ts',
     ],
     symbols: [
+      'ensureSubjectRoot',
       'archiveMisconceptionEdge',
       'createLearningIntentKnowledgeNode',
       'createMisconceptionEdge',
@@ -41,6 +43,7 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'agency goal scoping reads the knowledge tree snapshot; misconception/intent accept paths run knowledge-owned commands. Failure-attempt and subject-resolution reads moved to kernel read models (YUK-892).',
     reviewIssue: 'YUK-885',
     commandFiles: [
+      'src/capabilities/agency/server/goals/commands.ts',
       'src/capabilities/agency/server/goals/scope.ts',
       'src/capabilities/agency/server/misconception-promote.ts',
       'src/capabilities/agency/server/proposal-accept-applier.ts',
