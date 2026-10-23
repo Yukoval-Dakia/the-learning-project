@@ -1,4 +1,3 @@
-import { initialSchedulingState } from '@/server/fsrs/state';
 // 增量 3 — verifyAndPromote 薄 tier-dispatcher (caller-agnostic gate).
 // plan §+ Gate 设计决策 (owner 拍板 b1). 三个 caller 的统一 gate 入口:
 // ① matcher lazy verify ② owner manual override (inc-4 UI) ③ 未来 pre-warm.
@@ -10,7 +9,7 @@ import { initialSchedulingState } from '@/server/fsrs/state';
 // acceptQuestionDraftProposal (proposal-appliers.ts:286) 的 draft→active+FSRS 同形逻辑 (参照，
 // 非 import)，与 run 函数同款 enroll-if-absent，绝不重置已有 schedule。
 // 边界纪律 : 本模块**只能** import runSourceVerify / runQuizVerify (正常分支
-// 转调) + 少量 promote 原语 (writeEvent / getFsrsState / upsertFsrsState / initialFsrsState，
+// 转调) + 少量 promote 操作 (writeEvent / enrollPromotedQuestionScheduling，
 // 仅 override 分支用)。派发判别按 source 字面 (web_sourced/quiz_gen)，比 deriveSourceTier 更稳。
 // **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
 // 那是「合并抽取」的滑坡，被 b1 决策否决。
@@ -23,10 +22,9 @@ import {
   QUESTION_AVAILABILITY,
 } from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // question_admission_run 经本既有 publish seam 取 publisher API，
@@ -35,7 +33,7 @@ export { publishQuestionGroup, publishQuestionGroupFromRow };
 
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { publishVerifyLifecycleUpdate, runSourceVerify } from '../../jobs/source_verify';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
+import { enrollPromotedQuestionScheduling } from '../question-scheduling-enrollment';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
 export interface VerifyAndPromoteParams {
@@ -225,35 +223,12 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
         .where(eq(question.id, questionId));
 
-      // FSRS enroll — per-knowledge enroll-if-absent (mirror quiz_verify / source_verify /
-      // acceptQuestionDraftProposal): never reset a node that already has a schedule;
-      // question-level fallback when the row carries no knowledge ids.
-      const enrollIfAbsent = async (subjectKind: 'knowledge' | 'question', subjectId: string) => {
-        // a synthetic subject root ('seed:<subj>:root') is a structural
-        // anchor, never a content KC: skip knowledge-level enrollment so an owner
-        // override can't mint a due card for an id the subject read axis already
-        // excludes (resolveSubjectKnowledgeIds). One choke covers the parent loop
-        // AND the composite-parts cascade below; a roots-only label set enrolls
-        // ZERO cards (it is labeled-but-anchor-only, not unlabeled — the
-        // question-level fallback stays reserved for a truly empty binding).
-        if (subjectKind === 'knowledge' && SYNTHETIC_SUBJECT_ROOT_RE.test(subjectId)) return;
-        const existing = await getFsrsState(tx, subjectKind, subjectId);
-        if (existing) return;
-        await upsertFsrsState(tx, {
-          subject_kind: subjectKind,
-          subject_id: subjectId,
-          ...initialSchedulingState(subjectId, now),
-          last_review_event_id: verifyEventId,
-        });
-      };
-      const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
-      if (fsrsSubjectIds.length > 0) {
-        for (const knowledgeId of fsrsSubjectIds) {
-          await enrollIfAbsent('knowledge', knowledgeId);
-        }
-      } else {
-        await enrollIfAbsent('question', questionId);
-      }
+      await enrollPromotedQuestionScheduling(tx, {
+        questionId,
+        knowledgeIds: row.knowledge_ids ?? [],
+        evidenceEventId: verifyEventId,
+        now,
+      });
 
       // composite cascade on owner override: a force-enabled 篇
       // parent must take its draft children with it (the same atomic-group rule
@@ -278,14 +253,12 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         )
         .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
       for (const part of promotedParts) {
-        const partKnowledgeIds = Array.from(new Set(part.knowledgeIds ?? []));
-        if (partKnowledgeIds.length > 0) {
-          for (const knowledgeId of partKnowledgeIds) {
-            await enrollIfAbsent('knowledge', knowledgeId);
-          }
-        } else {
-          await enrollIfAbsent('question', part.id);
-        }
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId: part.id,
+          knowledgeIds: part.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
       }
 
       // evidence-first 留痕: owner-override promote 写 actor_kind:'user' + skipped_verify:true

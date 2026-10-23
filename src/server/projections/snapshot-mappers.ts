@@ -10,65 +10,18 @@
 // genesis parse still runs at writeEvent in the backfill.
 
 import type {
-  ArtifactRowSnapshotT,
   ItemCalibrationRowSnapshotT,
-  KnowledgeRowSnapshotT,
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
-import type { artifact, item_calibration, knowledge, question_block } from '@/db/schema';
+import type { item_calibration, question_block } from '@/db/schema';
 
+export { artifactRowToSnapshot } from '@/kernel/records/artifact-history';
 /**
  * Map a live `knowledge` row to its structural snapshot. The embed_* columns are
  * derived search-index state, not fold truth, so they are omitted. Shared by the
  * genesis backfill and the migrate-time subject-root seed.
  */
-export function knowledgeRowToSnapshot(row: typeof knowledge.$inferSelect): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-/**
- * Map a live `artifact` row to ArtifactRowSnapshotT. artifact has no derived/embed
- * columns, so the full row is the snapshot. The jsonb columns pass through untouched:
- * the backfill's writeEvent parseEvent barrier validates them. Dates stay Date.
- */
-export function artifactRowToSnapshot(row: typeof artifact.$inferSelect): ArtifactRowSnapshotT {
-  return {
-    id: row.id,
-    type: row.type,
-    title: row.title,
-    parent_artifact_id: row.parent_artifact_id,
-    knowledge_ids: row.knowledge_ids ?? [],
-    intent_source: row.intent_source,
-    source: row.source,
-    source_ref: row.source_ref,
-    body_blocks: row.body_blocks,
-    attrs: row.attrs ?? {},
-    tool_kind: row.tool_kind,
-    tool_state: row.tool_state,
-    generation_status: row.generation_status,
-    verification_status: row.verification_status,
-    verification_summary: row.verification_summary,
-    generated_by: row.generated_by,
-    verified_by: row.verified_by,
-    history: row.history ?? [],
-    archived_at: row.archived_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
+export { knowledgeLiveRowToSnapshot as knowledgeRowToSnapshot } from '@/kernel/records/knowledge-node-history';
 
 /**
  * Map a live `question_block` row to QuestionBlockRowSnapshotT, excluding the legacy

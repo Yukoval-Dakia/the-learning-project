@@ -12,7 +12,8 @@ import { createPortal } from 'react-dom';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { IconButton, UiNextRoot } from '@/ui-next/public';
 import { HintLadder } from '../HintLadder';
-import { type QuestionDetail, revealStudyReference } from '../practice-api';
+import type { QuestionDetail } from '../practice-api';
+import { usePracticeClient } from '../practice-client';
 
 export interface SoloCoachProps {
   open: boolean;
@@ -24,6 +25,7 @@ export interface SoloCoachProps {
 }
 
 export function SoloCoach({ open, session, onClose, question, issuanceId }: SoloCoachProps) {
+  const { revealStudyReference } = usePracticeClient();
   const trapRef = useFocusTrap(open, onClose);
   return createPortal(
     <UiNextRoot className="un-ps-coach-root">

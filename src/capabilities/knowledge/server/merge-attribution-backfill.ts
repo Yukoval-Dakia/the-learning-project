@@ -11,6 +11,7 @@
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { MergeRepairEntryT } from '@/core/schema/event/known';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   goal,
   kc_typed_state,
@@ -23,7 +24,6 @@ import {
   misconception_edge,
   question,
 } from '@/db/schema';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { repairMergeAttributionForFromId } from './proposals';
 
 export interface MergeChainResolution {

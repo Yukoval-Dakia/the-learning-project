@@ -15,7 +15,7 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
 import { editQuestion } from '@/server/questions/write';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';

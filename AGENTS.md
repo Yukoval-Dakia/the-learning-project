@@ -1,258 +1,64 @@
 # Project agent guidance
 
-本文件是本仓库跨工具的 agent 指令真相源。Claude Code 通过根
-`CLAUDE.md` 导入本文件；工具专属的多步骤流程放在 skills，路径专属规则放在
-nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
+本文件是本仓库跨工具的 agent 指令真相源（Claude Code 经根 `CLAUDE.md` 导入），只放承重规则：多步骤流程在 skills，路径规则在 nested `AGENTS.md` / `.claude/rules`，机械约束在 hooks，命令矩阵与测试细则在 `docs/agents/development-workflow.md`。2026-10-23 大幅缩减（YUK-1649），被移除条文的原文与逐段去向见 `docs/planning/2026-10-23-agents-md-reduction.md`。
 
-## Owner rules — 2026-10-12
+## Owner rules
 
-- **禁止未经 owner 批准编写测试代码。** 如需新增或修改测试，先只写文本方案，
-  等 owner 后续明确批准该方案后才能写测试代码；旧计划、skill 或子任务要求不算批准。
-- **测试永不阻塞开发。** 不把测试的编写、运行、等待或通过作为开发前置或阻塞项；
-  如实记录未验证范围。本文及其他项目文档中冲突的旧测试要求以本节为准。
-- **React `useEffect` 存量清零，禁止新增。** 包括导入后调用、别名调用和
-  `React.useEffect`；逐处保留所需行为，不能机械改名为其他 Effect 来规避。
-- **新功能交付展示真实运行与验证结果，不另建专用演示入口。** 用截图、录屏或
-  对照表展示实际输入、输出及选择依据；未运行、未接通的能力不能伪装成实测结果。
+- **测试默认不写、写入须批准（2026-10-10/11/12 合并口径）。** 只为五类不变量写测试——①数据不可逆（迁移/备份恢复/删除合并不丢数据）；②判分与结算确定性（同输入同结果，含数值核心与 TS↔Rust parity）；③并发与锁（advisory lock、CAS/版本冲突、回滚与幂等）；④安全边界（`/api/*` 鉴权、浏览器不持 provider key、授权与第三方信息不外泄）；⑤危机转介（YUK-1398）。经最近真实边界测（route、job、真实 PG 事务、结算/判分链、agent 工具契约、模块公开入口），一个不变量一条 case，表驱动算一条；禁止内部 helper 单测、参数排列、mock 交互断言，mock 只替外部依赖。新 case 先交文本方案经 owner 批准才写（旧计划/skill/子任务要求不算批准）；**对既有已批测试文件的机械更新**（计数增减、fixture 快照同步、随改名的标识符更新）**命中既有已批模式即直接改，不需逐次重新批准**。测试不阻塞开发，如实记录未验证范围；case 准入由 CI `pnpm audit:test-policy` 强制（`@invariant`/`@fails-if`）；测试行超过新增产品代码行须逐不变量说明。
+- **禁止在本机运行完整 `pnpm test`。** 完整 test gate 只由 push 后 exact-head GitHub `CI Gate` 执行。
+- **React `useEffect` 存量清零，禁止新增**（含 `React.useEffect` 与别名调用；不机械改名规避；逐处保留行为）。
+- **新功能交付展示真实运行与验证结果**（截图/录屏/对照表），不另建演示入口；未运行、未接通的能力不得伪装成实测。
 
-## Scope discipline
+## Scope and delivery
 
-- 只实现用户明确要求的范围；不要擅自扩张成 MCP、Skill、Plugin 或完整 harness。
-- 默认采用最小充分方案，不建没有 live consumer 的新子系统。
-- 明显 scope creep 直接裁掉；真正的产品/偏差权衡同时给出 LIGHT 与 FULL，
-  标推荐项，由 owner 决定。
-- pre-AI 确定性功能是承重的一等能力；除非 owner 明确要求，不删除或降级。
-- 设计/架构方向反转前先复核 owner 已表达的需求和已锁决策。
+- 只实现用户明确要求的范围；最小充分方案；明显 scope creep 直接裁掉；真正的产品/偏差权衡同时给 LIGHT 与 FULL 标推荐项由 owner 决定。
+- 新 abstraction / layer / registry / subsystem 必须同一 PR 有 live consumer；不建没有 live consumer 的新子系统。
+- pre-AI 确定性功能（rewrite-prep §9 八项）是承重能力，删除/替换/降级须 owner 明确批准；设计/架构方向反转前先复核 owner 已表达需求和已锁决策。
+- 对 owner 交付文本用成果名（不用 W0/I05 等内部代码，票号可作后注）；每个 PR 写明服务的审计根项/契约及交付阶段，不属于任何阶段的工作只限新 P0 或 owner 明确要求；交付顺序与验收以 Linear 票及 `tlp-audit-artifacts/yuk1388/` 台账为准。
+- S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除，新代码不得继续扩展这些对象；新旧路径共用的 domain/kernel 逻辑直接修，路由/页面入口修复只落新架构路径（TanStack Start / DBOS / 同路由 ui-next），旧路径不重复修复（迁移前新 P0 除外）。
+- 开放想法与 PARKED 契约只在真实使用达到预注册样本量后开工。
 
-## Delivery stages and anti-slop rules (YUK-1388)
+## Session discipline
 
-- 对 owner 的交付文本用成果名，不用 W0/W1、I05、M073 等内部代码；票号可随后作参考。
-  阶段与内部波次对应如下：
-  - 第一天能用（W0）
-  - 帮助靠谱（W1）
-  - 按真实时间安排（W2）
-  - 说清不知道并检验（W3）
-  - 证明有效（W4）
-- 交付顺序与验收以 Linear 票及仓库外绝对路径 artifact 为准：
-  `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/I02/waves-v1.md`。
-- 新 abstraction、layer、registry 或 subsystem 必须在同一 PR 有 live consumer。
-- 每个 PR 写明服务的审计根项或契约及交付阶段；不属于任何阶段的工作，只限新 P0
-  或 owner 明确要求。
-- S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除；
-  新代码不得继续扩展这些对象。
-- 删除、替换或降级 rewrite-prep §9 的 8 项 pre-AI 承重能力，须 owner 明确批准；
-  未获批准时保持原样并上报（与上文 pre-AI 承重规则一致）。
-- 开放想法与 PARKED 契约，只有真实使用达到预注册样本量后才开工。
-- 新旧路径共用的 domain/kernel 逻辑直接修；路由/页面入口的修复落在新架构路径
-  （TanStack Start / DBOS / 同一路由的 ui-next），不在旧路径重复修复，除非该页面迁移前发现新 P0。
+- 涉及 ≥3 个独立步骤或多轮工具调用时维护 task plan；外部 SaaS / 本机权限 / 第三方 CLI 先做 30 秒 pre-flight（executable、version、env/auth、target resolution）。Session start 先核当前 Linear 任务；本 worktree 的 `PLAN.md`、`.remember/now.md` 存在时读取，缺失按当前任务需要创建、不从其他线复制状态。单 session 只推动一条 active 线。
+- 切分支前 `git fetch origin` 并核对 `git rev-list --count HEAD..origin/main`，非 0 从最新 `origin/main` 切；并行实施每 lane 独立 branch + worktree，同一 diff 只有一个写入者。
+- **微问题禁止委派（2026-10-23）。** 单文件、单字面量、单条 git/CI 状态查询由父线程自己用 Read/grep/gh 当场回答，不为此 spawn 子 agent；委派仅限：跨 ≥3 文件的综合调查、需要对抗独立性的 review、预计 ≥10 分钟的连续实施。委派任务 title 带切片标识（issue 号 + attempt_n），禁止同题裸重复派发。
+- subagent 按当前工具已注册角色与任务性质分流，角色不可用时先收敛任务再交可用执行者；模型 fallback 不是质量升级，质量不达标重新判断任务与角色。
+- 中途发现的 bug/follow-up 当场登记 Linear，已验证 follow-up 不留在最终回复/TODO/scratch；收尾时对齐 Linear 状态与开放 PR/worktree/workflow，协调线随 stage 生命周期退役（被取代的旧线当周归档）。
+- 全局任务、归属、进度、阻塞以 Linear 为准；per-PR 进度只写 Linear/GitHub。`PLAN.md` / `.remember/now.md` 仅是本 worktree 私有状态：不提交、不跨分支合并、不当全局真相源、不要求其他线更新。
 
-## Session and collaboration discipline
+## Architecture boundaries（必须保持）
 
-- 涉及至少 3 个独立步骤或多轮工具调用时维护 task plan。
-- 外部 SaaS、本机权限或第三方 CLI 先做 30 秒 pre-flight：
-  executable、version、required env/auth、target resolution；全通过再执行。
-- Session start 先核当前 Linear 任务；本 worktree 的 `PLAN.md`、`.remember/now.md`
-  存在时读取，需要时读本地其他交接。缺失时按当前任务需要创建，不从其他线复制状态。
-- 切分支前先 `git fetch origin` 并核对 `git rev-list --count
-  HEAD..origin/main`；非 0 就从最新 `origin/main` 切，不从本地 HEAD 切。
-- 单 session 只推动一条 active 线；全局任务、归属、进度和阻塞以 Linear 为准。
-  `PLAN.md`、`.remember/now.md` 仅记录本 worktree 的私有工作状态，不提交或跨分支合并。
-- 中途发现的 bug/follow-up 当场登记 Linear；暂记本地 `PLAN.md` PARKED 的项，
-  收尾前仍须完成 Linear capture。
-- 并行实施必须每 lane 独立 branch + worktree；不要让多个对等会话写同一工作树。
-- 创建 subagent 时按当前工具**已注册**角色与任务性质分流：实施路径和验收已定的
-  机械修改给 Fixer；目标明确但需本地调查、局部方案或调试的非 UI 实施给
-  Implementer；UI 交互与视觉给 Designer；高风险架构决策和独立复核给 Oracle。
-  角色不可用时由编排者先收敛任务，再交给可用执行者；同一 diff 不派两个写入者。
-- 具体模型、variant 和请求故障回退由当前工具配置决定；代码质量不达标须重新
-  判断任务与角色，不把模型 fallback 当作质量升级。
-- 收尾时对齐 Linear 状态、开放 PR/workflow/worktree，按需更新本 worktree 的
-  `PLAN.md` 和 `.remember/now.md`。代码、正式设计和交付结论按原流程提交，
-  本地看板与交接文件保持忽略，不纳入 commit。
-
-## UI design pre-flight
-
-2026-10-07 owner 持续委托见 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本委托范围内，agent 在实施前记录以下 pre-flight 并承担方案与验收责任，不再等待 owner 逐项批准；owner 后续限制优先。未获此委托的工作仍须先提交并等待批准：
-
-1. 逐字引用相关 design doc，给路径与行号/章节。
-2. 声明组件类型：drawer / route / modal / page / other。
-3. 列出将创建和修改的文件。
-
-纯文档、纯后端、纯 schema、纯测试或已批准 plan 的实施步骤不适用。批准后仍须
-遵循现有 design tokens、primitives 与 design-system 规则。
-
-## Runtime and architecture
-
-当前运行形态、端口、本地/NAS 设置和目录图以 `README.md` 为准；详细架构以当前代码和
-当前 ADR 为准。`docs/architecture.md` 与 `docs/modules/` 已知部分过时（自述残留
-`app/api/**`、`middleware.ts` 等历史描述，cron 注册描述也已过时），采信前先对照代码。
-
-必须保持的当前边界：
-
-- Hono API（`server/index.ts` + `server/app.ts`，含 TanStack Start 前门 `server/start/`）+
-  Vite SPA（`web/`）+ 独立 worker（`scripts/worker.ts`，同进程挂 pg-boss 队列与
-  DBOS durable 层 `src/server/durable/`）。
-- Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis。
-- blob storage 走 R2/S3-compatible client。
-- 后端 route/job/copilotTool 只能经
-  `src/capabilities/<name>/manifest.ts` 贡献到组合根。
-- `server/app.ts` 对 `/api/*` 校验 `x-internal-token`，仅
-  `/api/health` 与 `/api/ready` 豁免。
-- 浏览器不持 provider key；AI 调用只经 Hono route 或 worker。
-- `core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`；
-  科目专属知识是学科语境数据，不是新增代码（ADR-0068）。
-- AI 动作须可追踪、可逆，并保留现有 run logging。
-- `src/server/` 子模块精确清单以 `ls src/server/*/` 的当前输出为准，不硬编码数量。
-- Next.js、Vercel、Redis/ioredis、`:3000`、`middleware.ts` 描述均为历史，
-  除非当前代码或文档明确说明。
-- 多 provider 细节以 `src/server/ai/AGENTS.md` 为准。
-
-## Architecture no-regression checklist（YUK-1579，六项）
-
-独立审查逐项给出源码证据或 NOT_APPLICABLE。
-
-1. 一个 owner 拥有一项完整事实或完整操作；同一事实不允许两个模块各自拼装。
-2. 窄接口必须隐藏决策、状态与恢复复杂度；拒绝 pass-through 转发和时序耦合
-   （调用方必须按特定顺序做的事属于模块内部职责）。
-3. 判断深模块用两个真实变更场景下的局部理解/修改范围；行数、import 数
-   只是信号，不构成架构收益证明。
-4. 不新增 god file，不把业务规则写进 UI；调用方不得重写被依赖模块的内部
-   排序或决策。
-5. 事务边界、锁顺序、幂等、部分完成/恢复路径和兼容契约必须显式；如实区分
-   静态检查、CI 校验与真实运行验证，不把前者冒充后者。
-6. 新增依赖来源只能走既有 `public`/`ui-public` 规则或已批准的 kernel 端口；
-   所有 ratchet 台账记录必须与机器输出逐条一致（baseline `edgeRecords` /
-   `sourceSizeRecords` / `compatShims` / `changes`）。
+- Hono API（`server/index.ts` + `server/app.ts`，含 TanStack Start 前门 `server/start/`）+ Vite SPA（`web/`）+ 独立 worker（`scripts/worker.ts`，同进程 pg-boss 队列 + DBOS durable 层 `src/server/durable/`）。
+- Postgres + Drizzle 是真相源；editing presence 走 PG，无 Redis；blob storage 走 R2/S3-compatible client。
+- 后端 route/job/copilotTool 只经 `src/capabilities/<name>/manifest.ts` 贡献到组合根；`server/app.ts` 对 `/api/*` 校验 `x-internal-token`（仅 `/api/health`、`/api/ready` 豁免）。
+- 浏览器不持 provider key，AI 调用只经 Hono route 或 worker；AI 动作可追踪、可逆，保留 run logging。
+- `core/` 只放跨科目逻辑，科目专属逻辑留 `subjects/<name>/`（科目知识是学科语境数据，ADR-0068）；多 provider 细节以 `src/server/ai/AGENTS.md` 为准；`src/server/` 子模块清单以 `ls src/server/*/` 现状为准。Next.js、Vercel、Redis/ioredis、`:3000`、`middleware.ts` 均为历史描述。
+- 架构不回退审查（YUK-1579 六项，独立审查逐项给源码证据或 NOT_APPLICABLE）：①一个 owner 拥有一项完整事实/操作；②窄接口隐藏决策、状态与恢复复杂度，拒绝 pass-through 与时序耦合；③深模块以两个真实变更场景的局部理解/修改范围衡量，行数与 import 数只是信号；④不新增 god file，业务规则不进 UI，调用方不得重写被依赖模块的内部排序或决策；⑤事务边界、锁顺序、幂等、部分完成/恢复与兼容契约显式，静态检查、CI 与真实运行验证分开；⑥新增依赖只走既有 `public`/`ui-public` 规则或已批 kernel 端口，ratchet 台账与机器输出逐条一致。
 
 ## Development and verification
 
-命令矩阵、测试分区、audit 清单和 Postman 流程见
-`docs/agents/development-workflow.md`。audit allowlist 的具体契约见
-`audits-reference` skill；完整 test gate 的执行位置以下述约束为准。
-
-常用本地入口：
-
-```bash
-pnpm dev:local
-pnpm vitest run --config vitest.unit.config.ts <test-file>
-pnpm vitest run --config vitest.db.config.ts <test-file>
-pnpm test:migration
-pnpm typecheck
-pnpm lint
-pnpm build
-```
-
-- 使用 pnpm；不要引入 npm/yarn lockfile。
-- **禁止在本机运行完整 `pnpm test`**；完整 test gate 只由 push 后的 exact-head
-  GitHub `CI Gate` 执行。本机不以 full `pnpm test` 作为 pre-PR 条件。
-- 下列测试规则都受顶部 Owner rules 约束：任何测试代码都先交文本方案、经 owner 批准才写；
-  测试不阻塞开发。
-- **默认不写测试（owner 2026-10-10，YUK-1401）。** 只有改动触及下列不变量时才写或
-  更新测试，且断言必须在该不变量被破坏时真的失败：
-  1. 数据不可逆：迁移、备份恢复不丢列、删除/合并不丢数据；
-  2. 判分与结算的确定性：同输入同分数/同状态，含数值核心与 TS↔Rust parity；
-  3. 并发与锁：advisory lock、CAS/版本冲突、事务回滚与幂等重试；
-  4. 安全边界：`/api/*` 鉴权与豁免、浏览器不持 provider key、授权与第三方信息不外泄；
-  5. 危机转介（YUK-1398）。
-- 五类不变量优先于下面的排除项：helper、DTO、UI 行为若承载上述不变量（如确定性
-  判分、幂等、隐私隔离），仍按不变量写测试（从哪进入见下条）。除此之外不写：只验证 UI/组件渲染、
-  DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档结构、实现细节，或只断言
-  “被调用/存在”的测试，以及为覆盖率补的测试。
-  修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
-- **禁止细小测试（owner 2026-10-11）。** 五类不变量决定*要不要*写，本条决定*从哪
-  进入*：承载不变量的 helper 也经最近的真实边界或其模块公开入口测，不单测 helper。
-  真实边界指 route、job、DB 事务（含在真实 Postgres 上跑的锁/CAS/幂等原语）、
-  结算/判分链、agent 工具契约，或确定性核心模块的公开入口（模块 index 导出的函数；
-  TS↔Rust parity 套件算公开入口）。一个不变量一条 case；表驱动算一条；分支或边界值
-  只有删掉它会放过一个别的 case 抓不到的具体缺陷时才另写（`@fails-if` 须写明该缺陷）。
-  禁止：内部 helper 单测、同一路径参数排列、断言 mock 交互或调用次数。mock 只替
-  外部依赖（provider、网络、时钟、blob 存储）；依赖 DB 的不变量放 DB 测试分区用真实 PG。
-- **测试多于代码须说明。** 一个 PR 新增测试行（含 fixture）超过新增产品代码行
-  （`src/**`、`server/**`、`web/**`、`scripts/**` 非测试文件与 migration SQL）时，PR 描述须
-  逐个不变量说明；这是说明触发线不是硬上限，说明不了的删掉。独立审查必须核对。
-- 新增或修改 case 的准入由 `pnpm audit:test-policy` 在 CI 强制执行；须在该 case
-  前声明 `@invariant` 类别/保护结果及 `@fails-if` 具体缺陷。格式和审查要求见
-  `docs/agents/development-workflow.md` 的 Test admission。标签本身不构成正确性证明。
-- 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者
-  结果对账，并封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；
-  不用 mock 单元测试冒充。
-- 本机只运行改动触及的不变量测试（若有），以及 `pnpm typecheck`、`pnpm lint`、
-  `pnpm build`。
-- `pnpm build` 必须作为本机 pre-PR gate，负责捕获 tsc/Biome/Vitest 未覆盖的 bundle
-  错误。
-- 修改 API route 时同步 `postman/api-endpoints.json` 并运行
-  `pnpm gen:postman`。
-- 文件权限必须尊重 umask；不要硬编码 mode bits。
-
-## Planning and documentation
-
-- 架构/设计决策写入版本化 planning docs 与 ADR。
-- `PLAN.md` 是本 worktree 可选的 ≤200 行本地活看板，`.remember/now.md` 是本地交接；
-  两者均不由 Git 跟踪，也不充当全局任务真相源。只写本线状态，四栏就地改写，
-  过期过程记录留在本地 `.remember/`。长期需求、已批准设计与决策仍写入版本化
-  planning docs / ADR，不因本地交接而省略。
-- README 是当前 stack 与本地/NAS 入口；runtime 形态改变时同步更新。
-- Single-context domain layout 使用根 `CONTEXT.md` 与 `docs/adr/`。
-- 批量证据外置：新增批量审计/验收证据（日志、tar.gz、截图、actual-output 封存等）
-  永久存放仓库外 `tlp-audit-artifacts/<line-or-issue>/<head>/`（本仓指
-  `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/`，架构线必须落在其
-  `architecture-deepening/` 子路径下）；git 只保留结论、命令、revision、外部路径与
-  SHA256 摘要。git 历史不重写；把既有批量证据从 HEAD 删除前，必须先完成外置复制、
-  hash 核验并在 git 内建立指针引用，且逐批提交协调线查看——协调线确认该批次前
-  不得删除。仓库内代码/测试仍按各自规则读取所需 fixture，不受本条影响。
-
-## Linear issue tracking
-
-Linear（Yukoval Studios / YUK）是新规划和跟进的权威 tracker；GitHub Issues 只保留
-历史用途。完整流程见 `docs/agents/issue-tracker.md`，标签见
-`docs/agents/triage-labels.md`。
-
-- branch、commit、PR 使用 `YUK-NN`；多 issue 时逐个重复
-  `Closes YUK-NN`，不要写 `Closes YUK-1 + YUK-2`。
-- 实施、审计、规划或迁移任务结束前执行 Linear capture gate：
-  先搜索重复，再创建/更新本次发现的 actionable follow-up；若没有，明确说明原因。
-- 触及的 issue 状态必须当场与代码现实对齐，不留虚假的 In Progress。
-- 已验证 follow-up 不得只留在最终回复、TODO 或 scratch doc。
-
-## Code search
-
-- 未知位置/概念检索先用 `ykv-code-index.search_code`。
-- 已知符号、引用或文件结构用 Serena；每 session 首次使用先调用
-  `serena.initial_instructions`。
-- grep/rg 用于已知字面量、regex 和文件名；grep 无结果不能直接断言不存在。
-- 索引结果明显偏靶时检查 index health，再用其他检索面交叉验证。
-- Serena 行号为 0-based。
-
-## Tooling and settings
-
-- MCP/tool/plugin 配置在 session start 时快照；新增或换名后需新 session 才能验证。
-- 不在项目任务中修改用户级 provider/auth/telemetry 配置。
-- 用户级 Claude settings 若受 self-modification 保护，给用户精确 diff；项目级
-  `.claude/settings.json` 可直接修改。
-- hooks 负责确定性约束；AGENTS/skills 负责行为和流程。不要在提示词里要求忽略
-  hook、工具结果或运行时 context。
-
-## Deployment
-
-2026-10-07 起 owner 指定生产部署与运维在这台 Mac，沿用 Docker Compose 的 app、worker、migrate、mem0-init 和 Postgres/pgvector（worker 是独立镜像 target，叠加 playwright/Chromium 供 `worksheet_render`），默认本机访问。Cloudflare Tunnel / NAS 是可选历史部署方式，不是当前发布目标。部署授权持续有效，数据恢复、独立审查与验收要求仍保留。当前入口见 `README.md` 和[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。
+- 使用 pnpm，不引入 npm/yarn lockfile。常用：`pnpm dev:local`、`pnpm vitest run --config vitest.unit.config.ts <file>`、`pnpm vitest run --config vitest.db.config.ts <file>`、`pnpm test:migration`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
+- 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build；`pnpm build` 是 pre-PR gate。watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
+- 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；不用 mock 单测冒充。
+- 修改 API route 时同步 `postman/api-endpoints.json` 并运行 `pnpm gen:postman`；文件权限尊重 umask，不硬编码 mode bits。
 
 ## Review, merge, and delivery
 
-- authoring 与独立 review 分离；review agent 必须能读取真实 diff。
-- **Merge 时机（owner 2026-10-21 更新）**：取消为等待 Codex advisory review 设置的约 17 分钟等待窗，不再创建等待窗计时任务。本地现行验证、独立 review、exact-head CI Gate 全绿且所有已出现的 P0/P1 均已裁决（回复 + 修复或 rationale-skip）后，即可按固定 head 合并。未出现或失败的 advisory review 不增加等待时间，也不触发额外审查轮次；既有审查预算不变。
-- **Review budget（owner 2026-07-30 拍板）**：自动 review 是 advisory，不是 CI correctness
-  gate。每个 PR 最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后出现的新 bot review
-  不重置预算，除非 owner 明确要求，不得启动第三轮。
-- 只在当前 PR 修复经验证的 P0/P1：security、data loss、correctness failure、release
-  blocker。P2/minor/nit/hygiene/refactor/performance 默认不阻塞：回复 skip rationale 后
-  resolve；只有实质且可执行的 follow-up 才在去重后进 Linear，不得一条 nit 开一个
-  issue，也不得把跳过写成已修复。
-- exact-head `CI Gate` 绿色且没有未裁决的 P0/P1 后，不等待、不重跑 pending / failed /
-  cancelled / timed-out 的 Codex、CodeRabbit 等 advisory review check。
-- 修复 PR review 后，在 commit + push 后回复/resolve 对应 review threads；跳过的非阻塞
-  finding 可回复 rationale 后 resolve，不能声称已修复。
-- 本机 scoped 验证与 typecheck/lint/build、独立 review，以及 push 后 exact-head
-  GitHub `CI Gate` 全绿后可自主 merge，并按 owner 已授权流程部署；owner 可随时指定
-  人工合并。
-- 危险 git guard 被触发时停下查原因，不绕过；不要 force push、force-delete branch、
-  或 `git worktree remove --force`。
+- authoring 与独立 review 分离，review agent 必须能读真实 diff。
+- **Review 分级（2026-10-23，替代全量多 lane 要求）。** Tier A：diff 触及 `src/core/`、schema/migration、鉴权、`src/server/ai/`、quota/付费、worker job，或 >500 行——走完整多 lane 独立审。Tier B（其余默认）：一轮独立初审 + exact-head CI Gate。两个 Tier 都是每 PR 最多初审一轮 + P0/P1 修复后验证审一轮，不启第三轮（owner 明确要求除外）。
+- 只修经验证的 P0/P1（security、data loss、correctness failure、release blocker）；P2/minor/nit/hygiene/refactor/performance 不阻塞，回复 skip rationale 后 resolve；实质可执行 follow-up 去重后进 Linear，不一条 nit 开一票，不把跳过写成已修复。
+- **无合并等待窗（2026-10-21）。** 本地现行验证、独立 review、exact-head `CI Gate` 全绿且已出现的 P0/P1 全部裁决后，即可按固定 head 合并；不等待、不重跑 pending/failed/cancelled 的 advisory review check，不创建等待窗计时任务。
+- **PR 栈深 ≤3（2026-10-23）。** 第 3 轮 rebase 仍不可合并即弃栈，从最新 `origin/main` 重切；追 main 用 `gh pr update-branch` 一条命令完成，不委派 agent 任务。
+- 修完 review 后先 commit + push 再回复/resolve 对应 threads；全绿后可自主 merge 并按 owner 已授权流程部署（owner 可随时指定人工合并）。
+- 危险 git guard 触发时停下查原因，不绕过；禁止 force push、force-delete branch、`git worktree remove --force`。
+
+## Planning, docs, and tracking
+
+- 架构/设计决策写版本化 planning docs 与 ADR；README 随 runtime 形态同步；domain layout 用根 `CONTEXT.md` 与 `docs/adr/`。
+- 批量证据外置 `tlp-audit-artifacts/<line-or-issue>/<head>/`（架构线必须落在 `architecture-deepening/` 子路径）；git 只留结论、命令、revision、外部路径与 SHA256 摘要；git 历史不重写；把既有批量证据从 HEAD 删除前必须先外置复制、hash 核验、建 git 指针并经协调线逐批确认。
+- Linear（Yukoval Studios / YUK）是权威 tracker，GitHub Issues 仅历史。branch/commit/PR 用 `YUK-NN`；多票逐个 `Closes YUK-NN`；任务收尾执行 capture gate（先查重再建/更新 actionable follow-up，没有则说明原因）；触及的 issue 状态当场与代码现实对齐。流程见 `docs/agents/issue-tracker.md`，标签见 `docs/agents/triage-labels.md`。
+- 代码检索：概念/未知位置先 `ykv-code-index.search_code`；已知符号/引用用 Serena（每 session 首次先 `serena.initial_instructions`，行号 0-based）；已知字面量/regex/文件名用 grep，无结果不断言不存在；索引偏靶时查 index health 再交叉验证。
+- UI 实施在 2026-10-07 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md) 范围内自主进行：pre-flight 引用 design doc 原文（路径+行号）、声明组件类型（drawer/route/modal/page）、列出创建与修改文件；遵循既有 design tokens/primitives/design-system。
+- 生产部署与运维在本机 Docker Compose（app、worker、migrate、mem0-init、Postgres/pgvector，worker 含 playwright/Chromium），默认本机访问；入口见 `README.md` 与授权 charter；数据恢复、独立审查与验收要求保留。
+- MCP/tool/plugin 配置 session start 快照，新增换名需新 session 验证；不在项目任务中改用户级 provider/auth/telemetry；用户级 Claude settings 若受 self-modification 保护，给用户精确 diff，项目级 `.claude/settings.json` 可直接修改；hooks 负责确定性约束，不在提示词里要求忽略 hook、工具结果或运行时 context。

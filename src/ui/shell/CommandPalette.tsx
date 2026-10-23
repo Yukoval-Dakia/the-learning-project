@@ -15,7 +15,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
+import type { KnowledgeTreeNode } from '@/capabilities/knowledge/ui-public';
+import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
@@ -96,12 +97,13 @@ function OpenCommandPalette({
 }: Omit<CommandPaletteProps, 'open'> & {
   trapRef: (panel: HTMLElement | null) => (() => void) | undefined;
 }) {
+  const { getTree } = useWorkbenchClient();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
 
   // 知识节点 open 时才 fetch（设计 index 在 open 时构建）；与 KnowledgePage 同
   // queryKey ['knowledge-tree'] → React Query 去重，不增请求。
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => getTree() });
   const knowledge = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
 
   // 全量 index（页面组静态 + 知识节点组）。设计 paletteIndex 等价物。

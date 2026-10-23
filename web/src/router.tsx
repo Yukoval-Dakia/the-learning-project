@@ -36,10 +36,9 @@ import {
   loadWelcomePage,
 } from '@/capabilities/onboarding/ui-public';
 import {
-  loadDraftReviewPage,
   loadPracticeFacePage,
-  loadQuestionDetailPage,
-  loadQuestionsPage,
+  loadQuestionLibraryPage,
+  loadQuestionPage,
   loadWorksheetPrintPage,
 } from '@/capabilities/practice/ui-public';
 import { loadCoachHub, loadInboxPage, loadTodayPage } from '@/capabilities/shell/ui-public';
@@ -185,19 +184,14 @@ const inboxRoute = createRoute({
   component: InboxRoute,
 });
 
-// Usability Step1 (YUK-354) — 错题本面（loom screen-mistakes ScreenMistakes）。闭合
-// record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
-// 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
-// Vite development fallback only. YUK-1359 owns its final removal.
-const MistakesRoute = import.meta.env.PROD
-  ? StartPageEntry
-  : lazyNavigableRoute(() => import('./routes/MistakesPage').then((module) => module.default));
-
+// YUK-1473 — 错题 is the 「做错过」 view of 题目. /mistakes stays a working address: the SPA
+// redirects here; a direct document load is redirected by the Start route.
 const mistakesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('mistakes'),
-  beforeLoad: startDocumentBeforeLoad,
-  component: MistakesRoute,
+  beforeLoad: () => {
+    throw redirect({ href: '/questions?view=mistakes', replace: true });
+  },
 });
 
 const AgentNotesRoute = import.meta.env.PROD
@@ -239,8 +233,8 @@ const eventDetailRoute = createRoute({
 });
 
 // M1-T6 (YUK-314) — 录入面。query 读写直接走 window.location + history.replace：
-// getQuery 只在 VisionTab 的 mount-only 恢复 effect 里读一次（不需要 reactive
-// 订阅）；setQuery 是 replace 语义（?ingest= 进行中会话的持久化/清除）。
+// getQuery 只在页面首次渲染时读一次 ?ingest=（打开的那次录入，不需要 reactive
+// 订阅）；setQuery 是 replace 语义（打开/收起一次录入时写入或清除）。
 const RecordRoute = lazyRouteComponent(async () => {
   const RecordPage = await loadRecordPage();
 
@@ -336,37 +330,47 @@ const practiceRoute = createRoute({
   component: PracticeRoute,
 });
 
-// inc-4b (YUK-403) — 草稿审核面（owner manual gate /drafts）。loom
-// screen-draft-review。导航走壳层 prop 注入（同 PracticeRoute），page 自持
-// list/detail query + verify/force-enable mutation。
-const DraftReviewRoute = lazyNavigableRoute(loadDraftReviewPage);
-
+// YUK-1473 — 待审核 is a view of 题目 (/questions?status=draft); /drafts keeps working.
 const draftsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('drafts'),
-  component: DraftReviewRoute,
+  beforeLoad: () => {
+    throw redirect({ href: '/questions?status=draft', replace: true });
+  },
 });
 
-// YUK-409 / YUK-413 — 题库面（loom screen-questions）+ 题详情面（loom
-// screen-question-detail）。导航走壳层 prop 注入（同 PracticeRoute/DraftReviewRoute），
-// page 自持 list query（多轴筛选 + composite 展开 + variant lineage）。row-click →
-// /questions/$id（QuestionDetailPage：inline 编辑 + 变体家族 + 约束删除，YUK-413 替
-// YUK-409 的 stub）。
-const QuestionsRoute = lazyNavigableRoute(loadQuestionsPage);
+// YUK-1473 — 题目: one library with four views; the view and scope live in the query string.
+const QuestionLibraryRoute = lazyRouteComponent(async () => {
+  const LibraryPage = await loadQuestionLibraryPage();
+
+  function QuestionLibraryRouteComponent() {
+    const router = useRouter();
+    const searchStr = useRouterState({ select: (s) => s.location.searchStr });
+    return (
+      <LibraryPage
+        searchStr={searchStr}
+        navigate={(to) => router.history.push(to)}
+        replace={(href) => router.history.replace(href)}
+      />
+    );
+  }
+
+  return { default: QuestionLibraryRouteComponent };
+});
 
 const questionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('questions'),
-  component: QuestionsRoute,
+  component: QuestionLibraryRoute,
 });
 
 const QuestionDetailRouteC = lazyRouteComponent(async () => {
-  const QuestionDetailPage = await loadQuestionDetailPage();
+  const QuestionPage = await loadQuestionPage();
 
   function QuestionDetailRouteComponent() {
     const router = useRouter();
     const { id } = questionDetailRoute.useParams();
-    return <QuestionDetailPage id={id} navigate={(to) => router.history.push(to)} />;
+    return <QuestionPage id={id} navigate={(to) => router.history.push(to)} />;
   }
 
   return { default: QuestionDetailRouteComponent };
@@ -443,21 +447,24 @@ const notesRoute = createRoute({
 });
 
 // M3-T7 (YUK-317) — 笔记阅读器/编辑器。
-const NoteReaderRouteC = lazyRouteComponent(async () => {
-  const NoteReaderPage = await loadNoteReaderPage();
+const NoteReaderRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const NoteReaderPage = await loadNoteReaderPage();
 
-  function NoteReaderRouteComponent() {
-    const router = useRouter();
-    const { id } = noteReaderRoute.useParams();
-    return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function NoteReaderRouteComponent() {
+        const router = useRouter();
+        const { id } = noteReaderRoute.useParams();
+        return <NoteReaderPage id={id} navigate={(to) => router.history.push(to)} />;
+      }
 
-  return { default: NoteReaderRouteComponent };
-});
+      return { default: NoteReaderRouteComponent };
+    });
 
 const noteReaderRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('note-detail'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: NoteReaderRouteC,
 });
 
@@ -465,11 +472,12 @@ const noteReaderRoute = createRoute({
 // S13 (YUK-335)：owner override 设计 app.jsx:106「admin separate shell」——admin
 // 路由现照常套主 chrome（RootShell .app 壳），不为 admin 特判跳过 chrome
 //（见 docs/audit/2026-06-13-visual-gap.md §5 决策点③，owner 已拍板收编）。
-const CoachRoute = lazyNavigableRoute(loadCoachHub);
+const CoachRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadCoachHub);
 
 const coachRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('coach'),
+  beforeLoad: startOnboardingBeforeLoad,
   component: CoachRoute,
 });
 

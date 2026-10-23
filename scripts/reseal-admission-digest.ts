@@ -27,7 +27,17 @@ function rejectUnknownArgs(): void {
 
 async function reportDatabase(): Promise<number> {
   const { db } = await import('@/db/client');
-  const report = await resealAdmissionDigests(db, { apply: APPLY });
+  const report = await resealAdmissionDigests(db, {
+    apply: APPLY,
+    ...(APPLY
+      ? {
+          readAssetBytes: async (storageKey: string) => {
+            const { getR2 } = await import('@/server/r2');
+            return getR2().get(storageKey);
+          },
+        }
+      : {}),
+  });
   console.log(JSON.stringify(report));
   if (report.failed.length === 0) return 0;
   console.error(report.failed.map((row) => row.cause).join('\n'));

@@ -4,6 +4,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
+import { aiAgentRef } from '@/ai/task-result';
 import {
   bodyBlocksHaveSemanticKinds,
   bodyBlocksToBlockSummaries,
@@ -31,7 +32,7 @@ import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

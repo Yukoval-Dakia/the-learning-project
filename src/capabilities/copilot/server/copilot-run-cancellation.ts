@@ -1,11 +1,24 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
+import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
-import { job_events } from '@/db/schema';
-import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
+import { event, job_events, tool_operation } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
+import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotReply } from './conversation-writes';
-import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
+import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+  hasCancelRequest,
+  isCopilotRunTerminalEvent,
+} from './copilot-run-status';
+import {
+  readCopilotDurableAcceptanceByRunId,
+  withCopilotDurableDispatchLock,
+} from './durable-dispatch';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
 import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
+import { cancelSubagentsForParentTx } from './subagent-mailbox';
 
 export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
 export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
@@ -266,4 +279,175 @@ export function createCopilotRunCancellationControl(options: {
       });
     },
   };
+}
+
+export type CancelCopilotRunStatus =
+  | 'cancel_requested'
+  | 'cancelled'
+  | 'already_requested'
+  | 'already_settled';
+
+/** Request cooperative cancellation of one accepted durable Copilot run. */
+export async function requestCopilotRunCancellation(
+  db: Db,
+  runId: string,
+  wakeSession?: (sessionId: string) => Promise<unknown>,
+): Promise<CancelCopilotRunStatus> {
+  const result = await withCopilotDurableDispatchLock(db, runId, async (tx) => {
+    // Lock order is always dispatch -> settlement. The worker's paid loop
+    // holds neither lock; only its fence and short outcome commit do.
+    await acquireCopilotExecutionSettlementLock(tx, runId);
+
+    const acceptance = await readCopilotDurableAcceptanceByRunId(tx, runId);
+    if (!acceptance) throw new ApiError('not_found', 'copilot run not found', 404);
+
+    // A QUEUED row alone is not enough: bind the public handle back to the
+    // canonical input event and its fixed conversation session.
+    const roots = await tx
+      .select({ id: event.id, action: event.action })
+      .from(event)
+      .where(
+        and(
+          eq(event.id, runId),
+          inArray(event.action, [
+            'experimental:copilot_user_ask',
+            'experimental:copilot_chip_trigger',
+          ]),
+          eq(event.session_id, acceptance.sessionId),
+        ),
+      )
+      .limit(1);
+    if (roots.length === 0) throw new ApiError('not_found', 'copilot run not found', 404);
+    const typedAsk = roots[0]?.action === 'experimental:copilot_user_ask';
+
+    const events = await tx
+      .select({
+        id: job_events.id,
+        event_type: job_events.event_type,
+        payload: job_events.payload,
+      })
+      .from(job_events)
+      .where(
+        and(eq(job_events.business_table, COPILOT_RUN_TABLE), eq(job_events.business_id, runId)),
+      )
+      .orderBy(asc(job_events.id));
+
+    const toolTaskRunId = `copilot_run_tool_${runId}`;
+    const runningOwnedOperations = await tx
+      .select({ id: tool_operation.id })
+      .from(tool_operation)
+      .where(
+        and(
+          eq(tool_operation.session_id, acceptance.sessionId),
+          eq(tool_operation.status, 'running'),
+          or(
+            eq(tool_operation.task_run_id, toolTaskRunId),
+            and(
+              sql`left(${tool_operation.task_run_id}, char_length(${toolTaskRunId})) = ${toolTaskRunId}`,
+              sql`substring(${tool_operation.task_run_id} from char_length(${toolTaskRunId}) + 1) ~ '^_retry_[1-9][0-9]*$'`,
+            ),
+          ),
+        ),
+      )
+      .limit(1);
+    const hasRunningOwnedOperation = runningOwnedOperations.length > 0;
+
+    if (events.some(isCopilotRunTerminalEvent) && !hasRunningOwnedOperation) {
+      return { status: 'already_settled' as const, sessionId: acceptance.sessionId };
+    }
+
+    // The domain outcome is authoritative even when its public DONE/FAILED
+    // suffix has not yet been projected.
+    const markers = await tx
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:copilot_reply'),
+          eq(event.caused_by_event_id, runId),
+          inArray(event.outcome, ['success', 'failure']),
+        ),
+      )
+      .limit(1);
+    if (markers.length > 0 && !hasRunningOwnedOperation) {
+      return { status: 'already_settled' as const, sessionId: acceptance.sessionId };
+    }
+
+    const executionStarted = events.some(
+      (item) => item.event_type === COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+    );
+    const queued = events.find((item) => item.event_type === COPILOT_RUN_EVENTS.QUEUED);
+    const actorRef =
+      queued?.payload.triggered_by === 'chip' ? 'agent:copilot_chip' : 'agent:copilot';
+    if (hasCancelRequest(events)) {
+      // A pre-fence orphan request can only come from legacy/manual data: a
+      // normal endpoint call writes request + terminal in this transaction.
+      if (!executionStarted) {
+        await persistCopilotRunCancellationMarker(tx, {
+          runId,
+          sessionId: acceptance.sessionId,
+          actorRef,
+          checkpointSafe: typedAsk,
+        });
+        await writeJobEvent(tx, {
+          business_table: COPILOT_RUN_TABLE,
+          business_id: runId,
+          event_type: COPILOT_RUN_EVENTS.FAILED,
+          payload: {
+            reason: 'cancelled',
+            cancelled_before_start: true,
+            ...(typedAsk ? { checkpoint_event_id: runId } : {}),
+          },
+        });
+        return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
+      }
+      return { status: 'already_requested' as const, sessionId: acceptance.sessionId };
+    }
+
+    await writeJobEvent(tx, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      payload: { requested_by: 'user', requested_at: new Date().toISOString() },
+    });
+    await cancelSubagentsForParentTx(tx, acceptance.sessionId, toolTaskRunId, 'user');
+
+    if (executionStarted || hasRunningOwnedOperation) {
+      return { status: 'cancel_requested' as const, sessionId: acceptance.sessionId };
+    }
+
+    // The shared dispatch lock makes this atomic with the paid-execution
+    // fence: once this commits, the worker cannot enter model/tool execution.
+    await persistCopilotRunCancellationMarker(tx, {
+      runId,
+      sessionId: acceptance.sessionId,
+      actorRef,
+      checkpointSafe: typedAsk,
+    });
+    await writeJobEvent(tx, {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: runId,
+      event_type: COPILOT_RUN_EVENTS.FAILED,
+      payload: {
+        reason: 'cancelled',
+        cancelled_before_start: true,
+        ...(typedAsk ? { checkpoint_event_id: runId } : {}),
+      },
+    });
+    return { status: 'cancelled' as const, sessionId: acceptance.sessionId };
+  });
+
+  if (wakeSession && (result.status === 'cancelled' || result.status === 'already_settled')) {
+    // Cancellation/terminalization is already committed. A wake failure must
+    // not turn a successful Stop into a false failure; the reconciler retries.
+    await wakeSession(result.sessionId).catch((error) => {
+      console.error('[copilot/cancel-run] failed to dispatch next session head', {
+        session_id: result.sessionId,
+        run_id: runId,
+        error,
+      });
+    });
+  }
+
+  return result.status;
 }

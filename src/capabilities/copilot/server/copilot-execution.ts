@@ -1,5 +1,7 @@
 import { observeTaskOperation } from '@/ai/task-observation';
+import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
+import type { PiAfterToolCall } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -17,13 +19,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
-import type { PiAfterToolCall } from '@/server/ai/pi-hooks';
-import {
-  type RunTaskResult,
-  type StreamCollectResult,
-  runAgentTask,
-  streamTaskCollecting,
-} from '@/server/ai/runner';
+import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import {
   type BuildMcpServerOptions,
   shouldEmitToolUseForCaller,
@@ -156,7 +152,7 @@ export type ExecuteCopilotTurn = (
 type AgentResult = Pick<RunTaskResult, 'task_run_id' | 'text'> & { finishReason?: string };
 type StreamResult = Pick<
   StreamCollectResult,
-  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error'
+  'task_run_id' | 'text' | 'terminalText' | 'partial' | 'error' | 'failure'
 > & { finishReason?: string };
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
@@ -565,7 +561,10 @@ export function createCopilotExecutionOwner(
       const finalization = await observeTaskOperation(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
-          const finalized = await finalizer.finalizeTerminal(terminalText);
+          const finalized = await finalizer.finalizeTerminal(
+            partial ? '' : terminalText,
+            partial ? result.failure : undefined,
+          );
           reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
         },

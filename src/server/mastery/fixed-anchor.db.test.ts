@@ -7,10 +7,14 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  type AnchorBucket,
+  setFixedAnchor,
+  setFixedAnchors,
+} from '@/capabilities/practice/server/fixed-anchor';
 import { db } from '@/db/client';
 import { item_calibration } from '@/db/schema';
 import { resetDb } from '../../../tests/helpers/db';
-import { type AnchorBucket, setFixedAnchor, setFixedAnchors } from './fixed-anchor';
 
 async function readCalRow(questionId: string) {
   const rows = await db

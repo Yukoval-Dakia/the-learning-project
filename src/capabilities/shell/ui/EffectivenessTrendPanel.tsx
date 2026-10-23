@@ -556,15 +556,19 @@ function PanelShell({
   );
 }
 
+export type CoachEffectivenessReader = typeof getEffectivenessTrend;
+
 export function EffectivenessTrendPanel({
   navigate,
   embedded = false,
+  readEffectiveness = getEffectivenessTrend,
 }: {
   navigate: (to: string) => void;
   embedded?: boolean;
+  readEffectiveness?: CoachEffectivenessReader;
 }) {
   const [drill, setDrill] = useState<{ domain: string | null } | null>(null);
-  const q = useQuery({ queryKey: ['effectiveness-trend'], queryFn: getEffectivenessTrend });
+  const q = useQuery({ queryKey: ['effectiveness-trend'], queryFn: readEffectiveness });
 
   if (q.isLoading) {
     return (

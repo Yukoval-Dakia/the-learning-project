@@ -1,18 +1,11 @@
 import type { ZodType } from 'zod';
+import { db } from '@/db/client';
 import { ApiError, canonicalResourceResponse, errorResponse } from '@/kernel/http';
+import { createPracticePaperSubmission } from '../server/paper-submission-operation';
+import { createPracticeHintRequest, createPracticeSolveSession } from '../server/solve-operations';
 import { createAnswerDraft } from './paper-answer-route';
-import {
-  CreatePaperAnswerDraftBodySchema,
-  CreatePaperSubmissionBodySchema,
-} from './paper-contracts';
-import { createPaperSubmission } from './paper-submit-route';
-import {
-  CreateHintRequestBodySchema,
-  CreateSolveSessionBodySchema,
-  CreateSolveSubmissionBodySchema,
-} from './question-solve-contracts';
-import { createHintRequest } from './solve-hint';
-import { createSolveSession } from './solve-start';
+import { CreatePaperAnswerDraftBodySchema } from './paper-contracts';
+import { CreateSolveSubmissionBodySchema } from './question-solve-contracts';
 import { createSolveSubmission } from './solve-submit';
 
 type JsonObject = Record<string, unknown>;
@@ -43,20 +36,14 @@ function forwardedJsonRequest(req: Request, body: JsonObject): Request {
 
 export async function createSolveSessionResource(req: Request): Promise<Response> {
   try {
-    const { question_id: questionId, ...body } = await parseJsonBody(
-      req,
-      CreateSolveSessionBodySchema,
-    );
-    return canonicalResourceResponse(
-      await createSolveSession(forwardedJsonRequest(req, body), { id: questionId }),
-      {
-        outcome: 'created',
-        location: (responseBody) =>
-          `/api/solve-sessions/${encodeURIComponent(
-            (responseBody as { session_id: string }).session_id,
-          )}`,
-      },
-    );
+    const raw = await req.json().catch(() => null);
+    return canonicalResourceResponse(Response.json(await createPracticeSolveSession(db, raw)), {
+      outcome: 'created',
+      location: (responseBody) =>
+        `/api/solve-sessions/${encodeURIComponent(
+          (responseBody as { session_id: string }).session_id,
+        )}`,
+    });
   } catch (err) {
     return errorResponse(err);
   }
@@ -67,15 +54,9 @@ export async function createHintRequestResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { question_id: questionId, ...body } = await parseJsonBody(
-      req,
-      CreateHintRequestBodySchema,
-    );
+    const raw = await req.json().catch(() => null);
     return canonicalResourceResponse(
-      await createHintRequest(forwardedJsonRequest(req, body), {
-        id: questionId,
-        sid: params.sid,
-      }),
+      Response.json(await createPracticeHintRequest(db, params.sid, raw)),
       {
         outcome: 'created',
         location: (responseBody) =>
@@ -152,18 +133,9 @@ export async function createPaperSubmissionResource(
   params: Record<string, string>,
 ): Promise<Response> {
   try {
-    const { paper_id: paperId, ...body } = await parseJsonBody(
-      req,
-      CreatePaperSubmissionBodySchema,
-    );
+    const raw = await req.json().catch(() => null);
     return canonicalResourceResponse(
-      await createPaperSubmission(
-        forwardedJsonRequest(req, {
-          ...body,
-          session_id: params.id,
-        }),
-        { id: paperId },
-      ),
+      Response.json(await createPracticePaperSubmission(db, params.id, raw)),
       {
         outcome: 'created',
         location: (responseBody) =>

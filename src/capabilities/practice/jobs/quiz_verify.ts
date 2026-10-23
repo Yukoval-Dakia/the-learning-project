@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { initialSchedulingState } from '@/server/fsrs/state';
 // Search-grounded QuizGen (T-SQ) — Q5 + Q6 handler.
 //
 // Chained behind quiz_gen (Q3 enqueues `quiz_verify` { question_ids }, like
@@ -42,6 +41,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
+import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { recordQuestionPoolGap } from '@/capabilities/agency/public';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
@@ -64,6 +64,7 @@ import {
   toUnifiedVerifyResult,
 } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import {
   event,
   knowledge,
@@ -74,22 +75,18 @@ import {
   source_document,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { appendAdmissionVerificationRecord } from '@/kernel/records/assessment-publication';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  aiAgentRef,
-  costUsdToMicroUsd,
-} from '@/server/ai/provenance';
+  appendAdmissionVerificationRecord,
+  publishQuestionGroup,
+  publishQuestionGroupFromRow,
+} from '@/kernel/records/assessment-publication';
+import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectQuestionKind } from '@/subjects/profile-schema';
 import { resolveQuizGenSkillDocs } from '@/subjects/quiz-gen-skills';
 import { resolveQuestionAdmissionPolicyId } from '../server/admission/run-admission';
-import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
+import { enrollPromotedQuestionScheduling } from '../server/question-scheduling-enrollment';
 import { SupplyTraceV1, type SupplyTraceV1T } from '../server/question-supply/evidence-demand';
 import {
   PlacementStarterAdmissionError,
@@ -322,31 +319,12 @@ async function promoteCompositeChildren(
       )
       .returning({ id: question.id });
     if (promotedChildren.length === 0) continue;
-    const childKnowledgeIds = Array.from(new Set(child.knowledgeIds ?? []));
-    if (childKnowledgeIds.length === 0) {
-      const childExisting = await getFsrsState(tx, 'question', child.id);
-      if (childExisting) continue;
-      await upsertFsrsState(tx, {
-        subject_kind: 'question',
-        subject_id: child.id,
-        ...initialSchedulingState(child.id, now),
-        last_review_event_id: verifyEventId,
-      });
-      continue;
-    }
-    for (const knowledgeId of childKnowledgeIds) {
-      // same anchor-not-content exclusion as the parent loop:
-      // an inherited 'seed:<subj>:root' binding must not mint a card.
-      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-      const childExisting = await getFsrsState(tx, 'knowledge', knowledgeId);
-      if (childExisting) continue;
-      await upsertFsrsState(tx, {
-        subject_kind: 'knowledge',
-        subject_id: knowledgeId,
-        ...initialSchedulingState(knowledgeId, now),
-        last_review_event_id: verifyEventId,
-      });
-    }
+    await enrollPromotedQuestionScheduling(tx, {
+      questionId: child.id,
+      knowledgeIds: child.knowledgeIds ?? [],
+      evidenceEventId: verifyEventId,
+      now,
+    });
   }
 }
 
@@ -1229,50 +1207,12 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
           })
           .where(eq(question.id, questionId));
 
-        // FSRS enroll is per knowledge point: materialize an
-        // initial "new" card for each knowledge id this verified question
-        // probes. The question itself remains the concrete item selected when
-        // that knowledge becomes due. Unlabeled legacy questions fall back to
-        // question-level FSRS so they are not silently dropped.
-        const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
-        if (fsrsSubjectIds.length > 0) {
-          for (const knowledgeId of fsrsSubjectIds) {
-            // a synthetic subject root ('seed:<subj>:root') is a
-            // structural anchor, never a content KC: skip FSRS enrollment (the
-            // subject read axis already excludes it — resolveSubjectKnowledgeIds).
-            // Branching on the RAW ids is deliberate: a roots-only label set is
-            // not "unlabeled", so it enrolls ZERO cards — the question-level
-            // fallback stays reserved for a genuinely unlabeled legacy row.
-            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
-            // enroll-if-absent. A verified quiz binding to a
-            // knowledge point that ALREADY has an FSRS projection (e.g. a
-            // supplementary question for an already-studied node) must NOT reset
-            // that node's state/due_at/last_review_event_id back to a fresh card —
-            // that would discard the user's review history and pull a not-yet-due
-            // card back into the pool. Only enroll knowledge points with no
-            // existing projection; leave existing schedules untouched.
-            const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-            if (existing) continue;
-            await upsertFsrsState(tx, {
-              subject_kind: 'knowledge',
-              subject_id: knowledgeId,
-              ...initialSchedulingState(knowledgeId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        } else {
-          // Unlabeled legacy questions enroll at question level. Same
-          // enroll-if-absent guard so a re-verify can't reset an existing card.
-          const existing = await getFsrsState(tx, 'question', questionId);
-          if (!existing) {
-            await upsertFsrsState(tx, {
-              subject_kind: 'question',
-              subject_id: questionId,
-              ...initialSchedulingState(questionId, now),
-              last_review_event_id: verifyEventId,
-            });
-          }
-        }
+        await enrollPromotedQuestionScheduling(tx, {
+          questionId,
+          knowledgeIds: current.knowledgeIds ?? [],
+          evidenceEventId: verifyEventId,
+          now,
+        });
 
         // composite cascade: a verified composite parent (quiz_gen
         // 篇 output carries question_part children persisted as 'draft' with NO
@@ -1334,6 +1274,10 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
             }
             const cleared = await publishQuestionGroup(tx, {
               group_id: groupRootId,
+              readAssetBytes: async (storageKey) => {
+                const { getR2 } = await import('@/server/r2');
+                return getR2().get(storageKey);
+              },
               contract: {
                 structure: currentRevision.structure,
                 response_spec: currentRevision.response_spec,

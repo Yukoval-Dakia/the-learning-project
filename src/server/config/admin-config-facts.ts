@@ -19,6 +19,7 @@ import { type TaskKind, getLearnerLocale, tasks } from '@/capabilities/task-regi
 import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
+import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
 import { nativePiModel, nativePiModels, piProviderId } from '@/server/ai/pi-provider-catalog';
@@ -37,7 +38,6 @@ import { INFRA_HOUSEKEEPING_SCHEDULES } from '@/server/boss/handlers';
 import { EXPIRE_AGENT, EXPIRE_FAST, EXPIRE_LLM, RETENTION_7D } from '@/server/boss/queue-config';
 import { resolveApiPort } from '@/server/env';
 import { EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE } from '@/server/event-subscriptions/dispatch-mount';
-import { resolveConfig as resolveAiRateLimitConfig } from '@/server/http/rate-limit';
 import { memoryReconcileHandoffMode } from '@/server/memory/memory-reconcile-handoff';
 import { MEMORY_INFRA_SCHEDULES } from '@/server/memory/triggers';
 import {

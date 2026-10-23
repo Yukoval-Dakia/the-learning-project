@@ -5,11 +5,11 @@
 
 import { count, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { thinCreateSubject } from '@/capabilities/observability/server/subject-create';
 import { knowledge, subject } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
-import { thinCreateSubject } from './thin-create';
 
 const db = testDb();
 

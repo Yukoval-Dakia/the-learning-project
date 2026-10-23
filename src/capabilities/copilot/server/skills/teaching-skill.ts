@@ -17,9 +17,10 @@
 // allowedTools:[] → empty SDK tool list + maxTurns:1 → one structured JSON reply,
 // never a tool loop, no memory, no tool budget.
 
+import type { RunTaskResult } from '@/ai/task-result';
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
-import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
+import { runAgentTask } from '@/server/ai/runner';
 import {
   type TeachingStructuredQuestionT,
   type TeachingTurnOutputT,

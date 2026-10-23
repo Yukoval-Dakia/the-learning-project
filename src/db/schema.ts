@@ -20,6 +20,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
+// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
+// the collector/writer lives with the ai server modules).
+import type { ProviderTransportEvidence } from '@/ai/task-result';
 // YUK-1044 — 统一评估契约真相源表的 jsonb 列形状（type-only，运行时零依赖：
 // schema.ts 保持 zod-free）。真相源：docs/planning/2026-09-24-question-assessment-
 // implementation-grounding.md §3/§11 + src/core/schema/assessment（YUK-1046 契约基座）。
@@ -58,9 +61,6 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
-// YUK-1630 — ai_task_runs.usage_json.transport persisted shape (type-only;
-// the collector/writer lives with the ai server modules).
-import type { ProviderTransportEvidence } from '../server/ai/provider-transport';
 import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';
@@ -385,7 +385,7 @@ export const question_block = pgTable(
     // a batch — NOT the real reading order. `ordinal` is written from the
     // extraction/import array index; historical rows were backfilled (0068) to
     // their prior on-screen order. Not fold truth — excluded from the W3
-    // question_block create-event snapshot (see question_block-create-event.ts).
+    // question_block create-event snapshot (see src/kernel/records/question-block-creation.ts).
     ordinal: integer('ordinal').notNull().default(0),
     // 2026-05-14: deviation from plan Step 0.4 —— plan 原文要求 DROP COLUMN，但
     // 当前 cascade.ts / ingestion route / import route 仍写此列，若现在 DROP 则
@@ -4971,4 +4971,32 @@ export const model_catalog_cache = pgTable(
     findings: jsonb('findings').notNull(),
   },
   (t) => [check('model_catalog_cache_singleton', sql`${t.id} = 1`)],
+);
+
+// YUK-1563 part 4 — runtime-configured custom providers. Authored config, no
+// secret: api_key_env holds the env var NAME; the key value stays in the
+// operator's env. Model facts live in model_catalog_cache under a synthetic
+// `custom:<slug>` bucket, never here.
+export const custom_provider = pgTable(
+  'custom_provider',
+  {
+    id: text('id').primaryKey(),
+    display_name: text('display_name').notNull(),
+    base_url: text('base_url').notNull(),
+    api_key_env: text('api_key_env').notNull(),
+    protocol: text('protocol').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('custom_provider_id_prefix_ck', sql`${t.id} LIKE 'custom:%'`),
+    check(
+      'custom_provider_protocol_ck',
+      sql`${t.protocol} IN ('openai-completions', 'anthropic-messages')`,
+    ),
+    check(
+      'custom_provider_base_url_ck',
+      sql`${t.base_url} LIKE 'https://%' AND ${t.base_url} NOT LIKE '%@%' AND ${t.base_url} NOT LIKE '%?%' AND ${t.base_url} NOT LIKE '%#%'`,
+    ),
+  ],
 );

@@ -6,6 +6,7 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/capabilities/ingestion/server/events/extraction-progress';
+import { dispatchExtractionFollowUps } from '@/capabilities/ingestion/server/extraction-follow-up';
 import {
   assignFigures,
   assignFiguresFromVlm,
@@ -33,6 +34,7 @@ import {
   executeTencentOcrSubmit,
   extractionPageOperationId,
 } from '@/capabilities/ingestion/server/provider-attempts';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import {
   type StructureResult,
   StructureTaskError,
@@ -50,19 +52,13 @@ import {
   type LayoutQuality,
   parseMarkAgentResponse,
 } from '@/capabilities/ingestion/server/tencent_mark_parser';
-import {
-  AUTO_ENROLL_SINGLETON_SECONDS,
-  autoEnrollJobEnabled,
-} from '@/capabilities/ingestion/server/workflow-judge-config';
 import { getConfig } from '@/core/config/store';
 import type { FigureRefT } from '@/core/schema/structured_question';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import type { R2Client } from '@/server/r2';
-import { Ingestion } from '@/server/session';
 
 // ---------- helpers ----------
 
@@ -575,38 +571,7 @@ async function processOneOcrJob(
       return result;
     });
 
-    // Paid modes are opt-in. Enqueue failures are logged, never fatal to a
-    // committed extraction; the dedicated auto_enroll queue isolates its failures,
-    // and the extraction state guard means this hook fires once.
-    if (autoEnrollJobEnabled(process.env)) {
-      try {
-        const { getStartedBoss } = await import('@/server/boss/client');
-        const boss = await getStartedBoss();
-        // singletonSeconds is required: a bare singletonKey is a no-op on a
-        // standard-policy queue. This only reduces duplicates; the per-block FOR
-        // UPDATE claim is the structural guard.
-        await boss.send(
-          'auto_enroll',
-          { sessionId },
-          { singletonKey: sessionId, singletonSeconds: AUTO_ENROLL_SINGLETON_SECONDS },
-        );
-      } catch (err) {
-        console.error('[tencent_ocr_extract] failed to enqueue auto_enroll', err);
-      }
-    }
-
-    // Post-commit, observe-only nudge evaluation. Isolated from auto_enroll so
-    // neither enqueue failure masks the other or fails the extraction.
-    try {
-      const { getStartedBoss } = await import('@/server/boss/client');
-      const boss = await getStartedBoss();
-      await boss.send(COPILOT_NUDGE_EVALUATE_QUEUE, {
-        kind: 'ingestion_complete',
-        session_id: sessionId,
-      });
-    } catch (err) {
-      console.error('[tencent_ocr_extract] failed to enqueue copilot_nudge_evaluate', err);
-    }
+    await dispatchExtractionFollowUps(sessionId, 'tencent_ocr_extract');
 
     await emitOperationEventSafely(deps.db, operationId, 'operation.completed', {
       result: { session_id: sessionId, status: extractionResult.status },

@@ -130,6 +130,29 @@
     background: var(--un-bg-hover);
   }
 
+  & .un-chip-action {
+    transition:
+      background-color var(--un-t-feedback) var(--un-ease-glide),
+      transform var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .un-chip-action:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+  }
+
+  & .un-chip-accent.un-chip-action:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--un-accent-soft) 80%, var(--un-accent) 20%);
+  }
+
+  & .un-chip-action:active:not(:disabled) {
+    transform: scale(var(--un-press-scale));
+  }
+
+  & .un-chip-action:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+
   & .un-chip-toggle[aria-pressed="true"] {
     background: var(--un-accent-soft);
     color: var(--un-accent-ink);

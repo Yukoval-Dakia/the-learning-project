@@ -6,12 +6,15 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import {
+  renameSubject,
+  resetSubject,
+} from '@/capabilities/observability/server/subject-control-write';
+import { thinCreateSubject } from '@/capabilities/observability/server/subject-create';
 import { event, subject, subject_control_journal } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
-import { renameSubject, resetSubject } from './subject-control-write';
-import { thinCreateSubject } from './thin-create';
 
 const db = testDb();
 

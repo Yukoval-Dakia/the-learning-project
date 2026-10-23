@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 import type {
   AdmissionEvidenceT,
@@ -42,6 +42,7 @@ import {
   validateStructure,
 } from '@/core/schema/assessment';
 import {
+  LEGACY_DRAFT_STATUS,
   QUESTION_AVAILABILITY,
   SCORING_ADMISSION_STATE,
   SCORING_ADMISSION_WITHHELD_REASON,
@@ -1316,4 +1317,77 @@ export async function restoreGroupLifecycle(
     .set({ withdrawn: false, withdrawn_at: null, updated_at: now })
     .where(eq(question_group_lifecycle.group_id, groupId));
   return { status: 'restored' };
+}
+
+// ─── YUK-1568 S3 R1-F2 — 组拥有的声明子行晋升 ───
+
+/**
+ * 组根来源核验成功后，同一事务把【当前已核验 revision 冻结 structure 声明
+ * 的真实 part 行】从 draft 翻 ACTIVE，并在 metadata 写继承证据（回指父级
+ * verify 事件）。
+ *
+ * 适用对象是 typed 声明组的 question_part 子行（行 id = 绑定 part_id =
+ * 契约 part_id）：它们不首发 active、不经独立 paid verify、不走 owner
+ * override —— 组根的 source_verify 成功是唯一晋升通道。对旧式组（part
+ * 行 id 与契约 part_id 不重合）与单 part 组恒 no-op —— 晋升集合是
+ * `parent_question_id = rootId` ∩ `id ∈ revision.structure.parts[].part_id`
+ * 的交集，不是「全部子行」。
+ *
+ * 纪律：调用方必须已锁组根行（FOR UPDATE，锁序 root→child）；只晋升
+ * non-tombstone 的 draft 行（归档/驳回不复活）；revision 缺失或不属于该
+ * 组 ⇒ fail-loud（核验维度的漂移不该静默放行）。返回被晋升子行供调用方
+ * 沿用根同款 FSRS enroll-if-absent 纪律。
+ */
+export async function promoteVerifiedGroupPartRows(
+  tx: Tx,
+  input: {
+    /** 组根 question id（调用方须已 FOR UPDATE 锁定）。 */
+    rootId: string;
+    /** 核验时钉住的当前 revision id —— part 集合取其冻结 structure.parts。 */
+    revisionId: string;
+    /** 根的来源核验成功事件 id —— 子行继承证据回指它。 */
+    verifyEventId: string;
+    now: Date;
+  },
+): Promise<{ id: string; knowledgeIds: string[] }[]> {
+  const [revision] = await tx
+    .select({
+      groupId: question_revision.group_id,
+      structure: question_revision.structure,
+    })
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, input.revisionId))
+    .limit(1);
+  if (revision == null || revision.groupId !== input.rootId) {
+    throw new Error(
+      `promoteVerifiedGroupPartRows: revision '${input.revisionId}' missing or not bound to group '${input.rootId}'`,
+    );
+  }
+  const partIds = revision.structure.parts
+    .map((part) => part.part_id)
+    .filter((partId) => partId !== input.rootId);
+  if (partIds.length === 0) return [];
+
+  return tx
+    .update(question)
+    .set({
+      draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
+      updated_at: input.now,
+      metadata: sql`coalesce(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
+        source_verify_inherited: {
+          event_id: input.verifyEventId,
+          root_question_id: input.rootId,
+        },
+      })}::jsonb`,
+    })
+    .where(
+      and(
+        eq(question.parent_question_id, input.rootId),
+        inArray(question.id, partIds),
+        eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
+        sql`${question.metadata}->>'archived_at' IS NULL`,
+        sql`${question.metadata}->>'dismissed_at' IS NULL`,
+      ),
+    )
+    .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
 }

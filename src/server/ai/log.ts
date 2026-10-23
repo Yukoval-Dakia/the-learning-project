@@ -1,56 +1,19 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
+import type { AiTaskUsage } from '@/ai/task-result';
 import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
-import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
+import { ai_task_runs, cost_ledger } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
-import type { ProviderTransportEvidence } from './provider-transport';
 
-// cost_ledger / tool_call_log are loose-coupled correlation logs (no FK); a single
-// INSERT/UPDATE works against either a top-level Db or a Tx. Accepting DbLike lets callers
+// cost_ledger is a loose-coupled correlation log (no FK); a single
+// INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
 // fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
 // the per-accept cost row into the question-INSERT tx for atomicity). FIX-R2-10 — all
-// THREE correlation-log writers (writeCostLedger, writeToolCallLog,
-// setToolCallLogMirroredEventId) accept DbLike for the same reason; only the ai_task_runs
+// tool-call correlation writers in kernel/tools/call-evidence retain the same
+// DbLike contract; only the ai_task_runs
 // lifecycle writers below stay Db (they are written by the runner outside any caller tx).
 type DbLike = Db | Tx;
-
-export interface ToolCallLogEntry {
-  task_run_id: string;
-  task_kind: string;
-  tool_name: string;
-  input_json: unknown;
-  output_json: unknown;
-  iteration: number;
-  latency_ms: number;
-  cost: number;
-  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
-  effect?: 'read' | 'propose' | 'write' | 'control';
-  /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
-  error_reason?: string;
-  /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
-  mirrored_event_id?: string;
-}
-
-export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Promise<string> {
-  const id = createId();
-  await db.insert(tool_call_log).values({
-    id,
-    task_run_id: entry.task_run_id,
-    task_kind: entry.task_kind,
-    tool_name: entry.tool_name,
-    effect: entry.effect ?? null,
-    input_json: entry.input_json as Record<string, unknown>,
-    output_json: entry.output_json as Record<string, unknown>,
-    error_reason: entry.error_reason ?? null,
-    iteration: entry.iteration,
-    latency_ms: entry.latency_ms,
-    cost: entry.cost,
-    occurred_at: new Date(),
-    mirrored_event_id: entry.mirrored_event_id ?? null,
-  });
-  return id;
-}
 
 /** Warn when a tool-calling task has no pi tool mounts configured in its context. */
 export function logMissingToolMountsWarning(entry: {
@@ -62,18 +25,6 @@ export function logMissingToolMountsWarning(entry: {
     task_run_id: entry.task_run_id,
     kind: entry.task_kind,
   });
-}
-
-/** YUK-79: backfill `mirrored_event_id` after mirrorEvent policy fires. */
-export async function setToolCallLogMirroredEventId(
-  db: DbLike,
-  toolCallLogId: string,
-  eventId: string,
-): Promise<void> {
-  await db
-    .update(tool_call_log)
-    .set({ mirrored_event_id: eventId })
-    .where(eq(tool_call_log.id, toolCallLogId));
 }
 
 interface CostLedgerEntryBase {
@@ -167,39 +118,6 @@ async function insertCostLedger(
   });
 }
 
-/**
- * YUK-1557 — record a remote tool call that has no provider-reported USD
- * price. The cost is explicitly `unknown` (never a fabricated zero) and the
- * synthetic task_run_id keeps the attempt-ledger uniqueness separate from the
- * model attempt row on the same run.
- */
-export async function writeUnpricedToolCost(
-  db: DbLike,
-  entry: {
-    taskRunId: string;
-    provider: string;
-    toolName: string;
-    outcome: 'success' | 'failed_permanent' | 'failed_retryable';
-    occurredAt?: Date;
-  },
-): Promise<void> {
-  await insertCostLedger(db, {
-    entry_kind: 'attempt',
-    task_run_id: `tool:${entry.taskRunId}:${entry.provider}:${entry.toolName}:${createId()}`,
-    task_kind: 'remote_mcp_tool',
-    provider: entry.provider,
-    model: entry.toolName,
-    cost: null,
-    cost_basis: 'unknown',
-    cost_ref: `unpriced:${entry.provider}/${entry.toolName}`,
-    currency: 'USD',
-    tokens_in: null,
-    tokens_out: null,
-    outcome: entry.outcome,
-    occurred_at: entry.occurredAt ?? new Date(),
-  });
-}
-
 export interface AiTaskRunStartEntry {
   id: string;
   task_kind: TaskKind;
@@ -240,54 +158,6 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     started_at: entry.started_at ?? new Date(),
     finished_at: null,
   });
-}
-
-/** Millisecond phase timings for one long-note generation. Absent on other tasks. */
-export interface NoteGeneratePhaseTimings {
-  prompt_build_ms?: number;
-  /** Null when the provider sent no token before the call ended. */
-  model_ttft_ms?: number | null;
-  model_total_ms?: number;
-  stream_ms?: number;
-  parse_ms?: number;
-  validation_ms?: number;
-  retry_count?: number;
-  db_write_ms?: number;
-}
-
-export interface AiTaskUsage {
-  inputTokens: number;
-  outputTokens: number;
-  /**
-   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
-   * (0 when the lane reported no cache) so the scoreboard can compute cache
-   * share without treating absence as unknown.
-   */
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  /** YUK-1557 — completed assistant turns (provider `num_turns`, or observed frames). */
-  numTurns?: number;
-  /**
-   * `estimated` when a budget abort had to infer tokens from the prompt and
-   * any streamed text. Absent when the provider reported the counts.
-   */
-  usage_basis?: 'reported' | 'estimated';
-  phases?: NoteGeneratePhaseTimings;
-  /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
-  thinkingBlocks?: number;
-  thinkingCharacters?: number;
-  /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
-  compaction?: {
-    count: number;
-    last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
-  };
-  /**
-   * YUK-1630 — per-attempt provider transport evidence: the timeout budget
-   * receipt (task timeout source + each derived layer) plus per-request wire
-   * milestones (fetch invoked / request sent / response / failure layer).
-   * Metadata only — it never feeds token counts or cost truth.
-   */
-  transport?: ProviderTransportEvidence;
 }
 
 export interface AiTaskRunFinishEntry {

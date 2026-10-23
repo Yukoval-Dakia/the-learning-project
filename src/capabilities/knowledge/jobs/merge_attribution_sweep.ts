@@ -13,9 +13,9 @@ import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
+import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
   countOrphanSurfaces,
   groupResolvedChains,

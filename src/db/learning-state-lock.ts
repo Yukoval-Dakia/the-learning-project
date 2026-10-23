@@ -1,4 +1,4 @@
-// Shared PostgreSQL transaction lock for assessment and intervention learning writes.
+// Shared PostgreSQL transaction locks for learning writes: global G and sorted caller keys.
 // This module owns the lock; it has no server or capability runtime dependency.
 import { sql } from 'drizzle-orm';
 import type { Db, Tx } from './client';
@@ -30,4 +30,15 @@ export async function withLearningStateLock<T>(
   };
   if ('$client' in db) return db.transaction(apply);
   return apply(db);
+}
+
+/** Acquire `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))` for every id in sorted order. */
+export async function acquireSortedAdvisoryLocks(
+  tx: Tx,
+  namespace: string,
+  ids: readonly string[],
+): Promise<void> {
+  for (const id of [...ids].sort()) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${namespace}:${id}`}))`);
+  }
 }

@@ -3,10 +3,7 @@
 // is just its unattended form.
 
 import type { Db } from '@/db/client';
-import {
-  auditProfilesFromDb,
-  formatDbProfileAuditReport,
-} from '@/server/subjects/audit-profile-db';
+import { auditProfilesFromDb, formatDbProfileAuditReport } from '../server/subject-profile-audit';
 
 export function buildSubjectProfileAuditNightlyHandler(db: Db) {
   return async (): Promise<void> => {
