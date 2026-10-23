@@ -2615,6 +2615,14 @@
       "date": "2026-10-23"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
@@ -2675,14 +2683,6 @@
       "date": "2026-10-23"
     },
     {
-      "debt": "capabilityToServer",
-      "pair": "practice -> boss",
-      "date": "2026-10-23",
-      "from": 15,
-      "to": 14,
-      "direction": "decrease"
-    },
-    {
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
@@ -2741,6 +2741,14 @@
       "issue": "YUK-1570",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-0a483d96-e573-4924-bb46-1c75c8d5b8d3",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-23",
+      "from": 15,
+      "to": 14,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5199,7 +5207,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 315,
+      "total": 313,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5260,7 +5268,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 2,
         "practice -> http": 3,
-        "practice -> mastery": 5,
+        "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> projections": 1,
         "practice -> proposals": 5,
