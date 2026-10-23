@@ -1,10 +1,12 @@
 import { createContext, useContext } from 'react';
-import { getQuestionFull } from '../practice-api';
+import { getDraftDetail, getQuestionFull } from '../practice-api';
 
 export type LibraryClient = {
+  getDraftDetail: typeof getDraftDetail;
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  getDraftDetail,
   getQuestionFull: (id) => getQuestionFull(id),
 };
 const LibraryClientContext = createContext<LibraryClient | undefined>(undefined);
