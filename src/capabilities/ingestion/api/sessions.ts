@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { materializeSourcePackage } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { event, learning_session, question, question_block, source_asset } from '@/db/schema';
@@ -9,7 +10,6 @@ import {
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { resolveSelectableSubjectId } from '@/subjects/profile';
 import { agentEvidenceSql } from '../server/agent/history';
 import { readSessionTitles } from '../server/session-titles';

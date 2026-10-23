@@ -9,6 +9,7 @@ import {
   prepareDocxForConversion,
 } from '@/capabilities/ingestion/server/docx/route-classify';
 import { redactIngestionText } from '@/capabilities/ingestion/server/privacy-guard';
+import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import {
   attachWordSourcePackage,
   persistPackageMedia,
@@ -17,7 +18,6 @@ import { db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { getR2 } from '@/server/r2';
-import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import { initiateDocxTextUpload } from './text-session-lifecycle';
 
 // Complete DOCX upload operation, private to the ingestion capability.
