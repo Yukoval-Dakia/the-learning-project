@@ -1,5 +1,5 @@
 import { getConfigMany } from '@/core/config/store';
-import { ApiError } from './errors';
+import { ApiError } from './http';
 
 // In-process rate limiter for the AI funnel.
 //
