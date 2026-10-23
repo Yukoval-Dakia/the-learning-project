@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type SQL, and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
@@ -7,10 +7,10 @@ import type { Db, Tx } from '@/db/client';
 import { learning_session, question_block } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
+import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import { writeJobEvent } from '@/server/events/writer';
-import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
 import { assertFromState } from './guards';
 
@@ -340,47 +340,24 @@ export async function applyExtractionResult(
   for (const [ordinal, blk] of params.blocks.entries()) {
     const blockId = createId();
     insertedBlockIds.push(blockId);
-    const [insertedRow] = await tx
-      .insert(question_block)
-      .values({
-        id: blockId,
-        ingestion_session_id: params.sessionId,
-        source_document_id: params.sourceDocumentId,
-        source_asset_ids: blk.source_asset_ids,
-        page_spans: blk.page_spans,
-        // YUK-221 — true positional order = the extraction array index (0-based).
+    await persistCapturedQuestionBlock(
+      tx,
+      {
+        origin: 'ocr',
+        blockId,
+        sessionId: params.sessionId,
+        sourceDocumentId: params.sourceDocumentId,
         ordinal,
-        // new schema fields
+        layoutQuality: params.layoutQuality,
         structured: blk.structured,
         figures: blk.figures,
-        layout_quality: params.layoutQuality,
-        // legacy nullable
-        extracted_prompt_md: null,
-        reference_md: null,
-        wrong_answer_md: null,
-        image_refs: blk.image_refs,
-        crop_refs: blk.figures.map((f) => f.asset_id),
-        visual_complexity: 'medium',
-        extraction_confidence: blk.extraction_confidence,
-        status: 'draft',
-        knowledge_hint: null,
-        merged_from_block_ids: [],
-        imported_question_id: null,
-        imported_attempt_event_id: null,
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      })
-      .returning();
-    // Canonical create event (additive, flag OFF) built from the returned row so
-    // the snapshot matches what landed, including crop_refs = figures' asset_ids.
-    await writeQuestionBlockCreateEvent(tx, {
-      row: insertedRow,
-      origin: 'ocr',
-      actorKind: 'agent',
-      actorRef: 'tencent_ocr',
+        sourceAssetIds: blk.source_asset_ids,
+        pageSpans: blk.page_spans,
+        imageRefs: blk.image_refs,
+        extractionConfidence: blk.extraction_confidence,
+      },
       now,
-    });
+    );
   }
 
   const updatedWarnings = [...current.warnings, ...params.warnings];
@@ -595,30 +572,16 @@ export async function applyRescue(tx: Db | Tx, params: ApplyRescueParams): Promi
     );
   }
 
-  const [rescuedRow] = await tx
-    .update(question_block)
-    .set({
+  await persistCapturedQuestionBlock(
+    tx,
+    {
+      origin: 'rescue',
+      blockId: params.blockId,
       structured: params.structured,
       figures: params.figures,
-      // The rescue overwrites figures; without re-deriving crop_refs it would go
-      // stale against them and the create-event snapshot.
-      crop_refs: params.figures.map((f) => f.asset_id),
-      updated_at: now,
-      version: sql`${question_block.version} + 1` as unknown as SQL<number>,
-    })
-    .where(eq(question_block.id, params.blockId))
-    .returning();
-
-  // A second full-snapshot create for the same blockId; the fold applies
-  // last-write-wins. Built from the after-row, so it carries the new content and
-  // the bumped version.
-  await writeQuestionBlockCreateEvent(tx, {
-    row: rescuedRow,
-    origin: 'rescue',
-    actorKind: 'agent',
-    actorRef: 'vision_rescue',
+    },
     now,
-  });
+  );
 
   await writeJobEvent(tx, {
     business_table: SESSION_TABLE,
