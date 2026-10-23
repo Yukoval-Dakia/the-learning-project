@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TaskTextResult } from '@/ai/task-result';
 import type { Provider, TaskKind } from '@/capabilities/task-registry';
 import { getLearnerLocale, isAiTaskKind } from '@/capabilities/task-registry';
 import { getDefaultRegistry } from '@/core/capability/judges';
@@ -12,7 +13,6 @@ import {
 } from '@/core/schema/capability';
 import { sha256Canonical, taskInputHash } from '@/core/task-input-hash';
 import type { Db } from '@/db/client';
-import type { TaskTextResult } from '@/server/ai/provenance';
 import {
   crossoverModelForProvider,
   isKnownProvider,

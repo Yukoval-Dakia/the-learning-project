@@ -23,12 +23,11 @@ import { FrontierRail } from './FrontierRail';
 import { deriveGhostEndpoints } from './ghost-endpoints';
 import {
   type KnowledgeTreeNode,
-  getEdgeProposals,
-  getEdges,
   getFrontier,
   getReviewDueSummary,
   getTreeForSubject,
 } from './knowledge-api';
+import { useKnowledgeClient } from './knowledge-client';
 import { isKnowledgeContainer } from './knowledge-node-kind';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 
@@ -39,6 +38,9 @@ const LazyMeshGraph = lazy(async () => {
 
 export interface KnowledgePageProps {
   navigate: (to: string) => void;
+  readTree?: typeof getTreeForSubject;
+  readFrontier?: typeof getFrontier;
+  readReviewDue?: typeof getReviewDueSummary;
 }
 
 export const KNOWLEDGE_INBOX_HREF = '/inbox';
@@ -65,7 +67,13 @@ function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth
   return out;
 }
 
-export default function KnowledgePage({ navigate }: KnowledgePageProps) {
+export default function KnowledgePage({
+  navigate,
+  readTree = getTreeForSubject,
+  readFrontier = getFrontier,
+  readReviewDue = getReviewDueSummary,
+}: KnowledgePageProps) {
+  const { getEdgeProposals, getEdges } = useKnowledgeClient();
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
   const [subject, setSubject] = useState('all');
@@ -74,11 +82,11 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
 
   const treeQ = useQuery({
     queryKey: ['knowledge-tree', subjectQuery],
-    queryFn: () => getTreeForSubject(subjectQuery),
+    queryFn: () => readTree(subjectQuery),
   });
   const fullTreeQ = useQuery({
     queryKey: ['knowledge-tree', undefined],
-    queryFn: () => getTreeForSubject(),
+    queryFn: () => readTree(),
     enabled: subjectQuery !== undefined,
   });
   const edgesQ = useQuery({
@@ -90,9 +98,9 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
     queryFn: getEdgeProposals,
   });
   // A5 S2 (YUK-354)：learnable_frontier 横幅读模型。
-  const frontierQ = useQuery({ queryKey: ['knowledge-frontier'], queryFn: getFrontier });
+  const frontierQ = useQuery({ queryKey: ['knowledge-frontier'], queryFn: readFrontier });
   // YUK-617 mode-1 — per-KC FSRS 到期计数（YUK-142 Slice 2 读模型此前零消费者）。树行出「到期」徽标。
-  const dueQ = useQuery({ queryKey: ['knowledge-due-summary'], queryFn: getReviewDueSummary });
+  const dueQ = useQuery({ queryKey: ['knowledge-due-summary'], queryFn: readReviewDue });
   const dueSummary = dueQ.data?.summary ?? {};
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);

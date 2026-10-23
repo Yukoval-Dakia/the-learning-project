@@ -14,13 +14,13 @@ import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
+// Projection parity assert: throws in dev/test, warns in prod.
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import {
   type EmbedProviderAttemptOptions,
   embedText,
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/embed';
-// Projection parity assert: throws in dev/test, warns in prod.
-import { projectKnowledgeNodeGuarded } from '@/server/projections/knowledge';
 import { getKnownSubjects } from '@/subjects/profile';
 import { type KnowledgeSimilarityCandidate, matchKnowledgeBySimilarity } from './match-similarity';
 import { prepareProposedKnowledgeId } from './proposals';

@@ -2,8 +2,8 @@
 // refetch (hand-built because ApiError nests extras under details); a conflict omits it
 // because retrying cannot help.
 
-import type { ControlWriteResult } from '@/server/subjects/subject-control-write';
-import type { TraitWriteResult } from '@/server/subjects/trait-write';
+import type { ControlWriteResult } from '../server/subject-control-write';
+import type { TraitWriteResult } from '../server/trait-write';
 
 export function traitResultResponse(result: TraitWriteResult): Response {
   switch (result.kind) {

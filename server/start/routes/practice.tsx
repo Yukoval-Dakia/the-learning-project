@@ -1,9 +1,52 @@
 import { createFileRoute, useRouter, useRouterState } from '@tanstack/react-router';
 import { Suspense, lazy, useCallback } from 'react';
-import { loadPracticeFacePage } from '@/capabilities/practice/ui-public';
+import {
+  type PracticeClient,
+  PracticeClientProvider,
+  loadPracticeFacePage,
+} from '@/capabilities/practice/ui-public';
+import { startIssuanceCreateClient } from '../issuance-create-client';
+import { startIssuanceStateClient } from '../issuance-state-client';
+import { startJudgeRunStatusClient } from '../judge-status-client';
+import { startPaperDetailClient } from '../paper-detail-client';
+import { endPaperSessionClient } from '../paper-end-client';
+import { startPaperSessionClient } from '../paper-start-client';
+import { startPaperSubmissionClient } from '../paper-submit-client';
+import { startPaperListClient } from '../papers-list-client';
+import { startPracticeAdviceClient } from '../practice-advice-client';
+import { startPracticeAppealClient } from '../practice-appeal-client';
+import { startPracticeQuestionDetailClient } from '../practice-question-detail-client';
+import { startPracticeStreamClient } from '../practice-stream-client';
+import { startPracticeStreamItemClient } from '../practice-stream-item-client';
+import { startPracticeRecomposeClient } from '../practice-stream-recompose-client';
+import { startPracticeSubmitClient } from '../practice-submit-client';
+import { startResponseDraftClient } from '../response-draft-client';
+import { startHintClient, startSolveClient } from '../solve-client';
+import { startStudyReferenceClient } from '../study-reference-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadPracticeFacePage().then((defaultPage) => ({ default: defaultPage })));
+const practiceClient: PracticeClient = {
+  revealStudyReference: startStudyReferenceClient,
+  solveStart: startSolveClient,
+  solveHint: startHintClient,
+  fileAppeal: startPracticeAppealClient,
+  getAdvice: startPracticeAdviceClient,
+  advanceStreamItem: startPracticeStreamItemClient,
+  getStream: startPracticeStreamClient,
+  recomposeStream: startPracticeRecomposeClient,
+  getPapers: startPaperListClient,
+  getPaperDetail: startPaperDetailClient,
+  startPaperSession: startPaperSessionClient,
+  submitPaperSlot: startPaperSubmissionClient,
+  endPaperSession: endPaperSessionClient,
+  getQuestionDetail: startPracticeQuestionDetailClient,
+  getIssuanceState: startIssuanceStateClient,
+  issueAssessment: startIssuanceCreateClient,
+  saveResponseDraft: startResponseDraftClient,
+  submitReview: startPracticeSubmitClient,
+  readJudgeRunStatus: startJudgeRunStatusClient,
+};
 function PracticePage() {
   const router = useRouter();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
@@ -40,16 +83,18 @@ function PracticePage() {
   );
   return (
     <StartWorkbenchShell pathname="/practice">
-      <Suspense>
-        <Page
-          navigate={startNavigate}
-          getQuery={getQuery}
-          setQuery={setQuery}
-          itemParam={itemParam}
-          writeItemParam={writeItemParam}
-          historyBack={historyBack}
-        />
-      </Suspense>
+      <PracticeClientProvider value={practiceClient}>
+        <Suspense>
+          <Page
+            navigate={startNavigate}
+            getQuery={getQuery}
+            setQuery={setQuery}
+            itemParam={itemParam}
+            writeItemParam={writeItemParam}
+            historyBack={historyBack}
+          />
+        </Suspense>
+      </PracticeClientProvider>
     </StartWorkbenchShell>
   );
 }

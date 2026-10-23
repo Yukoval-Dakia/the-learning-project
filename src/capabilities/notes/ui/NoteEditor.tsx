@@ -55,10 +55,12 @@ function isAbortError(error: unknown): boolean {
 }
 
 function ArtifactPicker({
+  searchReferences,
   excludeId,
   onPick,
   onClose,
 }: {
+  searchReferences: typeof searchArtifacts;
   excludeId: string;
   onPick: (a: { id: string; title: string; type: string }) => void;
   onClose: () => void;
@@ -110,7 +112,7 @@ function ArtifactPicker({
       requestController.current = controller;
       setRows([]);
       setSearchState('loading');
-      void searchArtifacts(trimmed, excludeId, controller.signal)
+      void searchReferences(trimmed, excludeId, controller.signal)
         .then((result) => {
           if (requestId !== requestSeq.current) return;
           requestController.current = null;
@@ -128,7 +130,7 @@ function ArtifactPicker({
           setSearchState('error');
         });
     },
-    [cancelPending, excludeId],
+    [cancelPending, excludeId, searchReferences],
   );
 
   const changeQuery = (next: string) => {
@@ -198,6 +200,7 @@ export function NoteEditor({
   noteId,
   onChange,
   rootRef,
+  searchReferences = searchArtifacts,
 }: {
   blocks: BodyBlock[];
   labels: NotePageLabel[];
@@ -205,6 +208,7 @@ export function NoteEditor({
   onChange: (next: BodyBlock[]) => void;
   /** Attached while this edit session's editor is on screen (host presence lease). */
   rootRef?: Ref<HTMLDivElement>;
+  searchReferences?: typeof searchArtifacts;
 }) {
   const [slashAt, setSlashAt] = useState<number | null>(null);
   const [picker, setPicker] = useState<'none' | 'xlink' | 'question'>('none');
@@ -288,6 +292,7 @@ export function NoteEditor({
       {slashAt === i && picker === 'xlink' && (
         <ArtifactPicker
           excludeId={noteId}
+          searchReferences={searchReferences}
           onClose={() => setPicker('none')}
           onPick={(a) =>
             insertAt(i, {

@@ -18,16 +18,22 @@ import type {
 } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { event, materialized_id_index } from '@/db/schema';
+import { gatherAndFoldArtifact } from '@/kernel/records/artifact-history';
+import { gatherAndFoldLearningItem } from '@/kernel/records/learning-items';
+import { gatherAndFoldMistakeVariant } from '@/kernel/records/mistake-variant-facts';
 import {
-  gatherAndFoldArtifact,
   gatherAndFoldGoal,
   gatherAndFoldKnowledgeEdge,
   gatherAndFoldKnowledgeNode,
-  gatherAndFoldLearningItem,
-  gatherAndFoldMistakeVariant,
   gatherAndFoldQuestionBlock,
 } from './gather';
 import { diffSnapshots } from './snapshot-diff';
+
+export { goalRowToSnapshot as goalLiveRowToSnapshot } from '@/kernel/records/goal-history';
+export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';
+export { hasLearningItemGenesisAnchor } from '@/kernel/records/learning-items';
+// Canonical implementation; retained for the retract-clock DB consumer.
+export { mistakeVariantLiveRowToSnapshot } from '@/kernel/records/mistake-variant-facts';
 
 type DbLike = Db | Tx;
 
@@ -71,111 +77,6 @@ function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: stri
   );
 }
 
-/**
- * Pick the snapshot fields from a live row without Zod parsing: a parse throw could abort
- * a live accept, and a plain pick cannot throw.
- */
-export function knowledgeLiveRowToSnapshot(row: {
-  id: string;
-  name: string;
-  domain: string | null;
-  parent_id: string | null;
-  merged_from: string[];
-  archived_at: Date | null;
-  proposed_by_ai: boolean;
-  approval_status: 'pending' | 'approved' | 'rejected';
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): KnowledgeRowSnapshotT {
-  return {
-    id: row.id,
-    name: row.name,
-    domain: row.domain,
-    parent_id: row.parent_id,
-    merged_from: row.merged_from,
-    archived_at: row.archived_at,
-    proposed_by_ai: row.proposed_by_ai,
-    approval_status: row.approval_status,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
-/**
- * Whether a node is event-sourced: a genesis/auto-tag event or an index anchor.
- * Pre-event rows fold to null, so callers gate the assert on this to avoid false mismatches.
- */
-export async function hasKnowledgeNodeGenesisAnchor(db: DbLike, nodeId: string): Promise<boolean> {
-  const genesisOrAutoTag = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        eq(event.subject_id, nodeId),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    )
-    .limit(1);
-  if (genesisOrAutoTag.length > 0) return true;
-
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, nodeId),
-        // genesis anchor for a NODE — materialized_id_index also carries edge anchors, so
-        // constrain by subject_kind to never read an edge anchor as a node's genesis anchor.
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/**
- * Batch form of hasKnowledgeNodeGenesisAnchor; one query per source.
- */
-export async function knowledgeNodesWithGenesisAnchor(
-  db: DbLike,
-  nodeIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (nodeIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'knowledge'),
-        inArray(event.subject_id, nodeIds),
-        or(
-          eq(event.action, 'experimental:genesis'),
-          eq(event.action, 'experimental:auto_tag_kc_created'),
-        ),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, nodeIds),
-        // NODE anchors only — see hasKnowledgeNodeGenesisAnchor (edge anchors share the table).
-        eq(materialized_id_index.subject_kind, 'knowledge'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
 // The only edge actions that can seed a row: generate create/archive and the genesis
 // backfill. Must stay in step with the backfill skip predicate and the fold.
 const KNOWLEDGE_EDGE_ANCHOR_ACTIONS = ['generate', 'experimental:genesis'] as const;
@@ -210,69 +111,6 @@ export async function knowledgeEdgesWithGenesisAnchor(
       and(
         inArray(materialized_id_index.materialized_id, edgeIds),
         eq(materialized_id_index.subject_kind, 'knowledge_edge'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
-// ── goal genesis-anchor helpers ────────────────────────────────────────────────────────────────
-//
-// A goal is event-sourced when it has a genesis seed, a goal_scope proposal, or an index
-// anchor. Status/scope updates are deliberately not anchors: the fold applies them only to
-// an existing row, so counting them would let the guarded writer delete a live goal and the
-// backfill skip it.
-const GOAL_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:proposal'] as const;
-
-/** Whether a goal has an anchor the fold can reproduce. */
-export async function hasGoalGenesisAnchor(db: DbLike, goalId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'goal'),
-        eq(event.subject_id, goalId),
-        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, goalId),
-        eq(materialized_id_index.subject_kind, 'goal'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function goalsWithGenesisAnchor(db: DbLike, goalIds: string[]): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (goalIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'goal'),
-        inArray(event.subject_id, goalIds),
-        inArray(event.action, [...GOAL_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, goalIds),
-        eq(materialized_id_index.subject_kind, 'goal'),
       ),
     );
   for (const r of idxRows) out.add(r.materialized_id);
@@ -341,41 +179,6 @@ export async function assertKnowledgeEdgeParity(
 // Write-time fold==row guard for the goal sites, mirroring the node assert. Callers must
 // only assert event-sourced goals; a pre-event goal folds to null and would false-mismatch.
 
-/** Pick snapshot fields from a live goal row without Zod parsing. */
-export function goalLiveRowToSnapshot(row: {
-  id: string;
-  title: string;
-  subject_id: string | null;
-  scope_knowledge_ids: string[] | null;
-  scope_mode: 'explicit' | 'subject_live';
-  sequence_hint: number;
-  declared_stage: 'middle_school' | 'high_school' | 'university' | 'custom' | null;
-  status: 'active' | 'dormant' | 'done';
-  source: string;
-  source_ref: string | null;
-  created_at: Date;
-  updated_at: Date;
-  version: number;
-}): GoalRowSnapshotT {
-  return {
-    id: row.id,
-    title: row.title,
-    subject_id: row.subject_id,
-    scope_knowledge_ids: row.scope_knowledge_ids ?? [],
-    // NOT NULL with a default; the fold materializes the same value for legacy payloads.
-    scope_mode: row.scope_mode,
-    sequence_hint: row.sequence_hint,
-    // Nullable; the fold materializes NULL for legacy payloads too, so surface it verbatim.
-    declared_stage: row.declared_stage,
-    status: row.status,
-    source: row.source,
-    source_ref: row.source_ref,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    version: row.version,
-  };
-}
-
 /** Assert that the goal fold reproduces the live row; see the node assert for throw handling. */
 export async function assertGoalParity(
   db: DbLike,
@@ -398,104 +201,10 @@ export async function assertGoalParity(
   if (diff.length > 0) onParityMismatch('goal', goalId, diff);
 }
 
-// ── mistake_variant genesis-anchor helpers ────────────────────────────────────────────────────
-//
-// A variant is event-sourced when it has a create/genesis base event or an index anchor.
-// Lifecycle events mutate an existing row and are not anchors on their own.
-
-const MISTAKE_VARIANT_ANCHOR_ACTIONS = [
-  'experimental:mistake_variant_create',
-  'experimental:genesis',
-] as const;
-
-/** Whether a variant has a base anchor the fold can reproduce. */
-export async function hasMistakeVariantGenesisAnchor(db: DbLike, mvId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'mistake_variant'),
-        eq(event.subject_id, mvId),
-        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, mvId),
-        eq(materialized_id_index.subject_kind, 'mistake_variant'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function mistakeVariantsWithGenesisAnchor(
-  db: DbLike,
-  mvIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (mvIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'mistake_variant'),
-        inArray(event.subject_id, mvIds),
-        inArray(event.action, [...MISTAKE_VARIANT_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, mvIds),
-        eq(materialized_id_index.subject_kind, 'mistake_variant'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
 // ── mistake_variant parity assert ─────────────────────────────────────────────────────────────
 //
 // Write-time fold==row guard for the variant sites, especially the fold-blind
 // cause_category, which must be on the base event. Callers only assert anchored variants.
-
-/** Pick snapshot fields from a live variant row without Zod parsing. */
-export function mistakeVariantLiveRowToSnapshot(row: {
-  id: string;
-  parent_question_id: string;
-  variant_question_id: string | null;
-  proposal_event_id: string | null;
-  status: string;
-  failure_reasons: string[] | null;
-  cause_category: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): MistakeVariantRowSnapshotT {
-  return {
-    id: row.id,
-    parent_question_id: row.parent_question_id,
-    variant_question_id: row.variant_question_id,
-    proposal_event_id: row.proposal_event_id,
-    // status is free text; the wired writers only set the snapshot enum values.
-    status: row.status as MistakeVariantRowSnapshotT['status'],
-    failure_reasons: row.failure_reasons ?? [],
-    cause_category: row.cause_category,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
 
 /** Assert that the variant fold reproduces the live row; see the node assert for throw handling. */
 export async function assertMistakeVariantParity(
@@ -517,71 +226,6 @@ export async function assertMistakeVariantParity(
     folded as Record<string, unknown> | null,
   );
   if (diff.length > 0) onParityMismatch('mistake_variant', mvId, diff);
-}
-
-// ── learning_item genesis-anchor helpers ──────────────────────────────────────────────────────
-//
-// An item is event-sourced when it has a genesis seed or an index anchor. Status/archive
-// events mutate an existing row and are not anchors on their own.
-
-const LEARNING_ITEM_ANCHOR_ACTIONS = ['experimental:genesis'] as const;
-
-/** Whether an item has a genesis anchor the fold can reproduce. */
-export async function hasLearningItemGenesisAnchor(db: DbLike, itemId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        eq(event.subject_id, itemId),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, itemId),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function learningItemsWithGenesisAnchor(
-  db: DbLike,
-  itemIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (itemIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'learning_item'),
-        inArray(event.subject_id, itemIds),
-        inArray(event.action, [...LEARNING_ITEM_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, itemIds),
-        eq(materialized_id_index.subject_kind, 'learning_item'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
 }
 
 // ── learning_item parity assert ────────────────────────────────────────────────────────────────
@@ -657,115 +301,12 @@ export async function assertLearningItemParity(
 
 // ── artifact genesis-anchor helpers ───────────────────────────────────────────────────────────
 //
-// An artifact is event-sourced when it has a create/genesis base event or an index anchor.
-// Both base events are subject-keyed, so the event leg is complete.
+export { artifactsWithGenesisAnchor } from '@/kernel/records/artifact-history';
 
-const ARTIFACT_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:artifact_create'] as const;
-
-/** Whether an artifact has an anchor the fold can reproduce. */
-export async function hasArtifactGenesisAnchor(db: DbLike, artifactId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'artifact'),
-        eq(event.subject_id, artifactId),
-        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  if (ev.length > 0) return true;
-  const indexed = await db
-    .select({ id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        eq(materialized_id_index.materialized_id, artifactId),
-        eq(materialized_id_index.subject_kind, 'artifact'),
-      ),
-    )
-    .limit(1);
-  return indexed.length > 0;
-}
-
-/** Batch form; also serves as the backfill's idempotency pre-scan. */
-export async function artifactsWithGenesisAnchor(
-  db: DbLike,
-  artifactIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (artifactIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'artifact'),
-        inArray(event.subject_id, artifactIds),
-        inArray(event.action, [...ARTIFACT_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  const idxRows = await db
-    .select({ materialized_id: materialized_id_index.materialized_id })
-    .from(materialized_id_index)
-    .where(
-      and(
-        inArray(materialized_id_index.materialized_id, artifactIds),
-        eq(materialized_id_index.subject_kind, 'artifact'),
-      ),
-    );
-  for (const r of idxRows) out.add(r.materialized_id);
-  return out;
-}
-
-// ── question_block genesis-anchor helpers ─────────────────────────────────────────────────────
-//
-// A block is event-sourced when it has a create/genesis event. It has no index anchor: the
-// row id is always the subject id, so the event leg is complete.
-
-const QUESTION_BLOCK_ANCHOR_ACTIONS = [
-  'experimental:genesis',
-  'experimental:question_block_create',
-] as const;
-
-/** Whether a block has an anchor the fold can reproduce. */
-export async function hasQuestionBlockGenesisAnchor(db: DbLike, blockId: string): Promise<boolean> {
-  const ev = await db
-    .select({ id: event.id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        eq(event.subject_id, blockId),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    )
-    .limit(1);
-  return ev.length > 0;
-}
-
-/** Batch form (event leg only); also serves as the idempotency pre-scan. */
-export async function questionBlocksWithGenesisAnchor(
-  db: DbLike,
-  blockIds: string[],
-): Promise<Set<string>> {
-  const out = new Set<string>();
-  if (blockIds.length === 0) return out;
-  const evRows = await db
-    .select({ subject_id: event.subject_id })
-    .from(event)
-    .where(
-      and(
-        eq(event.subject_kind, 'question_block'),
-        inArray(event.subject_id, blockIds),
-        inArray(event.action, [...QUESTION_BLOCK_ANCHOR_ACTIONS]),
-      ),
-    );
-  for (const r of evRows) out.add(r.subject_id);
-  return out;
-}
+export {
+  hasQuestionBlockGenesisAnchor,
+  questionBlocksWithGenesisAnchor,
+} from '@/kernel/records/question-block-projection';
 
 // ── item_calibration genesis-anchor helpers ───────────────────────────────────────────────────
 //
@@ -816,9 +357,9 @@ export async function itemCalibrationsWithGenesisAnchor(
 // Write-time fold==row guard for the artifact sites. Callers assert only anchored artifacts;
 // an edit against a pre-event artifact is skipped.
 
-// The shared mapper lives in snapshot-mappers so audit, backfill, and parity cannot drift.
+// The shared mapper lives in artifact-history so audit, backfill, and parity cannot drift.
 // Re-exported under the name existing callers import.
-export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from './snapshot-mappers';
+export { artifactRowToSnapshot as artifactLiveRowToSnapshot } from '@/kernel/records/artifact-history';
 
 /** Assert that the artifact fold reproduces the live row; see the node assert for throw handling. */
 export async function assertArtifactParity(

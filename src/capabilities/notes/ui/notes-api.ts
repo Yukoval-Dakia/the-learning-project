@@ -128,6 +128,7 @@ export const editingBlur = (artifactId: string, editorSessionId: string) =>
     url: '/api/editing-session/blur',
     method: 'POST',
     body: { artifact_id: artifactId, editor_session_id: editorSessionId },
+    init: { keepalive: true },
   });
 
 export const getAiChanges = (artifactId: string) =>

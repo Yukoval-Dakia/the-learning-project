@@ -5,7 +5,7 @@
  * question row stays as reusable item-bank content; nothing is hard-deleted.
  */
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
 import { questionRef } from '@/core/schema/activity';
 import type { Db } from '@/db/client';
@@ -15,7 +15,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { withdrawCapturedOccurrence } from '@/kernel/judge';
 import { archiveLearningRecord } from '@/kernel/records/queries';
-import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
+import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 
 export interface RevertAutoEnrolledBlockParams {
   blockId: string;
@@ -147,31 +147,11 @@ export async function revertAutoEnrolledBlock(
 
     await archiveLearningRecord(tx, record.id, record.version);
 
-    const [{ version: revertedBlockVersion }] = await tx
-      .update(question_block)
-      .set({
-        status: 'draft',
-        imported_question_id: null,
-        imported_attempt_event_id: null,
-        updated_at: now,
-        version: sql`${question_block.version} + 1`,
-      })
-      .where(eq(question_block.id, params.blockId))
-      .returning({ version: question_block.version });
-
-    // Fold-visible reset: explicit nulls clear both import links, and the bumped
-    // version lets foldQuestionBlock reproduce the row.
-    await writeQuestionBlockLifecycleEvent(tx, {
-      blockId: params.blockId,
-      op: 'set_status',
-      status: 'draft',
-      importedQuestionId: null,
-      importedAttemptEventId: null,
-      nextVersion: revertedBlockVersion,
-      actorKind: 'user',
-      actorRef: 'self',
+    await applyQuestionBlockTransition(
+      tx,
+      { kind: 'restore_after_revert', blockId: params.blockId },
       now,
-    });
+    );
 
     return { questionId, recordId: record.id, retractEventId, retractedEventId };
   });

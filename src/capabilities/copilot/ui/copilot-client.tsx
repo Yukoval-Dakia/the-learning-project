@@ -3,7 +3,7 @@ import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { type ApiOperationJsonResponse, apiFetch, apiJson } from '@/ui/lib/api';
 import type { ReplayTurn } from './replay';
 
-// Copilot transport (YUK-1473). The protocol stays with the consumers: the CopilotDock (and the new
+// Copilot transport (YUK-1473). The protocol stays with the consumers: the companion (and the new
 // practice companion) parse the 202 acceptance, fold run frames with consumeDurableCopilotRun and
 // reconcile replays. This seam only moves bytes, so the Start shell can provide its own transport
 // without copying the protocol. The HTTP default is what the Dock always called.

@@ -6,8 +6,6 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   type BacklinksByArtifactType,
   groupBacklinksByArtifactType,
-  listBacklinks,
-  resolveOwningLearningItemIds,
 } from '@/capabilities/notes/server/block-refs';
 import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import {
@@ -24,9 +22,8 @@ import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
-import { getArtifactCorrectionStates } from './artifact-corrections';
+import { readVisibleArtifactBacklinks } from './visible-artifact-backlinks';
 
-const CROSS_LINK_REF_KIND = 'cross_link';
 const NOTE_TYPES = ['note_atomic', 'note_hub', 'note_long'] as const;
 // The interactive artifact reads through this page too, but NOTE_TYPES stays
 // narrow so note-only machinery never treats it as a note.
@@ -129,7 +126,7 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
   const sections = bodyBlocksToNoteSections(note.body_blocks);
 
   // 4. backlinks — inbound cross_links with the same read-time filters as the panel.
-  const backlinks = await loadBacklinks(db, noteId);
+  const backlinks = await readVisibleArtifactBacklinks(db, noteId);
 
   // 5. related items — primary references plus label overlap, deduped.
   const related = await loadRelatedLearningItems(db, noteId, knowledgeIds);
@@ -164,52 +161,6 @@ export async function loadNotePage(db: Db, noteId: string): Promise<NotePage | n
     created_at: note.created_at.toISOString(),
     updated_at: note.updated_at.toISOString(),
   };
-}
-
-async function loadBacklinks(db: Db, noteId: string): Promise<NotePageBacklink[]> {
-  const inbound = (await listBacklinks(db, { toArtifactId: noteId })).filter(
-    (ref) => ref.ref_kind === CROSS_LINK_REF_KIND,
-  );
-  if (inbound.length === 0) return [];
-
-  const sourceIds = Array.from(new Set(inbound.map((ref) => ref.from_artifact_id)));
-  const sourceRows = await db
-    .select({
-      id: artifact.id,
-      archived_at: artifact.archived_at,
-      generation_status: artifact.generation_status,
-    })
-    .from(artifact)
-    .where(inArray(artifact.id, sourceIds));
-  const sourceById = new Map(sourceRows.map((row) => [row.id, row]));
-  const correctionStates = await getArtifactCorrectionStates(db, sourceIds);
-  const owningByArtifact = await resolveOwningLearningItemIds(db, sourceIds);
-
-  const out: NotePageBacklink[] = [];
-  for (const ref of inbound) {
-    const source = sourceById.get(ref.from_artifact_id);
-    if (!source) continue;
-    if (source.archived_at != null) continue;
-    if (source.generation_status !== 'ready') continue;
-    const correction = correctionStates.get(ref.from_artifact_id);
-    if (correction) {
-      if (correction.whole.state === 'retracted' || correction.whole.state === 'superseded') {
-        continue;
-      }
-      const blockState = correction.blocks.get(ref.from_block_id);
-      if (blockState && (blockState.state === 'retracted' || blockState.state === 'superseded')) {
-        continue;
-      }
-    }
-    out.push({
-      from_artifact_id: ref.from_artifact_id,
-      from_learning_item_id: owningByArtifact.get(ref.from_artifact_id) ?? null,
-      from_title: ref.from_artifact_title,
-      from_type: ref.from_artifact_type,
-      from_block_id: ref.from_block_id,
-    });
-  }
-  return out;
 }
 
 async function loadRelatedLearningItems(

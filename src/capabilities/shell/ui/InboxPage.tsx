@@ -395,7 +395,7 @@ export default function InboxPage({ navigate }: InboxPageProps) {
     queryFn: listObservationProposalPreview,
   });
   const aaQ = useQuery({ queryKey: ['proposals', 'auto-applied'], queryFn: listAutoApplied });
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => getTree() });
 
   // 第一页 commit 后才开始逐页补齐；每次只发一个 continuation。失败时停住并把重试权交给
   // 用户，避免瞬时错误形成请求风暴。已加载卡片始终保持可操作。

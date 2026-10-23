@@ -11,7 +11,8 @@ import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 
-import { type PaperListItem, getPapers } from './practice-api';
+import type { PaperListItem } from './practice-api';
+import { usePracticeClient } from './practice-client';
 
 // intent_source → 设计稿来源三类（AI 打包 / 点播 / 导入）。
 function shelfSource(p: PaperListItem): 'paper' | 'on_demand' | 'import' {
@@ -33,6 +34,7 @@ export function PfShelf({
   openPaper: (artifactId: string) => void;
   openRetro: (artifactId: string) => void;
 }) {
+  const { getPapers } = usePracticeClient();
   const papersQ = useQuery({ queryKey: ['papers'], queryFn: getPapers });
   const [src, setSrc] = useState<'all' | 'paper' | 'on_demand' | 'import'>('all');
 

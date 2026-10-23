@@ -12,11 +12,13 @@ import type {
 } from '@/kernel/proposals';
 import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
 import {
+  hasMistakeVariantGenesisAnchor,
+  projectMistakeVariantGuarded,
+} from '@/kernel/records/mistake-variant-facts';
+import {
   type ProposalInboxRow,
   asPlainRecord,
   findExistingRateEvent,
-  hasMistakeVariantGenesisAnchor,
-  projectMistakeVariantGuarded,
   recordProposalDecisionSignal,
   writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
