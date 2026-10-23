@@ -2616,6 +2616,14 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-23",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "copilot -> advisory-locks",
       "date": "2026-10-23",
       "from": 1,
@@ -5092,7 +5100,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 304,
+      "total": 302,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5149,7 +5157,7 @@
         "practice -> events": 1,
         "practice -> fsrs": 2,
         "practice -> http": 3,
-        "practice -> mastery": 5,
+        "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> projections": 1,
         "practice -> proposals": 5,
