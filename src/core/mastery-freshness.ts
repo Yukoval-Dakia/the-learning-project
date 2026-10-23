@@ -23,9 +23,7 @@ const DECAY_SEVERITY: Record<MasteryDecayBucket, number> = {
   unknown: 0,
 };
 
-export function worstMasteryDecayBucket(
-  buckets: readonly MasteryDecayBucket[],
-): MasteryDecayBucket {
+export function worstMasteryDecayBucket(buckets: readonly MasteryDecayBucket[]): MasteryDecayBucket {
   return buckets.reduce<MasteryDecayBucket>((worst, bucket) => {
     return DECAY_SEVERITY[bucket] > DECAY_SEVERITY[worst] ? bucket : worst;
   }, 'unknown');
