@@ -2505,6 +2505,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-88191dba-45c5-4cef-a8ec-304a1cb47e72",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-23",
+      "from": 9,
+      "to": 7,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4038,6 +4046,26 @@
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error status and envelope; Practice retains resource and legacy input contracts and SolveError domain mapping. Original HTTP adapters still reference deprecatedRouteResponse/errorResponse, and other resource handlers still reference ApiError, so this records the new physical consumer without claiming all references are net zero.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/client.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1570",
+      "owns": "The existing boss singleton owns boot and queue access; extraction follow-ups retain two lazy client imports and independent post-commit enqueue failure catches.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
+      "module": "src/server/boss/queue-names.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
+      "issue": "YUK-1570",
+      "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4904,7 +4932,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 318,
+      "total": 316,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -4929,7 +4957,7 @@
         "copilot -> today": 3,
         "ingestion -> advisory-locks": 1,
         "ingestion -> ai": 14,
-        "ingestion -> boss": 9,
+        "ingestion -> boss": 7,
         "ingestion -> events": 7,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
