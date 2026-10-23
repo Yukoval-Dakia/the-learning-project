@@ -73,15 +73,19 @@ export const IngestionSessionResponseSchema = z.object({
 });
 
 /**
- * The latest usage receipt for the session document. derivation_policy is the
- * document's live policy, so a later withdrawal shows immediately. Counts only;
- * redacted values never go on the wire.
+ * All persisted privacy-guard receipts for this session and its source document,
+ * read with the session and live derivation_policy in one read-only snapshot.
+ * Counts sum recorded mutated spans per use/segment, including repeated source
+ * spans across runs; they are neither unique source positions nor fees. Categories
+ * are a union; values never go on the wire. Missing receipts or any unavailable
+ * accounting yields a null usage_receipt, never partial counts or invented zero.
  */
 export const IngestionUsageReceiptSchema = z.object({
   derivation_policy: IngestionDerivationPolicy,
-  /** Extraction engine that produced this receipt (e.g. tencent / glm / docx_text). */
+  /** The common recorded engine; null for mixed or missing engines. */
   engine: z.string().nullable(),
-  /** Channels that left the server; page images are raw, text is redacted. */
+  /** Recorded channel union: raw/redacted if ever used, none only if all say none;
+   * null when any receipt lacks channels. No missing channel is guessed as none. */
   channels: z
     .object({
       page_images: z.enum(['raw', 'none']),
@@ -90,6 +94,7 @@ export const IngestionUsageReceiptSchema = z.object({
     .nullable(),
   redacted_fields: z.array(z.string()),
   redaction_counts: z.record(z.string(), z.number()),
+  /** Latest actual creation time among the attributed persisted receipts. */
   recorded_at: z.string().datetime(),
 });
 
