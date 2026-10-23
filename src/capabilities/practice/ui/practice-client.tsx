@@ -15,10 +15,12 @@ import {
   saveResponseDraft,
   solveHint,
   solveStart,
+  startPaperSession,
   submitReview,
 } from './practice-api';
 
 export type PracticeClient = {
+  startPaperSession: typeof startPaperSession;
   getPaperDetail: typeof getPaperDetail;
   solveStart: typeof solveStart;
   solveHint: typeof solveHint;
@@ -38,6 +40,7 @@ export type PracticeClient = {
   readJudgeRunStatus?: (runId: string) => Promise<ApiOperationJsonResponse<'getJudgeRunStatus'>>;
 };
 const httpPracticeClient: PracticeClient = {
+  startPaperSession,
   getPaperDetail,
   solveStart,
   solveHint,
