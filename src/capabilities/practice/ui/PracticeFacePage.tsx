@@ -21,8 +21,8 @@ import {
   type StreamStatus,
   type StreamView,
   advanceStreamItem,
-  getStream,
 } from './practice-api';
+import { usePracticeClient } from './practice-client';
 import { type Running, glideToTop, leaveQuestion } from './solo/advance-motion';
 import { PracticeSolo } from './solo/PracticeSolo';
 import { questionDetailQuery } from './use-practice-submit';
@@ -113,6 +113,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
+  const { getStream } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
     const value = getQuery('kc')?.trim();
@@ -321,7 +322,7 @@ export default function PracticeFacePage({
     const fresh = await getStream(scopeKnowledgeId ?? undefined);
     qc.setQueryData<StreamView>(streamQueryKey, fresh);
     return fresh;
-  }, [qc, scopeKnowledgeId, streamQueryKey]);
+  }, [getStream, qc, scopeKnowledgeId, streamQueryKey]);
 
   const refreshStream = useCallback(
     async function refresh(): Promise<StreamView | null> {
