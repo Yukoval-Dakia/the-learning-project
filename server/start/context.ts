@@ -21,6 +21,7 @@ import type {
   readQuestionDetail,
   recomposePracticeStream,
   releaseHeldPlacement,
+  revealFrozenStudyReference,
   saveResponseDraft,
   selectNextPlacementQuestion,
   startPlacementProbe,
@@ -77,6 +78,9 @@ export type FrontdoorContext = {
     sessionId: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof transitionPlacementSession>>>;
+  revealStudyReference: (
+    issuanceId: string,
+  ) => Promise<Awaited<ReturnType<typeof revealFrozenStudyReference>>>;
   createPracticeAppeal: (body: string) => Promise<string>;
   previewReviewAdvice: (
     body: string,
