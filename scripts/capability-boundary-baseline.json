@@ -2323,6 +2323,26 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-957008f1-e884-4145-bbac-362d45115ee1",
       "date": "2026-10-23"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readQuestionDetail",
+      "targetModule": "src/capabilities/practice/server/question-detail-read.ts",
+      "targetSymbol": "readQuestionDetail",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/practice-question-detail-operation.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "The authenticated host imports readQuestionDetail at AST and path line 13 and calls it at line 15 with only the requested id, fixed Practice surface and default timeline. Context imports are type-only; HTTP directly consumes the internal operation.",
+      "rationale": "Practice owns complete id, timeline and surface validation, diagnostic due and committed-result admission, serving composition and learner-safe wire projection. The underlying loader owns question data aggregation, not safe admission. The shared operation preserves ordinary question-bank output and diagnostic recovery while keeping private material out of the Practice cache; callers do not reconstruct these decisions.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6e6160eb-7733-44e3-8627-f6947e3e020e",
+      "date": "2026-10-23"
     }
   ],
   "edgeRecords": [
@@ -3616,6 +3636,36 @@
       "issue": "YUK-1570",
       "owns": "Consume existing importable statuses and extraction/agent enqueue operations with the original authorization callback, transaction, identity and recovery ordering.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the common HTTP error envelope; Practice retains complete input, admission and safe response decisions. The HTTP adapter still needs ApiError for PATCH and DELETE, so this records the new physical reference.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["readQuestionServing"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the existing serving facts and their projection. Practice composes these facts with complete question-detail admission and safe wire output; this reference moves from the original GET adapter.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-detail-read.ts",
+      "module": "src/server/questions/detail.ts",
+      "kind": "value",
+      "symbols": ["loadQuestionDetail"],
+      "issue": "YUK-1358",
+      "owns": "The existing server loader owns complete question data and timeline aggregation, not safe admission. Practice retains input validation, diagnostic recovery and learner-safe wire projection; this reference moves from the original GET adapter.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -3897,6 +3947,15 @@
       "to": 1046,
       "issue": "YUK-1570",
       "responsibilityReason": "One net line from separating shared task result facts into the canonical AI contract import and updating its adjacent source comment where present. All execution, context, admission, paid, lock and publication bodies remain unchanged; no additional operation is added to this caller."
+    },
+    {
+      "path": "src/capabilities/practice/ui/use-practice-submit.ts",
+      "date": "2026-10-23",
+      "baseBlob": "573d93f740b04bf44f1b5c4eb31c9e71a2fe7573",
+      "from": 1402,
+      "to": 1410,
+      "issue": "YUK-1358",
+      "responsibilityReason": "Existing Practice submission and recovery responsibilities are unchanged. The eight net lines only add the typed reader parameter and queryFn to questionDetailQuery, remove the direct getQuestionFull import, add the reader to the existing client destructuring with formatter expansion, and inject it into the existing useQuery. No business rule, Effect or recovery branch is added; no line compression or helper split is used to evade the size ratchet."
     }
   ],
   "compatShims": [
