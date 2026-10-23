@@ -196,3 +196,13 @@ Circle镜像同head的 db3 job11382也已读取真实测试步骤日志，确认
 exit 0，日志为 `parent-restore-order-{typecheck,lint,build}.log`。本机测试仍未运行。
 Owner待裁的三个版本字面量完整TEXT在仓库外
 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/stage1-yuk1522-creation-receipts-20261023/pr2037-backup-version-test-text.md`。
+
+## 后续主线组合
+
+父正常 merge 实际 main `a5df83c05b51cea3f5ae3b45613865ea6962edc2`，组合提交
+`341781ce67b3c3e627cf3a3144fffa99175d28ea`。唯一冲突为架构台账的追加位置：完整保留
+main 的稳定合同及两条边前缀，再追加本片记录；未改校验器或放宽债务。原创建、restore
+位置修复、0133/4.33、接口生成物及两个测试文件与 `07b98d007` 全部无差量。
+组合 typecheck、lint（164 warnings）、build、capability-boundaries、architecture-deepening
+串行 limiter 全部 exit 0；外部日志 `parent-a5df-*.log`。新 exact CI 另计，
+原两处测试 case 的三个版本字面量仍待 Owner，未改测试或新开审查。
