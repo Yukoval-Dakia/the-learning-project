@@ -17,11 +17,11 @@ export interface ToolCallLogEntry {
   iteration: number;
   latency_ms: number;
   cost: number;
-  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
+  /** DomainTool registry effect. Omit for rows not owned by the registry. */
   effect?: 'read' | 'propose' | 'write' | 'control';
-  /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
+  /** Set when tool execution hard-fails (timeout / parse / unsupported). */
   error_reason?: string;
-  /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
+  /** Set when the mirror policy writes the `tool_use` event; FK to event.id. */
   mirrored_event_id?: string;
 }
 
@@ -58,10 +58,9 @@ export async function setToolCallLogMirroredEventId(
 }
 
 /**
- * YUK-1557 — record a remote tool call that has no provider-reported USD
- * price. The cost is explicitly `unknown` (never a fabricated zero) and the
- * synthetic task_run_id keeps the attempt-ledger uniqueness separate from the
- * model attempt row on the same run.
+ * YUK-1557 — record a remote tool call with no provider-reported USD price. The
+ * cost is explicitly `unknown` (never a fabricated zero); the synthetic task_run_id
+ * keeps ledger uniqueness separate from the model attempt row.
  */
 export async function writeUnpricedToolCost(
   db: DbLike,

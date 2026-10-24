@@ -1,13 +1,10 @@
 /**
- * Cross-process admission for central Claude Agent SDK sessions (YUK-842).
+ * Cross-process admission for central provider sessions (YUK-842).
  *
- * The admitted unit is deliberately a whole `startup()` + `WarmQuery.query()`
- * session, not an HTTP request. One session can contain multiple turns, nested
- * SDK agents and the Claude CLI's bounded internal retries. Keeping that name
- * honest is important:
- * this module caps concurrent central session families/active branches and
- * session-start reservations per minute; it does not claim raw open-query count
- * or wire-level provider RPM.
+ * The admitted unit is a whole `startup()` + `query()` session, not an HTTP
+ * request: one session can contain multiple turns, nested agents and bounded
+ * internal retries. This module caps concurrent session families/branches and
+ * starts per minute; it does not claim raw open-query count or wire-level RPM.
  *
  * All coordination uses short Postgres transactions. No connection, row lock or
  * advisory lock is held while waiting or while the provider session runs.
@@ -86,7 +83,7 @@ interface RawLanePolicy {
 
 const MODE_ENV = 'AI_PROVIDER_SESSION_ADMISSION_MODE';
 const POLICIES_ENV = 'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON';
-// YUK-1007：keyspace 键名 = env 名（registry 登记同名）。
+// YUK-1007 — config keys mirror their env names (both registered).
 const MODE_KEY = MODE_ENV;
 const POLICIES_KEY = POLICIES_ENV;
 const RAW_POLICY_KEYS = new Set<keyof RawLanePolicy>([
@@ -152,9 +149,9 @@ function policyFingerprint(input: Omit<ProviderSessionLanePolicy, 'fingerprint'>
 }
 
 function hardReclaimHorizonMs(executionTimeoutMs: number): number {
-  // SDK startup is intentionally outside the model execution timer. Its
-  // bounded phase must therefore be represented in the DB's absolute reclaim
-  // horizon, or a live provider attempt could outlast its capacity fence.
+  // Adapter startup is intentionally outside the model execution timer, so its
+  // bounded phase must be in the DB reclaim horizon or a live attempt could
+  // outlast its capacity fence.
   return (
     PROVIDER_SESSION_INITIAL_LEASE_TTL_MS + executionTimeoutMs + PROVIDER_SESSION_ABORT_GRACE_MS
   );
@@ -163,9 +160,9 @@ function hardReclaimHorizonMs(executionTimeoutMs: number): number {
 function parsePolicies(
   raw: string | Record<string, unknown> | undefined,
 ): Map<Provider, ProviderSessionLanePolicy> {
-  // YUK-1007：env 层是 JSON 原文字符串；DB 层存解析后的对象（registry schema
-  // 已逐域校验形状，写端再拦 provider key）。两者都走这同一个校验环——原
-  // 报错文案不动。
+  // YUK-1007 — env carries JSON text, DB stores parsed objects (registry schema
+  // validates shape, the writer rejects provider keys). Both use this one check;
+  // the existing error messages stay unchanged.
   let parsed: unknown;
   if (typeof raw === 'string') {
     if (!raw.trim()) {
@@ -243,9 +240,9 @@ export function resolveProviderSessionAdmissionPlan(
   laneId: Provider,
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderSessionAdmissionPlan {
-  // YUK-1007：mode/policies 走配置面（DB > env > 'off'）。env 形参仍作
-  // fallback 层传给 getConfig；DB 行在场时恒赢。非法 mode（registry 原文透传
-  // 的 env / 脏 DB 值）照旧 throw——admission 是断流面，不 fail-open。
+  // YUK-1007 — mode/policies resolve through the config face (DB > env > 'off');
+  // the env argument is only the fallback layer for getConfig. An invalid mode
+  // still throws: admission is a circuit breaker and must not fail open.
   const rawModeValue = getConfig(MODE_KEY, env);
   const rawMode =
     typeof rawModeValue === 'string' && rawModeValue !== '' ? rawModeValue.trim() : 'off';
@@ -1473,7 +1470,7 @@ async function releaseLease(
 }
 
 /**
- * Acquire one central SDK-session permit. `observe` instruments but explicitly
+ * Acquire one central provider-session permit. `observe` instruments but explicitly
  * fails open; `enforce` fails closed on every control-plane ambiguity.
  */
 export async function acquireProviderSession(

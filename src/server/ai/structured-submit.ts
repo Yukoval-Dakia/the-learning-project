@@ -1,19 +1,14 @@
-// YUK-1547 — single source for the structured-submit wire policy shared by
-// the pi adapter (pi-agent-adapter.ts) and the admission ops scripts
-// (preflight / backlog driver). The catalog has no bit for "endpoint accepts a
-// forced named tool_choice on this resolved wire shape", so the capability is
-// binding-declared (PROVIDER_MODEL_BINDINGS → resolveModelProfile) and this
-// module is where the resolved capability becomes a wire decision.
+// YUK-1547 — single source for the structured-submit wire policy, shared by the pi
+// adapter and the admission ops scripts. The catalog has no bit for "endpoint
+// accepts a forced named tool_choice", so the capability is binding-declared and
+// this module turns it into a wire decision.
 //
-// Policy: a lane may force `tool_choice:{type:'function'}` for the submit tool
-// only while its profile does NOT record forcedToolChoice:false. A recorded
-// rejection (e.g. opencode-go/deepseek-v4.1-flash thinking mode, request_id
-// 6fde3ba6-8f64-4c84-8a3d-5a5e211b430a) degrades the lane to
-// tool_choice:'auto' — the prompt contract and exactly one closing reminder
-// carry the submit obligation instead. 'unknown' keeps the legacy forced
-// posture: forcing is the proven fix for the text-JSON drift these tasks were
-// admitted under, and absent evidence of breakage the runner must not silently
-// weaken every lane's wire guarantee.
+// A lane may force `tool_choice:{type:'function'}` while its profile does NOT record
+// forcedToolChoice:false. A recorded rejection (e.g. opencode-go deepseek thinking
+// mode) degrades to 'auto' with the prompt contract and one closing reminder.
+// 'unknown' keeps the legacy forced posture: forcing is the proven fix for the
+// text-JSON drift these tasks were admitted under, and absent evidence of breakage
+// the runner must not weaken every lane's wire guarantee.
 
 import type { Provider } from '@/capabilities/task-registry';
 import { type ModelCapabilityTriState, resolveModelProfile } from './model-profiles';
@@ -55,11 +50,9 @@ export function structuredSubmitWireFields(policy: StructuredSubmitPolicy):
 }
 
 /**
- * System-prompt suffix the adapter appends for structuredOutputMode:'tool'
- * tasks. Both variants share ONE landing budget: the forced variant's only
- * extra turn is a parameter-contract correction, and the auto variant's one
- * extra turn goes to whichever fires first — the missing-submit reminder or
- * the same correction.
+ * System-prompt suffix for structuredOutputMode:'tool' tasks. Both variants share
+ * ONE landing budget: the extra turn is either the missing-submit reminder or a
+ * single parameter-contract correction.
  */
 export function structuredSubmitSystemSuffix(forced: boolean): string {
   return forced
@@ -68,10 +61,8 @@ export function structuredSubmitSystemSuffix(forced: boolean): string {
 }
 
 /**
- * The one closing reminder (C2-landing shape, ADR-0075 §D2): injected once via
- * the pi follow-up surface when a structured-output turn would otherwise stop
- * without the submit call. Deliberately generic — no mode- or task-specific
- * content, so A/B/crosscheck and every structured submit share one policy.
+ * The one closing reminder (C2-landing shape, ADR-0075 §D2), injected once via the
+ * pi follow-up surface. Deliberately generic so every structured submit shares it.
  */
 export const STRUCTURED_SUBMIT_REMINDER =
   `You finished without the required tool call. Call ${STRUCTURED_OUTPUT_SUBMIT_TOOL} ` +
@@ -80,16 +71,12 @@ export const STRUCTURED_SUBMIT_REMINDER =
 
 // ─── bounded submit turn machine ─────────────────────────────────────────────
 //
-// YUK-1547 — ONE shared classification for "did this model turn produce the
-// submit call", consumed by the pi adapter (finishTurn) and the ops preflight
-// (its second, authorized landing request). Any turn carrying tool calls that
-// is not exactly the one landed submit — wrong tool, multiple calls, truncated
-// arguments — is terminal_failure IMMEDIATELY: pi continues the inner loop on
-// truncated calls (failToolCallsFromTruncatedMessage returns
-// terminate=false), so anything else would silently pay for repair turns.
-// A clean text-only end is the only turn allowed exactly one reminder.
-//
-// Turn bound: initial turn + at most one reminder turn. Never more.
+// ONE shared classification for "did this turn produce the submit call", consumed
+// by the pi adapter and the ops preflight. Any turn with tool calls that is not
+// exactly the one landed submit is terminal_failure immediately: pi continues the
+// inner loop on truncated calls, so anything else silently pays for repair turns.
+// A clean text-only end is the only turn allowed exactly one reminder; the bound
+// is initial turn + at most one reminder turn.
 
 export type SubmitTurnVerdict = 'landed' | 'needs_reminder' | 'terminal_failure';
 
@@ -111,12 +98,11 @@ export function classifySubmitTurn(
     calls.length === 1 &&
     calls[0] === STRUCTURED_OUTPUT_SUBMIT_TOOL;
   if (landed) return 'landed';
-  // Any tool call that is not the clean single submit — wrong tool, extra
-  // calls, truncated 'length' payloads — ends the run with evidence; the pi
-  // inner loop would otherwise continue paying for repair turns.
+  // Any tool call that is not the clean single submit ends the run with evidence;
+  // the pi inner loop would otherwise continue paying for repair turns.
   if (calls.length > 0) return 'terminal_failure';
-  // A clean text-only end is the only landing-eligible turn, and only on
-  // 'auto' lanes — a forced lane's text turn is a provider contract violation.
+  // A clean text-only end is landing-eligible only on 'auto' lanes — a forced
+  // lane's text turn is a provider contract violation.
   if (signal.stopReason === 'stop' || signal.stopReason === 'end_turn') {
     return opts.forced ? 'terminal_failure' : 'needs_reminder';
   }
