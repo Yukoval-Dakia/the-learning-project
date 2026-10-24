@@ -4514,6 +4514,16 @@
       "issue": "YUK-1560",
       "owns": "夜间任务资格判定的确定性阈值、四档活跃度分类与各类别决策（ADR-0075 D6）；调用方只声明 job 类别，不能改阈值",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/harness-scoreboard.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": ["ProposalInboxRow", "listProposalInboxRows"],
+      "issue": "YUK-1647",
+      "owns": "M4 inbox backlog reuses the kernel inbox projection (status derivation, visibility filtering, as-of replay) instead of re-deriving proposal state in observability",
+      "date": "2026-10-21"
     }
   ],
   "sourceSizeRecords": [
@@ -4831,6 +4841,15 @@
       "to": 1233,
       "issue": "YUK-1570",
       "responsibilityReason": "Three net lines are the required formatter expansion of the unchanged two-symbol advisory-lock import after its specifier moves to the approved canonical db/learning-state-lock owner. Removing that import leaves the entire caller byte-identical to the base, including all B, merge, paid, transaction and lock-order bodies. No operation or policy is added, and no unrelated lines are compressed or split to evade the size ratchet."
+    },
+    {
+      "path": "src/kernel/proposals/inbox.ts",
+      "date": "2026-10-21",
+      "baseBlob": "f88d528d79ee35d269bb46145f5a4766571521a8",
+      "from": 1058,
+      "to": 1082,
+      "issue": "YUK-1647",
+      "responsibilityReason": "Add an optional asOf bound to the existing inbox projection so the harness scoreboard can replay the pending set at a historical window end; default callers and the projection's ownership stay unchanged."
     }
   ],
   "compatShims": [

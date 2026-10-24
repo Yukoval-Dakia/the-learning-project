@@ -316,7 +316,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
 - 每次调用写 `ai_task_runs` / `cost_ledger`；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
-- 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
+- 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；M3/M4/M5 按 ADR 的逐任务/逐子项给出 `parts[]`（各有分子分母与 `basis`），M4 以窗口结束时刻的收件箱投影回放积压；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
 - **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
