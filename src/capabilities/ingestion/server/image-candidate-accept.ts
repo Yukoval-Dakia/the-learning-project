@@ -586,7 +586,6 @@ export async function acceptImageCandidateProposal(
     const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
     const writeCostLedgerFn = deps.writeCostLedgerFn ?? writeCostLedger;
 
-    // Download and persist the source asset.
     const { bytes, mimeType } = await fetchImageBytes(change.source_url);
     if (bytes.byteLength === 0) {
       throwSourceFetchFailure('source_fetch_failed', `0 bytes from ${change.source_url}`);
@@ -655,7 +654,6 @@ export async function acceptImageCandidateProposal(
       );
     }
 
-    // Build the web_sourced draft from the VLM block.
     const promptMd = block.extracted_prompt_md;
     // The OCR-extracted answer only; reference generation is out of scope here.
     const referenceMd = block.reference_md ?? '';
@@ -851,7 +849,6 @@ export async function acceptImageCandidateProposal(
         tokens_out: 0,
       });
 
-      // Accept rate event chained to the proposal.
       await writeEvent(tx, {
         id: rateEventId,
         actor_kind: 'user',

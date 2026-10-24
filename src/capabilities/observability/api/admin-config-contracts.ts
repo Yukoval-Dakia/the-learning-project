@@ -1,11 +1,4 @@
-// YUK-1007 — GET /api/admin/config 响应契约（读面 payload 形状）。
-//
-// 设计输入：settings-panel preflight §10.2 的行契约，按 PR #1498 落地后的
-// store 现实收敛：source 枚举 = store 的 ConfigSource（'db' | 'env' |
-// 'code-default' | 'compose-forced'）；env pin 与普通 env fallback 由 env_mode
-// 区分（'priority' = operator pin）。design 的 effect/writable/owner/risk/decl
-// 列在本批收敛为 wired/read_only/consumer——生效语义以实际接线为准（诚实优先
-// 于面板文案），风险/owner 标注随 UI lane 批准时补。
+// GET /api/admin/config 响应契约（读面 payload 形状）。
 import { z } from 'zod';
 
 /** 读面值形状：boolean | number | string | string[] | 对象（override/policies）| null。 */
@@ -127,7 +120,7 @@ export const AdminConfigScheduleRowSchema = z.object({
   note: z.string().optional(),
 });
 
-/** runtime 分区：运行形态常量（设计 §3.2 #6），全部来自单一声明点。 */
+/** runtime 分区：运行形态常量，全部来自单一声明点。 */
 export const AdminConfigRuntimeSectionSchema = z.object({
   port: z.number().int().nullable(),
   db_pool_max: z.number().int(),

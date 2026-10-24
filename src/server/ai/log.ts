@@ -6,13 +6,12 @@ import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
 
-// cost_ledger is a loose-coupled correlation log (no FK); a single
-// INSERT works against either a top-level Db or a Tx. Accepting DbLike lets callers
-// fold the write into a surrounding transaction (YUK-227 image_candidate accept folds
-// the per-accept cost row into the question-INSERT tx for atomicity). FIX-R2-10 — all
-// tool-call correlation writers in kernel/tools/call-evidence retain the same
-// DbLike contract; only the ai_task_runs
-// lifecycle writers below stay Db (they are written by the runner outside any caller tx).
+// cost_ledger is a loose-coupled correlation log (no FK), so one INSERT works
+// against either a top-level Db or a Tx. Accepting DbLike lets callers fold the
+// write into a surrounding transaction (YUK-227 image_candidate accept folds its
+// cost row into the question-INSERT tx); tool-call writers in
+// kernel/tools/call-evidence keep the same contract (FIX-R2-10). The ai_task_runs
+// lifecycle writers below stay Db (runner-owned, outside caller txs).
 type DbLike = Db | Tx;
 
 /** Warn when a tool-calling task has no pi tool mounts configured in its context. */
@@ -58,8 +57,8 @@ export async function writeCostLedger(db: DbLike, entry: CostLedgerEntry): Promi
 }
 
 /**
- * One models-catalog auth probe. Uses the attempt columns so an unpriced call
- * stays `cost = null` instead of a legacy zero. Not a runner task run.
+ * One models-catalog auth probe. Uses the attempt columns so an unpriced call stays
+ * `cost = null` instead of a legacy zero. Not a runner task run.
  */
 export async function writeModelCatalogProbeCost(
   db: DbLike,
@@ -205,8 +204,8 @@ export async function writeAiTaskRunFinished(
 }
 
 /**
- * Mark a settled failure only after the next SDK query has actually started.
- * A missed marker is conservative (`error`); a false positive is forbidden.
+ * Mark a settled failure only after the next provider query actually started. A
+ * missed marker is conservative (`error`); a false positive is forbidden.
  */
 export async function writeAiTaskRunRetried(db: DbLike, id: string): Promise<boolean> {
   const rows = await db
@@ -235,12 +234,9 @@ export interface AiTaskAttemptFinishEntry {
 }
 
 /**
- * Commit the two durable projections of one AI attempt as one unit.
- *
- * The transaction is intentionally owned here rather than by an adapter: every
- * runner path gets exactly one ai_task_runs terminal update and one attempt
- * ledger row carrying the same amount / basis / ref. A ledger uniqueness or
- * constraint failure therefore rolls the terminal update back too.
+ * Commit the two durable projections of one attempt as one unit: every runner path
+ * gets exactly one ai_task_runs terminal update and one ledger row with the same
+ * amount/basis/ref, so a ledger failure rolls the terminal update back.
  */
 export async function writeAiTaskAttemptFinished(
   db: Db,

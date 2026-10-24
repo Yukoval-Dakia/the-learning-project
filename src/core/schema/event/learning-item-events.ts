@@ -6,10 +6,10 @@ import { z } from 'zod';
 // Status restoration carries the captured pre-accept state instead of synthesizing completion.
 // Reserved action names prevent malformed payloads from falling through generic parsing.
 
-// A completion transition: status→'done', completed_at=event.created_at, version+1. Mirrors
-// acceptCompletionProposal's imperative UPDATE (proposal-appliers.ts:292-301). The reducer applies
-// it ONLY when the row is pending|in_progress (the imperative writer's status precondition); a
-// terminal/other-status row is a no-op (terminal-status guard, design §0).
+// A completion transition: status→'done', completed_at=event.created_at, version+1.
+// Mirrors acceptCompletionProposal's imperative UPDATE. The reducer applies it ONLY
+// when the row is pending|in_progress (the imperative writer's status precondition);
+// a terminal/other-status row is a no-op.
 export const LearningItemCompleteExperimental = z.object({
   actor_kind: z.enum(['user', 'agent', 'system']),
   actor_ref: z.string().min(1),
@@ -26,11 +26,11 @@ export const LearningItemCompleteExperimental = z.object({
 });
 export type LearningItemCompleteExperimentalT = z.infer<typeof LearningItemCompleteExperimental>;
 
-// A relearn (reopen) transition: status→'in_progress', completed_at=null, version+1. Mirrors
-// acceptRelearnProposal's imperative UPDATE (proposal-appliers.ts:376-385). The reducer applies it
-// ONLY when the row is done|resting (the imperative writer's status precondition); other-status
-// rows are a no-op. completed_at=null is a structural reset (the relearn-retract synthetic clock in
-// §7.3 cannot restore the original complete time — the fold accepts null).
+// A relearn (reopen) transition: status→'in_progress', completed_at=null, version+1.
+// Mirrors acceptRelearnProposal's imperative UPDATE. The reducer applies it ONLY when
+// the row is done|resting (the imperative writer's status precondition); other-status
+// rows are a no-op. completed_at=null is a structural reset: the relearn-retract
+// synthetic clock cannot restore the original complete time, so the fold accepts null.
 export const LearningItemRelearnExperimental = z.object({
   actor_kind: z.enum(['user', 'agent', 'system']),
   actor_ref: z.string().min(1),

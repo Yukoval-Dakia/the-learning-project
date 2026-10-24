@@ -1,10 +1,8 @@
 /**
- * YUK-1531 — a budget abort often cuts the stream before the provider's final
- * usage chunk. Estimate the tokens that were actually submitted or streamed,
- * including reasoning deltas the stream exposed. Same rough divisor the pi
- * compaction trigger uses: CJK ≈ 1 token, other text ≈ 4 characters per token.
- * The result is an estimate, never a measured
- * invoice, and never the {0,0} placeholder.
+ * YUK-1531 — a budget abort often cuts the stream before the final usage chunk, so
+ * estimate tokens from what was submitted or streamed. Same rough divisor as pi
+ * compaction: CJK ≈ 1 token, other text ≈ 4 chars. An estimate, never an invoice
+ * and never the {0,0} placeholder.
  */
 const CJK_RE = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/gu;
 

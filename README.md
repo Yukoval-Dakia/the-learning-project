@@ -1,6 +1,6 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md)（部分过时，采信前对照代码）为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
+自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md)（开头的运行时、capability、执行路径、Start 前门，以及「六、技术栈」已对齐当前代码；「七、八、九」及「五、AI 任务层」的细节尚待更新）为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
 
 > **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。
 
@@ -105,7 +105,7 @@ for exact boundaries and current limits.
 ## 开发
 
 Prerequisites: **Node.js >=24.0.0**（`.node-version` 固定最低支持版本）与
-**pnpm 11.13.1**。本地开发、生产 Docker 镜像与 CI 完整门禁统一使用 Node 24，
+**pnpm 11**。本地开发、生产 Docker 镜像与 CI 完整门禁统一使用 Node 24，
 避免公开运行时契约与实际验证环境漂移。
 
 ### 本地重活限流

@@ -21,7 +21,7 @@ export const DifficultyEvidence = z
     confidence: z.number().min(0).max(1),
     observed_at: z.string().datetime({ offset: true }).optional(),
     source_route: z.string().min(1).optional(),
-    /** YUK-1557 — one-line producer rationale; absent falls back to the deterministic basis sentence. */
+    /** One-line producer rationale; absent falls back to the basis sentence. */
     reason: z.string().trim().min(1).max(500).optional(),
   })
   .superRefine((evidence, ctx) => {
@@ -84,8 +84,8 @@ export function buildProducerDifficultyEvidence(
 }
 
 /**
- * YUK-1557 — the one-line answer to "why is this question difficulty N?".
- * Deterministic from stored evidence; a producer-supplied reason wins.
+ * The one-line answer to "why is this question difficulty N?". Deterministic from
+ * stored evidence; a producer-supplied reason wins.
  */
 export function explainDifficultyEvidence(evidence: DifficultyEvidenceT): string {
   if (evidence.reason) return evidence.reason;

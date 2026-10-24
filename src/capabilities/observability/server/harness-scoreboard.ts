@@ -9,7 +9,7 @@
 // Consumers:
 //   - jobs/harness_scoreboard_daily.ts (daily projection event)
 //   - api/harness-scoreboard.ts (status page read)
-//   - scripts/harness-scoreboard.ts (10-07..10-18 recompute CLI)
+//   - scripts/harness-scoreboard.ts (recompute CLI)
 
 import { createHash } from 'node:crypto';
 import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';

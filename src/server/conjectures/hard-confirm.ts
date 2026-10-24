@@ -1,6 +1,4 @@
 // Can this evidence separate a held misconception from a skill gap?
-// Sister of reconcile.ts, and not inside it. Reconcile imports scoring and typed-state.
-// This file imports scoring only. Neither file imports the other.
 // Counts, two- or three-value reads, and enums only. No fitted parameter.
 // The thresholds below are owner operating points, not values fitted to a learner.
 // Writes nothing. Does not touch mastery, FSRS, or difficulty. Reading baseline probability is allowed.

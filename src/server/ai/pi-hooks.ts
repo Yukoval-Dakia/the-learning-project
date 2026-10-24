@@ -1,19 +1,14 @@
-// YUK-921 P3 (YUK-1022) / P4 (YUK-1025) — the hook surface.
+// YUK-921 P3 (YUK-1022) / P4 (YUK-1025) — the hook surface, the only tool-call
+// interception surface since the SDK's `Options.hooks`/`canUseTool` retired.
 //
-// Post-P4 this is the ONLY tool-call interception surface (the retired SDK's
-// `Options.hooks`/`canUseTool` are gone). Producers (spawn-contract /
-// cancellation / reply-finalization) emit their entries from one shared
-// decision core:
+//   deny           → beforeToolCall { block, reason }
+//   interrupt      → beforeToolCall { block, reason, terminate }
+//   post-execution → afterToolCall (isError covering failures)
+//   compaction     → transformContext re-injection (adapter-owned)
 //
-//   deny              → beforeToolCall { block, reason }
-//   interrupt         → beforeToolCall { block, reason, terminate }
-//   post-execution    → afterToolCall (isError=false / true for failures)
-//   compaction        → transformContext re-injection (adapter-owned)
-//
-// Ordering: all beforeToolCall entries run in declaration order (first defined
-// result short-circuits); afterToolCall observers run in declaration order
-// after the tool settles. Observer failures are logged and fail open —
-// visibility must never abort paid work.
+// beforeToolCall entries run in declaration order with first defined result
+// short-circuiting; afterToolCall observers all run after the tool settles.
+// Observer failures are logged and fail open — visibility must never abort paid work.
 
 import type { AfterToolCallResult, BeforeToolCallResult } from '@earendil-works/pi-agent-core';
 
@@ -37,9 +32,8 @@ export async function runPiBeforeToolCall(
   return undefined;
 }
 
-/** Fan an observation out to every afterToolCall entry; failures log+continue.
- *  Returns the merged override — later entries' defined fields win over
- *  earlier ones (pi applies the result field-wise). */
+/** Fan an observation out to every observer. Returns the merged override —
+ *  later defined fields win (pi applies the result field-wise). */
 export async function emitPiAfterToolCall(
   bridge: PiHookBridge | undefined,
   observation: PiToolCallObservation,

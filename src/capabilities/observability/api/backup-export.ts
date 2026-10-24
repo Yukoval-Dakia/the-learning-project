@@ -1,4 +1,4 @@
-// Backup export. The existing HTTP path is unchanged.
+// Backup export: streams a ZIP of the database and, with include_assets=1, R2 assets.
 
 import { db } from '@/db/client';
 import { buildBackupArchive } from '@/server/export/archive';
