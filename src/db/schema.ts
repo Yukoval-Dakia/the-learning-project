@@ -3084,12 +3084,12 @@ export const intervention = pgTable(
 // YUK-445 (A11 — 谨慎 / 速度-精度轴) — learner_axis_state: per-KC SLOW-VARYING descriptor
 // recovered by EZ-diffusion (Wagenmakers 2007) from this learner's own RT + accuracy.
 //
-// Single writer = the A11 batch job (axis-writer.ts), nightly per-KC overwrite (peer of
-// mastery_state / kc_typed_state — diagnostic projection keyed by knowledge subject_id, no
-// enforced FK). Pure event-derived: reads attempt events' duration_ms + outcome, never writes
-// θ̂ / FSRS / scheduling state — these columns are a DESCRIPTOR only and have NO live estimation
-// consumer (read-out is display-only via placement-profile). So A11 touches no LIVE engine and
-// needs no dark-ship flag.
+// No scheduled writer: YUK-1560 retired the nightly batch. Rows are only renamed/frozen when
+// knowledge nodes merge (peer of mastery_state / kc_typed_state — diagnostic projection keyed
+// by knowledge subject_id, no enforced FK). Historical columns stay event-derived: attempt
+// events' duration_ms + outcome, never θ̂ / FSRS / scheduling state — a DESCRIPTOR only with NO
+// live estimation consumer (read-out is display-only via placement-profile). So A11 touches no
+// LIVE engine and needs no dark-ship flag.
 //
 // n=1 admissibility: drift_v / boundary_a / ter are recovered from ONE learner's sufficient
 // statistics (Pc, correct-RT mean/variance). boundary_a is THIS learner's response caution —
@@ -3097,9 +3097,9 @@ export const intervention = pgTable(
 //
 // drift_v vs boundary_a/ter provenance gate (the A11 hard boundary): in an ADAPTIVE flow item
 // selection pins Pc, confounding the drift interpretation, so `drift_v` is persisted ONLY for
-// provenance='probe' (a non-adaptive fixed-difficulty probe-set). In the adaptive main flow we
-// write boundary_a + ter and leave drift_v NULL. (No non-adaptive probe-set source exists yet;
-// the writer + column + gate are wired now, the probe-set data source is the deferred flip.)
+// provenance='probe' (a non-adaptive fixed-difficulty probe-set). The retired nightly writer
+// wrote boundary_a + ter and left drift_v NULL. (No non-adaptive probe-set source exists; the
+// probe-set flip stays deferred.)
 //
 // n_obs = total scored responses backing the recovery (usage-gate provenance, NOT a θ count).
 // NOTE: A10 (confidence/calibration_curve, YUK-444) is HOLD; when it lands it adds its own
@@ -3122,7 +3122,7 @@ export const learner_axis_state = pgTable(
     // total scored responses the recovery folded (usage-gate evidence). DEFAULT 0.
     n_obs: integer('n_obs').notNull().default(0),
     // 'adaptive' | 'probe' — which response source produced this row. Gates drift_v
-    // persistence. DEFAULT 'adaptive' (the only live source today).
+    // persistence. DEFAULT 'adaptive' (historical rows; no current writer).
     provenance: text('provenance').notNull().default('adaptive'),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

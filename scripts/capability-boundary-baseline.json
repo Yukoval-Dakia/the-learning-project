@@ -2853,6 +2853,14 @@
       "from": 12,
       "to": 11,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> calibration",
+      "date": "2026-10-21",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4499,6 +4507,16 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/manifest.ts",
+      "module": "src/kernel/nightly-eligibility.ts",
+      "kind": "value",
+      "symbols": ["nightlyEligibility"],
+      "issue": "YUK-1560",
+      "owns": "夜间任务资格判定的确定性阈值、四档活跃度分类与各类别决策（ADR-0075 D6）；调用方只声明 job 类别，不能改阈值",
+      "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/observability/server/harness-scoreboard.ts",
       "module": "src/kernel/proposals/inbox.ts",
       "kind": "value",
@@ -5399,7 +5417,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 295,
+      "total": 294,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5449,7 +5467,7 @@
         "practice -> ai": 46,
         "practice -> assessment": 1,
         "practice -> boss": 14,
-        "practice -> calibration": 3,
+        "practice -> calibration": 2,
         "practice -> coldstart": 1,
         "practice -> events": 1,
         "practice -> fsrs": 2,
