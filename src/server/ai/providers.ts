@@ -8,6 +8,10 @@ import {
   customProviderDefinitions,
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
+import {
+  assertModelEndpointHostAllowed,
+  isModelEndpointHostAllowed,
+} from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
 import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider-catalog';
@@ -352,6 +356,8 @@ export function providerModelsRoot(
   if (looksLikeCustomProviderId(provider)) {
     const definition = customProviderDefinition(provider);
     if (!definition) return null;
+    // Never send the credential to a host the catalog does not declare.
+    if (!isModelEndpointHostAllowed(definition.baseUrl)) return null;
     return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
       ? `${definition.baseUrl}/v1`
       : definition.baseUrl;
@@ -361,6 +367,7 @@ export function providerModelsRoot(
   try {
     const base = resolveModelProfile(provider, model, env).baseUrl;
     if (!base) return null;
+    if (!isModelEndpointHostAllowed(base)) return null;
     // Root routing depends only on the wire protocol; other facts gate execution,
     // not the endpoint. Without an api there is no protocol to route a root from.
     const api = nativePiModelApi(provider, model, env);
@@ -810,6 +817,17 @@ export function resolveTaskProvider(
         `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
       );
     }
+    // The key is sent to the catalog bucket's endpoint, not necessarily the
+    // registry definition during a PUT→refresh window. Validate the URL that
+    // will actually go on the wire and fail closed while the two disagree.
+    const catalogBaseUrl = resolveModelProfile(providerName, modelId).baseUrl;
+    if (catalogBaseUrl !== undefined && catalogBaseUrl !== definition.baseUrl) {
+      throw new Error(
+        `Custom provider '${providerName}' endpoint is out of sync: the saved definition has '${definition.baseUrl}' but the runtime catalog bucket still has '${catalogBaseUrl}'. Refusing to send ${definition.apiKeyEnv} until the provider's /models refresh completes.`,
+      );
+    }
+    const baseUrl = catalogBaseUrl ?? definition.baseUrl;
+    assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,
@@ -827,7 +845,7 @@ export function resolveTaskProvider(
       provider: providerName,
       model: modelId,
       apiKey,
-      baseUrl: resolveModelProfile(providerName, modelId).baseUrl ?? definition.baseUrl,
+      baseUrl,
       ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
       selectionRule: binding.selectionRule,
     };
@@ -889,12 +907,17 @@ export function resolveTaskProvider(
     );
   }
 
+  const profile = resolveModelProfile(providerName, modelId);
+  const baseUrl = profile.baseUrl;
+  if (baseUrl !== undefined) {
+    assertModelEndpointHostAllowed(baseUrl, `provider '${providerName}' model '${modelId}'`);
+  }
   return {
     authMode: 'key',
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: resolveModelProfile(providerName, modelId).baseUrl,
+    baseUrl,
     selectionRule,
     ...nativeReasoning,
   };

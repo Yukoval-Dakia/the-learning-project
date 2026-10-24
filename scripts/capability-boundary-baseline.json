@@ -4850,6 +4850,15 @@
       "to": 1082,
       "issue": "YUK-1647",
       "responsibilityReason": "Add an optional asOf bound to the existing inbox projection so the harness scoreboard can replay the pending set at a historical window end; default callers and the projection's ownership stay unchanged."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-23",
+      "baseBlob": "653a39710c78647c8f5fdc8d005bb533c7d7615b",
+      "from": 1267,
+      "to": 1306,
+      "issue": "YUK-1646",
+      "responsibilityReason": "The catalog document remains the single owner of models.dev endpoint truth: the added lines derive its model-endpoint hosts, install them into the shared allowlist on every document swap and on the initial snapshot, and admit freshly pulled hosts before the /models reads that precede the merge. No new responsibility or subsystem; custom:* buckets stay excluded so admin-configured URLs cannot extend the allowlist."
     }
   ],
   "compatShims": [

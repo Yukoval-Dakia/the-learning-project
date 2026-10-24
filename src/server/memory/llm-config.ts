@@ -1,3 +1,4 @@
+import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { executablePiModel } from '@/server/ai/pi-provider-catalog';
@@ -44,6 +45,10 @@ export function resolveMemoryLlmConfig(
   }
   const apiKey = credentialEnv ? env[credentialEnv]?.trim() : undefined;
   if (!apiKey) throw new Error(`Mem0 memory client requires ${credentialEnv}`);
+  assertModelEndpointHostAllowed(
+    native.baseUrl,
+    `memory LLM provider '${pin.provider}' model '${pin.model}'`,
+  );
   return { provider: pin.provider, apiKey, model: pin.model, baseURL: native.baseUrl };
 }
 

@@ -12,6 +12,7 @@
 // key value stays in the operator's env and never reaches the DB or logs.
 
 import { ApiError } from '@/kernel/http';
+import { assertModelEndpointHostAllowed } from './model-endpoint-allowlist';
 
 export type CustomProviderProtocol = 'openai-completions' | 'anthropic-messages';
 
@@ -115,7 +116,11 @@ export function validateCustomProviderBaseUrl(raw: string): string {
       422,
     );
   }
-  return raw.replace(/\/+$/, '');
+  const normalized = raw.replace(/\/+$/, '');
+  // The key named by api_key_env is sent to this endpoint. Refuse a host the
+  // models.dev catalog does not declare as a model endpoint.
+  assertModelEndpointHostAllowed(normalized, 'custom provider base_url');
+  return normalized;
 }
 
 export function validateCustomProviderSlug(slug: string): void {

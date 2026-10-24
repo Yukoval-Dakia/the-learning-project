@@ -760,10 +760,10 @@
                 }
               ]
             },
-            "description": "创建或替换一个自定义 provider 定义并刷新其 /models\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 需 x-internal-token。id 是 slug（小写字母/数字/连字符），provider id 为 custom:<slug>。写后跑一次共享目录刷新：自定义 provider 只做 GET /models 这类不计费读取（该到期的内置 provider 1-token 探针可能随同一刷新发出）；返回写后摘要与目录结果（stored/kept/not_wired）。key 只按 env 变量名引用（必须以 _API_KEY/_TOKEN 结尾，DATABASE_*/POSTGRES_*/INTERNAL_TOKEN/云凭据等共享 env 名被拒绝），值放 .env.local/容器 env，不进库不进日志。上限 16 个。",
+            "description": "创建或替换一个自定义 provider 定义并刷新其 /models\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 需 x-internal-token。id 是 slug（小写字母/数字/连字符），provider id 为 custom:<slug>。base_url host 必须在 models.dev 端点 allowlist 内（另含代码声明的 first-party 端点），否则 422；该约束只限模型端点，不影响 agent 浏览/fetch。写后跑一次共享目录刷新：自定义 provider 只做 GET /models 这类不计费读取（该到期的内置 provider 1-token 探针可能随同一刷新发出）；返回写后摘要与目录结果（stored/kept/not_wired）。key 只按 env 变量名引用（必须以 _API_KEY/_TOKEN 结尾，DATABASE_*/POSTGRES_*/INTERNAL_TOKEN/云凭据等共享 env 名被拒绝），值放 .env.local/容器 env，不进库不进日志。上限 16 个。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"display_name\": \"My OpenAI-compatible gateway\",\n  \"base_url\": \"https://gw.example.com/v1\",\n  \"api_key_env\": \"MY_GATEWAY_API_KEY\",\n  \"protocol\": \"openai-completions\"\n}",
+              "raw": "{\n  \"display_name\": \"My OpenAI-compatible gateway\",\n  \"base_url\": \"https://api.openai.com/v1\",\n  \"api_key_env\": \"MY_GATEWAY_API_KEY\",\n  \"protocol\": \"openai-completions\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
