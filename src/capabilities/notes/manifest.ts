@@ -1,6 +1,7 @@
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
 import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   ArtifactAiChangeParamsSchema,
@@ -195,9 +196,15 @@ export const notesCapability = defineCapability({
     handlers: [
       {
         // Coverage repair only: dirties or cancels cursors; the reconciler owns
-        // every apply.
+        // every apply. Batch layer (ADR-0067 D2): dormant learners skip coverage
+        // repair; presence hygiene must still run before that decision.
         name: 'hub_auto_sync_nightly',
         schedule: { cron: '45 2 * * *', tz: 'Asia/Shanghai' },
+        eligibility: nightlyEligibility('deterministic'),
+        beforeEligibility: async (db) => {
+          const { sweepAbandonedEditSessions } = await import('./server/hub-sync-reconciliation');
+          await sweepAbandonedEditSessions(db);
+        },
         queue: 'llm',
         load: () =>
           import('./jobs/hub_auto_sync_nightly').then((m) => m.buildHubAutoSyncNightlyHandler),

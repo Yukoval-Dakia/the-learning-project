@@ -906,5 +906,53 @@
       "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
       "expected_by": "2026-12-31"
     }
+  },
+  "learner_axis_state.subject_kind": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "learner_axis_state.drift_v": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "learner_axis_state.boundary_a": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "learner_axis_state.ter": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "learner_axis_state.n_obs": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
+  },
+  "learner_axis_state.provenance": {
+    "reason": "YUK-1560 retired the only writer (axis_state_nightly batch). The table is historical-retained for placement-profile display and merge rename/freeze; no runtime INSERT remains.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "ADR-0067 A38 decides whether to restore the EZ axis writer or drop the historical table",
+      "expected_by": "2027-03-31"
+    }
   }
 }
