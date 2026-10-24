@@ -816,7 +816,17 @@ export function resolveTaskProvider(
         `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
       );
     }
-    assertModelEndpointHostAllowed(definition.baseUrl, `custom provider '${providerName}'`);
+    // The key is sent to the catalog bucket's endpoint, not necessarily the
+    // registry definition during a PUT→refresh window. Validate the URL that
+    // will actually go on the wire and fail closed while the two disagree.
+    const catalogBaseUrl = resolveModelProfile(providerName, modelId).baseUrl;
+    if (catalogBaseUrl !== undefined && catalogBaseUrl !== definition.baseUrl) {
+      throw new Error(
+        `Custom provider '${providerName}' endpoint is out of sync: the saved definition has '${definition.baseUrl}' but the runtime catalog bucket still has '${catalogBaseUrl}'. Refusing to send ${definition.apiKeyEnv} until the provider's /models refresh completes.`,
+      );
+    }
+    const baseUrl = catalogBaseUrl ?? definition.baseUrl;
+    assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,
@@ -834,7 +844,7 @@ export function resolveTaskProvider(
       provider: providerName,
       model: modelId,
       apiKey,
-      baseUrl: resolveModelProfile(providerName, modelId).baseUrl ?? definition.baseUrl,
+      baseUrl,
       ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
       selectionRule: binding.selectionRule,
     };

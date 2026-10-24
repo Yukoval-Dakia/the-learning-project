@@ -183,7 +183,8 @@ key 环境变量名与协议（openai-completions / anthropic-messages）即可�
 结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
 （值会被当作 Bearer 发到该 provider）。baseURL 的 host 还必须在 models.dev 目录
 声明的模型端点内（另含代码声明的 anthropic/openai 直连根与 Xiaomi Token Plan
-三区）；保存与执行解析时校验，该约束只作用于模型端点，不影响 agent 的网页浏览 /
+三区）；保存与执行解析时校验，registry 与目录 bucket 未同步时任务解析 fail closed，
+不向旧端点发 key。该约束只作用于模型端点，不影响 agent 的网页浏览 /
 fetch 工具。模型列表来自该端点自己的 `GET /models`
 （自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
 同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`
