@@ -5,6 +5,7 @@
 > 重编号为 **0048**；两篇 on-topic 0047 合并为 `0047-kg-load-bearing-borrow.md`。
 
 **Status**: Accepted (owner 2026-07-23, YUK-678) — 六决策点按推荐默认全收（见文末「Owner 裁决」）。ratify 的是 A11 的**描述符-only 身份**（零引擎触碰）：本 acceptance **不**授权任何 A11 输出进 θ̂ / p(L) / 选题调度，**不**翻任何 flag。owner 保留逐条翻案权。
+**Amendment 2026-10-21（YUK-1560 / ADR-0075 D7）**: `axis_state_nightly` 夜写与 batch writer 已删除；`learner_axis_state` 只保留历史行，merge 时 rename/freeze，`placement-profile` 继续只读。描述符-only 身份不变；恢复条件见 ADR-0067「A38 EZ 轴信号是否值得恢复」。
 **Part of**: YUK-445 · 学习者全面档案 — n=1 firm-up · P5 效率/描述符 · Wave2 axis2。
 **Decision source**: YUK-445 body + 「🛠 实施讨论 · grounded 2026-06-27」comment（对照 main 代码核对）。审计修正：A10（YUK-444 confidence 轴）已 HOLD，本 ADR 只覆盖 A11。
 **Related**: ADR-0035（mastery_state 三维 + 四引擎——θ̂/p(L)/difficulty 三正交轴；A11 是与 θ̂ **正交**的第四类描述符，非第三轴的替代）· `docs/design/2026-06-19-comprehensive-learner-profile.md` §1（`learner_axis_state` 表形状）/§7（P5 路线）/§8（诚实天花板）· `docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`（A11 在 Tier-3 preprint/by-analogy）。
@@ -26,11 +27,13 @@
 自适应主流程里选题策略（A3 MFI/KL，`target-discovery.ts`）把 Pc 压在目标带 → `v` 的「难度」解释被混淆（v 吸收了选题策略，非纯学习者）。故：
 
 - **`drift_v` 只在非自适应 probe-set（`provenance='probe'`）上持久化**；
-- 自适应主流程（`provenance='adaptive'`，当前唯一 live 源）写 `boundary_a` + `ter`，`drift_v` 留 NULL。
+- 自适应主流程（`provenance='adaptive'`，退役前的唯一 live 源）当时写 `boundary_a` + `ter`，`drift_v` 留 NULL。
 
-当前**无非自适应定差 probe-set 题源**（仅有 fixed-anchor 校准锚 / A13 误解 probe，都非定差 probe-set）。故本 ADR 落地时 `drift_v` 列 + writer + provenance gate **全部接线就位**，唯一 defer 的是 probe-set 数据源——符合「defer flip not build」：collect/compute/gate 全通电，只等 probe 源到位翻最后一档。
+当前**无非自适应定差 probe-set 题源**（仅有 fixed-anchor 校准锚 / A13 误解 probe，都非定差 probe-set）。本 ADR 落地时 `drift_v` 列 + writer + provenance gate 曾全部接线；writer 已随 YUK-1560 退役，probe-set 数据源仍 deferred——恢复条件见 ADR-0067「A38 EZ 轴信号是否值得恢复」。
 
 ### 3. usage-gated（数据不足返空，非 flag）
+
+> 2026-10-21（YUK-1560）：writer 已退役；本节记录退役前的历史行为。
 
 per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 → 不写行（描述符缺席，非伪造）。EZ 退化（chance Pc / <2 correct RT）→ 闭式返 null + 带 reason，writer 写 n_obs 但 a/Ter 留 NULL，**绝不伪造中性值**（同 `forwardAuc` 单类返 null 的纪律）。
 
@@ -42,13 +45,13 @@ per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 �
 
 - **纯闭式模块** `src/server/calibration/ez-diffusion.ts`（与 auc/ece/replay 同目录，PURE + unit-test，含 Wagenmakers App 的 Pc∈{0,1} edge-correction + 退化裁决）。该 TS 形态已登记为 ADR-0046「豁免登记」R2 的成文豁免（owner 2026-08-27，YUK-679 LIGHT；描述符-only 红线存续期间有效，触发 port 的条件见该段）。
 - **新表 `learner_axis_state`**（5 处登记面：schema.ts / migration 0053 / audit:schema write-path / export FK_ORDER + SCHEMA_VERSION 4.10→4.11 / tests ALL_TABLES）：`(drift_v, boundary_a, ter, n_obs, provenance)` + (subject_kind, subject_id) 唯一。A10（HOLD）未来加 `calibration_curve_json` 列（additive 列，不 bump）= 本表第二 writer。
-- **batch writer** `src/server/calibration/axis-writer.ts`（advisory-lock 独立 namespace `axis_state:`）+ nightly job `axis_state_nightly`（practice manifest，cron 05:40 Asia/Shanghai）= 唯一 live writer。
+- **batch writer（2026-10-21 已删）** `src/server/calibration/axis-writer.ts`（advisory-lock 独立 namespace `axis_state:`）+ nightly job `axis_state_nightly`（practice manifest，cron 05:40 Asia/Shanghai）曾是唯一 live writer；YUK-1560 停夜写后只剩 merge 时的 rename/freeze。
 - **读出面**：`placement-profile` 每 KC 投影附 `axis` 字段（profile 投影，非新路由）。
 
 ## 后果
 
 - ✅ θ̂ 之外多一个正交着力点（教研团可说「过度求稳」而非只「不会」）。
-- ✅ 端到端非死代码：writer（nightly job）+ reader（placement-profile）都 live。
+- ✅ reader（placement-profile）仍 live；writer（nightly job）已按 YUK-1560 退役。
 - ⚠️ `drift_v` 在 probe-set 源到位前恒 NULL（已知 defer，非缺陷）。
 - ⚠️ **`boundary_a`/`ter` 在自适应流里也吃 Pc-pinning**：EZ 闭式 `a = s²·logit(Pc)/v` 是 Pc 的直接函数，自适应选题把 Pc 钉在目标带 → estimator 层面 `a` 的数值同样带选题偏差，并非只有 `drift_v` 被混淆。latent-trait 层面「谨慎度是 response-style，跨难度更稳」可辩（故仍作描述符保留），但 estimator 层面不免疫——见决策点 5。因 A11 不喂任何 LIVE 引擎，此偏差不构成正确性 blocker（描述符身份兜底）。
 - ⚠️ Tier-3 就绪度：A11 输出不可进算法；任何「让 a/Ter 修正 A1 的 d」是**独立 flagged follow-up**（YUK-449 territory），不在本 ADR scope——触 LIVE SRT 引擎，需 dark flag + V-A1-fwd byte-identical 锚。
@@ -58,7 +61,7 @@ per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 �
 1. usage-gate N（30 vs 50/KC）与标度常数 `s`（0.1 约定）取值。
 2. `Ter` 基线 KC 粒度（现实现 per-KC）vs 全局粒度（body「运动/阅读基线」偏全局）。
 3. 建表归属确认（本 ADR 由 A11 落表，A10 解除 HOLD 后加列）。
-4. 是否升 `axis_state_nightly` 为 CI/可观测 gate（当前纯 job，无 alarm）。
+4. 是否升 `axis_state_nightly` 为 CI/可观测 gate（该 job 已于 2026-10-21 退役；原为纯 job，无 alarm）。
 5. **显式 ratify「自适应流 EZ-`a`/`ter` 估计带 Pc-pinning 偏差但仍作描述符保留」**：决策 2 只把 `drift_v` 呈现为被混淆项，但 `boundary_a`/`ter` 在 estimator 层面也吃选题策略（后果 §⚠️4）。owner 应确认这是 acceptable（描述符身份兜底，不喂引擎），别让「只有 drift_v 被混淆」的叙述误导。
 6. **attempt（卷面首答）+ review（solo 间隔复习）的 RT 汇入同一 per-KC EZ 池**（`foldResponsesByKc` 不分 action）：两者是不同认知过程、RT 分布迥异，而 EZ 假设单一二择决策过程。作为描述符可辩，但 owner 应确认是否接受混池，或未来按 action 拆双描述符。
 
@@ -67,6 +70,8 @@ per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 �
 ## Owner 裁决（ratified 2026-07-23 · YUK-678）
 
 > owner 授权（2026-07-23，记录于 Linear YUK-678）：六决策点**按推荐默认全收** —— 取统计学约定 + 项目现实 grounded 的推荐值，写入本 ADR、标记 ratified；**owner 保留逐条翻案权**。以下每条均按此授权落定。六条推荐值全部**已在 shipped 代码中就位**（ratify shipped，不新增行为）——这是「代码已给出答案则 ratify 该答案」的理想情形。
+>
+> 2026-10-21（YUK-1560）：以下为历史裁决记录；writer 与 `axis_state_nightly` 已退役，见 Status Amendment。
 
 **① usage-gate N 与标度常数 `s` → 收 `N=30` / `s=0.1`（shipped）。**
 Ratify `AXIS_MIN_OBS = 30`（`src/server/calibration/axis-writer.ts:31`）与 `EZ_SCALING_S = 0.1`（`src/server/calibration/ez-diffusion.ts:37`）。EZ-diffusion 文献里*完全稳定*的估计常要 N≥40 正确试次，但用作**粗粒度慢变描述符（非诊断）**时 N≥15–20 即可接受；30 稳落在粗描述符地板之上，同时对 n=1 学习者的单 KC 仍可达。`s=0.1` 是 Wagenmakers 的标准标度约定（owner 固定常数，非估计量）。描述符身份下无需更保守的 50。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
@@ -75,13 +80,13 @@ Ratify `AXIS_MIN_OBS = 30`（`src/server/calibration/axis-writer.ts:31`）与 `E
 Ratify per-KC：`foldResponsesByKc`（`axis-writer.ts:57`）严格按 KC 折叠，每个 KC 的 `(a, Ter)` 由**同一 KC 自身的正确-RT 矩**闭式反推，描述符内部自洽、不引入需另行论证的跨-KC 汇池步。虽然 `Ter`（运动+编码非决策时间）在潜变量层面偏全局基线，但保持 per-KC 让描述符自足且可逆；若 per-KC `Ter` 事后证明偏噪，「全局 `Ter` 精修」是干净的 additive follow-up。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
 
 **③ 建表归属 → 收 `learner_axis_state` 归 A11（本 ADR）。**
-Ratify 本表由 A11 落地并独占单 writer（`runAxisStateBatch` via `axis_state_nightly`）；A10 解除 HOLD 后加 `calibration_curve_json`（additive 列，不 bump version）= 本表第二 writer。此归属已在 `src/db/schema.ts`（表定义 + 注释）与 export `FK_ORDER` / `SCHEMA_VERSION 4.10→4.11` 就位。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
+Ratify 本表由 A11 落地并独占单 writer（`runAxisStateBatch` via `axis_state_nightly`）；两者已于 2026-10-21 退役。A10 解除 HOLD 后加 `calibration_curve_json`（additive 列，不 bump version）= 本表第二 writer。此归属已在 `src/db/schema.ts`（表定义 + 注释）与 export `FK_ORDER` / `SCHEMA_VERSION 4.10→4.11` 就位。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
 
-**④ 是否升 `axis_state_nightly` 为 CI/可观测 gate → 收「不升，保持纯 job」（shipped）。**
-Ratify 维持纯 pg-boss job（`src/capabilities/practice/jobs/axis_state_nightly.ts`：记 `result` 日志，抛错入 `queue='llm'` DLQ），**无 alarm、无 CI gate**。A11 不喂任何 LIVE 引擎、纯显示读出，静默缺席只是「描述符不出现」的优雅降级，够不上保护 live 估计的正确性 gate 门槛；与 `kt_estimate_nightly` / `recalibration_nightly` 同为无 alarm 的夜扫 peer。若日后需监控描述符覆盖率，可另升为**可观测信号**（report-only，非翻 flag）——列为可选 follow-up。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
+**④ 是否升 `axis_state_nightly` 为 CI/可观测 gate → 收「不升，保持纯 job」（历史；job 已于 2026-10-21 退役）。**
+Ratify 当时维持纯 pg-boss job（`src/capabilities/practice/jobs/axis_state_nightly.ts`：记 `result` 日志，抛错入 `queue='llm'` DLQ），**无 alarm、无 CI gate**。A11 不喂任何 LIVE 引擎、纯显示读出，静默缺席只是「描述符不出现」的优雅降级，够不上保护 live 估计的正确性 gate 门槛；与 `kt_estimate_nightly` / `recalibration_nightly` 同为无 alarm 的夜扫 peer。若日后需监控描述符覆盖率，可另升为**可观测信号**（report-only，非翻 flag）——列为可选 follow-up。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
 
 **⑤ 显式 ratify「自适应流 EZ-`a`/`ter` 带 Pc-pinning 偏差但仍作描述符保留」→ 接受。**
-显式确认：EZ 闭式 `a = s²·logit(Pc)/v` 是 Pc 的直接函数，自适应选题把 Pc 钉在目标带 → **`boundary_a`/`ter` 在 estimator 层面同样带选题偏差**，并非只有 `drift_v` 被混淆（决策 2 的叙述不得误导为「仅 drift_v confounded」）。但 A11 不喂任何 LIVE 引擎（θ̂/p(L)/选题全不触），此偏差**不构成正确性 blocker**——描述符身份兜底；且潜变量层面「谨慎度是 response-style、跨难度更稳」支持其作描述符保留。shipped 代码在 `provenance='adaptive'` 下写 `boundary_a`+`ter`、`drift_v` 留 NULL，正是此裁决的落地。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
+显式确认：EZ 闭式 `a = s²·logit(Pc)/v` 是 Pc 的直接函数，自适应选题把 Pc 钉在目标带 → **`boundary_a`/`ter` 在 estimator 层面同样带选题偏差**，并非只有 `drift_v` 被混淆（决策 2 的叙述不得误导为「仅 drift_v confounded」）。但 A11 不喂任何 LIVE 引擎（θ̂/p(L)/选题全不触），此偏差**不构成正确性 blocker**——描述符身份兜底；且潜变量层面「谨慎度是 response-style、跨难度更稳」支持其作描述符保留。当时的 shipped 代码在 `provenance='adaptive'` 下写 `boundary_a`+`ter`、`drift_v` 留 NULL，正是此裁决的落地；writer 已于 2026-10-21 退役。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
 
 **⑥ attempt + review RT 混入同一 per-KC EZ 池 → 收「接受混池」（shipped）。**
-Ratify 混池：`runAxisStateBatch` 查询 `inArray(event.action, ['attempt','review'])`（`axis-writer.ts:301`）、`foldResponsesByKc` 不分 action。两者认知过程/RT 分布确有差异、EZ 假设单一二择过程，故混池是**已知近似**；但作为粗粒度慢变描述符（非诊断）可辩，且对 n=1 学习者最大化可用 N。若混池信号事后证明不稳，「按 action 拆双描述符」是干净的 additive follow-up。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
+Ratify 混池：历史实现里 `runAxisStateBatch` 查询 `inArray(event.action, ['attempt','review'])`（`axis-writer.ts:301`）、`foldResponsesByKc` 不分 action；该实现已随 YUK-1560 删除。两者认知过程/RT 分布确有差异、EZ 假设单一二择过程，故混池是**已知近似**；但作为粗粒度慢变描述符（非诊断）可辩，且对 n=1 学习者最大化可用 N。若混池信号事后证明不稳，「按 action 拆双描述符」是干净的 additive follow-up。*2026-07-23 owner 授权按推荐默认全收（YUK-678）；owner 保留逐条翻案权。*
