@@ -107,8 +107,8 @@ function diagnosticMetadata(input: {
       knowledge_id: input.knowledgeId,
       due_at: input.dueAt,
     }),
-    // The multimodal-direct judge consumes this canonical response-aware
-    // contract even when the diagnostic itself carries no images.
+    // The multimodal-direct judge consumes this canonical response-aware contract
+    // even when the diagnostic carries no images.
     probe_spec: input.probeSpec,
   };
 }
@@ -120,10 +120,9 @@ export function learnerFacingInterventionDiagnosticPrompt(
   const probePrompt = packageValue.diagnostics[kind].probe_spec.prompt_md;
   if (kind !== 'immediate') return probePrompt;
 
-  // The intervention must exist on a learner-visible surface before an outcome
-  // can be attributed to it. Its immediate one-shot is that delivery surface:
-  // approved material renders first, then the response-aware check. Later cards
-  // stay probe-only so they measure retention/transfer instead of re-teaching.
+  // The intervention must be visible before an outcome can be attributed to it, so
+  // the immediate one-shot is its delivery surface: approved material first, then the
+  // response-aware check. Later cards stay probe-only to measure retention/transfer.
   return [
     `# ${packageValue.material.title_md}`,
     packageValue.material.body_md,
@@ -164,10 +163,9 @@ export interface CommittedInterventionDiagnosticAttempt {
 }
 
 /**
- * Recover the canonical one-shot result after refresh, response loss, or a
- * concurrent duplicate submission. The active trusted judge event is the
- * verdict authority; the immutable review supplies the rating and a fallback
- * feedback string for historical rows whose judge payload omitted feedback_md.
+ * Recover the canonical one-shot result after refresh, response loss, or a duplicate
+ * submission. The active trusted judge event owns the verdict; the immutable review
+ * supplies the rating and, for historical rows without feedback_md, a fallback string.
  */
 export async function loadCommittedInterventionDiagnosticAttempt(
   db: Db,
@@ -203,7 +201,7 @@ export async function loadCommittedInterventionDiagnosticAttempt(
       judge: {
         route: 'evaluate_submission',
         coarse_outcome: verdict,
-        confidence: 0, // Native candidate records do not assert model confidence.
+        confidence: 0, // Native candidate records assert no model confidence.
         feedback_md: native.trusted
           ? units.flatMap((unit) => (unit.feedback_md ? [unit.feedback_md] : [])).join('\n\n')
           : '本次作答已保存，当前评估尚不能用于诊断结论，等待复核。',
@@ -270,13 +268,11 @@ async function appendImmediateDiagnosticToLiveStream(
   },
 ): Promise<void> {
   const date = streamLocalDate(input.now);
-  // Serialize with lazy/nightly/recompose writers. If no stream exists yet,
-  // leave it empty: the first normal composition will pick this newly-due FSRS
-  // card. If today's stream already exists, append atomically so its "stream is
-  // non-empty" fast path cannot strand the intervention until tomorrow.
-  // Do not let a busy stream writer stall the activation worker forever.
-  // A timeout aborts this transaction for the normal job retry; after acquiring
-  // the shared lock, restore the transaction default for unrelated writes.
+  // Serialize with lazy/nightly/recompose writers. If no stream exists, leave it empty;
+  // the next normal composition picks up this newly-due card. If today's stream exists,
+  // append atomically so its non-empty fast path cannot strand the intervention until
+  // tomorrow. A timeout aborts this transaction for normal job retry; restore the
+  // transaction default after taking the shared lock.
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '5s'"));
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtext(${`intervention:deliver:${input.questionId}`}))`,
@@ -385,9 +381,9 @@ async function appendImmediateDiagnosticToLiveStream(
 }
 
 /**
- * Materialize all three reviewed package diagnostics into the existing learner
- * review surface. Each is a one-shot question-scoped FSRS card so the exact
- * authored probe—not a same-KC substitute—appears when its fixed due time arrives.
+ * Materialize the three reviewed package diagnostics onto the learner review
+ * surface: one-shot, question-scoped FSRS cards so each authored probe — not a
+ * same-KC substitute — appears at its fixed due time.
  */
 interface MaterializeInterventionDiagnosticsInput {
   package: InterventionPackageT;
@@ -395,9 +391,8 @@ interface MaterializeInterventionDiagnosticsInput {
   snapshot: InterventionSnapshotT;
   now: Date;
   /**
-   * Set only by the aggregate transaction that records the first immediate
-   * review. It activates and re-enrolls the newly anchored follow-ups in the
-   * same transaction as the settlement update.
+   * Set only by the aggregate transaction that records the first immediate review:
+   * activates and re-enrolls the anchored follow-ups in the same settlement update.
    */
   activateAnchoredFollowups?: boolean;
 }
@@ -435,8 +430,8 @@ export async function materializeInterventionDiagnostics(
         difficulty: 3,
         source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
         source_ref: sourceRef,
-        // Product-owned diagnostics have already passed package authoring,
-        // independent review, deterministic validation, and the lineage proof below.
+        // Product-owned diagnostics already passed package authoring, independent
+        // review, deterministic validation, and the lineage proof below.
         draft_status:
           scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
             ? 'active'
@@ -488,8 +483,8 @@ export async function materializeInterventionDiagnostics(
         ),
       );
 
-  // A deterministic id collision must never silently bind an intervention to
-  // unrelated content. Re-read and prove exact lineage before enrolling cards.
+  // A deterministic id collision must not bind an intervention to unrelated content;
+  // re-read and prove exact lineage before enrolling cards.
   const rows = await tx
     .select({
       id: question.id,
@@ -606,8 +601,8 @@ export async function materializeInterventionDiagnostics(
     }
     const ready = kind === 'immediate' || followupsReady;
     if (scheduled.status === 'scheduled' && ready) {
-      // Admission can arrive after authoring. Only an unissued card is freshly
-      // released here; issued cards retain the submission/recovery lease above.
+      // Admission can arrive after authoring: release only an unissued card here;
+      // issued cards retain the submission/recovery lease above.
       await tx
         .update(question)
         .set({ draft_status: 'active', updated_at: input.now })
@@ -644,9 +639,8 @@ export async function materializeInterventionDiagnostics(
           ),
         );
       const dueAt = new Date(scheduled.due_at);
-      // A pre-fix installation may already have activation-anchored follow-up
-      // cards. Replace only at the atomic exposure transition so the card due
-      // date cannot retain that stale anchor.
+      // Pre-fix installations may have activation-anchored follow-up cards. Replace
+      // only at the exposure transition so their due date cannot retain that anchor.
       if (shouldActivateAnchoredFollowup) {
         await retireQuestionFsrsState(tx, scheduled.question_id);
       }
@@ -658,7 +652,7 @@ export async function materializeInterventionDiagnostics(
       });
     } else if (scheduled.status === 'scheduled' && !ready) {
       // Before exposure, follow-ups are product-owned drafts with no due-card
-      // projection. This also repairs activation-anchored rows from pre-fix data.
+      // projection; this also repairs activation-anchored rows from pre-fix data.
       await retireQuestionFsrsState(tx, scheduled.question_id);
     }
   }

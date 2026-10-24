@@ -1,4 +1,4 @@
-// Explicit family consumer of the fixed shared store. No registration or default cutover.
+// Explicit family consumer of the shared paid-effect store; no registration or default cutover.
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
@@ -159,7 +159,7 @@ function applicationBase(
   };
 }
 
-/** Pure compatibility check; only the store consumer can establish that every rep is applied. */
+/** Pure compatibility check; only the store consumer can prove every rep is applied. */
 export function validateItemPriorAppliedApplication(
   work: ItemPriorPreparedWork,
   staged: ItemPriorStagedItem,
@@ -187,7 +187,7 @@ export function validateItemPriorAppliedApplication(
   return historical.disposition;
 }
 
-/** B's sibling exemption requires one revision to identify one complete frozen workset. */
+/** The sibling exemption requires one revision to identify one complete frozen workset. */
 export function itemPriorPaidEffectRevision(work: ItemPriorPreparedWork): string {
   return computePaidEffectInputDigest({
     version: 1,
@@ -248,7 +248,7 @@ export class ItemPriorPaidEffectAdapter {
     private readonly db: Db,
     request: ItemPriorDispatchedRequest,
   ) {
-    // Producer persists this before dispatch. Never read current control to upgrade an old job.
+    // The producer persists this before dispatch; never read current control to upgrade an old job.
     const original = itemPriorDispatchedRequestSchema.parse(request);
     this.dispatch = Object.freeze(original.dispatch);
     this.request = Object.freeze({ ...original, dispatch: this.dispatch });
@@ -268,12 +268,12 @@ export class ItemPriorPaidEffectAdapter {
       return reservePaidEffect(this.db, input, delivery);
     }
     return this.db.transaction(async (tx) => {
-      // Family FIRST, then owning job, then B's row/entity/control locks in their existing order.
-      // The job lock remains held through the claim commit; cached admission cannot bypass it.
+      // Lock order: family, then owning job, then the store's row/entity/control locks.
+      // The job lock stays held through the claim commit; admission cannot bypass it.
       await lockPaidEffectControlFamily(tx, input.family);
       const job = await readItemPriorPgBossDelivery(tx, this.request, 'update');
       if (!['created', 'retry', 'active'].includes(job.state)) {
-        // Readonly recovery: no intent insert, claim, lease/fence mutation or invented receipt.
+        // Readonly recovery: no intent insert, claim, lease/fence mutation, or invented receipt.
         const snapshot = await readPaidEffect(tx, identity);
         if (snapshot?.state === 'receipt_ready' || snapshot?.state === 'applied') {
           return completedReservation(snapshot);
@@ -324,7 +324,7 @@ export class ItemPriorPaidEffectAdapter {
     });
   }
 
-  /** Domain disposition and every rep application receipt commit together. Readback is noncausal. */
+  /** Domain disposition and every rep receipt commit together; readback is noncausal. */
   async commitStaged(work: ItemPriorPreparedWork, staged: ItemPriorStagedItem) {
     if (staged.status === 'held' || staged.status === 'incomplete') {
       return { status: 'not-applicable' } as const;
@@ -347,8 +347,9 @@ export class ItemPriorPaidEffectAdapter {
           snapshots.push(snapshot);
         }
         if (snapshots.every((snapshot) => snapshot.state === 'applied')) {
-          // Historical disposition survives supported later domain edits and lost workflow acknowledgments.
-          // This branch performs no domain reads/writes and never rewrites an application receipt.
+          // Historical disposition survives later domain edits and lost workflow
+          // acknowledgments. This branch performs no domain reads/writes and never
+          // rewrites an application receipt.
           return validateItemPriorAppliedApplication(
             work,
             staged,
