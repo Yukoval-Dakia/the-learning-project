@@ -80,7 +80,7 @@ export class DerivedAssetConflictError extends Error {}
  * adopt another session's derived asset (and its derived_from/page_index).
  * With a request_id the id keys on the request alone: replaying the same
  * request_id with DIFFERENT args hits the same id and reports a conflict
- * (P2-10) instead of forking a sibling asset.
+ * instead of forking a sibling asset.
  */
 function derivedAssetId(
   scopeId: string,
@@ -643,7 +643,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     page_index: typeof parentProv?.page_index === 'number' ? parentProv.page_index : null,
   };
 
-  // P2-6 — timeout can never exceed the caller's own deadline (an elapsed
+  // Timeout can never exceed the caller's own deadline (an elapsed
   // deadline already threw hard_deadline_exceeded above).
   const timeoutMs = Math.min(GLM_TOOL_TIMEOUT_MS, ctx.providerSessionDeadlineAt - Date.now());
   const providerAttempt = createIngestionToolProviderContext({
@@ -664,7 +664,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
         timeoutMs,
         providerAttempt,
         beforeRequest,
-        // P1-4 — the operation-kind start fence serializes a second dispatch on
+        // The operation-kind start fence serializes a second dispatch on
         // this same anchor (unknown-paid 不自动重发).
         fencedAttempt: true,
       });
@@ -734,7 +734,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
       external_request_id: response.request_id ?? null,
     };
   } catch (err) {
-    // P1-4 — caller cancellation propagates; the bridge handles it. (Wrapped
+    // Caller cancellation propagates; the bridge handles it. (Wrapped
     // network/timeout errors carry names like RetryableError, so an
     // err.name === 'AbortError' check can never fire — test the signal.)
     if (ctx.signal?.aborted) throw err;
@@ -754,7 +754,7 @@ async function executeGlmOcr(ctx: ToolContext, raw: GlmOcrInput): Promise<GlmOcr
     }
     // RetryableError from timeouts / caller-independent network failures:
     // the request may have been dispatched and billed — the outcome is
-    // UNKNOWN, so never auto-retry (design §9 unknown-paid 不自动重发).
+    // UNKNOWN, so never auto-retry (unknown-paid: never re-dispatch silently).
     return {
       ...base,
       status: 'failed',

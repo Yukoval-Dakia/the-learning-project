@@ -59,7 +59,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     const bytes = await getR2().get(row.storage_key);
     if (!bytes) throw new ApiError('not_found', `asset ${id} bytes missing from R2`, 404);
 
-    // v2 安全裁决（R1 加固）：只有已知的位图类型按存储 mime 原样返回；JS 代码
+    // 安全裁决：只有已知的位图类型按存储 mime 原样返回；JS 代码
     // 资产按惰性字节服务（text/plain + CSP sandbox，宿主页 fetch 后校验 digest
     // 再注入沙箱 iframe）；其余一切（html / svg / xhtml / 未知类型）一律按下载
     // 处理，绝不在本站以可执行或可渲染的类型返回。nosniff 全部都带。

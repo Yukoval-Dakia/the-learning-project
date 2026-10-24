@@ -20,12 +20,11 @@ if (MAX_DOCX_PAGES !== MAX_PDF_PAGES) {
 //
 // Every upload renders once through LibreOffice/PDF/PDFium into persisted page
 // images. The visual line feeds those pages to OCR; the text line keeps them as
-// evidence only.
-//     (VLM 兜底 / 人工 review 时有图可读).
+// evidence only, so VLM fallback / human review still has something readable.
 //
-// Reuses #332全套 unchanged: renderPdfToPngPages (PDFium, 30s timeout + 15-page
-// cap) + persistImageAsset (content-addressed SHA-256 → R2 + source_asset row).
-// MAX_DOCX_PAGES is provably equal to MAX_PDF_PAGES so the cap carries over.
+// renderPdfToPngPages (PDFium, 30s timeout + page cap) and persistImageAsset
+// (content-addressed SHA-256 → R2 + source_asset row) are reused unchanged;
+// MAX_DOCX_PAGES is asserted equal to MAX_PDF_PAGES at module load.
 
 export interface PageEvidence {
   /** source_asset row ids, in page order. */

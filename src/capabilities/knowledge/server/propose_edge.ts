@@ -141,9 +141,8 @@ export async function runEdgeProposeAndWrite(
         relation_type: e.relation_type,
       }));
 
-    // Live edges with their real ids, for neighbor lookup. Kept in memory because
-    // in-flight batch rows are not persisted yet; a later candidate must reconcile
-    // against the batch-evolved mesh.
+    // Live edges with ids for neighbor lookup. Kept in memory so later candidates
+    // reconcile against the batch-evolved mesh.
     type LiveEdge = {
       edge_id: string;
       from_knowledge_id: string;
@@ -221,12 +220,8 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      // Rubric evidence is scoped per edge: a failure counts only when its effective
-      // id set (attempt ∪ judge) touches one of this edge's endpoints. Attaching the
-      // whole batch would let one edge borrow another's evidence. An empty scoped set
-      // takes the validator's evidence-missing path and folds. L2 digest/adaptive gate
-      // stay deferred. Built before the topology check so the reject branch can reuse
-      // the payload with empty evidence_refs.
+      // Scope evidence per edge: attaching the whole batch would let one edge borrow
+      // another's failures. Empty scope takes the evidence-missing path and folds.
       const endpointTouchingFailures = params.recentFailures.filter((failure) => {
         const effectiveRefs = new Set([
           ...failure.referenced_knowledge_ids,
@@ -251,7 +246,6 @@ export async function runEdgeProposeAndWrite(
         cooldown_key: `knowledge_edge:${key}`,
       };
 
-      // Common write fields; each branch adds its own payload and event override.
       const proposalWriteBase = {
         actor_ref: 'dreaming' as const,
         outcome: 'success' as const,
@@ -260,7 +254,6 @@ export async function runEdgeProposeAndWrite(
         created_at: new Date(),
       };
 
-      // Shared by the topology reject and warn branches; only the verdict differs.
       const eventPayloadBase = {
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
@@ -269,10 +262,8 @@ export async function runEdgeProposeAndWrite(
         reasoning: p.reasoning,
       };
 
-      // Structural gate, separate from the semantic rubric: tree redundancy, cycles,
-      // direction contradictions and transitive redundancy. The edge list includes
-      // earlier edges from this batch, so two proposals that only form a cycle
-      // together are still caught.
+      // Structural gate: tree redundancy, cycles, direction, and transitive
+      // redundancy. Includes earlier batch edges so combined cycles are caught.
       const topology = checkEdgeTopology(
         {
           from_knowledge_id: p.from_knowledge_id,
@@ -284,9 +275,7 @@ export async function runEdgeProposeAndWrite(
       );
 
       if (topology.status === 'reject') {
-        // Fold like a rubric reject: a marked event stays for audit, no live
-        // proposal is created, and a later batch may re-evaluate. A folded reject
-        // carries no evidence.
+        // Fold like a rubric reject: keep a marked event for audit, no live proposal.
         await writeAiProposal(params.db, {
           ...proposalWriteBase,
           payload: { ...proposalPayload, evidence_refs: [] },
@@ -315,9 +304,7 @@ export async function runEdgeProposeAndWrite(
       );
 
       if (!verdict.ok) {
-        // Folded, not dropped: keep a marked event for audit and exclude it from
-        // pending dedup so a later batch can re-propose. Mirrors the tool path's
-        // foldRubricRejectedEdge.
+        // Folded, not dropped: keep a marked event and exclude it from pending dedup.
         await writeAiProposal(params.db, {
           ...proposalWriteBase,
           payload: proposalPayload,
@@ -340,10 +327,8 @@ export async function runEdgeProposeAndWrite(
         continue;
       }
 
-      // Reconciliation runs only after both gates pass. It asks whether the
-      // candidate semantically corrects a live neighbor (supersede) or coexists
-      // with it (keep both). Parse errors, network failures and low confidence all
-      // degrade to keep-both; an uncertain judge never causes a destructive write.
+      // Reconcile only after both gates pass. Parse/network/low-confidence degrade
+      // to keep-both; an uncertain judge never causes a destructive write.
       const neighbors: EdgeNeighbor[] = liveNeighborEdges
         .filter((e) => !pendingSupersededEdgeIds.has(e.edge_id))
         .filter(
@@ -416,8 +401,7 @@ export async function runEdgeProposeAndWrite(
         }));
 
         if (supersededEdge && affectedRefs.length > 0) {
-          // The judge is advisory: persist a pending proposal; the replacement and
-          // archive happen only after an explicit user accept.
+          // Advisory: persist a pending proposal; replacement/archive need explicit accept.
           await writeAiProposal(params.db, {
             ...proposalWriteBase,
             payload: {
@@ -469,9 +453,8 @@ export async function runEdgeProposeAndWrite(
         });
       }
       pendingEdgeKey.add(key);
-      // Only live-path edges enter the batch mesh. Folded edges are never persisted,
-      // so adding them would create false cycles for later candidates. Pending
-      // proposals are not live rows either, so they stay out of both accumulators.
+      // Only live-path edges enter the batch mesh; folded/pending proposals are not
+      // rows, and adding them would create false cycles.
       liveTopologyEdges.push({
         from_knowledge_id: p.from_knowledge_id,
         to_knowledge_id: p.to_knowledge_id,
@@ -489,9 +472,8 @@ export async function runEdgeProposeAndWrite(
       err instanceof Error ? err.message : String(err),
     );
     await writeRetryableAiFailureLedger(params.db, 'KnowledgeEdgeProposeTask');
-    // Never advance the nightly watermark on a swallowed error, or this batch's
-    // events are lost. Also report whether the model was called, so a pre-model
-    // failure is not mistaken for an idle night.
+    // Never advance the nightly watermark on a swallowed error; report whether the
+    // model ran so a pre-model failure is not mistaken for an idle night.
     return { ...EMPTY_RESULT, ok: false, llm_attempted: llmAttempted };
   }
 }
@@ -510,16 +492,10 @@ const CORE_RELATION_TYPES = new Set<string>([
 ]);
 
 /**
- * Apply a user-approved supersede inside the caller's transaction, so a crash
- * rolls back everything and there is nothing to replay:
- *   1. record the plan in the reconciliation log;
- *   2. archive the old edge;
- *   3. create the new edge and its generate event;
- *   4. write the correction event, targeting the old archive event;
- *   5. mark the log row applied.
- *
- * The log is audit/provenance, not a replay cursor. Double-apply is prevented by
- * the unique edge key and the upstream duplicate check, not by deterministic ids.
+ * Apply a user-approved supersede inside the caller's transaction: record plan,
+ * archive old, create replacement + generate event, write correction, mark applied.
+ * The log is audit/provenance, not a replay cursor; double-apply is prevented by
+ * the unique edge key and upstream dedup, not deterministic ids.
  */
 export async function applyApprovedEdgeSupersede(
   db: Tx,
@@ -548,10 +524,8 @@ export async function applyApprovedEdgeSupersede(
   const newGenerateEventId = createId();
   const oldArchiveGenerateEventId = createId();
   const correctionEventId = createId();
-  // 1) Record the plan; applied_at is stamped last in the same transaction.
   await insertEdgePlannedRows(db, [logRow]);
 
-  // 2) Retire the old edge before introducing its replacement.
   const archived = await archiveKnowledgeEdgeFromEvents(db, supersededEdgeId, {
     event_id: oldArchiveGenerateEventId,
     caused_by_event_id: proposeEventId,
@@ -561,8 +535,6 @@ export async function applyApprovedEdgeSupersede(
   if (!archived.archived)
     throw new Error(`superseded edge ${supersededEdgeId} is already archived`);
 
-  // 3) Create the replacement. Its key is unique here because duplicates,
-  //    including the archived old edge's slot, were filtered upstream.
   const newEdgeId = await createKnowledgeEdge(db, {
     generate_event_id: newGenerateEventId,
     from_knowledge_id: p.from_knowledge_id,
@@ -570,14 +542,12 @@ export async function applyApprovedEdgeSupersede(
     relation_type: p.relation_type,
     weight: p.weight,
     reasoning: p.reasoning,
-    // Align actor and time with the generate event so the edge folds to its row.
     actor_kind: 'user',
     actor_ref: 'self',
     propose_event_id: proposeEventId,
     created_at: now,
   });
 
-  // 4) Human-attributed correction provenance for the accepted replacement.
   await writeEvent(db, {
     id: correctionEventId,
     actor_kind: 'user',
@@ -596,15 +566,14 @@ export async function applyApprovedEdgeSupersede(
     created_at: now,
   });
 
-  // 5) Same transaction, so a committed log row always means a full apply.
   await markEdgeReconcileApplied(db, logRow.id);
 
   return { edgeId: newEdgeId, generateEventId: newGenerateEventId };
 }
 
 /**
- * Keys of pending edge proposals: propose events with no chained rate event and no
- * terminal fold. Used so dreaming does not re-propose the same edge nightly.
+ * Keys of pending edge proposals: propose events with no rate event and no
+ * terminal fold, so dreaming does not re-propose the same edge nightly.
  */
 export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> {
   const proposeRows = await db
@@ -614,9 +583,8 @@ export async function loadPendingEdgeProposalKeys(db: Db): Promise<Set<string>> 
       and(
         eq(event.action, 'propose'),
         eq(event.subject_kind, 'knowledge_edge'),
-        // Folded proposals are terminal, not pending. Counting them here would
-        // permanently block re-proposing the same edge. A topology reject carries
-        // no rubric marker, so both predicates are required.
+        // Folded proposals are terminal. A topology reject carries no rubric
+        // marker, so both predicates are required.
         sql`(${event.payload}->'rubric_verdict'->>'ok') IS DISTINCT FROM 'false'`,
         sql`(${event.payload}->'topology_verdict'->>'status') IS DISTINCT FROM 'reject'`,
       ),

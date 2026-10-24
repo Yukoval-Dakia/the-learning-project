@@ -49,10 +49,6 @@ export type StructureResult = {
   figureAssignments?: FigureAssignment[];
 };
 
-/**
- * Thrown when the VLM cannot produce a usable tree; the handler catches it and falls
- * back to OCR structure.
- */
 // ---------- Tencent text hint rendering ----------
 
 export type TencentPageHint = {
