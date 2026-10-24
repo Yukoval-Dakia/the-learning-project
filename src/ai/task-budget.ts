@@ -7,22 +7,22 @@ import type { TaskBudget, TaskDefinition } from './task-spec';
 export interface TaskBudgetOverride {
   /**
    * `'unbounded'` (durable copilot only) removes the agentic-turn ceiling: the
-   * pi lane then mounts no `shouldStopAfterTurn`, so only Stop/cancellation/
-   * timeoutMs end the loop. Configured/default budgets stay finite numbers.
+   * pi lane mounts no `shouldStopAfterTurn`, so only Stop/cancellation/timeoutMs
+   * end the loop. Configured/default budgets stay finite.
    */
   readonly maxIterations?: number | 'unbounded';
   readonly timeoutMs?: number;
 }
 
 /**
- * YUK-1630 — which layer produced the resolved `timeout`: the caller's
- * explicit `timeoutMs`, the `system_config` task override, or the task
- * definition default. Persisted with the run's transport budget receipt so a
- * timeout failure can attribute the bound it ran under.
+ * Which layer produced the resolved `timeout`: the caller's explicit `timeoutMs`,
+ * the `system_config` task override, or the task definition default. Persisted
+ * with the run's transport budget receipt so a timeout failure can attribute the
+ * bound it ran under.
  */
 export type TaskTimeoutSource = 'caller' | 'config' | 'definition';
 
-/** `resolveTaskBudget` result: the budget plus its timeout provenance. */
+/** The resolved budget plus its timeout provenance. */
 export type ResolvedTaskBudget = TaskBudget & {
   readonly timeoutSource: TaskTimeoutSource;
 };

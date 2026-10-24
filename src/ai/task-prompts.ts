@@ -8,9 +8,9 @@ function assertNever(value: never): never {
   );
 }
 
-// YUK-1006 / YUK-1007 — only learner-facing generated text follows this locale.
-// Keep the default pin byte-identical for existing prompt hashes. UI language,
-// JSON keys, enum values, code and LaTeX are outside this setting's scope.
+// Only learner-facing generated text follows this locale. Keep the default pin
+// byte-identical for existing prompt hashes; UI language, JSON keys, enum
+// values, code and LaTeX are out of scope.
 export const LEARNER_LOCALE_PIN =
   '\n\n【输出语言】所有面向用户展示的文本（回复正文、reasoning / reason_md、解释摘要、提案理由、chip 与卡片文案等）一律用简体中文书写；JSON 字段名、枚举值、代码与 LaTeX 记号不受影响。';
 
@@ -28,12 +28,9 @@ function learnerLocalePin(locale: 'zh-CN' | 'en'): string {
 
 /** Bind prompt lookup and exact membership checks to the supplied catalog. */
 export function createTaskPromptReaders<const Catalog extends TaskCatalog>(tasks: Catalog) {
-  // YUK-589 (High-sec) — boundary validation for an untrusted task-kind string.
-  // The judge invoker receives `kind` as a plain string from the runner seam and
-  // must NOT `as AiTaskKind`-cast it before feeding it to fingerprinting: an
-  // unknown kind would silently produce a bogus prompt fingerprint (fail-open).
-  // `tasks` is the single registry whose keys ARE the AiTaskKind union, so an own
-  // key is the authoritative membership test.
+  // Boundary validation for an untrusted task-kind string. An unknown kind cast
+  // before fingerprinting would silently produce a bogus prompt fingerprint
+  // (fail-open); the catalog's own keys are the authoritative membership test.
   function isAiTaskKind(kind: string): kind is TaskKindOf<Catalog> {
     return Object.hasOwn(tasks, kind);
   }
@@ -50,9 +47,8 @@ export function createTaskPromptReaders<const Catalog extends TaskCatalog>(tasks
       case 'profile':
         return prompt.build(profile) + learnerLocalePin(learnerLocale);
       case 'none':
-        // YUK-1049 — typed tasks have no system prompt; runTask/streamTask
-        // reject execution:'typed' before reaching this seam, so reaching here
-        // is a routing bug, not a legitimate prompt.
+        // Typed tasks have no system prompt; runTask/streamTask reject them
+        // before this seam, so reaching here is a routing bug.
         throw new Error(`task ${task} is a typed task with no system prompt`);
       default:
         return assertNever(prompt);

@@ -42,5 +42,5 @@ export function buildCancelCopilotRunHandler(deps: CancelCopilotRunHandlerDeps =
     cancelCopilotRun(req, params, deps.wakeSession);
 }
 
-/** Direct test/compatibility seam; the manifest injects the production session wake. */
+/** Test seam; the manifest injects the production session wake. */
 export const POST = buildCancelCopilotRunHandler();
