@@ -1,4 +1,4 @@
-/** Numeric bbox shape before or after canonical normalization. */
+/** Normalized bbox. */
 export interface BBoxLike {
   x: number;
   y: number;
@@ -13,8 +13,8 @@ export function clamp01(value: number): number {
 }
 
 /**
- * Clamp a normalized bbox component-wise and cap its size at the remaining page extent.
- * The result is canonical and sum-safe: x + width <= 1 and y + height <= 1.
+ * Clamp a normalized bbox component-wise and cap its size at the remaining page
+ * extent, so x + width <= 1 and y + height <= 1 hold.
  */
 export function clampBBox(bbox: BBoxLike): BBoxLike {
   const x = clamp01(bbox.x);

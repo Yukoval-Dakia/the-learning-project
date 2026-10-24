@@ -31,9 +31,9 @@ import { SchedulingStateSchema } from '../scheduling-state';
 // ---------- θ̂ segment ----------
 //
 // before=null ≡ no mastery_state row ≡ cold-start (revert → DELETE row).
-// before MUST distinguish null from 0 (0 is a real prior θ̂; the Elo update at
-// mastery/state.ts:560 coerces missing→0 for math, but the snapshot stores the
-// raw row presence so revert deletes cold-start rows instead of writing θ̂=0).
+// before MUST distinguish null from 0 (0 is a real prior θ̂; the Elo update coerces
+// missing→0 for math, but the snapshot stores the raw row presence so revert deletes
+// cold-start rows instead of writing θ̂=0).
 
 // jsonb-roundtrip-safe zod mirrors of the two persisted shadow
 // columns (core/theta.ts RtCorrectBuffer, core/theta-grid.ts ThetaGridPosterior).
@@ -69,12 +69,10 @@ const _thetaGridPosteriorShapeLock: AssertEqual<
 
 // The FULL pre-attempt mastery_state row snapshot.
 // `before` must capture EVERY column an attempt writes so revert = VERBATIM whole-
-// row restore (not just θ̂ + zeroed counts). SRT_ENABLED is LIVE (theta.ts:259) so
-// `rt_correct_ms` is written on every SRT-eligible correct attempt TODAY — a θ̂-only
-// restore would leave a post-attempt RT sample behind (non-verbatim). `theta_grid_json`
-// is dark (THETA_GRID_ENABLED=false) but captured anyway so the flag flip never
-// silently loses verbatim fidelity. Column set is drift-guarded against mastery_state
-// (tests/schema/theta-snapshot-column-drift.test.ts).
+// row restore (not just θ̂ + zeroed counts). SRT_ENABLED is on, so `rt_correct_ms` is
+// written on every SRT-eligible correct attempt; a θ̂-only restore would leave a
+// post-attempt RT sample behind. `theta_grid_json` is dark (THETA_GRID_ENABLED=false)
+// but captured anyway so a flag flip never silently loses verbatim fidelity.
 export const ThetaRowSnapshot = z.object({
   theta_hat: z.number(),
   evidence_count: z.number().int(),

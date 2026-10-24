@@ -4,7 +4,7 @@ const JsonObjectSchema = z.record(z.string(), z.unknown());
 
 /**
  * Minimal immutable question context needed to interpret a historical learner
- * answer. This is evidence provenance, not a second mutable question model.
+ * answer. Evidence provenance, not a second mutable question model.
  */
 export const QuestionEvidenceContextSnapshot = z.object({
   question_id: z.string().min(1),
