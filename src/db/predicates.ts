@@ -15,10 +15,10 @@ import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import { type question, question_group_lifecycle } from '@/db/schema';
 
 /**
- * 家族-1 fail-open 池可见性谓词（红线-4）：NULL≡active。只有字面 'draft' 不可见，
+ * Family-1 fail-open 池可见性谓词（红线-4）：NULL≡active。只有字面 'draft' 不可见，
  * legacy 'active'/'final' 与 NULL 都可见。
  *
- * 不适用于家族-2 精确匹配闸（`=== 'active'` / `=== 'draft'` / `eq(col,'active'|'draft')`，
+ * 不适用于 family-2 精确匹配闸（`=== 'active'` / `=== 'draft'` / `eq(col,'active'|'draft')`，
  * 用于 FSRS 入组 / 编辑权限 / promote / demote / draft-review 池 SELECT），不要合并进来
  * （见 spec §2.2/§2.5）。
  */
@@ -29,7 +29,7 @@ export function notDraftPredicate(col: Column): SQL {
 /**
  * notDraftPredicate 的 JS 孪生：内存行同样只把字面 'draft' 排除在外。
  *
- * 不要用于家族-2 的 promote/入组守卫（那里 `row.draft_status !== 'draft'` 是 fail-closed
+ * 不要用于 family-2 的 promote/入组守卫（那里 `row.draft_status !== 'draft'` 是 fail-closed
  * 状态闸，不是池过滤，spec §2.5）。
  */
 export function isPoolVisible(row: { draft_status: string | null }): boolean {
