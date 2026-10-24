@@ -1,10 +1,8 @@
 import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 import type { MigrationCapture, RawEventRow } from './types';
 
-// YUK-1048 — shared capture fixtures for the pure migration unit tests.
-// 纯对象构造器：不 import DB；db 侧的 capture.db.test.ts 自行 seed 真表。
-// 快照 fixture 用【真实冻结契约】AttemptQuestionSnapshot.parse 产出（review
-// P1-5：不能用 {prompt_md, kind} 这种自造形状掩盖校验缺口）。
+// 纯 migration 单测的共享 capture fixture：不 import DB（db 侧测试自行 seed 真表）。
+// 快照 fixture 走真实冻结契约 parse，避免自造形状掩盖校验缺口。
 
 export function emptyCapture(): MigrationCapture {
   return {
@@ -112,8 +110,8 @@ export const SNAPSHOT = AttemptQuestionSnapshot.parse({
 });
 
 /**
- * 真实 durable pending 输入的冻结 snapshot（FrozenQuestionSnapshot 结构，
- * judge-run-payload.ts）：kind/prompt_md/.../version/updated_at。
+ * 真实 durable pending 输入的冻结 snapshot（FrozenQuestionSnapshot 结构，见
+ * src/capabilities/practice/server/judge-run-payload.ts）。
  */
 export const FROZEN_DURABLE_SNAPSHOT = {
   kind: 'short_answer',
@@ -139,7 +137,7 @@ export function durablePendingEvent(fixture: {
   questionId?: string;
   responseMd?: string;
   withSnapshot?: boolean;
-  /** 覆盖冻结 snapshot（终轮 P1-1 repro：4 字段残缺快照）。 */
+  /** 覆盖冻结 snapshot（复现残缺快照）。 */
   snapshotOverride?: unknown;
 }): RawEventRow {
   return ev({
@@ -156,7 +154,7 @@ export function durablePendingEvent(fixture: {
       submit: {
         body: { response_md: fixture.responseMd ?? 'x' },
         question_id: fixture.questionId ?? 'q-1',
-        // JudgePendingSubmitInput 必填字段（契约面）：subject_profile + ability 上下文。
+        // JudgePendingSubmitInput 必填字段。
         subject_profile: { learner_id: 'learner-1', locale: 'zh' },
         ability_global_by_knowledge_id: { 'kc-1': 'ag-1' },
         submitted_at: '2026-09-20T00:00:00.000Z',
