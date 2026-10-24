@@ -177,6 +177,7 @@ owner 2026-10-18 19:48 拍板「两件都允许」。**系统可自行执行、�
 | M7 | guard 触发数 | 未记录 | 0；触发即 harness 缺陷，生成 finding |
 
 **测量纪律**：before/after 均取 TEST 真实运行（夜链自然运行 + 回放集真实 provider 重跑，不用 mock）；每阶段至少观察 3 个完整夜晚或跑完一轮回放集，封存 revision、digest、task-run ID 与费用；付费重跑在 USD 20/周内。**删除**：`kt_estimate_nightly`（写了没人读）、`axis_state_nightly` 夜写、`HUB_SYNC_MODE=off` 时 `hub_sync_recovery` 的每分钟 cron。
+> **实施记录 2026-10-21（YUK-1560）**：kt 夜链已随 YUK-1576 删除，axis manifest 与 batch writer 已删。`hub_sync_recovery` 每分钟 cron **保留**：它是 Notes generation/verification handoff 与 claim 的唯一恢复地板（ADR-0052），删掉会丢漏发恢复；hub-sync 自身在 `HUB_SYNC_MODE=off` 时已在 `runHubSyncCycle` 入口短路。
 
 ### D8 阶段计划与已批范围（§5，经 §9/§10 修订）
 
