@@ -4372,37 +4372,44 @@ export interface operations {
                             m3_dropped_paid_output: {
                                 /** @enum {string} */
                                 basis: "measured" | "proxy" | "unavailable";
-                                by_task: {
-                                    denominator: number;
-                                    key: string;
-                                    numerator: number;
-                                    value: number | null;
-                                }[];
                                 note: string;
-                                verifier_rejections: {
-                                    action: string;
-                                    failed: number;
-                                    ratio: number | null;
-                                    total: number;
+                                parts: {
+                                    /** @enum {string} */
+                                    basis: "measured" | "proxy" | "unavailable";
+                                    denominator: number | null;
+                                    key: string;
+                                    note: string;
+                                    numerator: number | null;
+                                    value: number | null;
                                 }[];
                             };
                             m4_inbox_backlog: {
                                 /** @enum {string} */
                                 basis: "measured" | "proxy" | "unavailable";
-                                decided_in_window: number;
                                 note: string;
-                                oldest_pending_age_days: number | null;
-                                pending: number;
-                                proposed_in_window: number;
+                                parts: {
+                                    /** @enum {string} */
+                                    basis: "measured" | "proxy" | "unavailable";
+                                    denominator: number | null;
+                                    key: string;
+                                    note: string;
+                                    numerator: number | null;
+                                    value: number | null;
+                                }[];
                             };
                             m5_duplicate_rate: {
                                 /** @enum {string} */
                                 basis: "measured" | "proxy" | "unavailable";
-                                duplicate_ratio: number | null;
-                                exact_duplicates: number;
-                                new_questions: number;
                                 note: string;
-                                same_name_knowledge_pairs: number;
+                                parts: {
+                                    /** @enum {string} */
+                                    basis: "measured" | "proxy" | "unavailable";
+                                    denominator: number | null;
+                                    key: string;
+                                    note: string;
+                                    numerator: number | null;
+                                    value: number | null;
+                                }[];
                             };
                             m6_idle_spend: {
                                 active_daily_avg_usd: number | null;
@@ -4421,7 +4428,7 @@ export interface operations {
                                 note: string;
                             };
                             /** @enum {number} */
-                            version: 1;
+                            version: 2;
                             window: {
                                 /** Format: date-time */
                                 from: string;

@@ -4,30 +4,23 @@ import type { SubjectProfile } from '@/subjects/profile';
 import { CANONICAL_QUESTION_KINDS, rubricGuidanceSection } from './generation-prompt-support';
 import { parseTaskOutput } from './parse-output';
 
-// YUK-216 S2 slice 2 — SourcingTask prompt. Tool-calling agent that finds
-// EXISTING practice questions on the web and restructures them.
+// SourcingTask — tool-calling agent that finds EXISTING practice questions on the
+// web and restructures them, recording each origin URL as per-question provenance.
 //
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3.
-//   - Unlike QuizGen (which searches for SOURCE MATERIAL and writes ORIGINAL
-//     questions), SourcingTask searches for REAL practice questions and lifts +
-//     restructures them, recording each origin URL into per-question provenance.
-//   - OF-1 回填 (YUK-223 / YUK-227 S3 Slice C): HTML/TEXT sources are extracted
-//     inline as `questions`. Image-type sources — pages whose stem lives in an
-//     image that web_fetch_exa cannot lift as text — are reported as
-//     `image_candidates` (NOT auto-extracted: 守 ADR-0002, VLM 抽图是用户授权的
-//     付费动作). The handler turns each into an `image_candidate` proposal, and a
-//     VLM extraction runs ONLY on explicit user accept. The prompt MUST teach the
-//     agent (a) when to report an image_candidate, (b) the output contract for it,
-//     and (c) never to double-report a source as both a question and a candidate —
-//     生产 agent only emits image_candidates if the prompt asks for them.
-//   - This片 is the MINIMAL task-description skeleton (role / output contract /
-//     whitelist note). Domain content (题型规范 etc.) migrates to an Agent Skill
-//     in slice 4 — this builder stays thin per the owner's code-as-task-description
-//     philosophy.
+// Unlike QuizGen (searches SOURCE MATERIAL and writes ORIGINAL questions), this
+// lifts real questions. HTML/TEXT sources are extracted inline as `questions`.
+// Image-type sources — pages whose stem lives in an image that text extraction
+// cannot lift — are reported as `image_candidates`, never auto-extracted (VLM
+// extraction is a user-authorized paid action, ADR-0002). The handler turns each
+// into an `image_candidate` proposal; extraction runs only on explicit accept.
+// The prompt must therefore teach when to report a candidate, its output contract,
+// and never to double-report a source as both a question and a candidate.
 //
-// The handler mounts the Exa remote MCP (web_search_exa / web_fetch_exa) + an
-// in-process domain-tool MCP at run time, so this prompt refers to tools by
-// capability, not by exact mcp__* identifier.
+// The handler mounts the Exa MCP + an in-process domain-tool MCP at run time, so
+// the prompt refers to tools by capability, not by mcp__* identifier. Domain
+// content (题型规范) lives in the Agent Skill; this builder stays thin.
+//
+// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3
 function buildSourcingPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}题源检索员。任务：根据输入的学科 + 考点/题型 + 数量，**联网检索现成的练习题**，把每道题抽取并结构化为 SourcedQuestion。输入 { subject, knowledge_context, kinds?, objective_only?: boolean, kind_required?: boolean, count, whitelist } —— count 是期望题数，whitelist 是可信题源域名列表（可能为空）。objective_only=true 时 kinds 中指定的 kind 是硬约束（客观题），kind_required=true 时它是硬约束（结构）；任一为 true 时每道文本题的 kind 都必须与它一致；否则 kinds 是检索时的答案类型与题面结构指导，不要求整批输出复刻同一个 kind 字符串，应忠实抽取每道题的实际结构。
 科目上下文：${profile.displayName}。${profile.languageStyle}

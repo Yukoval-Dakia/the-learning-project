@@ -22,7 +22,7 @@ import {
 import { zodToJsonSchemaCompat } from '@/kernel/zod-json-schema';
 import { tokenPlanEndpointOverride } from '@/server/ai/model-catalog-overrides';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { nativePiModel } from '@/server/ai/pi-provider-catalog';
+import { executablePiModel } from '@/server/ai/pi-provider-catalog';
 
 const submit = 'mcp__structured_output__submit';
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -66,7 +66,7 @@ function routing() {
   ] as const) {
     try {
       assertModelProfileCapabilityFit(questionAdmissionSolveTaskSpec.definition, provider, model);
-      if (nativePiModel(provider, model)?.api !== 'openai-completions') {
+      if (executablePiModel(provider, model)?.api !== 'openai-completions') {
         throw new Error('Require an OpenAI-completions model');
       }
     } catch (error) {

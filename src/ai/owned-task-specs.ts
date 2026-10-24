@@ -4,11 +4,10 @@ export type TaskOwner = 'practice' | 'ingestion' | 'knowledge' | 'notes' | 'agen
 
 type OwnedTaskSpec = OwnedTaskSpecEntry;
 
-// YUK-885 — the transitional entry kind and the central quarry are deleted:
-// every owner entry is a full spec. YUK-1049 — the entry is either a chat
-// TaskSpec (definition + parseText + outputSchema) or a typed TypedTaskSpec
-// (definition execution:'typed' + typed.inputSchema + outputSchema); the
-// discriminant is definition.execution.
+// Every owner entry is a complete spec: either a chat TaskSpec (definition +
+// parseText + outputSchema) or a typed TypedTaskSpec (definition.execution:
+// 'typed' + typed.inputSchema + outputSchema). definition.execution is the
+// discriminant.
 export type TaskOwnerEntry = OwnedTaskSpec;
 
 const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -113,9 +112,8 @@ function validateDefinition(owner: TaskOwner, key: string, definition: TaskDefin
     throw new Error(`defineOwnedTaskSpecs(${owner}): "${key}" invalid execution discriminant`);
   }
   if (execution === 'typed') {
-    // YUK-1049 — typed tasks transport a schema-parsed body, not a chat
-    // prompt; the chat-only fields must all be absent/false so a typed def
-    // can never look like a runnable chat def.
+    // Typed tasks transport a schema-parsed body, not a chat prompt; chat-only
+    // fields must stay absent/false so a typed def can never look runnable as chat.
     if (prompt.kind !== 'none' || !hasExactKeys(prompt, ['kind'])) {
       throw new Error(
         `defineOwnedTaskSpecs(${owner}): "${key}" typed execution requires prompt {kind:'none'}`,
@@ -193,8 +191,8 @@ export function defineOwnedTaskSpecs<
     validateDefinition(owner, key, entry.definition);
     const isTypedEntry = (entry.definition as TaskDefinition).execution === 'typed';
     if (isTypedEntry) {
-      // Typed spec: input/output parse directly via schemas — parseText is
-      // forbidden on this lane (no free-text extraction seam exists).
+      // Typed lane parses input/output directly via schemas; no free-text
+      // parseText seam exists.
       if ('parseText' in entry) {
         throw new Error(
           `defineOwnedTaskSpecs(${owner}): typed "${key}" must not carry parseText (schema-parsed only)`,

@@ -74,11 +74,9 @@ function buildStepsJudgePrompt(profile: SubjectProfile): string {
 禁止：输出 JSON 之外的文字、verdict 用非合法值、signal_verdicts 长度与 expected_signals 不等。`;
 }
 
-// YUK-201 — MultimodalDirectJudgeTask prompt. HOLISTIC vision-aware judging with
-// NO step-rubric (steps@1 owns the rubric-weighted derivation path). Input is the
-// prompt + an optional reference_md + prompt figures and/or student answer photos
-// (attached to the user message in payload field order: prompt figures first,
-// then student photos). Output is a single holistic correctness verdict.
+// Holistic vision-aware judging with no step rubric (StepsJudgeTask owns the
+// rubric-weighted derivation path). Prompt figures attach before student photos;
+// output is a single correctness verdict.
 function buildMultimodalDirectJudgePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}视觉判分器（整体判分，无步骤评分表）。输入 { prompt_md, reference_md（参考答案，可能为 null）, prompt_image_refs（题干/图形/表格图片，若有，会先附在 user message 中）, student_image_refs（学生答题的 0..N 张图片，会后附在 user message 中）, student_final_answer_text?, image_present, prompt_image_count, student_image_count, probe_response_contract? }。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -127,7 +125,6 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildSemanticJudgePrompt },
   },
   UnitDimensionFallback: {
@@ -141,71 +138,46 @@ const judgeTaskDefinitions = {
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildUnitDimensionFallbackPrompt },
   },
   StepsJudgeTask: {
     kind: 'StepsJudgeTask',
-    // YUK-591 — the judge declares StepsLlmOutput here; the call site does the
-    // three-state dispatch (structured_output present → safeParse; endpoint
-    // ignores it → char-scan text parse). Post-YUK-1025 the wire-level
-    // outputFormat option is gone with the SDK; the schema remains the declared
-    // contract enforced by audit:structured-judge.
+    // The schema is the declared contract (audit:structured-judge); the call site
+    // dispatches: structured output present → safeParse, absent → char-scan parse.
     description:
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
     structuredOutputSchema: StepsLlmOutput,
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5',
-    // YUK-576 — transientRetries: 1: one same-target in-process retry on a fast
-    // transient failure (mid-stream drop / connection-class api_error_result /
-    // stream_no_terminal; see runner.ts + agent-run-error.ts). This judge is a
-    // synchronous-route sensor with NO durable backstop: runStepsJudge's catch
-    // swallows failures into 'unsupported' (steps-judge.ts), so pg-boss never
-    // sees a throw. A REAL cross-provider fallback (anthropic-sub Opus vision
-    // lane) is an owner decision — env-lever family (VISION_JUDGE_*), not a
-    // registry chain (design doc 2026-07-07 §1.2.1).
-    // YUK-792 deployed canary found that mimo's structured-output protocol can
-    // consume one envelope turn before its terminal result. StepsJudgeTask
-    // shares the same provider/model seam as its direct sibling, so both need
-    // the same two-turn protocol ceiling.
-    // Vision call latency: M0 preflight 7.6s for trivial; derivation prompts will run longer.
+    // transientRetries=1: one same-target in-process retry on a fast transient failure.
+    // This is a synchronous-route sensor with no durable backstop — runStepsJudge
+    // swallows failures into 'unsupported', so pg-boss never sees a throw. A real
+    // cross-provider fallback is an owner decision (VISION_JUDGE_* env levers).
+    // maxIterations=2 covers mimo's structured-output envelope turn before the
+    // terminal result (YUK-792). Vision latency: 7.6s even for a trivial preflight.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,
-    // invocation intentionally omitted (defaults to 'auto'): called from
-    // question-contract.ts runStepsJudge on every derivation grading attempt.
-    // Vision sibling tasks (VisionExtractTask*) are 'manual_rescue_only' because
-    // a human initiates them; this judge runs as part of the grading flow.
+    // invocation omitted (defaults to 'auto'): runs on every derivation grading
+    // attempt; human-initiated vision tasks are 'manual_rescue_only' instead.
     allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildStepsJudgePrompt },
   },
   MultimodalDirectJudgeTask: {
     kind: 'MultimodalDirectJudgeTask',
-    // YUK-591 — same shape as StepsJudgeTask above: declares
-    // MultimodalDirectLlmOutput, three-state dispatch on the result at the call
-    // site. Prior YUK-576 "structured-output migration deferred" note resolved.
+    // Same dispatch contract as StepsJudgeTask above.
     description:
       'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
     structuredOutputSchema: MultimodalDirectLlmOutput,
     defaultProvider: 'xiaomi',
-    // multimodal: mimo-v2.5 reads prompt figures + student answer photos, outputs
-    // a holistic JudgeResultV2 fragment. Mirrors StepsJudgeTask (same vision model).
     defaultModel: 'mimo-v2.5',
-    // YUK-576 — transientRetries: 1, same rationale + boundaries as
-    // StepsJudgeTask above (synchronous-route sensor, no durable backstop;
-    // cross-provider fallback = owner decision via env lever).
-    // YUK-792 deployed canary: mimo can use the first turn to satisfy the
-    // structured-output envelope, then needs one terminal turn. A ceiling of
-    // one returned error_max_turns before any judge result, leaving every
-    // response-aware probe unanswerable. This is still one paid judge request;
-    // maxIterations only bounds the adapter's turn protocol.
+    // Same retry/turn rationale as StepsJudgeTask above; maxIterations=2 still
+    // makes one paid judge request.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,
-    // invocation omitted (defaults to 'auto'): called from question-contract.ts
-    // resolveQuestionJudgeRoute → invoker on the multimodal_direct route, as part
-    // of the grading flow (not a user-initiated rescue).
+    // invocation omitted (defaults to 'auto'): part of the grading flow, not a
+    // user-initiated rescue.
     allowedTools: [],
     prompt: { kind: 'profile', build: buildMultimodalDirectJudgePrompt },
   },
