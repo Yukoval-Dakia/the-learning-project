@@ -17,7 +17,7 @@
 | `knowledge` 表 + `parent_id` tree backbone | ✅ | root 节点带 `domain='yuwen'`；子节点继承 effective domain |
 | Yuwen seed | ✅ | `src/subjects/yuwen/curriculum.json` 目前 7 个顶层 cluster：实词 / 虚词 / 句式 / 断句 / 翻译 / 文学常识 / 论述题 |
 | `knowledge_edge` typed mesh | ✅ | 5 个核心 relation type + `experimental:*`；唯一约束 `(from,to,type)` |
-| `knowledge_edge` 单一写入点 | ✅ | `src/server/knowledge/edges.ts` |
+| `knowledge_edge` 单一写入点 | ✅ | `src/kernel/records/knowledge-edge-facts.ts`（capability `src/capabilities/knowledge/server/edges.ts` re-export） |
 | edge propose event | ✅ | `event(action='propose', subject_kind='knowledge_edge')` |
 | edge accept / rate path | ✅ | `RateKnowledgeEdge` → `GenerateKnowledgeEdge` → insert edge |
 | `KnowledgeEdgeProposeTask` | ✅ registered | 单轮结构化输出，nightly / maintenance 用 |
@@ -288,7 +288,7 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 >
 > **Enforcement status (Layer 2, P5.4-L2 / YUK-174 — shipped 2026-05-31).** The adaptive
 > accept-learned bias is now live as an ADDITIVE soft layer on top of Layer 1, owned by
-> `src/server/proposals/adaptive-bias.ts` (read-only). It reads `proposal_signals` (rate + recent
+> `src/kernel/proposals/adaptive-bias.ts` (read-only). It reads `proposal_signals` (rate + recent
 > dismiss reasons) and the `rubric_rejected` propose-event bucket and produces (1) a per-`(kind,
 > relation)` **feedback digest** (`getProposalFeedbackDigest`) injected into the Dreaming / Coach /
 > Copilot proposal prompts — each scoped to the kinds that surface can act on, so the agent learns
@@ -319,7 +319,7 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > `proposal_signals.accept_count`, a corrective dismiss does not bump `dismiss_count` (the denominator
 > is not distorted), enforced at BOTH `accept_count`/`dismiss_count` writers
 > (`recordProposalDecisionSignal` incremental + `rebuildProposalDecisionSignal` replay/reconcile, both
-> in `src/server/proposals/signals.ts`). A corrective dismiss **still persists `cooldown_until`** (the
+> in `src/kernel/proposals/signals.ts`). A corrective dismiss **still persists `cooldown_until`** (the
 > gate skips KPI counting, not the cooldown). The `rate` event is still written, so the corrective
 > decision is excluded from the *KPI aggregate*, never from the *event log*. This keeps the P5.4-L2
 > accept-learned bias (above) measuring only proactive proposal quality — a retry-on-failure
@@ -438,14 +438,6 @@ These fixtures test whether the agent can understand context, not just whether S
 
 ## 6. Implementation Notes
 
-Recommended order:
-
-1. Add `SubjectGraphGuide` schema and storage path (`subject_graph_guide` table or `artifact(type='subject_graph_guide')`).
-2. Add guide seed/enrich service: `seedSubjectGraphGuide()` and `enrichSubjectGraphGuide()`.
-3. Add `src/server/ai/tools/read/get_subject_graph_overview.ts`.
-4. Add `query_knowledge` and fixtures.
-5. Add `expand_knowledge_subgraph`.
-6. Tighten `propose_knowledge_edge` to require `evidence_event_ids` for agent proposals.
-7. Add `ToolUseCard` summaries based on each tool's `summarize()`.
-
-`KnowledgeReviewTask` now mounts the shared `knowledge_review` surface (read tools + `propose_knowledge_mutation` / `propose_knowledge_edge`) through the DomainTool bridge; the private `write_proposal` tool is gone (YUK-1553).
+- 已落地：4 个 graph reader（`src/capabilities/knowledge/server/tools/knowledge-readers.ts`）、`propose_knowledge_edge` 的 evidence floor / rubric 校验（§4）、`KnowledgeReviewTask` 经 DomainTool bridge 挂 `knowledge_review` surface（YUK-1553）。
+- 仍未落地：`SubjectGraphGuide` schema 与 `seedSubjectGraphGuide()` / `enrichSubjectGraphGuide()`（§0 现状表）。
+- Phase 1/2 agent-readability fixtures 已删（§5）；可读性改用真实 actual-output 跑验证。

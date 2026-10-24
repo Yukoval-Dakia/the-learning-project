@@ -231,7 +231,7 @@ This keeps correctness evidence complete without flooding the record surface.
 
 ## 4. API target
 
-Replace `/api/study-log` and narrow `/api/mistakes` creation with `/api/records`.
+Design target（未落地）：用 `/api/records` 收口 `/api/study-log` 与窄化的 `/api/mistakes` 创建。当前 route 清单里没有 `/api/records`，也没有 `/api/study-log`；实际读写走 `GET|POST /api/mistakes`（§9）。
 
 ```text
 GET    /api/records
@@ -261,12 +261,10 @@ Filters:
 }
 ```
 
-Compatibility:
+Compatibility：
 
-- `/api/mistakes` can survive as a read alias for `GET /api/records?kind=mistake`.
-- `POST /api/mistakes` should be removed once `/record` is migrated.
-- `/api/study-log` should be deleted or return `410 Gone` in development, because keeping it
-  alive preserves the bad model.
+- `/api/mistakes` 是当前唯一 canonical 的 mistake 读写路由（POST 创建 / GET 列表）。
+- `/api/records` 与 `/api/study-log` 都不在当前 route 清单。
 
 ## 5. UI target
 
@@ -408,10 +406,8 @@ writing transitional migrations.
 
 | 项 | 状态 | 备注 |
 |---|---|---|
-| `learning_record` schema | ✅ ship | `src/db/schema.ts` L223；字段与 §2 完全对齐（kind / origin_event_id / payload jsonb / asset_refs / processing_status / 等） |
-| `memory_brief_note` schema | ✅ ship | `src/db/schema.ts` L257；三段 + evidence_ids 字段与 §7 对齐 |
-| `/api/records` + `/api/records/[id]` 路由 | ✅ ship | `app/api/records/route.ts` + `[id]/route.ts` |
-| `/api/mistakes` 路由 | 🟡 read alias 期 | `app/api/mistakes/route.ts` + `mistakes/recent/route.ts` 仍存在，按 §4 计划走 read-alias |
-| `/api/study-log` 路由 | ✅ 410 Gone | `app/api/study-log/route.ts` + `[id]/route.ts` 返回 `{ status: 410, error: 'gone', replacement: '/api/records' }`；`/app/(app)/study-log/page.tsx` 是 1-行 `redirect('/record')` —— 符合 §8 plan 步骤 2 + 5 |
-| `query_records` / `get_record_context` / `propose_record_links` agent tools | ✅ 注册 | `src/server/ai/tools/allowlists.ts` 已收录；record readers 由 `src/capabilities/ingestion/server/tools/` 拥有，proposal 仍走 `proposal-tools.ts` |
+| `learning_record` schema | ✅ ship | `src/db/schema.ts` L1222；字段与 §2 基本对齐（kind / origin_event_id / payload jsonb / asset_refs / processing_status / 等） |
+| `memory_brief_note` schema | ✅ ship | `src/db/schema.ts` L1266；三段 + evidence_ids 字段与 §7 对齐 |
+| `/api/mistakes`（GET/POST） | ✅ ship | `src/capabilities/ingestion/api/mistakes.ts`；manifest 注册 `createMistake` / `listMistakes` |
+| `query_records` / `get_record_context` / `propose_record_links` agent tools | ✅ 注册 | `src/kernel/tools/allowlists.ts` 已收录；record readers 由 `src/capabilities/ingestion/server/tools/` 拥有，proposal 仍走 `proposal-tools.ts` |
 | Memory dual-layer ingest (mem0 + brief sweep) | ✅ ship | `writeEvent` → outbox → `mem0.add(event)` (ADR-0017 + [ADR-0021](../adr/0021-event-write-outbox-pattern.md))；`memory_brief_note` 由 Dreaming refresh |

@@ -15,18 +15,18 @@
 
 | 设计概念 | 现状 |
 |---|---|
-| `question` 表（统一题库） | ✅ 落地 (`src/db/schema.ts` L146)，被 `event(action='attempt', subject_kind='question')` 引用 |
-| `answer` 表 | ✅ 仍存在 (`src/db/schema.ts` L339)，承载答案 payload；`vision_extracted` / `image_refs` 字段保留 |
-| `judgment` / `user_appeal` 表 | ❌ DROPped (ADR-0006 v2 / 1c.1 Step 1.4 Lane A)；判分走 `event(action='judge', subject_kind='event')`；申诉走 `POST /api/review/appeal` 创建 `experimental:appeal_request` event，并产出 `judge_retraction` proposal |
-| JudgeRouter + 7 种 judge kind | 🟡 `exact` / `keyword` 是 registry-backed local judge；`semantic` 通过 async `judgeAnswer` + `SemanticJudgeTask` 用于 prose embedded checks；`rubric` / `steps` / `multimodal_direct` / `ai_flexible` 仍是未来能力 |
-| `tool_quiz` artifact 类型 + standalone vs embedded | 🟡 backend 已写入：embedded check 和 search-grounded `quiz_gen` 都创建 `Artifact(type='tool_quiz')`，`tool_state.question_ids[]` 指向统一题库；完整 UI / review-session tool_quiz 仍未落地 |
-| Review session | ✅ ADR-0013 已落地：`/api/review/sessions[/id/{end,pause,reopen,resume}]` 创建/生命周期，`/api/review/submit` 可带 `session_id`，孤儿清理由 route + pg-boss `coach_daily` 处理；advice/plan/weekly 走 `/api/review/{advice,plan,weekly}` |
-| 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + due/submit API |
+| `question` 表（统一题库） | ✅ 落地 (`src/db/schema.ts` L429)，被 `event(action='attempt', subject_kind='question')` 引用 |
+| `answer` 表 | ✅ 仍存在 (`src/db/schema.ts` L1535)，承载答案 payload；`vision_extracted` / `image_refs` 字段保留 |
+| `judgment` / `user_appeal` 表 | ❌ DROPped (ADR-0006 v2 / 1c.1 Step 1.4 Lane A)；判分走 `event(action='judge', subject_kind='event')`；申诉走 `POST /api/appeals` 创建 `experimental:appeal_request` event 并入队 `rejudge` job，不再产 `judge_retraction` proposal（YUK-316 D15） |
+| JudgeRouter + judge kind | 🟡 可执行 6 种：`exact` / `keyword` / `semantic` / `steps` / `unit_dimension` / `multimodal_direct`；`rubric` / `ai_flexible` 只在 schema 声明，无 runner（`src/capabilities/practice/server/judge/question-contract.ts`） |
+| `tool_quiz` artifact 类型 + standalone vs embedded | 🟡 `quiz_gen` 创建 `Artifact(type='tool_quiz')`，`tool_state.question_ids[]` 指向统一题库；embedded check 生成链已删除；完整 standalone UI / review-session tool_quiz 仍未落地 |
+| Review session | ✅ ADR-0013 已落地：`POST /api/review-sessions` 创建，`PATCH /api/review-sessions/[id]` 改 `status`（started/paused/completed/abandoned），`POST /api/attempts` 可带 `session_id`，孤儿清理由 `prune_orphan_review_sessions` 处理；due/advice/weekly 走 `/api/review/{due,advice,weekly}` |
+| 复习 = standalone tool_quiz artifact | ❌ 仍未实现；当前是 review session + `/api/review/due` + `/api/attempts` |
 | 变式题生成 + lifecycle | ✅ pg-boss `variant_gen` 写 draft `question(source='mistake_variant')`，状态机走 `mistake_variant` 表（ADR-0018） |
 | 变式题双 pass verify | ✅ pg-boss `variant_verify` 已落，draft → active / broken 状态转换；三层防"错题繁殖"仍 Phase 2+ |
-| AttributionTask 写 cause | ✅ 落地 `src/server/knowledge/attribute.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
+| AttributionTask 写 cause | ✅ 落地 `src/capabilities/practice/tasks/attribution.ts`；输出走 `event(action='judge')`，payload 含 10 类 cause |
 
-**当前真"答题"路径**：手动录入（`POST /api/records` body 带 `{ "kind": "mistake", ... }`；read alias `POST /api/mistakes` 仍兼容） + FSRS 复习（`POST /api/review/sessions` → `GET /api/review/due` → `POST /api/review/submit` → session end）+ embedded check（`POST /api/embedded-check/attempt`）。`tool_quiz` 的 backend 包装已用于 embedded check / `quiz_gen`，但完整 Judgment / appeal 仪式感和 review-session tool_quiz 仍是后续范围。
+**当前真"答题"路径**：手动录入（`POST /api/mistakes`）+ FSRS 复习（`POST /api/review-sessions` → `GET /api/review/due` → `POST /api/attempts` → `PATCH /api/review-sessions/[id]`）。`tool_quiz` backend 包装目前只用于 `quiz_gen`；完整 Judgment / appeal 仪式感和 review-session tool_quiz 仍是后续范围。
 
 ---
 
@@ -54,9 +54,9 @@ Artifact (AI 产出物)
 - 模拟卷 / 用户保存的题集（`source: manual`）
 - 复习 session（`source: review_session`，FSRS 到期错题集合，用完归档）
 
-**Embedded**（note section 内嵌呈现 + 独立 Artifact 行）：
+**Embedded**（note section 内嵌呈现）：
 - Note `check` section 末尾的 1~3 题自检
-- section 持 `embedded_check.question_ids[]` 和 `artifact_ref`；`embedded_check_generate` 同时写 `Artifact(type='tool_quiz', tool_kind='embedded_check')`，并用 `artifact_block_ref(ref_kind='embedded_check')` 连接 note block → quiz artifact
+- section 持 `embedded_check.question_ids[]`；`embedded_check_generate` 生成链已删除，`embedded_check` 仅余 schema 槽
 
 两种形态共用同一套 Judge v2 light 判题入口：同步 exact/keyword 走 registry；语义题走 `SemanticJudgeTask`；判题失败返回 `unsupported`，不直接记错。
 
@@ -161,8 +161,9 @@ voice        语音（Phase 3+，暂不实现）
 3. semantic           AI 判语义等价                         $
 4. rubric             AI 按结构化评分标准评分               $$
 5. steps              AI 验证中间步骤 + 最终答案            $$
-6. multimodal_direct  强模型直接处理 image + text 一次过    $$
-7. ai_flexible        兜底：强模型 + 完整上下文 + CoT       $$$
+6. unit_dimension     数值 + 单位/量纲校验                   ~free
+7. multimodal_direct  强模型直接处理 image + text 一次过    $$
+8. ai_flexible        兜底：强模型 + 完整上下文 + CoT       $$$
 ```
 
 每种 judge_kind 对应一个独立 Task（见 § 10）。Question 有默认 judge_kind，可在题目级用 `judge_kind_override` 强制。
@@ -304,7 +305,7 @@ UI 上每个 verdict 旁有「我觉得我答对了」按钮（措辞可调）�
 
 ## 9. Schema
 
-> ⚠️ 下面 §9.3 的 `Judgment` / `UserAppeal` 是 Phase 1 sketch 期的 schema 设计参考，**两表已 DROP**（见 §0 现状表 + `src/db/schema.ts` L351-353 注释）。当前判分走 `event(action='judge', subject_kind='event', caused_by_event_id=<attempt_event_id>)`，appeal 走 `POST /api/review/appeal` 创建 `experimental:appeal_request` event（`caused_by_event_id=<judge_event_id>`），并产出 `judge_retraction` proposal。`answer` 表仍在用于持久化答案 payload。读 sketch 时心里替换 Judgment → judge event、UserAppeal → appeal_request event + proposal 即可。
+> ⚠️ 下面 §9.3 的 `Judgment` / `UserAppeal` 是 Phase 1 sketch 期的 schema 设计参考，**两表已 DROP**（见 §0 现状表 + `src/db/schema.ts` L1563 注释）。当前判分走 `event(action='judge', subject_kind='event', caused_by_event_id=<attempt_event_id>)`，appeal 走 `POST /api/appeals` 创建 `experimental:appeal_request` event（`caused_by_event_id=<judge_event_id>`）并触发异步 `rejudge`。`answer` 表仍在用于持久化答案 payload。读 sketch 时心里替换 Judgment → judge event、UserAppeal → appeal_request event 即可。
 
 完整 schema 见 [架构基础 § 七](../architecture.md#七数据模型骨架)。这里展开 quiz 子系统的关键字段。
 
@@ -344,7 +345,7 @@ Question
 
 ### 9.2 tool_quiz Artifact
 
-`Artifact` 表中 `type=tool_quiz` 的实例。Standalone 和 embedded check 都会独立成行；embedded check 额外在 note block 里保留 `embedded_check.question_ids[]` / `artifact_ref` 方便渲染：
+`Artifact` 表中 `type=tool_quiz` 的实例。当前只有 `quiz_gen` 会写这种行；embedded check 生成链已删除，`embedded_check` 仅余 note section 的 schema 槽：
 
 ```text
 Artifact
@@ -388,8 +389,8 @@ UserAppeal
 
 | | Embedded check | Standalone tool_quiz |
 | --- | --- | --- |
-| 存储 | note block 内联 `embedded_check.question_ids` + `artifact_ref`，背后也有独立 `Artifact(type=tool_quiz)` 行 | 独立 `Artifact` 行（type=tool_quiz） |
-| 生命周期 | 呈现跟 note section 1:1；quiz row 通过 `artifact_block_ref(ref_kind='embedded_check')` 被引用 | 独立（每日新生 / 用户保存 / review session） |
+| 存储 | 仅 note block 内联 `embedded_check.question_ids`（无独立 Artifact 行） | 独立 `Artifact` 行（type=tool_quiz） |
+| 生命周期 | 呈现跟 note section 1:1；无独立 quiz row | 独立（每日新生 / 用户保存 / review session） |
 | 可重做 | 可重做（生 Answer + Judgment） | 可重做 |
 | 可跨场景复用 | 否（绑死 note） | 是 |
 | Artifact archived | 跟随 note | 独立归档 |
@@ -401,7 +402,6 @@ UserAppeal
 | Task | Provider/Model | 触发 | 备注 |
 | --- | --- | --- | --- |
 | `QuizGenTask` | Sonnet (+ batch 可选) | knowledge / learning_item / manual `quiz_gen` | 输出 `Question[]`；`quiz_gen` handler 写 draft questions + `tool_quiz` artifact，并串起 `quiz_verify` |
-| `EmbeddedCheckGenerateTask` | Sonnet | note check section | 输出 `Question[]`；handler 写 embedded check questions + `tool_quiz` artifact + note block `artifact_ref` |
 | `JudgeRouter` | n/a | 每次答案提交 | 纯逻辑路由 |
 | `JudgeExactTask` | n/a | exact judge | 字符串比对，无 LLM |
 | `JudgeKeywordTask` | n/a | keyword judge | 关键词集合命中率，无 LLM |
@@ -556,16 +556,15 @@ Phase 1 启动后用文言文典型题型验证 5 种 judge_kind：
 
 ## 15. Phase 路线（tool_quiz 子集）
 
-### Phase 1（含 tool_quiz 骨架 + embedded check）
+### Phase 1（含 tool_quiz 骨架）
 
 - [ ] Schema: Question / Answer / Judgment / UserAppeal
-- [x] Artifact 表加 type=tool_quiz 行支持（embedded check + `quiz_gen` backend）
+- [x] Artifact 表加 type=tool_quiz 行支持（`quiz_gen` backend）
 - [x] note_atomic.sections[].embedded_check.question_ids 字段（embedded inline）
 - [x] QuizGenTask（knowledge / learning_item / manual 触发，写 draft questions + `tool_quiz` artifact）
 - [ ] JudgeRouter（路由逻辑）
 - [ ] JudgeExactTask / JudgeKeywordTask / JudgeSemanticTask（基础 3 种）
 - [ ] JudgeFlexibleTask + UserAppeal 流程（兜底必须 Phase 1 就有）
-- [x] Embedded check 嵌入 atomic note，并写背后 `tool_quiz` artifact
 - [ ] Mistake 创建事件（incorrect / partial → mistake，appeal 翻盘撤销）
 - [ ] mastery 反馈喂 base_mastery
 - [ ] feedback_md 模板（5 种 judge_kind 各一份）

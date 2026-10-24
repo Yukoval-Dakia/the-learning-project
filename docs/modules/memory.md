@@ -5,7 +5,8 @@
 > Substrate decisions: [ADR-0015](../adr/0015-learning-record-memory-brief.md) (brief as
 > first-class entity) and [ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md) (Mem0 + brief
 > layer: scope taxonomy, write triggers, anti-storm, cost). Code:
-> `src/server/memory/{brief,triggers,active-subjects,scope_tagger,client}.ts`.
+> `src/server/memory/{brief,triggers,active-subjects,client}.ts`；scope tagging 在
+> `src/kernel/events/scope-tagger.ts`。
 
 ## What it is
 
@@ -49,7 +50,7 @@ brief's `refreshed_at`** (or, for a never-built subject, any qualifying activity
    a single global scan floor.
 3. Resolve each event → subject via the **canonical knowledge→subject bridge** —
    `knowledge_ids[0] → getEffectiveDomain → resolveSubjectProfile.id` (BR-4,
-   `@/server/knowledge/subject-resolution.batchResolveSubjectIds`, the SAME bridge the review
+   `@/kernel/read-models/subject-resolution.batchResolveSubjectIds`, the SAME bridge the review
    scheduler uses, so "active subject" and "review round-robin subject" can never diverge). Orphan
    ids and capture events (no `referenced_knowledge_ids`) fall back to the default subject (YUK-56).
 4. Group by subject, keep the max `created_at`; a subject is active iff its newest qualifying event
@@ -82,7 +83,7 @@ do not qualify for a user-visible `tool_use` mirror. The tool description tells 
 stale/missing briefs as low-confidence direction and verify against source tools. This is an
 observability/degradation signal only; it does not mutate the brief or block the night chain.
 
-## Budgets (single source: `src/server/ai/tools/budgets.ts`)
+## Budgets (single source: `src/kernel/tools/budgets.ts`)
 
 `BRIEF_REFRESH_BUDGET` is the only place the P5.2 limits live (BR-9):
 
