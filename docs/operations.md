@@ -1,6 +1,6 @@
 # 运维
 
-当前形态是 Hono API + Vite SPA（`web/`）+ 独立 pg-boss worker 的 self-hosted 单用户应用。本文只写进程、发布顺序、备份恢复和访问约束；环境变量见 [configuration.md](./configuration.md)（与 `.env.example`）；架构以当前代码与 ADR 为准（`docs/architecture.md` 部分过时）；恢复契约细节见 `docs/sub5-restore-cli.md`。
+当前形态是 Hono API + Vite SPA（`web/`）+ 独立 pg-boss worker 的 self-hosted 单用户应用。本文只写进程、发布顺序、备份恢复和访问约束；环境变量见 [configuration.md](./configuration.md)（与 `.env.example`）；架构以当前代码与 ADR 为准（`docs/architecture.md` 开头的运行时、capability、执行路径、Start 前门，以及「六、技术栈」已对齐当前代码；「七、八、九」及「五、AI 任务层」的细节尚待更新）；恢复契约细节见 `docs/sub5-restore-cli.md`。
 
 ## 进程与 compose 服务
 

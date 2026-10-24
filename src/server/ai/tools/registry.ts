@@ -1,12 +1,7 @@
-// YUK-79 / Foundation D M1
-// YUK-862 / F3.1 — global output schema enforcement
+// DomainTool registry — module-level Map. Capability manifests register their tools
+// at startup, and the in-process bridge reads this registry to assemble mounts.
 //
-// DomainTool registry — module-level Map<string, DomainTool>. Tools register
-// themselves at module load time (Lane B+ side-effect imports); the in-process
-// MCP bridge (Lane C) reads from this registry to assemble per-request MCP
-// servers.
-//
-// Side-effect-free until tools call `registerTool`. Tests reset via
+// Side-effect-free until a module calls `registerTool`; tests reset via
 // `__resetRegistryForTests` to keep parallel registration deterministic.
 
 import type { z } from 'zod';
@@ -15,22 +10,16 @@ import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 
 const registry = new Map<string, DomainTool<unknown, unknown>>();
 
-// YUK-1553 / ADR-0075 C1-1 — effectful tools must declare their wire shape.
-// The retired KR tool accepted `payload: z.record(z.string(), z.unknown())`, so
-// the model saw no discriminated union and malformed mutations reached the
-// dispatcher. `z.unknown()`, `z.any()` and records with an unconstrained value
-// hide that shape again; reject them at registration (startup), the same way
-// validateComposition rejects contradictory cron/DAG declarations.
-//
-// Opaque JSON documents validated by an owner parser inside execute (e.g. a
-// draft document) use `OpaqueJsonInput` (z.json()): still opaque, but a real
-// JSON wire type. Only the top level and direct fields are inspected; nested
-// owner schemas are the owner's contract to review.
+// YUK-1553 / ADR-0075 C1-1 — effectful tools must declare their wire shape. The
+// retired KR tool accepted `payload: z.record(...)`, so the model saw no union and
+// malformed mutations reached the dispatcher. `z.unknown()`, `z.any()` and
+// unconstrained records hide the shape again, so registration rejects them at
+// startup. Opaque documents validated by an owner parser use `OpaqueJsonInput`
+// (z.json()); only the top level and direct fields are inspected.
 function unconstrainedFieldReason(schema: z.ZodTypeAny): string | null {
   let current = schema;
   // Unwrap modifiers so `z.unknown().optional()` is caught too. `z.lazy`
-  // (including z.json) stays opaque: following recursive getters here would
-  // turn the guard into a second schema walker.
+  // (including z.json) stays opaque — following getters would be a second walker.
   for (;;) {
     const def = current.def as { type: string; innerType?: z.ZodTypeAny };
     if (
@@ -91,13 +80,9 @@ export function registerTool<I, O>(tool: DomainTool<I, O>): void {
     );
   }
   assertEffectfulInputContract(tool as DomainTool<unknown, unknown>);
-  // YUK-1559 — composition-time contract check on the REAL converted schema:
-  // provider function calling requires a type:"object" parameters root, so an
-  // inputSchema that cannot compile to one (array/primitive/unconstrained
-  // roots) is rejected at registration instead of failing mid-run as a
-  // provider 400. Union-of-objects roots are normalized by the shared
-  // converter; the mount-time z.ZodObject check in buildPiDomainAgentTools is
-  // unchanged.
+  // YUK-1559 — provider function calling needs a type:"object" parameters root, so
+  // reject at registration a schema that cannot compile to one instead of failing
+  // mid-run as a provider 400. Union-of-object roots are normalized by the converter.
   try {
     zodToToolParametersSchema(tool.inputSchema, {
       io: 'input',
@@ -128,9 +113,8 @@ export function listTools(filter?: { effect?: ToolEffect }): DomainTool<unknown,
 }
 
 /**
- * Test-only reset. Production callers must not use this — the registry is
- * supposed to be append-once at startup. Exported under `__` prefix so it
- * surfaces in autocomplete as clearly internal.
+ * Test-only reset; production is append-once at startup. The `__` prefix marks it
+ * internal.
  */
 export function __resetRegistryForTests(): void {
   registry.clear();

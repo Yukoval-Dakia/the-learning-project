@@ -1,25 +1,9 @@
-// YUK-81 + YUK-82 / Foundation D M1 Lane C + Lane D
+// YUK-81 + YUK-82 — engine-neutral bridge from registry DomainTools to the
+// `mcp__<server>__<tool>` wire names agents see. YUK-1025 — pi is the only engine;
+// pi-tools.ts compiles mounts into AgentTools over this shared pipeline.
 //
-// Generic bridge: wrap any DomainTool from the registry into an agent-visible
-// MCP-named tool (`mcp__<server>__<tool>`). Replaces the per-task hand-written
-// tool-builder pattern for any task that needs access to read / propose /
-// write tools. YUK-1025 — the execution engine is pi-only; mounts compile to
-// `AgentTool`s in pi-tools.ts over this shared pipeline.
-//
-// Each tool call:
-//   1. zod-parse the raw args (re-parse for the typed Input value and a
-//      stable error path).
-//   2. execute the tool against the captured ToolContext.
-//   3. write a tool_call_log row with effect + error_reason populated.
-//   4. resolve mirrorEvent policy and, when it fires, write a `tool_use`
-//      KnownEvent mirror with payload
-//      { tool_name, args, result_summary, error_reason? } so Copilot /
-//      Dreaming / Coach can replay tool history from the event log.
-//      Lane D added this; ADR-0011 §1.1 (T-D7 / YUK-126) promoted the
-//      former `experimental:tool_use` to KnownEvent `tool_use`
-//      (`ToolUseQuery` in `src/core/schema/event/known.ts`).
-//   5. return an MCP-shaped { content: [{ type: 'text', text: <json> }] }
-//      result the LLM can read.
+// Every call lands one tool_call_log row plus, per mirror policy, a `tool_use`
+// KnownEvent mirror so Copilot / Dreaming / Coach can replay tool history.
 
 import { createHash } from 'node:crypto';
 
@@ -50,11 +34,8 @@ import { TOOL_OUTPUT_IMAGES_FIELD } from '@/kernel/tools/types';
 import { getTool } from './registry';
 
 /**
- * Engine-neutral tool-result content block. The text variant is the MCP-shaped
- * JSON payload every existing tool produces; the image variant carries real
- * bytes (base64) resolved from a versioned asset ref — structurally identical
- * to pi's `ImageContent`, which is what the pi AgentTool mount hands to the
- * loop (pi-tools.ts passes `content` through verbatim).
+ * Engine-neutral tool-result content: MCP-shaped JSON text, or real image bytes
+ * resolved from a versioned asset ref.
  */
 export type DomainToolResultContent =
   | { type: 'text'; text: string }
@@ -65,28 +46,22 @@ const MAX_TOOL_OUTPUT_IMAGES = 8;
 /** Absolute long-edge cap for the returned view; tools may request smaller. */
 const MAX_TOOL_IMAGE_EDGE = 2048;
 
-/**
- * Decide whether a tool invocation should mirror to the `event` table.
- *
- * `ToolUseQuery` (the schema, promoted from `experimental:tool_use` per
- * ADR-0011 §1.1) requires actor_kind='agent' — so user-fired debug-endpoint
- * calls never mirror, regardless of the tool's declared policy. The four
- * declared policies then fan out:
- *
- *   - 'never'             → never
- *   - 'always'            → always (provided caller is agent)
- *   - 'when_user_visible' → caller_ref matches copilot / teaching, with or without `agent:`
- *   - 'when_causal'       → tool effect is 'propose' | 'write',
- *                            OR caller_ref matches dreaming, with or without `agent:`
- *
- * Exported (with `__` prefix) so unit tests can pin the policy table without
- * spinning up the full bridge.
- */
 function matchesAgentRef(ref: string, family: string): boolean {
   const bare = ref.replace(/^agent:/i, '').toLowerCase();
   return bare === family || bare.startsWith(`${family}:`);
 }
 
+/**
+ * Whether one call mirrors to the `event` table. `ToolUseQuery` requires
+ * actor_kind='agent', so user-fired calls never mirror. Declared policies:
+ *
+ *   - 'never'             → never
+ *   - 'always'            → always (agent callers only)
+ *   - 'when_user_visible' → copilot / teaching caller_ref
+ *   - 'when_causal'       → propose | write effect, or dreaming caller_ref
+ *
+ * Exported with `__` so tests can pin the policy table.
+ */
 export function __resolveMirrorPolicy(
   policy: ToolMirrorPolicy,
   callerActor: ToolCallerActor,
@@ -108,15 +83,10 @@ export function __resolveMirrorPolicy(
 export type { ToolExecutionGateInput, ToolExecutionResultObservation } from '@/kernel/tools/types';
 
 /**
- * YUK-457 — live tool_use SSE gate. The streaming runner observes raw
- * tool_use block names (`mcp__<server>__<tool>`) BEFORE the bridge executes,
- * so the tool_use-side card gate resolves the DomainTool behind the name and
- * applies the SAME {@link __resolveMirrorPolicy} resolution that governs the
- * persisted tool_use mirror and {@link BuildMcpServerOptions.onToolComplete}.
- * One policy decision → live cards and replay tool_calls can't diverge.
- * Names outside `serverName` (native `Task`, remote MCP like Tavily) and
- * unregistered suffixes pass through: their user-visible surface is governed
- * elsewhere (subtask SSE / finalize force-done).
+ * YUK-457 — live tool_use SSE gate. Applies the same mirror policy that governs
+ * the persisted mirror, so live cards and replay cannot diverge. Names outside
+ * this server and unregistered suffixes pass through: their visibility is
+ * governed elsewhere (subtask SSE / finalize force-done).
  */
 export function shouldEmitToolUseForCaller(
   blockName: string,
@@ -188,28 +158,19 @@ function proposalEffectContract(
 }
 
 /**
- * Result of the optional per-call input interceptor (P5.1 / YUK-143). Lets the
- * Copilot context-budget tracker account a tool call and surface warning/hard
- * state. `args` is what the tool actually runs with; `truncationNote` (historic
- * field name), when present, is merged into output under `context_budget` so
- * the agent can self-correct and tool_call_log preserves the notice.
+ * Result of the per-call input interceptor (P5.1 / YUK-143): `args` is what the
+ * tool actually runs with; a `truncationNote` is merged into output under
+ * `context_budget` so the agent can self-correct.
  */
 export interface ToolInputInterceptResult {
   args: unknown;
-  /**
-   * Structured budget notice (any object). Merged verbatim into the tool
-   * output as `context_budget`. Kept as `object` (not a named shape) so the
-   * bridge stays decoupled from the throttle's `ContextBudgetNotice` type.
-   */
+  /** Budget notice merged verbatim as `context_budget`; kept loosely typed so the
+   *  bridge stays decoupled from the throttle's notice type. */
   truncationNote?: object | null;
   /**
-   * Graceful soft-stop signal (P5.1 / YUK-143 FIX 1). When the budget dimension
-   * is exhausted the interceptor returns a reason string here INSTEAD of capped
-   * args. The bridge treats it exactly like a `beforeExecute` reason: it does
-   * NOT execute the tool and surfaces the string as the tool result, so the
-   * agent stops and answers with what it has. This keeps the spec's central
-   * "never a hard reject/throw" guarantee — the tool never runs with a `limit:0`
-   * that would trip its own Zod min and throw.
+   * Soft-stop: when a budget dimension is exhausted the interceptor returns a
+   * reason here INSTEAD of capped args. The tool does not run and the reason is
+   * surfaced as the result (never a hard reject/throw, never `limit:0`).
    */
   softStop?: string | null;
 }
@@ -240,44 +201,34 @@ export interface BuildMcpServerOptions {
   /** Observes the exact agent-visible result after input interception and output decoration. */
   onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
   /**
-   * YUK-457 — fires after summarize completes with the human-facing summary string.
-   * Used by Copilot inline SSE to render done-state tool-use cards. Fires ONLY
-   * when the same {@link __resolveMirrorPolicy} resolution that persists the
-   * tool_use mirror fires: a live card that no persisted mirror backs would
-   * vanish on refresh (live/replay-same-rows invariant, materializing-tools.ts).
-   * Failures are swallowed so visibility cannot abort paid work.
+   * YUK-457 — fires with the human-facing summary after summarize, for Copilot
+   * inline SSE done-state cards. Fires only when the mirror policy fires: a live
+   * card without a persisted mirror would vanish on refresh. Failures swallowed.
    */
   onToolComplete?: (result: {
     toolName: string;
     input: Record<string, unknown>;
     summary: string;
     errorReason?: string;
-    /** YUK-920 — 同名并行 tool call 的确定性关联 id（有 correlated id 时携带）。 */
+    /** YUK-920 — correlation id for same-name parallel calls. */
     toolUseId?: string;
   }) => void;
   /**
-   * Optional per-call input interceptor (P5.1 / YUK-143). Runs AFTER
-   * `beforeExecute` clears and BEFORE execute, only on the happy path. Receives
-   * the zod-parsed args and returns the (possibly limit-capped) args plus an
-   * optional truncation note. Used by the Copilot per-message context-budget
-   * throttle. Dreaming and Coach use the same seam with their per-run budgets.
+   * P5.1 / YUK-143 — runs after `beforeExecute` clears and before execute on the
+   * happy path; returns possibly limit-capped args plus an optional note.
    */
   interceptInput?: (tool: ToolExecutionGateInput, args: unknown) => ToolInputInterceptResult;
 }
 
 /**
  * Options for {@link executeDomainToolCall} — the engine-neutral slice of
- * {@link BuildMcpServerOptions}. The pi AgentTool bridge (pi-tools.ts)
- * supplies the same fields; pi passes the loop's native toolCallId via
- * `correlatedToolUseId` (no hook round-trip needed).
+ * {@link BuildMcpServerOptions}. The pi AgentTool bridge passes the loop's native
+ * toolCallId as `correlatedToolUseId`.
  */
 export interface DomainToolCallOptions {
   ctx: ToolContext;
-  /**
-   * YUK-1557 — ai_task_runs.id for tool_call_log / tool_use mirror attribution.
-   * Defaults to ctx.taskRunId; the runner injects its active run id so tools
-   * with a separate spend-owner id still land one row on the real run.
-   */
+  /** YUK-1557 — ai_task_runs.id for tool_call_log / mirror attribution. Defaults
+   *  to ctx.taskRunId; the runner injects its active run id. */
   logTaskRunId?: string;
   /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
   taskKind?: string;
@@ -302,28 +253,20 @@ export interface DomainToolCallOptions {
   interceptInput?: BuildMcpServerOptions['interceptInput'];
 }
 
-/**
- * The engine-neutral DomainTool call pipeline — parse → beforeExecute gate →
- * interceptInput → execute (+ safe-handoff) → output schema → onResult →
- * summary → onToolComplete → tool_call_log → tool_use mirror → settle. The pi
- * AgentTool bridge wraps this verbatim via `AgentTool.execute` in
- * pi-tools.ts. Errors never throw — they encode into the returned text
- * payload exactly as the MCP convention requires, and `isError` carries the
- * authoritative failure flag (the PhaseResult `ok` bit) so pi can mark the
- * tool result without parsing the payload text.
- */
+/** Engine-neutral DomainTool result; `isError` is the authoritative failure flag. */
 export interface DomainToolCallResult {
   content: DomainToolResultContent[];
-  /**
-   * True when any pipeline phase failed (input parse, beforeExecute refusal,
-   * interceptInput soft-stop, execute throw, or output-schema violation).
-   * Derived from the phase-tracking `ok` flag — never inferred from the
-   * serialized content — so an error with empty text still marks correctly
-   * and a successful result is never mislabeled.
-   */
+  /** True when any pipeline phase failed; derived from the phase `ok` flag, never
+   *  inferred from the serialized content. */
   isError: boolean;
 }
 
+/**
+ * The DomainTool call pipeline: parse → beforeExecute → interceptInput → execute
+ * (+ safe handoff) → output schema → onResult → summary → tool_call_log →
+ * tool_use mirror → settle. Errors never throw: they encode into the text payload
+ * with `isError` marking the failure so the engine need not parse it.
+ */
 export async function executeDomainToolCall(
   dt: DomainTool<unknown, unknown>,
   rawArgs: unknown,
@@ -333,8 +276,8 @@ export async function executeDomainToolCall(
   const sourcePolicy = opts.ctx.causedByEventId
     ? await readEventDerivationPolicy(opts.ctx.db, opts.ctx.causedByEventId)
     : declared;
-  // YUK-1398：保留任意受限用途（answer_only / crisis）不塌缩回 allow；
-  // 因果根优先于声明值。
+  // YUK-1398 — keep restricted purposes (answer_only / crisis) from collapsing
+  // back to allow; the causal root wins over the declared value.
   const policy: DerivationPolicyT =
     sourcePolicy !== 'allow' ? sourcePolicy : declared !== 'allow' ? declared : 'allow';
   const call: ToolCallContext = {
@@ -369,16 +312,11 @@ export async function executeDomainToolCall(
 }
 
 /**
- * YUK-1404 (B2/R2) — media output resolution. When a tool's parsed output
- * carries an `images` array of versioned refs ({asset_id, digest}, optional
- * max_edge), each ref is loaded through the digest-verifying asset loader and
- * appended as image content. Bytes never enter tool_call_log or the tool_use
- * mirror — those persist the parsed output, which contains refs only.
- *
- * Resolution failures degrade to a text note (never silent): a declared-but-
- * unloadable image tells the model the ref exists but bytes could not be
- * verified/served. Non-image assets (pdf/docx/text) produce the same explicit
- * note instead of fake content.
+ * YUK-1404 (B2/R2) — media output: an `images` array of versioned refs
+ * ({asset_id, digest}, optional max_edge) is loaded through the digest-verifying
+ * asset loader and appended as image content. Bytes never enter tool_call_log or
+ * the mirror — those persist refs only. Resolution failures degrade to an
+ * explicit text note, never silently.
  */
 async function resolveOutputImages(
   call: ToolCallContext,
@@ -648,7 +586,7 @@ async function runExecute(call: ToolCallContext, phase: InputPhase): Promise<Exe
     if (safeOperation && safeOperation.status !== 'succeeded')
       return result({ ok: false, error: formatToolOperationFailure(safeOperation) });
     // Preserve the outer parse even for a safe operation: transforms ran at both
-    // boundaries before this extraction, and terminal evidence uses the inner one.
+    // boundaries and terminal evidence uses the inner one.
     const parsed = enforceOutputSchema(dt, rawOutput);
     if (!parsed.ok) return result(parsed);
     output = parsed.value;
@@ -684,9 +622,8 @@ async function notifyResult(
     await opts.onResult?.({
       ...gateInput,
       ...(correlatedToolUseId ? { tool_use_id: correlatedToolUseId } : {}),
-      // The context interceptor may cap a typed input before execution.
-      // Review the exact input that produced this output, not the larger
-      // request the model originally attempted.
+      // Review the exact input that produced this output, not the larger request
+      // the model originally attempted.
       input: execInput,
       output: errorReason ? { error: errorReason } : output,
       error_reason: errorReason ?? null,
@@ -818,10 +755,7 @@ async function mirrorToolUse(
   const { dt, ctx } = call;
   const { parsedInput } = input;
   const errorReason = errorReasonOf(execution.result);
-  // YUK-82 + ADR-0011 §1.1 (T-D7 / YUK-126): tool_use KnownEvent mirror
-  // per mirrorEvent policy. Schema (`ToolUseQuery`) requires
-  // actor_kind='agent', so user-fired calls never mirror regardless of
-  // the tool's policy.
+  // YUK-82 + ADR-0011 §1.1 — tool_use KnownEvent mirror per mirrorEvent policy.
   if (__resolveMirrorPolicy(dt.mirrorEvent, ctx.callerActor, dt.effect)) {
     const mirrorPayload: Record<string, unknown> = {
       tool_name: dt.name,
@@ -877,9 +811,8 @@ async function settleExecution(call: ToolCallContext, execution: ExecutionPhase)
     try {
       await opts.onExecuteSettled?.(gateInput);
     } catch (settleErr) {
-      // A bookkeeping observer must not turn a completed domain effect into
-      // an agent-visible failure. Cancellation control still fails closed via
-      // its persisted materializing-tool probe at terminal projection.
+      // Bookkeeping must not turn a completed domain effect into an agent-visible
+      // failure. Cancellation still fails closed via the terminal probe.
       console.error('[mcp-bridge] onExecuteSettled failed', {
         tool: dt.name,
         task_run_id: ctx.taskRunId,
@@ -899,8 +832,8 @@ function formatToolResponse(
   const { output, effectContract } = execution;
   const errorReason = errorReasonOf(execution.result);
   return {
-    // YUK-1559 — surface the authoritative phase outcome so engine mounts can
-    // flag the wire-level tool result error instead of inferring it from text.
+    // YUK-1559 — authoritative phase outcome, so engine mounts can flag the
+    // wire-level error instead of inferring it from text.
     isError: errorReason !== undefined,
     content: [
       {

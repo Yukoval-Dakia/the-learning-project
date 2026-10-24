@@ -84,7 +84,7 @@ export function requireIngestionScope(ctx: ToolContext): string {
 }
 
 /**
- * Scope enforcement (inventory §5.1.3): an asset is in scope iff it is a
+ * Scope enforcement: an asset is in scope iff it is a
  * package member or a derived asset whose derived_from chain reaches one (≤6
  * hops). A scope that resolves to no session/document fails CLOSED.
  */
@@ -123,7 +123,7 @@ export async function loadVerifiedAssetBytes(
 }
 
 /**
- * The source_document that owns this asset. Codex 4293474471 — embedded
+ * The source_document that owns this asset. Embedded
  * package media and crop/rotate-derived assets are not in
  * `source_asset_ids`, so the flat membership query reported null. Resolve the
  * way assertAssetInScope does: package membership + derived_from lineage

@@ -18,64 +18,25 @@ import { sanitizeProviderErrorText } from './provider-error-evidence';
 /**
  * YUK-1630 — pi provider-lane transport + per-request wire evidence.
  *
- * One npm-undici Agent per lifecycle attempt carries connect/headers/body
- * timers that all derive from the same resolved task budget (the value the
- * runner computes via `providerHttpTimeoutMs`). The SDK per-request timeout
- * gets the identical derived value, so every HTTP-layer timer traces back to
- * a single source instead of the old mix of "SDK default 600s / undici
- * default 300s / connect default 10s".
+ * One npm-undici Agent per lifecycle attempt carries connect/headers/body timers,
+ * all derived from the same resolved task budget the SDK timeout gets. Transport
+ * composition: the instrumented fetch invokes the CURRENT `globalThis.fetch` with
+ * our dispatcher injected into `init`, so observer wrappers still ride the
+ * controlled Agent; a fetch that ignores `init.dispatcher` produces no dispatch
+ * evidence and is reported on the `observer_fetch` lane as `unknown`, never
+ * fabricated `not_sent`. Legacy (undici 7) and modern (undici 8) handler shapes
+ * are both bridged.
  *
- * Transport composition (R1): the instrumented fetch always invokes the
- * CURRENT `globalThis.fetch` with our dispatcher injected into `init`.
- * A pass-through observer wrapper therefore still rides the controlled
- * Agent; a fetch that ignores `init.dispatcher` (test stub) simply never
- * produces `dispatch()` calls on it, and that request is reported on the
- * `observer_fetch` lane with `unknown` wire state — never fabricated
- * `not_sent`. Handler-shape bridging covers both undici generations: Node's
- * builtin fetch (undici 7) passes a legacy handler (onConnect/onHeaders/
- * onData/onComplete/onError) while the npm undici 8 Agent invokes the modern
- * surface (onRequestStart/onResponseStart/onResponseData/onResponseEnd/
- * onResponseError); the dispatcher translates whichever it receives.
- *
- * Evidence semantics (the ticket's core requirement):
- * - `onRequestStart` = the request began executing on a socket; bytes may or
- *   may not have reached the wire yet.
- * - `onRequestSent` = undici finished writing the complete request (headers +
- *   full body) to the socket. `undici:client:sendHeaders` fires BEFORE any
- *   write, so it can never stand in for this.
- * - `onResponseStarted`/`onResponseStart` = the peer began answering.
- * `not_sent` is claimed ONLY on positive evidence — our own dispatcher saw a
- * request end (via `onResponseError`) before `onRequestStart`, i.e. it never
- * began a socket write (connect/queue failure). Anything partially written,
- * still pending, or observed through a foreign fetch stays
- * `unknown`/`in_flight`; a later request's `not_sent` never masks an earlier
- * request that did send.
- *
- * Abort/timeout-layer attribution is honest about what the wire can see:
- * - undici error codes identify connect/headers/body directly.
- * - `signal_aborted` is emitted ONLY when the request's composed
- *   AbortSignal observably fired while the wire was live — never inferred
- *   from an abort-shaped error name/code. `signal_initiator` names the
- *   initiator from `abort_initiators`, which the lifecycle records
- *   synchronously at the layer that actually called `abort()` (execution
- *   timer, session deadline, caller signal, lease loss, or generic abort);
- *   `unknown` when none did.
- * - `timeout_layer: 'signal'` requires positive timeout evidence: an
- *   observed signal abort attributed to the armed execution timer or the
- *   caller's session deadline. Every other abort stays unclassified —
- *   including the bare `AbortError` a successful stream-end body-cancel
- *   produces (builtin fetch `response.cancel()` surfaces it via
- *   `onResponseError` without ever firing the composed signal) and the
- *   SDK's own timer, which wraps its error OUTSIDE fetch.
- * - Neutral raw error evidence (`last_transport_error`) stays separate
- *   from the failure summary (`last_failure`, which requires a classified
- *   timeout layer or substantive non-abort error evidence).
- *
- * The scope of `send_state` is this attempt's provider model-request lane —
- * everything the pi drivers route through `options.fetch` (root loop, nested
- * subagent loops and SDK-internal retries all funnel through the same
- * instrumented fetch). Other lanes (typed-primitive runner, provider /models
- * check) have their own transports and never attach this evidence.
+ * Evidence rules:
+ * - `not_sent` only on positive evidence: our dispatcher settled the request
+ *   before `onRequestStart` (connect/queue failure). Anything partially written,
+ *   pending, or behind a foreign fetch stays `unknown`/`in_flight`.
+ * - `signal_aborted` only when the composed AbortSignal observably fired while the
+ *   wire was live, never inferred from an abort-shaped error name.
+ * - `timeout_layer: 'signal'` requires an observed abort attributed to the armed
+ *   execution timer or the session deadline; every other abort stays unclassified.
+ * - `last_transport_error` is neutral raw evidence; `last_failure` requires a
+ *   classified timeout layer or substantive non-abort evidence.
  */
 
 const MAX_REQUEST_RECORDS = 32;
@@ -170,9 +131,8 @@ export class ProviderTransportCollector {
   }
 
   /**
-   * Whether any consumer armed the controlled transport. `usage.transport` is
-   * attached only when armed — an unobserved lane (e.g. the typed-primitive
-   * runner's direct POST) must not produce an empty `not_sent` receipt.
+   * Whether a consumer armed the controlled transport. `usage.transport` attaches
+   * only when armed — an unobserved lane must not produce an empty receipt.
    */
   get isArmed(): boolean {
     return this.armed;
@@ -194,9 +154,8 @@ export class ProviderTransportCollector {
   }
 
   /**
-   * The lifecycle is about to call `abort()`. Recorded synchronously BEFORE
-   * the signal fires so the marker's timestamp provably precedes the wire
-   * abort it causes; only the initiator that transitions the signal counts.
+   * Recorded synchronously BEFORE `abort()` fires so the marker provably precedes
+   * the wire abort it causes.
    */
   noteAbortInitiated(kind: TransportAbortInitiator): void {
     if (this.abortInitiators.length >= MAX_ABORT_MARKERS) return;
@@ -246,14 +205,12 @@ export class ProviderTransportCollector {
   }
 
   /**
-   * Re-derive the record's send state after any mutation and keep the
-   * aggregate counts + last-failure slot current — including for records that
-   * were already truncated out of `records`.
+   * Re-derive the record's state and keep aggregates current, including for
+   * records already truncated out of `records`.
    */
   touch(record: MutableRequestRecord): void {
     // A lane is decided once the dispatcher saw the call, or once the fetch
-    // settled/ended without ever dispatching — an in-flight record that has
-    // not dispatched yet must not pre-claim the observer lane.
+    // settled without dispatching; an in-flight record cannot pre-claim it.
     if (record.dispatches > 0) {
       this.lanesSeen.add('undici_agent');
     } else if (record.fetchSettledAt !== undefined || record.endedAt !== undefined) {
@@ -274,8 +231,8 @@ export class ProviderTransportCollector {
         record.endedAt !== undefined || record.fetchSettledAt !== undefined
           ? (record.endedAt ?? record.fetchSettledAt)
           : undefined;
-      // Neutral raw evidence — EVERY error lands here, truncated records
-      // included, so the final wire error is never silently dropped.
+      // Neutral raw evidence — every error lands here, so the final wire error is
+      // never silently dropped.
       this.lastTransportError = {
         seq: record.seq,
         ...(at !== undefined ? { at } : {}),
@@ -294,9 +251,8 @@ export class ProviderTransportCollector {
           : {}),
         error,
       };
-      // Verified-failure summary: a classified timeout layer or substantive
-      // non-abort evidence. A bare abort-only error (unknown-origin cancel,
-      // caller cancel, SDK stream-end body cleanup) is not a failure.
+      // Verified failure: a classified timeout layer or substantive non-abort
+      // evidence. A bare abort (caller cancel, stream-end cleanup) is not one.
       if (timeoutLayer !== undefined || !isBareAbort(error)) {
         this.lastFailure = {
           seq: record.seq,
@@ -317,9 +273,9 @@ export class ProviderTransportCollector {
   }
 
   /**
-   * The fetch promise rejected. The wire may still be live — the dispatcher
-   * path keeps reporting `onResponseError`; the signal listener is released
-   * here since a settled failure cannot still be signal-driven.
+   * The fetch promise rejected while the wire may still be live (the dispatcher
+   * keeps reporting onResponseError). Release the signal listener: a settled
+   * failure cannot still be signal-driven.
    */
   recordFetchFailure(record: MutableRequestRecord, error: unknown): void {
     record.fetchSettledAt = now();
@@ -335,11 +291,9 @@ export class ProviderTransportCollector {
   }
 
   /**
-   * Only the composed AbortSignal actually firing counts — the listener ran
-   * (or the signal arrived already aborted). An abort-shaped wire/fetch
-   * error alone never claims a signal abort: builtin fetch
-   * `response.cancel()` and SDK stream-end cleanup surface `AbortError`
-   * through `onResponseError` without firing the signal.
+   * Only the composed AbortSignal actually firing counts. An abort-shaped error
+   * alone never claims one: `response.cancel()` and stream-end cleanup surface
+   * `AbortError` without firing the signal.
    */
   private signalAborted(record: MutableRequestRecord): boolean {
     return record.signalAbortedAt !== undefined;
@@ -351,10 +305,8 @@ export class ProviderTransportCollector {
     if (record.signalAbortedAt === undefined) return undefined;
     const abortedAt = Date.parse(record.signalAbortedAt);
     // A lifecycle marker recorded no later than the wire abort is positive
-    // initiator evidence (the marker is written synchronously before abort()
-    // fires). +1ms absorbs same-tick ms rounding; everything else stays
-    // 'unknown' — in particular the SDK's own timer, which surfaces only as
-    // an SDK error type constructed outside fetch.
+    // initiator evidence (markers are written before abort() fires). +1ms absorbs
+    // same-tick rounding; everything else stays 'unknown'.
     let matched: TransportAbortInitiator | undefined;
     for (const marker of this.abortInitiators) {
       if (Date.parse(marker.at) <= abortedAt + 1) matched = marker.kind;
@@ -502,12 +454,9 @@ export function createProviderTransportCollector(
 }
 
 /**
- * Map an error to the timeout layer that produced it — positive evidence
- * only. undici names its own timers directly; the only other admissible
- * attribution is an observed signal abort the lifecycle synchronously
- * marked as its armed execution timer or the caller's session deadline.
- * Anything else (caller cancel, lease loss, generic teardown, SDK cleanup,
- * abort of unknown origin) stays unclassified rather than guessing.
+ * Map an error to its timeout layer on positive evidence only: undici timer codes,
+ * or an observed signal abort the lifecycle attributed to the execution timer or
+ * session deadline. Anything else stays unclassified rather than guessed.
  */
 function classifyTimeoutLayer(
   error: TransportFailureEvidence | undefined,
@@ -535,10 +484,8 @@ function errorCodes(error: TransportFailureEvidence | undefined): Set<string> {
 }
 
 /**
- * Abort-family evidence: a DOMException `AbortError`/`TimeoutError`
- * (numeric `code` 20/23) or undici's UND_ERR_ABORTED. Says nothing about
- * which layer initiated it — that requires the observed signal +
- * `abort_initiators` markers.
+ * Abort-family evidence: DOMException AbortError/TimeoutError, numeric 20/23, or
+ * undici UND_ERR_ABORTED. Says nothing about which layer initiated it.
  */
 function isAbortEvidence(error: TransportFailureEvidence): boolean {
   if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
@@ -552,10 +499,8 @@ function isAbortEvidence(error: TransportFailureEvidence): boolean {
 }
 
 /**
- * Every link of the cause chain is abort-family → the error is only a
- * cancellation of unattributed origin, never a verified failure on its own.
- * Any non-abort link (socket error, refused connect, parse failure, …) is
- * substantive failure evidence.
+ * Every link of the cause chain is abort-family → cancellation of unattributed
+ * origin, never a verified failure; any non-abort link is substantive evidence.
  */
 function isBareAbort(error: TransportFailureEvidence): boolean {
   let current: TransportFailureEvidence | undefined = error;
@@ -595,10 +540,9 @@ function failureEvidence(
 }
 
 /**
- * Legacy DispatchHandler surface — what Node's builtin fetch (undici 7) hands
- * to `dispatcher.dispatch`. The npm undici 8 Agent only invokes the modern
- * surface, so a legacy inner handler must be translated (the same mapping
- * undici's own WrapHandler/LegacyHandlerWrapper performs).
+ * Legacy DispatchHandler surface (Node builtin fetch / undici 7). The npm undici 8
+ * Agent only invokes the modern surface, so a legacy handler is translated the way
+ * undici's own WrapHandler does.
  */
 interface LegacyDispatchHandler {
   onConnect?(abort: (reason?: Error) => void, context?: unknown): void;
@@ -653,12 +597,9 @@ function rawTrailers(
 }
 
 /**
- * Per-`dispatch()` wrapper around the attempt's Agent. One fetch call maps to
- * one record, so concurrent fetches can never cross-pollinate evidence. The
- * handler the fetch implementation supplies may be the modern undici 8
- * surface or the legacy undici 7 one (Node's builtin fetch); both are bridged
- * to the modern surface the npm Agent invokes, with milestones recorded on
- * the outer side regardless.
+ * Per-`dispatch()` wrapper around the attempt's Agent: one fetch call maps to one
+ * record, so concurrent fetches cannot cross-pollinate evidence. Both handler
+ * shapes are bridged to the modern surface the npm Agent invokes.
  */
 class ObservedDispatcher {
   constructor(
@@ -757,10 +698,8 @@ class ObservedDispatcher {
   }
 
   /**
-   * Legacy inner handler (Node builtin undici 7 fetch): the npm Agent calls
-   * the modern surface on us; each call translates to the legacy method the
-   * fetch implementation passed — the same translation undici's own
-   * WrapHandler performs (rawHeaders come from the controller when present).
+   * Legacy inner handler: the npm Agent calls the modern surface on us; each call
+   * translates to the legacy method the fetch implementation passed.
    */
   private legacyHandler(inner: IncomingHandler): Dispatcher.DispatchHandler {
     return {
@@ -805,10 +744,10 @@ class ObservedDispatcher {
       onResponseError: (_controller, error) => {
         this.markWireError(error);
         this.markEnded();
-        // npm undici 8 calls handler.onResponseError without a try/catch —
-        // a throw would escape into the socket error path. A handler that
-        // cannot absorb the error simply loses the callback; the wire
-        // failure itself is already recorded above.
+        // npm undici 8 calls onResponseError without a try/catch — a throw here
+        // would escape into the socket error path. The wire failure is already
+        // recorded above, so a handler that cannot absorb it just loses the
+        // callback.
         inner.onError?.(error);
       },
       onBodySent: (chunk) => inner.onBodySent?.(chunk),
@@ -822,18 +761,13 @@ export interface BudgetedProviderFetch {
 }
 
 /**
- * Fetch for one attempt's provider lane. Every call invokes the CURRENT
- * `globalThis.fetch` with the attempt's dispatcher injected into
- * `init.dispatcher` — explicit composition, not identity-based bypass:
+ * Fetch for one attempt's provider lane: every call invokes the CURRENT
+ * `globalThis.fetch` with the attempt's dispatcher injected into `init`.
  *
- * - The platform fetch dispatches through the controlled Agent → full wire
- *   milestones + budget timers apply (Node builtin fetch passes a legacy
- *   handler; the bridge translates).
- * - An observer wrapper that forwards `init` still rides the same dispatcher
- *   — budget timers apply and milestones are recorded.
- * - A foreign fetch that ignores `init.dispatcher` never produces dispatches;
- *   its record stays on `observer_fetch` with `unknown` wire state, and the
- *   receipt omits the undici timers because they were never in effect.
+ * - Platform/observer fetches dispatch through the controlled Agent → wire
+ *   milestones and budget timers apply.
+ * - A foreign fetch that ignores `init.dispatcher` stays on `observer_fetch` with
+ *   `unknown` wire state; the receipt omits timers that were never in effect.
  */
 export function createBudgetedProviderFetch(input: {
   httpTimeoutMs: number;
@@ -857,11 +791,9 @@ export function createBudgetedProviderFetch(input: {
   });
   const fetchImpl: typeof fetch = async (fetchInput, init) => {
     const record = collector?.beginFetch();
-    // Track the composed signal across the WHOLE wire lifecycle: the fetch
-    // promise resolves at response headers, while aborts during body
-    // streaming only reach the dispatcher's onResponseError. signal.reason
-    // (e.g. DOMException AbortError/TimeoutError, or a caller's custom
-    // reason) is captured at abort time.
+    // Track the composed signal across the WHOLE wire lifecycle: the fetch promise
+    // resolves at response headers, while body-streaming aborts only reach the
+    // dispatcher's onResponseError.
     const signal = (init as { signal?: AbortSignal | null } | undefined)?.signal;
     if (
       record !== undefined &&
@@ -886,9 +818,8 @@ export function createBudgetedProviderFetch(input: {
       }
     }
     try {
-      // undici calls `dispatcher.dispatch(opts, handler)` — a plain object
-      // satisfies the call; the casts only bridge the type surface (DOM
-      // RequestInit has no `dispatcher` member; Node's fetch honors it).
+      // undici calls `dispatcher.dispatch(opts, handler)`; the casts only bridge
+      // the type surface (RequestInit has no `dispatcher` member).
       const observedInit = {
         ...(init ?? {}),
         dispatcher: (record !== undefined && collector !== undefined

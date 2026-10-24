@@ -121,8 +121,7 @@ function runProcess(cmd: string, args: string[], opts?: { cwd?: string }): Promi
 
 // File mode honouring umask (project rule: never hardcode 0o644). Read the umask
 // once into a local instead of the read-via-setter idiom
-// (process.umask(process.umask())), which momentarily mutates process-global
-// state (coderabbit-e).
+// (process.umask(process.umask())), which momentarily mutates process-global state.
 const CURRENT_UMASK = process.umask();
 const FILE_MODE = 0o666 & ~CURRENT_UMASK;
 
@@ -139,8 +138,8 @@ async function withTmpDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 // GFM has only decimal ordered lists. Preserve Word's alphabetic option labels
 // before the writer would turn A/B/C/D into 1/2/3/4 (false question boundaries).
-// Salvaged verbatim from the closed PR #1703; the downstream segmenter
-// (markdown-segment.ts OPTION_LINE) already expects `A.`–`D.` labels.
+// The downstream segmenter (markdown-segment.ts OPTION_LINE) already expects
+// `A.`–`D.` labels.
 const PRESERVE_OPTION_LABELS = `
 function OrderedList(list)
   if list.style ~= 'UpperAlpha' then return nil end

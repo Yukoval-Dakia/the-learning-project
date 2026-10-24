@@ -71,7 +71,6 @@ export async function POST(req: Request): Promise<Response> {
       await withActiveCauseCategoryOverlays(db, subjectProfile),
     );
 
-    // Validate asset refs.
     await assertAssetsExist(body.prompt_image_refs, 'prompt_image_refs');
     await assertAssetsExist(body.wrong_answer_image_refs, 'wrong_answer_image_refs');
 

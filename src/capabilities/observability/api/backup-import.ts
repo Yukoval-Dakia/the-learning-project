@@ -1,4 +1,4 @@
-// Backup restore. The existing HTTP path is unchanged.
+// Backup restore (destructive: requires ?confirm=wipe-and-reload).
 
 import { retireInterventionPreparationJobs } from '@/capabilities/agency/public';
 import { getConfig } from '@/core/config/store';

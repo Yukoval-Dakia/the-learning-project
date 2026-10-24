@@ -4,7 +4,7 @@
 // on, it tags and judges a bounded set of draft blocks and writes one durable
 // observed event per block, mutating nothing. Both paid modes default off.
 //
-// Failure boundary (§5): per-block tagging/judge/observe-write faults are
+// Failure boundary: per-block tagging/judge/observe-write faults are
 // swallowed INSIDE the runner (missing XIAOMI_API_KEY → TaggingTaskError →
 // route-to-review; a single failed audit write logs + continues). So this
 // handler-level catch does NOT guard the missing-key path. It guards only a

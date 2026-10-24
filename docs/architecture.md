@@ -1,6 +1,66 @@
 # 架构基础
 
-跨模块共享的概念、AI 任务层、技术栈、数据模型。具体模块行为见 [`modules/`](modules/) 各文件。
+当前代码的运行时拓扑、capability 契约、执行路径与技术栈；「一」起保留领域概念与数据模型。具体模块行为见 [`modules/`](modules/) 各文件。
+
+---
+
+## 运行时与进程拓扑
+
+- **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
+- **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
+- **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 三进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`）、`rw:web`（`vite --config web/vite.config.ts`，:5173，`/api` 代理到 :8787）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
+- **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
+- **静态面**：未设 `RW_STATIC_DIR` 时 app 只服务 Hono API；设了（镜像内为 `/app/web/dist`）则走 `server/frontdoor.ts` 的 Start 前门，见下文。
+
+---
+
+## capability 契约
+
+- 组合根是静态数组：`src/capabilities/index.ts` 聚合 9 个 manifest（agency / ingestion / practice / knowledge / notes / copilot / observability / onboarding / shell），交给 `buildHonoApp`。
+- `manifest.ts` 只声明归属：`name`、`events.actions`、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`（`src/kernel/manifest.ts`）。`validateComposition()` 在启动与 CI 校验全局唯一性、路径参数与响应契约。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
+- `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 访问 capability 只能走这两个入口；capability 之间不得深层 import，包间调用走 manifest 公共接口。审计把这两个文件名当唯一合法入口（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
+- kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
+- `pnpm audit:capability-boundaries` 是精确 ratchet：记录 `capability → server`、`server → capability deep`、跨 capability value 三类边数，变化必须在同一 PR 登记进 `scripts/capability-boundary-baseline.json`。三类边数与当前非平凡 SCC 构成以该文件的 `debts` 为准。
+- `pnpm audit:architecture-deepening` 再查深层 import、公开读环白名单、隐藏写、命令环、TaskSpec / DomainTool / proposal / queue 归属、provider lane census 与依赖上限（严格小于 `DEPENDENCY_CEILINGS`，见 `scripts/audit-architecture-deepening.ts`）。
+- TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 静态聚合；`src/capabilities/task-registry.ts` 向 `src/ai/` 提供冻结投影。细节见「五、AI 任务层」。
+
+---
+
+## 执行路径
+
+### HTTP 请求路径
+
+- 入口：`server/index.ts` 的 `serve({ fetch, port })`；`fetch` 是 `buildHonoApp(capabilities)`，设了 `RW_STATIC_DIR` 时外面再包 Start 前门。
+- `/api/*` 依次经过：`SECURITY_HEADERS` → `x-internal-token` 校验（`/api/health`、`/api/ready` 豁免；`INTERNAL_TOKEN` 未设时全拒）→ DB contract epoch gate（fenced 返回 503 `contract_epoch_fenced`）→ 90s request-scope provider deadline（`HTTP_PROVIDER_SESSION_BUDGET_MS`，`src/kernel/http.ts`）。
+- manifest 的 `api.routes[].load` 在首次请求时解析并缓存 handler；返回后由 `assertApiRouteSuccessStatus` 校验 status 契约。未命中的 `/api/*` 统一 404 JSON。
+- SSE：`src/server/events/writer.ts` 写 `job_events` 并 `pg_notify('job_status')`；app 进程的 `startListenLoop()` 独占一条 LISTEN 连接（`max:1`），广播给 `sse_router`。该连接不重连，断开需重启进程（`src/server/events/listen_loop.ts`）。
+- 浏览器不持 provider key；AI 调用只发生在 route / handler 内。
+
+### pg-boss 作业与夜间 DAG
+
+- 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）；dev 的 app 进程因 `RW_WORKER=1` 也会挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
+- 每个 job 独立队列；manifest 的 `queue` 只是档位（`llm` / `agent` / `fast`）。llm / agent 有 `<name>_dlq`、`retryLimit=2`、30s 退避；fast 无 DLQ（`src/server/boss/queue-config.ts`）。
+- 调度有两种：带 `schedule` 的是裸 cron（`boss.schedule`，按 `tz`）；带 `dependsOn`（含 `[]`）的是夜间 DAG 成员，自身不注册 cron。DAG 只有一根锚点 `nightly_orchestrator`，`30 2 * * *` Asia/Shanghai，启动补跑窗口 5h，tick 60s 自续；硬边失败跳过下游，soft 边照跑并记 stale（`src/server/orchestration/constants.ts`、`src/kernel/job-dag.ts`）。
+- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_edge_propose_nightly`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
+- 域 handler 在 `src/capabilities/<name>/jobs/*.ts`；中央 `src/server/boss/handlers.ts` 只留基础设施（`echo`、`promote_conversation_idle`、verify 补发、memory 队列）。
+
+### DBOS durable 路径
+
+- 只有 manifest 显式声明 `backend: 'dbos'` 的 job 走 DBOS，当前白名单 6 个：`prune_job_events`、`prune_orphan_review_sessions`、`prune_orphan_conversation_sessions`、`prune_orphan_placement_sessions`（observability）、`judge_run`、`judge_pending_reconcile`（practice）。`registerCapabilityJobs` 对集合、queue 档位、schedule 与 `load` 缺席做完整校验，不符合直接抛错。
+- 运行在同一个 worker 进程：`startDurableWorker()`（`src/server/durable/prune-worker.ts`）→ `DBOS.launch()`，系统库 schema `tlp_dbos`，executor `local`。
+- 每个家族有一张 control 表（如 `prune_job_events_control`、`review_orphan_control`），`phase ∈ pg-boss | draining-pg-boss | dbos | draining-dbos`。15s reconciler 按 phase 在 pg-boss 的 `boss.work` / `boss.schedule` 与 `DBOS.applySchedules` 之间切换，不会双跑。workflow 内用 `DBOS.runStep` 落业务提交与 checkpoint。
+- 新增家族必须同时提供 workflow、control 表、phase 切换和上述白名单校验；只加 `backend: 'dbos'` 一行会在启动期失败。
+
+---
+
+## Start 前门
+
+- 构建：`server/start/vite.config.ts`，`srcDirectory: 'server/start'`，`base: '/_build/'`，输出 `dist/start`（`pnpm build:start`）。
+- 挂载：`server/frontdoor.ts` 动态 import `dist/start/server/server.js`，把所有请求交给它的 `fetch`；客户端资产从 `dist/start/client` 提供在 `/_build/*`。
+- 路由：`server/start/routes/*.tsx` 文件路由，`routeTree.gen.ts` 由 TanStack Router 生成。已迁页面在 route 里 `lazy()` 一个 capability 的 `ui-public.ts` loader（如 `notes.tsx` → `loadNotesPage`），再包进 `StartWorkbenchShell`。
+- `/api/$` 原样转发给 `context.api.fetch`（Hono 组合根）；`/$` catch-all 回退到旧 `web/dist` SPA（`buildLegacySpa`）。新页面按 route 逐个接管，未迁移页面保持旧 SPA。
+- Start server function 统一先请求 `/api/auth/check`（`server/start/start.ts`），复用 Hono 的 token 与 epoch gate。
 
 ---
 
@@ -108,18 +168,16 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 52 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）。YUK-870 收编了
+> owner maps 现在保存完整 TaskSpec，数量与归属以 `src/capabilities/task-catalog.ts` 的
+> `taskCatalog` 为准。YUK-870 收编了
 > `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
 > （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
 > 由 `scripts/audit-architecture-ownership.ts` 守住。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
 
 架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
-`(source file, resolved target module)`：capability → server 513、server → capability deep
-45、cross-capability value 71；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
-组成的非平凡 SCC。任何下降必须在同一变更收紧
-`scripts/capability-boundary-baseline.json`，不能留下回涨额度。
+`(source file, resolved target module)`；各类边数与当前非平凡 SCC 构成以
+`scripts/capability-boundary-baseline.json` 的 `debts` 为准，任何变化必须在同一变更登记。
 （YUK-876 / FULL F3.7b：Knowledge 的 graph reader、edge/mutation propose 工具与
 FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 `knowledge-readers.ts` 删除；跨包消费改走 `knowledge/public.ts`。）
@@ -133,7 +191,9 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 > 投影为冻结 runtime map。`src/ai/registry.ts` 接收 catalog，`src/capabilities/task-registry.ts`
 > 提供同一 map 的 compatibility projection 及绑定的预算/prompt reader；没有 Copilot overlay、
 > 可变全局注册或动态发现。TaskKind 从组合结果推导，共享 ai/ 不反向依赖能力实现。
-> 当前为 **53 个 registered kinds、51 个静态 production invocation kinds、2 个显式分类**：
+> registered kinds、静态 production invocation kinds 与显式分类以
+> `src/capabilities/task-catalog.ts` 的 `taskCatalog` 及 `scripts/audit-task-census.ts` 的
+> `LIVE_NON_CALLER_CLASSIFICATIONS` 为准：
 > `AttributionTask` 保留历史兼容，`JevScoringDecisionTask` 经 typed runner 动态调用。
 > `pnpm audit:task-census` 验证 manifest/job 注册可达性及 run-log contract。
 > 具体 TaskSpec 仍含 Node helper；无 DB 初始化并不等于完整目录可直接在浏览器运行。
@@ -281,7 +341,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
   - ~~SubjectProfile-driven task → 400 `profile_required`~~ 走领域 route
   - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
   - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
-- 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
+- 领域 route（例如 `/api/teaching-sessions/*`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
 - pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
@@ -300,31 +360,7 @@ Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler
 
 ### 5.6 Dreaming / Maintenance 实施栈
 
-Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上，不再使用旧 Workers 队列设计。
-
-#### 触发与队列
-
-- `scripts/worker.ts` 启动 worker 进程。
-- `src/server/boss/handlers.ts` 注册 handlers 和 schedules。
-- pg-boss 与 Postgres 共用 `DATABASE_URL`；Docker compose 中 `worker` service 与 `app` 使用同一镜像。
-
-当前已注册的业务 job / schedule：
-
-| Job | 触发 | 产出 |
-| --- | --- | --- |
-| `knowledge_edge_propose_nightly` | BJT 02:30 schedule | `event(action='propose', subject_kind='knowledge_edge')` |
-| `knowledge_maintenance_nightly` | BJT 03:00 schedule | `KnowledgeReviewTask` tool calls → proposal inbox rows |
-| `note_generate` | learning-intent accept 后 enqueue | 填充 atomic artifact sections |
-| `variant_gen` | 复习 / 错因相关 enqueue | draft `question(source='mistake_variant')` |
-| `session_summary` | review session end | session summary |
-| `tencent_ocr_extract` | ingestion extract | OCR / block extraction pipeline |
-| `prune_orphan_review_sessions` | BJT 04:15 schedule | abandon stale review sessions |
-
-#### 当前边界
-
-- 产出提议写 event stream，不写旧 proposal 表。
-- 大批量 batch / 双 pass verify / weekly review 仍是未来能力，不要假设已存在。
-- Cloudflare Tunnel 只负责 ingress；不是 AI worker runtime。
+Dreaming / Maintenance 复用同一条 pg-boss + 夜间 DAG 路径（见「执行路径 · pg-boss 作业与夜间 DAG」）。job 清单以各 capability `manifest.ts` 的 `jobs.handlers` 为准，本节不再维护副本。提议仍写 event stream，不写旧 proposal 表；Cloudflare Tunnel 只负责 ingress，不是 AI worker runtime。
 
 ---
 
@@ -344,23 +380,18 @@ See [ADR-0062](adr/0062-unified-copilot-conversation-lifecycle.md),
 
 ## 六、技术栈
 
-| 层 | 选型 | 理由 |
-| --- | --- | --- |
-| Web app | Hono API（组合根 `server/app.ts`，:8787）+ Vite SPA（`web/`，React 19 + Tailwind v4 + TanStack Router，:5173） | 当前实现（YUK-321 M5 起）；backend surface = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 |
-| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) | 本地、测试、NAS compose 同一数据库形态；editing presence 走 PG 表 `editing_presence`（PgPresenceStore），无 Redis |
-| Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
-| 部署 | Docker compose on NAS：`app`（`node dist/server.cjs` :8787）+ `worker`（`node dist/worker.cjs`）+ `migrate` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
-| 后台任务 | pg-boss + `scripts/worker.ts`（独立进程，prod `dist/worker.cjs`） | schedules、queues、OCR、proposal、note generation |
-| AI 调用 | pi agent runtime（`@earendil-works/pi-agent-core` + `pi-ai`，in-process） | 见上节任务层 |
-| Tool calling 循环 | pi `agentLoop` + `piToolMounts`（DomainTool registry 编译为 `AgentTool`） | 领域 route / capability manifest 注入 mount 与 allowlist |
-| Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
-| Note 渲染 | react-markdown / markdown-it | |
-| 数学公式 | KaTeX | |
-| 图表 | Mermaid | |
-| 视觉录入 | Tencent QuestionMarkAgent async OCR + manual vision rescue | OCR 主路径已落地；vision rescue 手动触发 |
-| 复习算法 | `ts-fsrs` | 现成 FSRS 实现 |
+以 `package.json` 为准：
 
-> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 15 App Router 全栈已退场。下方及全文中遗留的 `app/`、`app/api/**`、`middleware.ts`、`next dev`/`next build`、`:3000`、`Redis/ioredis` 描述均为历史残留，不再适用——backend 真相源是 capability manifests + `server/app.ts` 组合根。会在后续 closeout 中继续清扫。
+- **运行时 / 工具链**：Node ≥24.0.0（`package.json` `engines`）、pnpm 11、TypeScript（`tsrs`）、Biome、esbuild。
+- **HTTP**：Hono 4 + `@hono/node-server`。
+- **Web**：Vite 8 + React 19 + TanStack Router 1 / TanStack Query 5 + Tailwind v4 + Zustand。
+- **数据**：Postgres（pgvector 镜像）+ Drizzle ORM（`postgresql` dialect、`postgres` driver），迁移用 drizzle-kit。
+- **异步**：pg-boss 12；durable workflow 用 `@dbos-inc/dbos-sdk` 5。
+- **AI**：`@earendil-works/pi-agent-core` / `pi-ai`（in-process agentLoop），`@anthropic-ai/sdk`、`@modelcontextprotocol/sdk`、`@lmnr-ai/lmnr`。
+- **内容 / 渲染**：TipTap 3（note 编辑）、KaTeX + mathjs + react-markdown / remark-math / rehype-katex、Cytoscape + fcose（图谱）、Playwright Core（`worksheet_render`）。
+- **录入**：`tencentcloud-sdk-nodejs-ocr` + `sharp` + `@hyzyla/pdfium`。
+- **存储 / 记忆**：`@aws-sdk/client-s3`（R2 / S3-compatible）；`mem0ai` + pgvector。editing presence 走 PG 表 `editing_presence`，无 Redis。
+- **复习 / 校验**：`ts-fsrs`、Zod 4。
 
 **反模式**：
 
@@ -726,31 +757,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 ## 十、异步任务层 (pg-boss) — Sub 0c
 
-独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同（YUK-321 M5 双进程拓扑：app 跑 `node dist/server.cjs`、worker 跑 `node dist/worker.cjs`；dev 三进程由 `scripts/dev-local.ts` spawn，见 README.md）：
-
-```
-[Vite SPA (web/, :5173)]          [Worker (Node.js, dist/worker.cjs / scripts/worker.ts)]
-       │                               │  boss.work('tencent_ocr_extract', handler)
-       │ POST /api/.../extract         │  → 拉到 job
-       │  (proxy → Hono :8787)         │  handler:
-       │ enqueueExtraction             │    IngestionSession.markExtractionStarted
-       │   ├─ UPDATE session.status    │    R2.get + Tencent submit/poll + parse + crop
-       │   ├─ writeJobEvent → NOTIFY   │    IngestionSession.applyExtractionResult
-       │   └─ boss.send                │       └─ writeJobEvent (NOTIFY)
-       │                               │    provider_attempt lifecycle + usage/cost truth
-       ├── GET /api/.../events (SSE)   │
-       │   replay + subscribe          │
-       ↑                               │
-       └─ listen_loop ←── pg_notify ──┘
-          (server/index.ts, app process — RW_WORKER=1 时同进程 worker 也跑)
-```
-
-**关键模块**：
-- `src/server/boss/{client,handlers,shutdown}.ts` — pg-boss 单例 + handler 注册 + graceful stop
-- `src/server/events/{writer,sse_router,listen_loop,sse_replay}.ts` — job_events + NOTIFY + SSE
-- `src/server/session/` — LearningSession 多态模块（ADR-0008 + ADR-0005 演化，single owner）
-- `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
-- `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
+进程、队列、调度与 DBOS 路径见「执行路径」。本节只保留异步链路的耐久性契约与专属机制。
 
 ### 十.1 Durable hub-sync reconciliation (YUK-384)
 

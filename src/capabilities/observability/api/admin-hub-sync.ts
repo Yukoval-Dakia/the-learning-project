@@ -1,5 +1,5 @@
 // Operator health snapshot for hub sync: status counts, lag, stale ages, failures
-// and the latest ack/repair. Read-only; one aggregate query.
+// and the latest ack/repair. Read-only; one aggregate plus a trigger check.
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';

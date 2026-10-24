@@ -1,18 +1,13 @@
 import { z } from 'zod';
 
-// ====================================================================
-// YUK-1496 — K1 给分规则小语言（统一设计 §3）
-// ====================================================================
-//
 // 规则只读比较结果的计数，不读题型、不解析显示内容或中文原文：
 //   - set-compare 产生 hit / wrong / miss / picked / expected；
-//   - 单空 exact 产生 correct（0|1）。
+//   - 单空 exact 产生 correct (0|1)。
 // 规则 = 按顺序命中的 cases + otherwise。when 是计数上的 eq/gt/gte/lt/lte，
-// 同一对象内为 AND，可用 all/any 组合。award（统一设计稿里叫 then；改名避开
-// thenable）只有四种：固定分、每命中分、
+// 同一对象内为 AND，可用 all/any 组合。award 只有四种：固定分、每命中分、
 // 按命中 item 权重求和（均可 cap）、显式 unknown。没有脚本、循环或跨 unit
-// 的隐式扣分。比较结果未知（missing / unreadable / undecidable）时根本不运行
-// 规则 —— 那些是 pending，绝不落进 otherwise 的零分。
+// 的隐式扣分。比较结果未知（missing / unreadable / undecidable）时不运行规则
+// —— 那些是 pending，绝不落进 otherwise 的零分。
 
 export const RuleMetric = z.enum(['hit', 'wrong', 'miss', 'picked', 'expected', 'correct']);
 export type RuleMetricT = z.infer<typeof RuleMetric>;

@@ -226,8 +226,8 @@ async function processOneOcrJob(
   const engine: 'glm' | 'tencent' =
     deps.engine ?? (getConfig('EXTRACT_OCR_ENGINE') === 'tencent' ? 'tencent' : 'glm');
 
-  // 1. Load the session and all assets; the VLM sees every page so it can assemble
-  //    cross-page questions.
+  // Load the session and all assets; the VLM sees every page so it can assemble
+  // cross-page questions.
   const sessionRows = await deps.db
     .select()
     .from(learning_session)
@@ -267,7 +267,6 @@ async function processOneOcrJob(
     assetById.set(id, asset);
   }
 
-  // 2. markExtractionStarted
   await deps.db.transaction((tx) => Ingestion.markExtractionStarted(tx, sessionId));
   await emitOperationEventSafely(deps.db, operationId, 'operation.running', {
     pg_boss_job_id: bossJobId,
@@ -281,9 +280,9 @@ async function processOneOcrJob(
     const sourceDocumentId = session.source_document_id ?? '';
     const warnings: string[] = [];
 
-    // 3-9. Per page: download, measure, OCR, parse, crop figures. OCR supplies text
-    //      and figure boxes; its structure is only a hint. Both engines feed the
-    //      same accumulators so the VLM layer below stays engine-agnostic.
+    // Per page: download, measure, OCR, parse, crop figures. OCR supplies text
+    // and figure boxes; its structure is only a hint. Both engines feed the
+    // same accumulators so the VLM layer below stays engine-agnostic.
     const pageImages: Array<{ data: string; mediaType: string }> = [];
     // Tencent path: per-page demoted structure → hint. GLM path: per-page markdown.
     const tencentPages: Array<{
@@ -419,10 +418,10 @@ async function processOneOcrJob(
       { stage: 'structure' },
     );
 
-    // 10. VLM StructureTask: all page images plus the OCR hint produce the cross-page
-    //     tree. If the VLM fails, fall back to the engine's OCR structure so an outage
-    //     never hard-fails extraction. On the fallback, only OCR containment binds
-    //     figures because there are no VLM assignments.
+    // VLM StructureTask: all page images plus the OCR hint produce the cross-page
+    // tree. If the VLM fails, fall back to the engine's OCR structure so an outage
+    // never hard-fails extraction. On the fallback, only OCR containment binds
+    // figures because there are no VLM assignments.
     let ocrHintMd: string;
     let ocrFallbackQuestions: ReturnType<typeof parseMarkAgentResponse>['questions'];
     // Carries the GLM fallback warning into the fallback structure; empty on the
@@ -487,7 +486,7 @@ async function processOneOcrJob(
     }
     warnings.push(...structure.warnings);
 
-    // 11. Bind only evidenced ownership; ambiguous crops stay source assets.
+    // Bind only evidenced ownership; ambiguous crops stay source assets.
     let figureRefs: FigureRefT[];
     if (allPreFigures.length === 0) {
       figureRefs = [];
@@ -507,10 +506,10 @@ async function processOneOcrJob(
       }
     }
 
-    // 12. One question_block per top-level question; a cross-page stem is one block.
-    //     VLM and GLM fallback carry real page indices, while the Tencent fallback
-    //     deliberately keeps page_index=0 so block assembly stays semantic-only.
-    //     Out-of-range page indices are hallucinated: clamp to 0 and warn.
+    // One question_block per top-level question; a cross-page stem is one block.
+    // VLM and GLM fallback carry real page indices, while the Tencent fallback
+    // deliberately keeps page_index=0 so block assembly stays semantic-only.
+    // Out-of-range page indices are hallucinated: clamp to 0 and warn.
     const pageCount = assetIds.length;
     const blocks = structure.questions.map((q) => {
       const useQuestionPageIndex = usedVlmPath || engine === 'glm';

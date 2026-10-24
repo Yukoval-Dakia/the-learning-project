@@ -163,7 +163,6 @@ export async function runFrontierFillAndWrite(
     liveEdges.map((e) => edgeKey(e.from_knowledge_id, e.to_knowledge_id)),
   );
 
-  // Dominant candidate domain, passed to the model as context.
   const domain = dominantDomain(tree, candidateSet);
 
   // From here on, faults are swallowed and counted; only pre-model DB faults retry.
@@ -173,7 +172,6 @@ export async function runFrontierFillAndWrite(
     const taskResult = await runTaskFn(
       'FrontierPrerequisiteTask',
       {
-        // Bounded structural context; candidates are passed separately.
         tree_snapshot: tree.slice(0, FRONTIER_FILL_TREE_CAP).map((n) => ({
           id: n.id,
           name: n.name,
@@ -277,7 +275,6 @@ export async function runFrontierFillAndWrite(
   return result;
 }
 
-/** Most common non-null effective_domain among the candidate KCs (LLM context hint). */
 function dominantDomain(
   tree: Array<{ id: string; effective_domain: string | null }>,
   candidateSet: Set<string>,
@@ -305,9 +302,8 @@ export function buildFrontierFillNightlyHandler(
     try {
       const result = await runFrontierFillAndWrite(db);
       console.log('[frontier_fill_nightly] result', result);
-      // Gated nights never enter the model half and report idle. `|| llm_failed`
-      // is redundant today, but keeps a swallowed fault from ever looking idle if a
-      // DB read is later inserted before the attempt flag.
+      // Gated nights report idle. `|| llm_failed` keeps a swallowed fault from ever
+      // looking idle if a DB read is later inserted before the attempt flag.
       const attempted = result.llm_attempted || result.llm_failed ? 1 : 0;
       return reportJobYield('frontier_fill_nightly', {
         attempted,

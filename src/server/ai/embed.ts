@@ -141,10 +141,8 @@ async function embedChunk(
 }
 
 /** Embed a batch of texts into 1024-dim vectors via the openai-compat /embeddings
- *  endpoint, reusing DASHSCOPE_API_KEY. Chunks at EMBED_MAX_BATCH (=10) to respect
- *  the DashScope per-request cap and stitches chunk results back in input order.
- *  Throws on a non-ok response so callers (the nightly backfill job) leave rows
- *  NULL and retry next run (§9 fallback). */
+ *  endpoint. Chunks at EMBED_MAX_BATCH (10) and stitches results in input order.
+ *  Throws on non-ok so callers leave rows NULL and retry next run. */
 export async function embedMany(
   texts: string[],
   providerAttempt?: EmbedProviderAttemptOptions,

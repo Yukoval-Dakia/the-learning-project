@@ -1,9 +1,6 @@
-// Shared write-result to HTTP mapping.
-//
-// ok/noop are 200; stale is 409 carrying currentRevision so the UI knows to refetch;
-// a name conflict is 409 without it, because retrying cannot help; not_found is 404;
-// forbidden and invalid are 422, with fan-out issues when present. Stale builds its
-// response by hand because ApiError cannot carry the extra revision field.
+// Shared write-result to HTTP mapping. Stale carries currentRevision so the UI knows to
+// refetch (hand-built because ApiError nests extras under details); a conflict omits it
+// because retrying cannot help.
 
 import type { ControlWriteResult } from '../server/subject-control-write';
 import type { TraitWriteResult } from '../server/trait-write';

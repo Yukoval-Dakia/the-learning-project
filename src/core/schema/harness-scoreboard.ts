@@ -1,19 +1,14 @@
 import { z } from 'zod';
 
 /**
- * YUK-1557 / ADR-0075 C6-2 — the deterministic harness scoreboard payload.
+ * The deterministic harness scoreboard payload.
  *
  * Values are computed from raw rows, never hand-entered. M1/M2/M6 report one
- * number. M3/M4/M5 are lists of `parts`: the ADR defines them per task or per
- * inbox sub-item, so each part owns its own numerator/denominator and its own
- * `basis`. `basis` is part of the contract: `measured` means the raw table
- * exposes the exact quantity; `proxy` means the scoreboard uses the closest
- * available raw signal and the note names the difference from the review's
- * manual definition; `unavailable` means the source table cannot answer it
+ * number. M3/M4/M5 are lists of `parts`: each part owns its own
+ * numerator/denominator and `basis`. `measured` means the raw table exposes the
+ * exact quantity; `proxy` means the closest available raw signal, with the note
+ * naming the difference; `unavailable` means the source table cannot answer it
  * without a new writer.
- *
- * YUK-1647 bumped the version: M3/M4/M5 changed from one proxy definition per
- * metric to the ADR's per-task / per-sub-item definitions.
  */
 export const HARNESS_SCOREBOARD_VERSION = 2 as const;
 

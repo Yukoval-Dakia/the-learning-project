@@ -1,16 +1,12 @@
-// YUK-921 P4 (YUK-1025) — the runner's normalized wire vocabulary.
+// The runner's normalized wire vocabulary.
 //
-// These types describe the frame/call-spec contract the Claude Agent SDK
-// used to emit; the package itself is retired, and PiAgentAdapter is now the
-// only producer. The `SDK*` names stay so the consume loop (lifecycle /
-// terminal evidence / tool_call recording / durable task_* projection) keeps
-// a single vocabulary — these are OUR protocol types now, sized to the fields
-// this codebase reads. SDK-only knobs (env/cwd/permissionMode/persistSession/
-// hooks/agents/skills/settingSources/title/maxBudgetUsd) are gone.
+// These types describe the frame contract the Claude Agent SDK used to emit. The
+// package is retired and PiAgentAdapter is the only producer; the `SDK*` names
+// stay so the consume loop keeps one vocabulary — they are OUR protocol types now,
+// sized to the fields this codebase reads.
 //
-// Anthropic Messages payload types (BetaMessage/MessageParam) come
-// from `@anthropic-ai/sdk`, which remains a dependency (pi-ai's anthropic
-// driver is built on it and runner.ts already imports ContentBlock from it).
+// Anthropic Messages payload types come from `@anthropic-ai/sdk`, which remains a
+// dependency of pi-ai's anthropic driver.
 
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages/messages';
@@ -24,17 +20,15 @@ type UUID = string;
 // ---------------------------------------------------------------------------
 
 /**
- * The per-attempt call spec `buildQueryOptions` produces and the adapter
- * consumes. Post-P4 this carries only what the pi lane can honour: model /
- * systemPrompt / abort / turn ceiling / tool allowlist / reasoning effort /
- * session resume pointer.
+ * Per-attempt call spec produced by `buildQueryOptions`: only what the pi lane can
+ * honour — model / systemPrompt / abort / turn ceiling / tools / effort / resume.
  */
 export interface Options {
   /** Server-owned durable judge call: one transport request, no paid retry. */
   judgeRetryPolicy?: 'none';
   /** Catalog model id inside the resolved provider. */
   model?: string;
-  /** Plain-string system prompt (SDK preset objects were never produced here). */
+  /** Plain-string system prompt. */
   systemPrompt?: string;
   /** Caller+lifecycle abort — propagates into the agentLoop signal chain. */
   abortController?: AbortController;
@@ -45,22 +39,16 @@ export interface Options {
   /** Reasoning effort tier → pi `reasoning` stream option. */
   effort?: EffortLevel;
   /**
-   * `pi:`-prefixed session id to resume. The pi lane has no provider session
-   * file — resume requires `ctx.piSessionReplay` (durable-turn fold), enforced
-   * fail-closed at adapter startup.
+   * `pi:`-prefixed session id to resume. There is no provider session file —
+   * resume requires `ctx.piSessionReplay`, enforced at adapter startup.
    */
   resume?: string;
   /**
-   * Whole-request HTTP budget passed to the provider client. Longer than the
-   * task abort so the lifecycle, not the SDK's 10-minute default, ends the call.
+   * Whole-request HTTP budget so the lifecycle, not the SDK's 10-minute default,
+   * ends the call.
    */
   providerTimeoutMs?: number;
-  /**
-   * YUK-1630 — the attempt-scoped transport evidence sink the lifecycle owns.
-   * The adapter's provider fetch records per-request wire milestones into it;
-   * the lifecycle folds its snapshot into usage_json on every terminal write,
-   * including abort paths that never produced a result frame.
-   */
+  /** YUK-1630 — attempt-scoped transport evidence sink owned by the lifecycle. */
   transportEvidence?: ProviderTransportCollector;
 }
 
@@ -83,9 +71,8 @@ export interface ModelUsage {
   provider?: string;
 }
 
-/** Terminal-frame usage the adapter emits: the four token counters every
- *  consumer reads (sdk-terminal's accumulateUsage reads exactly these). Pi
- *  carries no service_tier/server_tool_use breakdown — don't claim one. */
+/** Terminal-frame usage: the four counters every consumer reads. Pi carries no
+ *  service_tier/server_tool_use breakdown — do not claim one. */
 export type ResultUsage = {
   input_tokens: number;
   output_tokens: number;
@@ -176,7 +163,7 @@ export type SDKResultMessage = SDKResultSuccess | SDKResultError;
 export type ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'oauth' | 'none';
 
 // ---------------------------------------------------------------------------
-// Permission callback (the pruned `canUseTool` contract)
+// Permission mode vocabulary
 // ---------------------------------------------------------------------------
 
 export type PermissionMode =
@@ -286,11 +273,7 @@ export interface SDKTaskNotificationMessage {
   session_id: string;
 }
 
-/**
- * YUK-1547/YUK-1559 (C1) — adopted parameter-contract field repairs: one
- * string→JSON repair per field that passed the shared sub-schema check.
- * Metadata only — the payload is never carried on this frame.
- */
+/** YUK-1547/YUK-1559 (C1) — adopted string→JSON repairs; metadata only, never the payload. */
 export interface SDKToolArgsCoercedMessage {
   type: 'system';
   subtype: 'tool_args_coerced';
@@ -302,10 +285,8 @@ export interface SDKToolArgsCoercedMessage {
 }
 
 /**
- * YUK-1559 (C6) — a call rejected at the tool argument contract seam (never
- * reached execute): the sanitized, ≤4KiB original arguments plus the digest
- * of the full sanitized text. Emitted by the pi adapter for both its own
- * parameter-contract rejections and pi's schema-validation failures.
+ * YUK-1559 (C6) — a call rejected at the argument-contract seam (never executed):
+ * sanitized ≤4KiB original arguments plus the digest of the full sanitized text.
  */
 export interface SDKToolArgsContractFailedMessage {
   type: 'system';
@@ -322,12 +303,7 @@ export interface SDKToolArgsContractFailedMessage {
   session_id: string;
 }
 
-/**
- * The normalized frame union the runner consumes. Sized to what the codebase
- * produces/discriminates: assistant, user, result, system init,
- * compact_boundary, the durable task_* lifecycle frames, and the
- * tool-argument contract telemetry frames.
- */
+/** Normalized frame union the runner consumes, sized to what the codebase produces. */
 export type SDKMessage =
   | SDKAssistantMessage
   | SDKUserMessage

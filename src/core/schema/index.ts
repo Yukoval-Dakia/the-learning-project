@@ -21,14 +21,13 @@ export type Knowledge = z.infer<typeof Knowledge>;
 
 export type { Misconception } from './misconception';
 // ---------- Misconception (ADR-0036 身份层) ----------
-// HAND-WRITTEN Zod (NOT drizzle-zod): the misconception identity-table skeleton
-// is DORMANT (no writer, no route/job/copilotTool wiring). Soft-track red
-// line (ADR-0035) + subject=view are enforced by `.strict()` in the module.
+// Hand-written Zod (not drizzle-zod). The soft-track red line (ADR-0035) and
+// subject=view are enforced by `.strict()` in the module; promotion is flag-gated
+// in the agency conjecture accept path.
 export { MisconceptionInsert, MisconceptionSchema } from './misconception';
 export type { MisconceptionEdge } from './misconception-edge';
-// ADR-0036 RT1 — heterogeneous misconception edge. DORMANT until
-// the promotion writer / accept route lands; endpoint×relation validity lives in
-// the parallel topology gate (misconception-topology-gate.ts), not the Zod here.
+// Heterogeneous misconception edge. Endpoint×relation validity lives in the
+// topology gate, not the Zod here.
 export {
   CANONICAL_MISCONCEPTION_RELATIONS,
   MisconceptionEdgeInsert,
