@@ -11,14 +11,13 @@ export async function acquireLearningStateWriteLock(tx: Tx): Promise<void> {
 }
 
 /**
- * Run `fn` under the global learning-state write lock G, inside a transaction. Standardizes the
- * Db-vs-Tx dispatch on the DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not
- * carry `$client`) instead of the undocumented `'rollback' in db` duck-type — if a future drizzle
- * added `rollback` to the base `Db`, that heuristic would silently run the mutation OUTSIDE a
- * transaction and release the xact-scoped advisory lock immediately (session-level per statement).
- * A top-level `Db` opens a real tx so G is HELD across `fn`; an already-open `Tx` runs inline (the
- * caller owns the tx and its G ordering). Extracted from the duplicated apply-closure in
- * fsrs/state.ts + mastery/state.ts (YUK-497 wave-4).
+ * Run `fn` under the global learning-state write lock G, inside a transaction. Dispatch uses the
+ * DOCUMENTED `'$client' in db` polarity (src/db/client.ts: a `Tx` does not carry `$client`) rather
+ * than the undocumented `'rollback' in db` duck-type — if a future drizzle added `rollback` to the
+ * base `Db`, that heuristic would run the mutation OUTSIDE a transaction and release the
+ * xact-scoped advisory lock immediately (session-level per statement). A top-level `Db` opens a
+ * real tx so G is HELD across `fn`; an already-open `Tx` runs inline (the caller owns the tx and
+ * its G ordering).
  */
 export async function withLearningStateLock<T>(
   db: Db | Tx,
@@ -32,7 +31,7 @@ export async function withLearningStateLock<T>(
   return apply(db);
 }
 
-/** Acquire `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))` for every id in sorted order. */
+/** 按 id 排序逐个取 `pg_advisory_xact_lock(hashtext('<namespace>:<id>'))`，避免重叠 id 集死锁。 */
 export async function acquireSortedAdvisoryLocks(
   tx: Tx,
   namespace: string,

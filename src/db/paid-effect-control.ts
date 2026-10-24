@@ -15,12 +15,11 @@ import type { Db, Tx } from '@/db/client';
 import { paid_effect_control } from '@/db/schema';
 
 /**
- * THE family-level serialization lock (P1-R2-1): every control admission and
- * every switch takes it FIRST, in the SAME transaction, BEFORE reading or
- * materializing the control row — a row lock serializes nothing while the
- * row does not exist, which is exactly the missing-row race. Postgres
- * advisory xact locks are reentrant per transaction, so nesting
- * admit-inside-claim is a no-op re-acquire.
+ * THE family-level serialization lock: every control admission and every switch
+ * takes it FIRST, in the SAME transaction, BEFORE reading or materializing the
+ * control row — a row lock serializes nothing while the row does not exist,
+ * which is exactly the missing-row race. Advisory xact locks are reentrant per
+ * transaction, so an admit-inside-claim re-acquire is a no-op.
  */
 export async function lockPaidEffectControlFamily(tx: Tx, family: string): Promise<void> {
   await tx.execute(
@@ -64,19 +63,18 @@ export async function readPaidEffectControl(
 }
 
 /**
- * Admit one delivery under backend control. Runs in the caller's transaction
- * with a FOR SHARE lock on the control row; the decision itself is the pure
- * protocol function, so pg-boss and DBOS get byte-identical rules.
+ * Admit one delivery under backend control. Runs in the caller's transaction with
+ * a FOR SHARE lock on the control row; the decision is the pure protocol function,
+ * so pg-boss and DBOS get byte-identical rules.
  */
 export async function admitPaidEffectDeliveryControl(
   tx: Tx,
   family: string,
   ref: PaidEffectDeliveryRef,
 ): Promise<PaidEffectControlAdmission> {
-  // FIRST: the family serialization lock, BEFORE reading the control row —
-  // with no row present a FOR SHARE would lock nothing and a concurrent
-  // switch (insert + scan + flip) could commit unseen between this read and
-  // the caller's claim.
+  // FIRST: the family serialization lock, BEFORE reading the control row — with no
+  // row present a FOR SHARE locks nothing, and a concurrent switch could commit
+  // unseen between this read and the caller's claim.
   await lockPaidEffectControlFamily(tx, family);
   const rows = await tx
     .select()
