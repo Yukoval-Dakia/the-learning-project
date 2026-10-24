@@ -165,3 +165,13 @@ export function executablePiModel(
   const models = nativePiModels(provider, env);
   return Object.hasOwn(models, model) ? executableFacts(models[model]) : undefined;
 }
+
+/** Wire protocol declared for a catalog model; facts execution needs are not required. */
+export function nativePiModelApi(
+  provider: Provider,
+  model: string,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const models = nativePiModels(provider, env);
+  return Object.hasOwn(models, model) ? models[model].api : undefined;
+}

@@ -10,7 +10,7 @@ import {
 } from '@/core/config/custom-providers';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
-import { executablePiModel, piProviderId } from './pi-provider-catalog';
+import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider-catalog';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
@@ -361,10 +361,11 @@ export function providerModelsRoot(
   try {
     const base = resolveModelProfile(provider, model, env).baseUrl;
     if (!base) return null;
-    return executablePiModel(provider, model, env)?.api === 'anthropic-messages' &&
-      !base.endsWith('/v1')
-      ? `${base}/v1`
-      : base;
+    // Root routing depends only on the wire protocol; other facts gate execution,
+    // not the endpoint. Without an api there is no protocol to route a root from.
+    const api = nativePiModelApi(provider, model, env);
+    if (!api) return null;
+    return api === 'anthropic-messages' && !base.endsWith('/v1') ? `${base}/v1` : base;
   } catch {
     return null;
   }
@@ -712,8 +713,8 @@ export function resolveTaskBinding(
 /**
  * YUK-1547 — an opted-in task pair must be complete AND servable for this
  * task, checked at binding resolution (config error before any attempt/paid
- * call). Servable = provider implemented for the kind + model present in the
- * provider's native pi catalog; capability-fit still gates at run start.
+ * call). Servable = provider implemented for the kind + model passes the
+ * executable-facts gate; capability-fit still gates at run start.
  */
 function assertOptedTaskPair(
   kind: TaskKind,
