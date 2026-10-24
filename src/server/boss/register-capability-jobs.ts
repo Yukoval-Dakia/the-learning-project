@@ -17,7 +17,11 @@ import {
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { startDurableWorker } from '@/server/durable/prune-worker';
-import { loadNightlyContext, noteEligibilitySkip } from '@/server/orchestration/nightly-signals';
+import {
+  eligibilitySkipOutput,
+  loadNightlyContext,
+  noteEligibilitySkip,
+} from '@/server/orchestration/nightly-signals';
 
 function withScheduledEligibility(
   db: Db,
@@ -25,14 +29,16 @@ function withScheduledEligibility(
   handler: ReturnType<JobHandlerFactory>,
 ): ReturnType<JobHandlerFactory> {
   const decide = decl.schedule ? decl.eligibility : undefined;
-  if (!decide) return handler;
+  const before = decl.schedule ? decl.beforeEligibility : undefined;
+  if (!decide && !before) return handler;
   return async (jobs) => {
-    const decision = decide(
-      (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name),
-    );
+    if (before) await before(db);
+    if (!decide) return handler(jobs);
+    const signals = (await loadNightlyContext(db, new Date(), [decl.name])).forJob(decl.name);
+    const decision = decide(signals);
     if (!decision.run) {
       noteEligibilitySkip(decl.name, decision);
-      return;
+      return eligibilitySkipOutput(decl.name, signals, decision);
     }
     return handler(jobs);
   };

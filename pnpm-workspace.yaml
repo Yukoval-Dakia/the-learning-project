@@ -13,7 +13,8 @@ overrides:
   # mem0 publishes its Jest test types as a required peer; no runtime/declaration imports use it.
   'mem0ai@3.0.13>@types/jest': '-'
   'tmp@<0.2.6': '>=0.2.6'
-  'undici@<6.28.1': '>=6.28.1 <7'
+  'undici@>=6 <7': '>=6.29.1 <7'
+  'undici@>=8 <9': '>=8.12.2 <9'
   'form-data@<3.0.5': '>=3.0.5 <4'
   'form-data@>=4.0.0 <4.0.6': '>=4.0.6 <5'
   'protobufjs@<=7.6.2': '>=7.6.3 <8'
@@ -30,6 +31,13 @@ overrides:
   'esbuild@<0.28.1': '>=0.28.1 <0.29'
   'fast-uri@<3.1.6': '>=3.1.6 <4'
   'ip-address@<10.3.1': '>=10.3.1 <11'
+  # Security floors for advisories that only shipped a fix in these versions.
+  # zod 3.x has no patched release (GHSA-mrhx-c7xc-m3w5 fixes >=4.6.6 only) and
+  # @azure/identity 4.x still declares @azure/msal-node ^5/^6, so both floors
+  # cross a declared major; callers are typecheck/build verified.
+  'zod@<4.6.6': '>=4.6.6 <5'
+  'body-parser@>=2 <2.4.0': '>=2.4.0 <3'
+  '@azure/msal-node@<7.1.0': '>=7.1.0 <8'
 
 # pnpm 11 fails closed on dependency lifecycle scripts. Keep the executable/native
 # packages explicit, and record the reviewed no-op/optional scripts as denied so CI
