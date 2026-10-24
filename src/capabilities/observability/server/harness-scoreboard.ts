@@ -12,7 +12,7 @@
 //   - scripts/harness-scoreboard.ts (recompute CLI)
 
 import { createHash } from 'node:crypto';
-import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { learnerDayWindowUtc, learnerLocalDay } from '@/core/learner-day';
 import {
@@ -403,7 +403,14 @@ function isClosable(
  * retroactively empty the backlog; admission checks still read current rows.
  */
 async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inbox_backlog']> {
-  const pendingRows = await listProposalInboxRows(db, { status: 'pending', asOf: to });
+  const [pendingRows, allPendingRows] = await Promise.all([
+    listProposalInboxRows(db, { status: 'pending', asOf: to }),
+    listProposalInboxRows(db, {
+      status: 'pending',
+      asOf: to,
+      includeInadmissibleBlockMerges: true,
+    }),
+  ]);
   const pending = pendingRows.length;
   const oldest = pendingRows.reduce<Date | null>(
     (best, row) => (best === null || row.proposed_at < best ? row.proposed_at : best),
@@ -471,26 +478,31 @@ async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inb
     if (refs.ids.some((id) => (rowsByKnowledgeId.get(id)?.size ?? 0) > 1)) conflictInvolved += 1;
   }
 
+  const hasBlockMerge = allPendingRows.some((row) => row.kind === 'block_merge');
   const parts = [
     metricPart({
       key: 'pending',
       value: pending,
-      basis: 'measured',
-      note: 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored. Inadmissible block merges are already hidden by the projection.',
+      basis: hasBlockMerge ? 'proxy' : 'measured',
+      note: hasBlockMerge
+        ? 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored. The as-of pending set contains block_merge proposals whose admissibility is checked against current rows, so the visible count can drift for a historical window.'
+        : 'inbox projection rows still pending at the window end; rates and corrections after `to` are ignored. Inadmissible block merges are already hidden by the projection.',
     }),
     metricPart({
       key: 'oldest_pending_days',
       value: oldestDays,
-      basis: 'measured',
-      note: 'age of the oldest pending row measured at the window end.',
+      basis: hasBlockMerge ? 'proxy' : 'measured',
+      note: hasBlockMerge
+        ? 'age of the oldest pending row measured at the window end; derives from a visible pending set whose block_merge membership is checked against current rows.'
+        : 'age of the oldest pending row measured at the window end.',
     }),
     metricPart({
       key: 'closable',
       value: ratio(closable, pending),
       numerator: closable,
       denominator: pending,
-      basis: 'measured',
-      note: 'pending rows whose required knowledge target (parent, mutation node or edge endpoint) is missing/archived, whose expected_version no longer matches, or whose archive edge target is already gone. Other already-satisfied kinds are not covered by this predicate.',
+      basis: 'proxy',
+      note: 'pending rows whose required knowledge target (parent, mutation node or edge endpoint) is missing/archived, whose expected_version no longer matches, or whose archive edge target is already gone. Reads current knowledge/knowledge_edge rows, not the window-end snapshot, so a later archive or version bump can flip the result. Other already-satisfied kinds are not covered by this predicate.',
     }),
     metricPart({
       key: 'conflict_involved',
@@ -498,7 +510,7 @@ async function computeM4(db: Db, to: Date): Promise<HarnessScoreboardV2T['m4_inb
       numerator: conflictInvolved,
       denominator: pendingWithKnowledgeRefs,
       basis: 'measured',
-      note: 'pending rows sharing at least one referenced knowledge node with another pending row; denominator = pending rows that reference a knowledge node.',
+      note: 'pending rows sharing at least one referenced knowledge node with another pending row; covers knowledge_node, knowledge_mutation, archive, knowledge_edge, image_candidate, question_draft and goal_scope (conjecture targets the mind model and is not counted). Denominator = pending rows that reference a knowledge node from those kinds.',
     }),
   ];
   return {
@@ -798,24 +810,53 @@ export async function writeHarnessScoreboard(
   return id;
 }
 
-/** Latest persisted scoreboard (status page read). */
+export type LatestHarnessScoreboardT =
+  | { status: 'current'; scoreboard: HarnessScoreboardV2T; age_hours: number }
+  | { status: 'version_mismatch'; latest_version: number | null; age_hours: number };
+
+/**
+ * Latest persisted scoreboard (status page read). Skips newer projections that
+ * are not a readable current-version payload instead of reporting them as
+ * "never generated".
+ */
 export async function readLatestHarnessScoreboard(
   db: Db,
   now: Date = new Date(),
-): Promise<{ scoreboard: HarnessScoreboardV2T; age_hours: number } | null> {
-  const rows = await db
+): Promise<LatestHarnessScoreboardT | null> {
+  const currentRows = await db
+    .select({ payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, HARNESS_SCOREBOARD_EVENT_ACTION),
+        sql`${event.payload}->>'version' = ${String(HARNESS_SCOREBOARD_VERSION)}`,
+      ),
+    )
+    .orderBy(desc(event.created_at))
+    .limit(5);
+  for (const row of currentRows) {
+    const parsed = HarnessScoreboardV2.safeParse(row.payload);
+    if (!parsed.success) continue;
+    return {
+      status: 'current',
+      scoreboard: parsed.data,
+      age_hours: Math.max(0, (now.getTime() - row.created_at.getTime()) / (60 * 60 * 1000)),
+    };
+  }
+
+  const [latestAny] = await db
     .select({ payload: event.payload, created_at: event.created_at })
     .from(event)
     .where(eq(event.action, HARNESS_SCOREBOARD_EVENT_ACTION))
-    .orderBy(sql`${event.created_at} desc`)
+    .orderBy(desc(event.created_at))
     .limit(1);
-  const row = rows[0];
-  if (!row || row.payload === null || typeof row.payload !== 'object') return null;
-  const parsed = HarnessScoreboardV2.safeParse(row.payload);
-  if (!parsed.success) return null;
+  if (!latestAny) return null;
+  const latestVersion = asRecord(latestAny.payload).version;
   return {
-    scoreboard: parsed.data,
-    age_hours: Math.max(0, (now.getTime() - row.created_at.getTime()) / (60 * 60 * 1000)),
+    status: 'version_mismatch',
+    latest_version:
+      typeof latestVersion === 'number' && Number.isFinite(latestVersion) ? latestVersion : null,
+    age_hours: Math.max(0, (now.getTime() - latestAny.created_at.getTime()) / (60 * 60 * 1000)),
   };
 }
 

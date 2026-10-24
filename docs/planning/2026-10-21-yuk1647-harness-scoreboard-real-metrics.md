@@ -24,12 +24,12 @@
 
 ### M4 收件箱积压（`m4_inbox_backlog.parts`）
 
-`pending` / `oldest_pending_days` / `closable` / `conflict_involved` 均基于 **窗口结束时刻** 的收件箱投影：复用 `kernel/proposals/inbox` 的 `listProposalInboxRows({status:'pending', asOf:to})`，只计 `to` 之前创建的 propose、rate、correction，避免今天已裁决的条目把 10-18 的积压重算没了。block_merge 的可裁决性检查仍读当前行（历史行状态不可回放，见「已知边界」）。
+`pending` / `oldest_pending_days` / `closable` / `conflict_involved` 均基于 **窗口结束时刻** 的收件箱投影：复用 `kernel/proposals/inbox` 的 `listProposalInboxRows({status:'pending', asOf:to})`，只计 `to` 之前创建的 propose、rate、correction，避免今天已裁决的条目把 10-18 的积压重算没了。`closable` 与 block_merge 的可裁决性仍读当前行（历史行状态不可回放，见「已知边界」），因此 `closable` 恒为 `basis: 'proxy'`；pending 集含 block_merge 时，`pending` / `oldest_pending_days` 也标 `proxy`。
 
 - `pending`：该投影下仍 pending 的行数（admissible block_merge 过滤沿用现有投影）。
 - `oldest_pending_days`：最老 pending 行到 `to` 的天数。
 - `closable`：被引用知识点缺失/已归档、`expected_version` 与当前版本不符、或 `knowledge_edge` 归档目标已不存在的 pending 行数。其余「已满足」类别（例如 `block_merge`、`question_draft` 已提升）尚未纳入该谓词。
-- `conflict_involved`：与另一条 pending 行共享至少一个被引用知识点的行数；分母 = 引用了知识点的 pending 行数。
+- `conflict_involved`：与另一条 pending 行共享至少一个被引用知识点的行数；覆盖 `knowledge_node`、`knowledge_mutation`、`archive`、`knowledge_edge`、`image_candidate`、`question_draft`、`goal_scope`，`conjecture` 指向心智模型不计入；分母 = 引用了这些知识点的 pending 行数。
 
 10-18 审查报告的「可关 9 条」「17/26 卷入冲突」是人工读数，本实现给的是确定性谓词；两者定义不同，重算时按「定义差异」记录 delta，不调参凑数。
 
@@ -40,7 +40,9 @@
 | `new_question_duplicates` | 重复题数 / 窗口新建题数 | `event`（`experimental:question_draft_submit` 回执、`experimental:quiz_gen`）+ `question.created_at` | 重复 = 提交回执 `status='conflict'` 且 `reason ∈ {duplicate_exact,duplicate_source,near_dup}` + QuizGen `exact_duplicate_count`。分母 = 窗口内 `question` 行数（含 draft；提升不改 `created_at`）。比值可超过 1。 |
 | `same_name_same_parent_pairs` | 双胞胎对数（gauge） | `knowledge`（窗口内 `created_at`） | 按 `lower(trim(name)) + parent_id` 分组，每组多出的行数即对数；与旧代理「仅同名」的区别是同父约束。 |
 
-## 10-07～10-18 重算（NOT_RUN）
+## 10-07～10-18 重算（NOT_RUN，待 owner 批准）
+
+本机没有只读 TEST 连接，本 PR 也不申请用任何凭据访问 TEST；重算待 owner 批准后由有 TEST 访问权限的人执行。
 
 前置条件：可读 TEST Postgres 的连接串（只读角色即可；本仓库不保存也不接受任何凭据）。命令只读；`--persist` 会写一条 `experimental:harness_scoreboard` 投影，**重算比对时不要加**。
 
@@ -89,7 +91,7 @@ DATABASE_URL='postgres://<read-only-user>:<password>@<test-host>:5432/<test-db>'
 ## 已知边界
 
 - **M1**：`empty` 产出尚无独立 outcome 列（ADR C2-3 属 P2），分子只含 `status='failure'`；定义未扩展。
-- **M4 历史回放**：propose/rate/correction 可 as-of；block_merge 可裁决性与知识点版本读当前行，若 10-18 之后目标被归档/改版，`closable` 可能偏高。日更场景（昨天窗口）不受影响。
+- **M4 历史回放**：propose/rate/correction 可 as-of；block_merge 可裁决性与知识点版本读当前行，若窗口结束后目标被归档/改版，`closable` 会漂移，pending 集含 block_merge 时积压数也会漂移。日更同样读当前行，只是窗口结束到运行之间的时间差更短，不能说「不受影响」。
 - **M4 人工读数**：`closable`、`conflict_involved` 是可复算的确定性定义，不承诺与 review 的 9 / 17 逐条相同。
 - **M5 分母**：`question.created_at` 含 draft；draft 提升不改 `created_at`，所以「新入库」按新建行近似。
 - **M2**：ADR 基线是三个任务的具体计数；`by_task` 的 key 是 `task_kind`，比对时需按任务名映射。
