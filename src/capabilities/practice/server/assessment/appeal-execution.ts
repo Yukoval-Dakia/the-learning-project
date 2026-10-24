@@ -33,11 +33,11 @@ function conflict(detail: string): never {
   throw new ApiError('appeal_execution_conflict', detail, 409);
 }
 
-/** Called under assessment-evaluation-group, including by non-appeal allocators.
- * Appeal reservations and historical paid claims occupy slots before candidate sealing.
- * An unclaimed native binding keeps its existing collision policy: an intervening
- * candidate may occupy that slot, and its recovering owner must then hold, not spend.
- */
+/** Called under the assessment-evaluation-group lock, including by non-appeal
+ * allocators. Appeal reservations and historical paid claims occupy slots before
+ * candidate sealing; an unclaimed native binding keeps the existing collision
+ * policy: an intervening candidate may occupy the slot, and its recovering owner
+ * must then hold rather than spend. */
 export async function reservedEvaluationAttempt(
   tx: Tx,
   groupId: string,
@@ -67,9 +67,8 @@ export async function reservedEvaluationAttempt(
   return last;
 }
 
-/** A real appeal owns this binding, independently of the native pending-run protocol.
- * The caller commits this receipt before executing any unit. No receipt is reset on recovery.
- */
+/** A real appeal owns this binding independently of the native pending-run protocol.
+ * The caller commits the receipt before executing any unit; recovery never resets it. */
 export async function bindAppealExecution(
   tx: Tx,
   input: {
@@ -119,8 +118,8 @@ export async function bindAppealExecution(
       prior.action !== bindingAction ||
       prior.subject_kind !== 'evaluation_group' ||
       prior.subject_id !== input.evaluation_group_id ||
-      // 8d receipts used this exact appeal as parent. Retain them without rewriting;
-      // new operational bindings stay outside the business-resolution child surface.
+      // Legacy receipts used this exact appeal as parent; retain them without rewriting.
+      // New operational bindings stay outside the business-resolution child surface.
       (prior.caused_by_event_id !== null && prior.caused_by_event_id !== appeal.id) ||
       !parsed.success ||
       canonicalHash(BindingIdentity.parse(parsed.data)) !== canonicalHash(identity)
@@ -131,15 +130,12 @@ export async function bindAppealExecution(
   const prior = await read();
   if (prior) return prior;
 
-  // Compatibility: an old appeal may already have spent under ANY earlier attempt,
-  // even if a different appeal subsequently sealed that slot. Those claims cannot
-  // be attributed from their digest alone. Only a binding that preceded the claim
-  // establishes appeal ownership; a later binding cannot launder an old unknown claim.
-  // Old allocators could collide with native pending slots, so a native binding
-  // alone cannot attribute a historical claim to that run rather than this appeal.
-  // Hold model work instead of guessing. New appeals can pass other bound appeals.
-  // This is direct causal ordering (appeal commit precedes its claims), not a
-  // subscription completeness cursor. Compare in SQL, never as JS sequence numbers.
+  // A legacy appeal may already have spent under any earlier attempt, even if another
+  // appeal later sealed that slot. Those claims cannot be attributed from their digest
+  // alone: only a binding that preceded the claim establishes ownership, so a later
+  // binding cannot launder an old unknown claim. Native bindings alone cannot attribute
+  // a historical claim either. Hold model work instead of guessing. This is causal
+  // ordering, not a completeness cursor; compare dispatch_seq in SQL, never in JS.
   const [legacyClaim] = await tx
     .select({ id: event.id })
     .from(event)
@@ -179,8 +175,8 @@ export async function bindAppealExecution(
     subject_kind: 'evaluation_group',
     subject_id: input.evaluation_group_id,
     outcome: null,
-    // Operational identity is bindingId + the validated appeal/input payload.
-    // Only business resolutions belong to the appeal's caused_by child surface.
+    // Operational identity is bindingId + the validated appeal/input payload; only
+    // business resolutions belong to the appeal's caused_by child surface.
     caused_by_event_id: null,
     payload: binding,
     created_at: now,

@@ -43,8 +43,8 @@ export async function getFrozenPaperDetail(
         .where(inArray(assessment_issuance.issuance_id, issuanceIds))
     : [];
   const issuedById = new Map(issued.map((row) => [row.issuance.issuance_id, row]));
-  // Serving admission over the pinned issuances — the same authoritative guard the
-  // recovery read faces use; it reads the immutable frozen bindings, never mutates.
+  // Serving admission over pinned issuances — the same authoritative guard used by
+  // recovery reads. It reads frozen bindings and never mutates.
   const servingDecisions = await readAutomaticIssuanceServingDecisions(db, issuanceIds);
   const drafts = issuanceIds.length
     ? await db
@@ -98,15 +98,12 @@ export async function getFrozenPaperDetail(
     const frozen = issuedById.get(slot.issuance_id);
     if (!frozen) throw new ApiError('corrupt_state', 'paper opening receipt has no issuance', 409);
     const original = submissionByIssuance.get(slot.issuance_id);
-    // Serving gate (same boundary as getIssuanceState): an unsupported pinned
-    // contract withholds the answer surface for UNANSWERED slots — the slot is
-    // withheld from this projection entirely, since PaperSlotAssessment.practice_dto
-    // is non-nullable and omitting `assessment` would flip the whole paper into
-    // the legacy view-only path. The typed reason is exposed via
-    // withheld_assessments so the UI can render an explicit placeholder instead
-    // of a silently missing slot. An accepted submission keeps its DTO/history
-    // for settlement and recovery; stored issuance/draft/submission bytes are
-    // untouched.
+    // Serving gate (same boundary as getIssuanceState): an unsupported pinned contract
+    // withholds the answer surface for UNANSWERED slots. The slot is omitted because
+    // PaperSlotAssessment.practice_dto is non-nullable, and an omitted assessment would
+    // flip the whole paper into the legacy view-only path. Withheld slots are surfaced
+    // in withheld_assessments so the UI can show an explicit placeholder. Accepted
+    // submissions keep their DTO/history; stored bytes are untouched.
     const decision = servingDecisions.get(slot.issuance_id);
     if (decision?.kind === 'unavailable' && original == null) {
       withheld.push({
@@ -200,9 +197,8 @@ export async function getFrozenPaperDetail(
     }
     section.slots.push(detail);
   }
-  // Slots the gate refused at open time carry no issuance at all — surface them
-  // with a null issuance id next to pinned-but-unservable slots so the read
-  // shape is identical and never invents an issuance that does not exist.
+  // Slots refused at open time have no issuance; surface them with a null issuance id
+  // so the read shape matches pinned-but-unservable slots without inventing one.
   for (const slot of binding.withheld_slots ?? []) {
     withheld.push({
       issuance_id: null,

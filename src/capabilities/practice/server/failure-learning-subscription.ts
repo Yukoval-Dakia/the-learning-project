@@ -18,9 +18,9 @@ interface FailureLearningSubscriptionDeps {
 }
 
 /**
- * Turns one committed, effective-active question failure into durable work.
- * Eligibility reads and the pg-boss insert share the same database transaction;
- * the stable job UUID makes a delivery replay a successful no-op.
+ * Turns one committed effective-active question failure into durable work.
+ * Eligibility reads and the pg-boss insert share a transaction; the stable job
+ * UUID makes a delivery replay a successful no-op.
  */
 export async function handleFailureLearningAttemptDelivery(
   db: Db,
