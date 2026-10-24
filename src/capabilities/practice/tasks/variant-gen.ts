@@ -40,12 +40,8 @@ export function parseVariantOutput(text: string): VariantGenOutput {
   return VariantOutputSchema.parse(json);
 }
 
-// YUK-739 — targeted-variant authoring strategy copy now lives on each
-// subject's own cause category declaration (`variant_strategy`, see
-// profile-decl.ts). The cross-subject VARIANT_CAUSE_STRATEGIES mirror is gone:
-// math's `unit_error` and yuwen's `grammar` describe themselves; a category
-// without a declared strategy renders the generic fallback line below — the
-// exact behavior the legacy table's miss branch produced for physics etc.
+// Authoring strategy lives on each subject's cause category (`variant_strategy`,
+// see profile-decl.ts); a category without one gets the generic fallback below.
 
 function variantCauseStrategyList(profile: SubjectProfile): string {
   return profile.causeCategories

@@ -5,16 +5,13 @@ import type { SubjectProfile } from '@/subjects/profile';
 import { CANONICAL_QUESTION_KINDS, rubricGuidanceSection } from './generation-prompt-support';
 import { parseTaskOutput } from './parse-output';
 
-// ADR-0031 / YUK-304 (quiz C→A lane B) — QuestionAuthorTask prompt. Single-shot
-// structured output, NOT multimodal, NO tools (决定6: this is deliberately NOT
-// the QuizGenTask agent loop — the copilot orchestrates, one call = one
-// question). knowledge_context is the closed set of legal knowledge ids; the
-// seed core (src/server/ai/question-author.ts) ALSO intersects the echoed ids
-// against the live table and REGENERATES every structured node id, so a
-// hallucinated id can never persist (belt-and-suspenders, GoalScope/Tagging
-// 同款). seed_mode='material' carries the pasted material verbatim — the task
-// cannot fetch URLs (no Tavily), so material_url is provenance-only metadata
-// handled outside this prompt.
+// QuestionAuthorTask prompt (ADR-0031, quiz C→A lane B). Single-shot structured
+// output, deliberately not the QuizGenTask agent loop — the copilot orchestrates,
+// one call = one question. knowledge_context is the closed set of legal ids; the
+// seed core (src/capabilities/practice/server/tools/question-author.ts) also
+// intersects echoed ids with the live table and regenerates every node id, so a
+// hallucinated id cannot persist. seed_mode='material' carries the pasted material
+// verbatim; the task cannot fetch URLs, so material_url is provenance-only.
 function buildQuestionAuthorPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题作者，一次只写**恰好一道**原创题。输入 { seed_mode: 'knowledge'|'material', knowledge_context: [{ id, name }], requested_kind?, objective_only?: boolean, kind_required?: boolean, requested_difficulty?, material?: { body_md, title? } } —— knowledge_context 是这道题要考查的知识点（id 是你**唯一**能写进 knowledge_ids 的 id）；seed_mode='material' 时 material.body_md 是用户给的命题素材原文，题目必须**据这份素材**出。requested_kind 一旦出现就**是硬约束**：kind 在 plan 阶段已定死，你输出的 kind 必须与 requested_kind 完全一致，不得因素材更适合别的结构而偏离（objective_only=true 时同时要求客观题型，kind_required=true 时同时锁定结构）。requested_kind 缺省时才自行判断答案类型与题面结构。
 科目上下文：${profile.displayName}。${profile.languageStyle}
