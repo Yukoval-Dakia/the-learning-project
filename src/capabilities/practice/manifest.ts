@@ -1093,7 +1093,7 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
-      // YUK-1560 停掉 axis_state_nightly 夜写；learner_axis_state 显示保留最后一次写入。
+      // YUK-1560 删除 axis_state_nightly 夜写及 batch writer；learner_axis_state 只保留历史行（merge 时 rename/freeze）。
       // YUK-573 — judge 校准不同意率采样（report-only，dark-ship）。kill switch
       // JUDGE_CALIBRATION_SAMPLING_ENABLED 默认 OFF（cron 保持注册，handler no-op，
       // 零 spend）。复判走第二 lane（per-call ctx.override=anthropic-sub，绝不翻
