@@ -102,7 +102,7 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 
 ### R2 · EZ-diffusion — `src/server/calibration/ez-diffusion.ts`
 
-- **是什么**：`computeEzDiffusion` / `ezFromResponses` / `edgeCorrectPc`（207 行纯闭式）—— Wagenmakers et al. (2007) EZ-diffusion 闭式恢复（Pc/MRT/VRT → v/a/Ter，含 Pc∈{0,1} edge-correction 与退化 null 裁决）。+−×÷ ln exp 判据成立。2026-06-27 ship（YUK-445，PR #651）。live 消费：`axis-writer.ts:95` → nightly `axis_state_nightly` → `learner_axis_state` → placement-profile 显示读出。
+- **是什么**：`computeEzDiffusion` / `ezFromResponses` / `edgeCorrectPc`（207 行纯闭式）—— Wagenmakers et al. (2007) EZ-diffusion 闭式恢复（Pc/MRT/VRT → v/a/Ter，含 Pc∈{0,1} edge-correction 与退化 null 裁决）。+−×÷ ln exp 判据成立。2026-06-27 ship（YUK-445，PR #651）。历史 live 消费：`axis-writer.ts` → nightly `axis_state_nightly` → `learner_axis_state`；writer 与 job 已于 2026-10-21（YUK-1560）退役，`placement-profile` 仍只读历史行。
 - **为何豁免**：TS 纯闭式模块是 **ADR-0048 的成文形态决策**（其「形态」节：纯闭式模块；Accepted，owner 2026-07-23 YUK-678，ratify 的是 shipped 代码本身），但 0048 ratify 时未与本文铁律做 reconcile —— 本段即该 reconcile 的落地（ADR-0048 侧同步标注见其「形态」节 cross-ref）。豁免依据是 ADR-0048 的**描述符-only 红线**：A11 输出绝不喂 θ̂ / p(L) / 选题调度 —— 无引擎消费者、无浏览器 bit-exact 重算面；该红线存续期间，把 200 行闭式 port 进 crate 只添 lane 协调成本、不买任何同构性。
 - **PORT TRIGGER**（任一即失效）：① ADR-0048 描述符-only 红线松动（a/Ter 修正 A1 的 d —— YUK-449 territory —— 或进任何选题/引擎路径）；② UI 需要浏览器端 bit-exact 重算 (v, a, Ter)（#41/#45 家族）；③ Rust 线按本文 Open 项「calibration 先迁」顺序整体吸收 calibration barrel（ez-diffusion 随 barrel 进 crate，diff-test vs 冻结 TS 输出后删 TS）。
 

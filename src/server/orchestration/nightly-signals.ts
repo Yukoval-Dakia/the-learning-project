@@ -97,6 +97,35 @@ export function noteEligibilitySkip(
   console.warn(`[eligibility] '${jobName}' not_needed: ${decision.reason}`);
 }
 
+export const JOB_ELIGIBILITY_OUTPUT_KEY = 'job_eligibility';
+
+/** Scheduled cron skips have no DAG node row; this lands in the pg-boss job output. */
+export interface JobEligibilityOutput {
+  [JOB_ELIGIBILITY_OUTPUT_KEY]: {
+    job: string;
+    status: 'not_needed';
+    tier: NightlySignals['tier'];
+    reason: string;
+    defect?: 'consecutive_degraded';
+  };
+}
+
+export function eligibilitySkipOutput(
+  jobName: string,
+  signals: NightlySignals,
+  decision: Extract<EligibilityDecision, { run: false }>,
+): JobEligibilityOutput {
+  return {
+    [JOB_ELIGIBILITY_OUTPUT_KEY]: {
+      job: jobName,
+      status: 'not_needed',
+      tier: signals.tier,
+      reason: decision.reason,
+      ...(decision.defect ? { defect: decision.defect } : {}),
+    },
+  };
+}
+
 /** 日费用只告警。没有硬上限，也不把不同币种加在一起。 */
 export async function warnDailyCostDoesNotBlock(db: Db, now: Date): Promise<void> {
   try {
