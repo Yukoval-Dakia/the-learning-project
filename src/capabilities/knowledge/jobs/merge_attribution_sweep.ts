@@ -1,13 +1,10 @@
 // Weekly merge-attribution census plus bounded auto-repair.
 //
-// Accept-time merging already repairs all attribution surfaces in its transaction, but a
-// grading worker holding a pre-merge read can still write to the archived id afterwards.
-// This sweep repairs that residual drift using the same repair functions, never raw
-// writes. It is a safety net, not a merge path: it never merges or archives a KC.
-//
-// Census first (no writes), then repair drifted ids grouped by winner, one transaction
-// per winner, capped per run. A winner is re-verified as live before repair; a failed
-// winner rolls back alone. Repairs are idempotent, so leftovers wait for the next run.
+// Accept-time merging already repairs attribution, but a grading worker holding a
+// pre-merge read can still write to the archived id afterwards. This sweep repairs
+// that residual drift with the same functions, never raw writes; it never merges or
+// archives a KC. Census first, then repair drifted ids per winner, capped per run.
+// Repairs are idempotent, so leftovers wait for the next run.
 
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -218,7 +215,6 @@ export async function runMergeAttributionSweep(
             now,
             mergeFromIds,
           );
-          // Use the backfill's tally rather than a local re-derivation.
           entries.push({
             fromId,
             summary: summarizeRepair(entry),
@@ -247,9 +243,9 @@ export async function runMergeAttributionSweep(
       continue;
     }
 
-    // Write each event immediately after commit: a later failure or crash must not
-    // lose the breadcrumb, because the next census sees the repair as clean. The action
-    // is a generic experimental event, so no proposal/fold/dedup predicate claims it.
+    // Write each event immediately after commit: a later crash must not lose the
+    // breadcrumb once the next census sees the repair as clean. The action is a
+    // generic experimental event, so no proposal/fold/dedup predicate claims it.
     for (const { fromId, summary, surfaces } of outcome.entries) {
       repaired.push({ fromId, winnerId, summary, surfaces });
       console.log('[merge_attribution_sweep] auto-repaired', {
@@ -281,7 +277,6 @@ export async function runMergeAttributionSweep(
           caused_by_event_id: null,
           task_run_id: null,
           cost_micro_usd: null,
-          // Opt out of memory ingestion; this is an internal breadcrumb, not user activity.
           ingest_at: now,
         });
         eventsWritten += 1;
@@ -305,8 +300,8 @@ export async function runMergeAttributionSweep(
     );
   }
 
-  // Re-census after commit: this is the only read that can catch a grading write
-  // racing in after the repair, which is the residual this sweep exists for.
+  // Re-census after commit: the only read that can catch a grading write racing in
+  // after the repair, which is the residual this sweep exists for.
   let residualAfterRepair = 0;
   try {
     for (const { fromId } of repaired) {

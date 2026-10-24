@@ -3,9 +3,8 @@
 
 import type { AfterToolCallResult, BeforeToolCallResult } from '@earendil-works/pi-agent-core';
 
-/** The tool invocation a hook observes. `agentType` is set when the call runs
- *  inside a nested subagent loop — the pi equivalent of the SDK hook input's
- *  `agent_id` field (reply-finalization uses it to mark `root_call`). */
+/** The tool invocation a hook observes. `agentType` marks nested calls
+ *  (reply-finalization reads it to distinguish `root_call`). */
 export interface PiHookToolCall {
   id: string;
   name: string;
@@ -28,16 +27,13 @@ export interface PiToolCallObservation {
   output?: unknown;
   /** The thrown/settled error value when isError. */
   error?: unknown;
-  /** True when the abort lineage was live as the tool settled — the pi
-   *  equivalent of SDK PostToolUseFailure's `is_interrupt`. */
+  /** True when the abort lineage was live as the tool settled. */
   interrupted?: boolean;
 }
 
 /**
- * Post-execution observer. May return an AfterToolCallResult override — the
- * pi equivalent of SDK PostToolUse's `additionalContext` write-back (e.g.
- * reply-finalization appends `tool_use_id=` context the model sees). Most
- * observers return undefined.
+ * Post-execution observer. May return an override — e.g. reply-finalization
+ * appends `tool_use_id=` context the model sees.
  */
 export type PiAfterToolCall = (
   observation: PiToolCallObservation,

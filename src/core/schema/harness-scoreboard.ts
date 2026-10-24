@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
 /**
- * YUK-1557 / ADR-0075 C6-2 — the deterministic harness scoreboard payload.
+ * The deterministic harness scoreboard payload.
  *
  * Values are computed from raw rows, never hand-entered. `basis` is part of the
- * contract: `measured` means the raw table exposes the exact quantity;
- * `proxy` means the scoreboard uses the closest available raw signal and the
- * note names the difference from the review's metric definition; `unavailable`
- * means the source table cannot answer it without a new writer.
+ * contract: `measured` means the raw table exposes the exact quantity; `proxy`
+ * means the scoreboard uses the closest available raw signal and the note names
+ * the difference; `unavailable` means the source table cannot answer it without a
+ * new writer.
  */
 export const HARNESS_SCOREBOARD_VERSION = 1 as const;
 

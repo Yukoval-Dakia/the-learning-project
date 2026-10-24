@@ -33,8 +33,8 @@ export function isSpawnToolName(toolName: string): boolean {
 }
 
 /**
- * YUK-572/YUK-757 v2 deliberately observes real spend before choosing a number.
- * This mode never denies an enabled spawn because of an attempt count.
+ * YUK-572/YUK-757 v2 observes real spend before choosing a number, so this mode
+ * never denies an enabled spawn because of an attempt count.
  */
 export const SPAWN_BUDGET_MODE = 'report_only' as const;
 
@@ -93,10 +93,9 @@ function makeDepthOneAgent(definition: AgentDefinition): AgentDefinition {
 }
 
 /**
- * Depth-one reduction applied by the shared contract — strips spawn tools from
- * `tools`, adds them to `disallowedTools`, pins `background:false`. The pi
- * subagent host consumes the reduced definitions when it builds the
- * Task/Agent AgentTool.
+ * Depth-one reduction from the shared contract: strips spawn tools from `tools`,
+ * adds them to `disallowedTools`, pins `background:false`. The pi subagent host
+ * consumes the reduced definitions when it builds the Task/Agent AgentTool.
  */
 function toDepthOneAgents(
   agents: Record<string, AgentDefinition>,
@@ -107,9 +106,8 @@ function toDepthOneAgents(
 }
 
 /**
- * The engine-neutral half of the spawn contract (YUK-1022): memoized
- * per-toolUseId decisions plus the report-only permission observations. The pi
- * beforeToolCall gate consults this decider so duplicate consultations cannot
+ * Engine-neutral half of the spawn contract: memoized per-toolUseId decisions plus
+ * the report-only permission observations, so duplicate consultations cannot
  * double-count or disagree.
  */
 export interface SpawnDecider {
@@ -147,11 +145,10 @@ function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDecider {
         'name' in taskInput ||
         taskInput.run_in_background === true
       ) {
-        // Role definitions, not model-emitted Task input, own model/isolation and
-        // foreground completion. A background override can let the parent finish
-        // without receiving the child conclusion, breaking one-voice product flow.
-        // Reject rather than silently strip so both guard surfaces make the same
-        // correlation-id keyed decision and the attempted privilege change is visible.
+        // Role definitions own model/isolation and foreground completion: a
+        // background override could let the parent finish without the child's
+        // conclusion. Reject rather than strip so the attempted privilege change is
+        // visible on both guard surfaces with the same correlation-id decision.
         record = {
           decision: 'deny_input_override',
           message: 'Agent model/isolation/name/background overrides are not allowed',
@@ -200,10 +197,8 @@ function createSpawnDecider(options: CreateSpawnContractOptions): SpawnDecider {
 }
 
 /**
- * Engine-neutral nested-agent spec — the subset of AgentDefinition the pi
- * lane can serve. `tools`/`disallowedTools` carry the same wire names
- * (`mcp__<server>__<tool>` or local names) the SDK def declares; the adapter
- * filters its mounted AgentTools by them.
+ * Engine-neutral nested-agent spec: the subset of AgentDefinition the pi lane can
+ * serve. Tool names are the same wire names the parent mounts.
  */
 export interface PiSubagentSpec {
   description: string;
@@ -215,14 +210,13 @@ export interface PiSubagentSpec {
   /** Per-child assistant-turn ceiling (def.maxTurns); unbounded when absent. */
   maxTurns?: number;
   /**
-   * Pi catalog model id or 'inherit'/undefined ⇒ parent model. SDK alias names
-   * ('sonnet', 'opus', …) have no pi meaning — declaring one fails closed.
+   * Pi catalog model id, or 'inherit'/undefined for the parent model. SDK alias
+   * names have no pi meaning — declaring one fails closed.
    */
   model?: string;
 }
 
-/** Reduce one AgentDefinition to the pi spec (model alias rejection lives
- *  in the adapter, which owns the catalog). */
+/** Reduce one AgentDefinition to the pi spec (alias rejection lives in the adapter). */
 function toPiSubagentSpec(definition: AgentDefinition): PiSubagentSpec {
   return {
     description: definition.description,
@@ -246,10 +240,9 @@ function toPiSubagentSpecs(
 }
 
 /**
- * The pi spawn contract: the shared memoized decider exposed as a
- * PiHookBridge beforeToolCall entry, plus the depth-one specs the adapter
- * turns into the Task/Agent tool. `readBudgetReport` surfaces the decider's
- * permission observations for the caller's spawn evidence.
+ * The pi spawn contract: the shared decider as a beforeToolCall entry plus the
+ * depth-one specs the adapter turns into Task/Agent tools. `readBudgetReport`
+ * surfaces the permission observations for caller spawn evidence.
  */
 export interface PiSpawnContract {
   /** Depth-one specs for the adapter's Task/Agent tool (mount via piAgents). */

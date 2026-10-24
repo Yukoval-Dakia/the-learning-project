@@ -6,10 +6,9 @@ import { ProviderSessionAdmissionError } from './provider-session-admission';
 import type { SDKMessage } from './sdk-types';
 
 /**
- * Preserve the durable attempt identity for every exception that escapes a
- * started run lifecycle, not only SDK terminal errors. Unknown exceptions stay
- * permanent by classification, but downstream budget/provenance code can still
- * consume the exact persisted attempt id.
+ * Preserve the durable attempt identity for every exception escaping a started
+ * lifecycle, not only terminal errors: unknown exceptions stay permanent, but
+ * budget/provenance code can still consume the persisted attempt id.
  */
 export function bindAgentRunError(input: {
   error: unknown;
@@ -40,11 +39,8 @@ export function bindAgentRunError(input: {
   });
 }
 
-/**
- * Narrow helper for the runner: does this terminal result message carry the
- * success+is_error API-error shape? Extracted so classification and the
- * observability breadcrumb share one predicate.
- */
+/** Narrow runner predicate: does this terminal result carry the success+is_error
+ *  API-error shape? One predicate for classification and the breadcrumb. */
 export function isApiErrorSuccessResult(
   msg: Extract<SDKMessage, { type: 'result' }>,
 ): msg is Extract<SDKMessage, { type: 'result'; subtype: 'success' }> & {

@@ -1,12 +1,9 @@
-// Nightly near-duplicate KC detection. Unified tagging can mint several KCs for the
-// same concept, so this scans recent KCs by cosine distance and proposes merges for
-// the human to accept.
+// Nightly near-duplicate KC detection: scans recent KCs by cosine distance and
+// proposes merges for the human to accept.
 //
-// Propose-only by construction: this file must not import or call applyMerge, which
-// archives KCs and repairs downstream attribution. Only the accept path may do that.
-//
-// Detection is deterministic and needs a pairwise self-join, so it does not reuse the
-// single-query top-K similarity retriever.
+// Propose-only by construction: never import or call applyMerge, which archives KCs
+// and repairs attribution. Detection needs a pairwise self-join, so it does not reuse
+// the top-K similarity retriever.
 
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -137,7 +134,6 @@ export async function runKcDedupNightly(
   }
 
   for (const pair of pairRows) {
-    // Normalize raw-execute values, which may arrive as strings by type parser.
     const aCreatedMs = new Date(pair.a_created_at).getTime();
     const bCreatedMs = new Date(pair.b_created_at).getTime();
     const distance = Number(pair.distance);
@@ -173,7 +169,6 @@ export async function runKcDedupNightly(
       });
       merge_proposals_created += 1;
     } catch (err) {
-      // Best effort per pair; one failed write must not abort the scan.
       console.error('[kc_dedup_nightly] propose failed for pair', pair.a_id, pair.b_id, err);
       skipped += 1;
     }

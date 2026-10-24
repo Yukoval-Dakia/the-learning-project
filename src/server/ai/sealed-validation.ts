@@ -31,14 +31,12 @@ export type ConfirmedStructuredReviewResult<T> =
     };
 
 /**
- * Generic state machine used by release-critical structured comparators.
+ * Generic state machine for release-critical structured comparators.
  *
- * It deliberately knows nothing about questions, intervention packages, or
- * Copilot prose. Domain adapters own paid-call execution, parsing, sealed
- * source binding, and persistence; this module owns the shared FULL invariant:
- * a valid fail stops immediately, while a pass is authoritative only after
- * every bounded attempt is a valid pass. Contract-invalid output consumes an
- * attempt and can never be washed into a pass by the final slot.
+ * It knows nothing about questions, packages or Copilot prose; domain adapters own
+ * execution, parsing and persistence. This module owns the shared FULL invariant:
+ * a valid fail stops immediately, and a pass is authoritative only after every
+ * bounded attempt is a valid pass. Contract-invalid output consumes an attempt.
  */
 export async function runConfirmedStructuredReview<T>(input: {
   maxAttempts: number;

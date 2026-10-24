@@ -1,13 +1,11 @@
 // Read-only admin reader for conjecture calibration.
 //
-// (a) prediction_score events are live: one single-point proper score per probe, never
-// an "accuracy" or a window mean.
-// (b) confused-with-X typed states are pending energization: no writer can produce one
-// yet, because the only caller hardcodes a null second KC and the gate requires a named
-// one. Keep the query and describe the panel as pending, not auto-minted or impossible.
+// Prediction scores are live single-point proper scores per probe, never accuracy or a
+// window mean. Confused-with-X typed states are pending energization: the only caller
+// hardcodes a null second KC while the gate requires a named one, so keep the query and
+// present the panel as pending rather than auto-minted or impossible.
 //
-// The response declares score_basis single_point so consumers cannot mistake it for a
-// window-calibrated score.
+// score_basis='single_point' keeps consumers from reading it as window-calibrated.
 
 import { and, desc, eq } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';

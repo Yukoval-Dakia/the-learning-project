@@ -1,38 +1,14 @@
-// YUK-921 P4 — THE execution adapter (post-SDK-retirement the only one). One
-// agentLoop per query; its events are normalized into SDKMessage-shaped
-// RunnerMessage frames (see execution-adapter.ts `PiRunnerMessage`) so the
-// consume loop keeps one lifecycle implementation.
+// YUK-921 P4 — the only execution adapter. One agentLoop per query; its events
+// are normalized into SDKMessage-shaped RunnerMessage frames so the consume
+// loop keeps one lifecycle implementation.
 //
-// Engine contract (design §6 R5, all preserved from the SDK lane):
-//   - tools surface under the SAME `mcp__<server>__<tool>` wire names, so
-//     allowedTools filtering / recordToolCall / shouldEmitToolUseForCaller
-//     see identical names;
-//   - maxTurns maps to finishTurn — the terminal frame reports the
-//     SDK subtype 'error_max_turns';
-//   - beforeToolCall composes the piHooks gate chain (deny →
-//     {block, reason}, interrupt → terminate); arg-rewriting allows
-//     (updatedInput) throw loudly;
-//   - toolResult messages become SDK user frames carrying tool_result blocks;
-//   - text output only — structured output stays the strict-prompt + Zod
-//     text-JSON fallback (the production path on the default mimo lane);
-//   - abort = no terminal frame: the lifecycle's `aborted` binding produces
-//     the cancellation truth, never a synthesized success.
+// Contract retained from the SDK lane: identical `mcp__<server>__<tool>` wire
+// names; maxTurns maps to finishTurn ('error_max_turns'); abort emits no
+// terminal frame so the lifecycle's `aborted` flag stays the cancellation
+// truth; every opencode request carries `x-opencode-session` with the durable
+// run id (the per-attempt fencing identity).
 //
-// P3 surfaces (YUK-1022) are the direct caller contracts now:
-//   skills      → piSkillDocs: SKILL.md bodies appended to systemPrompt
-//   agents      → piAgents: Task/Agent AgentTools + in-process nested loops
-//   hooks       → piHooks bridge into beforeToolCall / afterToolCall
-//   compaction  → nativeCompaction → transformContext budget-prune + bounded
-//                 sessionContext re-injection
-//   resume      → options.resume (`pi:` id) + piSessionReplay durable turns
-//                 seeded into context.messages (fails closed without replay)
-// Steering/follow-up are wired as a ctx surface (`ctx.piQueues` → root-loop
-// getSteeringMessages/getFollowUpMessages) with NO live consumer today — the
-// surface exists so attaching queue semantics later needs no adapter surgery.
-//
-// Session/header contract (spike probe 6): every opencode request needs
-// `x-opencode-session`; we inject the durable run id (`ai_task_run.id`) — the
-// same per-attempt fencing identity the lifecycle already owns.
+// `ctx.piQueues` (steering/follow-up) is wired but has no live consumer yet.
 
 import { randomUUID } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
@@ -136,23 +112,18 @@ function toolOutputSchema(kind: ExecutionAdapterStartupArgs['kind']) {
 
 /**
  * YUK-590 — provider retry cap, preserving the CLAUDE_CODE_MAX_RETRIES env
- * contract the SDK subprocess honoured. Default 2 (three total attempts) keeps
- * short transient absorption while returning control to loom's one deliberate
- * retry layer. An unparseable value falls back to the default, not a throw.
+ * contract. Default 2 leaves short transients to the provider client and returns control to
+ * loom's one deliberate retry layer.
  */
 export function piMaxRetries(): number | undefined {
-  // YUK-1007：DB > env > code-default(2)。env 层保留原语义（非有限/负 → 默认）。
+  // YUK-1007: DB > env > code default.
   const v = getConfig('CLAUDE_CODE_MAX_RETRIES');
   return typeof v === 'number' ? v : 2;
 }
 
 /**
- * Pi session ids carry a `pi:` prefix so a persisted `agent_sdk_session_id`
- * cursor is unambiguous. Same-process pi cursors resume verbatim; a
- * cross-process or lane-mismatched attempt cold-starts from the caller's
- * durable-turn replay (copilot-execution computes the caller-side resume),
- * so context-digest delivery gating (`shouldDeliverCopilotSessionContext`)
- * keeps its per-session memory.
+ * `pi:`-prefixed session ids keep a persisted `agent_sdk_session_id` cursor
+ * unambiguous. A cross-process attempt cold-starts from durable-turn replay.
  */
 export const PI_SESSION_ID_PREFIX = 'pi:';
 
@@ -186,10 +157,8 @@ const EMPTY_PI_USAGE: PiUsage = {
 };
 
 /**
- * Replay turns → AgentMessages for `context.messages` seeding. Assistant
- * entries need the model's envelope fields (api/provider/usage/stopReason);
- * `convertToLlm` only reads role+content, so the envelope is honest
- * bookkeeping, not fabricated provider data.
+ * Replay turns → AgentMessages for `context.messages`. `convertToLlm` reads only
+ * role+content; the assistant envelope is honest bookkeeping, not provider data.
  */
 export function piReplayTurnsToMessages(
   turns: readonly PiReplayTurn[],
@@ -342,9 +311,9 @@ function piUserMessage(content: PiUserContent): AgentMessage {
 }
 
 /**
- * Convert one SDK user message into pi's UserMessage. Text and base64 images
- * map 1:1; url image sources are rejected upstream in runner.ts and tool_result
- * rejected loudly rather than silently dropped into a malformed request.
+ * Convert one SDK user message into pi's UserMessage. url image sources are
+ * rejected in runner.ts; a tool_result block reaching here throws rather than
+ * becoming a malformed request (the adapter synthesizes those frames itself).
  */
 function sdkUserMessageToPi(msg: SDKUserMessage): AgentMessage {
   const content = msg.message?.content;
@@ -413,9 +382,8 @@ function piStopReasonToSdk(
 }
 
 /**
- * Map every pi content block to its Anthropic-wire shape. toolCall → tool_use
- * keeps the tool_call_log recorder's contract even though P1 kinds never
- * declare tools. Unknown/future blocks are dropped (text lane).
+ * Map pi content blocks to their Anthropic-wire shape; toolCall → tool_use
+ * keeps the tool_call_log recorder's contract. Unknown blocks are dropped.
  */
 function piContentToSdk(content: PiAssistantMessage['content']): ContentBlock[] {
   const blocks: ContentBlock[] = [];
@@ -441,9 +409,8 @@ function piContentToSdk(content: PiAssistantMessage['content']): ContentBlock[] 
 }
 
 /**
- * pi AssistantMessage → SDKAssistantMessage-shaped frame. Every field carries
- * real data (id from responseId, model from responseModel, usage from the pi
- * Usage record); only the Anthropic-message envelope is synthesized.
+ * pi AssistantMessage → SDKAssistantMessage frame; provider data is real, only
+ * the Anthropic envelope is synthesized.
  */
 export function piAssistantToSdkFrame(
   message: PiAssistantMessage,
@@ -492,11 +459,8 @@ function piUsageToResultUsage(usage: PiUsage | undefined, model: PiModel<PiApi>)
 }
 
 /**
- * pi ToolResultMessage → SDK user-frame shape. SDK emits `user` messages
- * carrying `tool_result` blocks during tool loops; the pi lane mirrors them
- * so any downstream consumer inspecting the wire sees the same frame
- * sequence. (consumeSdkAttempt today only branches on assistant/result/system
- * — the frames are truthful parity, not a new semantic surface.)
+ * pi ToolResultMessage → SDK user frame carrying a tool_result block, mirroring
+ * the SDK wire sequence. `consumeSdkAttempt` ignores these frames today.
  */
 export function piToolResultToSdkFrame(
   message: PiToolResultMessage,
@@ -551,10 +515,8 @@ function assistantText(message: PiAssistantMessage): string {
 }
 
 /**
- * Build the terminal result frame for a completed agent_end. Returns undefined
- * when the run was caller-aborted — the absence of a terminal frame is what
- * binds the lifecycle's `aborted` truth (budget timeout / cancellation), the
- * same semantics the SDK lane gets from a killed subprocess.
+ * Build the terminal result frame. Returns undefined on caller abort: the absent
+ * terminal frame is what lets the lifecycle's `aborted` truth win.
  */
 export function piTerminalResultFrame(args: {
   messages: AgentMessage[];
@@ -563,44 +525,35 @@ export function piTerminalResultFrame(args: {
   durationMs: number;
   numTurns: number;
   aborted: boolean;
-  /** Set when finishTurn hit the configured turn ceiling — the pi
-   *  equivalent of the SDK's `error_max_turns` terminal subtype. */
+  /** Set when finishTurn hit the turn ceiling ('error_max_turns'). */
   cappedByMaxTurns?: boolean;
   /** Only the opt-in structured task uses tool arguments as its terminal result. */
   structuredOutputTool?: boolean;
-  /** Reject pi best-effort JSON salvage: original streamed arguments must parse strictly. */
+  /** Reject pi best-effort JSON salvage: streamed arguments must parse strictly. */
   invalidStructuredArguments?: boolean;
-  /** YUK-1547 — the run's ONE shared landing turn was consumed (by the
-   *  missing-submit reminder or by a parameter-contract correction) and the
-   *  submit still did not land; the terminal names which consumed it. */
+  /** YUK-1547 — the run's ONE shared landing turn was already consumed and the
+   *  submit still did not land; the name is reported in the terminal error. */
   submitLandingConsumedBy?: 'missing_submit' | 'param_contract';
-  /** YUK-1547 (C1) — the submit arguments AFTER the shared parameter-contract
-   *  repair was adopted (string-serialized array/object fields). This is what
-   *  pi validation and execute saw — the raw streamed bytes stay the failure
-   *  evidence record. */
+  /** YUK-1547 (C1) — submit arguments AFTER the shared parameter-contract repair,
+   *  i.e. what validation and execute saw. Raw streamed bytes stay the evidence. */
   repairedSubmitArguments?: unknown;
-  /** Bounded raw-arguments evidence carried on the structured-failure terminal so
-   *  the runner can attach it to the task run's tool_call_log. */
+  /** Bounded raw-arguments evidence for the structured-failure terminal. */
   structuredSubmitEvidence?: {
     tool_name: string;
     raw_arguments: string;
     raw_args_sha256: string;
     truncated: boolean;
   };
-  /** YUK-1559 (C6) — bounded, sanitized provider error-body capture from the
-   *  query's wrapped fetch. Appended to errors[] on a failed terminal so the
-   *  raw non-2xx body (not just pi's formatted errorMessage) reaches
-   *  ai_task_runs.error_message and paid_effect.unresolved_reason. */
+  /** YUK-1559 (C6) — sanitized provider error body from the query's fetch; it
+   *  rides errors[] so the raw non-2xx body reaches error_message. */
   providerError?: ProviderErrorEvidence;
   /** Safe rejection bound to the same final root assistant, never query.latest. */
   providerRequestRejection?: { http_status: 400 };
-  /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained
-   *  provider text. Applied to pi's errorMessage (errors[0]): the driver can
-   *  embed the full unsanitized body in it, which would otherwise bypass the
-   *  evidence body's credential redaction and 4096B cap. */
+  /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained provider
+   *  text, applied to pi's errorMessage (errors[0]) so the full unsanitized body
+   *  cannot bypass credential redaction or the 4096B cap. */
   sanitizeErrorMessage?: (text: string) => string;
-  /** P3 — nested-child usage rolled into the run's terminal evidence, the
-   *  same way the SDK result aggregates subagent tokens into modelUsage. */
+  /** Nested-child usage merged into the terminal totals (SDK result parity). */
   childUsage?: PiChildUsage;
 }): PiRunnerMessage | undefined {
   const final = lastAssistantMessage(args.messages);
@@ -642,8 +595,7 @@ export function piTerminalResultFrame(args: {
   const costUsd = (usage?.cost?.total ?? 0) + (child?.costUsd ?? 0);
   const usageParts = piUsageToResultUsage(usage, args.model);
   // YUK-1559 (C6) — the captured non-2xx body rides as its own errors[] entry
-  // so it survives into error_message / unresolved_reason verbatim; errors[0]
-  // stays pi's own formatted message (a display string, not the raw body).
+  // so it survives verbatim; errors[0] stays pi's formatted message.
   const providerErrorEntry =
     args.providerError !== undefined
       ? `provider_http_error=${JSON.stringify(args.providerError)}`
@@ -764,13 +716,10 @@ export function piTerminalResultFrame(args: {
           : {}),
       } as SDKResultMessage & { source: 'pi' };
     }
-    // YUK-1547 — the submit call's arguments ARE the structured output (the
-    // task's output schema itself); there is no {result: ...} envelope. When
-    // the shared parameter-contract repair was adopted the capability sees
-    // the REPAIRED arguments — the same value pi validation and execute
-    // accepted — so a string-serialized array/object field reaches the domain
-    // schema as its declared type. The raw streamed bytes stay the
-    // tool_call_log evidence record (structured_submit_evidence on failure).
+    // YUK-1547 — the submit call's arguments ARE the structured output; there is
+    // no {result: ...} envelope. When the parameter-contract repair was adopted
+    // the capability sees the REPAIRED arguments; raw streamed bytes stay the
+    // tool_call_log evidence.
     structuredOutput = args.repairedSubmitArguments ?? arguments_;
   }
   return {
@@ -785,9 +734,7 @@ export function piTerminalResultFrame(args: {
   } as SDKResultMessage & { source: 'pi' };
 }
 
-/** Aggregated usage from nested child loops, merged into the terminal frame
- *  so the run's cost evidence includes subagent spend (SDK parity — the SDK
- *  result's usage/modelUsage roll nested-agent tokens into the totals). */
+/** Nested-child usage rolled into the parent terminal (SDK result parity). */
 interface PiChildUsage {
   input: number;
   output: number;
@@ -814,18 +761,9 @@ function emptyPiChildUsage(): PiChildUsage {
 }
 
 /**
- * Prepared pi query: startup holds the resolved model + session identity;
- * `query()` runs ONE agentLoop and yields normalized frames. `close()` aborts
- * the loop — the in-process equivalent of the SDK warm transport teardown.
- *
- * P3 additions (YUK-1022):
- * - `sessionId` is the `pi:`-prefixed durable session marker emitted on every
- *   frame; `options.resume` carrying a `pi:` id reuses it verbatim.
- * - `queuedFrames` is the internal sink for frames produced inside the loop
- *   (subagent task_* lifecycle, compact_boundary) — the generator drains it
- *   before each engine event so ordering matches the SDK wire sequence.
- * - Nested-agent runs execute in-process via `PiSubagentHost` — same abort
- *   lineage, same hook gate chain, child usage aggregated into the terminal.
+ * Prepared pi query: `query()` runs ONE agentLoop and yields normalized frames;
+ * `close()` aborts it. Frames produced inside the loop (subagent task_*,
+ * compact_boundary) go through `queuedFrames` so wire ordering matches the SDK.
  */
 class PiPreparedQuery implements PreparedExecutionQuery {
   private closed = false;
@@ -837,38 +775,30 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
   /**
-   * YUK-1547/YUK-1559 (C1/C6) — per-call bookkeeping for the shared
-   * parameter-contract seam. `pendingCoercions` collects adopted string→JSON
-   * repairs per tool name (prepareArguments runs before pi validation, so a
-   * call that never reaches execute still lands its `coerced` evidence at
-   * tool_execution_end). `pendingArgs` holds each in-flight call's original
-   * arguments — captured at tool_execution_start, BEFORE pi's validation
-   * normalization can touch them — so a param-contract rejection can persist
-   * sanitized ≤4KiB raw-args evidence keyed to the exact call.
+   * YUK-1547/YUK-1559 (C1/C6) — `pendingCoercions` queues adopted string→JSON
+   * repairs per tool (prepareArguments runs before validation, so a call that
+   * never reaches execute still lands its `coerced` evidence); `pendingArgs`
+   * holds original arguments captured at tool_execution_start for contract
+   * rejection evidence.
    */
   private readonly pendingCoercions = new Map<string, ToolParamCoercion[][]>();
   private readonly pendingArgs = new Map<string, { toolName: string; args: unknown }>();
-  /** Latest adopted repair per tool name — the structured-submit terminal
-   *  hands the capability what validation actually accepted. */
+  /** Latest adopted repair per tool — the structured-submit terminal hands the
+   *  capability what validation actually accepted. */
   private readonly repairedToolArgs = new Map<string, unknown>();
   /**
    * YUK-1547 (C1) — ONE run-scoped parameter-contract correction allowance,
-   * shared by this query's root loop AND every nested child loop (spawned
-   * researchers inherit wrapped tools but have no submit landing machine).
-   * A `[tool_param_contract]` rejection may continue once; a second rejection
-   * ends the loop regardless of the caller's iteration ceiling — unbounded
-   * Copilot and maxTurns runs share this budget. On the structured-submit
-   * lane the same allowance is further shared with the missing-submit
-   * reminder via `landingTurnUsed`.
+   * shared by the root loop and every nested child loop: a second rejection
+   * ends the loop regardless of the iteration ceiling. The structured-submit
+   * lane shares it with the missing-submit reminder via `landingTurnUsed`.
    */
   private paramContractCorrectionUsed = false;
   private providerHttp: { fetch: typeof fetch; close: () => Promise<void> } | undefined;
 
   /**
    * Per-loop streamed-arguments tracker: `rawByIndex` accumulates this turn's
-   * `toolcall_delta` bytes; `byCallId` binds them to call ids at message_end.
-   * Each agentLoop (root and each nested child) owns its own pair so a
-   * child's turn_start can never erase a parent's in-flight evidence.
+   * deltas, `byCallId` binds them at message_end. Each loop owns its own pair so
+   * a child's turn_start cannot erase a parent's evidence.
    */
   private trackStreamedArgs(
     event: AgentEvent,
@@ -897,8 +827,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       });
     }
   }
-  /** YUK-1559 (C6) — per-query non-2xx capture fetch; created lazily in
-   *  baseLoopConfig once the base fetch (idle-budget or global) is resolved. */
+  /** YUK-1559 (C6) — non-2xx capture fetch, created lazily in baseLoopConfig. */
   private providerErrorCapture: ReturnType<typeof createProviderErrorCaptureFetch> | undefined;
 
   constructor(
@@ -917,10 +846,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     this.sessionId = piSessionIdFor(
       typeof args.options.resume === 'string' ? args.options.resume : undefined,
     );
-    // The spawn tools are mounted here (not in buildTools) because the host
-    // binds to this query's frame sink + abort lineage. They honor the same
-    // effective allowedTools filter the domain mounts already passed through —
-    // `Task` must be allowlisted exactly as on the SDK lane.
+    // Spawn tools live here (not in buildTools) because the host binds to this
+    // query's frame sink and abort lineage. `Task` honors the same allowedTools
+    // filter as the domain mounts.
     const allowed = Array.isArray(args.options.tools)
       ? new Set(args.options.tools as string[])
       : undefined;
@@ -932,14 +860,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
     this.allTools = [...tools, ...visibleSpawn].map((tool) => ({
       ...tool,
-      // YUK-1547/YUK-1559 (C1) — EVERY mounted tool gets the shared
-      // parameter-contract repair ahead of pi's validateToolArguments (pi
-      // calls prepareArguments first — this is the only seam that can fix a
-      // string-serialized array/object field before validation rejects the
-      // call). A repair that fails throws ToolParamContractError → isError
-      // result; execute is never reached, so tool side effects stay
-      // exactly-once. Adopted repairs are queued for the persisted `coerced`
-      // event drained at tool_execution_end.
+      // YUK-1547/YUK-1559 (C1) — every mounted tool gets the parameter-contract
+      // repair ahead of pi's validateToolArguments (prepareArguments is the only
+      // seam that runs first). A failed repair throws → isError result, so
+      // execute is never reached and side effects stay exactly-once.
       prepareArguments: (rawArgs: unknown) => {
         const prepared = tool.prepareArguments ? tool.prepareArguments(rawArgs) : rawArgs;
         const repaired = repairToolArguments(tool.parameters, prepared);
@@ -977,9 +901,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     streamedArgsByCallId: ReadonlyMap<string, string>,
   ): void {
     if (event.type === 'tool_execution_start') {
-      // Capture the model's original arguments BEFORE prepareArguments repair
-      // and pi validation normalization — the C6 evidence baseline. Sanitized
-      // and bounded only if the call actually fails at the contract seam.
+      // Capture original arguments BEFORE prepareArguments repair and validation
+      // normalization — the C6 evidence baseline.
       this.pendingArgs.set(event.toolCallId, { toolName: event.toolName, args: event.args });
       return;
     }
@@ -991,8 +914,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     const pending = this.pendingArgs.get(event.toolCallId);
     this.pendingArgs.delete(event.toolCallId);
-    // Drain adopted string→JSON repairs for this call: the persisted `coerced`
-    // event carries tool/field metadata only — never the payload.
+    // Drain adopted repairs for this call: the `coerced` event carries
+    // tool/field metadata only, never the payload.
     const coercedFields = this.pendingCoercions.get(event.toolName)?.shift();
     if (coercedFields && this.pendingCoercions.get(event.toolName)?.length === 0) {
       this.pendingCoercions.delete(event.toolName);
@@ -1010,21 +933,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       });
     }
     if (executions > 0) return;
-    // YUK-1559 (C6) — a call that failed at the argument-contract seam (our
-    // parameter-contract rejection or pi's schema validation) never reached
+    // YUK-1559 (C6) — a call rejected at the argument-contract seam never reached
     // execute: persist the sanitized ≤4KiB original arguments as run evidence.
-    // Unknown-tool / hook-blocked / aborted / truncated calls keep their
-    // existing (non-args) evidence story.
     if (
       pending !== undefined &&
       isToolArgumentContractFailure({ isError: event.isError, content: event.result?.content })
     ) {
       const secrets = this.args.resolved.apiKey ? [this.args.resolved.apiKey] : [];
-      // Fidelity: prefer THIS call's exact streamed argument bytes (sanitized
-      // — the recursive pass redacts credential keys even inside embedded
-      // JSON string fields before any serialization/cap). When the stream
-      // never delivered deltas, event.args is a pi-parsed/salvaged object —
-      // label it 'reconstructed' rather than claiming wire fidelity.
+      // Fidelity: prefer this call's exact streamed bytes (sanitized — the
+      // recursive pass redacts credentials inside embedded JSON fields). When no
+      // deltas arrived, event.args is a pi-parsed object → label 'reconstructed'.
       const streamed = streamedArgsByCallId.get(event.toolCallId);
       const args_source = streamed !== undefined ? 'streamed' : 'reconstructed';
       const sanitizedText =
@@ -1078,10 +996,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * The composed beforeToolCall gate for one loop level. Caller-declared
-   * piHooks gates (spawn-contract / cancellation / finalization) run in
-   * declaration order with first-defined-result short-circuit. `agentType`
-   * marks nested calls (reply-finalization marks `root_call` off it).
+   * Composed beforeToolCall gate for one loop level: caller-declared piHooks
+   * gates run in declaration order with first-defined-result short-circuit.
+   * `agentType` marks nested calls.
    */
   private makeBeforeToolCall(agentType?: string): AgentLoopConfig['beforeToolCall'] {
     const piHooks = this.args.piHooks;
@@ -1098,11 +1015,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * The pi `afterToolCall` config — the PostToolUse/PostToolUseFailure
-   * equivalent. Observers fire in declaration order; the bridge returns the
-   * merged override (the `additionalContext` equivalent — reply-finalization
-   * uses it to append `tool_use_id=` context the model sees), so the loop
-   * applies the field-wise merge to the settled result.
+   * pi `afterToolCall` config (PostToolUse/PostToolUseFailure). Observers fire in
+   * declaration order; the bridge's merged override is what the model sees.
    */
   private makeAfterToolCall(agentType?: string): AgentLoopConfig['afterToolCall'] {
     const piHooks = this.args.piHooks;
@@ -1127,13 +1041,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * ADR-0060 compaction on the pi lane: `transformContext` runs before every
-   * LLM call. When the estimated context crosses the window trigger we drop
-   * the oldest messages down to the target, re-inject the bounded
-   * sessionContext (the SessionStart-compact hook's `additionalContext`
-   * equivalent), and emit a compact_boundary frame through the frame queue so
-   * `sdk-terminal`'s usage evidence stays identical. Contract: never throws —
-   * on any failure the original messages pass through.
+   * ADR-0060 compaction on the pi lane: `transformContext` prunes to the target
+   * window, re-injects the bounded sessionContext, and emits a compact_boundary
+   * frame so `sdk-terminal`'s usage evidence stays identical. Never throws — on
+   * failure the original messages pass through.
    */
   private makeTransformContext(): AgentLoopConfig['transformContext'] {
     const compaction = this.args.nativeCompaction;
@@ -1147,10 +1058,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         const plan = planCompaction(messages);
         if (!plan) return messages;
         const startedAt = Date.now();
-        // Keep the newest tail that fits the target; the current-turn prompt
-        // is the last element and is never dropped.
-        // Pi 1.0 carries instructions and tool declarations in system messages.
-        // Replay their deltas before pruning so neither can disappear with history.
+        // Keep the newest tail that fits the target; the current-turn prompt is
+        // last and never dropped. Pi 1.0 carries instructions and tool
+        // declarations in system messages, so replay their deltas before pruning.
         const { getCurrentSystemMessage } = await import('@earendil-works/pi-ai');
         const system = getCurrentSystemMessage(messages);
         const transformed = plan.selectMessages(system, piUserMessage);
@@ -1173,14 +1083,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * YUK-1630 — every provider request in this query runs through the
-   * attempt's controlled transport: an npm-undici Agent whose connect,
-   * headers and body timers all take the same budget-derived value the SDK
-   * gets as its per-request `timeout` (provider-transport.ts). The runner
-   * always resolves `options.providerTimeoutMs` from the task budget; a
-   * caller that leaves it unset gets the SDK's 10-minute default as the
-   * derivation base so the undici layer stays consistent with the SDK's own
-   * bound rather than falling back to hidden undici defaults.
+   * YUK-1630 — every provider request runs through the attempt's controlled
+   * transport (budget-derived connect/headers/body timers). Unset timeoutMs
+   * derives from the SDK's 10-minute default so undici stays consistent with it.
    */
   private providerTransport(): { timeoutMs?: number; fetch: typeof fetch } {
     const timeoutMs = this.args.options.providerTimeoutMs;
@@ -1209,39 +1114,29 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   > {
     const { options, resolved, runId } = this.args;
     const http = this.providerTransport();
-    // YUK-1559 (C6) — every provider request in this query funnels through a
-    // capture fetch so a non-2xx leaves a bounded, sanitized body + status +
-    // request id for the terminal error evidence. A transparent passthrough:
-    // it only reads a clone of failing responses. Every loom-registered
-    // provider accepts a custom fetch (the same surface providerTransport
-    // already uses for the budget-derived dispatcher).
+    // YUK-1559 (C6) — every provider request funnels through a capture fetch so a
+    // non-2xx leaves a bounded, sanitized body + status + request id for the
+    // terminal error evidence. Passthrough otherwise; it only reads a clone.
     this.providerErrorCapture ??= createProviderErrorCaptureFetch(
       http.fetch,
-      // The request's resolved credential — verbatim + JSON-escaped forms are
-      // redacted at the shared boundary before any field/header patterns run.
+      // The request's resolved credential — redacted at the shared boundary.
       { secrets: resolved.apiKey ? [resolved.apiKey] : [] },
     );
     return {
-      // All prompts are standard LLM messages — identity conversion narrowed
-      // to the LLM roles the union type needs. UI-only AgentMessages never
-      // reach this lane (loom owns the durable transcript).
+      // All prompts are standard LLM messages; UI-only AgentMessages never reach
+      // this lane (loom owns the durable transcript).
       convertToLlm: createPiLlmMessageConverter(),
-      // The x-opencode-session header is an opencode-go wire requirement
-      // (400 MissingSessionID without it). Scope it to that lane: forwarding a
-      // stray opencode-namespaced header to api.openai.com / the anthropic
-      // compat endpoints serves no purpose (YUK-1027).
+      // opencode-go requires this header (400 MissingSessionID without it); it
+      // is scoped to that lane so no stray header reaches other providers
+      // (YUK-1027).
       ...(resolved.provider === 'opencode-go'
         ? { headers: { [OPENCODE_SESSION_HEADER]: runId } }
         : {}),
-      // Per-request credential from the lifecycle-resolved binding — resolved
-      // once in resolveTaskProvider for both auth modes (oauth carries the
-      // sk-ant-oat* token; the anthropic-messages driver switches to Bearer).
+      // Per-request credential resolved once in resolveTaskProvider for both auth
+      // modes (oauth carries the sk-ant-oat* token → Bearer).
       apiKey: resolved.apiKey,
-      // YUK-590 parity: the SDK lane honoured CLAUDE_CODE_MAX_RETRIES to cap
-      // provider retries at 2 (three total requests) so a persistent 5xx
-      // returns control to loom's deliberate retry layer instead of burning
-      // the task budget on client-side retries. Same knob on pi's stream
-      // options; preserve an explicit operator value including '0'.
+      // YUK-590 parity: cap provider retries so a persistent 5xx returns control
+      // to loom's deliberate retry layer. An explicit operator '0' is preserved.
       ...(options.judgeRetryPolicy === 'none'
         ? { maxRetries: 0 }
         : piMaxRetries() !== undefined
@@ -1254,11 +1149,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * YUK-1547 — the submit wire policy for this query's resolved lane, read
-   * through the shared capability surface (structured-submit.ts). 'forced'
-   * pins the named tool_choice; a lane whose profile records the forced
-   * choice as wire-rejected (forcedToolChoice:false) degrades to 'auto' +
-   * the single closing reminder wired in iterate().
+   * YUK-1547 — submit wire policy for this lane. 'forced' pins the named
+   * tool_choice; a lane that records the forced choice as wire-rejected degrades
+   * to 'auto' + the single closing reminder wired in iterate().
    */
   private structuredSubmitPolicy(model: PiModel<PiApi>) {
     if (toolOutputSchema(this.args.kind) === undefined || model.api !== 'openai-completions') {
@@ -1276,11 +1169,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       maxTokens: Math.min(streamOptions?.maxTokens ?? model.maxTokens, model.maxTokens, remaining),
     };
     const submitPolicy = this.structuredSubmitPolicy(model);
-    // YUK-1547 — per-task model-native reasoning params (resolved +
-    // fail-closed-validated in resolveTaskProvider): pass the model's own
-    // wire parameter (e.g. DeepSeek `reasoning_effort`) through verbatim.
-    // This is NOT the options.effort → pi ThinkingLevel enum path — startup
-    // rejects both being set so the param has exactly one writer.
+    // YUK-1547 — per-task model-native reasoning params pass through verbatim.
+    // This is NOT the options.effort → ThinkingLevel path; startup rejects both
+    // being set so the wire key has exactly one writer.
     const nativeReasoning = this.args.resolved.nativeReasoningParams;
     const streamOptionsWithPayload = {
       ...streamOptions,
@@ -1329,13 +1220,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   };
 
   /**
-   * YUK-1547 (C1) — the run-scoped parameter-contract correction gate applied
-   * to EVERY loop this query runs (root and nested children share
-   * `paramContractCorrectionUsed`). A `[tool_param_contract]` isError result
-   * is the correction prompt itself: it may continue ONCE so the model can
-   * re-issue the call; a second rejection ends the loop regardless of the
-   * caller's iteration ceiling — unbounded Copilot and maxTurns runs share
-   * this budget. Clean turns and ordinary valid iterations defer to `inner`.
+   * YUK-1547 (C1) — the run-scoped parameter-contract correction gate for every
+   * loop level: a rejection may continue ONCE so the model can re-issue the
+   * call; a second one ends the loop regardless of the turn ceiling. Clean turns
+   * defer to `inner`.
    */
   private contractCorrectionFinishTurn(inner?: FinishTurn): FinishTurn {
     return (turn, signal) => {
@@ -1348,9 +1236,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * Child tool set: the spec's allowlist over the parent's mounted wire names,
-   * minus disallowedTools, minus spawn aliases (depth-one is structural — a
-   * child can never see Task/Agent even if its def listed them).
+   * Child tool set: the spec's allowlist over mounted wire names, minus
+   * disallowedTools, minus spawn aliases (depth-one is structural).
    */
   private childToolsFor(spec: PiSubagentSpec): AgentTool[] {
     const parentTools = this.allTools.filter((tool) => !isSpawnToolName(tool.name));
@@ -1363,11 +1250,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   /**
-   * Nested-run host for the Task/Agent spawn tools. Runs ONE child agentLoop
-   * under the parent's abort lineage and emits the task_started/task_progress/
-   * task_updated frames the durable projection consumes. The child's final
-   * assistant text is the tool result; failures throw → error tool result
-   * (the SDK Task-call parity).
+   * Nested-run host for Task/Agent: ONE child agentLoop under the parent's abort
+   * lineage, emitting task_started/progress/updated frames for the durable
+   * projection. Child failures throw → error tool result.
    */
   private readonly subagentHost: PiSubagentHost = {
     runNested: async ({ toolCallId, subagentType, description, prompt, spec, signal }) =>
@@ -1492,10 +1377,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               throw new Error('nested subagent aborted');
             }
             const final = lastAssistantMessage(finalMessages);
-            // Root-loop terminal parity: no assistant at all, a capped turn
-            // ceiling, or a provider-side error/aborted stop all mean the child
-            // FAILED — a completed task_* row would let the parent answer from
-            // a report that does not exist.
+            // Root-loop terminal parity: no assistant, a capped ceiling, or a
+            // provider error means the child FAILED — a completed task_* row
+            // would let the parent answer from a report that does not exist.
             if (!final) {
               throw new Error(
                 `nested subagent '${subagentType}' ended without an assistant message`,
@@ -1571,9 +1455,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               'pi adapter requires a plain string systemPrompt (claude_code presets are SDK-only)',
             );
           })();
-    // Skill dual-descriptor: SDK injects SKILL.md bodies through its
-    // filesystem mirror; the pi lane appends the resolved bodies to the
-    // system prompt (same model-visible contract, no Skill tool needed).
+    // Skill docs: SDK injected SKILL.md via a filesystem mirror; pi appends the
+    // bodies to the system prompt (same model-visible contract, no Skill tool).
     if (this.args.piSkillDocs && this.args.piSkillDocs.length > 0) {
       const docs = this.args.piSkillDocs
         .map((doc) => `<skill name="${doc.name}">\n${doc.body}\n</skill>`)
@@ -1581,69 +1464,55 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
     const structuredOutput = toolOutputSchema(this.args.kind) !== undefined;
-    // YUK-1547 — capability-driven submit policy: forced named tool_choice on
-    // lanes that accept it; 'auto' + the closing reminder (C2-landing shape)
-    // where the provider rejects forcing (forcedToolChoice:false). Both share
-    // ONE landing budget with the parameter-contract correction turn.
+    // YUK-1547 — capability-driven submit policy: forced named tool_choice where
+    // accepted, 'auto' + closing reminder where the provider rejects forcing.
+    // Both share ONE landing budget with the parameter-contract correction.
     const submitPolicy = structuredOutput ? this.structuredSubmitPolicy(this.model) : undefined;
     const submitReminderAllowed = submitPolicy !== undefined && !submitPolicy.forced;
-    // YUK-1547 (C1) — ONE landing budget per run, shared across the
-    // missing-submit reminder and the parameter-contract correction (not one
-    // each). Whichever consumes it first ends the run's extra-turn allowance.
+    // ONE landing budget per run, shared by the reminder and the correction.
     let landingTurnUsed = false;
     let landingConsumer: 'missing_submit' | 'param_contract' | undefined;
     if (structuredOutput) {
       systemPrompt += structuredSubmitSystemSuffix(submitPolicy?.forced ?? true);
     }
     const context: AgentContext = {
-      // sdkSession→本地回放: durable-turn replay seeds context.messages — the
-      // pi equivalent of reattaching an SDK session file.
+      // Durable-turn replay seeds context.messages — the pi equivalent of
+      // reattaching an SDK session file.
       messages: [
         { role: 'system', content: systemPrompt, timestamp: Date.now() },
         ...piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
       ],
       ...(this.allTools.length > 0 ? { tools: this.allTools } : {}),
     };
-    // options.maxTurns is the runner's agentic-turn ceiling. Pi has no built-in
-    // equivalent — finishTurn counts completed turns and asks the
-    // loop to end; the terminal frame then reports the normalized subtype
-    // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
-    // YUK-1026 — SDK parity: the ceiling only bites when the agent wants
-    // ANOTHER turn. A turn whose assistant message carries no tool calls ends
-    // the loop successfully; the ceiling also leaves queued follow-ups undrained.
-    // It must report
-    // success, not error_max_turns — under the unconditional counter every
-    // maxTurns=1 task deterministically failed after its first clean turn.
+    // options.maxTurns is the runner's agentic-turn ceiling; pi has no built-in
+    // equivalent, so finishTurn counts turns and the terminal reports
+    // 'error_max_turns'. YUK-1026 — the ceiling only bites when the agent wants
+    // ANOTHER turn: a clean end_turn ends successfully, because under an
+    // unconditional counter every maxTurns=1 task failed after its first turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
     let cappedByMaxTurns = false;
-    // Per-turn streamed-argument evidence, bound to call ids at message_end;
-    // the strict-JSON flag also gates the parameter-contract correction below.
+    // Per-turn streamed arguments, bound to call ids at message_end; the
+    // strict-JSON flag also gates the parameter-contract correction.
     const rawToolArguments = new Map<number, string>();
     const streamedArgsByCallId = new Map<string, string>();
     let invalidStructuredArguments = false;
-    // pi's producer only enqueues events; it does not wait for this adapter's
-    // consumer. Gate scheduling on observation of the SAME assistant message
-    // (pi emits and passes the same object to finishTurn), never a default flag.
-    // Root-local state cannot be acknowledged by a nested loop's events.
+    // pi only enqueues events; it does not wait for this consumer. Gate
+    // scheduling on observing the SAME assistant message pi passes to
+    // finishTurn, so a nested loop's events cannot acknowledge the root.
     let observedStructuredMessage: PiAssistantMessage | undefined;
     let acknowledgeStructuredMessage: ((message: PiAssistantMessage) => void) | undefined;
     const config: AgentLoopConfig = {
       model: this.model,
       ...this.baseLoopConfig(),
-      // SDK in-process MCP tools run serially — pin the same execution mode
-      // so batch ordering/tool_call_log sequence can't diverge by engine.
+      // SDK in-process MCP tools run serially — pin the same mode so ordering and
+      // the tool_call_log sequence cannot diverge by engine.
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(structuredOutput
         ? {
-            // Bounded submit state machine (structured-submit.ts): 'landed' or
-            // any non-clean turn ends the run — a turn with tool calls that is
-            // not exactly the one submit NEVER continues, because pi would
-            // otherwise pay the tool-result inner loop again (truncated calls
-            // come back terminate=false). Exactly two turns may exceed the
-            // initial one, sharing ONE landing budget: a clean text-only end
-            // on an 'auto' lane takes the closing reminder, and a clean submit
-            // envelope rejected at the parameter-contract seam takes the
-            // correction turn. Total model turns are at most initial + one.
+            // Bounded submit state machine (structured-submit.ts): 'landed' or a
+            // non-clean turn ends the run; a turn with tool calls that is not the
+            // submit never continues. At most initial + one extra turn, sharing
+            // ONE landing budget between the closing reminder and the correction.
             finishTurn: (async ({ message, toolResults }) => {
               if (observedStructuredMessage !== message && !this.abort.signal.aborted) {
                 await new Promise<void>((resolve) => {
@@ -1660,7 +1529,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               }
               // Abort/close releases the wait without scheduling another turn.
               // Missing or invalid streamed JSON stays terminal before either
-              // landing allowance can be consumed or evidence can be reset.
+              // landing allowance is consumed.
               if (
                 this.abort.signal.aborted ||
                 observedStructuredMessage !== message ||
@@ -1682,20 +1551,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
                   ? undefined
                   : { action: 'end' as const };
               }
-              // The ONE correction-eligible failure: a clean single-submit
-              // envelope (verdict 'landed') whose arguments were rejected at
-              // the parameter-contract seam — a string-serialized
-              // array/object field whose shared repair failed. The isError
-              // tool result itself is the correction prompt; the inner loop
-              // continues once inside the SAME run, sharing the single
-              // landing budget with the missing-submit reminder AND the
-              // run-scoped correction allowance nested loops also consume.
+              // The ONE correction-eligible failure: a clean single-submit envelope
+              // whose arguments were rejected at the parameter-contract seam. The
+              // isError result is the correction prompt; it continues once inside
+              // the same run, sharing the landing budget and the run-scoped
+              // allowance nested loops also consume.
               //
-              // Strict-envelope prerequisite (P1): the correction is only
-              // granted when THIS turn's streamed submit bytes were strictly
-              // valid JSON — a malformed outer envelope salvaged by pi's
-              // parser stays terminal with its retained evidence, identical
-              // to the preflight's strict JSON.parse ordering.
+              // Strict prerequisite: only when THIS turn's streamed submit bytes
+              // were strictly valid JSON — a salvaged envelope stays terminal.
               if (
                 verdict === 'landed' &&
                 !landingTurnUsed &&
@@ -1716,10 +1579,8 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             }) satisfies FinishTurn,
           }
         : {
-            // Every non-structured root loop shares the run-scoped correction
-            // allowance too — an unbounded/maxTurns Copilot loop must not pay
-            // for a second param-contract rejection. The caller's turn ceiling
-            // keeps its normal meaning underneath the gate.
+            // Non-structured root loops share the run-scoped correction allowance
+            // too; the caller's turn ceiling keeps its normal meaning under it.
             finishTurn: this.contractCorrectionFinishTurn(
               maxTurns !== undefined
                 ? turnLimiter(maxTurns, () => {
@@ -1731,20 +1592,17 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       beforeToolCall: this.makeBeforeToolCall(),
       afterToolCall: this.makeAfterToolCall(),
       transformContext: this.makeTransformContext(),
-      // YUK-1022 spec §3 P3 — steering/follow-up queue sources wired on the
-      // ROOT loop only: steering targets the running turn, and nested loops
-      // are synchronous tool executions that must not drain a parent queue.
-      // No caller provides these today; the ctx surface exists so a future
-      // consumer attaches without adapter surgery.
+      // YUK-1022 — steering/follow-up sources are wired on the ROOT loop only:
+      // steering targets the running turn and nested loops must not drain a
+      // parent queue. No caller provides these today.
       ...(this.args.piQueues?.getSteeringMessages
         ? { getSteeringMessages: this.args.piQueues.getSteeringMessages }
         : {}),
       ...(submitReminderAllowed || this.args.piQueues?.getFollowUpMessages
         ? {
-            // The C2-landing reminder fires once when the loop would stop
-            // without the submit call; afterwards (and on forced lanes never)
-            // the caller queue is the only follow-up source. Contract: never
-            // throws — a broken delegate returns [] rather than killing the run.
+            // The closing reminder fires once when the loop would stop without a
+            // submit; afterwards the caller queue is the only follow-up source.
+            // Never throws — a broken delegate returns [].
             getFollowUpMessages: async () => {
               if (submitReminderAllowed && !landingTurnUsed) {
                 landingTurnUsed = true;
@@ -1838,19 +1696,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, rootStreamFn);
     let textStreamed = false;
     for await (const event of stream) {
-      // A new assistant turn restarts the raw-arguments evidence window:
-      // tool-call content indexes repeat per message, so without the reset a
-      // rejected submit's streamed bytes would concatenate with the corrected
-      // call's and corrupt the strict-JSON check below. Only an ELIGIBLE
-      // continuation reaches a next turn — an invalid-envelope rejection ends
-      // immediately, so a terminal first-turn failure can never be erased by
-      // this reset.
+      // A new assistant turn restarts the raw-arguments window: content indexes
+      // repeat per message, so without the reset a rejected submit's bytes would
+      // concatenate with the corrected call's and corrupt the strict-JSON check.
       this.trackStreamedArgs(event, rawToolArguments, streamedArgsByCallId);
       if (event.type === 'turn_start') invalidStructuredArguments = false;
       this.observeToolAttempt(event, streamedArgsByCallId);
-      // Frames queued inside the loop (subagent task_*, compact_boundary)
-      // surface before the engine event that follows them — matching the SDK
-      // wire order where lifecycle frames precede the parent tool_result.
+      // Frames queued inside the loop surface before the engine event that
+      // follows them, matching the SDK wire order (lifecycle frame → tool_result).
       yield* this.drainFrames();
       if (
         event.type === 'message_update' &&
@@ -1877,11 +1730,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         if (structuredOutput) {
-          // pi's provider parser may repair malformed tool JSON. That hidden
-          // repair must not consume an untracked allowance in each blind
-          // pass. Reject salvaged output; only strict raw JSON reaches the
-          // capability's single shared normalization budget. Missing raw
-          // deltas fail closed.
+          // pi's parser may repair malformed tool JSON. That hidden repair must
+          // not consume an untracked allowance: reject salvaged output and fail
+          // closed on missing raw deltas.
           event.message.content.forEach((block, index) => {
             if (block.type !== 'toolCall') return;
             try {
@@ -1917,28 +1768,24 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       sessionId: this.sessionId,
       durationMs: Date.now() - startedAt,
       numTurns,
-      // The internal controller is the single abort truth — it fires both
-      // when the caller signal aborts (wired in the constructor) and when
-      // close() tears down an in-flight query.
+      // The internal controller is the single abort truth: it fires on caller
+      // signal abort (wired in the constructor) and on close().
       aborted: this.abort.signal.aborted,
       cappedByMaxTurns,
       structuredOutputTool: structuredOutput,
       invalidStructuredArguments,
-      // The original streamed submit bytes survive a structured-parse failure
-      // as bounded tool_call_log evidence (adapter-level failures never reach
-      // the capability, which logs its own view of the payload).
+      // The consumed landing consumer is named in the terminal error evidence, so
+      // a structured-parse failure stays diagnosable without the payload.
       submitLandingConsumedBy: landingConsumer,
-      // The submit arguments validation/execute actually saw when the shared
-      // parameter-contract repair was adopted — the capability receives this,
-      // not the still-stringified raw fields.
+      // What validation/execute actually saw after the shared repair — the
+      // capability receives this, not the still-stringified raw fields.
       repairedSubmitArguments: this.repairedToolArgs.get(STRUCTURED_OUTPUT_TOOL),
       structuredSubmitEvidence:
         structuredOutput && rawToolArguments.size > 0
           ? {
               tool_name: STRUCTURED_OUTPUT_TOOL,
-              // Same C6 safe boundary as the per-call evidence — streamed
-              // bytes can carry escaped credential keys inside embedded JSON
-              // string fields, so they pass the argument sanitizer too.
+              // Same C6 boundary as per-call evidence — streamed bytes can carry
+              // credential keys inside embedded JSON string fields.
               ...rawArgumentsEvidence(
                 [...rawToolArguments.values()]
                   .map((raw) =>
@@ -1950,15 +1797,14 @@ class PiPreparedQuery implements PreparedExecutionQuery {
               ),
             }
           : undefined,
-      // YUK-1559 (C6) — the last non-2xx this query's capture fetch saw, if
-      // any; the terminal frame appends it to errors[] on failure terminals.
+      // YUK-1559 (C6) — last non-2xx this query's capture fetch saw, if any.
       providerError: this.providerErrorCapture?.latest(),
       providerRequestRejection:
         finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
           ? rootRejections.get(finalAssistant)
           : undefined,
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
-      // full unsanitized provider body; it must not bypass redaction/cap.
+      // full unsanitized provider body and must not bypass redaction/cap.
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,
       childUsage: this.childUsage,
     });
@@ -1967,8 +1813,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
 
   async close(): Promise<void> {
     this.closed = true;
-    // Aborting a finished loop is harmless; for a query in flight it is the
-    // cooperative stop that mirrors SDK query.close().
+    // Cooperative stop that mirrors SDK query.close().
     this.abort.abort();
     const providerHttp = this.providerHttp;
     this.providerHttp = undefined;
@@ -1991,21 +1836,17 @@ export class PiAgentAdapter implements ExecutionAdapter {
   constructor(private readonly init: PiAdapterDeps = {}) {}
 
   /**
-   * Lazy dependency resolution — the module-level PI_ADAPTER singleton must
-   * not pay the provider-catalog construction cost on import of the seam file.
-   * The imports are dynamic for a second reason: migrate.cjs transitively
-   * reaches this module (migrate → projections → judge → runner → seam) and
-   * build:migrate marks @earendil-works/* external — a static require would
-   * crash the migrate container at module load. Dynamic imports only execute
-   * when startup() actually runs, which migrate never calls.
+   * Lazy dependency resolution: the module-level singleton must not build the
+   * provider catalog on import, and migrate.cjs reaches this module while
+   * build:migrate marks @earendil-works/* external — static requires would crash
+   * the migrate container at load.
    */
   private async resolveDeps(): Promise<Required<PiAdapterDeps>> {
     if (this.resolved === undefined) {
-      // Each import evaluates only when its injected dep is absent — tests
-      // that inject both never load the pi tree at all.
+      // Each import evaluates only when its injected dep is absent.
       this.resolved = {
-        // Native pi presets own wire behavior; anthropic-sub selects the
-        // native Anthropic preset with the separately resolved OAuth credential.
+        // Anthropic-sub selects the native Anthropic preset with the OAuth
+        // credential resolved separately.
         models: this.init.models ?? (await createLoomPiModels()),
         agentLoop: this.init.agentLoop ?? (await import('@earendil-works/pi-agent-core')).agentLoop,
         connectRemoteMcp: this.init.connectRemoteMcp ?? connectPiRemoteMcp,
@@ -2015,11 +1856,9 @@ export class PiAgentAdapter implements ExecutionAdapter {
   }
 
   /**
-   * Build the pi-side tool surface from the caller's declarative mounts,
-   * filtered by the same effective allowedTools the SDK lane enforces
-   * (`options.tools` — already `ctx.allowedTools ?? registry` resolved by
-   * buildQueryOptions). Wire names are `mcp__<server>__<tool>` on both
-   * engines so the allowlist match is verbatim.
+   * Build the pi-side tool surface from declarative mounts, filtered by the same
+   * effective allowedTools the SDK lane enforces. Wire names stay
+   * `mcp__<server>__<tool>` so allowlist matching is verbatim.
    */
   private async buildTools(
     args: ExecutionAdapterStartupArgs,
@@ -2049,7 +1888,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
           tools.push(
             ...buildPiDomainAgentTools({
               ...mount.options,
-              // YUK-1557 — the runner owns the active run identity; it stamps
+              // YUK-1557 — the runner owns the active run identity and stamps
               // every bridge row even when a tool's spend owner uses another id.
               logTaskRunId: args.runId,
             }),
@@ -2077,11 +1916,9 @@ export class PiAgentAdapter implements ExecutionAdapter {
 
   async startup(args: ExecutionAdapterStartupArgs): Promise<PreparedExecutionQuery> {
     const deps = await this.resolveDeps();
-    // Fail fast inside admission but before the durable attempt row: an
-    // unknown model or unresolved credential is a config error, not a paid
-    // call. Both auth modes carry the credential value on `resolved.apiKey`
-    // (oauth = the sk-ant-oat* subscription token the anthropic-messages
-    // driver switches to Bearer).
+    // Fail fast before the durable attempt row: an unknown model or unresolved
+    // credential is a config error, not a paid call. Both auth modes carry the
+    // credential on `resolved.apiKey`.
     if (
       typeof args.options.resume === 'string' &&
       args.options.resume.length > 0 &&
@@ -2097,9 +1934,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
         `pi adapter cannot execute '${args.resolved.provider}/${args.resolved.model}': protocol or required catalog facts (endpoint, reasoning, input modalities, context/output limits) are unknown. Model selection is unchanged.`,
       );
     }
-    // YUK-1547 — the wire's reasoning_effort must have exactly one writer:
-    // the options.effort tier (pi ThinkingLevel map) and the per-task
-    // native reasoning_effort passthrough both serialize onto the same key.
+    // YUK-1547 — reasoning_effort must have exactly one writer: options.effort
+    // and the native passthrough both serialize onto the same wire key.
     if (
       args.options.effort !== undefined &&
       args.resolved.nativeReasoningParams?.reasoning_effort !== undefined
@@ -2109,11 +1945,10 @@ export class PiAgentAdapter implements ExecutionAdapter {
       );
     }
     const { tools, remoteHandles } = await this.buildTools(args, deps);
-    // Fail-closed rollout rule: a tool-loop kind pinned to pi but carrying no
-    // pi-visible tools would silently run tool-less — reject at startup.
-    // Exception: an explicitly empty `options.tools` allowlist is the caller's
-    // declared intent to run tool-less (CopilotTask authoritativeReply turns
-    // do exactly this), not a mount misconfiguration.
+    // Fail-closed rollout rule: a tool-loop kind with no pi-visible tools would
+    // silently run tool-less. An explicitly empty `options.tools` is the caller's
+    // declared intent to do exactly that (CopilotTask authoritativeReply), not a
+    // mount misconfiguration.
     const explicitlyToolLess = Array.isArray(args.options.tools) && args.options.tools.length === 0;
     if (tasks[args.kind].needsToolCall && tools.length === 0 && !explicitlyToolLess) {
       throw new Error(

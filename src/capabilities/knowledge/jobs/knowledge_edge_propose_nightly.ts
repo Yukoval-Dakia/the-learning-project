@@ -1,9 +1,5 @@
-// Nightly knowledge-edge proposal. One batch per day over recent failure attempts,
-// looking for cross-attempt graph patterns.
-//
-// The old node-propose partner at 02:00 is gone, but edge proposal is topology
-// maintenance rather than per-attempt node creation, so it stays. The 02:30 slot is
-// harmless and moving it costs a queue/schedule re-registration.
+// Nightly knowledge-edge proposal over recent failure attempts, looking for
+// cross-attempt graph patterns. Propose-only; the user accepts in the inbox.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
@@ -144,12 +140,8 @@ export interface NightlyResult {
 
 /**
  * Scan failure attempts forward from the watermark and run the propose task once.
- * A swallowed failure or missed cron no longer drops events, because the cursor only
- * advances past successfully processed batches.
- *
- * First run falls back to 24h. Later runs page forward from the cursor, capped per
- * run. An empty tail is a no-op. The cursor advances only when `ok` is true, even if
- * the batch produced zero proposals; otherwise a declined batch would rescan forever.
+ * The cursor advances only when `ok` is true, even for a zero-proposal batch, so a
+ * declined batch is not rescanned. First run falls back to 24h; later runs page forward.
  */
 export async function runKnowledgeEdgeProposeNightly(
   db: Db,
@@ -191,7 +183,6 @@ export async function runKnowledgeEdgeProposeNightly(
   }
 
   const runTaskFn: RunTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
-  // Pull llm_attempted out: it is a boolean upstream and a number in this result.
   const {
     ok,
     llm_attempted: llmAttempted,
@@ -200,7 +191,6 @@ export async function runKnowledgeEdgeProposeNightly(
     db,
     recentFailures: attempts,
     runTaskFn,
-    // Thread env so the reconcile judge uses the same config as the rest of the run.
     env: process.env,
     providerAttempt: deps.providerAttempt,
     pgbossJobId: deps.pgbossJobId,
