@@ -208,7 +208,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 常用检查 / PR 前门禁：
 
 ```bash
-pnpm typecheck        # tsc --noEmit
+pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
 pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
