@@ -17,18 +17,17 @@
 | 设计概念 | 已落地 | 备注 |
 |---|---|---|
 | `learning_item` 表 + `completion_evidence` 表 | ✅ schema | 1c.1 已存在 |
-| 6 状态机 `pending / in_progress / done / dismissed / resting / archived` | ✅ Phase 1c.2 Cand 2 落定（commit `7fb58e0`） | 转换矩阵 + UI tabs + revival 流程 |
-| `knowledge_ids` 关联 + UI 显示 | ✅ Phase 1c.2 commit `dd50a3a` | 创建 + per-row "改知识点" 内联编辑 |
-| `parent_learning_item_id` / `child_learning_item_ids[]`（hub+atomic 层级） | ✅ Phase 1d commit `ac4d4e3` | GET /api/learning-items/[id] 返 parent + children；PATCH 支持 set/clear parent（cycle prevention）；POST 接 optional parent；/learning-items/[id] 详情页 inline 编辑 + parent breadcrumb + children list + parent picker。**派生约定**：有子项 = hub，没子项 = atomic；不引入 `kind` enum |
+| 状态机 `pending / in_progress / done / resting` | ✅ Phase 1c.2 Cand 2 落定（commit `7fb58e0`） | event 层只有这 4 态（`src/core/schema/event/learning-item-events.ts`）；dismiss/archive 不在 status enum |
+| `knowledge_ids` 关联 | ✅ Phase 1c.2 commit `dd50a3a` | `learning_item.knowledge_ids` jsonb + GIN 索引 |
+| `parent_learning_item_id` / `child_learning_item_ids[]`（hub+atomic 层级） | ✅ Phase 1d commit `ac4d4e3` | 层级字段在 `learning_item` 表；读路径 `src/server/learning-items/queries.ts`，agent 经 `get_learning_item_context`。**派生约定**：有子项 = hub，没子项 = atomic；不引入 `kind` enum |
 | 优先级 score 公式（urgency·0.4 / weakness·0.3 / recency·0.3 / pin） | ❌ 现按 status + updated_at 排序 | Phase 1d |
 | AI 主动提议完成（`event(action='propose')` payload `kind='completion'`） | ❌ | Phase 2 dreaming worker；走 [`src/core/schema/proposal.ts`](../../src/core/schema/proposal.ts) AiProposal union — `completion` / `relearn` discriminants 已在 schema |
 | 复学机制（done → resting → propose relearn） | ⚠️ resting 状态在；触发链未接 | Phase 2 |
-| Note artifact 联动（hub ↔ note_hub 1:1; atomic ↔ note_atomic 1:1） | ❌ | Phase 2B Learning Intent Orchestrator |
-| 4 个来源（quiz_answer / manual / note_gen / dreaming） | ⚠️ 现只跑 `manual` 一个 source；`learning_intent` 入口 Phase 2B 加 | quiz_answer 等 Phase 2 |
+| Note artifact 联动（hub ↔ note_hub; atomic ↔ note_atomic） | ✅ | `src/capabilities/agency/server/learning-intent.ts` accept 时同步建 artifact 并写 `primary_artifact_id` |
+| 4 个来源（quiz_answer / manual / learning_intent / ai_dream） | ⚠️ 现只写 `learning_intent`（`src/capabilities/agency/server/learning-intent.ts`）与 `ai_dream`（`src/capabilities/ingestion/server/legacy-record-appliers.ts`） | quiz_answer / manual 未接 |
 
 **当前 UI 入口**：
-- `/learning-items` — 创建 + 6 状态切换 + knowledge_ids 编辑 + 软删除 + title 跳转 detail
-- `/learning-items/[id]` — 内联编辑 + 状态转移 + parent breadcrumb + children list + parent picker（hub/atomic 层级 read+write）
+- 无独立 `/learning-items` 页面；学习项在 note 页「相关学习项」区块展示（`src/capabilities/notes/ui/NoteReaderPage.tsx`）
 
 ---
 
@@ -166,8 +165,8 @@ event(action='propose', subject_kind='learning_item', subject_id=<learning_item_
 ```
 
 进 dreaming 待审核区（`GET /api/proposals?status=pending`）。用户次日打开 app 看到通知 → 一键 approve / dismiss：
-- approve → 创建 `completion_evidence(path=ai_propose)` + `learning_item.status='done'`（`POST /api/proposals/[id]/accept`）
-- dismiss → 该 LearningItem 短期内（默认 7 天）AI 不再提议同一项（`POST /api/proposals/[id]/dismiss`，冷却由 `proposal_signals` 跟踪）
+- approve → 创建 `completion_evidence(path=ai_propose)` + `learning_item.status='done'`（`POST /api/proposals/[id]/decisions` body `{"decision":"accept"}`）
+- dismiss → 该 LearningItem 短期内（默认 7 天）AI 不再提议同一项（`POST /api/proposals/[id]/decisions` body `{"decision":"dismiss"}`，冷却由 `proposal_signals` 跟踪）
 
 ### 3.3 CompletionEvidence
 
