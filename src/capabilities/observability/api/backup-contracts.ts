@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { OPENAPI_BINARY_CONTENT_DESCRIPTION } from '@/kernel/http-contracts';
 
 /**
- * `include_assets=1` is the only truthy value at runtime. Other string values
- * remain accepted and behave like the omitted query parameter for compatibility.
+ * Only `include_assets=1` is truthy at runtime. Other values stay accepted and
+ * behave like an omitted parameter for compatibility.
  */
 export const BackupExportQuerySchema = z.object({
   include_assets: z.string().optional(),
