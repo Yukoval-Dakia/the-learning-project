@@ -1,18 +1,12 @@
-// YUK-870 (F3.5b) — SessionSummaryTask is Practice-owned.
-//
-// Moved verbatim from the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
-// definition). The output is a plain-text ≤120-char summary — NOT JSON — so
-// the owned output contract mirrors the summary runner's consumer
-// (src/capabilities/practice/server/session-summary.ts): trim, clamp to 240 chars, require non-empty.
-// This was the LAST transitional quarry entry; with it owned, the central
-// semantic quarry holds zero entries (quarry deletion is YUK-885).
+// SessionSummaryTask is Practice-owned. The output is plain text, not JSON; the
+// runner's consumer (src/capabilities/practice/server/session-summary.ts) trims,
+// clamps to 240 chars and requires non-empty.
 
 import { z } from 'zod';
 import { causeTaxonomyList } from '@/ai/cause-prompt';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import type { SubjectProfile } from '@/subjects/profile';
 
-// Legacy quarry alias preserved verbatim inside the moved definitions.
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
 function buildSessionSummaryPrompt(profile: SubjectProfile): string {
@@ -46,18 +40,11 @@ export interface SessionSummaryInput {
   }[];
 }
 
-/**
- * Plain-text summary — any non-empty text is shape-valid; the 240-char soft cap
- * lives in the parser (the prompt asks for ≤120 but the runner clamps instead
- * of rejecting so an occasional overshoot doesn't lose the summary).
- */
+/** Any non-empty text is shape-valid; the parser clamps to 240 instead of rejecting. */
 export const SessionSummaryOutputSchema = z.string().min(1);
 export type SessionSummaryOutput = z.infer<typeof SessionSummaryOutputSchema>;
 
-/**
- * Mirrors the summary runner consumer exactly: trim, clamp to 240 chars,
- * require non-empty (empty → the runner reports skipped:no_events).
- */
+/** Trim, clamp to 240, require non-empty (empty → runner reports skipped:no_events). */
 export function parseSessionSummaryOutput(text: string): SessionSummaryOutput {
   return SessionSummaryOutputSchema.parse(text.trim().slice(0, 240));
 }
@@ -69,12 +56,10 @@ export const sessionSummaryTaskSpec = {
     description: '复习 session 结束后写观察与建议；题数/正确率由服务端按有效判分模板生成',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // mimo-v2.5-pro 比 Anthropic haiku 慢，60s 给点余量
     budget: { ...DEFAULT_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
     allowedTools: [],
-    // getTaskSystemPrompt(task, profile) in src/ai/task-prompts.ts; this
     prompt: { kind: 'profile', build: buildSessionSummaryPrompt },
   },
   outputSchema: SessionSummaryOutputSchema,

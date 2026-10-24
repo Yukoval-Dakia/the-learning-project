@@ -3,25 +3,21 @@ import { QuizVerificationResult, type QuizVerificationResultT } from '@/core/sch
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from './parse-output';
 
-// Search-grounded QuizGen (T-SQ) — QuizVerifyTask prompt. Single-shot verifier.
+// Search-grounded QuizGen — QuizVerifyTask, single-shot closed-book verifier.
 //
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md
-//   §1  CLOSED-BOOK: trusts the QuizGen agent's self-reported source_refs; it
-//       does NOT run its own Tavily loop this wave (default fork).
-//   §5  Three checks — fact/grounding vs source_refs, plagiarism/copy_safety,
-//       knowledge-hit — rolled into a two-axis QuizVerificationResult that the
-//       Q5 handler gates Option B on (pass → promote draft→active + FSRS enroll).
+// Trusts the generator's self-reported source_refs and runs three checks —
+// grounding, copy_safety, knowledge_hit — rolled into a two-axis
+// QuizVerificationResult that the Q5 handler gates Option B on.
 //
-// The handler ALSO computes a deterministic normalized n-gram overlap between
-// the prompt and the source snippets (the question's own grounded material
-// excluded) and that gate alone owns the persisted 'too_close' verdict; this
-// prompt's copy_safety is the model's independent advisory read — a model-only
-// 'too_close' routes the draft to human review instead of blocking it. This
-// prompt is SHARED (quiz_verify job + the learning-content validation lane),
-// so it deliberately states judgment criteria only; consequence routing
-// differs per consumer (quiz_verify: review/n-gram hard gate;
-// learning-content: contentAdmitted=false) and lives in those callers — a
-// consequence description here could bias the verdict itself.
+// The handler also computes deterministic n-gram overlap (excluding the question's
+// own grounded material) and that gate alone owns the persisted 'too_close'
+// verdict; this prompt's copy_safety is an independent advisory read, so a
+// model-only too_close routes to review instead of blocking.
+//
+// The prompt is shared by the quiz_verify job and the learning-content validation
+// lane, so it states judgment criteria only; consequence routing lives in callers.
+//
+// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1/§5
 function buildQuizVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题质检员，复核一道练习题草稿（检索出题、据材出题或闭卷生成，由输入决定）。输入 { question: { id, prompt_md, reference_md, choices_md, kind, difficulty, knowledge_ids }, knowledge_context: [{ id, name, ... }], source_pack: { query_plan, searched_at, tool }, source_refs: [{ url, title, snippet?, used_for, extracted }], self_copy_safety: { verdict, max_overlap?, checked_by }, material?: { title, body_md }, remote_tool_evidence?: [{ tool_name, tool_use_id, root_call, input, output?, failure?: { error, is_interrupt? } }] }。material 只在「据材出题」（material_grounded，tier 3）时出现：它是出题所据的**真实素材原文**全文。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -70,7 +66,6 @@ export const quizVerifyTaskSpec = {
       "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
-    // Single structured-output call (mirrors VariantVerifyTask).
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },
     needsToolCall: false,
     isMultimodal: false,
