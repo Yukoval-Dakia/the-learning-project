@@ -18,12 +18,12 @@
 ## capability 契约
 
 - 组合根是静态数组：`src/capabilities/index.ts` 按固定顺序登记全部 capability manifest，交给 `buildHonoApp`；成员与顺序以该文件为准。
-- `manifest.ts` 只声明归属：`name`、`events.actions`、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`（`src/kernel/manifest.ts`）。`validateComposition()` 在启动与 CI 校验全局唯一性、路径参数与响应契约。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
-- `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 访问 capability 只能走这两个入口；capability 之间不得深层 import，包间调用走 manifest 公共接口。审计把这两个文件名当唯一合法入口（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
+- `manifest.ts` 只声明归属（`CapabilityManifest`，`src/kernel/manifest.ts`）：必填 `name`、`description`；可选 `events.actions`、`subscriptions.handlers`（`EventSubscriptionDecl[]`）、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`。`validateComposition()` 在启动（`server/app.ts`）与 CI（`pnpm audit:api-contracts` → `scripts/audit-api-contracts.ts`）校验包名、event action、订阅 `id@vN`（`actions` 必须已被某个包声明、`load` 必填）、route key / `operationId` / 路径参数 / 响应契约、job 名与 DAG、proposal kind、DomainTool 名、UI page 路由的全局唯一性。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
+- `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 新增依赖只能落在别人 `public.ts` / `ui-public.ts`（或 kernel 端口），私有模块与 capabilities barrel 一律拒；capability 之间的 value import 按 owner 对计数，同样由 baseline 冻结（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
 - kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
 - `pnpm audit:capability-boundaries` 是精确 ratchet：记录 `capability → server`、`server → capability deep`、跨 capability value 三类边数，变化必须在同一 PR 登记进 `scripts/capability-boundary-baseline.json`。三类边数与当前非平凡 SCC 构成以该文件的 `debts` 为准。
 - `pnpm audit:architecture-deepening` 再查深层 import、公开读环白名单、隐藏写、命令环、TaskSpec / DomainTool / proposal / queue 归属、provider lane census 与依赖上限（严格小于 `DEPENDENCY_CEILINGS`，见 `scripts/audit-architecture-deepening.ts`）。
-- TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 静态聚合；`src/capabilities/task-registry.ts` 向 `src/ai/` 提供冻结投影。细节见「五、AI 任务层」。
+- TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 用 `composeTaskCatalog` + `expectedCount` 静态聚合；`src/capabilities/task-registry.ts` 用 `createTaskRegistry` 冻同一 catalog，并导出预算 / prompt readers 给 route 与 job。细节见「五、AI 任务层」。
 
 ---
 
@@ -177,21 +177,14 @@ TaskSpec 由 capability 拥有：`src/capabilities/<name>/tasks/index.ts` 用 `d
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-08-08 alignment / YUK-1025 P4 更新**: 现行 runner 在 `src/server/ai/runner.ts`，唯一
-> 执行引擎是 pi（`@earendil-works/pi-agent-core` in-process agentLoop，`pi-agent-adapter.ts`）。
-> Tool transport 使用 `piToolMounts + allowedTools + maxTurns`（wire name `mcp__<server>__<tool>`）。
-> DomainTool registry、capability manifest inventory 与 in-process MCP bridge 已运行；具体产品工具
-> 逐步迁回 owner capability，中央层只负责组合、预算与 transport。
+现行 runner 在 `src/server/ai/runner.ts`，唯一执行引擎是 pi（`@earendil-works/pi-agent-core` 的 in-process `agentLoop`，`pi-agent-adapter.ts`）。Tool transport 用 `piToolMounts` + `allowedTools` + `maxTurns`（wire name `mcp__<server>__<tool>`）。DomainTool registry、capability manifest inventory 与 in-process MCP bridge 都在跑；产品工具归 owner capability，中央层只负责组合、预算与 transport。
 
-**当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker；下述规则语义不变，仅路由入口从 `app/api/ai/[task]` 改为各 capability 包 `manifest.ts` 声明的 route）：
+**当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场，AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker）：
 
-- generic `/api/ai/[task]` 已整体退场；所有 task 由 capability 领域 route / worker 调用。
-- SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
-- `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route/worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 现由 `knowledge_maintenance_nightly` cron in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
-- `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
-- 本地 `loom` MCP server 从 capability manifests 装配 typed DomainTools；它是进程内 transport，
-  不对外暴露 endpoint。`attribute_mistake` / `propose_variant` 的 concrete adapters 已归 practice，
-  `author_question` 的 variant 分支只走其窄 public operation。
+- SubjectProfile-driven task 必须走领域 route / worker，由入口解析并传入正确 `SubjectProfile`。
+- `needsToolCall: true` 的 task 必须走领域 route / worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 由 `knowledge_maintenance_nightly` 夜间 DAG job in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
+- `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口。
+- 本地 `loom` MCP server 从 capability manifests 装配 typed DomainTools，是进程内 transport，不对外暴露 endpoint。`attribute_mistake` / `propose_variant` 的 concrete adapters 归 practice，`author_question` 的 variant 分支只走其窄 public operation。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
 **DomainTool 合约**：定义在 `src/kernel/tools/types.ts`（`effect: read | propose | write | control`，另有 `costClass`、`mirrorEvent` 与可选 `safeHandoff`），由 manifest inventory + `src/server/ai/tools/registry.ts` 消费；字段以该文件为准，本文不复制。
@@ -205,28 +198,34 @@ Copilot 由服务端持久受理和顺序执行，浏览器只订阅；没有独
 ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审计，不能笼统视为 drain-only
 历史代码。安装排空与保留名称的边界见 ADR-0063，pi 机制见 ADR-0065。
 
-**循环控制现状**：
+**循环控制**：
 
-`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi 1.0 adapter 的 `finishTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+- `TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi adapter 用 `finishTurn` 计数，超限出 `error_max_turns` 终态）；`timeout` 由 `AbortController` 协作中止（`src/server/ai/runner.ts`、`pi-agent-adapter.ts`）。
+- `TaskBudget.maxCost` 在 chat/pi lane 不设美元闸——pi catalog 成本是估算值，mimo 不回 cost，subscription OAuth 是 flat quota；只有 typed lane 自己按每次 wire attempt 预扣 reserve 并累计封顶（`src/server/ai/typed-primitive-runner.ts`）。
+- `TaskBudget.transientRetries` 只控**同一已解析目标**的进程内瞬时重试：chat/pi lane 上只有两个 vision judge（`StepsJudgeTask` / `MultimodalDirectJudgeTask`）opt-in，且受 `run-lifecycle.ts` 的 `transientRetryEnabled` / `classifyLifecycleRetry` 门控（ctx 显式开启、无 `override` / `modelBinding` / 全局 override 钉死、白名单瞬时分类、次数封顶、elapsed 未超 `RETRY_ELAPSED_CAP_MS`）；typed lane 由 `typed-primitive-runner.ts` 自行按 `1 + budget.transientRetries` 重试。
+- durable job 的瞬时层只靠 pg-boss 显式重投（`retryLimit=2` + 30s 退避，`src/server/boss/queue-config.ts`），不与进程内重试叠加。
+- provider API retry 默认 2 次，运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖（`pi-agent-adapter.ts`），让 5xx 终态在任务预算内回到 loom 分类层。
+- provider session admission（YUK-842）：resolved provider 后先用 Postgres 短事务拿 lane 槽与 start reservation，排队不计 model timeout；在 slot 内以 45s initial lease 调 adapter `startup()`（只做 model/auth 预检，不发 prompt），成功后用 claim-token CAS 切到 15s steady lease，才写 `ai_task_runs`、启动剩余 model timeout 并调一次 `query()`。lease protocol v2 计入 policy fingerprint；只有 heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry；`hard_reclaim_at` = 45s startup + model timeout + abort grace。开关与策略是 `AI_PROVIDER_SESSION_ADMISSION_MODE` / `AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON`（默认 `off`），运维见 `docs/runbooks/provider-session-admission.md`。
+- request scope：`server/app.ts` 给每个 `/api/*` 请求开一个 90s absolute provider-session deadline（`HTTP_PROVIDER_SESSION_BUDGET_MS`，`src/kernel/http.ts`），runner 取它与显式 caller deadline 的较早者；adapter 返回后重新校验 lease / abort / deadline，迟到 success 不记成功。durable worker 没有 HTTP scope，保留 task 完整预算；Copilot durable job 用 `DURABLE_OWNER_SETTLEMENT_BUDGET_MS`（45min 执行 + 30s grace）作显式 deadline（`copilot_run.ts`、`copilot-run-settlement.ts`）。
+- 同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽避免自锁，parallel sibling 必须排队或占另一 root 槽，每个 child 仍独立记 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失即 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离（`src/server/ai/provider-session-admission.ts`）。
 
 ### 5.3 成本控制
 
-- 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
-- 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
+- 同步 / 异步不是任务类型，而是入口：用户操作触发的 task 在领域 route 的调用链里同步跑；夜间与重活由 capability manifest 声明的 pg-boss job 跑同一批 task，名单以各包 `manifest.ts` 的 `jobs.handlers` 为准。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
-- 每次调用写 `ai_task_runs` / `cost_ledger`；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
+- 每次调用写 `ai_task_runs` / `cost_ledger`（`entry_kind='attempt'` 每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
 - 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；M3/M4/M5 按 ADR 的逐任务/逐子项给出 `parts[]`（各有分子分母与 `basis`），M4 以窗口结束时刻的收件箱投影回放积压；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
-- **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
+- **尚未实现**：通用 per-run 美元硬预算（chat/pi lane 无 contractual USD 信号可闸，只有 typed lane 自闸）、vision judge 以外的跨 provider fallback、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：vision judge 的跨 lane fallback（`VISION_JUDGE_PROVIDER` / `VISION_JUDGE_MODEL` 由 `src/server/ai/vision-judge-config.ts` 读取，`src/capabilities/practice/server/judge/provider-lane-fallback.ts` 消费）、同目标瞬时重试、队列显式 retryLimit、stuck-run reconcile sweeper（`ai_task_run_reconcile_nightly`）、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
 
 这些概念保留，但不要和产品内 runtime tool 混在一起：
 
-- **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **in-process tool bridge**（当前可用）：领域 route 可注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露
-- **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
-- **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/yuwen/` 的目录边界
-- **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
+- **Skill**（提示词包）：`src/subjects/<subject>/skills/<name>/SKILL.md`，跨科包放 `src/subjects/_shared/skills/`；调用方读正文后经 `piSkillDocs` 拼进 systemPrompt，缺包不注入、回落到 prompt 正文（`src/subjects/copilot-skills.ts`、`quiz-gen-skills.ts`、`note-skills.ts`）。
+- **in-process tool bridge**（现役）：领域 route / job 注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露 endpoint。
+- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/server/ai/mcp/exa.ts`）；其余来源按需接。
+- **Standalone MCP Server**（对外暴露 resources + tools）：未实现；未来复用 DomainTool registry，不重写工具定义。
+- **Plugin**（学科 bundle）：学科专属逻辑放 `src/subjects/<subject>/`，跨科逻辑放 `core/`。
 
 ### 5.5 Tool calling 循环位置
 
@@ -234,17 +233,12 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 #### 实现
 
-> YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——下列 dispatch 规则的语义由各 capability 包 `manifest.ts` 声明的领域 route 承接（旧 `app/api/ai/[task]/route.ts` 描述保留作历史对照）。
-
-- ~~`app/api/ai/[task]/route.ts`~~（已退场；YUK-321 M5）：
-  - ~~SubjectProfile-driven task → 400 `profile_required`~~ 走领域 route
-  - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
-  - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
-- 领域 route（例如 `/api/teaching-sessions/*`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
-- 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行
-- 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
-- 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
+- generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
+- AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。
+- 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
+- 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
+- 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。
 
 #### 为什么不在 client 跑
 
@@ -253,7 +247,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 #### 与 Dreaming 实施栈的关系
 
-Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler 调 `runTask` / `streamTask` 同样入口。区别只是触发方式（HTTP 请求 vs pg-boss scheduled job / queued job）和写入对象（event proposal、artifact、question draft 等）。
+Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler 调 `runTask` / `runAgentTask` / `streamTask` 同一入口。区别只是触发方式（HTTP 请求 vs pg-boss scheduled job / queued job）和写入对象（event proposal、artifact、question draft 等）。
 
 ---
 
