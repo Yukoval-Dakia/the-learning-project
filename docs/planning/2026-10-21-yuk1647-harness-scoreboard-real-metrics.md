@@ -20,7 +20,7 @@
 | `quiz_gen_batches` | 丢弃批次数 / 终止批次数 | `event`（`experimental:quiz_gen`） | 终止 = `outcome ∈ success,failure`。失败且 `failure_stage ∈ {event,dispatch}` 时题面已持久化，不算丢弃；`plan/producer/persist` 失败计入丢弃。 |
 | `source_consistency_questions` | 被拒题数 / 有终判题数 | `event`（`experimental:source_verify`，`subject_kind='question'`） | 同一题在窗口内任一终判为 `failure` 即计为被拒；`outcome=error`（瞬态）不计入分子或分母。 |
 | `note_generation_attempts` | 失败尝试数 / 终止尝试数 | `event`（`experimental:artifact_lifecycle`，`actor_ref='note_generate'`，`op='set_generation_status'`，`generation_status ∈ {ready,failed}`） | 每次付费生成尝试一条终态迁移，重试分别计数。 |
-| `knowledge_review_writes` | 未落地写入数 / 写入尝试数 | `tool_call_log`（`task_kind='KnowledgeReviewTask'`，propose 工具） | 落地 = 无 `error_reason` 且输出 `status='proposed'`（旧 `write_proposal` 以 `proposal_id` 判定）；`1 - value` 即 KR 写入成功率。 |
+| `knowledge_review_writes` | 未落地写入数 / 写入尝试数 | `tool_call_log`（`task_kind='KnowledgeReviewTask'`，propose 工具） | 落地 = 无 `error_reason` 且确实写入提案事件：共享工具 `status='proposed'`；旧 `write_proposal` 为 `kind='tree_mutation'` 且带 `proposal_id`，或 `kind='knowledge_edge_propose'` 且带 `event_id`（成功边写入没有 `proposal_id`）。`skipped_duplicate` / `skipped_cooldown` / `rubric_rejected` 不落地。`1 - value` 即 KR 写入成功率。 |
 
 ### M4 收件箱积压（`m4_inbox_backlog.parts`）
 
@@ -37,7 +37,7 @@
 
 | key | 分子 / 分母 | 原始表 | 口径 |
 |---|---|---|---|
-| `new_question_duplicates` | 重复题数 / 窗口新建题数 | `event`（`experimental:question_draft_submit` 回执、`experimental:quiz_gen`）+ `question.created_at` | 重复 = 提交回执 `status='conflict'` 且 `reason ∈ {duplicate_exact,duplicate_source,near_dup}` + QuizGen `exact_duplicate_count`。分母 = 窗口内 `question` 行数（含 draft；提升不改 `created_at`）。比值可超过 1。 |
+| `new_question_duplicates` | 重复题数 / 窗口新建题数 | `event`（`experimental:question_draft_submit` 回执、`experimental:quiz_gen`）+ `question.created_at` | 重复 = 提交回执 `status='conflict'` 且 `reason ∈ {duplicate_exact,duplicate_source,near_dup}` + QuizGen `exact_duplicate_count`；同一逻辑提交只计一次（候选提交内层 `${request_id}:submit` 回执折入外层调用方回执）。分母 = 窗口内 `question` 行数（含 draft；提升不改 `created_at`）。比值可超过 1。 |
 | `same_name_same_parent_pairs` | 双胞胎对数（gauge） | `knowledge`（窗口内 `created_at`） | 按 `lower(trim(name)) + parent_id` 分组，每组多出的行数即对数；与旧代理「仅同名」的区别是同父约束。 |
 
 ## 10-07～10-18 重算（NOT_RUN，待 owner 批准）
@@ -101,4 +101,4 @@ DATABASE_URL='postgres://<read-only-user>:<password>@<test-host>:5432/<test-db>'
 
 - C4-4③ 读侧「目标不存在/版本不匹配/已满足」统一折叠实现后，把 M4 `closable` 切到该 owner，删除本地谓词。
 - M1 的 `empty` 产出需要 C2-3 的 `outcome` 列；在此之前 M1 保持 failure-only。
-- `question_draft_submit` 回执的 `replayed` / 重试语义若被证实会重复计数，M5 分子需要按 `request_id` 去重；本轮未改回执写入。
+- `question_draft_submit` 回执已在 M5 读取侧按逻辑 `request_id` 去重（候选提交的 `:submit` 内层回执折入外层调用方回执），回执写入语义未改；若未来出现同一逻辑提交换 `request_id` 重试，仍需另定归并键。
