@@ -48,6 +48,9 @@ const KR_WRITE_TOOLS = [
 ];
 
 const DUPLICATE_SUBMIT_REASONS = new Set(['duplicate_exact', 'duplicate_source', 'near_dup']);
+// Candidate submits claim two idempotency domains in one transaction: the domain
+// receipt under `${requestId}:submit` and the caller receipt under `${requestId}`.
+const SUBMIT_DOMAIN_RECEIPT_SUFFIX = ':submit';
 
 function ratio(numerator: number, denominator: number): number | null {
   return denominator > 0 ? numerator / denominator : null;
@@ -290,7 +293,7 @@ async function computeM3(
       numerator: krDropped,
       denominator: krAttempts,
       basis: 'measured',
-      note: 'KnowledgeReviewTask proposal tool calls; landed = no error_reason and status=proposed (legacy write_proposal: proposal_id). 1 - value is the KR write success rate.',
+      note: 'KnowledgeReviewTask proposal tool calls; landed = no error_reason and a proposal event was written (shared tools status=proposed; legacy write_proposal kind=tree_mutation with proposal_id or knowledge_edge_propose with event_id). Skipped dedup/cooldown and rubric-rejected writes do not land. 1 - value is the KR write success rate.',
     }),
   ];
   return {
@@ -541,17 +544,38 @@ async function computeM5(
     .select({ payload: event.payload })
     .from(event)
     .where(and(eq(event.action, 'experimental:question_draft_submit'), inWindow(event.created_at)));
-  let submitDuplicates = 0;
+  const submitRequestIds = new Set<string>();
   for (const row of submitRows) {
-    const receipt = asRecord(asRecord(row.payload).receipt);
-    if (
-      receipt.status === 'conflict' &&
-      typeof receipt.reason === 'string' &&
-      DUPLICATE_SUBMIT_REASONS.has(receipt.reason)
-    ) {
-      submitDuplicates += 1;
-    }
+    const requestId = asRecord(row.payload).request_id;
+    if (typeof requestId === 'string' && requestId.length > 0) submitRequestIds.add(requestId);
   }
+  const duplicateSubmitRequestIds = new Set<string>();
+  let anonymousSubmitDuplicates = 0;
+  for (const row of submitRows) {
+    const payload = asRecord(row.payload);
+    const receipt = asRecord(payload.receipt);
+    if (
+      receipt.status !== 'conflict' ||
+      typeof receipt.reason !== 'string' ||
+      !DUPLICATE_SUBMIT_REASONS.has(receipt.reason)
+    ) {
+      continue;
+    }
+    const requestId = typeof payload.request_id === 'string' ? payload.request_id : '';
+    if (requestId.length === 0) {
+      anonymousSubmitDuplicates += 1;
+      continue;
+    }
+    // Fold the nested domain receipt into its caller receipt when both exist,
+    // then count each logical submission once even if a receipt repeats.
+    const callerRequestId =
+      requestId.endsWith(SUBMIT_DOMAIN_RECEIPT_SUFFIX) &&
+      submitRequestIds.has(requestId.slice(0, -SUBMIT_DOMAIN_RECEIPT_SUFFIX.length))
+        ? requestId.slice(0, -SUBMIT_DOMAIN_RECEIPT_SUFFIX.length)
+        : requestId;
+    duplicateSubmitRequestIds.add(callerRequestId);
+  }
+  const submitDuplicates = duplicateSubmitRequestIds.size + anonymousSubmitDuplicates;
 
   const quizGenRows = await db
     .select({ payload: event.payload })
@@ -582,7 +606,7 @@ async function computeM5(
       numerator: duplicates,
       denominator: newQuestionCount,
       basis: 'measured',
-      note: 'numerator = question_draft_submit duplicate_exact/duplicate_source/near_dup conflicts + QuizGen exact_duplicate_count; denominator = question rows created in the window (drafts included; promotion does not move created_at). The ratio can exceed 1.',
+      note: 'numerator = duplicate_exact/duplicate_source/near_dup question_draft_submit conflicts (one per logical request_id; nested candidate :submit receipts fold into their caller receipt) + QuizGen exact_duplicate_count; denominator = question rows created in the window (drafts included; promotion does not move created_at). The ratio can exceed 1.',
     }),
     metricPart({
       key: 'same_name_same_parent_pairs',
@@ -602,9 +626,18 @@ async function computeM5(
 function proposalWriteLanded(row: { output: unknown; error: string | null }): boolean {
   if (row.error !== null) return false;
   const output = asRecord(row.output);
+  // Shared propose tools report the outcome directly.
   if (output.status === 'proposed') return true;
-  // Pre-YUK-1553 custom tool returned { proposal_id, kind } with no status.
-  return typeof output.proposal_id === 'string' && typeof output.status !== 'string';
+  // Pre-YUK-1553 write_proposal had no status. Successful edge writes carry
+  // event_id (no proposal_id); skipped dedup/cooldown and rubric-rejected also
+  // carry ids, but wrote no pending proposal, so only the success kinds land.
+  if (output.kind === 'tree_mutation') {
+    return typeof output.proposal_id === 'string' && output.proposal_id.length > 0;
+  }
+  if (output.kind === 'knowledge_edge_propose') {
+    return typeof output.event_id === 'string' && output.event_id.length > 0;
+  }
+  return false;
 }
 
 export async function computeHarnessScoreboard(
