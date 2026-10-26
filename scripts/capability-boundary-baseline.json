@@ -2905,6 +2905,51 @@
       "from": 11,
       "to": 9,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "CreateIngestionSessionBody",
+      "targetModule": "src/capabilities/ingestion/api/contracts.ts",
+      "targetSymbol": "CreateIngestionSessionBody",
+      "owner": "ingestion",
+      "consumers": [{ "file": "server/start/ingestion-session-create-operation.ts", "line": 20 }],
+      "evidence": "The authenticated host callback awaits the ingestion public import at AST line 20, with its module path at line 21, then invokes the existing schema at line 23. Context type imports are not runtime consumers.",
+      "rationale": "Ingestion retains its canonical creation input contract. Start validates with this existing schema after authorization inside the original 90-second provider scope; it introduces no second codec, domain owner, savepoint orchestration or input policy. The module ruling binds only this exact symbol and target, not the whole barrel.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f6af7bbc-fbdf-4f90-af2f-c752304c0dc7",
+      "date": "2026-10-26"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "createIngestionSession",
+      "targetModule": "src/capabilities/ingestion/server/create-session.ts",
+      "targetSymbol": "createIngestionSession",
+      "owner": "ingestion",
+      "consumers": [{ "file": "server/start/ingestion-session-create-operation.ts", "line": 20 }],
+      "evidence": "The authenticated host callback awaits the ingestion public import at AST line 20, with its module path at line 21, then awaits the complete owner at line 34. Context type imports are not runtime consumers.",
+      "rationale": "The already merged ingestion owner retains the complete creation transaction, source-package materialization, terminal receipt and COMMIT order. Start adapts the committed result only: safe terminal 500 body and Location/replay headers, or the narrowed session success. The original request key or null is preserved without a new key or retry; this does not grant no-key UI replay safety or claim full canonical HTTP equivalence.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f6af7bbc-fbdf-4f90-af2f-c752304c0dc7",
+      "date": "2026-10-26"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/onboarding/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "IngestionSessionCreateClientProvider",
+      "targetModule": "src/capabilities/onboarding/ui/ingestion-session-create-client.tsx",
+      "targetSymbol": "IngestionSessionCreateClientProvider",
+      "owner": "onboarding",
+      "consumers": [{ "file": "server/start/routes/onboarding.upload.tsx", "line": 3 }],
+      "evidence": "The existing upload route imports the provider at ImportDeclaration AST line 3 and module path line 7, then wraps the existing lazy page at JSX lines 19 and 23. The client type is not counted as a runtime consumer; the hook remains inside onboarding.",
+      "rationale": "Onboarding owns its live upload consumer's narrow create client, original HTTP fallback and route-local transport provider, not another creation operation. The existing create-to-extract-to-stillHere sequence, uploads, PDF/DOCX, SSE, recovery and visual behavior remain unchanged. The ingestion UI barrel and ColdStart export remain unchanged; this adds no cross-capability edge or growth allowance.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f6af7bbc-fbdf-4f90-af2f-c752304c0dc7",
+      "date": "2026-10-26"
     }
   ],
   "edgeRecords": [
