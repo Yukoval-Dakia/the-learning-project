@@ -1,4 +1,4 @@
-import type { IngestionSessionCreateClient } from '@/capabilities/ingestion/ui-public';
+import type { IngestionSessionCreateClient } from '@/capabilities/onboarding/ui-public';
 import { authenticatedStartFetch } from './authenticated-fetch';
 import { createStartIngestionSessionFunction } from './ingestion-session-create-function';
 

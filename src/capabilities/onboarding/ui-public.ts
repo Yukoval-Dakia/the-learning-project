@@ -1,6 +1,10 @@
 // Client-only public contribution surface.
 export { default as ColdStart } from './ui/ColdStart';
 export {
+  type IngestionSessionCreateClient,
+  IngestionSessionCreateClientProvider,
+} from './ui/ingestion-session-create-client';
+export {
   type GoalClient,
   GoalClientProvider,
   type PlacementClient,

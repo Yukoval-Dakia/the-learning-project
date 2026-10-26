@@ -18,7 +18,6 @@
 // VLM ordering decision, neither true on this path today.
 
 import { useCallback, useRef, useState } from 'react';
-import { useIngestionSessionCreateClient } from '@/capabilities/ingestion/ui-public';
 import {
   UploadSubjectPicker,
   uploadSubjectField,
@@ -38,6 +37,7 @@ import { useIngestionSSE } from '@/ui/lib/sse';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { useIngestionSessionCreateClient } from './ingestion-session-create-client';
 import { ObSteps } from './ObSteps';
 import './onboarding.css';
 

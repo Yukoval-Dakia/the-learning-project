@@ -3,8 +3,8 @@ import { Suspense, lazy } from 'react';
 import {
   type IngestionSessionCreateClient,
   IngestionSessionCreateClientProvider,
-} from '@/capabilities/ingestion/ui-public';
-import { loadOnboardRecordPage } from '@/capabilities/onboarding/ui-public';
+  loadOnboardRecordPage,
+} from '@/capabilities/onboarding/ui-public';
 import { startIngestionSessionCreateClient } from '../ingestion-session-create-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
