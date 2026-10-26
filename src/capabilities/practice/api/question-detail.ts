@@ -19,7 +19,7 @@ import {
   hasAnyAssociation,
 } from '@/server/questions/write';
 import { readQuestionDetail } from '../server/question-detail-read';
-import { updatePracticeQuestion } from '../server/question-update-operation';
+import { updatePracticeQuestion } from '../server/question-write-operations';
 import { QuestionParamsSchema } from './question-solve-contracts';
 
 export async function GET(req: Request, params: Record<string, string>): Promise<Response> {
