@@ -2914,7 +2914,12 @@
       "targetModule": "src/capabilities/ingestion/api/contracts.ts",
       "targetSymbol": "CreateIngestionSessionBody",
       "owner": "ingestion",
-      "consumers": [{ "file": "server/start/ingestion-session-create-operation.ts", "line": 20 }],
+      "consumers": [
+        {
+          "file": "server/start/ingestion-session-create-operation.ts",
+          "line": 20
+        }
+      ],
       "evidence": "The authenticated host callback awaits the ingestion public import at AST line 20, with its module path at line 21, then invokes the existing schema at line 23. Context type imports are not runtime consumers.",
       "rationale": "Ingestion retains its canonical creation input contract. Start validates with this existing schema after authorization inside the original 90-second provider scope; it introduces no second codec, domain owner, savepoint orchestration or input policy. The module ruling binds only this exact symbol and target, not the whole barrel.",
       "issue": "YUK-1358",
@@ -2929,7 +2934,12 @@
       "targetModule": "src/capabilities/ingestion/server/create-session.ts",
       "targetSymbol": "createIngestionSession",
       "owner": "ingestion",
-      "consumers": [{ "file": "server/start/ingestion-session-create-operation.ts", "line": 20 }],
+      "consumers": [
+        {
+          "file": "server/start/ingestion-session-create-operation.ts",
+          "line": 20
+        }
+      ],
       "evidence": "The authenticated host callback awaits the ingestion public import at AST line 20, with its module path at line 21, then awaits the complete owner at line 34. Context type imports are not runtime consumers.",
       "rationale": "The already merged ingestion owner retains the complete creation transaction, source-package materialization, terminal receipt and COMMIT order. Start adapts the committed result only: safe terminal 500 body and Location/replay headers, or the narrowed session success. The original request key or null is preserved without a new key or retry; this does not grant no-key UI replay safety or claim full canonical HTTP equivalence.",
       "issue": "YUK-1358",
@@ -2944,12 +2954,33 @@
       "targetModule": "src/capabilities/onboarding/ui/ingestion-session-create-client.tsx",
       "targetSymbol": "IngestionSessionCreateClientProvider",
       "owner": "onboarding",
-      "consumers": [{ "file": "server/start/routes/onboarding.upload.tsx", "line": 3 }],
+      "consumers": [
+        {
+          "file": "server/start/routes/onboarding.upload.tsx",
+          "line": 3
+        }
+      ],
       "evidence": "The existing upload route imports the provider at ImportDeclaration AST line 3 and module path line 7, then wraps the existing lazy page at JSX lines 19 and 23. The client type is not counted as a runtime consumer; the hook remains inside onboarding.",
       "rationale": "Onboarding owns its live upload consumer's narrow create client, original HTTP fallback and route-local transport provider, not another creation operation. The existing create-to-extract-to-stillHere sequence, uploads, PDF/DOCX, SSE, recovery and visual behavior remain unchanged. The ingestion UI barrel and ColdStart export remain unchanged; this adds no cross-capability edge or growth allowance.",
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f6af7bbc-fbdf-4f90-af2f-c752304c0dc7",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> projections",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4713,6 +4744,26 @@
       "issue": "YUK-1522",
       "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
       "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "Append the complete learning-item prior-state repair and guarded materialization in the caller-held item lock and Tx; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned completion/relearn evidence handling.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/merge-attribution.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "Append each complete learning-item knowledge-id repair and guarded materialization in the caller-held merge Tx and ordered item row locks; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned knowledge-id selection.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
@@ -5633,13 +5684,12 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 290,
+      "total": 288,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> learning-items": 1,
-        "agency -> projections": 1,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
@@ -5689,7 +5739,6 @@
         "practice -> fsrs": 2,
         "practice -> mastery": 3,
         "practice -> memory": 1,
-        "practice -> projections": 1,
         "practice -> proposals": 5,
         "practice -> questions": 11,
         "practice -> r2": 6,
