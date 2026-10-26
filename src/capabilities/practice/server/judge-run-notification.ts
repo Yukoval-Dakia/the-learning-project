@@ -1,7 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import { lockJudgeRun } from './judge-operational';
 import { readJudgeRunPermanent } from './judge-run-observation';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';

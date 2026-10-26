@@ -7,7 +7,7 @@ import {
 } from '@/capabilities/copilot/server/copilot-run-status';
 import type { TeachingSkillResult } from '@/capabilities/copilot/server/skills/teaching-skill';
 import { event, learning_item, question } from '@/db/schema';
-import { computeReplay } from '@/server/events/sse_replay';
+import { computeReplay } from '@/kernel/job-events';
 import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runCopilotRun, writeSuccessfulTerminalProjection } from './copilot_run';

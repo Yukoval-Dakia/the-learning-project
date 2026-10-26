@@ -5,7 +5,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, learning_session } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 import { assertFromState } from './guards';
 

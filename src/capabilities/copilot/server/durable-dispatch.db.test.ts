@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { event, job_events } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {

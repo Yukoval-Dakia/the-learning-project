@@ -25,7 +25,7 @@ import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-ev
 import { evaluation, event, job_events, mastery_state, material_fsrs_state } from '@/db/schema';
 import * as domain from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import * as notificationWriter from '@/server/events/writer';
+import * as notificationWriter from '@/kernel/job-events';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, frozenJudge, judgeEvidence, resetJudgeControl } from './support';
 

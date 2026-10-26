@@ -11,7 +11,7 @@ import {
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
 import { event, job_events } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { writeCopilotInputEvent } from '../server/conversation-writes';

@@ -10,11 +10,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { capabilities } from '@/capabilities';
 import { ai_task_runs, event, learning_session, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { computeReplay, writeJobEvent } from '@/kernel/job-events';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { type PiAdapterDeps, PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
-import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { createCopilotRunView, foldCopilotRunFrames } from '../ui/subtask-events';

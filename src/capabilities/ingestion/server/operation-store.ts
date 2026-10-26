@@ -9,7 +9,7 @@ import type {
 } from '@/capabilities/ingestion/api/operation-schema';
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import { writeAgentBudgetPath } from './agent/budget-state';
 import {
   findDurableAgentKey,

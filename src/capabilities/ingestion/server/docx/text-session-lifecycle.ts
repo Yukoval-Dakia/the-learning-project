@@ -10,12 +10,12 @@ import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_document } from '@/db/schema';
+import { writeJobEvent } from '@/kernel/job-events';
 import {
   USAGE_POLICY_PROVENANCE_KEY,
   resolveSessionDerivationPolicy,
 } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { writeJobEvent } from '@/server/events/writer';
 import { writeSessionEvent } from '../events/session-extract';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './omission';
 
