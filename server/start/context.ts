@@ -28,6 +28,7 @@ import type {
   readQuestionDetail,
   recomposePracticeStream,
   releaseHeldPlacement,
+  restorePracticeQuestion,
   revealFrozenStudyReference,
   saveResponseDraft,
   selectNextPlacementQuestion,
@@ -90,6 +91,10 @@ export type FrontdoorContext = {
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
   readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
+  restoreLibraryQuestion: (input: {
+    id: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof restorePracticeQuestion>>>;
   readLibraryQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;

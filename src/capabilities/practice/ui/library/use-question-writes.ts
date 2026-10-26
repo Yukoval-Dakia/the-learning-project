@@ -11,7 +11,7 @@ import {
   forceEnableDraft,
   patchQuestion,
 } from '../practice-api';
-import { type ServingAction, restoreQuestion, runServingAction } from './library-api';
+import { type ServingAction, runServingAction } from './library-api';
 import { type LibraryClient, useLibraryClient } from './library-client';
 import { LIBRARY_KEY } from './use-library';
 
@@ -99,16 +99,20 @@ export function restoreErrorText(err: unknown): string {
   return writeErrorText(err);
 }
 
-async function restoreLatest(id: string, getQuestionFull: LibraryClient['getQuestionFull']) {
+async function restoreLatest(
+  id: string,
+  getQuestionFull: LibraryClient['getQuestionFull'],
+  restoreQuestion: LibraryClient['restoreQuestion'],
+) {
   const fresh = await getQuestionFull(id);
   return restoreQuestion(id, fresh.version);
 }
 
 export function useRestore(id: string) {
-  const { getQuestionFull } = useLibraryClient();
+  const { getQuestionFull, restoreQuestion } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
-    mutationFn: () => restoreLatest(id, getQuestionFull),
+    mutationFn: () => restoreLatest(id, getQuestionFull, restoreQuestion),
     onSuccess: () => showToast({ message: '已恢复，题目回到待审核' }),
     onError: (err) => showToast({ message: restoreErrorText(err) }),
     onSettled: () => void refresh(),
@@ -117,7 +121,7 @@ export function useRestore(id: string) {
 
 /** Delete, then offer 撤销 for the toast's lifetime (restore works later too). */
 export function useDelete(id: string) {
-  const { getQuestionFull } = useLibraryClient();
+  const { getQuestionFull, restoreQuestion } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: (input: { version: number; children: number }) =>
@@ -133,7 +137,7 @@ export function useDelete(id: string) {
         action: {
           label: '撤销',
           run: () => {
-            void restoreLatest(id, getQuestionFull)
+            void restoreLatest(id, getQuestionFull, restoreQuestion)
               .then(() => showToast({ message: '已恢复，题目回到待审核' }))
               .catch((err: unknown) => showToast({ message: restoreErrorText(err) }))
               .finally(() => void refresh());
