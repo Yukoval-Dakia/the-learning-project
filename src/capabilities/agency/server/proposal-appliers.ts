@@ -15,7 +15,7 @@ import type { CreateLearningIntentKnowledgeNodeFn } from '@/capabilities/knowled
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { artifact, completion_evidence, event, learning_item } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   ensureProposalDecisionSignal,
@@ -27,7 +27,6 @@ import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import {
   asPlainRecord,
   ensureAcceptOnly,
