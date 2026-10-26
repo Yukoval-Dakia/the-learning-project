@@ -15,6 +15,7 @@ import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
 import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
 import { readStartLibraryQuestionDetail } from './start/library-question-detail-reader';
 import { readStartLibraryQuestionMistakes } from './start/library-question-mistakes-reader';
+import { restoreStartLibraryQuestion } from './start/library-question-restore-operation';
 import { readStartPaperDetail } from './start/paper-detail-reader';
 import { endStartPaperSession } from './start/paper-end-operation';
 import { startPaperSession } from './start/paper-start-operation';
@@ -85,6 +86,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readPracticeQuestionDetail: readStartPracticeQuestionDetail,
     readLibraryQuestionDetail: readStartLibraryQuestionDetail,
     readLibraryQuestionMistakes: readStartLibraryQuestionMistakes,
+    restoreLibraryQuestion: restoreStartLibraryQuestion,
     readLibraryDraftDetail: readStartLibraryDraftDetail,
     getPracticeStream: getStartPracticeStream,
     recomposePracticeStream: recomposeStartPracticeStream,
