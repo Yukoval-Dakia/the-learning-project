@@ -227,7 +227,7 @@ function QuoteButton({
   return (
     <IconButton
       label={`把${what}引用到学习伙伴`}
-      className="un-ps-quote-btn"
+      className="un-ps-quote-btn un-m3e-control"
       icon={<MessageSquareQuote size={14} />}
       onClick={(e) =>
         onQuote(text, e.currentTarget.closest(QUOTE_BLOCK)?.getBoundingClientRect() ?? null)
@@ -422,6 +422,7 @@ export function PracticeSolo({
           {/* YUK-432 — after an automatic commit 「返回」 marks the item done (handleBack). Never
               blocked by the draft: at most 8s for the last save, then an honest toast (YUK-1489). */}
           <Button
+            className="un-m3e-control"
             variant="quiet"
             size="sm"
             disabled={submit.returning}
@@ -433,7 +434,7 @@ export function PracticeSolo({
             {submit.returning ? '正在保存…' : '返回练习'}
           </Button>
           {!question.isInterventionDiagnostic && (
-            <Button variant="quiet" size="sm" onClick={openCoach}>
+            <Button className="un-m3e-control" variant="quiet" size="sm" onClick={openCoach}>
               <Lightbulb size={14} aria-hidden="true" />
               需要提示？
             </Button>
@@ -485,10 +486,14 @@ export function PracticeSolo({
       <div className="un-ps-state" role="alert">
         <p>这道题没取到，可能是网络断了一下。</p>
         <div className="un-ps-actions">
-          <Button variant="secondary" onClick={() => void question.query.refetch()}>
+          <Button
+            className="un-m3e-control"
+            variant="secondary"
+            onClick={() => void question.query.refetch()}
+          >
             再试一次
           </Button>
-          <Button variant="quiet" onClick={onBack}>
+          <Button className="un-m3e-control" variant="quiet" onClick={onBack}>
             返回练习
           </Button>
         </div>
@@ -507,15 +512,15 @@ export function PracticeSolo({
         <p>{problem.text}</p>
         <div className="un-ps-actions">
           {problem.selfRate ? (
-            <Button variant="primary" onClick={issuance.startSelfRated}>
+            <Button className="un-m3e-control" variant="primary" onClick={issuance.startSelfRated}>
               按自行评级练习
             </Button>
           ) : (
-            <Button variant="secondary" onClick={issuance.retry}>
+            <Button className="un-m3e-control" variant="secondary" onClick={issuance.retry}>
               重试
             </Button>
           )}
-          <Button variant="quiet" onClick={onBack}>
+          <Button className="un-m3e-control" variant="quiet" onClick={onBack}>
             返回练习
           </Button>
         </div>
@@ -727,6 +732,7 @@ export function PracticeSolo({
               <span className="un-ps-actions-label">做完了？自己评一下：</span>
               {RATINGS.map((grade) => (
                 <Button
+                  className="un-m3e-control"
                   key={grade}
                   variant="secondary"
                   size="sm"
@@ -740,7 +746,7 @@ export function PracticeSolo({
           ) : (
             <Button
               variant="primary"
-              className="un-ps-submit"
+              className="un-ps-submit un-m3e-control"
               disabled={!submit.canSubmit}
               title="⌘Enter 也能提交"
               aria-keyshortcuts="Meta+Enter Control+Enter"
@@ -757,6 +763,7 @@ export function PracticeSolo({
         </div>
         <div className="un-ps-bar-tools">
           <Button
+            className="un-m3e-control"
             variant="quiet"
             size="sm"
             disabled={answerLocked || draft.uploading}
@@ -767,6 +774,7 @@ export function PracticeSolo({
           </Button>
           {offerTrace && (
             <Button
+              className="un-m3e-control"
               variant="quiet"
               size="sm"
               aria-expanded={showTrace}
@@ -816,7 +824,12 @@ export function PracticeSolo({
               : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。'}
           </p>
           <div className="un-ps-actions">
-            <Button variant="secondary" disabled={advancing} onClick={onDone}>
+            <Button
+              className="un-m3e-control"
+              variant="secondary"
+              disabled={advancing}
+              onClick={onDone}
+            >
               {advancing ? '下一题准备中…' : '先继续'}
             </Button>
           </div>
@@ -831,6 +844,7 @@ export function PracticeSolo({
           <div className="un-ps-scale" role="group" aria-label="把握程度，1 到 5">
             {[1, 2, 3, 4, 5].map((n) => (
               <Button
+                className="un-m3e-control"
                 key={n}
                 variant={submit.selfConfidence === n ? 'primary' : 'secondary'}
                 size="sm"
@@ -840,7 +854,12 @@ export function PracticeSolo({
                 {n}
               </Button>
             ))}
-            <Button variant="quiet" size="sm" onClick={() => submit.revealVerdict(null)}>
+            <Button
+              className="un-m3e-control"
+              variant="quiet"
+              size="sm"
+              onClick={() => submit.revealVerdict(null)}
+            >
               跳过
             </Button>
           </div>
@@ -895,6 +914,7 @@ export function PracticeSolo({
                   <span className="un-ps-actions-label">按这次的情况安排复习：</span>
                   {RATINGS.map((g) => (
                     <ChipToggle
+                      className="un-m3e-control"
                       key={g}
                       pressed={submit.rating === g}
                       onPressedChange={() => submit.setRating(g)}
@@ -915,12 +935,17 @@ export function PracticeSolo({
                 {feedback.coarse_outcome === 'unsupported' &&
                   !submit.autoCommitted &&
                   !submit.committedPreview && (
-                    <Button variant="secondary" onClick={submit.startSelfRate}>
+                    <Button
+                      className="un-m3e-control"
+                      variant="secondary"
+                      onClick={submit.startSelfRate}
+                    >
                       自己评一下
                     </Button>
                   )}
                 {submit.autoCommitted ? (
                   <Button
+                    className="un-m3e-control"
                     variant="primary"
                     disabled={submit.committing || advancing}
                     onClick={onDone}
@@ -929,6 +954,7 @@ export function PracticeSolo({
                   </Button>
                 ) : unknownScore ? (
                   <Button
+                    className="un-m3e-control"
                     variant="primary"
                     disabled={submit.committing || advancing}
                     // Required wire fallback only; auto_rate leaves the actual rating to the server.
@@ -944,6 +970,7 @@ export function PracticeSolo({
                   </Button>
                 ) : (
                   <Button
+                    className="un-m3e-control"
                     variant="primary"
                     disabled={submit.committing || advancing || !submit.rating}
                     onClick={() =>
@@ -986,6 +1013,7 @@ export function PracticeSolo({
                   />
                   <div className="un-ps-actions">
                     <Button
+                      className="un-m3e-control"
                       variant="secondary"
                       size="sm"
                       disabled={
@@ -1008,7 +1036,12 @@ export function PracticeSolo({
                     >
                       提交重判，先继续
                     </Button>
-                    <Button variant="quiet" size="sm" onClick={() => appeal.setOpen(false)}>
+                    <Button
+                      className="un-m3e-control"
+                      variant="quiet"
+                      size="sm"
+                      onClick={() => appeal.setOpen(false)}
+                    >
                       算了
                     </Button>
                     <span className="un-ps-hint">重判在后台进行，不耽误做下一题</span>
@@ -1135,7 +1168,7 @@ export function PracticeSolo({
   } as CSSProperties;
 
   return (
-    <UiNextRoot className="un-ps-root">
+    <UiNextRoot className="un-ps-root" data-un-m3e="practice-foundation">
       <div
         className="un-ps"
         style={insets}

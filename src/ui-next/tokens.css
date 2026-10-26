@@ -290,3 +290,79 @@
     transform: translate(-50%, -50%);
   }
 }
+
+/* YUK-1473: PracticeSolo foundation only. Google token sources and Web mapping:
+   docs/design/2026-10-27-m3e-direction-and-migration.md §8.
+   No legacy alias is rebound; only explicitly marked consumers use these roles. */
+[data-ui-next][data-un-m3e="practice-foundation"] {
+  --un-md-sys-color-primary: #6750a4;
+  --un-md-sys-color-on-primary: #ffffff;
+  --un-md-sys-color-secondary: #625b71;
+  --un-md-sys-color-secondary-container: #e8def8;
+  --un-md-sys-color-on-secondary-container: #1d192b;
+  --un-md-sys-color-on-surface: #1d1b20;
+  --un-md-sys-color-on-surface-variant: #49454f;
+  --un-md-sys-color-outline-variant: #cac4d0;
+
+  --un-md-sys-typescale-headline-small-size: 1.5rem;
+  --un-md-sys-typescale-headline-small-line-height: 2rem;
+  --un-md-sys-typescale-headline-small-weight: 500;
+  --un-md-sys-typescale-headline-small-tracking: 0;
+  --un-md-sys-typescale-label-large-size: 0.875rem;
+  --un-md-sys-typescale-label-large-line-height: 1.25rem;
+  --un-md-sys-typescale-label-large-weight: 500;
+  --un-md-sys-typescale-label-large-tracking: 0.00625rem;
+  --un-md-sys-typescale-title-medium-size: 1rem;
+  --un-md-sys-typescale-title-medium-line-height: 1.5rem;
+  --un-md-sys-typescale-title-medium-tracking: 0.0125rem;
+  --un-md-sys-shape-full: 9999px;
+  --un-md-sys-shape-small: 8px;
+  --un-md-sys-shape-medium: 12px;
+  --un-md-sys-state-hover: 8%;
+  --un-md-sys-state-focus: 10%;
+  --un-md-sys-state-pressed: 10%;
+  --un-md-sys-state-disabled-content: 38%;
+  --un-md-sys-state-disabled-container: 10%;
+  --un-md-sys-elevation-1: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --un-md-comp-button-small-height: 40px;
+  --un-md-comp-button-small-space: 16px;
+  --un-md-comp-button-small-icon: 20px;
+  --un-md-comp-button-medium-height: 56px;
+  --un-md-comp-button-medium-space: 24px;
+  --un-md-comp-icon-button-size: 40px;
+  --un-md-comp-icon-button-icon: 24px;
+  --un-md-comp-filter-chip-height: 32px;
+  --un-md-comp-filter-chip-icon: 18px;
+  --un-md-comp-control-gap: 8px;
+  --un-md-comp-control-outline: 1px;
+  --un-md-comp-control-target: 48px;
+  --un-md-comp-focus-width: 3px;
+  --un-md-comp-focus-offset: 2px;
+}
+
+:root[data-theme="dark"]
+  [data-ui-next][data-un-m3e="practice-foundation"]:not([data-un-theme="light"]),
+[data-ui-next][data-un-m3e="practice-foundation"][data-un-theme="dark"] {
+  --un-md-sys-color-primary: #d0bcff;
+  --un-md-sys-color-on-primary: #381e72;
+  --un-md-sys-color-secondary: #ccc2dc;
+  --un-md-sys-color-secondary-container: #4a4458;
+  --un-md-sys-color-on-secondary-container: #e8def8;
+  --un-md-sys-color-on-surface: #e6e0e9;
+  --un-md-sys-color-on-surface-variant: #cac4d0;
+  --un-md-sys-color-outline-variant: #49454f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])
+    [data-ui-next][data-un-m3e="practice-foundation"]:not([data-un-theme="light"]) {
+    --un-md-sys-color-primary: #d0bcff;
+    --un-md-sys-color-on-primary: #381e72;
+    --un-md-sys-color-secondary: #ccc2dc;
+    --un-md-sys-color-secondary-container: #4a4458;
+    --un-md-sys-color-on-secondary-container: #e8def8;
+    --un-md-sys-color-on-surface: #e6e0e9;
+    --un-md-sys-color-on-surface-variant: #cac4d0;
+    --un-md-sys-color-outline-variant: #49454f;
+  }
+}
