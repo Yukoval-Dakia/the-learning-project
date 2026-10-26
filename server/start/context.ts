@@ -35,6 +35,7 @@ import type {
   startPlacementProbe,
   transitionPlacementSession,
   transitionReviewSession,
+  updatePracticeQuestion,
   updatePracticeStreamItem,
 } from '@/capabilities/practice/public';
 import type { LearnerSubjectRow } from '@/capabilities/shell/public';
@@ -95,6 +96,10 @@ export type FrontdoorContext = {
     id: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof restorePracticeQuestion>>>;
+  updateLibraryQuestion: (input: {
+    id: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof updatePracticeQuestion>>>;
   readLibraryQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
