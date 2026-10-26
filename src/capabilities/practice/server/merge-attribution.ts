@@ -8,7 +8,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { Tx } from '@/db/client';
 import { learning_item, question } from '@/db/schema';
-import { applyLearningItemRepair } from '@/server/projections/learning_item';
+import { applyLearningItemRepair } from '@/kernel/records/learning-items';
 
 export async function rewriteQuestionKnowledgeIds(
   tx: Tx,

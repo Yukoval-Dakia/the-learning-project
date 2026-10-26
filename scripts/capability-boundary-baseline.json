@@ -2968,6 +2968,22 @@
     },
     {
       "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> projections",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
       "pair": "copilot -> events",
       "date": "2026-10-26",
       "from": 5,
@@ -4755,6 +4771,26 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "Append the complete learning-item prior-state repair and guarded materialization in the caller-held item lock and Tx; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned completion/relearn evidence handling.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/merge-attribution.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["applyLearningItemRepair"],
+      "issue": "YUK-1570",
+      "owns": "Append each complete learning-item knowledge-id repair and guarded materialization in the caller-held merge Tx and ordered item row locks; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned knowledge-id selection.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/copilot/jobs/copilot_run.ts",
       "module": "src/kernel/job-events.ts",
       "kind": "value",
@@ -5682,13 +5718,12 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 278,
+      "total": 276,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> learning-items": 1,
-        "agency -> projections": 1,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
@@ -5736,7 +5771,6 @@
         "practice -> fsrs": 2,
         "practice -> mastery": 3,
         "practice -> memory": 1,
-        "practice -> projections": 1,
         "practice -> proposals": 5,
         "practice -> questions": 11,
         "practice -> r2": 6,

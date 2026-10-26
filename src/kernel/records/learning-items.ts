@@ -2,12 +2,17 @@
 // Derived child_learning_item_ids / ai_score / due_at / reviewed_at remain outside the snapshot.
 
 import { and, eq, inArray } from 'drizzle-orm';
+import type { z } from 'zod';
 import { newId } from '@/core/ids';
 import { foldLearningItem } from '@/core/projections/learning_item';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
+import type {
+  LearningItemKnowledgeIdsRewriteExperimental,
+  LearningItemStateRestoreExperimental,
+} from '@/core/schema/event/learning-item-events';
 import type { Db, Tx } from '@/db/client';
 import { event, learning_item, materialized_id_index } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { upsertMaterializedIdIndex } from './materialized-id-index';
 import { rowToFoldEvent } from './projection-events';
 
@@ -256,4 +261,27 @@ export async function learningItemsWithGenesisAnchor(
     );
   for (const r of idxRows) out.add(r.materialized_id);
   return out;
+}
+
+type LearningItemRepairEvent =
+  | z.infer<typeof LearningItemKnowledgeIdsRewriteExperimental>
+  | z.infer<typeof LearningItemStateRestoreExperimental>;
+
+/** Caller holds the item row lock. Anchor, causal time, append and projection stay inseparable. */
+export async function applyLearningItemRepair(
+  tx: Tx,
+  input: LearningItemRepairEvent,
+  requestedAt: Date,
+): Promise<void> {
+  if (!(await hasLearningItemGenesisAnchor(tx, input.subject_id))) {
+    throw new Error(`Learning item ${input.subject_id} needs canonical projection migration`);
+  }
+  const createdAt = await nextProjectionEventTime(
+    tx,
+    'learning_item',
+    input.subject_id,
+    requestedAt,
+  );
+  await writeEvent(tx, { ...input, id: newId(), created_at: createdAt, ingest_at: requestedAt });
+  await projectLearningItemGuarded(tx, input.subject_id);
 }
