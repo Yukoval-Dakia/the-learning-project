@@ -3073,6 +3073,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c7dce5aa-16b7-475b-a5be-8bed96160812",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> session",
+      "date": "2026-10-26",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5886,7 +5894,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 275,
+      "total": 274,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5901,7 +5909,7 @@
         "copilot -> questions": 1,
         "copilot -> revert": 1,
         "copilot -> runtime-env": 1,
-        "copilot -> session": 6,
+        "copilot -> session": 5,
         "copilot -> today": 3,
         "ingestion -> ai": 14,
         "ingestion -> boss": 7,

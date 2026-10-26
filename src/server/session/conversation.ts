@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { COPILOT_REUSE_WINDOW_MS } from '@/core/limits';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
@@ -230,65 +230,6 @@ export async function getCopilotConversation(
     )
     .limit(1);
   return rows[0] ?? null;
-}
-
-/** YUK-936 — provider session id persisted for foreground inline resume. */
-export async function getAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<string | null> {
-  const rows = await db
-    .select({ agent_sdk_session_id: learning_session.agent_sdk_session_id })
-    .from(learning_session)
-    .where(
-      and(
-        eq(learning_session.id, sessionId),
-        eq(learning_session.type, 'conversation'),
-        eq(learning_session.entrypoint, 'copilot'),
-      ),
-    )
-    .limit(1);
-  return rows[0]?.agent_sdk_session_id ?? null;
-}
-
-/** YUK-936 — persist the provider session id after a successful inline query. */
-export async function setAgentSdkSessionId(
-  db: Db | Tx,
-  sessionId: string,
-  agentSdkSessionId: string,
-): Promise<void> {
-  await db
-    .update(learning_session)
-    .set({ agent_sdk_session_id: agentSdkSessionId, updated_at: new Date() })
-    .where(
-      and(
-        eq(learning_session.id, sessionId),
-        eq(learning_session.type, 'conversation'),
-        eq(learning_session.entrypoint, 'copilot'),
-      ),
-    );
-}
-
-/** Resume miss/fail/restart clears the id so the next turn starts fresh (ADR-0054). */
-export async function clearAgentSdkSessionId(
-  db: Db | Tx,
-  sessionId: string,
-  expected?: string | null,
-): Promise<void> {
-  await db
-    .update(learning_session)
-    .set({ agent_sdk_session_id: null, updated_at: new Date() })
-    .where(
-      and(
-        eq(learning_session.id, sessionId),
-        eq(learning_session.type, 'conversation'),
-        eq(learning_session.entrypoint, 'copilot'),
-        ...(expected === undefined
-          ? []
-          : [
-              expected === null
-                ? isNull(learning_session.agent_sdk_session_id)
-                : eq(learning_session.agent_sdk_session_id, expected),
-            ]),
-      ),
-    );
 }
 
 export async function findOrCreateCopilotConversation(
