@@ -35,11 +35,11 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
-// Single tunable source for Coach run caps.
-import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 // Active/pinned learning items' knowledge_ids feed the Coach input as ATTENTION PRESSURE
 // only; never scheduling/bookkeeping, never the FSRS-due review backbone.
-import { type ActiveLearningItem, listActiveLearningItems } from '@/server/learning-items/queries';
+import { type ActiveLearningItem, listActiveLearningItems } from '@/kernel/records/learning-items';
+// Single tunable source for Coach run caps.
+import { COACH_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 
 // Re-exported alias kept for existing imports; sourced from COACH_CONTEXT_BUDGET.maxProposals.
 export const COACH_MAX_PROPOSALS = COACH_CONTEXT_BUDGET.maxProposals as number;
