@@ -18,6 +18,7 @@
 // VLM ordering decision, neither true on this path today.
 
 import { useCallback, useRef, useState } from 'react';
+import { useIngestionSessionCreateClient } from '@/capabilities/ingestion/ui-public';
 import {
   UploadSubjectPicker,
   uploadSubjectField,
@@ -29,7 +30,7 @@ import {
   useUploadUsageChoice,
 } from '@/ui/components/UploadUsagePicker';
 import { UsageReceiptLine } from '@/ui/components/UsageReceiptLine';
-import { ApiAuthError, apiJson } from '@/ui/lib/api';
+import { ApiAuthError } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
 import { latestProgress } from '@/ui/lib/ingestion-phase';
@@ -126,6 +127,7 @@ export interface OnboardRecordProps {
 }
 
 export default function OnboardRecord({ navigate }: OnboardRecordProps) {
+  const { createIngestionSession } = useIngestionSessionCreateClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   // OCR review (#551): synchronous re-entrancy lock (state is async → a rapid
   // double-click could fire two uploads before the button hides).
@@ -262,14 +264,11 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
         assetIds = assets.map((a) => a.id);
       }
       setPhase('creating');
-      const session = await apiJson<{ session: { id: string } }>('/api/ingestion', {
-        method: 'POST',
-        body: JSON.stringify({
-          entrypoint: 'vision_paper',
-          asset_ids: assetIds,
-          ...uploadSubjectField(uploadSubject),
-          ...uploadUsageField(uploadUsage),
-        }),
+      const session = await createIngestionSession({
+        entrypoint: 'vision_paper',
+        asset_ids: assetIds,
+        ...uploadSubjectField(uploadSubject),
+        ...uploadUsageField(uploadUsage),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
       if (!stillHere()) return;
