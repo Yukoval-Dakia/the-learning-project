@@ -1,11 +1,35 @@
 # TS 全栈迁移与前端重写：准备计划
 
-日期：2026-10-07（Asia/Tokyo）。状态：**准备完成，未开始实施**。
-决定者：agent，依据[自主交付授权](2026-10-07-autonomous-delivery-charter.md)作出；owner 后续限制优先。
+日期：2026-10-07 起草；2026-10-27 更新当前入口（Asia/Tokyo）。
+状态：**迁移与 UI 已有主线交付，整体未完成；M3E 方向已定，本次仅固化计划**。
+原计划决定者：agent，依据[自主交付授权](2026-10-07-autonomous-delivery-charter.md)作出；owner 后续限制优先。
 Epic：[YUK-1351](https://linear.app/yukoval-studios/issue/YUK-1351)。第一道 gate：[YUK-1338](https://linear.app/yukoval-studios/issue/YUK-1338)。
 目标架构：[ADR-0066](../adr/0066-typescript-adaptive-learning-architecture.md)（ADR-0065 是 Pi execution ADR）。
 
 本文件只做规划与票据。不含代码、依赖变更、schema 变更或部署。
+
+## 0. 当前决定与阅读顺序（2026-10-27）
+
+UI 设计、实施与视觉复核采用 **Astra + Google Material 3 Expressive**，见
+[当前方向与主线事实表](../design/2026-10-27-m3e-direction-and-migration.md)及
+[渐进顺序与精确交接](2026-10-09-ui-migration-sequencing.md)。
+Owner [覆盖决定](https://linear.app/yukoval-studios/issue/YUK-1351#comment-dcadddc1-14ab-4c44-a60f-00809a0588ba)
+已定，不再等待 loft、Linear、Apple Glass 或 A/B/C 选择。
+
+本次核查基线 `93ab3f790ae78652b787b66743d8ae66453921d6` 已有 ui-next 基座、做题、学习伙伴、题库、录入与 classic 显式复核，
+以及后续 Start reader 接线；这些是旧视觉下的源码交付，不是 M3E 实现或完整运行验收。
+外壳/今日的新稿仍只有 V3 样稿记录，未交 M3E main；运行缺口留 YUK-1473，整体迁移留 YUK-1351/YUK-1358/YUK-1359。
+
+- **已覆盖的旧前置**：§2 同路由同交付、§5 原 UI 顺序、§6 loft 三选一、§11 未启动排期及 §12 Opus 吞吐约束，均保作历史。
+  [非 UI 优先决定](2026-10-07-non-ui-migration-priority.md)已解除迁移与视觉同交付绑定；2026-10-11 的做题+学习伙伴首张真实页面决定由本次 M3E 计划续接。
+  不要求现役非视觉 transport writer 等全部 M3E 完成，也不把全部迁移退役作为代表页面改造的新前置。
+- **下一片**：在现役做题页消费有作用域的 M3E tokens / primitives，随后学习伙伴，再外壳/今日与其余页面；不另建 showcase、演示路由或通用框架。
+- **继续承重**：§8 领域/鉴权边界与 §9 八项 pre-AI 能力不变；锁、事务、幂等、paid、读写与恢复合同不因样式变更重写。
+  §3/§4/§5 的旧切换提案不授予本轮运行权限，后续退出以原票当前证据为准；禁止恢复 ADR-0052 已拒 NO-GO callback 壳。
+- **本次边界**：仅五个指定文档；不写产品/测试代码，不执行浏览器、provider、DB、TEST、paid、容器或部署；文档 PR 与适用校验由协调线收口。
+  未来测试代码仍须 owner 批准文本方案；测试不作为开发前置。本地 PLAN/now 不是全局进度来源。
+
+以下保留 2026-10-07 的起点、选择理由与承重契约。与本节冲突的模型、视觉、排期及前置只作历史，不得重新启动旧审批或复活已移除的页面/恢复路径。
 
 ## 1. 起点（2026-10-07 核查）
 
@@ -20,7 +44,7 @@ Epic：[YUK-1351](https://linear.app/yukoval-studios/issue/YUK-1351)。第一道
 - 行为基线：[连续学习系统行为设计](../design/2026-10-06-continuous-learning-system-behavior.md)；
   §4.4 末尾明确导航数量、路由和视觉布局未锁定。
 
-## 2. 关键决定：迁移与重写按路由合并交付
+## 2. 历史决定：迁移与重写按路由合并交付（已被 §0 覆盖）
 
 **决定（agent）**：采用 **route-by-route 合并**——每条迁到 TanStack Start 的路由同时上线重写后的 UI；
 页面背后的业务操作与任务族在同一波次切换。
@@ -66,7 +90,7 @@ DBOS 不恢复 ADR-0052 否决的通用 callback 业务壳；业务的事务边�
   模型已响应但检查点未保存的窗口单列为"未知外部结果"，不宣称零重复费用。
 - **演练**：P5 用低风险 housekeeping 族（如 `prune_job_events`）在恢复副本上走完一次全流程再迁业务族。
 
-## 5. 阶段与退出条件
+## 5. 原阶段与退出条件（历史排期，当前见 §0）
 
 | 阶段 | Linear | 类型 | 退出条件 |
 | --- | --- | --- | --- |
@@ -82,7 +106,7 @@ DBOS 不恢复 ADR-0052 否决的通用 callback 业务壳；业务的事务边�
 P6 波次：W1 today/inbox → W2 record/drafts/onboarding/placement → W3 questions/notes/knowledge/agent-notes →
 W4 CopilotDock/coach/profile → W5 admin-*。顺序依据：先做每日入口，再做材料进入，Copilot 最晚（流式与会话恢复最复杂）。
 
-## 6. UI 重写的设计 pre-flight 输入
+## 6. 原 UI 设计 pre-flight 输入（历史，当前引用 M3E 计划）
 
 **需要决定的是视觉方向**——PLAN 与 ADR-0066 都写明"视觉方向本轮暂缓"。不再空谈，用 loft 定稿（YUK-1353）：
 
@@ -137,12 +161,12 @@ W4 CopilotDock/coach/profile → W5 admin-*。顺序依据：先做每日入口�
 
 ## 10. 模型路由
 
-- **UI 票**（设计、实施、视觉复核）：只交 **Claude Opus 5.5**，不交 GPT/Codex/MiMo（授权文件 §工作方式）。
-  Linear 用 `area:ui` 且标题前缀 `[UI · Opus 5.5 only / Pn]` 标出：YUK-1353、YUK-1354、YUK-1357，以及 P6 每波的 UI 子票。
+- **UI 票**（设计、实施、视觉复核）：当前由 **Astra** 承担，方向为 Google M3E（2026-10-27 owner 覆盖）。
+  原 Opus-only 标题与既有 Opus 评审保留历史；不把历史评审改署 Astra，不因换方向重开 Done 票。YUK-1473 承接当前代表页面与未完验收。
 - **非 UI 票**：按 AGENTS 与授权文件的开发代理常规选择（`gpt-6.1-sol high`）。`opencode-go/mimo-v2.6-pro` 是产品内 AI 的 provider，不用于开发编排。
 - 核对实际运行选择，不把配置回执当作已切换；同一 diff 不派两个写入者；独立 review 与 exact-head CI Gate 照旧。
 
-## 11. 排期与当前单线
+## 11. 原排期与单线记录（2026-10-07 历史）
 
 PLAN 规定单 session 只推动一条 active 线。当前 active 线仍是 YUK-1103 后续（恢复真实 AI 帮助与学习行为验收）。
 本 epic 进入 NEXT：先 YUK-1338 gate；P2 视觉 loft 可在 gate 期间并行（只产出原型与决策，不进生产）。

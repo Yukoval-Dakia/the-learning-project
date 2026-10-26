@@ -2,6 +2,15 @@
 
 日期：2026-10-07，Asia/Tokyo。状态：owner 明确委托，持续有效，直至后续修改或撤回。
 
+## 当前 UI 模型与方向覆盖（2026-10-27）
+
+Owner [已记录决定](https://linear.app/yukoval-studios/issue/YUK-1351#comment-dcadddc1-14ab-4c44-a60f-00809a0588ba)：
+UI 设计、实施与视觉复核改由 **Astra** 承担，全面转向 **Google Material 3 Expressive**，严格依照 Google 官方规范。
+现行方向与交接见 [M3E 计划](../design/2026-10-27-m3e-direction-and-migration.md)；下文 2026-10-07 的 Opus-only 条款仅保留为历史，由本节覆盖。
+此覆盖只改变 UI 模型与视觉方向，不改变产品内 AI/provider、非 UI writer、业务合同或原运行权限。
+本次正式计划变更只交付文档，不包含 UI 实施、浏览器、provider、DB、TEST 写入、paid、容器或部署；
+以后实际运行仍须满足原票的精确权限与后续限制，不能从本节推导扩大授权。
+
 ## 当前部署用途覆盖指令
 
 2026-10-07 owner 后续原文：
