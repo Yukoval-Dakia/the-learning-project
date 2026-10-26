@@ -1,9 +1,8 @@
-// YUK-758 — 从组合根 capabilities 投影出编排 DAG 成员，并建图。
+// 从组合根 capabilities 投影出编排 DAG 成员并建图。
 //
-// 成员判据（JobDecl 上**存在** dependsOn 字段，含 `[]` 根；裸 cron job 不入图）**不在此
-// 定义**：投影是 kernel 的 projectDagMembers 独家职责（review ToTau）。本文件曾内联一份
-// 同样的投影循环，与 validateComposition 里的那份构成双写——判据一侧改动即让「校验过的
-// 图」与「运行期建的图」静默分叉。现在两侧共用 kernel 那一份，分叉不可能发生。
+// 成员判据（JobDecl 上**存在** dependsOn 字段，含 `[]` 根；裸 cron job 不入图）归 kernel 的
+// projectDagMembers 独家所有，此处不得内联投影——否则「校验过的图」与「运行期建的图」
+// 会静默分叉。
 
 import { type JobDag, buildJobDag } from '@/kernel/job-dag';
 import { type CapabilityManifest, projectDagMembers } from '@/kernel/manifest';

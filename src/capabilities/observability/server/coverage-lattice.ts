@@ -51,8 +51,7 @@ function displayNameMap(): Record<string, string | null> {
 }
 
 /**
- * Assemble the scan input (timed), run the pure gap scan, fetch supply activity in
- * one query, and build the lattice. Read-only.
+ * Load the lattice for the current scan window; read-only.
  */
 export async function loadCoverageLattice(
   db: Db | Tx,

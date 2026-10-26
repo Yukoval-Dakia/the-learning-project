@@ -16,7 +16,7 @@ AI 主动产出走两条平行 lane，UI 模式一致：建议列表 + reason �
 | pg-boss worker / schedules | ✅ `scripts/worker.ts` + `src/server/boss/handlers.ts` |
 | Knowledge proposal | ✅ content-driven（cold-start-bridge / image-candidate-accept matcher / agent proposal-tools / `KnowledgeReviewTask`）写 `subject_kind='knowledge'` proposal — Lane D（YUK-482）移除了 `knowledge_propose_nightly`（答错→提议耦合） |
 | Knowledge edge proposal | ✅ `knowledge_edge_propose_nightly` 写 `subject_kind='knowledge_edge'` proposal |
-| Note generation + verification + embedded check | ✅ `note_generate` job 填 atomic artifact sections；`note_verify` job 二次检查并写 artifact verification metadata / `experimental:note_verify` event；`embedded_check_generate` 在 note pass 后写 1-3 道 `question(source='embedded')` + artifact embedded_check metadata |
+| Note generation + verification | ✅ `note_generate` job 填 atomic artifact sections；`note_verify` job 二次检查并写 artifact verification metadata / `experimental:note_verify` event |
 | Variant generation | ✅ `variant_gen` job 写 draft `question(source='mistake_variant')` |
 | Review session summary | ✅ `session_summary` job |
 | Maintenance lane 6 个 action（archive/merge/etc.） | ❌ 仍是 Phase 2+ |
@@ -42,8 +42,7 @@ AI 主动产出走两条平行 lane，UI 模式一致：建议列表 + reason �
 | 题目推荐（手动） | 目标 | 用户按钮 | 直接进待学习列表 |
 | 知识点建议 | ✅ 已有 event proposal | pg-boss schedule / user-triggered path | `/knowledge` proposal UI |
 | 知识关系建议 | ✅ 已有 event proposal | pg-boss schedule | `/knowledge` mesh proposal UI |
-| Embedded check（atomic notes） | ✅ 已有 inline self-check | `note_verify` verdict=pass 后触发 `embedded_check_generate` | `question(source='embedded')` + learning-item detail inline attempt UI |
-| Active Teaching ask_check | ✅ 已有 inline 追问 | `/api/teaching-sessions/[id]/turn` 的 `ask_check` turn | `question(source='teaching_check')` + teach drawer inline attempt UI |
+| Active Teaching ask_check | ✅ 已有 inline 追问 | `POST /api/copilot/chat` 的 `ask_check` turn | `question(source='teaching_check')` + `POST /api/teaching-sessions/[id]/accept-chip` |
 | Note section 更新建议 | 目标 | living note 触发器（见 [`notes.md`](notes.md) § 9） | 待审核区 |
 | **LearningItem 完成提议** | 目标 | mastery>0.8 持续 14 天 ∨ 关联 check 全过 ∨ 7 天错 0 | 待审核区，approve 后创建 CompletionEvidence(path=ai_propose) |
 | **LearningItem 复学提议** | 目标 | done → resting 后 mastery 衰减 < 0.5 持续 N 天 | 待审核区，approve 后 status 回 pending |

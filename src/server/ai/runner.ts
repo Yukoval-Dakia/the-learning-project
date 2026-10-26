@@ -1,26 +1,12 @@
 // AI task runner — pi execution lane.
 //
-// All paths go through the ExecutionAdapter seam (execution-adapter.ts), which
-// post-P4 resolves to PiAgentAdapter: an in-process `@earendil-works/
-// pi-agent-core` agentLoop per query. The adapter normalizes loop events into
-// the SDKMessage-shaped RunnerMessage vocabulary (sdk-types.ts) so the consume
-// loop keeps one implementation for:
-//   - tool-call loop with declarative piToolMounts / allowedTools
-//   - piHooks beforeToolCall / afterToolCall interception
-//   - task_* lifecycle frames (durable subagent projection)
-//   - compact_boundary evidence + native transformContext compaction
-//   - `pi:` session cursors + durable-turn replay (session resume)
+// Every path goes through the ExecutionAdapter seam, which resolves to
+// PiAgentAdapter: one in-process agentLoop per query, normalized into the
+// SDKMessage-shaped RunnerMessage vocabulary so the consume loop has a single
+// implementation. Provider wire protocols stay the adapter's business.
 //
-// Provider wire protocols are the adapter's business (anthropic-messages for
-// Anthropic for Claude, OpenAI Completions for Xiaomi/Z.AI, and the native
-// API mix for opencode-go); the runner
-// only ever sees normalized frames.
-//
-// Memory-layer extensibility:
-//   - `RunTaskCtx.middleware: { beforeRun, afterRun }` — pre/post hooks
-//     applied uniformly across runTask / runAgentTask / streamTask.
-//     Memory module decorates input ahead of the model call and observes
-//     output after.
+// Memory-layer extensibility: `RunTaskCtx.middleware` applies uniformly across
+// runTask / runAgentTask / streamTask.
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
@@ -147,12 +133,11 @@ export interface RunTaskCtx {
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
-  /** Caller-owned cancellation propagated into the SDK run lifecycle. */
+  /** Caller-owned cancellation propagated into the provider run lifecycle. */
   signal?: AbortSignal;
   /**
-   * Stable controller shared with an in-process MCP ToolContext. The runner
-   * owns its lifecycle semantics and aborts it on timeout/fencing/caller stop,
-   * so a nested central task sees the exact parent-attempt cancellation signal.
+   * Stable controller shared with an in-process MCP ToolContext; the runner
+   * aborts it on timeout/fencing/caller stop.
    */
   lifecycleAbortController?: AbortController;
   /** Only vision/ingestion paths use this; runTask itself doesn't dereference. */
@@ -160,37 +145,24 @@ export interface RunTaskCtx {
   /** Override provider/model for testing or per-call routing escapes. */
   override?: { provider?: ResolvedProvider['provider']; model?: string };
   /**
-   * YUK-921 / YUK-1013 — per-run model binding (design doc §2.4/§4). The
-   * explicit-ctx layer for per-run provider/model/effort selection; resolved
-   * inside the unchanged `explicit > env > registry` order — `ctx.override`
-   * (escape hatch) still wins per-field over this binding. Post-P4 the only
-   * legal `adapter` value is 'pi'.
+   * YUK-921 / YUK-1013 — per-run model binding. Resolved inside the
+   * `explicit > env > registry` order; `ctx.override` still wins per field. The
+   * only legal `adapter` value is 'pi'.
    */
   modelBinding?: ModelBinding;
   /**
-   * YUK-576 — in-process transient-retry opt-in. Default OFF (undefined):
-   * existing callers still make one loom-level attempt. ONLY call paths with NO durable
-   * backstop may set this (single-transient-layer principle) — today exactly
-   * the two vision judges (steps-judge.ts / multimodal-direct-judge.ts), whose
-   * catch swallows failures into 'unsupported' so pg-boss never sees a throw.
-   * Durable pg-boss handlers must NOT set it: queue redelivery (queue-config.ts
-   * retryLimit) is their single transient layer — stacking both would multiply
-   * worst-case paid calls (2×3). Enforced by src/server/ai/retry-optin.test.ts
-   * (grep-level pin). Even when set, retry only fires when routing is not
-   * pinned (no ctx.override, no ctx.modelBinding routing, no
-   * AI_PROVIDER_OVERRIDE), the failure is
-   * whitelist-transient (agent-run-error.ts §2.3 frozen table), the attempt
-   * budget (tasks[kind].budget.transientRetries) has room, and the failure
-   * arrived within RETRY_ELAPSED_CAP_MS of the first attempt (sync-route
-   * wall-clock bound).
+   * YUK-576 — in-process transient-retry opt-in, default OFF. ONLY call paths
+   * with NO durable backstop may set it (today the two vision judges). Durable
+   * pg-boss handlers must NOT: queue redelivery is their single transient layer
+   * and stacking both multiplies worst-case paid calls. Even when set, retry
+   * requires unpinned routing, a whitelisted transient failure, budget room, and
+   * arrival within RETRY_ELAPSED_CAP_MS of the first attempt.
    */
   enableTransientRetry?: boolean;
   /**
-   * Optional absolute wall-clock deadline for the whole provider session:
-   * admission wait, adapter startup and model execution share this one budget.
-   * Hono requests inherit the composition-root deadline automatically; callers
-   * use this explicit seam for work that may outlive the handler. Durable workers
-   * omit it and retain the task's full execution budget.
+   * Absolute wall-clock deadline for the whole provider session: admission,
+   * startup and execution share it. Hono requests inherit one automatically;
+   * durable workers omit it and keep the task's full budget.
    */
   providerSessionDeadlineAt?: number;
   /** Memory-layer hook surface. */
@@ -207,76 +179,49 @@ export interface RunTaskCtx {
   /** Stable prompt language for this execution, including retries and provenance. */
   learnerLocale?: 'zh-CN' | 'en';
   /**
-   * ADR-0060 compaction: the bounded session context the adapter's
-   * transformContext re-injects after a budget prune. Never contains raw
-   * summary/CoT. Enabled only for the Copilot live-session lane.
+   * ADR-0060 — bounded session context re-injected after a budget prune. Never
+   * contains raw summary/CoT; enabled only for the Copilot live-session lane.
    */
   nativeCompaction?: {
-    /** Context to reintroduce after compaction; never contains raw summary/CoT. */
+    /** Context to reintroduce after compaction; never raw summary/CoT. */
     sessionContext: string;
   };
-  /**
-   * YUK-757 structural task-lifecycle observer. Only system task_started /
-   * task_progress / task_updated / task_notification frames are exposed; raw
-   * messages, assistant text, and thinking blocks never cross this seam.
-   * Observer failures are logged and fail open so visibility cannot abort paid work.
-   */
+  /** YUK-757 — structural task-lifecycle frames only; observer failures fail open. */
   onTaskEvent?: TaskEventObserver;
-  /**
-   * YUK-457 — streaming tool-use observer. Called synchronously for each
-   * tool_use block in an assistant message during streamTaskCollecting. Receives
-   * the sanitized call surface (tool name + serializable input); raw SDK internals
-   * never cross this seam. Only fires during streaming; runTask/runAgentTask omit it.
-   * Failures are swallowed so visibility cannot abort paid work.
-   */
+  /** YUK-457 — sanitized streaming tool_use observer; failures cannot abort paid work. */
   onToolUse?: (call: {
     toolName: string;
     input: Record<string, unknown>;
     toolUseId?: string;
   }) => void;
   /**
-   * YUK-575 (N5/MF-A) seam: per-call budget override for the durable copilot run.
-   * The inline `CopilotTask` registry budget (maxIterations:6 / timeout:60_000) is
-   * the model-execution share of the retained sync path; the Hono composition
-   * root's absolute provider-session deadline keeps admission + startup + execution
-   * below cloudflared idle-100s. A durable pg-boss run needs a much larger
-   * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
-   * a raised inline budget only turned error_max_turns into an inline-request abort).
-   * Overrides the configured task budget per field. Each entry point snapshots
-   * the budget before middleware/admission/startup; retries retain that snapshot.
-   * Tool-call limits remain owned by ContextBudgetTracker, not this seam.
-   * `maxIterations: 'unbounded'` removes the agentic-turn ceiling entirely —
-   * the pi lane then mounts no `shouldStopAfterTurn` (durable copilot runs are
-   * turn-uncapped; only Stop/cancellation/timeoutMs still end the loop).
+   * YUK-575 (N5/MF-A) — per-call budget override for durable copilot runs. The
+   * registry default must stay untouched (YUK-458: raising it only turned
+   * error_max_turns into an inline-request abort). Snapshotted before
+   * middleware/admission/startup; retries retain that snapshot. 'unbounded'
+   * removes the agentic-turn ceiling entirely.
    */
   budgetOverride?: TaskBudgetOverride;
-  /**
-   * Optional caller-owned correlation id shared with an in-process MCP server.
-   * Omitted callers keep runner-generated ids. `runTask` uses it for the first
-   * attempt; any opt-in transient retry gets a fresh id to preserve row identity.
-   */
+  /** Correlation id shared with an in-process MCP server; a retry gets a fresh id. */
   taskRunId?: string;
-  /** Runs after durable attempt creation and immediately before WarmQuery.query submits a prompt. */
+  /** Runs after durable attempt creation and immediately before the prepared query submits its prompt. */
   beforeProviderQuery?: BeforeProviderQuery;
   /**
    * Active outer central attempt for a nested DomainTool run. Same-lane children
-   * borrow the parent's session-concurrency slot so maxConcurrency=1 cannot
-   * deadlock outer query → tool → inner query. The DB validates the parent lease.
+   * borrow the parent's session slot so maxConcurrency=1 cannot deadlock; the DB
+   * validates the parent lease.
    */
   parentTaskRunId?: string;
   /**
-   * Disable runner-owned tool logging. The runner records only the SDK-native
-   * Task spawn; DomainTools, custom mounts and remote MCP write their own
-   * authoritative input/output row (YUK-1557: one row per executed call).
+   * Disable runner-owned tool logging. DomainTools, custom mounts and remote MCP
+   * write their own row (YUK-1557: one row per executed call).
    */
   autoLogToolCalls?: boolean;
   /**
-   * YUK-936 (ADR-0054) — the durable agent-session slot (historical name: it
-   * held the SDK session-file id; post-P4 it carries the `pi:` cursor minted
-   * by the adapter). `persist` keeps the cursor for resume; `resume` replays
-   * `ctx.piSessionReplay` into the loop context; `onSessionId` observes the
-   * minted id. Set explicitly by chat.ts; never inferred from task kind.
-   * Omitted ⇒ no resume, no id subscription.
+   * YUK-936 (ADR-0054) — durable agent-session slot (historically the SDK
+   * session-file id; now the `pi:` cursor). `persist` keeps the cursor,
+   * `resume` replays `ctx.piSessionReplay`, `onSessionId` observes the minted id.
+   * Set explicitly by chat.ts; omitted ⇒ no resume, no subscription.
    */
   sdkSession?: {
     persist: boolean;
@@ -285,17 +230,11 @@ export interface RunTaskCtx {
   };
   compiledModelPrompt?: CompiledModelPrompt;
   /**
-   * YUK-921 P2 (YUK-1021) — THE tool mount surface (post-P4 the only one).
-   * Domain tools via piDomainMount, remote MCP via piRemoteMcpMount, bespoke
-   * tools via a custom AgentTool mount. needsToolCall kinds must mount at
-   * least one visible tool — the adapter fails closed otherwise.
+   * YUK-921 P2 (YUK-1021) — THE tool mount surface. needsToolCall kinds must
+   * mount at least one visible tool; the adapter fails closed otherwise.
    */
   piToolMounts?: PiToolMount[];
-  /**
-   * YUK-1022 — THE tool-call interception surface (post-P4 the only one):
-   * ordered beforeToolCall gates + afterToolCall observers (spawn-contract
-   * gate, cancellation, finalization trace).
-   */
+  /** YUK-1022 — ordered beforeToolCall gates + afterToolCall observers. */
   piHooks?: PiHookBridge;
   /** Replay turns seeded into `context.messages` when `sdkSession.resume` is set. */
   piSessionReplay?: readonly PiReplayTurn[];
@@ -303,11 +242,7 @@ export interface RunTaskCtx {
   piSkillDocs?: readonly { name: string; body: string }[];
   /** Depth-one nested-agent specs; mounts the `Task`/`Agent` AgentTool. */
   piAgents?: Record<string, PiSubagentSpec>;
-  /**
-   * YUK-1022 — steering/follow-up queue sources for the root pi loop. No
-   * caller provides one today; the ctx surface is wired so attaching queue
-   * semantics later needs no adapter surgery.
-   */
+  /** YUK-1022 — steering/follow-up sources for the root loop; no live caller yet. */
   piQueues?: PiQueueSources;
 }
 
@@ -460,16 +395,9 @@ function promptFromInput(input: unknown): string | AsyncIterable<SDKUserMessage>
 }
 
 /**
- * Build the per-attempt call spec for the pi adapter. Centralised so the 3
- * entry points (runTask / runAgentTask / streamTask) stay consistent on
- * tools-from-registry default, turn ceiling, session resume, etc.
- *
- * Post-P4 surface (vendored `Options` in sdk-types.ts): model / systemPrompt /
- * abort / tool allowlist / turn ceiling / effort / resume.
- * The SDK-only knobs (env, cwd, permissionMode, hooks, agents, skills,
- * settingSources, outputFormat, maxBudgetUsd, persistSession, title) died with
- * Adapter A — their pi equivalents live on `ctx.pi*` fields the adapter reads
- * directly, not on this call spec.
+ * Build the per-attempt call spec for the adapter so the three entry points stay
+ * consistent on tools-from-registry default, turn ceiling and session resume.
+ * The pi surfaces live on `ctx.pi*` and are read by the adapter, not here.
  */
 function buildQueryOptions(
   kind: TaskKind,
@@ -483,9 +411,7 @@ function buildQueryOptions(
   transportEvidence?: ProviderTransportCollector,
 ): Options {
   // The registry map's value type is the union of every spec's inferred literal
-  // shape. Optional fields (reasoningEffort) only exist on declaring members, so
-  // they are read through this declared-interface view; the literal union stays
-  // the source for mutable-array fields like allowedTools.
+  // shape; optional fields are read through this declared-interface view.
   const def = tasks[kind];
   const declaredDef: TaskDefinition = def;
   const options: Options = {
@@ -494,18 +420,16 @@ function buildQueryOptions(
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
-    // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling; 'unbounded'
+    // removes it entirely.
     maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
-    // YUK-1630 — the resolved task budget is the single source for every
-    // provider HTTP layer: this value is both the SDK per-request `timeout`
-    // and the derivation of the controlled dispatcher's connect/headers/body
-    // timers (see provider-transport.ts).
+    // YUK-1630 — the task budget is the single source for every provider HTTP
+    // layer: this value is both the SDK timeout and the controlled dispatcher's
+    // timer derivation (provider-transport.ts).
     providerTimeoutMs: providerHttpTimeoutMs(budget.timeout),
     transportEvidence,
   };
-  // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
-  // task-kind declaration; unset → the provider default applies.
+  // YUK-923 — per-run modelBinding effort wins over the task-kind declaration.
   const reasoningEffort = ctx.modelBinding?.effort ?? declaredDef.reasoningEffort;
   if (reasoningEffort !== undefined) {
     options.effort = reasoningEffort;
@@ -523,13 +447,9 @@ async function notifySdkSessionId(ctx: RunTaskCtx, msg: { session_id?: string })
 }
 
 /**
- * Start the adapter-resolved transport inside admission without sending a
- * prompt, then create the durable attempt/timer immediately before the one
- * allowed query. Cleanup remains part of the admitted session boundary.
- * YUK-1013 — the ExecutionAdapter seam: `adapter.startup` replaces the direct
- * `sdkStartup` call; Adapter A wraps the identical WarmQuery lifecycle, so
- * every entry point keeps byte-identical behaviour while a second engine
- * (pi agentLoop, P1) can plug in behind the same three hooks.
+ * Start the adapter-resolved transport inside admission, then create the durable
+ * attempt immediately before the one allowed query. Cleanup stays within the
+ * admitted session boundary. YUK-1013 — `adapter.startup` is the single seam.
  */
 async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>(
   lifecycle: AiRunLifecycle<TResult>,
@@ -541,9 +461,8 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
   beforeProviderQuery?: BeforeProviderQuery,
   ctx?: RunTaskCtx,
 ): Promise<TValue> {
-  // Resolved at the seam boundary so an unimplemented adapter pin throws the
-  // same config-error posture as resolveTaskProvider's credential checks —
-  // before admission, before any durable row.
+  // Resolved at the seam boundary so an unimplemented adapter pin throws the same
+  // config-error posture before admission and before any durable row.
   const adapter = resolveExecutionAdapter(modelBinding, lifecycle.resolved, lifecycle.kind);
   let prepared: PreparedExecutionQuery | undefined;
 
@@ -558,10 +477,9 @@ async function withPreparedExecutionQuery<TResult extends RunTaskResult, TValue>
         runId: lifecycle.taskRunId,
         kind: lifecycle.kind,
         piToolMounts: ctx?.piToolMounts,
-        // YUK-1022 — pi-lane dual descriptors for the P3 surfaces (hooks,
-        // session replay, skill bodies, nested agents). The SDK adapter
-        // ignores them; `nativeCompaction` is forwarded verbatim because the
-        // pi lane needs the raw sessionContext for transformContext.
+        // YUK-1022 — pi-lane descriptors for hooks, replay, skills, nested agents
+        // and compaction; forwarded verbatim because the adapter needs the raw
+        // sessionContext for transformContext.
         piHooks: ctx?.piHooks,
         piSessionReplay: ctx?.piSessionReplay,
         piSkillDocs: ctx?.piSkillDocs,
@@ -592,10 +510,8 @@ type SDKSuccessResultMessage = Extract<SDKResultMessage, { subtype: 'success' }>
 type SDKToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>;
 
 /**
- * Consume one prepared SDK query while keeping caller-owned lifecycle policy at
- * the entrypoint. This is deliberately only the shared message-iteration and
- * terminal core: retry, settlement, stream cancellation, and partial-result
- * behavior remain with runTask/streamTask/streamTaskCollecting.
+ * Consume one prepared query, keeping caller-owned lifecycle policy (retry,
+ * settlement, stream cancellation, partial results) at each entrypoint.
  */
 async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   query: AsyncIterable<RunnerMessage>;
@@ -622,9 +538,8 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let firstTokenAt: number | undefined;
   const outputStats = emptyStreamTextStats();
   const settleUnobservedUsage = async () => {
-    // YUK-1557 — a stream cut/provider failure with no usage frame still
-    // submitted a prompt; persist a bounded estimate, never a null cost.
-    // A provider-reported usage/cost frame wins (recordEstimatedUsage no-ops).
+    // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
+    // persist a bounded estimate, never a null cost. A reported frame wins.
     await args.lifecycle.recordEstimatedUsage({
       promptText: args.usagePrompt ?? '',
       output: outputStats,
@@ -654,14 +569,9 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         continue;
       }
 
-      // YUK-1547/YUK-1559 (C1/C6) — pi tool-argument contract telemetry.
-      // 'tool_args_coerced' persists each adopted string→JSON field repair
-      // (tool/path/length only, no payload) so the harness can count
-      // coercions per run; 'tool_args_contract_failed' persists the sanitized
-      // ≤4KiB original arguments of a call rejected at the param-contract
-      // seam (never reached execute). Both land on tool_call_log keyed to
-      // this task_run — the same evidence surface as the structured-submit
-      // failure rows.
+      // YUK-1547/YUK-1559 (C1/C6) — tool-argument contract telemetry, both keyed
+      // to this task_run: adopted string→JSON repairs (tool/path/length only) and
+      // sanitized ≤4KiB original arguments of a call rejected before execute.
       if (msg.type === 'system' && msg.subtype === 'tool_args_coerced') {
         await args.lifecycle.recordToolCall({
           toolName: msg.tool_name,
@@ -736,9 +646,8 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
         }
         await args.onSuccess?.(msg);
       } else {
-        // YUK-1547 — a failed structured submit keeps its raw arguments as
-        // bounded tool_call_log evidence attached to this task run, so the
-        // paid-effect unknown row can be diagnosed without a provider re-ask.
+        // YUK-1547 — a failed structured submit keeps its raw arguments as bounded
+        // tool_call_log evidence so the unknown paid-effect row is diagnosable.
         const submitEvidence = (msg as { structured_submit_evidence?: Record<string, unknown> })
           .structured_submit_evidence;
         if (submitEvidence != null && typeof submitEvidence === 'object') {
@@ -789,20 +698,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   }
 }
 
-// ============================================================================
-// runTask — default path. Goes through the ExecutionAdapter (PiAgentAdapter)
-// like the other entry points; tasks without `allowedTools` declared in
-// registry just get an empty tool list and behave like a single-turn query.
-// ============================================================================
-
 /**
- * YUK-576 — should this call participate in the in-process transient-retry
- * loop? Gate order (design doc §3.2): call-site opt-in (default OFF, so every
- * non-opt-in caller keeps one loom-level attempt) → caller-pinned routing OFF → env-pinned
- * routing OFF (pinned routing is an explicit decision — e.g. induce.ts pins
- * anthropic-sub per call for self-consistency sampling, where a silent retry
- * would still be same-target but the pin marks a lane where wall-clock
- * determinism matters more than absorption).
+ * One attempt through the adapter. YUK-576 — the in-process transient-retry loop
+ * only engages for opt-in call sites with unpinned routing; every other caller gets
+ * one loom-level attempt.
  */
 async function runTaskAttempt(args: {
   kind: TaskKind;
@@ -819,11 +718,9 @@ async function runTaskAttempt(args: {
   const { kind, actualInput, budget, ctx, lifecycle, modelBinding } = args;
 
   let resultText = '';
-  // Purely local preparation can perform cold-start filesystem work (notably
-  // the one-time isolated skill mirror). Keep it outside the distributed
-  // lease: blocking this event loop after acquire can delay the first
-  // heartbeat beyond its DB-derived deadline even though no provider work has
-  // started yet.
+  // Purely local preparation can do cold-start filesystem work (notably the
+  // one-time skill mirror). Keep it outside the distributed lease: blocking after
+  // acquire can delay the first heartbeat past its DB-derived deadline.
   const promptStarted = Date.now();
   const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
   const callOptions = buildQueryOptions(
@@ -905,6 +802,8 @@ async function runTaskAttempt(args: {
   return result;
 }
 
+/** Default chat entry. Tasks without `allowedTools` get an empty tool list and behave
+ *  like a single-turn query. */
 export async function runTask(
   kind: string,
   input: unknown,
@@ -1030,7 +929,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
       });
       // Settle the full truth before another provider call is allowed. The
       // actual-retry marker is a later, conservative transition performed only
-      // after the next WarmQuery has actually submitted its prompt.
+      // after the next provider query has actually submitted its prompt.
       const settled = await lifecycle.finishFailure(boundError, 'error');
       if (!settled) throw boundError;
       if (!retry.willRetry) throw boundError;
@@ -1051,13 +950,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
   throw lastErr;
 }
 
-// ============================================================================
-// runAgentTask — alias kept so callers that explicitly want the
-// "I'm doing a tool-call loop, here's my MCP server" form can phrase intent.
-// Behaviour is identical to runTask — pass ctx.piToolMounts / ctx.allowedTools
-// or let the registry's `allowedTools` apply.
-// ============================================================================
-
+/** Alias kept for callers that phrase intent as a tool-call loop; same behaviour. */
 export async function runAgentTask(
   kind: string,
   input: unknown,
@@ -1066,11 +959,7 @@ export async function runAgentTask(
   return runTask(kind, input, ctx);
 }
 
-// ============================================================================
-// streamTask — text-stream Response. Same pi path; pipes assistant text
-// deltas to the body. Tool-use blocks land in tool_call_log per turn.
-// ============================================================================
-
+/** Text-stream Response over the same pi path; tool-use blocks land in tool_call_log. */
 export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskCtx): Response {
   const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
   if (!isKnownTask(kind)) {
@@ -1191,9 +1080,9 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                 });
                 const settled = await lifecycle.finishFailure(boundError);
                 if (!settled) {
-                  // Assistant bytes may already have reached a live reader and cannot be
-                  // retracted. Error the stream so the protocol cannot still complete
-                  // cleanly while its durable attempt truth remains unsettled.
+                  // Assistant bytes may already have reached a live reader. Error the
+                  // stream so the protocol cannot complete cleanly while the durable
+                  // attempt truth stays unsettled.
                   shouldClose = false;
                   if (!clientCancelled) controller.error(boundError);
                   return;
@@ -1248,25 +1137,15 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
   return out;
 }
 
-// ============================================================================
-// streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
-// streams root Pi text_delta frames to `onDelta(chunk)` as the provider emits them.
-// Complete assistant frames retain usage/tool collection without re-emitting text.
-// Adapters/fixtures without partial frames fall back to completed-message text.
-// then RESOLVES the full RunTaskResult (text + task_run_id + usage + cost). Unlike
-// streamTask (which returns a text-only Response and discards the final metadata),
-// the Copilot S3a turn-persistence contract needs the full reply text AND the real
-// task_run_id to persist the experimental:copilot_reply event — so this entrypoint
-// hands both back to the caller while still streaming.
-//
-// SDK message adaptation remains local, while run start/provider/abort/tool-log/
-// cost/terminal/after-run ownership is shared through run-lifecycle.ts.
-//
-// GRACEFUL DEGRADE (red line): if the SDK stream throws AFTER some text was
-// collected and the failure truth settles durably, this resolves with the collected
-// text + a `partial: true` flag (mirroring streamTask's catch that appends an error
-// marker but still finishes). A terminal-settlement failure rejects instead: the
-// caller must never persist partial model output against an unsettled attempt id.
+/**
+ * YUK-266 (C1) — collecting variant of streamTask: streams root text deltas and
+ * resolves the full RunTaskResult (text + task_run_id + usage + cost) that the
+ * Copilot turn-persistence contract needs.
+ *
+ * GRACEFUL DEGRADE (red line): a stream error AFTER text was collected and durably
+ * settled resolves with `partial: true`; a settlement failure rejects, so the
+ * caller never persists model output against an unsettled attempt id.
+ */
 export interface StreamCollectResult extends RunTaskResult {
   /** Exact SDK success `result`; unlike `text`, excludes assistant preambles. */
   terminalText?: string;
@@ -1444,11 +1323,9 @@ async function streamTaskCollectingImpl(
         costUsd: lifecycle.costUsd,
       });
       const settled = await lifecycle.finishFailure(boundError);
-      // A provider-success payload whose success projection failed must never be
-      // returned as graceful partial text, even if the bounded fallback records
-      // the application attempt as failure successfully. Admission fencing is
-      // likewise a fail-closed control-plane verdict, not an SDK stream failure
-      // that Copilot may persist and present as a graceful partial reply.
+      // A provider-success payload whose projection failed must never be returned
+      // as graceful partial text; admission fencing is likewise a fail-closed
+      // verdict, not a stream failure Copilot may present as a partial reply.
       if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
         throw boundError;
       }

@@ -23,8 +23,8 @@ const RENDER_SCALE = 150 / 72;
 // `Promise.race` and return 400, but the underlying `renderPages` is NOT
 // cancelled by the timer itself — a still-connected client's pathological page
 // keeps consuming CPU + WASM heap to completion in the background, freeing only
-// in renderPages' own `finally`. Bounded and acceptable on this single-user NAS
-// tool given the 15-page cap (MAX_PDF_PAGES).
+// in renderPages' own `finally`. Bounded and acceptable on this single-user
+// local deployment given the 15-page cap (MAX_PDF_PAGES).
 // A disconnected client aborts cooperatively between page renders via the loop's
 // signal check. Timeout and page cap are unchanged; abort is additive.
 export const PDF_RENDER_TIMEOUT_MS = 30_000;

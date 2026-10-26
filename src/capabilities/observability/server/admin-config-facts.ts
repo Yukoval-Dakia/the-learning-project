@@ -21,6 +21,7 @@ export interface AdminConfigProviderRow {
   readonly implemented_for?: { readonly chat: boolean; readonly typed: boolean };
   /** Actual native pi identity; null for providers using a non-pi execution path. */
   readonly pi_provider?: string | null;
+  /** Only models the save-time registry accepts (required executable facts present). */
   readonly models?: readonly { id: string; api: string; input: readonly string[] }[];
 }
 

@@ -46,13 +46,9 @@ export function flat8ToBBox(flat: number[], pageWidth: number, pageHeight: numbe
   const maxX = Math.max(...xs);
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
-  // Clamp width/height so the box never extends past the page edge — i.e. so the result satisfies the
-  // canonical BBox refine `x + width <= 1` / `y + height <= 1`, not just per-component [0,1]. Clamping
-  // each component INDEPENDENTLY (the old behavior) let a near-full-page polygon (OCR coords meeting
-  // or exceeding the declared page dimension) yield x+width > 1, which FAILS BBox.parse. Latent until
-  // The structured tree (plus figure source_bbox) goes through the canonical
-  // QuestionBlockRowSnapshot at the create-event parse barrier, where it would roll back the
-  // extraction tx. Shared `clampBBox` applies the sum-safe cap (verified: x + min(w, 1-x) <= 1).
+  // Clamp sum-safe, not per component: a near-full-page polygon can otherwise
+  // yield x + width > 1, which fails BBox.parse at the create-event barrier and
+  // would roll back the extraction tx. clampBBox keeps x + min(w, 1-x) <= 1.
   return clampBBox({
     x: minX / pageWidth,
     y: minY / pageHeight,

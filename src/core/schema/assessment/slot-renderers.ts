@@ -1,15 +1,14 @@
 import type { ResponseSlotT } from './response';
 
 /**
- * 网页逐槽原生作答控件能画的槽位种类 —— 单一来源（YUK-1573）。
+ * 网页逐槽原生作答控件能画的槽位种类 —— 单一来源。
  *
  * - `nativeSlotFieldSpec`（src/ui/components/response/ResponseSlotField.tsx）先用
- *   `hasNativeSlotField` 收窄，再对收窄后的种类穷举 switch：本表加一种而 switch 没写，
- *   或 switch 多写一种本表没有的，都是编译错误。
+ *   `hasNativeSlotField` 收窄，再对收窄后的种类穷举 switch：本表加一种而 switch
+ *   没写，或 switch 多写一种本表没有的，都是编译错误。
  * - 出题门（serving-admission）以本表判「逐槽有输入控件」。
  * - 不在表内：`table` 是布局容器（单元格是其它槽，各自检查）；`sentence_breaks`
- *   的字间点选编辑器归 R10 UI 线；`select` / `blank` 只能由展示层输入积木画出
- *   （YUK-1496/1497）。
+ *   的字间点选编辑器归 R10 UI 线；`select` / `blank` 只能由展示层输入积木画出。
  */
 export const NATIVE_FIELD_SLOT_KINDS = [
   'single_choice',
@@ -33,8 +32,8 @@ export function hasNativeSlotField(slot: ResponseSlotT): slot is NativeFieldSlot
 }
 
 /**
- * 只能由展示层输入积木画出的槽位种类（YUK-1497 spec §4）：出题门要求它们被声明式输入积木
- * 绑定才发出（被自定义块绑定的一律扣发，直到 YUK-1513）。
+ * 只能由展示层输入积木画出的槽位种类：出题门要求它们被声明式输入积木绑定才
+ * 发出；被自定义块绑定的继续扣发。
  */
 export const PRESENTATION_INPUT_SLOT_KINDS = [
   'select',
@@ -42,9 +41,9 @@ export const PRESENTATION_INPUT_SLOT_KINDS = [
 ] as const satisfies readonly ResponseSlotT['kind'][];
 
 /**
- * 整卷页（PfPaper）能作答的槽位种类：原生逐槽控件，加上展示层输入积木画的 select / blank
- * （YUK-1573：整卷页与单题页用同一个 PresentationBlocks）。发出的 select / blank 槽必被
- * 声明式积木绑定（出题门），所以整卷页总能画出。
+ * 整卷页（PfPaper）能作答的槽位种类：原生逐槽控件，加上展示层输入积木画的
+ * select / blank。整卷页与单题页共用同一个 PresentationBlocks，发出的 select /
+ * blank 必被声明式积木绑定，所以整卷页总能画出。
  */
 export const WHOLE_PAPER_SLOT_KINDS: ReadonlySet<ResponseSlotT['kind']> = new Set([
   ...NATIVE_FIELD_SLOT_KINDS,

@@ -1,26 +1,14 @@
 import { z } from 'zod';
 
-// ====================================================================
-// YUK-1046 — 统一评估契约 · 显式未决态（grounding §4.4、§3.2、§13）
-// ====================================================================
+// 显式未决态。未决不是分数：材料缺失 / 不可判分 / 证据不可读 / 待复核都以显式
+// 类型表达，绝不落成伪零分。pending unit 不产生 points，聚合进入 unresolved 或
+// 按 policy 阻塞，由 settlement 决定重试或人工复核。
 //
-// 未决【不是】分数：材料缺失 / 不可判分 / 证据不可读 / 待复核一律以显式类型
-// 表达，绝不落成伪零分（“missing 或识别失败不能变 0”）。判分记录中一个
-// pending 的 unit 不产生 points，并使聚合结果进入 unresolved（或按 policy
-// 阻塞），由后续 lane 的 settlement 决定何时重试/人工复核。
-//
-// 区分表（§4.4，全部不同状态，不得互相冒充）：
-//   空白 blank          —— 完整提交中的显式空作答；仅当 blank_scores_zero
-//                          政策明确才计 0（那是 scored，不是 pending）。
-//   missing             —— 未提交/缺条目/缺材料（missing_response / missing_materials）。
-//   unparseable         —— 提交了但格式无法解释。
-//   insufficient        —— 证据在、可读，但不足以支撑判分。
-//   infra_failure       —— 基础设施失败（可重试语义由执行器给出）。
-//   needs_review        —— 判出来了但需人工/复核确认。
-//   historical_unresolved —— 迁移前历史记录缺冻结上下文；保留原始证据可查看，
-//                          但不得用当前题面补造当时所见（§3.2/§13）。
+// 状态互不冒充：blank 是完整提交中的显式空作答（仅 blank_scores_zero 时计 0，
+// 属 scored）；缺失、无法解析、证据不足、基础设施失败、待复核与历史缺失分别走
+// 下面各自的 reason。
 
-/** 需要复核的触发源。verify_suspended：题源 verify 挂起期间的提交（§3.3 表）。 */
+/** 需要复核的触发源。verify_suspended：题源 verify 挂起期间的提交。 */
 export const NeedsReviewTrigger = z.enum([
   'low_confidence',
   'verify_suspended',
@@ -34,7 +22,7 @@ export const PendingState = z.discriminatedUnion('reason', [
     reason: z.literal('missing_response'),
     slot_ids: z.array(z.string().min(1)).min(1),
   }),
-  /** 判分所需共享材料缺失/不可得（§交付语义：不得猜材料）。 */
+  /** 判分所需共享材料缺失/不可得（不得猜材料）。 */
   z.object({
     reason: z.literal('missing_materials'),
     material_ids: z.array(z.string().min(1)).min(1),
@@ -51,7 +39,7 @@ export const PendingState = z.discriminatedUnion('reason', [
     evidence_ids: z.array(z.string().min(1)).min(1),
     detail: z.string().default(''),
   }),
-  /** 证据可读但不足以判分（如只需原媒体证据而只有转写 —— §7.2）。 */
+  /** 证据可读但不足以判分（如只需原媒体证据而只有转写）。 */
   z.object({
     reason: z.literal('insufficient_evidence'),
     detail: z.string().default(''),
@@ -61,7 +49,7 @@ export const PendingState = z.discriminatedUnion('reason', [
     reason: z.literal('unjudgeable'),
     detail: z.string().default(''),
   }),
-  /** 结果已产生但需复核后才可生效（D4：否则保持 held）。 */
+  /** 结果已产生但需复核后才可生效，否则保持 held。 */
   z.object({
     reason: z.literal('needs_review'),
     trigger: NeedsReviewTrigger,
@@ -75,7 +63,7 @@ export const PendingState = z.discriminatedUnion('reason', [
   }),
   /**
    * 迁移前历史记录缺冻结上下文（无 issued snapshot 等）。可查看原始证据，
-   * 但不得用当前 revision 补造当时所见（§3.2/§13 —— native 未决表示）。
+   * 但不得用当前 revision 补造当时所见。
    */
   z.object({
     reason: z.literal('historical_unresolved'),

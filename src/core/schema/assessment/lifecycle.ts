@@ -1,25 +1,11 @@
-// ====================================================================
-// YUK-1056 — draft_status 语义拆分词表（grounding §3.3 / §15 常量化）
-// ====================================================================
+// 生命周期字面量词表。旧 `question.draft_status` 用一个值同时表达「未完成」与
+// 「容器内可用」，这里拆成独立维度：
+//   - draft：未核验、不可判分、不可发题 ⇒ container_only +
+//     withheld(unverified_rules)；
+//   - NULL / active：legacy 行等价 general_pool，admission 由 verify/promote 决定；
+//   - 挂起 / 撤回 / claim 走 question_group_lifecycle，不再是 draft_status 的隐含义。
 //
-// 旧 `question.draft_status` 是 NULL≡active 的松散三态文本列，一个字面量同时
-// 表达「未完成（尚需 verify/promote）」与「容器内可用（不属公共题池）」两个
-// 不同事实。统一契约（YUK-1044/1046）把它拆成【独立维度】；本文件是全部
-// 生命周期字面量的唯一词表 —— 业务写路径与判定断言必须用这些常量，不再
-// 手写裸字面量。
-//
-// 语义映射（§3.3 表）：
-//   draft_status='draft'          —— 未完成：未核验、不可判分、不可发题；
-//                                    折叠成 availability=container_only +
-//                                    scoring_admission=withheld(unverified_rules)。
-//   draft_status IS NULL / 'active' —— 可入公共题池：legacy 行等价
-//                                    availability=general_pool；admission 由
-//                                    verify/promote 事务显式决定。
-//   挂起 / 撤回 / claim           —— 不再是 draft_status 的隐式含义；走
-//                                    question_group_lifecycle 独立列。
-//
-// 命名：值对象用大写蛇形，且全部 `as const` —— 任何扩值（如未来 archive
-// 显式值）必须在 coverage/审计 doc 里重新对齐（YUK-1056 审计口径）。
+// 业务写路径与判定必须用这些常量，不再手写裸字面量；扩值需同步 coverage/审计。
 
 /** legacy `question.draft_status` 列字面量（text 列，非 enum —— NULL≡active）。 */
 export const LEGACY_DRAFT_STATUS = {
@@ -30,12 +16,12 @@ export const LEGACY_DRAFT_STATUS = {
 } as const;
 export type LegacyDraftStatusT = (typeof LEGACY_DRAFT_STATUS)[keyof typeof LEGACY_DRAFT_STATUS];
 
-/** NULL 与显式 'active' 在池可见性下等价（红线-4 fail-open）。 */
+/** NULL 与显式 'active' 在池可见性下等价（fail-open）。 */
 export function isLegacyPoolVisibleStatus(status: string | null): boolean {
   return status !== LEGACY_DRAFT_STATUS.DRAFT;
 }
 
-/** 维度三：使用范围 —— 公共题池 vs 容器内专用（§3.3 拆分后的可用性轴）。 */
+/** 使用范围：公共题池 vs 容器内专用。 */
 export const QUESTION_AVAILABILITY = {
   /** 通用练习池候选（配合 admission/挂起谓词决定实际可见）。 */
   GENERAL_POOL: 'general_pool',
@@ -45,7 +31,7 @@ export const QUESTION_AVAILABILITY = {
 export type QuestionAvailabilityT =
   (typeof QUESTION_AVAILABILITY)[keyof typeof QUESTION_AVAILABILITY];
 
-/** 维度二：评分准入（D1/D17 —— 未准入绝不自动判分）。 */
+/** 评分准入：未准入绝不自动判分。 */
 export const SCORING_ADMISSION_STATE = {
   ADMITTED: 'admitted',
   WITHHELD: 'withheld',

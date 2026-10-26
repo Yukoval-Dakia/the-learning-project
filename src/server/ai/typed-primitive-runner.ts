@@ -1,33 +1,19 @@
 // YUK-1049 — restricted TYPED execution entry (OpenRouter native decisions
-// endpoint → AiRunLifecycle). Grounding §5: a dedicated typed sibling seam,
-// NOT the chat façade — POST /api/v1/systemone carries {state, questions}
-// typed primitives, never a composed prompt.
+// endpoint → AiRunLifecycle). A dedicated typed sibling seam, not the chat
+// façade: the wire carries {state, questions} typed primitives, never a prompt.
 //
-// Contract (D12 smoke FINAL 2026-09-24 — wire/auth/cost only, no accuracy):
-//   - pinned request model typesafe/jev-1.13 → canonical response model
-//     typesafe/jev-1.13-20260917 (drift = contract violation);
-//   - provider constraints only+order ['TypeSafe'], allow_fallbacks=false,
-//     max_price {prompt 0.042, completion 0} USD/M;
-//   - Jev→advanced upgrade happens at the APPLICATION layer (the caller —
-//     jev-model-executor.ts) as a SEPARATE invocation inside the same
-//     wall-clock deadline; OR has no models-array fallback for this wire;
-//   - usage/cost/probabilities/confidence are OPTIONAL — never fabricated;
-//   - confidence is distribution shape, not accuracy.
+// The request model is pinned (drift = contract violation), provider constraints
+// stay TypeSafe-only with allow_fallbacks=false, and usage/cost/confidence are
+// optional — never fabricated. The Jev→advanced upgrade is the CALLER's separate
+// invocation inside the same wall-clock deadline, so the bound covers both lanes.
 //
-// Lifecycle reuse (spec §5.2 — do not fork): admission / cancellation /
-// timeout / durable started+terminal rows / retry taxonomy / cost truth /
-// input provenance all come from AiRunLifecycle + resolveTaskProvider. The
-// canonical typed body (state+questions+model+provider constraints) is what
-// withProviderSession hashes into ai_task_runs.input_hash — the provenance
-// fingerprint; compiledPromptProvenance is NOT set (that field is the
-// chat-prompt channel).
+// Lifecycle reuse (spec §5.2 — do not fork): admission, cancellation, timeout,
+// durable rows, retry taxonomy and cost truth come from AiRunLifecycle; the
+// canonical typed body is what gets hashed into ai_task_runs.input_hash.
 //
-// Budget honesty (spec §5.2 warning verified in source): the registry's
-// budget.maxCost has NO runtime consumer today — the SDK maxBudgetUsd wiring
-// died with Adapter A (src/kernel/tools/budgets.ts). This runner therefore
-// enforces the cap itself: a per-call reserve (default $0.005, the D12 smoke
-// reserve) is charged BEFORE each wire attempt, and settled attempts account
-// their truth (unknown cost counts as the reserve — never zero).
+// The registry's budget.maxCost has no runtime consumer (the SDK-era maxBudgetUsd
+// wiring is gone), so this runner enforces the cap itself: a reserve is charged
+// before each wire attempt and unknown cost counts as the reserve.
 
 import type { ZodTypeAny } from 'zod';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS, isTransientAgentFailure } from '@/ai/agent-run-error';
@@ -103,11 +89,9 @@ export interface TypedPrimitiveCtx {
   /** Shared in-process tool abort lineage (as runTask). */
   readonly abortController?: AbortController;
   /**
-   * Absolute wall-clock bound (ms epoch) covering admission, retries AND the
-   * caller's application-layer advanced fallback. The runner computes the
-   * same runTask-style internal session bound (first start + retry cap + one
-   * attempt timeout) and takes the min — the caller uses the SAME deadlineAt
-   * for its escalation invocation, so the total budget spans both lanes.
+   * Absolute wall-clock bound (ms epoch) covering admission, retries and the
+   * caller's application-layer fallback. The runner takes the min with its own
+   * runTask-style session bound, so both lanes share one budget.
    */
   readonly deadlineAt?: number;
   readonly parentTaskRunId?: string;
@@ -123,11 +107,9 @@ export interface TypedPrimitiveOutcome<Output = unknown> {
   readonly attempts: number;
   readonly usage: LifecycleUsage;
   /**
-   * Cumulative settled/reserved cost of THIS invocation — every prior
-   * wire-attempted failure plus the terminal success attempt (unknown cost
-   * counts as the per-call reserve, never zero — YUK-1092). Consumers
-   * (cost_usd_micros reporting, plan-level spend gates) must use this
-   * cumulative figure, not the last attempt alone.
+   * Cumulative settled/reserved cost of THIS invocation — earlier failed wire
+   * attempts plus the terminal one (unknown cost counts as the reserve, never
+   * zero). Spend gates must use this, not the last attempt alone.
    */
   readonly cost_usd: number;
   /** Cost basis of the SUCCEEDING attempt (cumulative unknown-ness rides on `unknown_cost`). */
@@ -151,13 +133,11 @@ const ERROR_SNIPPET_MAX = 500;
 
 /**
  * Execute one registered typed task end-to-end: admission → canonical body →
- * systemone POST → schema-parsed typed output → durable cost/provenance.
+ * systemone POST → schema-parsed output → durable cost/provenance.
  *
- * Retry taxonomy (spec §5.2): 401/422 (and every non-transient 4xx) are
- * PERMANENT — no blind retry; 429/529/5xx and connection-class transport
- * failures retry only inside the shared wall-clock bound (RETRY_ELAPSED_CAP_MS
- * start gate + session deadline), never multiplied by SDK/queue retries —
- * this path performs at most budget.transientRetries extra wire calls.
+ * Retry taxonomy: non-transient 4xx are PERMANENT (no blind retry); 429/529/5xx
+ * and connection-class failures retry only inside the shared wall-clock bound,
+ * at most budget.transientRetries extra wire calls.
  */
 export async function runTypedPrimitiveTask<Output = unknown>(
   kind: string,
@@ -170,21 +150,17 @@ export async function runTypedPrimitiveTask<Output = unknown>(
       `typed primitive runner: unregistered task '${kind}' — typed execution only accepts tasks in the typed registry (typed-primitive-runner.ts)`,
     );
   }
-  // Literal-union read through the declared interface view (same pattern as
-  // run-lifecycle.ts TaskDefinition reads).
+  // Literal-union read through the declared interface view.
   const def = tasks[kind] as TaskDefinition;
   if ((def.execution ?? 'chat') !== 'typed') {
     throw new Error(`typed primitive runner: '${kind}' is not a typed-execution task`);
   }
   const budget = resolveTaskBudget(kind);
-  // Input is schema-parsed directly — a failure is a caller contract bug,
-  // thrown BEFORE any lifecycle/admission/cost work exists (no task_run row).
+  // A parse failure is a caller contract bug, thrown before any lifecycle/cost work.
   const parsedInput = registration.inputSchema.parse(input);
 
-  // Canonical typed body: model + provider constraints are pinned here so a
-  // caller cannot weaken them (allow_fallbacks stays false, TypeSafe stays
-  // the only provider, max_price stays bounded). The input_hash over THIS
-  // body is the typed provenance fingerprint (spec §5.2).
+  // Pin model + provider constraints here so a caller cannot weaken them; the
+  // input_hash over this body is the typed provenance fingerprint.
   const body = {
     model: def.defaultModel,
     provider: registration.providerConstraints,
@@ -195,9 +171,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
   const reserveUsd = TYPED_RESERVE_PER_CALL_USD;
   const maxCostUsd = budget.maxCost;
   const firstAttemptStartedAt = Date.now();
-  // runTask parity: the in-process session bound covers retries inside one
-  // wall clock; the caller deadline bounds the whole invocation INCLUDING the
-  // application-layer advanced fallback.
+  // runTask parity: the session bound covers retries inside one wall clock; the
+  // caller deadline also bounds the application-layer fallback.
   const retryingDeadlineAt =
     maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;
   const providerSessionDeadlineAt =
@@ -213,9 +188,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
   let retrySource: ReturnType<typeof createRunLifecycle> | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Cumulative maxCost gate — the typed path's own budget enforcement
-    // (verified absent elsewhere). Unknown-cost attempts were accounted at
-    // the reserve, so the bound is conservative, never optimistic.
+    // Cumulative maxCost gate — the typed path's own enforcement. Unknown-cost
+    // attempts were accounted at the reserve, so the bound is conservative.
     if (spentUsd + reserveUsd > maxCostUsd) {
       throw (
         lastErr ??
@@ -234,9 +208,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
       kind,
       timeoutMs: budget.timeout,
       abortController: ctx.abortController,
-      // Pin provider+model explicitly: a global AI_PROVIDER_OVERRIDE must never
-      // redirect the typed lane onto a chat-incompatible provider, and the
-      // model pin is the verified request id, not an alias (spec §5.2).
+      // Pin provider+model: a global AI_PROVIDER_OVERRIDE must never redirect the
+      // typed lane, and the model pin is the verified request id, not an alias.
       override: { provider: TYPED_PRIMITIVE_PROVIDER, model: def.defaultModel },
       parentTaskRunId: ctx.parentTaskRunId,
       providerStartDeadlineAt:
@@ -274,8 +247,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
             });
           } catch (error) {
             if (lifecycle.abortController.signal.aborted) throw error;
-            // Connection-class: DNS/socket/reset before an HTTP status —
-            // the probe-frozen transient marker (api_error_status null).
+            // Connection-class failure before an HTTP status — the probe-frozen
+            // transient marker (api_error_status null).
             throw new AgentRunError({
               kind,
               taskRunId: lifecycle.taskRunId,
@@ -286,9 +259,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
           }
           const text = await response.text();
           if (!response.ok) {
-            // Typed HTTP status map: 401/422 (and every other non-transient
-            // status) → permanent api_error_result (isTransientAgentFailure
-            // whitelists only null/429/5xx). No blind retry.
+            // Non-transient statuses are permanent; isTransientAgentFailure
+            // whitelists only null/429/5xx. No blind retry.
             throw new AgentRunError({
               kind,
               taskRunId: lifecycle.taskRunId,
@@ -371,11 +343,9 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         structured_output: output,
       };
       await lifecycle.finishSuccess(result);
-      // YUK-1092 — the reported cost is the CUMULATIVE invocation spend:
-      // settled earlier attempts (failure branch charged them) + this
-      // success attempt's truth (unknown ⇒ the reserve, never zero).
-      // Reporting only the last attempt undercounts and lets callers blow
-      // plan-level max_total_cost bounds after retries.
+      // YUK-1092 — report CUMULATIVE invocation spend: earlier settled attempts plus
+      // this one (unknown ⇒ the reserve, never zero). Last-attempt-only reporting
+      // undercounts and can blow plan-level max_total_cost bounds after retries.
       const successSettledUsd = result.cost_usd ?? reserveUsd;
       spentUsd += successSettledUsd;
       return {
@@ -390,8 +360,8 @@ export async function runTypedPrimitiveTask<Output = unknown>(
         unknown_cost: unknownCost || result.cost_basis === 'unknown',
       };
     } catch (error) {
-      // Reserve accounting: a wire call that may have reached the provider
-      // contributes its settled truth — unknown ⇒ reserve, never zero.
+      // A wire call that may have reached the provider contributes its settled
+      // truth — unknown ⇒ reserve, never zero.
       if (wireAttempted || lifecycle.costBasis !== 'unknown') {
         spentUsd += lifecycle.costUsd ?? reserveUsd;
         if (lifecycle.costBasis === 'unknown') unknownCost = true;

@@ -1,5 +1,4 @@
-// YUK-892 (F4.0) — Ingestion-owned record proposal tools, moved verbatim from
-// the central src/server/ai/tools/proposal-tools.ts.
+// Ingestion-owned record proposal tools.
 //
 // These tools expose owner-service paths to agent tool loops. They do not
 // apply destructive record mutations directly: they write inbox-visible
@@ -109,8 +108,8 @@ const ProposeRecordLinksInputSchema = z.object({
     .min(1)
     .max(12),
   evidence_event_ids: z.array(z.string().min(1)).optional(),
-  // P5.6 / YUK-178 (§4.2, SK-5) — OPTIONAL model-labeled discriminator; omit
-  // (→ proactive) unless this repairs a model-observed failure.
+  // OPTIONAL model-labeled discriminator; omit (→ proactive) unless this
+  // repairs a model-observed failure.
   suggestion_kind: SuggestionKind.optional(),
 });
 
@@ -173,7 +172,7 @@ async function proposeRecordLinksExecute(
       },
       rollback_plan: { action: 'dismiss proposal; record links stay unchanged' },
       cooldown_key: cooldownKey,
-      // P5.6 / YUK-178 — explicit model label, default proactive.
+      // Explicit model label, default proactive.
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     },
     task_run_id: ctx.taskRunId,
@@ -206,8 +205,8 @@ const ProposeRecordPromotionInputSchema = z.object({
   // (title/prompt/body_blocks/knowledge_ids); z.json keeps it a JSON document
   // instead of an unconstrained value (YUK-1553 C1-1 registration contract).
   draft: OpaqueJsonInput.optional(),
-  // P5.6 / YUK-178 (§4.2, SK-5) — OPTIONAL model-labeled discriminator; omit
-  // (→ proactive) unless this repairs a model-observed failure.
+  // OPTIONAL model-labeled discriminator; omit (→ proactive) unless this
+  // repairs a model-observed failure.
   suggestion_kind: SuggestionKind.optional(),
 });
 
@@ -241,7 +240,7 @@ async function proposeRecordPromotionExecute(
       },
       rollback_plan: { action: 'dismiss proposal; no stronger learning object is created' },
       cooldown_key: cooldownKey,
-      // P5.6 / YUK-178 — explicit model label, default proactive.
+      // Explicit model label, default proactive.
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     },
     task_run_id: ctx.taskRunId,

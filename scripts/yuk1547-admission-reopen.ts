@@ -21,7 +21,7 @@ import {
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { zodToToolParametersSchema } from '@/kernel/zod-json-schema';
 import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
-import { nativePiModel } from '@/server/ai/pi-provider-catalog';
+import { executablePiModel } from '@/server/ai/pi-provider-catalog';
 import {
   readProviderErrorEvidence,
   sanitizeProviderErrorText,
@@ -158,7 +158,7 @@ async function routing(): Promise<{
         resolved.provider,
         resolved.model,
       );
-      const native = nativePiModel(resolved.provider, resolved.model);
+      const native = executablePiModel(resolved.provider, resolved.model);
       if (native?.api !== 'openai-completions' || !native.baseUrl) {
         throw new Error('Require an OpenAI-completions model with a known catalog endpoint');
       }

@@ -6,7 +6,11 @@ import {
 } from '@/core/config/custom-providers';
 import { catalogModelCost } from './model-catalog';
 import type { ModelProfileReasoning } from './model-profiles';
-import { nativePiModels, piProviderId } from './pi-provider-catalog';
+import {
+  type ExecutablePiModelFacts,
+  executablePiModels,
+  piProviderId,
+} from './pi-provider-catalog';
 
 export type LoomPiModel = Model<Api> & {
   maxInputTokens?: number;
@@ -19,44 +23,14 @@ const PROTOCOL_DONOR: Record<CustomProviderProtocol, string> = {
   'anthropic-messages': 'anthropic',
 };
 
-type PiModelFacts = ReturnType<typeof nativePiModels>[string];
-
-/** Facts narrowed to the executable set (endpoint, limits, reasoning, inputs all known). */
-interface ExecutableModelFacts {
-  api: string;
-  baseUrl: string;
-  input: readonly string[];
-  reasoning: boolean;
-  contextWindow: number;
-  maxInputTokens?: number;
-  maxTokens: number;
-  catalogReasoning: ModelProfileReasoning;
-  thinkingLevelMap?: Record<string, string | null>;
-}
-
-/** Undefined when a required fact is missing — the model is then not executable. */
-function executableFacts(facts: PiModelFacts): ExecutableModelFacts | undefined {
-  if (
-    !facts.baseUrl ||
-    facts.contextWindow === undefined ||
-    facts.maxTokens === undefined ||
-    facts.reasoning === 'unknown' ||
-    facts.input.includes('unknown')
-  ) {
-    return undefined;
-  }
-  return facts as ExecutableModelFacts;
-}
-
 /**
  * The model ids this provider can actually serve right now — the same
  * required-facts gate `createLoomPiModels().getModel` applies, so a panel that
  * lists these never offers a model the save-time check rejects.
  */
 export function executablePiModelIds(provider: Provider): readonly string[] {
-  return Object.entries(nativePiModels(provider))
-    .filter(([, facts]) => executableFacts(facts) !== undefined)
-    .map(([id]) => id)
+  return executablePiModels(provider)
+    .map(({ id }) => id)
     .sort();
 }
 
@@ -72,7 +46,7 @@ function thinkingLevelMapOf(
 }
 
 /** Anthropic's SDK appends /v1/messages; the API root already includes /v1. */
-function baseUrlForWire(facts: ExecutableModelFacts): string {
+function baseUrlForWire(facts: ExecutablePiModelFacts): string {
   return facts.api === 'anthropic-messages' ? facts.baseUrl.replace(/\/v1$/, '') : facts.baseUrl;
 }
 
@@ -97,10 +71,9 @@ export async function createLoomPiModels() {
     const templates = base.getModels();
     const getModels = (): LoomPiModel[] => {
       const result: LoomPiModel[] = [];
-      for (const [modelId, facts] of Object.entries(nativePiModels(lane))) {
+      for (const { id: modelId, ...executable } of executablePiModels(lane)) {
         const template = templates.find((model) => model.id === modelId);
-        const executable = executableFacts(facts);
-        if (!template || !executable) continue;
+        if (!template) continue;
         result.push({
           ...template,
           id: modelId,
@@ -153,9 +126,7 @@ export async function createLoomPiModels() {
     const id = definition.id;
     const getModels = (): LoomPiModel[] => {
       const result: LoomPiModel[] = [];
-      for (const [modelId, facts] of Object.entries(nativePiModels(definition.id))) {
-        const executable = executableFacts(facts);
-        if (!executable) continue;
+      for (const { id: modelId, ...executable } of executablePiModels(definition.id)) {
         // Catalog rate card copied from the same-id entry; zeros only when the
         // catalog has no card (cost truth then classifies unknown, not free).
         const rates = catalogModelCost(definition.id, modelId);

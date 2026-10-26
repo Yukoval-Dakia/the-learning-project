@@ -1,22 +1,14 @@
 // YUK-1559 (C6) — shared provider HTTP error evidence.
 //
-// A non-2xx provider response carries the only honest record of WHY the wire
-// rejected us (schema violations, quota, auth). pi-ai already folds a
-// formatted `<status>: <body>` display string into `errorMessage`, but that
-// is a re-serialized, separately-capped rendering — not the raw body — and it
-// drops the response headers entirely. This module is the single capture
-// boundary both sides use:
+// A non-2xx body is the only honest record of why the wire rejected us. pi-ai's
+// formatted errorMessage is a re-serialized, separately-capped rendering that
+// drops headers, so both capture sites use this one boundary: the pi lane wraps
+// the per-query fetch (body cloned, bounded and sanitized before the SDK consumes
+// it) and the admission preflight records the same shape on its receipt.
 //
-//   - the pi lane wraps the per-query provider fetch (`baseLoopConfig`) so a
-//     non-2xx response's body is cloned, bounded and sanitized BEFORE the
-//     provider SDK consumes it — the terminal error frame then carries the
-//     evidence into `ai_task_runs.error_message` and `paid_effect.unresolved_reason`;
-//   - the admission preflight script records the same shape on its receipt.
-//
-// The body is UTF-8 text capped at 4096 BYTES (same bound as the submit-args
-// evidence in raw-arguments-evidence.ts), with a sha256 of the full sanitized
-// text so a truncated capture still matches the wire. Secrets are redacted —
-// provider keys, auth headers and tokens never land in logs or receipts.
+// Bodies are capped at 4096 bytes with a sha256 of the FULL sanitized text, so a
+// truncated capture still matches the wire. Provider keys, auth headers and
+// tokens never land in logs or receipts.
 
 import { sha256Hex } from '@/core/migration/canonical';
 import { truncateUtf8 } from '@/core/raw-arguments-evidence';
@@ -52,20 +44,16 @@ export const PROVIDER_ERROR_REQUEST_ID_MAX_BYTES = 128;
 
 export interface ProviderErrorSanitizeOptions {
   /**
-   * The resolved credential value(s) used for THIS request — verbatim and
-   * JSON-escaped forms are redacted before the generic patterns, because an
-   * error body can echo the key back in arbitrary text (`Invalid API key:
-   * <key>`) where no field-name or token-shape pattern reaches it.
+   * Credential value(s) used for THIS request — removed verbatim and JSON-escaped
+   * before the generic patterns, since a body can echo the key back in free text.
    */
   secrets?: readonly string[];
 }
 
 /**
- * Redact credential material from provider-produced text. The caller's
- * actual credential is removed in both its verbatim form and the form it
- * takes inside a JSON string (`JSON.stringify` escapes `"` / `\` / control
- * chars), then the generic field/header/token patterns run. Anything the
- * rules miss stays verbatim: this is a hygiene floor, not a parser.
+ * Redact credential material from provider-produced text: the caller's credential
+ * (verbatim and JSON-escaped), then generic field/header/token patterns. Anything
+ * the rules miss stays verbatim — this is a hygiene floor, not a parser.
  */
 export function sanitizeProviderErrorText(
   text: string,
@@ -88,8 +76,8 @@ export function sanitizeProviderErrorText(
 }
 
 /**
- * Read a non-2xx response's body into bounded, sanitized evidence. Callers
- * pass `response.clone()` when the SDK still owns the original stream.
+ * Read a non-2xx body into bounded, sanitized evidence. Callers pass
+ * `response.clone()` when the SDK still owns the original stream.
  */
 export async function readProviderErrorEvidence(
   response: Response,
@@ -116,19 +104,15 @@ export async function readProviderErrorEvidence(
 }
 
 /**
- * Credential-ish object KEYS — the key-name half of SECRET_VALUE_FIELD,
- * applied to structured argument values where the text-level pattern cannot
- * see escaped/nested keys. Failure evidence fails closed: an over-redacted
- * field name is a lesser cost than a persisted credential.
+ * Credential-ish object KEYS — the key-name half of SECRET_VALUE_FIELD applied to
+ * structured values. Over-redaction is cheaper than a persisted credential.
  */
 const CREDENTIAL_KEY_NAME =
   /(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|authorization|client[-_]?secret|secret|password|token|credential|cookie|private[-_]?key)/i;
 
 /**
- * A credential-looking `name:`/`name=` still present AFTER the textual
- * passes — the string may be truncated/escaped JSON that neither the JSON
- * field pattern nor a strict parse could neutralize. Anything matching this
- * residual pattern fails closed to a whole-string redaction.
+ * A credential-looking `name:`/`name=` surviving the textual passes (truncated or
+ * escaped JSON) fails closed to whole-string redaction.
  */
 const RESIDUAL_CREDENTIAL_PATTERN =
   /(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|authorization|client[-_]?secret|secret|password|token|credential|cookie|private[-_]?key)\s*["'\\]*\s*[:=]/i;
@@ -143,9 +127,8 @@ function sanitizeArgumentText(
   const text = sanitizeProviderErrorText(value, options);
   let inspected = text;
   for (let level = depth; level <= ARG_EVIDENCE_MAX_DEPTH; level += 1) {
-    // Inspect decoded views too: embedded/malformed text need not start with
-    // a JSON delimiter, and its keys or actual secrets may be JSON-escaped
-    // several times. Keep harmless text's original escaping in the evidence.
+    // Inspect decoded views too: embedded/malformed text need not start with a JSON
+    // delimiter and its keys may be escaped several times. Keep original escaping.
     if (
       RESIDUAL_CREDENTIAL_PATTERN.test(inspected) ||
       sanitizeProviderErrorText(inspected, options) !== inspected
@@ -171,8 +154,8 @@ function sanitizeArgumentValue(
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
-      // Include JSON string literals: each parse unwraps one encoding layer,
-      // sharing the same depth bound as object/array traversal.
+      // JSON string literals too: each parse unwraps one encoding layer under the
+      // same depth bound as object/array traversal.
       try {
         return JSON.stringify(sanitizeArgumentValue(JSON.parse(value), options, depth + 1));
       } catch {
@@ -197,13 +180,10 @@ function sanitizeArgumentValue(
 }
 
 /**
- * Recursively sanitize a tool-call ARGUMENTS value for durable failure
- * evidence (YUK-1559 C6). Unlike `sanitizeProviderErrorText` — a textual
- * hygiene pass — this walks the parsed structure: credential/auth object
- * keys are replaced by '[redacted]' at any depth, string fields that embed
- * JSON are parsed and sanitized INSIDE, and the resolved provider credential
- * is still removed verbatim and JSON-escaped. Unparseable text that still
- * shows a credential-looking `key:`/`key=` fails closed to '[redacted]'.
+ * Recursively sanitize tool-call ARGUMENTS for durable failure evidence (YUK-1559
+ * C6): credential-ish keys are redacted at any depth, embedded JSON strings are
+ * parsed and sanitized inside, and unparseable text showing a credential-looking
+ * `key:`/`key=` fails closed to '[redacted]'.
  */
 export function sanitizeArgumentsEvidence(
   value: unknown,
@@ -213,11 +193,9 @@ export function sanitizeArgumentsEvidence(
 }
 
 /**
- * The same boundary applied to streamed argument TEXT: a strict-parsable
- * chunk is sanitized structurally (embedded JSON credentials included) and
- * re-serialized; unparseable text gets the textual passes plus the residual
- * credential fail-close. Used for every retained argument representation so
- * malformed first-turn evidence cannot leak an embedded credential either.
+ * Same boundary for streamed argument TEXT: parsable chunks are sanitized
+ * structurally and re-serialized; unparseable text gets the textual passes plus
+ * the residual fail-close.
  */
 export function sanitizeArgumentsEvidenceText(
   text: string,
@@ -231,11 +209,9 @@ export function sanitizeArgumentsEvidenceText(
 }
 
 /**
- * Wrap the provider fetch handed to a pi query: on a non-2xx response the
- * body is cloned and recorded while the original response still reaches the
- * provider SDK untouched (pi's errorMessage continues to render its own
- * formatted summary). The LAST non-2xx wins — provider retries may pass
- * several failures before the terminal one the run reports.
+ * Wrap the provider fetch handed to a pi query: on a non-2xx the body is cloned
+ * and recorded while the original response reaches the SDK untouched. The LAST
+ * non-2xx wins — retries may pass several failures before the reported one.
  */
 export function createProviderErrorCaptureFetch(
   base: typeof fetch,
@@ -244,9 +220,8 @@ export function createProviderErrorCaptureFetch(
   fetch: typeof fetch;
   latest(): ProviderErrorEvidence | undefined;
   /**
-   * The same boundary applied to pi's formatted errorMessage — the driver
-   * may embed the full (unbounded, unsanitized) provider body in it, so a
-   * retained copy must pass through identical sanitize + UTF-8 cap.
+   * Same boundary for pi's formatted errorMessage, which may embed the full
+   * unbounded provider body.
    */
   sanitize(text: string): string;
 } {

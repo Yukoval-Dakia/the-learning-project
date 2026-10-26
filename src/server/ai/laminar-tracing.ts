@@ -175,7 +175,7 @@ export async function initializeLaminarTracing(
             setAttribute: (name, value) => {
               span.setAttribute(name, value);
             },
-            // 0.8.49 returns LaminarSpan at runtime, but startSpan declares OTel Span.
+            // Laminar's startSpan is typed as OTel Span, but returns LaminarSpan at runtime.
             setInput: (value) => {
               if ('setInput' in span && typeof span.setInput === 'function') span.setInput(value);
             },

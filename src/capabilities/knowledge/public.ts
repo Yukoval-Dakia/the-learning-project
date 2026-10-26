@@ -81,11 +81,7 @@ export {
   subjectRootId,
   updateSubjectRootNameFromControl,
 } from './server/node-creation';
-export {
-  type MasteryDecayBucket,
-  loadKnowledgeNodePage,
-  masteryDecayBucket,
-} from './server/node-page';
+export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,

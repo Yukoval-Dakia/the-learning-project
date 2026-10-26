@@ -16,8 +16,8 @@ export const SELECTION_MISS_REASONS = [
   'NO_SCORABLE_ITEM',
   'NO_INDEPENDENT_FAMILY',
   'ONLY_QUARANTINED_ITEMS',
-  // Eligible items existed but were insufficient to satisfy demand (partial fulfill: some used,
-  // residual gap). Kept distinct from NO_ALLOWED_USE_ITEM, which means the pool was truly empty.
+  // Eligible items existed but could not meet demand: some were used and a residual
+  // gap remains. Distinct from NO_ALLOWED_USE_ITEM, which means the pool was truly empty.
   'INSUFFICIENT_ELIGIBLE_ITEMS',
 ] as const;
 
@@ -56,10 +56,9 @@ export function parseSelectionMiss(value: unknown): SelectionMissV1 {
 }
 
 function reasonFor(c: EvaluatedSelectionConstraints): SelectionMissV1['reason'] {
-  // A non-live (archived/missing) KC collapses into NO_ACCESSIBLE_ITEM: the reason vocabulary
-  // has no dedicated NO_LIVE_KNOWLEDGE axis, and a dead KC yields zero accessible items by
-  // definition. This is a deliberate conflation of the lifecycle axis with the availability
-  // axis — a dashboard filtering on NO_ACCESSIBLE_ITEM mixes archived-KC and item-scarcity misses.
+  // A dead (archived/missing) KC has no dedicated reason axis and yields zero accessible
+  // items by definition, so it collapses into NO_ACCESSIBLE_ITEM. A dashboard filtering
+  // on that reason therefore mixes archived-KC and item-scarcity misses.
   if (!c.live_knowledge) return 'NO_ACCESSIBLE_ITEM';
   if (c.candidate_count === 0) return 'NO_ALLOWED_USE_ITEM';
   if (c.near_difficulty_count === 0) return 'NO_NEAR_DIFFICULTY';
@@ -78,13 +77,9 @@ function reasonFor(c: EvaluatedSelectionConstraints): SelectionMissV1['reason'] 
   ) {
     return 'ONLY_EXPOSED_FAMILIES';
   }
-  // Phase A has no allowed-use projection yet. Reaching here means every observable constraint
-  // passed but selection still missed — the matcher's partial-fulfill path (some eligible items
-  // used, a residual gap remains). accessible_count > 0 is guaranteed at this point (the
-  // accessible_count === 0 branch returned above), so eligible items demonstrably existed:
-  // classify as INSUFFICIENT_ELIGIBLE_ITEMS rather than overloading NO_ALLOWED_USE_ITEM, which
-  // represents the genuine candidate_count === 0 truly-empty pool. The NO_ALLOWED_USE_ITEM arm is a
-  // defensive fallback should the guards above ever be reordered.
+  // Every observable constraint passed but selection still missed: eligible items existed
+  // and only demand was not fully met. Keep this distinct from NO_ALLOWED_USE_ITEM (a
+  // truly empty pool); the final arm is a defensive fallback if the guards are reordered.
   return c.accessible_count > 0 ? 'INSUFFICIENT_ELIGIBLE_ITEMS' : 'NO_ALLOWED_USE_ITEM';
 }
 
@@ -103,8 +98,7 @@ export function classifySelectionMiss(
 
 /** Observe-only ledger write. It never dispatches supply work or participates in selection. */
 export async function writeSelectionMissEvent(db: Db, miss: SelectionMissV1): Promise<string> {
-  // `miss` is already SelectionMissV1-validated by the only caller (classifySelectionMiss ends in
-  // selectionMissSchema.parse); trust the type and write directly instead of re-parsing.
+  // classifySelectionMiss already validated `miss`; write it directly instead of re-parsing.
   return writeEvent(db, {
     id: newId(),
     actor_kind: 'system',

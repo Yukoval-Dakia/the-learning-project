@@ -1,23 +1,7 @@
-// KnowledgeReviewTask — Maintenance Agent runtime (pi agentLoop lane).
-//
-// YUK-1553 — the private `mcp__loom__write_proposal` custom mount is RETIRED.
-// The task now mounts the registered `knowledge_review` DomainTool surface
-// through `piDomainMount` → `executeDomainToolCall`, so its model calls the
-// same `propose_knowledge_mutation` / `propose_knowledge_edge` shared tools
-// every other surface uses (registry input/output schemas, bridge logging,
-// unified cooldown gate). The `runWriteProposal` compatibility adapter below
-// keeps the existing programmatic caller contract — it forwards to the same
-// registered tool implementations rather than owning a parallel path.
-//
-// Flow:
-//   1. Build the input payload (tree + recent failure attempts + agent notes).
-//   2. `streamTask` runs the pi agentLoop with the domain mount exposing the
-//      `knowledge_review` surface as `mcp__loom__*` tools; the bridge writes
-//      the authoritative tool_call_log row per call.
-//   3. Return the streamed Response.
-//
-// Proposals are proposal-only (event(action='propose') rows); the user accepts
-// in the inbox — no direct mutation, per the knowledge capability boundary.
+// KnowledgeReviewTask — maintenance agent runtime. Mounts the shared
+// knowledge_review tools through piDomainMount; proposals are proposal-only and the
+// user accepts in the inbox. runWriteProposal is a compatibility adapter for
+// existing programmatic callers and forwards to the same registered tools.
 
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -53,9 +37,8 @@ async function buildReviewInput(db: Db) {
     .from(knowledge)
     .orderBy(knowledge.created_at);
 
-  // U8 / AF §4 — un-expired out-of-band hints addressed to 'maintenance'. HINTS,
-  // not facts (labelled as such in the input below); additive context only,
-  // never mutates durable learning facts (AF §2.4). Empty on the common path.
+  // U8 / AF §4 — un-expired hints for 'maintenance'. Additive context only; never
+  // durable facts. Empty on the common path.
   const agent_notes = (await readAgentNotes(db, { for_agent: 'maintenance', now: new Date() })).map(
     (n) => ({
       id: n.id,
@@ -75,9 +58,7 @@ async function buildReviewInput(db: Db) {
     const cause = effectiveCauseForFailureAttempt(fa);
     return {
       id: fa.attempt_event_id,
-      // M3 closeout (2026-05-22): canonical LLM payload field name —
-      // KnowledgeReviewTask prompt (src/ai/task-prompts.ts buildKnowledgeReviewPrompt)
-      // documents `question_id` as the recipe field. NOT ActivityRef legacy.
+      // Prompt recipe field is `question_id`, not the ActivityRef legacy name.
       question_id: fa.question_id,
       knowledge_ids: fa.referenced_knowledge_ids,
       cause: cause
@@ -96,10 +77,8 @@ async function buildReviewInput(db: Db) {
     input: {
       tree,
       recent_mistakes,
-      // U8 / AF §4 — these are HINTS left by narrow tasks, NOT facts: use them to
-      // direct maintenance attention (e.g. a flagged structural gap), never as
-      // ground truth, and keep proposing only (AF §2.4). Empty when no fresh
-      // notes exist → the task behaves exactly as before.
+      // HINTS left by narrow tasks, not facts: direct attention, never ground truth.
+      // Empty means the task behaves as before.
       agent_notes,
     },
     subjectProfile: resolveSubjectProfile(resolveSingleTreeDomain(tree)),
@@ -113,17 +92,9 @@ function resolveSingleTreeDomain(tree: Array<{ domain: string | null }>): string
   return domains.size === 1 ? ([...domains][0] ?? null) : null;
 }
 
-// ── runWriteProposal compatibility adapter ──────────────────────────────────
-//
-// Existing programmatic callers (e.g. the maintenance nightly db tests) still
-// invoke `runWriteProposal` with the retired tool's arg shape
-// `{ mutation?, payload, reasoning, evidence_event_ids? }`, where the payload
-// object IS the mutation change (it carries `payload.mutation` as its
-// discriminator; `payload.mutation === 'propose_knowledge_edge'` selects the
-// mesh-edge path). This adapter forwards to the REGISTERED DomainTools — there
-// is exactly one proposal implementation now. Strict input schemas mean a
-// malformed payload throws a zod error instead of silently writing a
-// cast-shaped proposal event like the retired executor did.
+// Compatibility adapter: existing programmatic callers pass the retired tool's arg
+// shape; this forwards to the registered DomainTools so there is one proposal
+// implementation. Strict schemas throw instead of silently writing a cast-shaped event.
 
 export interface WriteProposalArgs {
   mutation?: string;
@@ -157,19 +128,16 @@ export type WriteProposalResult =
       edge_id: string;
       kind: 'skipped:duplicate_live_edge';
     }
-  // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
-  // still written (folded, marked rubric-rejected); the verdict is surfaced to
-  // the agent so it gets structured feedback instead of a silent drop.
+  // P5.4 — rubric-rejected edge: the event is still written; the verdict reaches
+  // the agent as structured feedback.
   | {
       event_id: string;
       kind: 'rubric_rejected';
       gate: string;
       reason: string;
     }
-  // YUK-1553 — the shared tools' own world-state skips that the retired
-  // dispatcher never saw (node checks, cross-subject, parent-semantic
-  // duplicate, edge_not_found, invalid_payload). `status` carries the shared
-  // tool's exact status string so callers see the typed outcome.
+  // YUK-1553 — shared-tool world-state skips; `status` carries the exact tool
+  // status string.
   | {
       kind: 'skipped';
       status: string;
@@ -183,9 +151,8 @@ export async function runWriteProposal(
   args: WriteProposalArgs,
   ctx: WriteProposalCtx = {},
 ): Promise<WriteProposalResult> {
-  // The retired private executor always ran as agent actor 'dreaming'
-  // (isAgent: true) — preserve that actor so rubric/adaptive gates keep the
-  // same agent-strict behavior for existing callers.
+  // Preserve the retired executor's agent actor so rubric/adaptive gates stay
+  // agent-strict for existing callers.
   const toolCtx: ToolContext = {
     db,
     taskRunId: ctx.taskRunId ?? '',
@@ -201,9 +168,7 @@ export async function runWriteProposal(
       : typeof payload.mutation === 'string'
         ? payload.mutation
         : undefined;
-  // The shared tool schemas re-parse inside execute, so raw objects are safe to
-  // hand over (`as never` mirrors the bridge's execInput cast); invalid shapes
-  // throw the typed zod error at the tool boundary.
+  // Shared schemas re-parse inside execute; invalid shapes throw at the tool boundary.
   if (mutation === 'propose_knowledge_edge') {
     const out = await proposeKnowledgeEdgeTool.execute(toolCtx, {
       ...payload,
@@ -296,10 +261,8 @@ export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Respon
     db: ctx.db,
     subjectProfile,
     piToolMounts: [
-      // YUK-1553 — the registered `knowledge_review` surface (readers +
-      // propose_knowledge_mutation + propose_knowledge_edge) through the shared
-      // DomainTool bridge. callerActor 'maintenance' matches this task's
-      // agent-notes channel and the producers' default actor_ref.
+      // YUK-1553 — registered knowledge_review surface via the shared DomainTool
+      // bridge; actor 'maintenance' matches the agent-notes channel.
       piDomainMount({
         ctx: {
           db: ctx.db,
@@ -313,10 +276,7 @@ export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Respon
       }),
     ],
     taskRunId,
-    // The domain bridge already writes the authoritative tool_call_log row per
-    // call (input, output, error_reason); the runner's input-only stream log
-    // stays off so each call logs exactly once — same posture the retired
-    // private mount used.
+    // The bridge already logs each call; keep the runner's input-only log off.
     autoLogToolCalls: false,
   });
 }

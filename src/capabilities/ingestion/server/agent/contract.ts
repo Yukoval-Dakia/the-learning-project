@@ -99,7 +99,7 @@ export const IngestionAgentErrorCode = z.enum([
   'worker_lost',
   'structure_failed',
   'ask_expired',
-  // R2-8: session refused because the document's derivation policy forbids
+  // Session refused because the document's derivation policy forbids
   // the paid agent lane (answer_only / crisis).
   'policy_blocked',
 ]);
@@ -263,7 +263,7 @@ export const AgentRunSegmentPayload = z
 export type AgentRunSegmentPayloadT = z.infer<typeof AgentRunSegmentPayload>;
 
 /**
- * `agent.terminal_request` — model-declared run-stop request (R2-6). The
+ * `agent.terminal_request` — model-declared run-stop request. The
  * model may not emit session-scope errors itself; the tool records this
  * marker instead and the orchestrator emits the session error + fails.
  */

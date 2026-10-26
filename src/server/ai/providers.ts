@@ -8,9 +8,13 @@ import {
   customProviderDefinitions,
   looksLikeCustomProviderId,
 } from '@/core/config/custom-providers';
+import {
+  assertModelEndpointHostAllowed,
+  isModelEndpointHostAllowed,
+} from '@/core/config/model-endpoint-allowlist';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import { type ProviderModelBinding, resolveModelProfile } from './model-profiles';
-import { nativePiModel, piProviderId } from './pi-provider-catalog';
+import { executablePiModel, nativePiModelApi, piProviderId } from './pi-provider-catalog';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
@@ -352,6 +356,8 @@ export function providerModelsRoot(
   if (looksLikeCustomProviderId(provider)) {
     const definition = customProviderDefinition(provider);
     if (!definition) return null;
+    // Never send the credential to a host the catalog does not declare.
+    if (!isModelEndpointHostAllowed(definition.baseUrl)) return null;
     return definition.protocol === 'anthropic-messages' && !definition.baseUrl.endsWith('/v1')
       ? `${definition.baseUrl}/v1`
       : definition.baseUrl;
@@ -361,10 +367,12 @@ export function providerModelsRoot(
   try {
     const base = resolveModelProfile(provider, model, env).baseUrl;
     if (!base) return null;
-    return nativePiModel(provider, model, env)?.api === 'anthropic-messages' &&
-      !base.endsWith('/v1')
-      ? `${base}/v1`
-      : base;
+    if (!isModelEndpointHostAllowed(base)) return null;
+    // Root routing depends only on the wire protocol; other facts gate execution,
+    // not the endpoint. Without an api there is no protocol to route a root from.
+    const api = nativePiModelApi(provider, model, env);
+    if (!api) return null;
+    return api === 'anthropic-messages' && !base.endsWith('/v1') ? `${base}/v1` : base;
   } catch {
     return null;
   }
@@ -712,8 +720,8 @@ export function resolveTaskBinding(
 /**
  * YUK-1547 — an opted-in task pair must be complete AND servable for this
  * task, checked at binding resolution (config error before any attempt/paid
- * call). Servable = provider implemented for the kind + model present in the
- * provider's native pi catalog; capability-fit still gates at run start.
+ * call). Servable = provider implemented for the kind + model passes the
+ * executable-facts gate; capability-fit still gates at run start.
  */
 function assertOptedTaskPair(
   kind: TaskKind,
@@ -737,8 +745,8 @@ function assertOptedTaskPair(
   if (!isProviderImplementedForTask(provider, kind)) {
     fail(`provider '${rawProvider}' is not implemented for task '${kind}'`);
   }
-  if (!nativePiModel(provider, model)) {
-    fail(`model '${model}' is not in native pi provider '${piProviderId(provider)}'`);
+  if (!executablePiModel(provider, model)) {
+    fail(`model '${model}' is not executable in native pi provider '${piProviderId(provider)}'`);
   }
 }
 
@@ -763,10 +771,10 @@ function resolveTaskNativeReasoningParams(
 ): TaskNativeReasoningParams | undefined {
   const effort = params?.reasoning_effort;
   if (effort === undefined) return undefined;
-  const native = nativePiModel(provider, model);
+  const native = executablePiModel(provider, model);
   if (native?.api !== 'openai-completions' || native.reasoning !== true) {
     throw new Error(
-      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
+      `task.${kind}.reasoning sets reasoning_effort='${effort}', but '${provider}/${model}' is not an executable OpenAI-completions reasoning model — the param would be dropped or rejected on the wire. Remove the task override or point the task at a lane whose own reasoning parameter is reasoning_effort.`,
     );
   }
   const supported = resolveModelProfile(provider, model).reasoning.supportedEfforts;
@@ -809,6 +817,17 @@ export function resolveTaskProvider(
         `Unknown provider '${providerName}' for task ${kind}: the custom provider definition no longer exists. Remove the task override or recreate the provider.`,
       );
     }
+    // The key is sent to the catalog bucket's endpoint, not necessarily the
+    // registry definition during a PUT→refresh window. Validate the URL that
+    // will actually go on the wire and fail closed while the two disagree.
+    const catalogBaseUrl = resolveModelProfile(providerName, modelId).baseUrl;
+    if (catalogBaseUrl !== undefined && catalogBaseUrl !== definition.baseUrl) {
+      throw new Error(
+        `Custom provider '${providerName}' endpoint is out of sync: the saved definition has '${definition.baseUrl}' but the runtime catalog bucket still has '${catalogBaseUrl}'. Refusing to send ${definition.apiKeyEnv} until the provider's /models refresh completes.`,
+      );
+    }
+    const baseUrl = catalogBaseUrl ?? definition.baseUrl;
+    assertModelEndpointHostAllowed(baseUrl, `custom provider '${providerName}'`);
     const wireReasoning = resolveTaskNativeReasoningParams(
       kind,
       providerName,
@@ -826,7 +845,7 @@ export function resolveTaskProvider(
       provider: providerName,
       model: modelId,
       apiKey,
-      baseUrl: resolveModelProfile(providerName, modelId).baseUrl ?? definition.baseUrl,
+      baseUrl,
       ...(wireReasoning !== undefined ? { nativeReasoningParams: wireReasoning } : {}),
       selectionRule: binding.selectionRule,
     };
@@ -888,12 +907,17 @@ export function resolveTaskProvider(
     );
   }
 
+  const profile = resolveModelProfile(providerName, modelId);
+  const baseUrl = profile.baseUrl;
+  if (baseUrl !== undefined) {
+    assertModelEndpointHostAllowed(baseUrl, `provider '${providerName}' model '${modelId}'`);
+  }
   return {
     authMode: 'key',
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: resolveModelProfile(providerName, modelId).baseUrl,
+    baseUrl,
     selectionRule,
     ...nativeReasoning,
   };

@@ -1,4 +1,4 @@
-// compose_presentation：录入 agent 的展示层工具（spec §5）。
+// compose_presentation：录入 agent 的展示层工具。
 //
 // 给定 draft question_block 或已发布 revision 的引用 + 一份 presentation 文档：
 //   1. 解析该题的契约（structure / response_spec / scoring_basis）——

@@ -1,24 +1,10 @@
-// YUK-1007 — 热加载配置 key 注册表（canonical keyspace）。
-//
-// grounding：docs/planning/2026-09-26-yuk1007-hot-reload-config.md §1.4/§1.5。
-// 本文件在 `src/core/`：capability reader 只允许 import `@/core/*`（capability→server
-// 边计入 capability-boundary baseline，新 module 一律回归），故 keyspace + 读面全
-// 部保持 DB-free。
-//
-// 分层裁决（每个 env-migratable key，对应 getConfig）：
-//   envMode='fallback'  — DB 行 > env 值 > codeDefault（env 是迁移期回退层 + 逃生通道）
-//   envMode='priority'  — env 显式值 > DB 行 > codeDefault（operator pin 永远钉死
-//                         进程，如 AI_PROVIDER_OVERRIDE——owner 裁决的 readEnvOverride
-//                         语义：env pin > DB 单键覆盖）
-//   envMode='pinned'    — env 值 > codeDefault，DB 层整层跳过（compose 强制项：
-//                         面板写端对它返回 409，不得让 DB 行静默输给 deploy pin）
-//
-// `envParse` 把 env 原始 string 翻译成 DB 层同型值（flag → boolean、CSV → array、
-// int → number）。返回 undefined = 「env 未表达值」→ 继续下探一层；对 flag 组
-// unrecognized literal 返回 undefined = 该 reader 现 fallback 语义的等价物。
-//
-// 不在本表的 key：secret / boot 输入 / env schema 自身 / VITEST / NODE_ENV（§1.5
-// 「不建 key」清单）。task.<kind>.* / lane.<lane>.* 用模式定义（§1.5 动态前缀）。
+// 热加载配置 key 注册表（canonical keyspace）。分层裁决（每个 env-migratable key）：
+//   envMode='fallback' — DB 行 > env 值 > codeDefault（env 是迁移期回退层 + 逃生通道）
+//   envMode='priority' — env 显式值 > DB 行 > codeDefault（operator pin 钉死进程）
+//   envMode='pinned'   — env 值 > codeDefault，DB 层整层跳过（面板写端返回 409，
+//                        不得让 DB 行静默输给 deploy pin）
+// 本文件在 `src/core/`：capability reader 只能 import `@/core/*`，故 keyspace 与读面
+// 保持 DB-free。详见 docs/planning/2026-09-26-yuk1007-hot-reload-config.md §1.4/§1.5。
 
 import { z } from 'zod';
 import { STUCK_RUN_THRESHOLD_MS } from '@/core/ai-run-limits';
@@ -37,18 +23,18 @@ export type ConfigValue =
 export interface ConfigOverride {
   provider?: string;
   model?: string;
-  /** TaskSpec budget 覆盖（maxIterations/maxCost/transientRetries/timeout）。 */
+  /** TaskSpec budget 覆盖。 */
   budget?: {
     maxIterations?: number;
     maxCost?: number;
     transientRetries?: number;
     timeout?: number;
   };
-  /** YUK-1547 — task.<kind>.reasoning：模型原生推理参数（键 = wire 参数名）。 */
+  /** task.<kind>.reasoning：模型原生推理参数（键 = wire 参数名）。 */
   reasoning?: {
     reasoning_effort?: string;
   };
-  /** YUK-1547 — task.<kind>.override_global_pin：显式 opt-in，task pair 优先于全局 pin。 */
+  /** task.<kind>.override_global_pin：显式 opt-in，task pair 优先于全局 pin。 */
   override_global_pin?: boolean;
 }
 
@@ -69,7 +55,7 @@ export interface ConfigKeyDef {
   envParse?: EnvParseFn;
   /** migration tier（A=per-call 读点已换 getConfig，B=结构改造后，C=不可热）。 */
   tier: 'A' | 'B' | 'C';
-  /** 备注（P2 风险标注 / 面板文案提示）。 */
+  /** 备注（面板文案提示 / 风险标注）。 */
   note?: string;
 }
 
@@ -108,10 +94,8 @@ const nonNegIntEnv: EnvParseFn = (raw) => {
 };
 
 /**
- * 原 readPositiveInt 语义（rate-limit 组）：Number(raw) —— '1e2'→100、'0.9'→floor→0→
- * fallback 边界、'' → Number('')=0 → fallback。有限且 >0 → floor；其余 → undefined。
- * 与 posIntEnv 的分歧点在 '1e2'（Number 100 vs parseInt 1）和 '0.9'（floor 后取
- * 整判正 vs parseInt 直接截断）。
+ * 原 readPositiveInt 语义（rate-limit 组）：Number(raw) 后 floor，有限且 >0 才表达。
+ * 与 posIntEnv 的差别在 '1e2'（100 vs 1）和 '0.9'（floor 后判正 vs parseInt 截断）。
  */
 const posNumFloorEnv: EnvParseFn = (raw) => {
   const v = raw.trim();
@@ -121,8 +105,8 @@ const posNumFloorEnv: EnvParseFn = (raw) => {
 };
 
 /**
- * 原 resolvePositiveInt 语义（KC dedup int 组）：trunc(Number(raw))，>0 且 trunc≥1；
- * '1e2'→100（不是 parseInt 的 1）；'0.5'→trunc 0 → fallback；'12.9'→12。
+ * 原 resolvePositiveInt 语义（KC dedup int 组）：trunc(Number(raw))，'1e2'→100，
+ * '0.5'→0 → fallback，'12.9'→12。
  */
 const posNumTruncEnv: EnvParseFn = (raw) => {
   const v = raw.trim();
@@ -134,9 +118,8 @@ const posNumTruncEnv: EnvParseFn = (raw) => {
 };
 
 /**
- * 原 readIntInRange 的 env 段（judge-calibration 组）：parseInt；NaN → 未表达
- * （reader 侧 clamp 到 [min,max] 是公开语义——'0' 必须产出 0 交给 clamp，
- * 不是 fallback）。
+ * 原 readIntInRange 的 env 段（judge-calibration 组）：parseInt，NaN → 未表达。
+ * reader 侧 clamp 到 [min,max] 是公开语义，故 '0' 必须产出 0 交给 clamp，不是 fallback。
  */
 const intEnv: EnvParseFn = (raw) => {
   const v = raw.trim();
@@ -146,16 +129,14 @@ const intEnv: EnvParseFn = (raw) => {
 };
 
 /**
- * jyeoo 组原语义（YUK-990）：Number.parseInt 直通，NaN 给 spawn 边界 fail-closed。
- * 关键：'' 不是 unset——parseInt('')=NaN 直通（旧 env='' → NaN → spawn fail-closed，
- * 不许把 '' 纠成「未表达」回落 codeDefault）。
+ * jyeoo 组语义：parseInt 直通，NaN 交给 spawn 边界 fail-closed。'' 不算 unset
+ * （parseInt('')=NaN），不能纠成「未表达」回落 codeDefault。
  */
 const rawParseIntEnv: EnvParseFn = (raw) => Number.parseInt(raw, 10);
 
 /**
- * JYEOO_BACKFILL_TIMEOUT_MS 原语义（迁移前 jyeooBackfillSpawnTimeoutMs 的
- * `env.BACKFILL || env.SPAWN` 链）：'' 是 falsy = 未设置（下探 SPAWN 层/推导
- * 默认）；非数字 parseInt 直通 NaN（fail-closed）。
+ * JYEOO_BACKFILL_TIMEOUT_MS 语义（迁移前 `env.BACKFILL || env.SPAWN` 链）：'' 是
+ * falsy = 未设置，继续下探 SPAWN 层；非数字 parseInt 直通 NaN（fail-closed）。
  */
 const backfillTimeoutEnv: EnvParseFn = (raw) => {
   const v = raw.trim();
@@ -198,13 +179,9 @@ const budgetOverrideSchema = z
   .strict();
 
 /**
- * YUK-1547 — per-task model-native reasoning params. Keys are the model's own
- * wire parameter names; the value set is validated at resolution time against
- * the resolved model's own declared levels (providers.ts
- * assertTaskNativeReasoningParams), never against a loom-wide tier enum. This
- * slice wires DeepSeek `reasoning_effort` only — new keys are added when their
- * lane is proven, so the schema stays strict rather than passing typos to the
- * wire.
+ * per-task 模型原生推理参数。键是模型自己的 wire 参数名，取值在解析期按该模型声明的
+ * 档位校验（providers.ts assertTaskNativeReasoningParams），不用 loom 全局档位枚举。
+ * 当前只接入 DeepSeek `reasoning_effort`；schema 保持 strict，避免把拼写错误发给 wire。
  */
 const taskReasoningSchema = z
   .object({
@@ -212,8 +189,7 @@ const taskReasoningSchema = z
   })
   .strict();
 
-/** env 侧 provider override 读到的是两个独立 env（*_PROVIDER / *_MODEL），
- * getLaneOverride 每 key 各读各的 env fallback（registry envName 直挂）。 */
+/** lane override 是两个独立 env（*_PROVIDER / *_MODEL）：getLaneOverride 每 key 各读各的 envName。 */
 
 // ─── 注册表 ────────────────────────────────────────────────────────────────
 
@@ -228,7 +204,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
   },
   JUDGE_FALLBACK_PROVIDER: {
     // '' = 显式关闭跨 provider 兜底（env 语义）；非空 = provider 名（写端校验）。
-    // 原 reader（judge-durable-config）：?.trim() 后 ' ' 也是显式关——不可裸存 raw。
+    // reader 侧 trim 后 ' ' 也算显式关——不能裸存 raw。
     schema: z.string(),
     codeDefault: 'anthropic-sub',
     envName: 'JUDGE_FALLBACK_PROVIDER',
@@ -240,7 +216,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: false,
     envName: 'MISCONCEPTION_PROMOTE_ENABLED',
     envParse: flagEnv,
-    // compose 强制项（preflight §4.2）：DB 层跳过，写端 409。
+    // compose 强制项：DB 层跳过，写端 409。
     envMode: 'pinned',
     tier: 'A',
   },
@@ -299,8 +275,8 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     codeDefault: 0.85,
     envName: 'WORKFLOW_JUDGE_AUTO_ENROLL_THRESHOLD',
     envParse: numberEnv,
-    // review P1-1：compose 只强制 ENABLED 两面旗 + PLACEMENT_PROBE_ENABLED——
-    // THRESHOLD 没被 compose 设置，误 pin 会让 DB 写 409（可调阈值变死值）。
+    // compose 只强制两面 ENABLED 旗 + PLACEMENT_PROBE_ENABLED；THRESHOLD 误 pin
+    // 会让 DB 写 409，把可调阈值钉死。
     tier: 'A',
   },
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: {
@@ -417,16 +393,15 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     // 原 reader 裸 === 比较（无 trim）：' apply ' → off。
     envParse: (raw) => (raw === 'off' || raw === 'shadow' || raw === 'apply' ? raw : undefined),
     tier: 'A',
-    // P2（architecture.md:764）：'off' 不是完整 kill switch（触发器照常记账）——
-    // 面板文案必须带这句。
+    // 'off' 不是完整 kill switch（触发器照常记账）——面板文案必须带这句。
     note: "P2: 'off' is not a complete kill switch (trigger bookkeeping continues)",
   },
   MEMORY_RECONCILE_HANDOFF_MODE: {
     schema: z.enum(['observe', 'write', 'recover', 'drain']),
     codeDefault: 'observe',
     envName: 'MEMORY_RECONCILE_HANDOFF_MODE',
-    // 原语义：env 非法值 fail-fast throw（不是 fallback 地板）——原文直通，
-    // 把 throw 留在 memoryReconcileHandoffMode 的 switch 里。
+    // env 非法值 fail-fast throw（不是 fallback 地板）：原文直通，throw 留在
+    // memoryReconcileHandoffMode 的 switch 里。
     envParse: stringEnv,
     tier: 'A',
   },
@@ -439,9 +414,8 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
     note: 'P2: 写所有权翻位（Scheme A dark-ship）',
   },
-  // PLACEMENT_PROBE_ENABLED —— 原 reader（placement.ts）：raw === 'true' 逐位字面量。
-  // '1'/'TRUE'/' true ' 全 false；compose 强制（pinned）与另两面 dark-ship 旗一致，
-  // 面板写端 409。
+  // PLACEMENT_PROBE_ENABLED —— raw === 'true' 逐位字面量：'1'/'TRUE'/' true ' 全 false。
+  // compose 强制（pinned），与另两面 dark-ship 旗一致，面板写端 409。
   PLACEMENT_PROBE_ENABLED: {
     schema: z.boolean(),
     codeDefault: false,
@@ -508,9 +482,8 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
   },
   // ── 全局 provider pin（owner 裁决：env pin > DB > default） ────────────────
-  // 裸 AI_PROVIDER_OVERRIDE / AI_PROVIDER_MODEL 不注册（review P2：resolver 只消费
-  // lane.global.*——注册裸键会产生「写进去永不生效」的静默死键）。env 层经
-  // lane.global.* 的 envName 挂接，priority 语义不变。
+  // 裸 AI_PROVIDER_OVERRIDE / AI_PROVIDER_MODEL 不注册：resolver 只消费 lane.global.*，
+  // 注册裸键会产生「写进去永不生效」的静默死键。env 层经 lane.global.* 的 envName 挂接。
   // ── jyeoo 供给旋钮 ────────────────────────────────────────────────────────
   JYEOO_RS_BINARY: {
     schema: z.string(),
@@ -520,8 +493,8 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
   },
   JYEOO_SPAWN_TIMEOUT_MS: {
-    // YUK-990：env 垃圾值 NaN 直通 spawn 边界 fail-closed，不做 env 纠偏；
-    // DB 层走 zod（int positive）拦写入。'' 也是 NaN（parseInt('')），不是未表达。
+    // env 垃圾值 NaN 直通 spawn 边界 fail-closed，不做 env 纠偏；DB 层走 zod（int
+    // positive）拦写入。'' 也是 NaN（parseInt('')），不是未表达。
     schema: z.number().int().positive(),
     codeDefault: 120_000,
     envName: 'JYEOO_SPAWN_TIMEOUT_MS',
@@ -532,13 +505,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     schema: z.number().int().positive(),
     codeDefault: undefined, // 缺省 → sessionMax × 90s（reader 侧推导）
     envName: 'JYEOO_BACKFILL_TIMEOUT_MS',
-    // CI 收口（round-2 后）：原 reader（jyeooBackfillSpawnTimeoutMs 迁移前）的
-    // `env.BACKFILL || env.SPAWN` 链把 '' 当 falsy=未设置下探下一层；非数字才
-    // parseInt 直通 NaN（fail-closed）。rawParseIntEnv 把 '' 变成已表达的 NaN，
-    // 撞断了 BACKFILL=''→SPAWN 层的下探（CI run 36425519241 unit 失败）。
-    // SPAWN 键不适用本 parser：它的直读 reader（jyeooSpawnTimeoutMs）语义就是
-    // ''→NaN 直通（YUK-990），与 backfill 链的 ''-下探是同一 env 名的双面——
-    // 注册面取各自主 reader 语义，backfill 链对 SPAWN 层的 '' 已在 reader 侧消化。
+    // '' 必须下探 SPAWN 层：迁移前的 `env.BACKFILL || env.SPAWN` 链把 '' 当未设置，
+    // rawParseIntEnv 会把 '' 变成已表达的 NaN，撞断这层下探。SPAWN 键不可换用本
+    // parser——它的直读 reader 语义就是 ''→NaN 直通，同一 env 名两面各取主 reader 语义。
     envParse: backfillTimeoutEnv,
     tier: 'A',
   },
@@ -557,7 +526,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     tier: 'A',
   },
   JYEOO_DAILY_FETCH_BUDGET: {
-    // 0 = 当日禁抓（operator kill-switch；不得被 coalesce 成默认，memory #606）。
+    // 0 = 当日禁抓（operator kill-switch），不得被 coalesce 成默认。
     schema: z.number().int().min(0),
     codeDefault: 40,
     envName: 'JYEOO_DAILY_FETCH_BUDGET',
@@ -630,7 +599,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     },
     tier: 'A',
   },
-  // ── admission 面（P2：enforce 断流；mode 原文透传保 throw 语义） ─────────
+  // ── admission 面（enforce 断流；mode 原文透传保 throw 语义） ──────────────
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: {
     schema: z.enum(['off', 'observe', 'enforce']),
     codeDefault: 'off',
@@ -749,7 +718,7 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
     envMode: 'priority',
     tier: 'B',
   },
-  // ── ingestion agent 周预算（YUK-1522 LIGHT 启动额度门） ────────────────────
+  // ── ingestion agent 周预算（启动额度门） ──────────────────────────────────
   'ingestion.agent_weekly_budget_usd': {
     // USD/周上限；0 = 显式关闭 agent 启动（kill switch）。判定点在事务内直读
     // system_config 行 + revision（不依赖 15s 快照），env 仅作无 DB 行时的
@@ -771,12 +740,9 @@ export const CONFIG_REGISTRY: Record<string, ConfigKeyDef> = {
 
 // ─── 动态前缀 key（task.<kind>.* / lane.<lane>.*） ──────────────────────────
 //
-// `task.<kind>.provider` / `.model` / `.budget` / `.reasoning` /
-// `.override_global_pin`：52 TaskSpec 的 per-task 覆盖，kind 有效性在写端经
-// src/ai/registry `tasks` 校验（server/write.ts 侧）。`.reasoning` 是模型原生
-// 推理参数；`.override_global_pin` 是显式 opt-in（YUK-1547）。
-// `lane.<lane>.provider` / `.model`：scoped lane（verify_solve / vision_judge /
-// judge_calibration / global）。
+// task.<kind>.{provider,model,budget,reasoning,override_global_pin}：per-task 覆盖，
+// kind 有效性在写端经 src/ai/registry `tasks` 校验。lane.<lane>.{provider,model}：
+// scoped lane（verify_solve / vision_judge / judge_calibration / global）。
 
 export interface DynamicKeyDef {
   kind: 'task' | 'lane';
@@ -814,7 +780,7 @@ export function dynamicKeySchema(def: DynamicKeyDef): z.ZodTypeAny | null {
   }
 }
 
-/** 查 registry：静态 key 或动态前缀 key 都返回 def；未登记 → null。 */
+/** 静态 key 与动态前缀 key 同一入口；未登记返回 null。 */
 export function resolveKeyDef(key: string): ConfigKeyDef | null {
   const staticDef = Object.hasOwn(CONFIG_REGISTRY, key) ? CONFIG_REGISTRY[key] : undefined;
   if (staticDef) return staticDef;

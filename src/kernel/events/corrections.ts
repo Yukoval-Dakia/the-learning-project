@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, lt } from 'drizzle-orm';
 import { CorrectEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -42,6 +42,7 @@ export async function getCorrectionStatus(
 export async function getCorrectionStatuses(
   db: DbLike,
   targetEventIds: string[],
+  opts: { createdBefore?: Date } = {},
 ): Promise<Map<string, CorrectionStatus>> {
   const ids = Array.from(new Set(targetEventIds));
   const statuses = new Map<string, CorrectionStatus>();
@@ -56,6 +57,7 @@ export async function getCorrectionStatuses(
         eq(event.action, 'correct'),
         eq(event.subject_kind, 'event'),
         inArray(event.subject_id, ids),
+        opts.createdBefore ? lt(event.created_at, opts.createdBefore) : undefined,
       ),
     )
     .orderBy(asc(event.created_at), asc(event.dispatch_seq), asc(event.id));

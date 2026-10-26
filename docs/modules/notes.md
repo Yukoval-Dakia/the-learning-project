@@ -14,18 +14,18 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 ## 0. 实施现状（2026-05-28）
 
-> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；`note_verify` 已做二次检查；verified atomic note 会生成 embedded check。Wave 6 Living Note v0 已接入 `NoteRefineTask`：小 patch 走 mutator，超过阈值走 `AiProposal(kind='note_update')` 人工审批，编辑中 defer，idle/blur flush，并提供 AI 改动 timeline + undo。
+> Note 链路已有 MVP：Learning Intent 可以创建 hub/atomic LearningItem 与配套 artifact，pg-boss `note_generate` 会异步填充 atomic body blocks；`note_verify` 已做二次检查。Wave 6 Living Note v0 已接入 `NoteRefineTask`：小 patch 走 mutator，超过阈值走 `AiProposal(kind='note_update')` 人工审批，编辑中 defer，idle/blur flush，并提供 AI 改动 timeline + undo。
 
 | 设计概念 | 现状 |
 |---|---|
-| `artifact` 表 | ✅ schema (`src/db/schema.ts` L290) 与 write path 已在 Learning Intent / note generation 路径启用；body 存 `body_blocks` (ProseMirror JSON), 而非 markdown 文件 |
+| `artifact` 表 | ✅ schema (`src/db/schema.ts` L1310) 与 write path 已在 Learning Intent / note generation 路径启用；body 存 `body_blocks` (ProseMirror JSON), 而非 markdown 文件 |
 | `NoteGenerateTask` | ✅ registry 已有；pg-boss `note_generate` handler 填 atomic body blocks |
 | `NoteVerifyTask` | ✅ Pass-2 verify 把结果写 `artifact.verification_status` + `verification_summary` |
 | `NoteRefineTask` | ✅ Wave 6 / T-88 P4：输出 patch ops；`≤3 ops && ≤2 new blocks` 自动 apply，其余写 `AiProposal(kind='note_update')` |
 | `note_hub` / `note_atomic` 类型 | ✅ artifact.type 二态 + `parent_artifact_id` 父子链 |
 | Hub ↔ LearningItem hub 1:1 / atomic ↔ LearningItem atomic 1:1 | ✅ Learning Intent accept 时同步 materialize |
 | TipTap 编辑器 | ✅ ADR-0022 PM node schema + lazy editor；编辑中 heartbeat 防止 Living Note patch 打断用户 |
-| Embedded check（inline tool_quiz） | ✅ verified atomic note 后生成 1–3 题；attempt 走 `POST /api/embedded-check/attempt`；question 写 `source='embedded'` |
+| Embedded check（inline tool_quiz） | ❌ 生成链已删除；`check` section 与 `NoteSection.embedded_check` 仍是合法 schema 槽，但无 writer、无 attempt route |
 | Grounding / source verification | ❌ sections 目前默认 `source_tier='llm_only'`、`user_verified=false`（Phase 2） |
 
 ---
@@ -39,7 +39,7 @@ Tool 互动型分支当前唯一实例是 `tool_quiz`（见 [`quiz.md`](quiz.md)
 
 当前已落地的是 `learning_intent` 来源：用户声明 topic → `LearningIntentOutlineTask` 产出 1 hub + N atomic outline → 用户 accept 后**同步创建 LearningItem 层级**与 `note_hub` / `note_atomic` artifact stubs → 入队 `NoteGenerateTask` 填 atomic sections。
 
-Living Note v0 的更新触发已接到同一个 `note_refine` 队列：artifact block `mark_wrong`、embedded check failure/error-rate、review mastery success（当 question 带 artifact `source_ref`）、editor dwell heartbeat、dreaming 新增 `note_update` 候选。每个触发器都有 `WAVE6_TRIGGER_*_ENABLED` kill switch；队列入口做 1h debounce，避免同一 artifact 被同类信号刷屏。
+Living Note v0 的更新触发接到同一个 `note_refine` 队列，四类信号：artifact block `mark_wrong`、`mastery_change`、`dreaming`、`verify`。每类有独立 `WAVE6_TRIGGER_*_ENABLED` kill switch；队列入口做 1h debounce，避免同一 artifact 被同类信号刷屏。
 
 ## 2. Hub + Atomic 双层结构
 
@@ -85,24 +85,16 @@ note_hub: 氧化还原反应
 
 | 信号 | AI 反应 |
 | --- | --- |
-| 在 atomic note A 上停留很久 | `dwell` 触发 `note_refine`；默认小 patch 延后到用户 idle/blur 后 apply |
-| 在 A 对应知识点错题 | embedded failure / mark_wrong 触发 `note_refine`，小修自动 apply，大修进 proposal inbox |
-| 用户问"再举个例子" | 在 `example` section 追加，留版本 |
+| 在 A 对应知识点错题 | `mark_wrong` 触发 `note_refine`，小修自动 apply，大修进 proposal inbox |
 | mastery 升高 | `mastery_change` 触发精简/复盘向 patch 候选 |
-| embedded check 错误率持续 >50% | 大 patch 走 `AiProposal(kind='note_update')`，需用户审批 |
+| `note_verify` 发现需复核 | `verify` 触发 patch 候选 |
+| dreaming 产出 `note_update` 候选 | `dreaming` 触发 patch 候选 |
 
 这是相对静态笔记软件（Notion / Obsidian / Wikipedia）的护城河：内容跟随用户演化。
 
-## 6. Embedded check 闭环
+## 6. `check` section 现状
 
-`check` section 是 inline 嵌入的 mini tool_quiz（`question_ids` 引用全局 Question 表）。Tool 可独立存在（每日 quiz、final quiz、用户存的模拟卷）也可嵌入 Note（即 embedded check）——同一抽象，共用 [`quiz.md`](quiz.md) 的判定与申诉机制。
-
-闭环：
-- 做对：算 LearningItem done 信号之一（见 [`learning-items.md`](learning-items.md)），喂 base mastery（见 [`progress.md`](progress.md)）
-- 做错：入错题本（见 [`mistakes.md`](mistakes.md)，经 `caused_by_event_id` 关联到致因 attempt/judge event），可申诉重判
-- 错误率持续 >50%：触发 § 5 的 note 重写 propose
-
-读 note 与做题不再分离。
+graded inline self-test 链已删除：`check` section 只作为 Phase-3 自解释锚点保留（ADR-0040 决定3），`NoteSection.embedded_check` 仍是合法 schema 槽（`src/core/schema/business.ts` L316），但没有生成 writer。
 
 ## 7. 准确性 / 反幻觉
 
@@ -134,10 +126,6 @@ Pass 2  NoteVerifyTask    →  不同 model 跑事实一致性检查
 ### 7.3 显式不确定性
 
 prompt 硬要求：不确定的说不确定，例子优先用经典教材原文，**不自创例子**。
-
-### 7.4 Embedded check 反向信号
-
-某 check question 多次尝试错误率持续 >50% → 自动 flag、propose 重写该 section。**可能不是用户没学懂，是 note 写错了**。
 
 ### 关键 Call
 
@@ -175,7 +163,6 @@ prompt 硬要求：不确定的说不确定，例子优先用经典教材原文�
 | 触发器 | 动作 |
 | --- | --- |
 | 该节点最近 7 天新错题 ≥ 2 | `note_update` propose 更新 atomic 的 `pitfall` |
-| embedded check 多次错误率 >50% | `note_update` propose 重写整个 atomic |
 | 对话中提到该节点 ≥ 3 次 | `note_update` propose 在 `example` 加例子 |
 | mastery > 0.85 且持续 >30 天 | 生成「精简复习版」atomic（新 artifact） |
 | 节点 90 天没触达 | `archive` propose 归档 atomic + hub |
@@ -187,7 +174,7 @@ prompt 硬要求：不确定的说不确定，例子优先用经典教材原文�
 ### 10.1 不嵌 Obsidian 的理由
 
 - Note 在工具里是「学习系统的内容产物」——schema 强耦合知识图谱、structured sections、embedded check、AI 生命周期，Obsidian 自由 markdown 模型不匹配
-- Obsidian 是闭合 app，不能内嵌进当前自托管 Next.js / NAS Docker 运行时；移动端是独立 app，UX 不可控
+- Obsidian 是闭合 app，不能内嵌进当前自托管 Hono API + Vite SPA / NAS Docker 运行时；移动端是独立 app，UX 不可控
 - "做 Obsidian plugin" 路线 = 锁死在 Obsidian 生态，做不到 AI 实时改 section / propose / 接 judge 路径
 - AI 主动改某个 section、source_tier 标记、version 演化在 Obsidian 里没法做出好 UX
 
@@ -229,16 +216,15 @@ artifact (row)
   }
   generation_status: 'ready'
   verification_status: 'verified'
-  embedded_check_status: 'ready'
   generated_by: { task_kind: 'NoteGenerateTask', version: '…' }
   …
 ```
 
-Embedded check 在 PM 树里是自定义 block，渲染时交给 [`POST /api/embedded-check/attempt`](../../app/api/embedded-check/attempt/route.ts) 走 judge 链路；question_ids 引用 `question` 表（统一题库）。
+`check` section 的 `embedded_check.question_ids` 引用 `question` 表；`src/capabilities/notes/server/body-blocks.ts` 会把它写进 PM block，但没有 attempt route 消费（生成链已删除）。
 
 ### 10.4 开放性 / 离线导出
 
-不再假设 markdown 文件落盘开放性免费送。需要时由 `/api/_/export` 走 [export 路径](../../app/api/_/export/route.ts) 把 PM JSON 转 markdown 文件下载，或后续做 Obsidian plugin 反向桥（Phase 4 加分项）。当前自托管运行时是 Next.js + Postgres，note 存数据库，不直接写用户家目录。
+不再假设 markdown 文件落盘开放性免费送。需要时由 `GET /api/_/export` 走 [export 路径](../../src/capabilities/observability/api/backup-export.ts) 把 PM JSON 转 markdown 文件下载，或后续做 Obsidian plugin 反向桥（Phase 4 加分项）。当前自托管运行时是 Hono API + Vite SPA + Postgres，note 存数据库，不直接写用户家目录。
 
 ---
 
@@ -257,10 +243,6 @@ Embedded check 在 PM 树里是自定义 block，渲染时交给 [`POST /api/emb
 - 双栏：左侧 hub outline 侧栏（含每 atomic 的 mastery 小标识 + 完成状态），右侧 atomic 主体
 - Linear / tree 双导航：linear（next/prev atomic）为主，tree 跳转为辅
 - 进度条：atomic 内显示 5 section 进度，hub 内显示 atomic 完成度
-
-### Mastery 反馈
-
-embedded check 做对后即时 toast：「+0.05 → 当前 X」，让 mastery 增长可感。
 
 ---
 

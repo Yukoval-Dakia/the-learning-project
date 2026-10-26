@@ -1,59 +1,44 @@
-// Exa remote MCP wiring for the product agent runtime（Tavily → Exa 换装，
-// 2026-09-13 owner 拍板；挂载形状照 YUK-198 Tavily 先例）。
+// Exa remote MCP wiring for the product agent runtime (Tavily → Exa, owner decision
+// 2026-09-13).
 //
-// Exa ships a hosted (remote) MCP server. The pi adapter bridges it via
-// `piRemoteMcpMount` → a real `@modelcontextprotocol/sdk` client pointed at
-// `https://mcp.exa.ai/mcp`, authenticated via the `x-api-key` header — Exa's
-// highest-priority documented auth form（query param `exaApiKey` 也受支持，但
-// header 让 key 不进 URL/日志；live-probed 2026-09-13: streamable-HTTP
-// `initialize` + `tools/list` 双通，server v3.2.1）。
+// Exa ships a hosted MCP server; the pi adapter bridges it via `piRemoteMcpMount`
+// to a real MCP SDK client at `https://mcp.exa.ai/mcp`. Auth goes in the `x-api-key`
+// header so the key never enters the URL or logs (live-probed 2026-09-13:
+// streamable-HTTP initialize + tools/list both work).
 //
-// The API key is ONLY ever read from `process.env.EXA_API_KEY` — never
-// hardcoded, never logged. When the env var is absent/blank this module is a
-// graceful no-op (`buildExaMcpServer()` returns null) so the surface keeps
-// working offline / unconfigured.
+// The key is read ONLY from `process.env.EXA_API_KEY`. Missing/blank makes this a
+// graceful no-op so the surface still runs offline.
 //
-// Scope: the hosted server exposes exactly two tools (live `tools/list` probe):
-// `web_search_exa`（web 搜索；required: query + objective，可选 numResults）与
-// `web_fetch_exa`（URL → clean markdown；required: urls[]，可选 maxCharacters）——
-// 1:1 对应旧 tavily_search / tavily_extract。MCP tools are named
-// `mcp__<serverName>__<toolName>` in allowedTools; the serverName here is
-// `exa`。
+// The hosted server exposes two tools, `web_search_exa` and `web_fetch_exa` — the
+// 1:1 successor of tavily_search / tavily_extract.
 
 import type { RemoteMcpHttpConfig } from '@/server/ai/tools/pi-tools';
 
 /** MCP server name this helper registers under (drives the mcp__<name>__* prefix). */
 export const EXA_MCP_SERVER_NAME = 'exa';
 
-/** Hosted Exa MCP endpoint (key is appended as a query param at build time). */
+/** Hosted Exa MCP endpoint; auth travels in a header, never the URL. */
 const EXA_MCP_BASE_URL = 'https://mcp.exa.ai/mcp';
 
 /**
- * Upstream Exa MCP tool names we scope to — the hosted server's complete tool
- * surface (live-probed 2026-09-13): `web_search_exa` (real-time web search) +
- * `web_fetch_exa` (URLs → content markdown).
+ * The hosted server's complete tool surface (live-probed 2026-09-13): web search
+ * plus URL → markdown.
  */
 export const EXA_SCOPED_TOOL_NAMES = ['web_search_exa', 'web_fetch_exa'] as const;
 
 /**
- * `allowedTools` entries for the scoped Exa tools, namespaced by the
- * server name (`mcp__exa__web_search_exa`, `mcp__exa__web_fetch_exa`).
- * Listed explicitly (not a `mcp__exa` server-wide wildcard) to match how the
- * rest of the codebase enumerates exact MCP tool names and to keep the scope
- * pinned to search + fetch.
+ * `allowedTools` entries for the scoped tools, listed explicitly rather than as a
+ * server-wide wildcard, matching how the codebase enumerates exact MCP tool names.
  */
 export const EXA_MCP_ALLOWED_TOOLS = EXA_SCOPED_TOOL_NAMES.map(
   (name) => `mcp__${EXA_MCP_SERVER_NAME}__${name}` as const,
 );
 
 /**
- * Build the remote Exa MCP server config from `process.env.EXA_API_KEY`.
- *
- * - key present (non-blank after trim) → `{ type:'http', url, headers }`
- *   with the key carried in the `x-api-key` header（key 不进 URL）。
- * - key missing / blank → `null` (graceful no-op; caller must not register it).
- *
- * The key is read ONLY from the environment and is never logged by this module.
+ * Build the remote Exa MCP config from `process.env.EXA_API_KEY`.
+ * A non-blank key yields `{type:'http', url, headers}` with the key in the
+ * header; missing/blank yields null (graceful no-op — the caller must not
+ * register it). The key is never logged.
  */
 export function buildExaMcpServer(): RemoteMcpHttpConfig | null {
   const key = process.env.EXA_API_KEY?.trim();

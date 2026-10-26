@@ -11,22 +11,13 @@ export interface TaskTextResult {
   cost_basis?: 'reported' | 'estimated' | 'unknown';
   cost_ref?: string;
   /**
-   * YUK-299 seam: Agent SDK structured-output passthrough. runTask's full
-   * RunTaskResult is a structural superset of this interface, so a
-   * handler-injected TaskTextRunFn can read `result.structured_output` and do
-   * three-state dispatch (structured value present / undefined / fallback).
-   * undefined ⇒ outputFormat not set, endpoint unsupported, or model fell back
-   * to text — caller must run the text-fallback parse.
-   *
-   * Adapter-provided product for opt-in schema tool output (YUK-1537).
-   * Legacy tasks retain their text parsing behavior. Runner does not interpret
-   * the product; the capability validates it before any domain publication.
+   * YUK-299 seam: structured-output passthrough. `RunTaskResult` is a structural
+   * superset, so a TaskTextRunFn can read it. undefined ⇒ fall back to text parsing.
+   * YUK-1537: the runner does not interpret the product; the capability validates
+   * it before any domain publication.
    */
   structured_output?: unknown;
-  /**
-   * NoteGenerateTask phase timings recorded on the task run.
-   * Present for NoteGenerateTask. Model phases; the job adds parse and DB.
-   */
+  /** NoteGenerateTask model phases; the job adds parse and DB timings. */
   phases?: NoteGeneratePhaseTimings;
 }
 
@@ -57,9 +48,8 @@ export interface AiTaskUsage {
   inputTokens: number;
   outputTokens: number;
   /**
-   * YUK-1557 — provider prompt-cache counters. Written on every terminal row
-   * (0 when the lane reported no cache) so the scoreboard can compute cache
-   * share without treating absence as unknown.
+   * YUK-1557 — provider prompt-cache counters, written on every terminal row (0 when
+   * the lane reported no cache) so cache share never reads absence as unknown.
    */
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
@@ -71,7 +61,7 @@ export interface AiTaskUsage {
    */
   usage_basis?: 'reported' | 'estimated';
   phases?: NoteGeneratePhaseTimings;
-  /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
+  /** Metadata-only proof that the provider returned reasoning blocks; raw CoT is never persisted. */
   thinkingBlocks?: number;
   thinkingCharacters?: number;
   /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
@@ -80,10 +70,8 @@ export interface AiTaskUsage {
     last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
   };
   /**
-   * YUK-1630 — per-attempt provider transport evidence: the timeout budget
-   * receipt (task timeout source + each derived layer) plus per-request wire
-   * milestones (fetch invoked / request sent / response / failure layer).
-   * Metadata only — it never feeds token counts or cost truth.
+   * YUK-1630 — per-attempt transport evidence: timeout budget receipt plus wire
+   * milestones. Metadata only — it never feeds token counts or cost truth.
    */
   transport?: ProviderTransportEvidence;
 }

@@ -1,6 +1,66 @@
 # 架构基础
 
-跨模块共享的概念、AI 任务层、技术栈、数据模型。具体模块行为见 [`modules/`](modules/) 各文件。
+当前代码的运行时拓扑、capability 契约、执行路径与技术栈；「一」起保留领域概念与数据模型。具体模块行为见 [`modules/`](modules/) 各文件。
+
+---
+
+## 运行时与进程拓扑
+
+- **app**：`server/index.ts`（`pnpm build:server` → `dist/server.cjs`），`@hono/node-server` 监听 `API_PORT`（默认 8787，`src/server/env.ts` 的 `resolveApiPort`）。启动关键步骤：`loadEnv` → 科目 / 配置 / 模型目录水合 → capability tools 注册 → `recoverToolOperationsOnBoot` → admin config 注入 → `startListenLoop` → serve。
+- **worker**：`scripts/worker.ts`（`pnpm build:worker` → `dist/worker.cjs`）。`bootWorker()`（`src/server/boss/worker-boot.ts`）先注册 tools，再调 `startBossWorker` 挂 pg-boss、capability jobs、夜间 orchestrator 与 DBOS。worker 不启动 HTTP，也不开 LISTEN loop（`scripts/worker.ts` 注释）。
+- **migrate**：`scripts/migrate.ts` → `dist/migrate.cjs`，以 `node dist/migrate.cjs` 在 app / worker 之前跑 Drizzle migration。
+- **dev**：`pnpm dev:local`（`scripts/dev-local.ts`）spawn 三进程：`rw:api`（`tsx watch server/index.ts`，脚本自带 `RW_WORKER=1`）、`rw:web`（`vite --config web/vite.config.ts`，:5173，`/api` 代理到 :8787）、`worker:dev`（`tsx scripts/worker.ts`）。因此 dev 里 app 进程与独立 worker 都会消费队列。
+- **prod**：`docker-compose.yml` 的 `migrate` / `app`（`node dist/server.cjs`，镜像 target `runner`）/ `worker`（`node dist/worker.cjs`，target `worker`，额外带 headless Chromium 供 `worksheet_render`）/ `postgres`（pgvector）/ `mem0-init` / `cloudflared`。app 与 worker 共用 `DATABASE_URL`；worker 是 mem0 SQLite history 的唯一写者。
+- **静态面**：未设 `RW_STATIC_DIR` 时 app 只服务 Hono API；设了（镜像内为 `/app/web/dist`）则走 `server/frontdoor.ts` 的 Start 前门，见下文。
+
+---
+
+## capability 契约
+
+- 组合根是静态数组：`src/capabilities/index.ts` 按固定顺序登记全部 capability manifest，交给 `buildHonoApp`；成员与顺序以该文件为准。
+- `manifest.ts` 只声明归属（`CapabilityManifest`，`src/kernel/manifest.ts`）：必填 `name`、`description`；可选 `events.actions`、`subscriptions.handlers`（`EventSubscriptionDecl[]`）、`api.routes`、`jobs.handlers`、`proposals.kinds`、`copilotTools.tools`、`ui.pages`。`validateComposition()` 在启动（`server/app.ts`）与 CI（`pnpm audit:api-contracts` → `scripts/audit-api-contracts.ts`）校验包名、event action、订阅 `id@vN`（`actions` 必须已被某个包声明、`load` 必填）、route key / `operationId` / 路径参数 / 响应契约、job 名与 DAG、proposal kind、DomainTool 名、UI page 路由的全局唯一性。`load` 是懒加载 thunk；route 与 pg-boss job 没有 `load` 就只是归属元数据、不挂载（`backend: 'dbos'` 的 job 例外，由 DBOS 路径启动）。
+- `public.ts` 是服务端契约，`ui-public.ts` 是客户端契约。`src/server/**` 新增依赖只能落在别人 `public.ts` / `ui-public.ts`（或 kernel 端口），私有模块与 capabilities barrel 一律拒；capability 之间的 value import 按 owner 对计数，同样由 baseline 冻结（`PUBLIC_ENTRYPOINTS`，`scripts/audit-capability-boundaries.ts`）。
+- kernel 端口：`src/kernel/` 承载 manifest、events、tools、read-models、records、proposals、job-dag、cost 等跨 capability 契约。跨包读取只走对方 `public.ts`；`audit:capability-boundaries` 禁止新增 kernel / core → capability / server 的 value import，既有 facade 由 ratchet 冻结（`scripts/lib/dependency-ratchet.ts` 的 `auditKernelReverseEdges`）。
+- `pnpm audit:capability-boundaries` 是精确 ratchet：记录 `capability → server`、`server → capability deep`、跨 capability value 三类边数，变化必须在同一 PR 登记进 `scripts/capability-boundary-baseline.json`。三类边数与当前非平凡 SCC 构成以该文件的 `debts` 为准。
+- `pnpm audit:architecture-deepening` 再查深层 import、公开读环白名单、隐藏写、命令环、TaskSpec / DomainTool / proposal / queue 归属、provider lane census 与依赖上限（严格小于 `DEPENDENCY_CEILINGS`，见 `scripts/audit-architecture-deepening.ts`）。
+- TaskSpec 由各包 `task-public.ts` 贡献、`src/capabilities/task-catalog.ts` 用 `composeTaskCatalog` + `expectedCount` 静态聚合；`src/capabilities/task-registry.ts` 用 `createTaskRegistry` 冻同一 catalog，并导出预算 / prompt readers 给 route 与 job。细节见「五、AI 任务层」。
+
+---
+
+## 执行路径
+
+### HTTP 请求路径
+
+- 入口：`server/index.ts` 的 `serve({ fetch, port })`；`fetch` 是 `buildHonoApp(capabilities)`，设了 `RW_STATIC_DIR` 时外面再包 Start 前门。
+- `/api/*` 依次经过：`SECURITY_HEADERS` → `x-internal-token` 校验（`/api/health`、`/api/ready` 豁免；`INTERNAL_TOKEN` 未设时全拒）→ DB contract epoch gate（fenced 返回 503 `contract_epoch_fenced`）→ 90s request-scope provider deadline（`HTTP_PROVIDER_SESSION_BUDGET_MS`，`src/kernel/http.ts`）。
+- manifest 的 `api.routes[].load` 在首次请求时解析并缓存 handler；返回后由 `assertApiRouteSuccessStatus` 校验 status 契约。未命中的 `/api/*` 统一 404 JSON。
+- SSE：`src/server/events/writer.ts` 写 `job_events` 并 `pg_notify('job_status')`；app 进程的 `startListenLoop()` 独占一条 LISTEN 连接（`max:1`），广播给 `sse_router`。该连接不重连，断开需重启进程（`src/server/events/listen_loop.ts`）。
+- 浏览器不持 provider key；AI 调用只发生在 route / handler 内。
+
+### pg-boss 作业与夜间 DAG
+
+- 进程：独立 worker（prod `dist/worker.cjs`，dev `scripts/worker.ts`）；dev 的 app 进程因 `RW_WORKER=1` 也会挂一份。启动配方在 `src/server/boss/start-worker.ts`：基础设施队列 `registerHandlers` → capability jobs `registerCapabilityJobs` → verify 补发 → event subscription → orchestrator。
+- 每个 job 独立队列；manifest 的 `queue` 只是档位（`llm` / `agent` / `fast`）。llm / agent 有 `<name>_dlq`、`retryLimit=2`、30s 退避；fast 无 DLQ（`src/server/boss/queue-config.ts`）。
+- 调度有两种：带 `schedule` 的是裸 cron（`boss.schedule`，按 `tz`）；带 `dependsOn`（含 `[]`）的是夜间 DAG 成员，自身不注册 cron。DAG 只有一根锚点 `nightly_orchestrator`，`30 2 * * *` Asia/Shanghai，启动补跑窗口 5h，tick 60s 自续；硬边失败跳过下游，soft 边照跑并记 stale（`src/server/orchestration/constants.ts`、`src/kernel/job-dag.ts`）。
+- DAG 成员与根以各 capability `manifest.ts` 的 `dependsOn` 为准，例如 `dreaming_nightly`、`coach_daily`、`knowledge_edge_propose_nightly`、`knowledge_maintenance_nightly`、`item_prior_backfill`、`recalibration_nightly`、`embed_backfill`、`answer_class_backfill`。
+- 域 handler 在 `src/capabilities/<name>/jobs/*.ts`；中央 `src/server/boss/handlers.ts` 只留基础设施（`echo`、`promote_conversation_idle`、verify 补发、memory 队列）。
+
+### DBOS durable 路径
+
+- 只有 manifest 显式声明 `backend: 'dbos'` 的 job 走 DBOS：observability 的 `prune_job_events` / `prune_orphan_*_sessions`、practice 的 `judge_run` / `judge_pending_reconcile`；完整名单以两个 manifest 的 `backend: 'dbos'` 为准。`registerCapabilityJobs`（`src/server/boss/register-capability-jobs.ts`）对集合、queue 档位、schedule 与 `load` 缺席做校验，不符合直接抛错。
+- 运行在同一个 worker 进程：`startDurableWorker()`（`src/server/durable/prune-worker.ts`）→ `DBOS.launch()`，系统库 schema `tlp_dbos`，executor `local`。
+- 每个家族有一张 control 表（如 `prune_job_events_control`、`review_orphan_control`），`phase ∈ pg-boss | draining-pg-boss | dbos | draining-dbos`。15s reconciler 按 phase 在 pg-boss 的 `boss.work` / `boss.schedule` 与 `DBOS.applySchedules` 之间切换，不会双跑。workflow 内用 `DBOS.runStep` 落业务提交与 checkpoint。
+- 新增家族必须同时提供 workflow、control 表、phase 切换和上述白名单校验；只加 `backend: 'dbos'` 一行会在启动期失败。
+
+---
+
+## Start 前门
+
+- 构建：`server/start/vite.config.ts`，`srcDirectory: 'server/start'`，`base: '/_build/'`，输出 `dist/start`（`pnpm build:start`）。
+- 挂载：`server/frontdoor.ts` 动态 import `dist/start/server/server.js`，把所有请求交给它的 `fetch`；客户端资产从 `dist/start/client` 提供在 `/_build/*`。
+- 路由：`server/start/routes/*.tsx` 文件路由，`routeTree.gen.ts` 由 TanStack Router 生成。已迁页面在 route 里 `lazy()` 一个 capability 的 `ui-public.ts` loader（如 `notes.tsx` → `loadNotesPage`），再包进 `StartWorkbenchShell`。
+- `/api/$` 原样转发给 `context.api.fetch`（Hono 组合根）；`/$` catch-all 回退到旧 `web/dist` SPA（`buildLegacySpa`）。新页面按 route 逐个接管，未迁移页面保持旧 SPA。
+- Start server function 统一先请求 `/api/auth/check`（`server/start/start.ts`），复用 Hono 的 token 与 epoch gate。
 
 ---
 
@@ -101,99 +161,15 @@ Question (统一题库，single source of truth)
 
 所有 AI 调用按「任务」抽象，**不**按 `chat()` 抽象——避免丢掉 provider 特色能力（prompt caching / batch API / structured output / multimodal）。
 
-> **FULL 执行注（2026-08-08，YUK-840 / YUK-847–849）**：Phase 0 已闭合；Phase 1
-> 首个 Failure Learning 竖切已实现并等待 review。ADR-0051 锁定目标：capability 拥有完整
-> product operation 与 typed task contract，中央 runtime 只拥有 provider/SDK/budget/retry/
-> admission/model-attempt logging。Attribution/AttributionRerank/VariantGen 已由 `practice/tasks`
-> 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
-> Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
-> 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 52 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）。YUK-870 收编了
-> `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
-> （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
-> 由 `scripts/audit-architecture-ownership.ts` 守住。
-> 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
-
-架构债由 `pnpm audit:capability-boundaries` 递减约束。基线单位是去重后的
-`(source file, resolved target module)`：capability → server 513、server → capability deep
-45、cross-capability value 71；后者目前包含一个由 agency/ingestion/knowledge/notes/practice
-组成的非平凡 SCC。任何下降必须在同一变更收紧
-`scripts/capability-boundary-baseline.json`，不能留下回涨额度。
-（YUK-876 / FULL F3.7b：Knowledge 的 graph reader、edge/mutation propose 工具与
-FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
-`knowledge-readers.ts` 删除；跨包消费改走 `knowledge/public.ts`。）
-
 ### 5.1 Task 注册
 
+TaskSpec 由 capability 拥有：`src/capabilities/<name>/tasks/index.ts` 用 `defineOwnedTaskSpecs` 把 owner map 定义成完整 spec（owner 集合以 `src/ai/owned-task-specs.ts` 的 `TaskOwner` 为准），`task-public.ts` 只做再导出。`src/capabilities/task-catalog.ts` 用 `composeTaskCatalog` 合并这些 map：加载期校验 key === `definition.kind`、owner 不重复、kind 不重复，冻结结果并断言 `expectedCount`——**task 名单、归属与总数只写在 owner map 与该文件的 `expectedCount`**，本文不复制。
 
-> **Canonical source**: `src/capabilities/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 经各自 `task-public.ts` 静态贡献完整 owned TaskSpec；`public.ts` 同时公开相同 map。
-> 共享 `src/ai/task-catalog.ts` 保留 composer 与类型，接收 owner maps 后将精确 `definition`
-> 投影为冻结 runtime map。`src/ai/registry.ts` 接收 catalog，`src/capabilities/task-registry.ts`
-> 提供同一 map 的 compatibility projection 及绑定的预算/prompt reader；没有 Copilot overlay、
-> 可变全局注册或动态发现。TaskKind 从组合结果推导，共享 ai/ 不反向依赖能力实现。
-> 当前为 **53 个 registered kinds、51 个静态 production invocation kinds、2 个显式分类**：
-> `AttributionTask` 保留历史兼容，`JevScoringDecisionTask` 经 typed runner 动态调用。
-> `pnpm audit:task-census` 验证 manifest/job 注册可达性及 run-log contract。
-> 具体 TaskSpec 仍含 Node helper；无 DB 初始化并不等于完整目录可直接在浏览器运行。
-> 本节为同步快照（2026-10-04）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
-> ownership 与字段以 owner maps / `taskCatalog` 为准。
+- 消费面：`src/capabilities/task-registry.ts` 用 `createTaskRegistry` 冻结同一 map，并绑定 `createTaskBudgetReaders` / `createTaskPromptReaders`；`src/ai/task-catalog.ts` 只有 composer 与类型，没有动态发现、可变全局注册或 Copilot overlay。
+- TaskSpec 字段（`defaultProvider` / `defaultModel` / budget / prompt / `invocation` / `execution`）见 `src/ai/task-spec.ts`；某个 task 用哪个模型、由谁触发，看 owner map 与调用方代码。
+- 分类（compatibility-only、无静态 caller）以 `scripts/audit-task-census.ts` 的 `LIVE_NON_CALLER_CLASSIFICATIONS` 为准；`pnpm audit:task-census` 校验 manifest/job 注册可达性与 run-log 契约。
 
-**当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
-
-| Task | 模型 | 触发 | tool call | 多模态 | 产出 |
-| --- | --- | --- | --- | --- | --- |
-| `AttributionTask` | mimo-v2.5-pro | compatibility only（当前无静态调用） | 否 | — | 错题归因（10 类 cause）+ analysis |
-| `AttributionRerankTask` | mimo-v2.5-pro | user action / pg-boss | 否 | — | 错题归因 retrieve→rerank stage 2（从 L1 候选 cause 列表重排选 primary + 逐候选理由，YUK-462；小词表时 == AttributionTask） |
-| `KnowledgeEdgeProposeTask` | mimo-v2.5-pro | maintenance / nightly | 否 | — | 0-5 条 knowledge_edge proposal |
-| `FrontierPrerequisiteTask` | mimo-v2.5-pro | maintenance / nightly（frontier bootstrap, YUK-349 PR-2） | 否 | — | 0-5 条 prerequisite knowledge_edge proposal（empty-frontier 时 propose-only 低置信） |
-| `SessionSummaryTask` | mimo-v2.5-pro | review session end | 否 | — | 服务端有效判分数字 + ≤70 字观察/建议；写入前剔除模型的题数、正确率与百分比陈述，保留非统计分句及其中的章节号、题目序号 |
-| `LearningIntentOutlineTask` | mimo-v2.5-pro | `/api/learning-intents` | 否 | — | 1 hub + N atomic outline |
-| `NoteGenerateTask` | mimo-v2.5-pro | pg-boss `note_generate` | 否 | — | atomic artifact sections |
-| `VariantGenTask` | mimo-v2.5-pro | pg-boss `variant_gen` / explicit tool | 否 | — | pending variant proposal + draft `mistake_variant` ledger；accept 后才物化 question |
-| `TeachingTurnTask` | mimo-v2.5-pro | `/api/teaching-sessions/*` | 否 | — | Active Teaching turn；`ask_check` 可落 `question(source='teaching_check')` |
-| `KnowledgeReviewTask` | mimo-v2.5-pro | pg-boss `knowledge_maintenance_nightly` / manual maintenance | 是 | — | tree / mesh mutation proposal |
-| `VisionExtractTask` | mimo-v2.5 | `POST /api/ingestion/[id]/rescue` | 否 | 输入 | bbox blocks |
-| `VisionExtractTaskHeavy` | mimo-v2.5 | 同上（heavy manual rescue） | 否 | 输入 | bbox blocks |
-| `NoteVerifyTask` | mimo-v2.5-pro | pg-boss `note_verify` | 否 | — | atomic note section second-pass verification |
-| `SemanticJudgeTask` | mimo-v2.5-pro | judge router (rubric_json semantic route) | 否 | — | semantic answer scoring via `required_points` |
-| `UnitDimensionFallback` | mimo-v2.5-pro | judge router (unit_dimension fallback, YUK-36) | 否 | — | natural-language unit / dimension parse when mathjs cannot |
-| `StepsJudgeTask` | mimo-v2.5 | judge router (steps@1 partial credit) | 否 | 输入 | vision-aware math derivation step judging |
-| `VariantVerifyTask` | mimo-v2.5-pro | pg-boss `variant_verify` (YUK-17 / ADR-0018) | 否 | — | second-pass content alignment for accepted mistake variant; verdict='fail' → mistake_variant.status='broken' |
-| `MultimodalDirectJudgeTask` | mimo-v2.5 | judge router (multimodal_direct route, YUK-201) | 否 | 输入 | holistic vision-aware answer judging（无 step-rubric 的带图题）|
-| `SourceGroundingVerifyTask` | mimo-v2.5 | `source_verify` 图源核验（single_source_grounding 行，YUK-230） | 否 | 输入 | 重读来源图片判「题面是否真在图里」（grounded bool），抓 image_candidate 抽题幻觉；not_grounded → 打回 draft |
-| `StructureTask` | mimo-v2.5 | OCR extraction job（tencent_ocr_extract handler, YUK-145 OC-1/2） | 否 | 输入 | N 页图 + OCR hint → 规范结构树 |
-| `TaggingTask` | mimo-v2.5 | auto-enroll **OBSERVE** path (YUK-145 OC-4) | 否 | — | 题面 + 网格 → knowledge_id 建议 + confidence。**YUK-489：ENROLL 路径改走统一 `tagKnowledge`（embedding cosine match-or-propose，非 registry task）；TaggingTask 仅留 observe 零-mutation 质量探针** |
-| `BlockAssemblyTask` | mimo-v2.5 | auto-enroll server pass (YUK-202) | 否 | — | 相邻 draft block 合并候选（propose-only）|
-| `MistakeEnrollTask` | mimo-v2.5-pro | auto-enroll observe path (YUK-145 OC-5) | 否 | — | 录入题错题元数据草稿（observe-only）|
-| `NoteRefineTask` | mimo-v2.5-pro | pg-boss `note_refine` (T-88 P4-A) | 否 | — | Living Note refine → NotePatch ops |
-| `SolutionGenerateTask` | mimo-v2.5-pro | solve orchestrator lazy-gen (YUK-193) | 否 | — | bare question → reference + worked solution |
-| `SolutionGenerateVisionTask` | mimo-v2.5 | `source_verify` 图题独立求解（YUK-727） | 否 | 输入 | 读取题面图片后生成 reference + worked solution；图片或视觉调用失败时保持 draft |
-| `GoalScopeTask` | mimo-v2.5-pro | `/api/goals` scope 提议 (YUK-143 / ADR-0024) | 否 | — | goal → scope_knowledge_ids + sequence_hint proposal |
-| `MemoryBriefTask` | mimo-v2.5-pro | nightly brief sweep (YUK-185 / ADR-0017) | 否 | — | per-scope 3-window memory brief（窗口与 evidence ids 由服务端分桶）|
-| `MindModelInductionTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_nightly` (YUK-406 / YUK-821) | 否 | 输入 | EvidenceCells → claim + 冻结 DiagnosticSpec V2（含显式 `causal_direction_required`，本阶段不出题；V1 只读兼容并在 FULL review 保守按 causal 处理）；N=3 对完整 hypothesis 做 self-consistency + judge-only cap |
-| `ConjectureGroupingTask` | mimo-v2.5-pro | `induceConjecture`（per conjecture post-fast-path，YUK-821） | 否 | — | 语义去重：将 MindModelInductionTask N 个样本按 claim + 完整 DiagnosticSpec 等价分组；服务端再按 V2 `causal_direction_required` 确定性拆组，避免 claim 相似但触发条件、范围或因果审查类型不同的结果被误判为共识 |
-| `ConjectureProbeAuthorTask` | Opus（per-call override） | `induceConjecture` / research meeting director（共识后，YUK-821） | 否 | 输入 | 只根据冻结的 claim + DiagnosticSpec 生成完整双 probe 包；最多允许一次整包重生成 |
-| `ConjectureProbeReviewTask` | Opus（per-call override） | `induceConjecture` / research meeting director（每个候选 probe 包，YUK-821） | 否 | 输入 | 独立复核范围、目标错误、双题独立性、正确答案与错误答案签名；失败关闭，不自行修题 |
-| `InterventionRecommendationTask` | mimo-v2.5-pro | pg-boss `prepare_intervention`（YUK-791） | 否 | — | 只从确定性 pedagogy shortlist 选择一个方法或 abstain；不能恢复被禁用/排除的方法，不宣称因果排名 |
-| `InterventionPackageAuthorTask` | mimo-v2.5-pro | 同一 `prepare_intervention` wave（YUK-791） | 否 | — | 从冻结 intervention snapshot + recommendation 原子生成 1 份材料及 immediate/delayed/transfer 三道 response-aware 诊断题 |
-| `InterventionPackageReviewTask` | mimo-v2.5-pro | package author 后、三道 `SolutionGenerateTask` 盲解完成后的 sealed comparator（YUK-829） | 否 | — | 把盲解的完整必要路径密封为逐项 operation digest，逐项复核 reference 覆盖与 frozen scope 后再做 all-of；同时检查 grounding、material、方法落实、response signature、可判定性、迁移情境及显式 causal gate；合同无效时仅对同输入重试一次，prompt/result/run provenance 在 activation（含 recovery）重新绑定；只 pass/fail，不修包 |
-| `ResearchMeetingDirectorTask` | mimo-v2.5-pro（Opus anthropic-sub per-call override） | pg-boss `research_meeting_agent_nightly` (YUK-572, dark-ship) | 是 | — | agent-led 教研例会 director（shadow lane）：charter agent 只提 claim + DiagnosticSpec；服务器复用 author/reviewer 质量门生成 probe；可按需派聚焦的 evidence-scout。共享 spawn contract 结构性封顶 depth=1、广度 report-only 留痕而不设拍脑袋次数 cap；可留 agent note，从不结算 / 不碰 FSRS |
-| `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
-| `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
-| `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan draft（daily_focus / 知识焦点 / proposals；题数 / 分钟 / 时间盒 / 科目配比由代码计算，daily_focus 的题量/分钟/百分比声明由服务端剥离，YUK-1622；propose_* 写 inbox）|
-| `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
-| `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
-| `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
-| `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
-| `QuizGenTask` | mimo-v2.5-pro | pg-boss `quiz_gen` (T-SQ) | 是 | — | search-grounded 原创题（Tavily + domain MCP）|
-| `QuizVerifyTask` | mimo-v2.5-pro | pg-boss `quiz_verify` (T-SQ Q5) | 否 | — | closed-book 出题校验（fact/copy_safety/knowledge-hit）；handler 先跑确定性预检（选项重复/参考答案不在选项/选项数不足——choice 题型 0 选项同样拦截，命中则零模型调用留人审），copy_safety 的 `too_close` 以确定性 n-gram 为准（tier-3 素材原文豁免），模型-only too_close 转人审（YUK-1624）|
-| `TeachingQualityTask` | mimo-v2.5-pro | pg-boss `quiz_verify`（tier3/4 teaching_quality 审题闸，YUK-578） | 否 | — | 入池前审题：只读题面判 题干清晰度/唯一正解性/干扰项诊断力(仅选择题)；confident-fail 留 draft(needs_review) 绝不 promote |
-| `SourcingTask` | mimo-v2.5-pro | pg-boss `sourcing` (YUK-216 S2) | 是 | — | web-sourced 题（draft, tier 2）+ source_verify chain |
-| `ColdStartPlacementBridgeTask` | mimo-v2.5 | ingestion 上传 accept（抽题无 KC 匹配时，YUK-478） | 否 | — | 冷启上传题一次 pass：classify subject（∈KNOWN_SUBJECT_IDS）+ kc_name + reference 答案（OCR 无答案则生成，有则 echo）→ 喂建子 KC + auto-promote |
-
-**与旧 ADR 版本差异**：原计划的 `EnrichMistakeTask` 已拆分为 `AttributionTask`（归因）+（曾经的）`KnowledgeProposeTask`（知识点提议）。`KnowledgeProposeTask` 已于 Lane D（YUK-482）移除——答错→提议新 KC 的耦合被解除：创建/提议知识点是 CONTENT 轴动作（由材料覆盖内容驱动），与答题正误无关；答错只喂错因/mastery。KC 创建现完全走 content-driven 路径：**YUK-489 起统一 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`，embedding cosine match-or-propose — `matchKnowledgeBySimilarity` + `MATCH_THRESHOLD`，effective-domain subject 过滤；PROPOSE 自动批准 + audit-only `experimental:auto_tag_kc_created`）跑在全部题目创建入口（auto-enroll ENROLL / image-candidate-accept / 手动 `/api/mistakes` / `/api/import`）**，外加 agent proposal-tools + 维护流 `KnowledgeReviewTask`；近重复 KC 由 `kc_dedup_nightly`（确定性 cosine 自连接 → merge 提议，**propose-only**，复用 live `applyMerge` accept 路径）兜底。死的 `knowledge_ids:[]` 零匹配门已删（提议恒产具体 KC id，无「空→不可见」失效）。cold-start-bridge 仍在，角色收窄为 subject 分类器 + tagKnowledge 的命名引擎；其 ③ reference 生成解耦为独立 `reference_answer_backfill`（`reference_md IS NULL` nightly 触发）。详见 `docs/design/2026-06-22-unified-tagging-axis.md` + ADR-0045。VisionExtract* 在 ADR-0002 修订（2026-05-11）中改为 manual rescue tool，不参与自动 cascade。`DreamingTask` / `CoachTask` / `BlockAssemblyTask` 早期作为 lane 级编排概念保留，现已落地为 registry 中的具体 task + 对应 pg-boss handler（见上表）。
+**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 
@@ -201,43 +177,19 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-08-08 alignment / YUK-1025 P4 更新**: 现行 runner 在 `src/server/ai/runner.ts`，唯一
-> 执行引擎是 pi（`@earendil-works/pi-agent-core` in-process agentLoop，`pi-agent-adapter.ts`）。
-> Tool transport 使用 `piToolMounts + allowedTools + maxTurns`（wire name `mcp__<server>__<tool>`）。
-> DomainTool registry、capability manifest inventory 与 in-process MCP bridge 已运行；具体产品工具
-> 逐步迁回 owner capability，中央层只负责组合、预算与 transport。
+现行 runner 在 `src/server/ai/runner.ts`，唯一执行引擎是 pi（`@earendil-works/pi-agent-core` 的 in-process `agentLoop`，`pi-agent-adapter.ts`）。Tool transport 用 `piToolMounts` + `allowedTools` + `maxTurns`（wire name `mcp__<server>__<tool>`）。DomainTool registry、capability manifest inventory 与 in-process MCP bridge 都在跑；产品工具归 owner capability，中央层只负责组合、预算与 transport。
 
-**当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker；下述规则语义不变，仅路由入口从 `app/api/ai/[task]` 改为各 capability 包 `manifest.ts` 声明的 route）：
+**当前规则**（YUK-321 M5 起 generic `/api/ai/[task]` route 已退场，AI 调用全走 capability manifest 声明的领域 route 或 pg-boss worker）：
 
-- generic `/api/ai/[task]` 已整体退场；所有 task 由 capability 领域 route / worker 调用。
-- SubjectProfile-driven task **不能**走 generic route；必须走领域 route / worker，由该入口解析并传入正确 `SubjectProfile`。
-- `needsToolCall: true` 的 task **不能**走 generic route；必须走领域 route/worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 现由 `knowledge_maintenance_nightly` cron in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
-- `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口，不通过 generic route 暴露。
-- 本地 `loom` MCP server 从 capability manifests 装配 typed DomainTools；它是进程内 transport，
-  不对外暴露 endpoint。`attribute_mistake` / `propose_variant` 的 concrete adapters 已归 practice，
-  `author_question` 的 variant 分支只走其窄 public operation。
+- SubjectProfile-driven task 必须走领域 route / worker，由入口解析并传入正确 `SubjectProfile`。
+- `needsToolCall: true` 的 task 必须走领域 route / worker，由入口注入 MCP server 和 allowlist。例如 `KnowledgeReviewTask` 由 `knowledge_maintenance_nightly` 夜间 DAG job in-process 调 `streamReviewTask`（YUK-617 撤了冗余的 `/api/knowledge/review` HTTP route）。
+- `invocation: 'manual_rescue_only'` 的 VisionExtract* task 只能走 ingestion rescue 入口。
+- 本地 `loom` MCP server 从 capability manifests 装配 typed DomainTools，是进程内 transport，不对外暴露 endpoint。`attribute_mistake` / `propose_variant` 的 concrete adapters 归 practice，`author_question` 的 variant 分支只走其窄 public operation。
 - 破坏性操作（删题、合并节点、reparent、merge、archive）没有直接 write tool。AI 只能 propose；用户 accept route 再执行真实 mutation。
 
-**当前 DomainTool 合约**（由 manifest inventory + registry/MCP bridge 消费）：
+**DomainTool 合约**：定义在 `src/kernel/tools/types.ts`（`effect: read | propose | write | control`，另有 `costClass`、`mirrorEvent` 与可选 `safeHandoff`），由 manifest inventory + `src/server/ai/tools/registry.ts` 消费；字段以该文件为准，本文不复制。
 
-```ts
-type ToolEffect = 'read' | 'propose' | 'write';
-
-interface DomainTool<Input, Output> {
-  name: string;
-  effect: ToolEffect;
-  inputSchema: z.ZodType<Input>;
-  outputSchema: z.ZodType<Output>;
-  safeHandoff?: { transport: 'remote'; idempotent: true };
-  execute(ctx: ToolContext, input: Input): Promise<Output>;
-  summarize(input: Input, output: Output): string;
-  mirrorEvent: 'never' | 'when_user_visible' | 'when_causal' | 'always';
-}
-```
-
-`src/server/ai/tools/registry.ts` 接收 capability manifests 在启动期注册的 DomainTools；
-pi mount 将选中的工具编译为 `AgentTool`，执行委托共享 `executeDomainToolCall` 管线。
-远程 MCP 是现役工具来源之一，不等同于向外发布产品级 MCP server。
+manifest 在启动期注册的 DomainTools 进入 registry 后，pi mount 把选中的工具编译成 `AgentTool`，执行委托共享 `executeDomainToolCall` 管线。远程 MCP 是现役工具来源之一，不等同于向外发布产品级 MCP server。
 
 当前工具阻塞到结果或取消/期限终态，不向模型返回旧 45 秒 yield 句柄。
 Copilot 由服务端持久受理和顺序执行，浏览器只订阅；没有独立 Mission 会话入口
@@ -246,28 +198,34 @@ Copilot 由服务端持久受理和顺序执行，浏览器只订阅；没有独
 ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审计，不能笼统视为 drain-only
 历史代码。安装排空与保留名称的边界见 ADR-0063，pi 机制见 ADR-0065。
 
-**循环控制现状**：
+**循环控制**：
 
-`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi 1.0 adapter 的 `finishTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+- `TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi adapter 用 `finishTurn` 计数，超限出 `error_max_turns` 终态）；`timeout` 由 `AbortController` 协作中止（`src/server/ai/runner.ts`、`pi-agent-adapter.ts`）。
+- `TaskBudget.maxCost` 在 chat/pi lane 不设美元闸——pi catalog 成本是估算值，mimo 不回 cost，subscription OAuth 是 flat quota；只有 typed lane 自己按每次 wire attempt 预扣 reserve 并累计封顶（`src/server/ai/typed-primitive-runner.ts`）。
+- `TaskBudget.transientRetries` 只控**同一已解析目标**的进程内瞬时重试：chat/pi lane 上只有两个 vision judge（`StepsJudgeTask` / `MultimodalDirectJudgeTask`）opt-in，且受 `run-lifecycle.ts` 的 `transientRetryEnabled` / `classifyLifecycleRetry` 门控（ctx 显式开启、无 `override` / `modelBinding` / 全局 override 钉死、白名单瞬时分类、次数封顶、elapsed 未超 `RETRY_ELAPSED_CAP_MS`）；typed lane 由 `typed-primitive-runner.ts` 自行按 `1 + budget.transientRetries` 重试。
+- durable job 的瞬时层只靠 pg-boss 显式重投（`retryLimit=2` + 30s 退避，`src/server/boss/queue-config.ts`），不与进程内重试叠加。
+- provider API retry 默认 2 次，运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖（`pi-agent-adapter.ts`），让 5xx 终态在任务预算内回到 loom 分类层。
+- provider session admission（YUK-842）：resolved provider 后先用 Postgres 短事务拿 lane 槽与 start reservation，排队不计 model timeout；在 slot 内以 45s initial lease 调 adapter `startup()`（只做 model/auth 预检，不发 prompt），成功后用 claim-token CAS 切到 15s steady lease，才写 `ai_task_runs`、启动剩余 model timeout 并调一次 `query()`。lease protocol v2 计入 policy fingerprint；只有 heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry；`hard_reclaim_at` = 45s startup + model timeout + abort grace。开关与策略是 `AI_PROVIDER_SESSION_ADMISSION_MODE` / `AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON`（默认 `off`），运维见 `docs/runbooks/provider-session-admission.md`。
+- request scope：`server/app.ts` 给每个 `/api/*` 请求开一个 90s absolute provider-session deadline（`HTTP_PROVIDER_SESSION_BUDGET_MS`，`src/kernel/http.ts`），runner 取它与显式 caller deadline 的较早者；adapter 返回后重新校验 lease / abort / deadline，迟到 success 不记成功。durable worker 没有 HTTP scope，保留 task 完整预算；Copilot durable job 用 `DURABLE_OWNER_SETTLEMENT_BUDGET_MS`（45min 执行 + 30s grace）作显式 deadline（`copilot_run.ts`、`copilot-run-settlement.ts`）。
+- 同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽避免自锁，parallel sibling 必须排队或占另一 root 槽，每个 child 仍独立记 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失即 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离（`src/server/ai/provider-session-admission.ts`）。
 
 ### 5.3 成本控制
 
-- 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
-- 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
+- 同步 / 异步不是任务类型，而是入口：用户操作触发的 task 在领域 route 的调用链里同步跑；夜间与重活由 capability manifest 声明的 pg-boss job 跑同一批 task，名单以各包 `manifest.ts` 的 `jobs.handlers` 为准。
 - 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
-- 每次调用写 `ai_task_runs` / `cost_ledger`；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
-- 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
-- **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
+- 每次调用写 `ai_task_runs` / `cost_ledger`（`entry_kind='attempt'` 每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）；工具调用写 `tool_call_log`。YUK-1557 起终态 `usage_json` 固定带 `numTurns` / `cacheReadTokens` / `cacheWriteTokens`；同一次工具执行只留一行（runner 只记 spawn，DomainTool 由 bridge、remote MCP 由 pi mount、custom 由 owner 各记一行），Exa 调用另记 unknown-cost ledger 行。
+- 确定性计分板：`harness_scoreboard_daily` 每日从原始表汇总 M1–M6（零 AI），写入 `experimental:harness_scoreboard` 投影；M3/M4/M5 按 ADR 的逐任务/逐子项给出 `parts[]`（各有分子分母与 `basis`），M4 以窗口结束时刻的收件箱投影回放积压；`GET /api/admin/harness-scoreboard` 供状态页读取，`pnpm harness:scoreboard --from … --to …` 可重算任意 BJT 日窗。
+- **尚未实现**：通用 per-run 美元硬预算（chat/pi lane 无 contractual USD 信号可闸，只有 typed lane 自闸）、vision judge 以外的跨 provider fallback、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：vision judge 的跨 lane fallback（`VISION_JUDGE_PROVIDER` / `VISION_JUDGE_MODEL` 由 `src/server/ai/vision-judge-config.ts` 读取，`src/capabilities/practice/server/judge/provider-lane-fallback.ts` 消费）、同目标瞬时重试、队列显式 retryLimit、stuck-run reconcile sweeper（`ai_task_run_reconcile_nightly`）、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
 
 这些概念保留，但不要和产品内 runtime tool 混在一起：
 
-- **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **in-process tool bridge**（当前可用）：领域 route 可注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露
-- **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
-- **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/yuwen/` 的目录边界
-- **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
+- **Skill**（提示词包）：`src/subjects/<subject>/skills/<name>/SKILL.md`，跨科包放 `src/subjects/_shared/skills/`；调用方读正文后经 `piSkillDocs` 拼进 systemPrompt，缺包不注入、回落到 prompt 正文（`src/subjects/copilot-skills.ts`、`quiz-gen-skills.ts`、`note-skills.ts`）。
+- **in-process tool bridge**（现役）：领域 route / job 注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露 endpoint。
+- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/server/ai/mcp/exa.ts`）；其余来源按需接。
+- **Standalone MCP Server**（对外暴露 resources + tools）：未实现；未来复用 DomainTool registry，不重写工具定义。
+- **Plugin**（学科 bundle）：学科专属逻辑放 `src/subjects/<subject>/`，跨科逻辑放 `core/`。
 
 ### 5.5 Tool calling 循环位置
 
@@ -275,17 +233,12 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 #### 实现
 
-> YUK-321 M5 起 generic `/api/ai/[task]` route 已退场——下列 dispatch 规则的语义由各 capability 包 `manifest.ts` 声明的领域 route 承接（旧 `app/api/ai/[task]/route.ts` 描述保留作历史对照）。
-
-- ~~`app/api/ai/[task]/route.ts`~~（已退场；YUK-321 M5）：
-  - ~~SubjectProfile-driven task → 400 `profile_required`~~ 走领域 route
-  - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
-  - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
-- 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
-- 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行
-- 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
-- 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
+- generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
+- AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。
+- 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
+- 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
+- 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。
 
 #### 为什么不在 client 跑
 
@@ -294,37 +247,13 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 #### 与 Dreaming 实施栈的关系
 
-Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler 调 `runTask` / `streamTask` 同样入口。区别只是触发方式（HTTP 请求 vs pg-boss scheduled job / queued job）和写入对象（event proposal、artifact、question draft 等）。
+Dreaming / Maintenance lane 复用这套 runner：pg-boss schedule / job handler 调 `runTask` / `runAgentTask` / `streamTask` 同一入口。区别只是触发方式（HTTP 请求 vs pg-boss scheduled job / queued job）和写入对象（event proposal、artifact、question draft 等）。
 
 ---
 
 ### 5.6 Dreaming / Maintenance 实施栈
 
-Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上，不再使用旧 Workers 队列设计。
-
-#### 触发与队列
-
-- `scripts/worker.ts` 启动 worker 进程。
-- `src/server/boss/handlers.ts` 注册 handlers 和 schedules。
-- pg-boss 与 Postgres 共用 `DATABASE_URL`；Docker compose 中 `worker` service 与 `app` 使用同一镜像。
-
-当前已注册的业务 job / schedule：
-
-| Job | 触发 | 产出 |
-| --- | --- | --- |
-| `knowledge_edge_propose_nightly` | BJT 02:30 schedule | `event(action='propose', subject_kind='knowledge_edge')` |
-| `knowledge_maintenance_nightly` | BJT 03:00 schedule | `KnowledgeReviewTask` tool calls → proposal inbox rows |
-| `note_generate` | learning-intent accept 后 enqueue | 填充 atomic artifact sections |
-| `variant_gen` | 复习 / 错因相关 enqueue | draft `question(source='mistake_variant')` |
-| `session_summary` | review session end | session summary |
-| `tencent_ocr_extract` | ingestion extract | OCR / block extraction pipeline |
-| `prune_orphan_review_sessions` | BJT 04:15 schedule | abandon stale review sessions |
-
-#### 当前边界
-
-- 产出提议写 event stream，不写旧 proposal 表。
-- 大批量 batch / 双 pass verify / weekly review 仍是未来能力，不要假设已存在。
-- Cloudflare Tunnel 只负责 ingress；不是 AI worker runtime。
+Dreaming / Maintenance 复用同一条 pg-boss + 夜间 DAG 路径（见「执行路径 · pg-boss 作业与夜间 DAG」）。job 清单以各 capability `manifest.ts` 的 `jobs.handlers` 为准，本节不再维护副本。提议仍写 event stream，不写旧 proposal 表；Cloudflare Tunnel 只负责 ingress，不是 AI worker runtime。
 
 ---
 
@@ -344,23 +273,18 @@ See [ADR-0062](adr/0062-unified-copilot-conversation-lifecycle.md),
 
 ## 六、技术栈
 
-| 层 | 选型 | 理由 |
-| --- | --- | --- |
-| Web app | Hono API（组合根 `server/app.ts`，:8787）+ Vite SPA（`web/`，React 19 + Tailwind v4 + TanStack Router，:5173） | 当前实现（YUK-321 M5 起）；backend surface = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 |
-| 数据库 | Postgres + Drizzle ORM (`postgresql` dialect, `postgres` driver) | 本地、测试、NAS compose 同一数据库形态；editing presence 走 PG 表 `editing_presence`（PgPresenceStore），无 Redis |
-| Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
-| 部署 | Docker compose on NAS：`app`（`node dist/server.cjs` :8787）+ `worker`（`node dist/worker.cjs`）+ `migrate` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
-| 后台任务 | pg-boss + `scripts/worker.ts`（独立进程，prod `dist/worker.cjs`） | schedules、queues、OCR、proposal、note generation |
-| AI 调用 | pi agent runtime（`@earendil-works/pi-agent-core` + `pi-ai`，in-process） | 见上节任务层 |
-| Tool calling 循环 | pi `agentLoop` + `piToolMounts`（DomainTool registry 编译为 `AgentTool`） | 领域 route / capability manifest 注入 mount 与 allowlist |
-| Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
-| Note 渲染 | react-markdown / markdown-it | |
-| 数学公式 | KaTeX | |
-| 图表 | Mermaid | |
-| 视觉录入 | Tencent QuestionMarkAgent async OCR + manual vision rescue | OCR 主路径已落地；vision rescue 手动触发 |
-| 复习算法 | `ts-fsrs` | 现成 FSRS 实现 |
+以 `package.json` 为准：
 
-> **2026-06-13 形态变更（YUK-321 M5）**：Next.js 15 App Router 全栈已退场。下方及全文中遗留的 `app/`、`app/api/**`、`middleware.ts`、`next dev`/`next build`、`:3000`、`Redis/ioredis` 描述均为历史残留，不再适用——backend 真相源是 capability manifests + `server/app.ts` 组合根。会在后续 closeout 中继续清扫。
+- **运行时 / 工具链**：Node ≥24.0.0（`package.json` `engines`）、pnpm 11、TypeScript（`tsrs`）、Biome、esbuild。
+- **HTTP**：Hono 4 + `@hono/node-server`。
+- **Web**：Vite 8 + React 19 + TanStack Router 1 / TanStack Query 5 + Tailwind v4 + Zustand。
+- **数据**：Postgres（pgvector 镜像）+ Drizzle ORM（`postgresql` dialect、`postgres` driver），迁移用 drizzle-kit。
+- **异步**：pg-boss 12；durable workflow 用 `@dbos-inc/dbos-sdk` 5。
+- **AI**：`@earendil-works/pi-agent-core` / `pi-ai`（in-process agentLoop），`@anthropic-ai/sdk`、`@modelcontextprotocol/sdk`、`@lmnr-ai/lmnr`。
+- **内容 / 渲染**：TipTap 3（note 编辑）、KaTeX + mathjs + react-markdown / remark-math / rehype-katex、Cytoscape + fcose（图谱）、Playwright Core（`worksheet_render`）。
+- **录入**：`tencentcloud-sdk-nodejs-ocr` + `sharp` + `@hyzyla/pdfium`。
+- **存储 / 记忆**：`@aws-sdk/client-s3`（R2 / S3-compatible）；`mem0ai` + pgvector。editing presence 走 PG 表 `editing_presence`，无 Redis。
+- **复习 / 校验**：`ts-fsrs`、Zod 4。
 
 **反模式**：
 
@@ -377,277 +301,29 @@ See [ADR-0062](adr/0062-unified-copilot-conversation-lifecycle.md),
 
 ## 七、数据模型骨架
 
-> **Phase 1c.1 事件驱动核**（ADR-0006 v2）已落地。`event` + `learning_session` + `knowledge_edge` 是现行 schema 的三个新晋实体；下文骨架以现行 schema 为准，旧表（mistake / review_event / dreaming_proposal / ingestion_session）已在 Phase 1c.1 Step 9 DROP。旧实体名称只作为迁移背景出现；代码层不再有这些表。
+DDL 唯一真相源是 `src/db/schema.ts`（单文件、按段注释）；本节只写跨模块约束，不复制列清单与 enum 值。
 
-```
-Knowledge                          // 知识树节点（backbone）
-  id, name, domain, parent_id, last_active_at
-  base_mastery, ai_delta_mastery
-  merged_from[]                   // 合并历史，可拆回
-  archived_at?
-  proposed_by_ai: bool            // AI 创建的，未经审核
-  approval_status: pending | approved | rejected
-  updated_at, version
+**主实体**
 
-// 统一题库
-Question
-  id
-  kind: choice | true_false | fill_blank | short_answer | essay
-        | computation | reading | translation
-  prompt_md
-  reference_md
-  rubric_json?                    // {criteria: [{name, weight, descriptor}]}
-  judge_kind_override?
-  visual_complexity?: low | medium | high
-  → knowledge_ids[]
-  difficulty: 1~5
-  source: embedded | daily | final | dreaming | manual
-        | vision_single | vision_paper | reverse_mark | attempt_variant
-  source_ref?                     // source event_id (variant) / artifact_id (reverse_mark) / null
-  draft_status?: draft | active   // 仅 attempt_variant 等需要双 pass 的题
-  // 变式系列字段
-  variant_depth: int              // 默认 0；0=原题，1=一代变式，最大 2
-  root_question_id?: string       // 指向 root question (variant_depth=0 时可省略)
-  parent_variant_id?: string      // 直接上一代
-  created_by: {task, version}
-  metadata?: { force_flexible?, expected_input_kind?, ... }
-  created_at, updated_at, version  // created_at = 题目进入统一题库的记录时间
+- `knowledge`（树骨架，`parent_id`）+ `knowledge_edge`（类型化横向边，见 §九）。
+- `question`（题库唯一存储）+ `question_block` / `question_revision` / `question_group_lifecycle`（结构化题、不可变发布版本、发布组生命周期）。
+- `learning_item` / `learning_record` / `completion_evidence`。
+- `artifact`（AI 产出物；note 内容在 `body_blocks`，quiz 题号在 `tool_state`）+ `artifact_block_ref` / `artifact_edit_session`。
+- `answer` / `learning_session` / `event`。
+- 观测与费用：`ai_task_runs` / `tool_call_log` / `tool_operation` / `cost_ledger` / `provider_attempt` / `job_events`。
 
-// ★ Phase 1c.1 实体：attempt = event WHERE action='attempt'
-//    outcome='failure' 是错题视图；outcome='success' 也是学习表现信号。
-//    旧 Mistake 表已 DROP（ADR-0006 v2）；UI 保留"错题"称呼（用户语义不变）
+**读模型 vs 投影表**：`QuestionActivitySummary` 与周报（`loadWeeklyReview` 按窗口聚合 event，`src/capabilities/practice/server/review-weekly.ts`）是即时读模型、不落表；p(L) 诊断在 `mastery_state`、FSRS 调度在 `material_fsrs_state`（随 `action='review'` 同事务写），都是物理投影表。
 
-// 已入库题目的生命周期信息不复制到 Question 表：
-// - 入库/记录时间：Question.created_at
-// - 来源证据：Question.source / source_ref / metadata（source_document、asset、crop、origin block 等）
-// - 作答记录：event(action='attempt', subject_kind='question', subject_id=question.id)
-// - 复习记录：event(action='review', subject_kind='question', subject_id=question.id)
-// - 当前复习调度：material_fsrs_state(subject_kind='question', subject_id=question.id)
-// Reader/API 可以派生 QuestionActivitySummary；不要手写 last_reviewed_at 等漂移字段。
-QuestionActivitySummary            // derived/read model, not canonical storage
-  question_id
-  recorded_at                      // question.created_at
-  source, source_ref
-  first_attempted_at?, last_attempted_at?
-  attempt_counts: { success, partial, failure }
-  first_reviewed_at?, last_reviewed_at?
-  review_count
-  due_at?, last_review_ref?        // read-model ref to the latest review action
-  linked_record_ids[]
+**已 DROP，只作迁移背景**：`mistake`（改由 attempt event 表达，`outcome='failure'` 即错题视图）、`judgment` + `user_appeal`（改由 judge event）、`dreaming_proposal`（改由 propose event）、`review_event`、`ingestion_session`。`MemoryItem` / `MaintenanceSuggestion` 从未建表；记忆 brief 落 `memory_brief_note`。
 
-// 待学习列表（含层级）—— 学习意图层，与 event 解耦
-LearningItem
-  id
-  source: mistake | manual | learning_intent | ai_dream
-  source_ref                      // attempt event_id / dream event_id / null
-  title, content
-  → knowledge_ids[]
-  primary_artifact_id?            // 主消费物（note_hub 或 standalone tool_quiz）
-  // 层级关系
-  parent_learning_item_id?        // atomic 指向 hub
-  child_learning_item_ids[]?      // hub 持有 atomic
-  // 状态（6 个）
-  status: pending | in_progress | done | dismissed | resting | archived
-  user_pinned: bool
-  ai_score?: float                // weighted (urgency, weakness, recency)
-  created_at, due_at?
-  completed_at?                   // status=done 时填
-  dismissed_at?                   // status=dismissed 时填
-  archived_at?                    // status=archived 时填
-  archived_reason?: maintenance | user
-  reviewed_at?                    // dreaming 来源被用户确认的时间
-  updated_at, version
+**schema 里的显式约束**
 
-CompletionEvidence
-  id, learning_item_id
-  path: self_declare | ai_propose | quiz_pass
-  evidence_json                   // AI 看到的信号快照
-  user_overrode_low_evidence?: bool
-  decided_at
+- `knowledge` 行不存 mastery：θ̂ 与计数在 `mastery_state`（`subject_kind='knowledge'`）。
+- `event.task_run_id`、`tool_call_log.task_run_id`、`cost_ledger.task_run_id` 都是 loose text ref，故意不建 FK（常早于 `ai_task_runs` 行写入）。
+- `learning_record.knowledge_ids` 在 KC merge 时故意不重写，unmerge 才能重算（见该表注释）。
+- `artifact.knowledge_ids` 是数组列，单值 `knowledge_id` 已不存在。
 
-// 学习记录 — 用户活动产生的学习上下文（records 模块详述）
-LearningRecord
-  id
-  kind: mistake | worked_example | open_question | insight | reflection | observation | resource_note
-  title?
-  content_md
-  source: manual | ocr | import | conversation | agent
-  capture_mode: text | image | paper | voice | url | mixed
-  activity_kind: attempt | review | read | ask | annotate | import | conversation | plan
-  processing_status: raw | linked | actioned | archived
-  → origin_event_id                // 触发/物化该 record 的活动 event
-  subject_id?
-  → knowledge_ids[]
-  → question_id?
-  → attempt_event_id?             // kind=mistake 时关联 failure attempt event
-  → artifact_id?
-  → learning_item_id?
-  → source_document_id?
-  asset_refs[]
-  payload: jsonb                  // kind-specific, small and Zod-guarded at API boundary
-  created_at, updated_at, archived_at?, version
-
-// Future memory layer — AI-curated projection, not manual notes
-// LearningRecord is raw activity-grounded evidence. Memory is derived from records + events + graph + proposal feedback.
-// Users act, capture, and correct; agents link, summarize, detect recurring patterns, and propose updates.
-MemoryItem                         // future scope, not part of first LearningRecord migration
-  id
-  kind: learner_preference | recurring_misconception | durable_goal | strategy_note | subject_pattern
-  subject_id?
-  → knowledge_ids[]
-  summary_md
-  confidence
-  evidence_refs[]                  // learning_record / event / knowledge / artifact ids
-  status: active | stale | dismissed
-  created_by: agent
-  created_at, updated_at, refreshed_at?
-
-// ★ Phase 1c.1 实体：propose / generate 动作走 event（ADR-0006 v2）
-//    旧 proposal 表已 DROP；梦境流提议 = event WHERE action='propose' AND actor_kind='agent'
-
-MaintenanceSuggestion               // ★ 保留 — 用户可回滚的维护建议（非 event，因需快照 + rollback_until）
-  id, kind                        // merge_knowledge | archive | reset_fsrs | reset_mastery
-  target_ref
-  reasoning
-  status: pending | accepted | dismissed | rolled_back
-  snapshot_json
-  proposed_at, decided_at, rollback_until
-
-Artifact                          // AI 产出物的统一抽象（Note + Tool）
-  id
-  type: note_hub | note_atomic | tool_quiz | tool_<future>
-  title
-
-  knowledge_id?                   // note_atomic 必填；note_hub 可选；tool_* 视情况
-
-  parent_artifact_id?             // note_atomic→note_hub
-  child_artifact_ids[]            // note_hub 持有 atomic 列表
-
-  intent_source: declared | from_mistake | from_dream
-  source                          // 具体语义按 type:
-                                  //   note: 同 intent_source
-                                  //   tool_quiz: embedded | teaching_check | daily | final | dreaming | manual | mistake_variant | review_session
-  source_ref?
-
-  // Note 字段（type=note_*）
-  outline_json?                   // note_hub
-  sections?                       // note_atomic
-    [{
-      id, kind: definition | mechanism | example | pitfall | check
-      body_md
-      source_tier: llm_only | search_grounded | textbook | user_verified
-      user_verified: bool
-      embedded_check?: { question_ids: [string] }   // inline，引用 Question 表
-      version
-    }]
-
-  // Tool 字段（type=tool_*）
-  tool_kind?                      // quiz | visualizer | simulator | drill | ...
-  tool_state?                     // tool_quiz: { question_ids[], session_meta? }
-
-  generation_status: pending | partial | complete
-  generated_by: {task, provider, model, prompt_version}
-  history[]
-  archived_at?
-  updated_at, version
-
-// Quiz 子系统的事件 schema
-Answer
-  id, question_id, learning_item_id?
-  input_kind: text | option | image | voice
-  content_md
-  image_refs[]
-  vision_extracted?
-  tags?: [string]
-  submitted_at
-
-Judgment                          // 不可变；同 answer_id 可有多条
-  id, answer_id
-  judge_kind: exact | keyword | semantic | rubric | steps | multimodal_direct | ai_flexible
-  verdict: correct | partial | incorrect
-  score: 0~1
-  feedback_md
-  evidence_json
-  is_flexible_fallback: bool
-  triggered_by?: initial | borderline | appeal | force
-  prior_judgment_id?
-  judged_by: {task, provider, model, version}
-  judged_at
-  is_effective: bool
-
-UserAppeal
-  id, judgment_id
-  reason: text?
-  appealed_at
-  resolved_judgment_id?
-
-// ★ Phase 1c.1 实体：LearningSession 替代旧 Session（ADR-0008）
-LearningSession
-  id, type: ingestion | review | tutor | explore | create | conversation
-  status                          // per-type 状态机（见 § 学习会话多态状态机）
-  started_at, ended_at?
-  updated_at
-
-// ★ Phase 1c.1 实体：event — 统一 action log（ADR-0006 v2）
-Event
-  id
-  session_id → learning_session   // cron / system 事件可空
-  actor_kind: user | agent | cron | system
-  actor_ref                       // 'self' (user) / task_kind (agent) / cron_name
-  action: attempt | judge | propose | generate | review | rate | extract | ...
-  subject_kind: question | knowledge | knowledge_edge | artifact | source_document | event | record
-  subject_id
-  outcome: success | failure | partial | null  // attempt 的 success/failure/partial 都是学习信号
-  payload: jsonb                  // Zod-guarded per action × subject_kind（见 ADR-0006 v2）
-  caused_by_event_id → event      // 因果链：judge ← attempt，propose ← cron
-  task_run_id → ai_task_runs
-  cost_micro_usd: int?
-  created_at
-
-WeeklyReview
-  id, week_start, summary_md
-  → weak_points: knowledge_ids[]
-  → recurring_attempt_event_ids[] // 反复答错的 attempt event（替代旧 recurring_mistakes）
-  → cause_distribution            // 按 cause 类型的分布（来自 judge event payload）
-  → integrated_record_ids[]       // 整合本周用户写的 reflection / open_question / insight
-
-ToolCallLog                       // 运行时 LLM tool 调用观测
-  id, task_run_id, task_kind
-  tool_name, input_json, output_json
-  iteration, latency_ms, cost
-  occurred_at
-
-CostLedger
-  id, task_kind, provider, model
-  cost, tokens_in, tokens_out
-  occurred_at
-```
-
-In-code registries (not DB)：
-
-```
-DomainTool {                      // LLM 调用的函数原语，跟 tool_* artifact 是不同概念
-  name, description
-  effect: read | propose | write
-  input_schema, output_schema
-  execute(ctx, input)
-  summarize(input, output)        // ToolUseCard folded summary
-  mirror_event: never | when_user_visible | when_causal | always
-}
-
-Task {
-  kind, allowed_tools[], budget, system_prompt
-  default_provider, fallback_chain
-  needs_tool_call: bool
-  is_multimodal: bool
-}
-
-JudgeTask extends Task {
-  judge_kind: JudgeKind
-  needs_llm: bool
-  // Common interface: run(question, answer) -> Judgment
-}
-```
+In-code registries（非 DB）以代码为准：`DomainTool` 契约在 `src/kernel/tools/types.ts`，`TaskDefinition` 在 `src/ai/task-spec.ts`，`JudgeKind` 在 `src/core/schema/business.ts`。
 
 ---
 
@@ -657,14 +333,14 @@ JudgeTask extends Task {
 
 **equal-actor model**：`actor_kind ∈ {user, agent, cron, system}`——AI 不是注释层，是与用户对等的事件发起者。Copilot 对话、Dreaming 夜间产出、Critique 自批改全部 first-class。
 
-**schema reference**：见 § 七、数据模型骨架 `Event` 块；完整 DDL 在 `src/db/schema.ts`（event 表）。
+**schema reference**：表结构见 `src/db/schema.ts` 的 `event`；Zod 分支见 `src/core/schema/event/`。
 
 **payload 守护策略**（ADR-0006 v2 "Option 折中"）：
-- **KnownEvent union（11 个 discriminated 分支）**：`AttemptOnQuestion` / `JudgeOnEvent` / `ReviewOnQuestion` / `ProposeKnowledge` / `ProposeKnowledgeEdge` / `GenerateArtifact` / `GenerateKnowledgeEdge` / `RateEvent` / `RateKnowledgeEdge` / `AcceptSuggestionChip` / `ExtractSourceDocument`
+- **KnownEvent union**：稳定分支定义与顺序在 `src/core/schema/event/known.ts` 的 `KnownEvent`，解析优先级与 experimental 特化顺序在 `src/core/schema/event/index.ts` 顶部注释；分支清单与数量以这两个文件为准，本文不复制。
 - **ExperimentalEvent**：`action.startsWith('experimental:')` 的 escape hatch；探索期先跑，稳了再 promote 到 KnownEvent + 数据迁移
-- Zod schema 在 `src/core/schema/event/`；每次 event 写入必须经 `parseEvent()` guard
+- Zod schema 在 `src/core/schema/event/`；每次 event 写入必须经 `parseEvent()` guard（`src/core/schema/event/index.ts`）
 
-**单一写入点**：`writeEvent()` from `src/server/events/queries.ts`。route / handler 不允许直接 `db.insert(event)` 绕过 parse guard。
+**单一写入点**：`writeEvent()` / `writeEvents()` from `src/kernel/events/events.ts`（`@/kernel/events`）。route / handler 不允许直接 `db.insert(event)` 绕过 parse guard。
 
 **因果链（event chaining）**：`caused_by_event_id` 把动作串成 DAG——judge ← attempt，propose ← cron trigger，rate ← propose。可重放、可审计，critique agent 可作用于历史 event。
 
@@ -686,7 +362,7 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 
 **结构**："tree 是骨架，mesh 是肌肉"——`knowledge.parent_id` 保留主层级 backbone（一棵树），`knowledge_edge` 表叠加有类型的横向链接。tree 用于 effective_domain 派生 + UI tree-view；mesh 用于 Dreaming agent 找"薄弱但邻近"复习候选。
 
-**关系类型（5 核心 + experimental）**：
+**关系类型（5 核心 + experimental）**（enum 见 `src/core/schema/event/blocks.ts` 的 `RelationTypeSchema`）：
 
 | relation_type | 语义 | 例 |
 |---|---|---|
@@ -697,13 +373,13 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 | `derived_from` | from 派生自 to | 之-主谓间用法 ← 之-用法 |
 | `experimental:*` | 探索期新关系 | — |
 
-**单一写入点**：`src/server/knowledge/edges.ts`；route 不允许直接 `db.insert(knowledge_edge)` 绕过 guard。
+**单一写入点**：`src/kernel/records/knowledge-edge-facts.ts`（`createKnowledgeEdge` / `archiveKnowledgeEdgeFromEvents` / `reactivateKnowledgeEdge`），由 `src/capabilities/knowledge/server/edges.ts` re-export；写命令自带 event provenance，调用方不得另写 generate/archive event。
 
 **propose 路径**（通过 event 流）：
 1. `ProposeKnowledgeEdge` event（AI 提议，dry-run）→ 用户 accept
 2. `RateKnowledgeEdge` event（rating='accept'）→ 触发 `GenerateKnowledgeEdge` event + `knowledge_edge` INSERT
 
-**agent 读图路径**：不要把整张 `knowledge` / `knowledge_edge` 表直接塞进 prompt。使用语义化 graph reader：
+**agent 读图路径**：不要把整张 `knowledge` / `knowledge_edge` 表直接塞进 prompt。使用语义化 graph reader（knowledge 包 `src/capabilities/knowledge/server/tools/knowledge-readers.ts`）：
 
 - `get_subject_graph_overview`：subject 图例、root clusters、relation type 语义
 - `query_knowledge`：按 query/id 找节点，返回 path、neighbors、stats、recent failures
@@ -718,39 +394,13 @@ FSRS 投影表 `material_fsrs_state` 从 event 流派生，每次 `action='revie
 - `get_learning_item_context`：给 Teaching / Coach / Copilot 提供学习项上下文
 - `attribute_mistake` / `propose_variant`：包装现有 AttributionTask / VariantGenTask owner，不暴露任意 DB mutation
 
-这些 tool 的完整设计见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。
-
-参考 `src/server/knowledge/edges.ts`，ADR-0010，ADR-0011 §3-5。
+这些 tool 的完整设计见 [`docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`](superpowers/specs/2026-05-17-agent-context-tools-design.md)。工具按 owner 分居各包 `server/tools/`，注册走 `manifest.ts` 的 `copilotTools`；ADR-0010、ADR-0011 §3-5。
 
 ---
 
 ## 十、异步任务层 (pg-boss) — Sub 0c
 
-独立 worker 进程 + app process 经 LISTEN/NOTIFY 协同（YUK-321 M5 双进程拓扑：app 跑 `node dist/server.cjs`、worker 跑 `node dist/worker.cjs`；dev 三进程由 `scripts/dev-local.ts` spawn，见 README.md）：
-
-```
-[Vite SPA (web/, :5173)]          [Worker (Node.js, dist/worker.cjs / scripts/worker.ts)]
-       │                               │  boss.work('tencent_ocr_extract', handler)
-       │ POST /api/.../extract         │  → 拉到 job
-       │  (proxy → Hono :8787)         │  handler:
-       │ enqueueExtraction             │    IngestionSession.markExtractionStarted
-       │   ├─ UPDATE session.status    │    R2.get + Tencent submit/poll + parse + crop
-       │   ├─ writeJobEvent → NOTIFY   │    IngestionSession.applyExtractionResult
-       │   └─ boss.send                │       └─ writeJobEvent (NOTIFY)
-       │                               │    provider_attempt lifecycle + usage/cost truth
-       ├── GET /api/.../events (SSE)   │
-       │   replay + subscribe          │
-       ↑                               │
-       └─ listen_loop ←── pg_notify ──┘
-          (server/index.ts, app process — RW_WORKER=1 时同进程 worker 也跑)
-```
-
-**关键模块**：
-- `src/server/boss/{client,handlers,shutdown}.ts` — pg-boss 单例 + handler 注册 + graceful stop
-- `src/server/events/{writer,sse_router,listen_loop,sse_replay}.ts` — job_events + NOTIFY + SSE
-- `src/server/session/` — LearningSession 多态模块（ADR-0008 + ADR-0005 演化，single owner）
-- `src/server/ingestion/tencent_mark{,_parser,_errors}.ts` — Mark Agent SDK + parser + 错误分类
-- `src/server/boss/handlers/tencent_ocr_extract.ts` — 生产 OCR async job handler
+进程、队列、调度与 DBOS 路径见「执行路径」。本节只保留异步链路的耐久性契约与专属机制。
 
 ### 十.1 Durable hub-sync reconciliation (YUK-384)
 
@@ -766,7 +416,7 @@ PostgreSQL 是权威：`knowledge` / `knowledge_edge` / hub-local `artifact` 拓
 
 **耐久性契约**：耐久性 = SQL 触发器（记录 dirty，事务内）+ 每分钟恢复地板。immediate wake 是纯 latency 优化、best-effort，**从不是耐久性依赖**——漏发/失败由恢复地板兜底。有 backlog 时 recovery/nightly handler peek 已启动的 boss（`getRunningBoss`，不启动 boss）投递恰一个 singleton-keyed continuation，一个 cron tick 内 drain 完。
 
-**FULL wake 接线（哪些即时唤醒 vs 靠恢复收敛）**：wake 在 boss-available 的 HANDLER 边界、外层事务提交后发**一个合并的 hub-agnostic 信号**（不 per-hub、不进 13 个 KG leaf writer）。已接线（即时唤醒）：`POST /api/knowledge/edges`（建边）、`POST /api/proposals/[id]/decisions`（KC/边提案 accept）、`POST /api/teaching-sessions/[id]/accept-chip`（chip 驱动 accept，直调 acceptAiProposal）。因 wake 合并，这三个覆盖交互常路；其余靠恢复地板：已弃用的 proposal decide/retract 代理路由、learning_intent 编排者（agency applier job）、rejudge 翻案 job、projection fold-appliers（回放期/休眠）、bootstrap 写（seed / ensure-subject-root / subject-control-write）。tag-knowledge 委托、无直接写，无需 wake。
+**FULL wake 接线（哪些即时唤醒 vs 靠恢复收敛）**：wake 在 boss-available 的 HANDLER 边界、外层事务提交后发**一个合并的 hub-agnostic 信号**（不 per-hub、不进每个 KG leaf writer）。已接线（即时唤醒）：`POST /api/knowledge/edges`（建边）、`POST /api/proposals/[id]/decisions`（KC/边提案 accept）、`POST /api/teaching-sessions/[id]/accept-chip`（chip 驱动 accept，直调 acceptAiProposal）。因 wake 合并，这三个覆盖交互常路；其余靠恢复地板：已弃用的 proposal decide/retract 代理路由、learning_intent 编排者（agency applier job）、rejudge 翻案 job、projection fold-appliers（回放期/休眠）、bootstrap 写（seed / ensure-subject-root / subject-control-write）。tag-knowledge 委托、无直接写，无需 wake。
 
 **Rollout mode `HUB_SYNC_MODE = off | shadow | apply`**（`off` 短路 cycle；`shadow` 计算+ack 不写 body；`apply` 全量）。off→shadow→apply→rollback 八步序：
 
@@ -789,13 +439,13 @@ DROP TRIGGER IF EXISTS hub_sync_knowledge_dirty ON knowledge;
 DROP TRIGGER IF EXISTS hub_sync_knowledge_edge_dirty ON knowledge_edge;
 ```
 
-重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 影响**——它在 nightly 的 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 控制。
+重建 = 重跑 `drizzle/0071` 的 `CREATE TRIGGER` 段（函数体仍在，无需重建）+ 跑一次 nightly repair（`runHubAutoSyncNightly`）补齐停用期间遗漏的 coverage。停用期间 abandoned `artifact_edit_session` 的清扫**不受 `off` 或 dormancy 影响**——它在 nightly 的 `beforeEligibility` 与 mode 门之前无条件跑（`sweepAbandonedEditSessions`），presence 卫生不该受 reconciler mode 或资格门控制。
 
 **Restore 语义（R3）**：`hub_sync_reconciliation` 走 `BACKUP_EXCLUDED_TABLES`（非 FK_ORDER）——restore 重插 `artifact` 时 `hub_sync_artifact_dirty` 逐行 fan-out 重建每个 live hub 的 pending 游标（`O(atomics×hubs)` 的一次性 churn，单用户规模可忽略），nightly repair 兜底 coverage；故 restore 后无需手工补游标。
 
 **Operator 面**：`GET /api/admin/hub-sync`（`readHubSyncHealth`，单条 filtered-aggregate；`capabilities/observability`）暴露 status 计数、`dirty_count` / `ready_count` / `expired_lease_count` / `invalid_document_count`、`oldest_dirty_age_seconds` / `oldest_invalid_age_seconds`、`max_consecutive_failure_count`、`max_generation_lag`（TEXT，bigint-safe）、`last_acknowledged_at` / `last_repair_key`、`triggers_installed`（provisioning 哨兵，见上 Provisioning 警告）。reconciler 每次 attempt 发一行结构化 NDJSON（`hub_sync_attempt`：artifact_id / generation / claim_token / reason / mode / outcome / duration_ms / error_class——**只带 id 与元数据，从不带文档正文**）。告警阈值：oldest dirty > 5m；expired lease 跨 > 2 个恢复周期仍在；invalid document > 15m；ready backlog 连续采样单调增长。mutation-to-ack 延迟 = `last_dirty_at` → `acknowledged_at`。
 
-**所有权守卫**：`pnpm audit:hub-sync-writers`（+ `tests/integration/step9-invariant-audit.test.ts`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
+**所有权守卫**：`pnpm audit:hub-sync-writers`（`scripts/audit-hub-sync-writers.ts`，writer 清单在 `scripts/audit-hub-sync-writers-allowlist.json`）静态锁四不变量：拓扑写全部登记（触发器 own 正确性）、`hub_sync_reconciliation` + `app.hub_sync_internal_apply` 唯一属 `hub-sync-reconciliation.ts`、禁直接 `actorRef:'hub_auto_sync'` apply。
 
 **并发注记 — atomic 硬删 vs finalizer 死锁 (X2)**：atomic 硬删事务持 atomic 行锁 → `AFTER DELETE` 触发器 fan-out 要更新 hub cursor；同时 finalizer 持 cursor 锁 → `syncBlockRefsForArtifact` 插 `artifact_block_ref(to_artifact_id=该 atomic)` 需该 atomic 行的 `KEY SHARE` → 两事务互等。这是**可能但收敛安全**的：PostgreSQL 死锁检测（默认 `deadlock_timeout` 1s）解环、abort 一边并抛 `40P01 deadlock_detected`。**finalize 侧**若被 abort，`40P01` 是 5 字符 SQLSTATE → `classifyHubSyncError` 归 `pg_transient` → classified retry → 下一周期自愈（无数据损失，义务不丢）。**删除侧调用方**若被 abort，需容忍并重试该删除（标准写侧重试纪律）。彻底消除方案（如 finalize 先验 refs、或延迟 block-ref fan-out）是 follow-up，非本 PR——单用户规模下死锁窗口极小，PG 解环 + 自愈已足。
 
@@ -813,37 +463,17 @@ YUK-861 对 Verify、Notes、Memory 三条 durable handoff 做了架构 closeout
 
 这三个边界必须继续由各 owner 维护。重复少量机械 dispatch/readback 代码是可接受的架构成本；
 不得以 callback 成功、共享 completion 或统一 optional-field shell 替代真实 transaction、provider、
-digest、cursor 与 receipt 语义。YUK-858 已合并 `136faec8224c0f0136532c748aea1bbc689ca7b7`，exact-head CI
-`31362608190` green；本状态不代表已部署，YUK-832 继续 HOLD、YUK-842 production 继续 observe。
+digest、cursor 与 receipt 语义。
 
 **学习会话 (LearningSession) 多态状态机** (ADR-0008，演化自 ADR-0005；[CONTEXT.md](../CONTEXT.md) "录入会话")：
 
-`learning_session` 表承载 6 种会话类型：`ingestion | review | tutor | explore | create | conversation`。Phase 1c.1 实现前 2 种；余 4 种 enum 占位、行为延后。
+`learning_session` 承载 7 种 type：`ingestion | review | tutor | conversation | placement` 有实装状态机，`explore | create` 仍是 `placeholder` 单值占位。per-type status enum 与判别联合在 `src/core/schema/learning_session.ts`（`LearningSessionStatusByType`）；状态图与合法取值以该文件与各 lifecycle owner 为准，本文不复制。
 
-每种 type 有独立 status 状态机，由 `src/server/session/` 多态模块内部分支：
-
-```
-# type='ingestion'（从 ADR-0005 IngestionSession 平移而来）
-uploaded → (enqueueExtraction) → queued
-        → (worker markExtractionStarted) → extracting
-        → applyExtractionResult         → extracted | partial
-        → markExtractionFailed          → failed
-extracted | partial → markReviewed → reviewed
-extracted | partial | reviewed → commitImport → imported (终态)
-failed → enqueueExtraction (retry) → queued
-partial → applyRescue (block-level) → partial（session 不变）
-
-# type='review'（Phase 1c.1 新建最小状态机）
-started → completed | abandoned
-```
-
-**Single owner invariant** (ADR-0005 / ADR-0008)：`src/server/session/` 是 `learning_session.status` 唯一可信写入点；route / handler 不允许直接 `db.update(learning_session)`。per-type Zod 状态机定义见 `src/core/schema/`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner——conversation / placement / review / tutor 在 `src/server/session/`（`index.ts` 命名空间导出），ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`。route / handler 不允许直接 `db.update(learning_session)`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 
-**Acceptance gates**：EchoJob E2E（~~`app/api/echo/echo.e2e.test.ts`~~ 已随 YUK-321 M5 退场，echo job handler 测试现位于 `src/capabilities/observability/` 下）+ tencent_ocr_extract handler test + IngestionSession 16 transition tests。
-
-**pg-boss dev harness（`echo_jobs` + `/api/echo`）**：`echo_jobs` 表 + `POST /api/echo` 路由 + `src/server/boss/handlers/echo.ts` 是 Sub 0c 的 **pg-boss E2E dev harness**，验证 enqueue → pg-boss worker → notify → SSE 全链路。这是验收门（acceptance gate），**不是生产业务路由**；不在 Phase 1c.1 DROP，但 Phase 2+ 可按需清理。（closes #34 finding 2）
+**pg-boss dev harness**：`echo_jobs` 表 + `echo` job + `src/server/boss/handlers/echo.ts` 是 Sub 0c 的 enqueue → pg-boss worker → notify → SSE 联调通道，**不是生产业务路由**；HTTP 路由已不在 manifest 声明中。
 
 **命名澄清**：`Tool` (LLM 函数原语) ≠ `tool_*` Artifact (互动型产出物)。前者是 AI 任务层的实现细节，后者是用户消费的内容对象。两个层级不冲突但同名易混。
 

@@ -1,18 +1,21 @@
-// Turns a probe outcome into a prediction score and a typed-state cell.
-// Without it, probe outcomes accumulate and the typed ledger never moves.
-// Joins the probe to its conjecture by conjecture_event_id. Does not guess by KC and time window.
-// Writes the typed-state cell first, then a deterministic anchor, so an anchor means the cell already advanced.
-// Sequence 1 anchors a prediction score. Sequence 2 anchors a score-free projection.
-// The conjecture's predicted probability is calibrated for the first probe only.
-// Accountability may reorder conjecture candidates. It does not flip mastery, typed state, or FSRS.
+// Turns a probe outcome into a prediction score and a typed-state cell; without it probe
+// outcomes accumulate and the typed ledger never moves. Joins the probe to its conjecture
+// by conjecture_event_id, never by KC and time window.
+//
+// Writes the typed-state cell first, then a deterministic anchor, so an anchor means the
+// cell already advanced. Sequence 1 anchors a prediction score; sequence 2 anchors a
+// score-free projection. The conjecture's predicted probability is calibrated for the
+// first probe only.
+//
 // This loop passes a null confused-with KC, so the typed-state gate keeps every cell soft.
-// Do not clear that null until induction names the second KC and verifies it exists.
-// The column has no foreign key, and nextTypedState only checks that the id is truthy.
-// This is the only production caller of upsertKcTypedState, so nothing currently writes confused-with-X.
-// An empty admin column is that fact, not missing learner data. `mastered` is unreachable here.
-// Retrievability is stored on the anchor event because replay needs it. kc_typed_state has no such column.
-// Does not write FSRS.
-// Neither anchor action is reserved. Both stay on the loose experimental event. Do not reserve them here.
+// Do not clear that null until induction names and verifies the second KC: the column has
+// no foreign key and nextTypedState only checks truthiness. This is the only production
+// caller of upsertKcTypedState, so nothing currently writes confused-with-X; `mastered` is
+// unreachable here.
+//
+// Accountability may reorder candidates but does not flip mastery, typed state, or FSRS.
+// Retrievability lives on the anchor event because replay needs it. Neither anchor action
+// is reserved; both stay on the loose experimental event.
 
 import { ZodError, z } from 'zod';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';

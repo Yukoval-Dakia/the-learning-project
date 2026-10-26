@@ -1,15 +1,13 @@
-// YUK-193 — Lazy AI reference-solution generator (spec §2).
+// YUK-193 — lazy AI reference-solution generator (spec §2).
 //
-// Runs SolutionGenerateTask through the AI runner (which logs the run to the AI
-// log — evidence-first, ADR-0005 spirit), parses the structured output, and
-// writes it MERGE-PRESERVING into question.rubric_json + question.reference_md.
-// This is the "fuel" that makes the shipped StepsJudge/SemanticJudge usable on
-// real ingested questions (which arrive with no rubric_json).
+// Runs SolutionGenerateTask through the runner (run logging included), parses the
+// structured output, and writes it MERGE-PRESERVING into question.rubric_json +
+// question.reference_md. This is the "fuel" that makes the shipped judges usable
+// on ingested questions, which arrive without a rubric_json.
 //
-// Robustness (spec §2.4): a missing key / LLM throw / unparseable output is a
-// LOGGED SKIP — never a thrown 500, never a retry storm. The caller (solve
-// orchestrator) degrades gracefully; the manual flow is untouched. Lazy +
-// idempotent (skip when reference_solution already exists, unless regenerate).
+// Robustness: a missing key, LLM throw or unparseable output is a LOGGED SKIP —
+// never a 500, never a retry storm. Lazy + idempotent (skip when a reference
+// already exists, unless regenerate).
 import { and, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 
@@ -22,8 +20,7 @@ import { question } from '@/db/schema';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
-// `RubricT` is not exported from business.ts (it's a private alias inside
-// db/schema.ts). Derive the type locally from the single-source-of-truth Rubric
+// `RubricT` is private inside db/schema.ts; derive it locally from the Rubric
 // schema so the merged write matches `question.rubric_json`'s `$type<RubricT>()`.
 type RubricT = z.infer<typeof Rubric>;
 
@@ -115,44 +112,40 @@ export async function generateReferenceSolution(
     return { status: 'skipped_error', reason };
   }
 
-  // Merge-preserving: keep any existing criteria/keywords/required_points/
-  // acceptable_answers, replace only reference_solution. A question with no
-  // prior rubric gets a minimal valid Rubric (criteria: []).
+  // Merge-preserving: keep existing criteria/keywords and replace only
+  // reference_solution. A question without a rubric gets a minimal valid one.
   const prior = Rubric.safeParse(row.rubric_json);
   const base: RubricT = prior.success ? prior.data : { criteria: [] };
   const mergedRubric = {
     ...base,
     reference_solution: parsed.reference_solution,
-    // provenance marker (spec §2.1) — lets a human distinguish AI-generated
-    // reference solutions from authored ones. Lives alongside the typed Rubric
-    // keys; Rubric.parse() ignores unknown keys on read so this is safe.
+    // Provenance marker (spec §2.1): lets a human tell AI-generated references
+    // from authored ones. Rubric.parse() ignores unknown keys on read.
     reference_solution_source: 'ai_generated' as const,
   };
 
-  // Write-guard (concurrent-safe): unless an explicit regenerate, write ONLY when reference_md is
-  // STILL null. A concurrent writer (an OCR enroll/import, a manual edit) may have set a REAL
-  // reference between our initial SELECT and this UPDATE (TOCTOU) — we must never clobber an
-  // externally-set answer with an AI guess. If the guard matches 0 rows a reference landed
-  // concurrently → skip (the nightly reference_answer_backfill counts it skipped, not filled).
+  // Write-guard: unless regenerating, write ONLY while reference_md is still null.
+  // A concurrent OCR enroll/import or manual edit may have set a real reference
+  // between SELECT and UPDATE (TOCTOU) — an AI guess must never clobber it. A
+  // zero-row match means one landed concurrently, so the backfill counts a skip.
   const updateWhere = params.regenerate
     ? eq(question.id, questionId)
     : and(eq(question.id, questionId), isNull(question.reference_md));
-  // YUK-1043（复审 P1-6，§2 矩阵 reference backfill 行）—— 生成参考答案改变
-  // 评分依据：UPDATE 与统一发布同事务，不能直接改已发布列后不铸新版。新
-  // scoring basis ⇒ 旧 admission evidence 不再适用（P1-5），preserve 折叠
-  // withheld/unverified_rules —— 待重新核验后再准入（来源标识已在 rubric
-  // reference_solution_source='ai_generated' 留痕）。
+  // YUK-1043 (review P1-6, reference backfill row) — an AI reference changes the
+  // scoring basis, so the UPDATE and the unified publish share one transaction;
+  // writing a published column without minting a new version is not allowed. A new
+  // scoring basis invalidates prior admission evidence (P1-5) and folds
+  // withheld/unverified_rules to pending re-verification.
   //
-  // ADR-0072 LIGHT（embedding 失效 bug 修复）—— reference_md 是题库向量源文本
-  // （questionEmbedText）的一部分：此写入点与 editQuestion 同等承担 hash 失效义务。
-  // 按内容 digest 失效：合并后源文本的 embedHash 与存量 embed_content_hash 不同 ⇒
-  // 同一 UPDATE 内置空 embedding 并盖新 hash，夜间 embed_backfill（谓词
-  // embedding IS NULL OR embed_version 落后）据此重嵌入。否则旧向量滞留，
-  // 向量检索永远命中补写参考答案之前的语义。
+  // ADR-0072 LIGHT — reference_md feeds the question's embedding source text, so
+  // this write point owes the same hash-invalidation duty as editQuestion: when the
+  // merged source digest differs, null the embedding and stamp the new hash in the
+  // same UPDATE. The nightly embed_backfill (embedding IS NULL or stale version)
+  // then re-embeds; otherwise stale vectors keep matching pre-backfill semantics.
   const written = await db.transaction(async (tx) => {
-    // P1-1（第二轮复审）—— 锁序 root→child：目标是子 part 时先锁组根再改子行
-    //（backfill 更新的可能是组内子行；FromRow 的根解析不做子行锁定，所以这
-    // 里显式先锁）。单题时被更新行自身即根，UPDATE 取锁天然根优先。
+    // P1-1 (second review) — lock order is root→child: for a child part, lock the
+    // group root before touching the row. A single question is its own root, so
+    // the UPDATE's own row lock already orders root-first.
     if (row.parent_question_id != null) {
       await tx
         .select({ id: question.id })

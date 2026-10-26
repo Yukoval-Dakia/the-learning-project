@@ -12,7 +12,7 @@ export interface AgentRedactionSink {
   readonly counts: Partial<Record<IngestionRedactionField, number>>;
   /** Texts already counted this run — window re-reads never double-count. */
   readonly countedKeys: Set<string>;
-  /** Full-text redactions cached per unique source text (R2-1). */
+  /** Full-text redactions cached per unique source text. */
   readonly cache: Map<string, IngestionRedactionResult>;
 }
 
@@ -84,7 +84,7 @@ export function recordAgentRedactionOnce(
 }
 
 /**
- * Cache for full-text redactions (R2-1: redact whole page/doc once, then
+ * Cache for full-text redactions (redact whole page/doc once, then
  * window). Returns the cached result when this run already redacted `key`.
  */
 export function cachedAgentRedaction(

@@ -1,25 +1,17 @@
-// YUK-1007 — 配置读模型（GET /api/admin/config 的装配层）。
+// GET /api/admin/config 的装配层：只做装配与分类，不做解析决策。
+// 分层（env pin > DB > env fallback > code default / compose-forced 跳 DB）由
+// src/core/config 的 resolveConfigValue 单一真相源决定；effective 值与
+// providers/infra schedules/runtime 来自组合根注入的真实事实（admin-config-facts.ts）。
+// 输出直接是 wire 形状（AdminConfigResponseSchema）。
 //
-// 设计输入：docs/design/2026-09-26-yuk1007-settings-panel-preflight.md §10.1/§10.2
-// （读面契约）+ PR #1498 已落地的热加载 store（src/core/config）。本文件只做
-// **装配与分类**，不做任何解析决策——分层（env pin > DB > env fallback > code
-// default / compose-forced 跳 DB）全部复用 store 的 resolveConfigValue，单一真相
-// 源不在此重复；effective 值与 providers/schedules/runtime 分区 likewise 来自
-// 组合根注入的真实事实（admin-config-facts.ts，调用真实 reader/注册表，本层
-// 零规则复制）。输出直接是 wire 形状（api/admin-config-contracts.ts 的
-// AdminConfigResponseSchema 与之 1:1，由单测 safeParse 钉住等价）。
-//
-// 诚实性规则（本端点存在的理由）：
-//   - keys[] 只枚举 registry **已登记**的 key——不枚举 process.env，不 dump
-//     未分类值；secret 按 grounding §1.5「不建 key」清单天然不在面上。
-//   - 每个 key 带 wired/consumer：wired=false 表示「DB/env 值当前没有运行时
-//     reader 消费」（未接线）。未列入 KEY_CONSUMERS 的 key 一律按未接线报——
-//     新增 registry key 而忘登记时，读面**低估**生效面，不会虚报。
-//   - tasks[] 不把静态 TaskSpec 默认说成运行时覆盖：default 永远标注为 catalog
-//     冻结值；override 单列。预算逐字段报告wired/effective，未消费字段为null。
-//   - 不在此重算 resolveTaskProvider 的合成结果（arg > env pin > DB > registry
-//     链的单一真相源在 src/server/ai/providers.ts）——读面给出分层事实
-//     （default / override / global_pin），合成留给消费方。
+// 诚实性规则：
+//   - keys[] 只枚举 registry 已登记的 key，不枚举 process.env，不暴露 secret。
+//   - wired=false 表示该值当前没有运行时 reader 消费；未登记 consumer 的 key
+//     一律按未接线报，漏登记只会低估生效面，不会虚报。
+//   - tasks[] 的 default 始终是 catalog 冻结值，override 单列；预算逐字段报告
+//     wired/effective，未消费字段为 null。
+//   - 不在此重算 resolveTaskProvider 的合成结果（单一真相源在
+//     src/server/ai/providers.ts）；读面给出 default/override/global_pin 分层事实。
 //
 // 纯同步、零 DB：route 调用点在快照之上，hydrate 由 boot/refresh 周期负责。
 
@@ -49,9 +41,8 @@ export type AdminConfigValue = ConfigValue | null;
  * registry key → 运行时消费方声明（wired 证据）。value = 消费 reader 的文件
  * 路径；null = 已登记但 reader 未接线。
  *
- * 完整性由 config-read-model.unit.test.ts 钉死：CONFIG_REGISTRY 每键必须在此
- * 分类，防新增 key 漏分类；分类错误（标 wired 但 reader 实际未读）属于
- * KEY_CONSUMERS 维护 bug，走常规 review 修正。
+ * 新增 registry key 必须在此分类，否则读面按未接线报告；标 wired 但 reader
+ * 实际未读属于维护 bug，走常规 review 修正。
  */
 export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   JUDGE_DURABLE_ENABLED: 'src/capabilities/practice/server/judge-durable-config.ts',
@@ -131,7 +122,7 @@ export const TASK_OVERRIDE_WIRING = {
   budget: false,
 } as const;
 
-/** wire 形状（与 AdminConfigResponseSchema 1:1；契约测试钉等价）。 */
+/** wire 形状（与 AdminConfigResponseSchema 1:1）。 */
 export interface AdminConfigKeyRow {
   readonly key: string;
   readonly value: AdminConfigValue;
@@ -206,15 +197,11 @@ function normalizeValue(value: ConfigValue | null | undefined): AdminConfigValue
 }
 
 /**
- * 全局 pin 的**caller 语义**合成（不是逐字段合成）：
- * `readGlobalProviderSwitch`（src/server/ai/providers.ts，运行时唯一真相源）
- * 在 env provider pin 在场时整体返回 env 对（all-or-nothing），不再下探 DB
- * model；env 缺席时才用 DB 对，且 DB 支路以 **provider 在场为门**
- * （providers.ts `if (!db?.provider) return undefined`）——只有
- * lane.global.model 而无 lane.global.provider 的行在运行时**不消费**（惰性）。
- * 此处镜像这两道门，避免读面虚报 runtime 不消费的 DB 值（「实际 caller
- * 生效语义 > 表面 DB 值」）。单测用真实 resolver（hasGlobalProviderOverride /
- * resolveTaskProvider）对照钉住一致性。
+ * 全局 pin 的 caller 语义合成（不是逐字段合成）：
+ * readGlobalProviderSwitch（src/server/ai/providers.ts，运行时唯一真相源）在
+ * env provider pin 在场时整体返回 env 对；env 缺席时才用 DB 对，且 DB 支路以
+ * provider 在场为门——只有 lane.global.model 而无 lane.global.provider 的行在
+ * 运行时不消费。此处镜像这两道门，避免读面虚报 runtime 不消费的 DB 值。
  */
 function resolveGlobalPin(env: NodeJS.ProcessEnv): { provider?: string; model?: string } | null {
   const provider = resolveConfigValue('lane.global.provider', env);

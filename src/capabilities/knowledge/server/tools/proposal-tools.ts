@@ -1,14 +1,10 @@
-// YUK-876 / FULL F3.7b — Knowledge proposal DomainTools, owned by the knowledge
-// capability and loaded through its manifest. These expose owner-service paths to
-// agent tool loops; they do not apply destructive graph mutations directly:
-// proposal tools write inbox-visible proposal events (propose-only invariant).
-// Originally moved from src/server/ai/tools/proposal-tools.ts; the five-branch
-// mutation schema and the shared cooldown gate now live here.
+// YUK-876 — knowledge proposal DomainTools. Proposal-only: they write
+// inbox-visible events and never apply destructive graph mutations.
 
 import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
-// ADR-0032 D4-E1 (YUK-203) — archive-op edge proposal targets a live edge by id;
-// the single-owner edges module is the read authority.
+// ADR-0032 D4-E1 — archive-op proposals target a live edge by id; edges.ts is
+// the read authority.
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
 import {
   knowledgeMutationCooldown,
@@ -19,8 +15,7 @@ import {
   validateProposalQuality,
 } from '@/capabilities/knowledge/server/rubric-validator';
 import { RelationTypeSchema, isSymmetricKnowledgeRelation } from '@/core/schema/event/blocks';
-// P5.6 / YUK-178 — the proactive/corrective discriminator the model can label
-// explicitly via the propose-tool input arg (§4.1/§4.2).
+// P5.6 / YUK-178 — model-labeled proactive/corrective discriminator.
 import { SuggestionKind } from '@/core/schema/event/known';
 import {
   type AiProposalPayloadInputT,
@@ -29,15 +24,14 @@ import {
 } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
-// P5.4-L2 / YUK-174 (Facet B) — resolve the per-(kind, relation) gate-bump for
-// this edge and pass it as the OPTIONAL adaptive input to the L1 validator. The
-// digest read is bounded; cold-start / below-threshold returns a no-op bump.
+// P5.4-L2 / YUK-174 — per-(kind, relation) gate bump passed to the L1 validator;
+// cold start is a no-op.
 import { resolveEdgeGateBump } from '@/kernel/proposals/adaptive-bias';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { findActiveProposalCooldown, withProposalGateLock } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
-// P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
+// P5.4-L2 / YUK-174 — adaptive gate-bump budget + bias config.
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { writeToolCallLog } from '@/kernel/tools/call-evidence';
 import { sanitizeProposedNodeDomain } from '@/subjects/profile';
@@ -45,20 +39,15 @@ import type { DomainTool, ToolContext } from './types';
 
 type DbLike = Db | Tx;
 
-// resolveEvidence resolves refs one-by-one; cap model input so a malformed call
-// cannot amplify into an unbounded query sequence.
+// Cap model input so a malformed call cannot amplify into unbounded evidence reads.
 const EvidenceEventIdsSchema = z.array(z.string().min(1)).max(20);
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
   return [...new Set(ids)].map((id) => ({ kind: 'event', id }));
 }
 
-// YUK-1553 — the propose-side dedup/cooldown gate shared by both knowledge
-// proposal tools, run INSIDE {@link withProposalGateLock} so the pending +
-// dismiss-cooldown reads and the subsequent proposal write are serialized per
-// (kind, cooldown_key). This is the check the retired KR `runWriteProposal`
-// gate enforced (`checkProposalGate`); the canonical home is here so every
-// caller of the shared tools gets it, not just the maintenance task.
+// YUK-1553 — propose-side dedup/cooldown gate shared by both proposal tools.
+// Runs inside withProposalGateLock so reads and write serialize per (kind, cooldown_key).
 interface ProposalCooldownSkip {
   status: 'skipped:duplicate_pending' | 'skipped:cooldown';
   /** Existing proposal row id: the pending twin, or the latest proposal on the key. */
@@ -90,9 +79,7 @@ async function checkProposalCooldownGate(
   }
   const cooling = await findActiveProposalCooldown(db, kind, cooldownKeys);
   if (cooling) {
-    // Point the caller at the cooldown's origin: the latest DISMISSED proposal
-    // on the key (cooldowns only exist after a dismiss), falling back to the
-    // latest row at all if the dismiss predates this projection window.
+    // Point at the dismissed proposal that started the cooldown (fallback: latest row).
     const latest = (rows: typeof onKey) =>
       rows.reduce<(typeof onKey)[number] | undefined>(
         (best, row) => (best === undefined || row.proposed_at > best.proposed_at ? row : best),
@@ -153,27 +140,14 @@ async function getSharedKnowledgeDomain(db: Db, ids: string[]): Promise<string |
   return domains.every((domain) => domain === first) ? first : null;
 }
 
-// ---------------------------------------------------------------------------
-// propose_knowledge_edge
-// ---------------------------------------------------------------------------
-
-// ADR-0032 D4-E1 (YUK-203) — `op` discriminator: 'create' (default / absence)
-// proposes a NEW mesh edge from {from,to,relation_type}; 'archive' soft-deletes an
-// EXISTING live edge named by `edge_id`. FLAT z.object (the MCP bridge requires a
-// ZodObject — see mcp-bridge.ts:145; a .refine would break it), so the per-op
-// required-field check ('archive' requires edge_id; 'create' requires the edge
-// endpoints) runs in execute(), not on the schema. Mirrors the node omnibus
-// (propose_knowledge_mutation) discriminator and author_question's flat-schema +
-// in-execute validation pattern.
+// ADR-0032 D4-E1 — 'create' (default) proposes a new edge; 'archive' soft-deletes
+// an existing live edge by id. Flat z.object because the MCP bridge requires a
+// ZodObject, so per-op required fields are checked in execute().
 const ProposeKnowledgeEdgeInputSchema = z.object({
-  // OPTIONAL on the schema (absence === 'create') so the tool's Input type stays a
-  // clean z.object the MCP bridge + DomainTool generic accept; the default is
-  // applied in execute() (mirrors suggestion_kind's absence→proactive). A schema
-  // .default() would diverge z.input (optional) from z.infer (required) and break
-  // the DomainTool<Input> inputSchema constraint.
+  // Optional keeps the Input type a clean z.object; absence means 'create' and is
+  // applied in execute(). A .default() would break the DomainTool input type.
   op: z.enum(['create', 'archive']).optional(),
-  // create-op endpoints (also describe the archive target's edge for the card;
-  // optional on the schema, required-by-op in execute()).
+  // create-op endpoints; optional on the schema, required by op in execute().
   from_knowledge_id: z.string().min(1).optional(),
   to_knowledge_id: z.string().min(1).optional(),
   relation_type: RelationTypeSchema.optional(),
@@ -182,10 +156,8 @@ const ProposeKnowledgeEdgeInputSchema = z.object({
   edge_id: z.string().min(1).optional(),
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: EvidenceEventIdsSchema.optional(),
-  // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator. Set
-  // 'corrective' ONLY when this edge repairs a failure the model itself observed;
-  // omit (→ 'proactive') for a next-step suggestion. There is NO deterministic
-  // coercion — absence defaults to proactive in execute().
+  // P5.6 / YUK-178 — optional model label: 'corrective' only when this edge
+  // repairs an observed failure; omit means proactive. No deterministic coercion.
   suggestion_kind: SuggestionKind.optional(),
 });
 
@@ -197,27 +169,20 @@ const ProposeKnowledgeEdgeOutputSchema = z.object({
     'skipped:cross_subject',
     'skipped:duplicate_live_edge',
     'skipped:duplicate_pending',
-    // YUK-1553 — an active dismiss-cooldown covers this edge key; same-args
-    // retries inside the window are suppressed (was the retired KR gate's
-    // `skipped_cooldown`).
+    // YUK-1553 — an active dismiss-cooldown covers this edge key.
     'skipped:cooldown',
     'skipped:parent_semantic_duplicate',
-    // P5.4 / YUK-143 (RB-6) — rubric-rejected agent edge. The propose event is
-    // still written, MARKED rubric-rejected (folded, not dropped); the verdict
-    // is returned to the agent as primitive feedback.
+    // P5.4 — rubric-rejected agent edge. The proposal is still written and marked
+    // rejected; the verdict returns to the agent as primitive feedback.
     'skipped:rubric_rejected',
-    // ADR-0032 D4-E1 (YUK-203) — archive-op outcomes. The target edge id does not
-    // resolve to a live (non-archived) edge, or an archive proposal for the same
-    // edge is already pending.
+    // ADR-0032 — archive target missing/already archived, or a proposal is pending.
     'skipped:edge_not_found',
   ]),
   proposal_id: z.string().optional(),
   cooldown_key: z.string().optional(),
-  // YUK-1553 — ISO deadline for skipped:cooldown so the agent knows when a
-  // retry could succeed.
+  // YUK-1553 — ISO deadline so the agent knows when a retry could succeed.
   cooldown_until: z.string().optional(),
-  // YUK-1553 — the live edge id for skipped:duplicate_live_edge /
-  // skipped:edge_not_found (was smuggled through `reason`).
+  // YUK-1553 — live edge id for duplicate/not-found outcomes.
   edge_id: z.string().optional(),
   reason: z.string().optional(),
   // P5.4 — stable gate string from the rubric verdict (YUK-174 Layer-2 signal).
@@ -232,11 +197,8 @@ async function proposeKnowledgeEdgeExecute(
   raw: ProposeKnowledgeEdgeInput,
 ): Promise<ProposeKnowledgeEdgeOutput> {
   const input = ProposeKnowledgeEdgeInputSchema.parse(raw);
-  // ADR-0032 D4-E1 (YUK-203) — dispatch by op (absence === 'create', backward
-  // compatible). Archive is the inverse of create: it soft-deletes a live edge
-  // through the proposal→accept loop, so it shares the proposal writer + inbox +
-  // accept dispatch but skips the create-only rubric evidence floor (the validator
-  // short-circuits {ok:true} for edge_op:'archive').
+  // ADR-0032 — dispatch by op. Archive shares the writer/inbox/accept path but
+  // skips the create-only rubric floor.
   if (input.op === 'archive') {
     return await proposeKnowledgeEdgeArchive(ctx, input);
   }
@@ -247,8 +209,7 @@ async function proposeKnowledgeEdgeCreate(
   ctx: ToolContext,
   input: ProposeKnowledgeEdgeInput,
 ): Promise<ProposeKnowledgeEdgeOutput> {
-  // create-op required fields (optional on the flat schema — enforced here per the
-  // MCP-bridge ZodObject constraint, mirroring author_question).
+  // create-op required fields are checked here due to the flat-schema MCP constraint.
   if (!input.from_knowledge_id || !input.to_knowledge_id || !input.relation_type) {
     return {
       status: 'skipped:unknown_node',
@@ -292,10 +253,8 @@ async function proposeKnowledgeEdgeCreate(
   const cooldownKeys = edgeCooldownKeys(fromKnowledgeId, toKnowledgeId, relationType);
   const cooldownKey = cooldownKeys[0];
 
-  // YUK-1553 — live-duplicate + pending + dismiss-cooldown reads and the
-  // proposal write run inside ONE (kind, cooldown_key) advisory-locked txn
-  // (the gate the retired KR path enforced); rubric/adaptive stay inside the
-  // same txn so a verdict-fold and a skip both see the serialized world.
+  // YUK-1553 — duplicate/pending/cooldown reads and the write share one
+  // advisory-locked txn; rubric/adaptive stay inside so both see the serialized world.
   return await withProposalGateLock(ctx.db, 'knowledge_edge', cooldownKeys, async (tx) => {
     const duplicateLiveEdge = (
       await tx
@@ -348,9 +307,7 @@ async function proposeKnowledgeEdgeCreate(
       reason_md: input.reasoning,
       evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
       proposed_change: {
-        // ADR-0032 D4-E1 — explicit create marker (the schema defaults to it, but
-        // setting it makes the create branch's payload self-describing alongside
-        // the archive branch).
+        // Explicit create marker keeps the payload self-describing.
         edge_op: 'create' as const,
         from_knowledge_id: fromKnowledgeId,
         to_knowledge_id: toKnowledgeId,
@@ -358,23 +315,13 @@ async function proposeKnowledgeEdgeCreate(
         weight: input.weight ?? 1,
       },
       cooldown_key: cooldownKey,
-      // P5.6 / YUK-178 — explicit model label, default proactive. This payload flows
-      // through parseAiProposalPayload → validateProposalQuality (the rubric) BELOW
-      // before writeAiProposal, so the marker must survive that round-trip (§12 PIN
-      // 10); it does because suggestion_kind is on BaseProposal.
+      // P5.6 — explicit model label; survives parseAiProposalPayload into the rubric.
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     };
 
-    // P5.4-L2 / YUK-174 (Facet B) — resolve the adaptive gate-bump for this edge's
-    // `(knowledge_edge, relation_type)` cell. Only meaningful for agents (the L1
-    // evidence floor + rescue is agent-only); for the user path the bump is inert
-    // because the rescue branch never runs. Cold-start / below-threshold → no-op.
-    //
-    // ND-5 (additive-only): the L2 bump is an OPTIONAL soft layer. A digest/query
-    // error here MUST NOT become a hard failure that blocks the pure-L1
-    // validateProposalQuality below — that would suppress L1's signal-driven
-    // proposals. Guard the call so any error downgrades `adaptive` to undefined
-    // (no-op, identical to cold start) and the L1 floor + downstream still run.
+    // P5.4-L2 — resolve the adaptive bump for this (knowledge_edge, relation).
+    // Only agents use it. A digest error must not block pure L1, so downgrade to
+    // undefined (same as cold start).
     let adaptive: Awaited<ReturnType<typeof resolveEdgeGateBump>> | undefined;
     if (ctx.callerActor.kind === 'agent') {
       try {
@@ -386,12 +333,9 @@ async function proposeKnowledgeEdgeCreate(
         );
       } catch (bumpErr) {
         adaptive = undefined;
-        // Evidence-first (CLAUDE.md): the soft-layer downgrade is traceable. Log
-        // via the AI action logger; the log write itself must never break the
-        // tool path, so swallow log errors with a console fallback (mirrors the
-        // mcp-bridge writeToolCallLog guard). The log deliberately goes through
-        // ctx.db (not tx): it is an independent side-record that must survive a
-        // later gate-txn rollback.
+        // Evidence-first: log the soft-layer downgrade via ctx.db (an independent
+        // side-record that survives a gate rollback). Logging must never break the
+        // tool path; fall back to console.
         const errorReason = bumpErr instanceof Error ? bumpErr.message : String(bumpErr);
         try {
           await writeToolCallLog(ctx.db, {
@@ -416,8 +360,7 @@ async function proposeKnowledgeEdgeCreate(
       }
     }
 
-    // P5.4 / YUK-143 (RB-1) — shared rubric floor before the write. Agents are
-    // strict; user-edited proposals (kind !== 'agent') run structural-only.
+    // P5.4 — shared rubric floor before the write; agents strict, users structural-only.
     const verdict = await validateProposalQuality(
       parseAiProposalPayload(proposalPayload),
       tx,
@@ -449,29 +392,20 @@ async function proposeKnowledgeEdgeCreate(
   });
 }
 
-// P5.4 / YUK-143 (RB-6 / §3.4) — on an agent rubric rejection, write the
-// propose event ANYWAY, MARKED rubric-rejected (carrying { rubric_verdict } as a
-// sibling of ai_proposal in the event payload). Folded, not dropped: the row is
-// an audit trail + a Layer-2 (YUK-174) signal, and is excluded from live-pending
-// dedup/cooldown (RB-7) because the inbox derive maps the marker to a terminal
-// 'rubric_rejected' status.
+// P5.4 — on rejection, write the propose event anyway, marked rubric-rejected.
+// Folded as an audit/L2 signal and excluded from live-pending dedup because the
+// inbox derives a terminal status.
 //
-// NOTE (PR #219 review fix): we do NOT write a tool_call_log row here. The
-// mcp-bridge DomainTool wrapper (mcp-bridge.ts) already logs exactly ONE
-// tool_call_log per DomainTool call from this function's RETURN value, capturing
-// the verdict in `output_json` ({status:'skipped:rubric_rejected', gate, reason}).
-// An explicit log here double-counted the call (distorting call-volume/
-// failure-rate) and mis-flagged a SOFT reject as a hard failure by writing the
-// verdict into `error_reason`. Traceability is preserved via (1) the bridge's
-// output_json log and (2) the folded `rubric_rejected` propose event above.
+// Do not log here: the mcp-bridge DomainTool wrapper already logs exactly one
+// tool_call_log from the return value; a second log would double-count and
+// mis-flag a soft reject as a hard failure.
 async function foldRubricRejectedEdge(
   ctx: ToolContext,
   db: DbLike,
   proposalPayload: AiProposalPayloadInputT,
   cooldownKey: string,
   verdict: Extract<RubricVerdict, { ok: false }>,
-  // Narrowed create-edge fields (the create path resolves these before calling
-  // fold; fold is only reachable from create — archive bypasses the rubric).
+  // Narrowed create-edge fields (fold is only reachable from create).
   edge: {
     from_knowledge_id: string;
     to_knowledge_id: string;
@@ -488,8 +422,7 @@ async function foldRubricRejectedEdge(
       action: 'propose',
       subject_kind: 'knowledge_edge',
       payload: {
-        // ADR-0032 D4-E1 — folded rejection is a create-op edge (archive never
-        // reaches the rubric); mark it so the inbox derive reads a stable shape.
+        // Folded rejection is always create-op; archive never reaches the rubric.
         edge_op: 'create',
         from_knowledge_id: edge.from_knowledge_id,
         to_knowledge_id: edge.to_knowledge_id,
@@ -512,18 +445,14 @@ async function foldRubricRejectedEdge(
   };
 }
 
-// ADR-0032 D4-E1 (YUK-203) — archive-op cooldown key. One pending archive proposal
-// per live edge id; a second archive call for the same edge dedups to
-// skipped:duplicate_pending instead of stacking inbox rows.
+// ADR-0032 — one pending archive per edge id; a second call dedups instead of
+// stacking inbox rows.
 function edgeArchiveCooldownKey(edgeId: string): string {
   return `knowledge_edge_archive:${edgeId}`;
 }
 
-// ADR-0032 D4-E1 (YUK-203) — archive-op executor. Proposes soft-deleting a LIVE
-// edge through the same proposal→accept loop as create (守 propose-only invariant:
-// never a direct write). Skips the create-only rubric evidence floor (the
-// validator short-circuits {ok:true} for edge_op:'archive') — an archive is the
-// inverse of proposing, so it carries no failure evidence by design.
+// ADR-0032 — archive executor: proposes soft-deleting a live edge through the
+// same proposal→accept loop. No rubric evidence floor; archive carries none by design.
 async function proposeKnowledgeEdgeArchive(
   ctx: ToolContext,
   input: ProposeKnowledgeEdgeInput,
@@ -533,12 +462,10 @@ async function proposeKnowledgeEdgeArchive(
   }
   const edgeId = input.edge_id;
   const cooldownKey = edgeArchiveCooldownKey(edgeId);
-  // YUK-1553 — the pending/dismiss-cooldown dedup + proposal write run inside
-  // ONE (kind, cooldown_key) advisory-locked txn (same gate as create).
+  // YUK-1553 — dedup + write inside one (kind, cooldown_key) advisory-locked txn.
   return await withProposalGateLock(ctx.db, 'knowledge_edge', [cooldownKey], async (tx) => {
     const edge = await getKnowledgeEdgeById(tx, edgeId);
-    // Target must be a LIVE (non-archived) edge. A missing id or an
-    // already-archived edge is a no-op — nothing to propose archiving.
+    // Target must be a live edge; missing/already-archived is a no-op.
     if (!edge || edge.archived_at !== null) {
       return { status: 'skipped:edge_not_found', edge_id: edgeId, reason: edgeId };
     }
@@ -560,9 +487,8 @@ async function proposeKnowledgeEdgeArchive(
       evidence_refs: evidenceRefsFromEventIds(input.evidence_event_ids ?? []),
       proposed_change: {
         edge_op: 'archive' as const,
-        // The endpoints + relation describe the edge being archived (inbox card +
-        // structural shape); archive_edge_id is the authoritative target the accept
-        // applier flips.
+        // Endpoints/relation describe the archived edge; archive_edge_id is the
+        // authoritative target the accept applier flips.
         from_knowledge_id: edge.from_knowledge_id,
         to_knowledge_id: edge.to_knowledge_id,
         relation_type: edge.relation_type,
@@ -573,18 +499,14 @@ async function proposeKnowledgeEdgeArchive(
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     };
 
-    // The validator runs for shape uniformity but short-circuits {ok:true} on
-    // edge_op:'archive' (no evidence floor) — archive proposals are never folded.
+    // Shape uniformity only; archive short-circuits {ok:true} and is never folded.
     const verdict = await validateProposalQuality(parseAiProposalPayload(proposalPayload), tx, {
       isAgent: ctx.callerActor.kind === 'agent',
       actorRef: ctx.callerActor.ref,
     });
     if (!verdict.ok) {
-      // Defensive: archive should never fail the rubric (the validator bypasses the
-      // evidence floor for it). If a future structural gate does reject it, surface
-      // it as rubric_rejected rather than silently swallow — but do NOT fold a
-      // create-shaped event_override (this is an archive). Reuse the create fold's
-      // marker shape minimally.
+      // Defensive: a future structural gate could reject an archive. Surface it,
+      // but do not fold a create-shaped event for an archive.
       return {
         status: 'skipped:rubric_rejected',
         cooldown_key: cooldownKey,
@@ -631,22 +553,15 @@ export const proposeKnowledgeEdgeTool: DomainTool<
   mirrorEvent: 'when_causal',
 };
 
-// ---------------------------------------------------------------------------
-// propose_knowledge_mutation
-// ---------------------------------------------------------------------------
-
-// YUK-1553 — model-visible input exposes the real five-branch change
-// structure. The pi bridge requires a top-level z.object (pi-tools.ts:130), so
-// the discriminated union lives inside the `change` field; `change` IS the
-// KnowledgeMutationPayload written by the proposal writer — ONE schema serves
-// both the wire contract and the execute-side parse (no hidden second parser).
+// YUK-1553 — the model-visible input exposes the real five-branch change. The pi
+// bridge needs a top-level z.object, so the union lives in `change`; one schema
+// serves both the wire contract and the execute-side parse.
 const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
   z.object({
     mutation: z.literal('propose_new'),
     name: z.string().min(1).max(120),
-    // null = propose a NEW domain ROOT; then `domain` is required (validated in
-    // execute — flat z.object, no .refine, per the MCP-bridge ZodObject
-    // constraint). A string parent_id proposes a child node.
+    // null = new domain ROOT and requires `domain` (validated in execute);
+    // a string parent_id proposes a child node.
     parent_id: z.string().min(1).nullable(),
     domain: z.string().min(1).optional(),
   }),
@@ -654,15 +569,14 @@ const KnowledgeMutationChangeSchema = z.discriminatedUnion('mutation', [
     mutation: z.literal('reparent'),
     node_id: z.string().min(1),
     new_parent_id: z.string().min(1),
-    // CAS token: the node's current `version` (see query_knowledge / tree input).
+    // CAS token: the node's current `version`.
     expected_version: z.number().int().min(0),
   }),
   z.object({
     mutation: z.literal('merge'),
     from_ids: z.array(z.string().min(1)).min(1),
     into_id: z.string().min(1),
-    // CAS tokens for every absorbed node: {from_id: current version}. Accept
-    // rejects a merge whose recorded base version has drifted.
+    // CAS tokens for every absorbed node; accept rejects a drifted base version.
     expected_versions: z.record(z.string(), z.number().int().min(0)),
   }),
   z.object({
@@ -684,8 +598,7 @@ const KnowledgeMutationInputSchema = z.object({
   change: KnowledgeMutationChangeSchema,
   reasoning: z.string().min(1).max(2000),
   evidence_event_ids: EvidenceEventIdsSchema.optional(),
-  // P5.6 / YUK-178 (§4.1/§4.2, SK-5) — OPTIONAL model-labeled discriminator;
-  // omit (→ 'proactive') unless this mutation repairs a model-observed failure.
+  // P5.6 — optional model label; omit unless this mutation repairs an observed failure.
   suggestion_kind: SuggestionKind.optional(),
 });
 
@@ -696,9 +609,7 @@ const KnowledgeMutationOutputSchema = z.object({
     'skipped:cross_subject',
     'skipped:invalid_payload',
     'skipped:duplicate_pending',
-    // YUK-1553 — an active dismiss-cooldown covers this key; same-args retries
-    // inside the window are suppressed (was the retired KR gate's
-    // `skipped_cooldown`).
+    // YUK-1553 — an active dismiss-cooldown covers this key.
     'skipped:cooldown',
   ]),
   proposal_id: z.string().optional(),
@@ -757,11 +668,8 @@ async function proposeKnowledgeMutationExecute(
     }
   }
 
-  // Root-creation guard (propose_new with parent_id=null): the payload must
-  // declare a real domain for the root to anchor; a child proposal must NOT
-  // carry one — children inherit the parent's effective domain and an explicit
-  // value would silently diverge from it. 'general'/blank is the fallback
-  // subject identity and can never be a node domain (node-creation contract).
+  // Root proposals need a real domain; children inherit the parent's effective
+  // domain and must omit it. 'general'/blank is never a node domain.
   if (change.mutation === 'propose_new') {
     if (change.parent_id === null && !sanitizeProposedNodeDomain(change.domain)) {
       return {
@@ -785,8 +693,7 @@ async function proposeKnowledgeMutationExecute(
     return { status: 'skipped:unknown_node', reason: missing.join(',') };
   }
 
-  // Root proposals reference no existing nodes — nothing to domain-check
-  // against; the declared domain is reviewed at accept time like any proposal.
+  // Root proposals reference no existing nodes; the domain is reviewed at accept.
   const sharedDomain = ids.length === 0 ? 'root' : await getSharedKnowledgeDomain(ctx.db, ids);
   if (sharedDomain === null) {
     return { status: 'skipped:cross_subject', reason: 'mutation spans multiple domains' };
@@ -800,18 +707,15 @@ async function proposeKnowledgeMutationExecute(
       actor_ref: ctx.callerActor.ref,
       caused_by_event_id: ctx.causedByEventId ?? null,
       task_run_id: ctx.taskRunId,
-      // P5.6 / YUK-178 — model-labeled discriminator threaded into the proposal
-      // payload writeKnowledgeProposeEvent builds; default proactive.
+      // P5.6 — model-labeled discriminator, default proactive.
       suggestion_kind: input.suggestion_kind ?? 'proactive',
     });
 
-  // Every mutation branch shares the writer's `(kind, cooldown_key)` identity;
-  // reparent / merge / split are included here (they had no propose-side gate
-  // before, so repeated proposals stacked in the inbox).
+  // Every branch shares the writer's `(kind, cooldown_key)` identity; change-scoped
+  // mutations now dedup too.
   const gate = knowledgeMutationCooldown(change);
-  // YUK-1553 — pending/dismiss-cooldown dedup reads and the proposal write in
-  // ONE advisory-locked txn; same-args retries inside the window skip instead
-  // of stacking inbox rows (the retired KR gate's serialized check-then-write).
+  // YUK-1553 — dedup reads + write in one advisory-locked txn so retries skip
+  // instead of stacking inbox rows.
   return await withProposalGateLock(ctx.db, gate.kind, gate.cooldownKeys, async (tx) => {
     const skip = await checkProposalCooldownGate(tx, gate.kind, gate.cooldownKeys);
     if (skip) {
