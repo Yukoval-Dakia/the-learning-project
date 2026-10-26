@@ -1,5 +1,13 @@
 # UI 视觉方向决策：导航骨架、页面结构、学习伙伴、吉祥物、token 与动效
 
+> **当前方向已替代（2026-10-27）**：UI 设计、实施与视觉复核由 **Astra** 承担，
+> 全面采用 **Google Material 3 Expressive（M3E）**。现行入口是
+> [M3E 正式方向与渐进迁移计划](2026-10-27-m3e-direction-and-migration.md)。
+> Owner [决定原文](https://linear.app/yukoval-studios/issue/YUK-1351#comment-dcadddc1-14ab-4c44-a60f-00809a0588ba)
+> 已生效；旧 Opus-only、Linear / Apple Liquid Glass / 暖纸珊瑚 loft 视觉和等待 A/B/C 选择的要求不再适用。
+> 下文的「定稿」、稳定/待定分层、排期、规则编号与 Opus 评审均为历史记录，不作为当前视觉规范或模型限制。
+> 正文、样稿和评审证据原样保留；既有功能、数据与恢复合同继续有效，按新入口的合同与验收表承接。
+
 日期：2026-10-07 起草，2026-10-09 按 owner 选定的第二轮方案重写（Asia/Tokyo）。
 票：[YUK-1353](https://linear.app/yukoval-studios/issue/YUK-1353)，epic [YUK-1351](https://linear.app/yukoval-studios/issue/YUK-1351)。
 
