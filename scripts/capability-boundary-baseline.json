@@ -3081,6 +3081,14 @@
       "from": 6,
       "to": 5,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-26",
+      "from": 11,
+      "to": 10,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4974,6 +4982,26 @@
       "issue": "YUK-1358",
       "owns": "The existing question writer owns lineage-field vocabulary and edit/restore transactions, lock order, version CAS, no-op checks, content claims, derived embedding state, publication and audit events; Practice owns the two complete resource operations, ordered transport-input validation, writer invocation and error/success projection.",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-parts.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Own generated question-part materialization in Practice, retaining the existing part INSERT answer-class derivation and parent/part identity. QuizGen retains normalization, parent dedup/admission and placement decisions; no new default or answer policy.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-parts.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "Own ordered generated-part projection and creation together: preserve root lock before each part INSERT and republish the parent group in the same caller Tx after every part, with the original actor, timestamp and failure propagation. Parent final publication, verify intent and paid boundaries remain with QuizGen.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
@@ -5894,7 +5922,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 274,
+      "total": 273,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5947,7 +5975,7 @@
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> proposals": 5,
-        "practice -> questions": 11,
+        "practice -> questions": 10,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
         "practice -> session": 6,

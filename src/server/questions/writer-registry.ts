@@ -47,7 +47,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'web_sourced/jyeoo 新草稿 ⇒ 同事务铸首版 revision（admission withheld/unverified_rules；source_verify 通过后由 promote 重新发布为准入态）。',
   },
-  'src/server/questions/parts.ts': {
+  'src/capabilities/practice/server/question-parts.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'createQuestionPart ⇒ 同事务重发父组 revision（组契约含全部子 part）。',
