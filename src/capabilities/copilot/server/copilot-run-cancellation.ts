@@ -3,7 +3,7 @@ import type { PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import { writeCopilotReply } from './conversation-writes';
 import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
 import {

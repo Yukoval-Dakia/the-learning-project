@@ -5,7 +5,7 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 
 import { evaluation, knowledge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { computeReplay } from '@/server/events/sse_replay';
+import { computeReplay } from '@/kernel/job-events';
 import { nativeJudgeRunFixture } from '../../../../tests/fixtures/native-judge-run';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 

@@ -4,7 +4,7 @@ import { COPILOT_REUSE_WINDOW_MS } from '@/core/limits';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from './guards';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.

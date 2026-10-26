@@ -2983,6 +2983,30 @@
       "direction": "decrease"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> events",
+      "date": "2026-10-26",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-26",
+      "from": 7,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> events",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
       "type": "stable_contract",
       "file": "src/capabilities/practice/public.ts",
       "siteKind": "site",
@@ -4786,6 +4810,16 @@
       "date": "2026-10-26"
     },
     {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/jobs/copilot_run.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["computeReplay"],
+      "issue": "YUK-1570",
+      "owns": "Read the complete durable job-event cursor stream for existing pre-fence terminal/cancellation replay and overlapping-execution observation; preserve numeric cursor ordering, original business stream filters, recovery guards, execution fence, retry identity and paid decisions in the caller.",
+      "date": "2026-10-26"
+    },
+    {
       "file": "src/capabilities/practice/server/question-restore-operation.ts",
       "kind": "value",
       "issue": "YUK-1358",
@@ -5724,7 +5758,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 288,
+      "total": 276,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5735,7 +5769,6 @@
         "agency -> runtime-env": 1,
         "copilot -> ai": 12,
         "copilot -> boss": 6,
-        "copilot -> events": 5,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
@@ -5745,7 +5778,7 @@
         "copilot -> today": 3,
         "ingestion -> ai": 14,
         "ingestion -> boss": 7,
-        "ingestion -> events": 7,
+        "ingestion -> events": 1,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 9,
@@ -5775,7 +5808,6 @@
         "practice -> boss": 14,
         "practice -> calibration": 2,
         "practice -> coldstart": 1,
-        "practice -> events": 1,
         "practice -> fsrs": 2,
         "practice -> mastery": 3,
         "practice -> memory": 1,

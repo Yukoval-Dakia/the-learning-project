@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 import { assertFromState } from './guards';
 

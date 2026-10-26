@@ -31,9 +31,8 @@ import {
   foldCopilotRunFrames,
 } from '@/capabilities/copilot/ui/subtask-events';
 import { event, learning_session } from '@/db/schema';
+import { computeReplay, writeJobEvent } from '@/kernel/job-events';
 import type { PiToolMount } from '@/server/ai/tools/pi-tools';
-import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getRecentCopilotTurns } from '../server/turns';
 import {
