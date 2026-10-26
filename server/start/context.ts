@@ -1,6 +1,6 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
-import type { readMistakes } from '@/capabilities/ingestion/public';
+import type { createIngestionSession, readMistakes } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
   loadKnowledgeNodePage,
@@ -41,6 +41,12 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 export type FrontdoorContext = {
   api: Hono;
   adminControls: () => Promise<AdminControlClient>;
+  createIngestionSession: (input: {
+    body: string;
+    key: string | null;
+  }) => Promise<
+    Extract<Awaited<ReturnType<typeof createIngestionSession>>, { body: { session: unknown } }>
+  >;
   createKnowledgeEdge: (
     body: string,
   ) => Promise<Awaited<ReturnType<typeof createManualKnowledgeEdge>>>;
