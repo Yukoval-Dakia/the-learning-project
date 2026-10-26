@@ -4974,6 +4974,56 @@
       "issue": "YUK-1358",
       "owns": "The existing question writer owns lineage-field vocabulary and edit/restore transactions, lock order, version CAS, no-op checks, content claims, derived embedding state, publication and audit events; Practice owns the two complete resource operations, ordered transport-input validation, writer invocation and error/success projection.",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Own the teaching-chip accept_suggestion write after source-anchor validation and any completed proposal accept. Preserve the original event fields, event-ID timing, bare Db and non-atomic accept-first failure window; no new transaction or retry.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Own original active-session and source-anchor business failures in the complete chip acceptance operation; HTTP route retains body/path parsing, validation_error presentation and errorResponse.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "module": "src/server/boss/hub-sync-wake.ts",
+      "kind": "value",
+      "symbols": ["wakeHubSyncAfterCommit"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the existing fire-and-forget topology wake immediately after a successful proposal accept and before writing the chip event. Do not await it, add dispatch, or change the shared best-effort failure policy.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "module": "src/server/proposals/actions.ts",
+      "kind": "value",
+      "symbols": ["acceptAiProposal"],
+      "issue": "YUK-1570",
+      "owns": "Invoke the unchanged complete proposal accept owner with the same bare Db and proposal ID before chip-event persistence. Proposal kind/applier/idempotency/paid effects remain with that owner; do not claim atomic chip/proposal acceptance.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "module": "src/server/session/index.ts",
+      "kind": "value",
+      "symbols": ["Conversation"],
+      "issue": "YUK-1570",
+      "owns": "Retain the existing Conversation.assertActive business precondition before anchor queries; never substitute assertAcceptingTurns or add idle resume, lifecycle writes, transaction or locks.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
