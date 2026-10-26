@@ -1,5 +1,6 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
+import type { readMistakes } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
   loadKnowledgeNodePage,
@@ -82,6 +83,7 @@ export type FrontdoorContext = {
   readLibraryDraftDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
+  readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
   readLibraryQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;
