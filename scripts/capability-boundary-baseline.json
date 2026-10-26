@@ -3025,6 +3025,14 @@
       "issue": "YUK-1358",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-16eef657-9241-4e0a-995a-eed9a9b98639",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> learning-items",
+      "date": "2026-10-26",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4820,24 +4828,34 @@
       "date": "2026-10-26"
     },
     {
-      "file": "src/capabilities/practice/server/question-restore-operation.ts",
-      "kind": "value",
-      "issue": "YUK-1358",
-      "date": "2026-10-26",
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-restore-operation.ts",
       "module": "src/kernel/http.ts",
+      "kind": "value",
       "symbols": ["ApiError"],
-      "owns": "Kernel owns the shared API error value contract; the complete Practice restore operation retains original input validation, state-to-error mapping and wire projection. HTTP and Start only adapt transport. The HTTP adapter still physically imports errorResponse from this module."
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error value contract; the complete Practice restore operation retains original input validation, state-to-error mapping and wire projection. HTTP and Start only adapt transport. The HTTP adapter still physically imports errorResponse from this module.",
+      "date": "2026-10-26"
     },
     {
-      "file": "src/capabilities/practice/server/question-restore-operation.ts",
-      "kind": "value",
-      "issue": "YUK-1358",
-      "date": "2026-10-26",
       "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-restore-operation.ts",
       "module": "src/server/questions/write.ts",
+      "kind": "value",
       "symbols": ["restoreQuestion"],
-      "owns": "The existing server state writer retains the restore transaction, root and part locks, version CAS, archived content claims, lifecycle/republish and event writes. Practice owns complete resource validation and the original state-to-error/DTO mapping without copying SQL or reordering the state operation. The old direct HTTP writer import is removed."
+      "issue": "YUK-1358",
+      "owns": "The existing server state writer retains the restore transaction, root and part locks, version CAS, archived content claims, lifecycle/republish and event writes. Practice owns complete resource validation and the original state-to-error/DTO mapping without copying SQL or reordering the state operation. The old direct HTTP writer import is removed.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/records/learning-items.ts",
+      "kind": "value",
+      "symbols": ["ActiveLearningItem", "listActiveLearningItems"],
+      "issue": "YUK-1570",
+      "owns": "Read the complete active-learning-item attention-pressure projection: exclude archived rows, retain in-progress or user-pinned rows, order by created_at then id, and preserve the original four-field/null-knowledge mapping. Coach scheduling/review backbone, proposal generation and injected reader precedence remain caller-owned.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
@@ -5758,12 +5776,11 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 276,
+      "total": 275,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
-        "agency -> learning-items": 1,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
