@@ -135,3 +135,43 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 **无新的风格或产品决定待 owner 重选。** 尚需补齐的是组件具体 Specs（含数值、状态、Web availability）的可获取证据、各实施片真实修改 hunk 与原票运行许可条件，
 不是本方向待批准。若未来官方规范与现存业务功能发生实质冲突，先给协调线精确冲突和最小保功能方案，不静默降级确定性能力。
 方向与未完验收继续由 YUK-1351/YUK-1473、transport 由 YUK-1358 承接，不因计划合入将原票整体标为完成。
+
+## 8. 做题基础源码候选：2026-10-27（YUK-1473）
+
+本片基于 `01678912baa7717312878c2123a75866dc46a32b`，只改四源码及本节；仍是**未运行验收的源码候选**。
+`PracticeSolo` 的既有 `UiNextRoot` 增加 `data-un-m3e="practice-foundation"`，直接使用的 Button / 引用 IconButton / 评级 ChipToggle 增加 `un-m3e-control`。
+`tokens.css` 只追加 `--un-md-*` 角色，`components.css` 同时要求根标记与控件 class；`practice-solo.css` 只映射现有标题。
+Root、三个 primitive 的 React 实现无需改动。未标记消费者、全部旧 token 定义与原主题优先级保持；不新增 theme store、导出或框架。
+
+### 官方依据 → 本片映射
+
+获取日期 2026-10-27 JST。Buttons / Icon buttons / Chips 的 overview、specs、guidelines、accessibility 及 color/type/shape/motion 站点直读为 JS-only，未获取完整规范正文。
+以下具体数值改由 Google 官方开源实现交叉核实，不声称已读取不可得的页面或已有完整官方 Web Expressive 库：
+
+- AndroidX 固定 [`0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06`](https://github.com/androidx/androidx/tree/0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/tokens)，生成版本按文件区分：`ButtonMediumTokens` 为 `v0_11_0`、`TypeScaleTokens` 为 `v0_103`、`SmallIconButtonTokens` 为 `14_1_0`、`FilterChipTokens` 为 `7_0_1`；其余以对应文件头为准。
+- Google Material Web 固定 [`fd45953c77876d7964dfe1181e1e30ae55b69a73`](https://github.com/material-components/material-web/tree/fd45953c77876d7964dfe1181e1e30ae55b69a73/docs/components)：button / icon-button / chip 的 Usage、Accessibility；保留真实动作标签、原生 disabled、图标名称与既有键盘次序，不采用另一套 toolbar 导航。
+- [Google Material Android Chips](https://github.com/material-components/material-components-android/blob/66b0eeb53afeb6025ffbbd37734b08e5bce197ed/docs/components/Chip.md)：选择型 chip 与单选集合用法；本片评级只是其视觉映射，不重写选择行为。
+
+| 真实 consumer | 官方 token / 参数 | 项目映射与适用状态 |
+| --- | --- | --- |
+| 现有 `h1.un-ps-title` | AndroidX `TypeScaleTokens.HeadlineSmallEmphasized`：24/32、500、tracking 0 | `--un-md-sys-typescale-headline-small-*`；保本地中文字体、标题内容、morph 与 tabIndex，不裁剪长标题 |
+| 提交、确认/记下作答/下一题、自行评级入口的 primary Button | `ButtonMediumTokens`：56 高、24 两侧、pressed CornerMedium 12；`Button.textStyleFor` → titleMedium 16/24、500、tracking .2；`FilledButtonTokens` → primary/onPrimary | 只将既有 primary+md 映射 medium filled；busy/disabled 判据与文字原样，未减少真实动作 |
+| 返回、提示、重试、自评、把握、跳过、附件、思路、先继续、申诉提交/取消 | `ButtonSmallTokens`：40 高、16 两侧、20 icon、8 gap、pressed CornerSmall 8；labelLarge 14/20、500、tracking .1；`OutlinedButtonTokens` / `TextButtonTokens` → onSurfaceVariant、outlineVariant | secondary → outlined，quiet → text；small primary 保 filled；思路展开仍由原 aria-expanded 与收起文案表达，并加下划线作为非颜色提示 |
+| 题目/小问/文章引用按钮 | `SmallIconButtonTokens`：40 容器、24 icon、round full、pressed 8；`StandardIconButtonTokens` → onSurfaceVariant | standard icon button；保原 label/title/icon/onClick；selected、disabled 无本片实际分支，不新增状态 |
+| 「再练 / 模糊 / 掌握」评级 ChipToggle | `FilterChipTokens`：32 高、CornerSmall 8、labelLarge、18 icon、1 outline；selected secondaryContainer/onSecondaryContainer | 现有 aria-pressed 唯一决定选中；勾选提示与颜色并用，不重算 rating/建议，不改 callback。disabled 无实际分支，不伪造样本 |
+| 上述交互控件 | `StateTokens` hover .08 / focus .10 / pressed .10；filled disabled container onSurface .10、label onSurfaceVariant .38 | enabled/hover/focus-visible/pressed/实际 disabled 映射；pressed 即时改变按钮形状，无 scale 或新动画。选中 chip 不改变形状 |
+| 明暗与焦点 | AndroidX `ColorLightTokens` / `ColorDarkTokens` / `PaletteTokens` 的 reference scheme；Material Web [`focus-ring`](https://github.com/material-components/material-web/blob/fd45953c77876d7964dfe1181e1e30ae55b69a73/tokens/_md-comp-focus-ring.scss)：secondary、3px、offset 2px；[`elevation`](https://github.com/material-components/material-web/blob/fd45953c77876d7964dfe1181e1e30ae55b69a73/elevation/internal/_elevation.scss)：level1 两层 shadow | 不另选品牌色；新增角色仅由标记消费者读取。hover filled/selected chip 用 level1，focus/pressed 回 level0；局部 override → app → system 选择器沿用原合同 |
+
+Web 尺寸采用 CSS px 作为组件逻辑尺寸，字阶以 16px 基准换算 rem；这是项目映射，不宣称 Android dp/sp 与任意设备 CSS 像素等价。
+圆形 full 采用 CSS 大半径表示法；48×48 最小命中区依据 AndroidX `InteractiveComponentSize`，通过原 button 的透明扩展与布局预留实现，不添 DOM 包装。
+多行按钮允许增高，原顺序不变。所选字阶使用已有字体，不加载 Roboto/Google Sans/图片，不改变 CSP。
+[Google Web focus](https://web.dev/learn/accessibility/focus/) 与 [contrast](https://web.dev/learn/accessibility/color-contrast/) 是焦点/非颜色提示与 4.5:1 文字、3:1 必要图标检查依据；token 配对计算不等于浏览器实测。
+
+### 明确未验与保留范围
+
+本片 browser / inspector / screenshot / 真实作答、provider、测试、部署均 **NOT_RUN**；不宣称 skill gate、视觉、可访问性或业务运行通过。
+完整组件规范页、Web spring/ripple、跨控件 motion、缩放/软键盘/读屏/实际命中区与亮暗嵌套背景仍待有权限的现役页验收。
+外壳、伙伴、题干/数学/资产、输入、静态 Chip 状态标签、Judgment、Segmented、抽屉、原玻璃操作栏容器及页面过渡均未迁；不把局部控件候选称全页 M3E。
+所有业务表达式、props/callback、挂载/key、快捷键/输入法、8 秒 race 与恢复路径保持；不扩大原 paid/B/LIGHT 边界。
+静态检查与完整 diff 的实际记录外置于 `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/m3e-practice-foundation-20261027/`；
+父线负责原 YUK-1351/YUK-1473 的全局状态、待分类机器项、独立 R1 与 PR/CI，不新建同义票。

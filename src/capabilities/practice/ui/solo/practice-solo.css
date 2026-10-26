@@ -1149,3 +1149,15 @@
     transform: translateY(calc(100% + var(--un-sp-4)));
   }
 }
+
+/* YUK-1473 M3E foundation: headline-small emphasized, using the existing local font stack.
+   The surrounding sheet, verdicts, fields and overlays are not part of this migration. */
+[data-ui-next][data-un-m3e="practice-foundation"] .un-ps-title {
+  color: var(--un-md-sys-color-on-surface);
+  font-family: var(--un-font-sans);
+  font-size: var(--un-md-sys-typescale-headline-small-size);
+  font-weight: var(--un-md-sys-typescale-headline-small-weight);
+  line-height: var(--un-md-sys-typescale-headline-small-line-height);
+  letter-spacing: var(--un-md-sys-typescale-headline-small-tracking);
+  overflow-wrap: anywhere;
+}
