@@ -750,7 +750,7 @@ export type InitiateUploadParams = {
  * "user picked a file" is not an extract action yet.
  */
 export async function initiateUpload(
-  db: Db,
+  db: Db | Tx,
   params: InitiateUploadParams,
 ): Promise<{ sessionId: string; sourceDocumentId: string }> {
   return db.transaction(async (tx) => {
@@ -831,7 +831,7 @@ export async function initiateUpload(
  * error is recorded on document provenance instead.
  */
 export async function markSessionPackageFailed(
-  db: Db,
+  db: Db | Tx,
   sessionId: string,
   err: unknown,
 ): Promise<'kept_extracted' | 'marked_failed' | 'missing'> {

@@ -41,6 +41,50 @@ export const CreateIngestionSessionBody = z.object({
   derivation_policy: IngestionDerivationPolicy.optional(),
 });
 
+/** Optional creation identity; explicitly supplied empty keys are invalid. */
+export const CreationReceiptHeadersSchema = z.object({
+  'Idempotency-Key': z.string().trim().min(1).max(200).optional(),
+});
+
+export const IngestionSessionCreationResponseSchema = z.strictObject({
+  session: z.strictObject({
+    id: z.string().min(1),
+    source_document_id: z.string().min(1),
+    status: z.literal('uploaded'),
+    source_asset_ids: z.array(z.string().min(1)).min(1),
+    entrypoint: IngestionEntrypoint,
+  }),
+});
+
+export const CreationReceiptConflictSchema = z.strictObject({
+  error: z.literal('idempotency_conflict'),
+  message: z.literal('Idempotency-Key was used with a different creation input'),
+});
+
+export const CreationReceiptUnavailableSchema = z.strictObject({
+  error: z.literal('creation_receipt_unavailable'),
+  message: z.literal('Creation receipt unavailable; retry with the same key and original input'),
+});
+
+export const CreationInternalErrorSchema = z.strictObject({
+  error: z.literal('internal_error'),
+  message: z.literal('Internal Server Error'),
+});
+
+export const IngestionSourcePackageFailedSchema = z.strictObject({
+  error: z.literal('ingestion_source_package_failed'),
+  message: z.literal('Source package materialization failed'),
+  details: z.strictObject({
+    session_id: z.string().min(1),
+    source_document_id: z.string().min(1),
+  }),
+});
+
+export const IngestionCreationErrorSchema = z.union([
+  CreationInternalErrorSchema,
+  IngestionSourcePackageFailedSchema,
+]);
+
 export const IngestionSessionTitleSourceSchema = z.enum([
   'source_document',
   'agent_item_preview',
@@ -197,10 +241,10 @@ export const MistakeListQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
-export const CreateMistakeResponseSchema = z.object({
-  question_id: z.string(),
-  mistake_id: z.string(),
-  record_id: z.string(),
+export const CreateMistakeResponseSchema = z.strictObject({
+  question_id: z.string().min(1),
+  mistake_id: z.string().min(1),
+  record_id: z.string().min(1),
 });
 
 const MistakeCorrectionStepSchema = z.object({

@@ -1540,6 +1540,40 @@
           "response": []
         },
         {
+          "name": "POST /api/ingestion-sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ingestionCreationIdempotencyKey}}",
+                "description": "可选；同一逻辑创建保留 key 与原输入，丢响应后重放。trim 后 1–200 字符。",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions"]
+            },
+            "description": "创建录入 session 及同事务 source package / 长期创建回执\n\n**Notes:** 201 {session} + Location；可选 Idempotency-Key，同 key 原输入重放原创建终态/IDs/Location 并带 Idempotency-Replayed:true；异输入409 idempotency_conflict，坏/未知版本/不可用回执503 creation_receipt_unavailable。同事务 materialize 失败时先提交 failed session 与固定安全500 ingestion_source_package_failed（details.session_id/source_document_id）及 Location，重放不再次 materialize；无法提交则回滚或 unknown，不做全局补偿，沿原 key+原输入重试。未提供 key 保留兼容创建。session subject omitted/null 等价，derivation_policy omitted/explicit allow 不同。legacy /api/ingestion 共用 key scope，成功200+弃用header、失败原样透传。回执冻结创建结果；当前状态由原 GET 判断。不授权启动 agent；DOCX 不在此保证内。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entrypoint\": \"vision_single\",\n  \"asset_ids\": [\n    \"REPLACE_uploaded_asset\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "POST /api/ingestion-sessions/:id/asks/:ask_id/answers",
           "request": {
             "method": "POST",
@@ -1877,6 +1911,12 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{ingestionCreationIdempotencyKey}}",
+                "description": "可选；同一逻辑创建保留 key 与原输入，丢响应后重放。trim 后 1–200 字符。",
+                "disabled": true
               }
             ],
             "url": {
@@ -1884,7 +1924,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "mistakes"]
             },
-            "description": "录入一条错题：创建 question + attempt event + learning_record，异步触发 AI 提议\n\n**Notes:** knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id",
+            "description": "录入一条错题：创建 question + attempt event + learning_record，异步触发 AI 提议\n\n**Notes:** knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id；201 + Location；可选 Idempotency-Key 为长期创建身份，同 key 原输入重放返回原 question/mistake/record IDs 和 Location（Idempotency-Replayed:true），不再次发布或写事件；异输入409 idempotency_conflict，坏或不可用回执503 creation_receipt_unavailable，事务内部失败500 internal_error。重放先于实时 KC/cause/assets 验证；无 key 保留原创建行为。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"prompt_md\": \"下列句子中「而」字的用法是？\",\n  \"reference_md\": \"《劝学》原文片段\",\n  \"wrong_answer_md\": \"我认为是转折用法\",\n  \"knowledge_ids\": [\n    \"kid_abc123\"\n  ],\n  \"cause\": {\n    \"primary_category\": \"misunderstanding\",\n    \"user_notes\": \"混淆了顺承与转折\"\n  },\n  \"difficulty\": 3,\n  \"question_kind\": \"short_answer\",\n  \"prompt_image_refs\": [],\n  \"wrong_answer_image_refs\": []\n}",
