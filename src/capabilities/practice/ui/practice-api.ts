@@ -123,7 +123,7 @@ export const getQuestionKnowledgeOptions = (): Promise<{ rows: QuestionKnowledge
   });
 
 // ── 题详情面 /questions/:id（YUK-413, loom screen-question-detail）─────────────
-// GET /api/questions/:id 的完整聚合（src/server/questions/detail.ts QuestionDetail）。
+// GET /api/questions/:id 的完整聚合（src/capabilities/practice/server/question-detail.ts QuestionDetail）。
 // 上面那个薄 QuestionDetail 是 solve 链用的兼容子集；详情编辑面要全投影：
 // family（变体家族）/ parts（composite 小题）/ scheduling（FSRS）/ backlinks（卷引用）
 // / timeline（attempt·review）/ version（PATCH/DELETE 乐观锁 token）。

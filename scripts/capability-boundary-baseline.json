@@ -2863,6 +2863,42 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/kernel/events/index.ts",
+      "siteKind": "module",
+      "symbol": "nextProjectionEventTime",
+      "targetModule": "src/kernel/events/events.ts",
+      "targetSymbol": "nextProjectionEventTime",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/goals/commands.ts",
+          "line": 9
+        },
+        {
+          "file": "src/capabilities/agency/server/proposal-appliers.ts",
+          "line": 18
+        },
+        {
+          "file": "src/server/projections/learning_item.ts",
+          "line": 10
+        }
+      ],
+      "evidence": "The existing events index exports the symbol at binding line 29 (export declaration starts at line 25). The canonical function at events.ts:310-323 owns the raw subject-stream latest created_at query, includes genesis, and computes max(requestedAt, latest+1) without reading the wall clock. Real import AST starts are commands:9, proposal-appliers:18 and learning_item:10; calls remain at commands:164, appliers:351/458 and repair:29.",
+      "rationale": "Kernel event storage owns this complete existing event-stream watermark mechanism. All three consumers already import writeEvent through the same index; the complete old function and its caller-lock comment move unchanged, and the old server module is removed. Caller-owned locks, Tx lifetime, requestedAt, guards, retract bypass and write/project ordering remain unchanged. This is permanent mechanism ownership with zero newly hidden decision depth, not a compatibility shim or a facade for a server implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-546f60df-9630-4ee0-b721-915a4216503b",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-26",
+      "from": 3,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> questions",
       "date": "2026-10-26",
@@ -5543,13 +5579,13 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 292,
+      "total": 290,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> learning-items": 1,
-        "agency -> projections": 3,
+        "agency -> projections": 1,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,

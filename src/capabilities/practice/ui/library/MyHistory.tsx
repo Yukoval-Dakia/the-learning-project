@@ -4,7 +4,8 @@ import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
-import { type QuestionFullDetail, listQuestionMistakes } from './library-api';
+import type { QuestionFullDetail } from './library-api';
+import { useLibraryClient } from './library-client';
 import { outcomeWord } from './library-copy';
 import {
   type MistakeQuestionSummary,
@@ -137,6 +138,7 @@ export function MyHistory({
   detail: QuestionFullDetail;
   navigate: (to: string) => void;
 }) {
+  const { listQuestionMistakes } = useLibraryClient();
   const mistakes = useQuery({
     queryKey: [LIBRARY_KEY, 'question-mistakes', detail.id],
     queryFn: () => listQuestionMistakes(detail.id),
