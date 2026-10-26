@@ -4856,6 +4856,57 @@
       "issue": "YUK-1570",
       "owns": "Read the complete active-learning-item attention-pressure projection: exclude archived rows, retain in-progress or user-pinned rows, order by created_at then id, and preserve the original four-field/null-knowledge mapping. Coach scheduling/review backbone, proposal generation and injected reader precedence remain caller-owned.",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": [
+        "getCorrectionStatus"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Own checkpoint replay detection inside the current-conversation revert transaction, before terminal probes or the learning-state lock; preserve getCorrectionStatus timing and already_reverted outcome.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": [
+        "ApiError"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Own the existing checkpoint-not-found and turn-not-terminal refusals within the revert operation; HTTP parsing, Zod error handling and response serialization remain in the route.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "module": "src/server/revert/cascade-revert.ts",
+      "kind": "value",
+      "symbols": [
+        "COPILOT_REPLY_ACTION",
+        "COPILOT_USER_ASK_ACTION",
+        "orchestrateCascadeRevert"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Own the complete Copilot checkpoint request around the existing cascade: validate current-session root and durable terminal evidence, acquire G at the original point, invoke copilotAskOnly cascade in the same Tx and preserve in-transaction refusal mapping. The cascade policies and compensation implementation remain unchanged.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "module": "src/server/session/conversation.ts",
+      "kind": "value",
+      "symbols": [
+        "findReusableCopilotConversation",
+        "lockCopilotSessionSelection"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Own current-Copilot-conversation selection and selection-lock acquisition as the first steps of checkpoint reversion; preserve checkpoint-specific advisory lock order, query predicates and transaction lifetime.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
