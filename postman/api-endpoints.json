@@ -823,7 +823,15 @@
           "prompt_image_refs": [],
           "wrong_answer_image_refs": []
         },
-        "notes": "knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id"
+        "notes": "knowledge_ids 至少 1 个且须存在未归档；cause 可为 null（null 时异步触发 attribution job）；CauseCategory 匹配 /^[a-z][a-z0-9_]*$/；question_kind 枚举见 import；image_refs 须已上传 asset id；响应含 question_id、mistake_id、record_id；201 + Location；可选 Idempotency-Key 为长期创建身份，同 key 原输入重放返回原 question/mistake/record IDs 和 Location（Idempotency-Replayed:true），不再次发布或写事件；异输入409 idempotency_conflict，坏或不可用回执503 creation_receipt_unavailable，事务内部失败500 internal_error。重放先于实时 KC/cause/assets 验证；无 key 保留原创建行为。",
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "{{ingestionCreationIdempotencyKey}}",
+            "disabled": true,
+            "description": "可选；同一逻辑创建保留 key 与原输入，丢响应后重放。trim 后 1–200 字符。"
+          }
+        ]
       },
       {
         "method": "GET",
@@ -2040,6 +2048,30 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "返回 {rows:[...]}，每行 version 为 question_block.version；无抽样/状态过滤（含 ignored/auto_enrolled）。客户端须保留用户实际检查的版本，缺 version 不可默认 0。agent 历史 draft 不在 classic 集合；需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建录入 session 及同事务 source package / 长期创建回执",
+        "query": [],
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "{{ingestionCreationIdempotencyKey}}",
+            "disabled": true,
+            "description": "可选；同一逻辑创建保留 key 与原输入，丢响应后重放。trim 后 1–200 字符。"
+          }
+        ],
+        "contentType": "application/json",
+        "bodyExample": {
+          "entrypoint": "vision_single",
+          "asset_ids": ["REPLACE_uploaded_asset"]
+        },
+        "notes": "201 {session} + Location；可选 Idempotency-Key，同 key 原输入重放原创建终态/IDs/Location 并带 Idempotency-Replayed:true；异输入409 idempotency_conflict，坏/未知版本/不可用回执503 creation_receipt_unavailable。同事务 materialize 失败时先提交 failed session 与固定安全500 ingestion_source_package_failed（details.session_id/source_document_id）及 Location，重放不再次 materialize；无法提交则回滚或 unknown，不做全局补偿，沿原 key+原输入重试。未提供 key 保留兼容创建。session subject omitted/null 等价，derivation_policy omitted/explicit allow 不同。legacy /api/ingestion 共用 key scope，成功200+弃用header、失败原样透传。回执冻结创建结果；当前状态由原 GET 判断。不授权启动 agent；DOCX 不在此保证内。"
       }
     ]
   }
