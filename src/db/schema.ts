@@ -461,7 +461,7 @@ export const question = pgTable(
     // (mirrors the variant parent-ref precedent above; new axis = composition, not
     // variant lineage). Nullable: NULL on a plain/root question, set only on parts.
     // `part_index` orders parts within a parent. Written by the part-creation owner
-    // `src/server/questions/parts.ts` (createQuestionPart). Because a part IS a
+    // `src/capabilities/practice/server/question-parts.ts` (createQuestionPart). Because a part IS a
     // question, it gets FSRS state + flows through the existing fsrs_question
     // due/review path unchanged — independent scheduling falls out of independent
     // question rows. Parent-level aggregation scheduling is DEFERRED (ADR-0014 line

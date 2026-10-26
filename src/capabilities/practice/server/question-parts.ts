@@ -10,11 +10,19 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
-import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
+import type { DifficultyEvidenceT } from '@/core/schema/difficulty-evidence';
+import type { QuizGenMetadataT, QuizGenQuestionT } from '@/core/schema/quiz_gen';
+import {
+  type FigureRefT,
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+  structuredToReferenceMarkdown,
+} from '@/core/schema/structured_question';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import type { SupplyTraceV1T } from './question-supply/evidence-demand';
 
 /** Matches the `question.metadata` jsonb column shape (Record<string, unknown>). */
 type JsonObject = Record<string, unknown>;
@@ -153,4 +161,91 @@ export async function representMultiPartQuestion(
     );
   }
   return created;
+}
+
+export interface MaterializeGeneratedQuestionPartsInput {
+  parentQuestionId: string;
+  structured: StructuredQuestionT;
+  /** The exact knowledge labels persisted on the generated parent. */
+  knowledgeIds: string[];
+  difficulty: QuizGenQuestionT['difficulty'];
+  quizGenMetadata: QuizGenMetadataT;
+  difficultyEvidence: DifficultyEvidenceT;
+  supplyTrace?: SupplyTraceV1T;
+  now: Date;
+}
+
+/**
+ * Materialize a fresh generated parent's ordered child rows in its existing Tx.
+ * Own the child render/choice projection and metadata together with part insertion
+ * and per-part group publication. Parent dedup, eligibility and verification stay
+ * with the generation operation; an existing or merged parent never enters here.
+ */
+export async function materializeGeneratedQuestionParts(
+  tx: Tx,
+  input: MaterializeGeneratedQuestionPartsInput,
+): Promise<number> {
+  const {
+    parentQuestionId: id,
+    structured,
+    knowledgeIds: duplicateKnowledgeIds,
+    difficulty,
+    quizGenMetadata: metaQuizGen,
+    difficultyEvidence,
+    supplyTrace: questionSupplyTrace,
+    now,
+  } = input;
+  const subs = structured.sub_questions ?? [];
+  for (const [partIndex, sub] of subs.entries()) {
+    const narrowed: StructuredQuestionT = {
+      ...structured,
+      sub_questions: [sub],
+    };
+    // YUK-1011 codex P2 — when the sub's options persist separately as
+    // choices_md (below), derive the child prompt WITHOUT the inline
+    // option list: renderers (PfSolo/PfPaper) paint persisted choices as
+    // buttons, so keeping them in prompt_md too would show every choice
+    // twice. The `structured` tree keeps the options — only the derived
+    // prompt view drops them.
+    const { options: subOptions, ...subSansOptions } = sub;
+    const hasOptions = subOptions != null && subOptions.length > 0;
+    const promptTree: StructuredQuestionT = hasOptions
+      ? { ...narrowed, sub_questions: [subSansOptions] }
+      : narrowed;
+    await createQuestionPart(tx, {
+      parentQuestionId: id,
+      partIndex,
+      promptMd: structuredToPromptMarkdown(promptTree),
+      referenceMd: structuredToReferenceMarkdown(narrowed),
+      // ADR-0028 (U0 A2, recorded on ADR-0014 §12): a generated part
+      // inherits its parent's PERSISTED knowledge labels at write time —
+      // an unlabeled part would be invisible to the KC-keyed pool fetch,
+      // attempts on it would update no KC theta/mastery, and the verify
+      // cascade could only enroll it under the legacy question-level
+      // fallback. duplicateKnowledgeIds is the exact set the parent row
+      // persists (target KCs first, then model attribution).
+      knowledgeIds: duplicateKnowledgeIds,
+      // YUK-1011 codex P1 — an objective sub (options) must persist its
+      // option bodies so the row keeps the deterministic 'exact' judge
+      // contract (route-resolve: choices_md.length > 0 → 'exact');
+      // otherwise PfSolo renders free-text and grading degrades to
+      // semantic. Bodies only — renderers own the letter labels
+      // (YUK-609), the exact judge resolves letters↔indices itself.
+      choicesMd: hasOptions ? subOptions.map((o) => o.text) : null,
+      difficulty,
+      source: 'quiz_gen',
+      structured: narrowed,
+      draftStatus: 'draft',
+      metadata: {
+        quiz_gen: metaQuizGen,
+        difficulty_evidence: difficultyEvidence,
+        ...(questionSupplyTrace ? { supply_trace: questionSupplyTrace } : {}),
+        // The normalized sub-node id — the part_ref coordinate the judge
+        // narrowing / UI use to address this part inside the parent tree.
+        part_ref: sub.id,
+      },
+      now,
+    });
+  }
+  return subs.length;
 }

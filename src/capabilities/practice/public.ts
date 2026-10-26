@@ -339,6 +339,7 @@ export { CreatePlacementSessionBodySchema } from './api/placement-contracts';
 export { readPaperList } from './server/papers-list';
 export { readQuestionDetail } from './server/question-detail-read';
 export {
+  archivePracticeQuestion,
   restorePracticeQuestion,
   updatePracticeQuestion,
 } from './server/question-write-operations';
