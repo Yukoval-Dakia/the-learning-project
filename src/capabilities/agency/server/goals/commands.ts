@@ -6,7 +6,7 @@ import type { DeclaredStageT } from '@/core/schema/business';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
 import { goal } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import { requireLaterProposalCorrection } from '@/kernel/proposals/types';
 import {
   hasGoalGenesisAnchor,
@@ -14,7 +14,6 @@ import {
   projectGoalGuarded,
 } from '@/kernel/records/goal-history';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
-import { nextProjectionEventTime } from '@/server/projections/event-clock';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
 type GoalDb = Db | Tx;

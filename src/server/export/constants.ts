@@ -139,7 +139,8 @@
 // unconfigure every task pinned to a custom provider. No enforced FK. The
 // model_catalog_cache bucket/checks it feeds are refetchable and excluded.
 // NEW FK_ORDER table → bump 4.31 → 4.32 (migration 0130).
-export const SCHEMA_VERSION = '4.32';
+// YUK-1522: permanent creation receipts must survive resource deletion and restore.
+export const SCHEMA_VERSION = '4.33';
 
 export const SUBSCRIPTION_PROGRESS_TABLES = [
   'event_subscription_checkpoint',
@@ -220,6 +221,7 @@ export const FK_ORDER = [
   'question_generation_plan',
   'question_generation_binding',
   'learning_session',
+  'ingestion_creation_receipt',
   'question_block',
   'question',
   // YUK-1044 — 统一评估契约真相源九表（grounding §3/§11）。authoried 数据非瞬态/

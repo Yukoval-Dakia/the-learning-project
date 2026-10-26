@@ -2861,6 +2861,50 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/kernel/events/index.ts",
+      "siteKind": "module",
+      "symbol": "nextProjectionEventTime",
+      "targetModule": "src/kernel/events/events.ts",
+      "targetSymbol": "nextProjectionEventTime",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/server/goals/commands.ts",
+          "line": 9
+        },
+        {
+          "file": "src/capabilities/agency/server/proposal-appliers.ts",
+          "line": 18
+        },
+        {
+          "file": "src/server/projections/learning_item.ts",
+          "line": 10
+        }
+      ],
+      "evidence": "The existing events index exports the symbol at binding line 29 (export declaration starts at line 25). The canonical function at events.ts:310-323 owns the raw subject-stream latest created_at query, includes genesis, and computes max(requestedAt, latest+1) without reading the wall clock. Real import AST starts are commands:9, proposal-appliers:18 and learning_item:10; calls remain at commands:164, appliers:351/458 and repair:29.",
+      "rationale": "Kernel event storage owns this complete existing event-stream watermark mechanism. All three consumers already import writeEvent through the same index; the complete old function and its caller-lock comment move unchanged, and the old server module is removed. Caller-owned locks, Tx lifetime, requestedAt, guards, retract bypass and write/project ordering remain unchanged. This is permanent mechanism ownership with zero newly hidden decision depth, not a compatibility shim or a facade for a server implementation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-546f60df-9630-4ee0-b721-915a4216503b",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> projections",
+      "date": "2026-10-26",
+      "from": 3,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-26",
+      "from": 11,
+      "to": 9,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -4524,6 +4568,106 @@
       "issue": "YUK-1647",
       "owns": "M4 inbox backlog reuses the kernel inbox projection (status derivation, visibility filtering, as-of replay) instead of re-deriving proposal state in observability",
       "date": "2026-10-21"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1522",
+      "owns": "Append the original manual attempt and optional user-cause event envelopes in the creation transaction; replay never invokes this writer.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/cause-overlay.ts",
+      "kind": "value",
+      "symbols": ["withActiveCauseCategoryOverlays"],
+      "issue": "YUK-1522",
+      "owns": "Resolve active owner-accepted cause overlays for the original manual capture validation on receipt miss in the actual Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/question-evidence-snapshot.ts",
+      "kind": "value",
+      "symbols": ["loadAttemptQuestionSnapshot"],
+      "issue": "YUK-1522",
+      "owns": "Read the frozen published question snapshot for the original attempt after publication in the same Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["assertCauseAllowedForSubjectProfile", "resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1522",
+      "owns": "Resolve the existing knowledge subject profile and enforce its allowed cause policy on receipt miss in the actual Tx.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1522",
+      "owns": "Derive the original manual question answer_class at write time using the existing complete kernel operation, replacing the retired route-to-server re-export import.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1522",
+      "owns": "Run the original same-transaction question-group publication through the existing kernel owner, preserving actorRef, revision, event and admission behavior; replaces the retired route-to-server publisher re-export import.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "module": "src/kernel/records/queries.ts",
+      "kind": "value",
+      "symbols": ["createLearningRecord"],
+      "issue": "YUK-1522",
+      "owns": "Create the original manual learning_record with the existing active-KC validation and insert owner in the creation transaction.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/create-session.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/creation-receipts.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
+      "date": "2026-10-23"
     }
   ],
   "sourceSizeRecords": [
@@ -4859,6 +5003,15 @@
       "to": 1306,
       "issue": "YUK-1646",
       "responsibilityReason": "The catalog document remains the single owner of models.dev endpoint truth: the added lines derive its model-endpoint hosts, install them into the shared allowlist on every document swap and on the initial snapshot, and admit freshly pulled hosts before the /models reads that precede the merge. No new responsibility or subsystem; custom:* buckets stay excluded so admin-configured URLs cannot extend the allowlist."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-23",
+      "baseBlob": "8837826350dc0da690d9ae7a8ff42164658036e8",
+      "from": 5002,
+      "to": 5028,
+      "issue": "YUK-1522",
+      "responsibilityReason": "Owner-approved independent ingestion_creation_receipt table after learning_session and before event: 26 additive lines, composite PK and closed actor/scope checks. No existing column changes; the two active creation owners write this long-lived identity and FK_ORDER backs it up at 4.33. Splitting the central schema would change unrelated ownership; receipt behavior lives in the new small complete owners."
     }
   ],
   "compatShims": [
@@ -5426,13 +5579,13 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 294,
+      "total": 290,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> learning-items": 1,
-        "agency -> projections": 3,
+        "agency -> projections": 1,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
@@ -5451,7 +5604,7 @@
         "ingestion -> events": 7,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
-        "ingestion -> questions": 11,
+        "ingestion -> questions": 9,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,

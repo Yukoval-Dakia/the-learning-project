@@ -122,7 +122,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1043'],
     note: 'image_candidate 接受 INSERT ⇒ 同事务首版 revision withheld —— withheld admission 正是为「结构可判分、深度 grounding 未过」准备；source_verify（含 YUK-230 多模态复查）过后再 promote。',
   },
-  'src/capabilities/ingestion/api/mistakes.ts': {
+  'src/capabilities/ingestion/server/create-manual-mistake.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: '人工错题 INSERT ⇒ 同事务首版 revision（原错误作答不能成为答案键：在 attempt 事件保留；契约只承载题面/参考 —— 复审裁决即刻收敛）。',

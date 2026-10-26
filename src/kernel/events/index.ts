@@ -26,6 +26,7 @@ export {
   getEventById,
   getEventChain,
   getEvents,
+  nextProjectionEventTime,
   writeEvent,
   writeEvents,
 } from './events';

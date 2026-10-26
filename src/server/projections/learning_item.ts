@@ -7,12 +7,11 @@ import type {
   LearningItemStateRestoreExperimental,
 } from '@/core/schema/event/learning-item-events';
 import type { Tx } from '@/db/client';
-import { writeEvent } from '@/kernel/events';
+import { nextProjectionEventTime, writeEvent } from '@/kernel/events';
 import {
   hasLearningItemGenesisAnchor,
   projectLearningItemGuarded,
 } from '@/kernel/records/learning-items';
-import { nextProjectionEventTime } from './event-clock';
 
 type LearningItemRepairEvent =
   | z.infer<typeof LearningItemKnowledgeIdsRewriteExperimental>
