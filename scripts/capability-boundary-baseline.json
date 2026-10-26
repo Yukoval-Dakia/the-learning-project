@@ -5108,6 +5108,15 @@
       "to": 5028,
       "issue": "YUK-1522",
       "responsibilityReason": "Owner-approved independent ingestion_creation_receipt table after learning_session and before event: 26 additive lines, composite PK and closed actor/scope checks. No existing column changes; the two active creation owners write this long-lived identity and FK_ORDER backs it up at 4.33. Splitting the central schema would change unrelated ownership; receipt behavior lives in the new small complete owners."
+    },
+    {
+      "path": "src/capabilities/practice/ui/solo/PracticeSolo.tsx",
+      "date": "2026-10-26",
+      "baseBlob": "c283e7dca8ce2e132e608599215e63d92e388fce",
+      "from": 1184,
+      "to": 1217,
+      "issue": "YUK-1473",
+      "responsibilityReason": "PracticeSolo remains the existing presentation owner. The 33-line increase adds one local M3E root marker and 22 static class bindings to its real Button, quote IconButton and rating ChipToggle consumers, including Biome expansion of existing JSX attributes. Removing only those 23 attributes restores the original business AST: hooks, props, callbacks, keys, labels, submission and recovery expressions are unchanged. The existing CSS remains an exact prefix and the new rules require the root marker plus control class. No new business responsibility, effect, data operation, public interface or framework; extracting a helper solely to hide these local class attributes would not create an independent live operation."
     }
   ],
   "compatShims": [
