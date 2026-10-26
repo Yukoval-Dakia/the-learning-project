@@ -16,7 +16,7 @@ UI 设计、实施与视觉复核采用 **Astra + Google Material 3 Expressive**
 Owner [覆盖决定](https://linear.app/yukoval-studios/issue/YUK-1351#comment-dcadddc1-14ab-4c44-a60f-00809a0588ba)
 已定，不再等待 loft、Linear、Apple Glass 或 A/B/C 选择。
 
-本次核查基线 `8fd39d07f270bcb41508ffc51c8300153580e668` 已有 ui-next 基座、做题、学习伙伴、题库、录入与 classic 显式复核，
+本次核查基线 `93ab3f790ae78652b787b66743d8ae66453921d6` 已有 ui-next 基座、做题、学习伙伴、题库、录入与 classic 显式复核，
 以及后续 Start reader 接线；这些是旧视觉下的源码交付，不是 M3E 实现或完整运行验收。
 外壳/今日的新稿仍只有 V3 样稿记录，未交 M3E main；运行缺口留 YUK-1473，整体迁移留 YUK-1351/YUK-1358/YUK-1359。
 
@@ -26,7 +26,7 @@ Owner [覆盖决定](https://linear.app/yukoval-studios/issue/YUK-1351#comment-d
 - **下一片**：在现役做题页消费有作用域的 M3E tokens / primitives，随后学习伙伴，再外壳/今日与其余页面；不另建 showcase、演示路由或通用框架。
 - **继续承重**：§8 领域/鉴权边界与 §9 八项 pre-AI 能力不变；锁、事务、幂等、paid、读写与恢复合同不因样式变更重写。
   §3/§4/§5 的旧切换提案不授予本轮运行权限，后续退出以原票当前证据为准；禁止恢复 ADR-0052 已拒 NO-GO callback 壳。
-- **本次边界**：仅五个指定文档与一个本地 docs 提交；不写产品/测试代码，不运行测试、构建、浏览器、provider、DB、TEST、paid、容器或部署，不 push/PR/review/merge。
+- **本次边界**：仅五个指定文档；不写产品/测试代码，不执行浏览器、provider、DB、TEST、paid、容器或部署；文档 PR 与适用校验由协调线收口。
   未来测试代码仍须 owner 批准文本方案；测试不作为开发前置。本地 PLAN/now 不是全局进度来源。
 
 以下保留 2026-10-07 的起点、选择理由与承重契约。与本节冲突的模型、视觉、排期及前置只作历史，不得重新启动旧审批或复活已移除的页面/恢复路径。

@@ -23,7 +23,7 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 ## 2. 固定主线事实与未完义务
 
-本次源码核查基线：`8fd39d07f270bcb41508ffc51c8300153580e668`（fresh `origin/main`）。
+本次源码核查基线：`93ab3f790ae78652b787b66743d8ae66453921d6`（fresh `origin/main`）。
 下表「已合」仅指该基线包含相应提交与真实 consumer；不等于当前 TEST 已部署该 revision，也不等于全链路运行通过。
 动态进度继续以原 Linear 票为准，不复制成另一个全局看板。
 
@@ -34,13 +34,12 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 | 学习伙伴 | [#2020](https://github.com/Yukoval-Dakia/the-learning-project/pull/2020)，`9cf9e2a0a`；`web/src/RootShell.tsx` 经 copilot `ui-public.ts` 消费唯一 `CompanionMount`，内部持有 controller 与恢复生命周期 | 协调线本次交接记录真实验收样本失败，正文流出中 Stop 未验；本轮未复测，不把关闭面板或未发生的流式阶段算停止成功 | YUK-1473 |
 | 统一题库 | [#2022](https://github.com/Yukoval-Dakia/the-learning-project/pull/2022)，`9e1e99bc8`；`src/capabilities/practice/ui/library/LibraryPage.tsx`、`QuestionPage.tsx`，`/drafts`、`/mistakes` 已转交统一题库 | 删除/恢复、编辑/审核等真实写路径未完整验收；`use-library.ts` 保有分页、局部已加载错题集合及独立计数语义，不能换成臆造总量 | YUK-1473；reader 接线 YUK-1358 |
 | 录入与显式复核 | [#2023](https://github.com/Yukoval-Dakia/the-learning-project/pull/2023)，`45c835c7e`；`src/capabilities/ingestion/ui/record/RecordPage.tsx`、`RecordingSheet.tsx`；[#2031](https://github.com/Yukoval-Dakia/the-learning-project/pull/2031)，`9c190de20`，classic 部分结果显式复核 | 上传、识别、历史、写入全链未闭环；旧 TEST 验收记录中的后端无新 history 路由，404/旧响应不能解释为空历史或验收通过；本轮未探测现环境 | YUK-1473，后端缺口留原迁移/领域线 |
-| Start readers | [#2066](https://github.com/Yukoval-Dakia/the-learning-project/pull/2066) `bacf1a0a1`、[#2067](https://github.com/Yukoval-Dakia/the-learning-project/pull/2067) `7b11c8b10`、[#2071](https://github.com/Yukoval-Dakia/the-learning-project/pull/2071) `c42d6b1e8`；`server/start/routes/questions.$id.tsx` 注入 question/draft readers 与 `() => startWorkbenchClient.getTree()` | 是 transport/reader 交付，不是 M3E 或全量 RPC/写入验收；其余 HTTP、binary、keepalive、SSE 与恢复义务不因本计划消失 | YUK-1358 |
+| Start readers | [#2066](https://github.com/Yukoval-Dakia/the-learning-project/pull/2066) `bacf1a0a1`、[#2067](https://github.com/Yukoval-Dakia/the-learning-project/pull/2067) `7b11c8b10`、[#2071](https://github.com/Yukoval-Dakia/the-learning-project/pull/2071) `c42d6b1e8`，以及 [#2086](https://github.com/Yukoval-Dakia/the-learning-project/pull/2086) `629fb1a1`；`server/start/routes/questions.$id.tsx` 注入 question/draft/mistakes readers 与 `() => startWorkbenchClient.getTree()` | 是 transport/reader 交付，不是 M3E 或全量 RPC/写入验收；其余 HTTP、binary、keepalive、SSE 与恢复义务不因本计划消失 | YUK-1358 |
 | 外壳 / 今日 | 现役 `web/src/RootShell.tsx`、`src/capabilities/shell/ui/TodayPage.tsx`，Start `workbench-shell.tsx`、`routes/today.tsx` 仍消费现有 UI | 协调线交接的新外壳/今日仅 V3 样稿，未交 M3E main；样稿不是运行页面；旧 A/B/C 待选择已失效 | YUK-1351，相关功能/迁移原票 |
 
 运行权限与缺口的直接记录：YUK-1473 [题库/录入只读边界](https://linear.app/yukoval-studios/issue/YUK-1473#comment-d07389b0-fe94-4b16-b84b-d8f0cdac0bda)、
 [伙伴限定真实验收安排](https://linear.app/yukoval-studios/issue/YUK-1473#comment-33db89a1-e3cb-4d18-9a84-35718531ceff)。
 这些评论记录当时的环境与许可，不证明现在仍有可用预算、同一部署或未消费的请求额度。
-本轮未读取原 UI worktree 的私有状态或 `counts-before.txt`，不替旧线改写验收证据。
 
 ## 3. Google 官方依据与 Web 可用性
 
@@ -104,7 +103,7 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 - **Practice**：真实 host 为 `server/start/routes/practice.tsx`，已有 `PracticeClient` 方法注入；视觉保持既有 issuance、response draft、submit、judge status、hint/solve 等调用及错误语义。不因方法叫 get/read 就认定无写入、无 queue 或无 paid；是否触发效果由完整操作 owner 判定。
 - **Library**：保留 `LibraryClient` 的 question/draft reader、知识选项的零参数 `() => startWorkbenchClient.getTree()` 适配；query key、分页、过滤、计数未知、partial、错误与失效保持。`MyHistory.tsx` 是展示与 query 接缝共享节点，不整文件冻结。
-  YUK-1358 [当前精确片记录](https://linear.app/yukoval-studios/issue/YUK-1358#comment-26f4d6df-47a2-47b9-92b0-4fa58d778cdd)为 #2086 的 id-only mistakes reader，固定 head `590733e44fcc461f8be29796c6740b3255a2da91`；本基线尚未包含它，UI 不抢改其 client/host/调用 hunk、不代签其合并结果。
+  YUK-1358 [当前精确片记录](https://linear.app/yukoval-studios/issue/YUK-1358#comment-26f4d6df-47a2-47b9-92b0-4fa58d778cdd)为 #2086 的 id-only mistakes reader，由 #2086 合入 `629fb1a1`，已包含在本次基线；UI 保留其 client/host/调用合同，不借视觉改造重写查询或错误恢复。
 - **Companion**：壳经 `copilot/ui-public.ts` 消费唯一 `CompanionMount`。关闭/卸载读取与显式 Stop 是不同动作；保留接受回执、未知发送恢复、session/run identity、只断订阅不暗中取消、重开/刷新及状态重读。视觉不得自建恢复 owner、重发未知 turn 或把流文本当持久提交。
 - **Ingestion**：保留原上传、识别、agent、手工录入、classic 显式复核、当时/现在与历史缺证据语义；恢复键/重试键沿用 owner，识别和 paid 操作保持显式触发。没有历史接口时呈现未接通，不能画成空状态遮掉。
 - **共享文件**：`RootShell`、各 `ui-public.ts`、`server/start/routes/*`、生成 route tree、公共 client 类型需逐 hunk 协调。UI writer 交实际组件/props；transport writer 交已批 client/route 注入。只有真正重叠的 hunk 等交接，不锁整条线，不另造空转发层绕开 owner。
@@ -114,25 +113,25 @@ M3E 改变视觉语言与交互呈现，不重新决定选题、判分、建议�
 
 | 层次 | 能证明什么 | 不能代替什么 |
 | --- | --- | --- |
-| 本次文档静态 | 五路径范围、固定 base/diff、历史保留、链接与交接一致；Google 获取范围如 §3 | 未运行 UI、构建、测试、浏览器、接口或 provider，不证明任何页面行为 |
+| 本次文档静态 | 五路径范围、固定 base/diff、历史保留、链接与交接一致；Google 获取范围如 §3 | 文档检查不证明 UI、测试、浏览器、接口或 provider 的实际行为 |
 | 后续产品源码静态 | token/组件角色、调用方接缝、状态映射、无新增 `useEffect`、不引入业务/恢复重复 owner | 不能证明视觉、交互、可访问性或真实写入成功 |
-| 后续本机检查 / CI | 按当片范围记录 typecheck/lint/build、独立 review、exact-head CI 的实际结果；测试代码先获 owner 批准，测试不作开发前置 | build/CI 不等于已部署，不等于真实页面/写恢复/provider 通过；本轮全部 NOT_RUN |
+| 后续本机检查 / CI | 按当片范围记录 typecheck/lint/build、独立 review、exact-head CI 的实际结果；测试代码先获 owner 批准，测试不作开发前置 | build/CI 不等于已部署，不等于真实页面/写恢复/provider 通过；当片执行情况以其 PR 的真实记录为准 |
 | 真实页面 | 在真实现役入口展示实际输入/输出、选择依据、桌面/窄屏、亮暗、键盘/focus、reduced-motion、读屏与全部可达状态，保留 screenshot/录屏/对照 | 不新建演示入口；fixture、设计稿或未发生的状态不能标成真实业务验收 |
 | 写入 / 恢复 / provider | 逐真实样本记录初始状态、命令/回执、重开后的已提交状态、明确停止阶段、错误与未知结果；模型输出另记 exact revision、task-run、provider/model/cost 与输入输出 digest | 不用发送成功、只读重开、模拟流或旧 CI 证明持久性、停止效果或学习质量 |
 
-未来运行前由协调线核定具体环境/revision、原票现有许可是否仍有效，以及本片精确操作与预算；**本轮无任何运行权限扩张**：
+后续运行沿用原票已经授予的环境、操作与预算，不增加例行确认。只有缺少实际环境/样本/预算或范围发生变化时，才集中提出精确缺项；**本轮无任何运行权限扩张**：
 
 1. 题库写验收先给自有样本 ID、原状态、canonical 删除/恢复边界和可逆处置；不使用未知真实学习题。原只读许可不授权编辑、审核、删除/恢复。
 2. 录入上传/识别/history 全链先确认目标后端确实接通及样本/写入/paid 范围；缺接口不为验收擅自部署。读取也按完整操作判断副作用，不能按 HTTP 方法猜。
 3. 伙伴不能重用旧“两 turn”安排当作自动续期额度。需确认自有会话、实际可用预算、运行上限、当前 provider；unknown 请求不盲重试，Stop 必须确实处在正文流出阶段才能记该项通过。
-4. 原每次唤起 ≤USD5 / 日 ≤USD20 是费用纪律，不等于本任务获 paid 授权；未知费用保留未知。TEST 用途不转日用，容器/DB/部署仍须各自原授权与锁，不由视觉计划派生。
+4. 既有费用纪律和原票预算不因视觉计划自动扩大；未知费用保留未知。TEST 用途不转日用，容器/DB/部署沿用各自原授权与锁，不由视觉计划派生。
 5. 后续真实证据外置到 `tlp-audit-artifacts/<原票>/<实际head>/`，git 只留结果、命令、revision、外部位置与实际生成的摘要；本轮不手算 SHA/seal，不伪造证据回执。
 
 ## 7. 本次交接与未决项
 
-本次只改当前入口、旧方向顶部、迁移顺序、准备计划当前入口/模型及 charter 的 UI 覆盖；一个本地 docs 固定提交由协调线继续处理。
-不 push、创建 PR、启动 review、merge/watch；不写 UI/后端/路由/配置/依赖/测试代码，不运行 heavy、测试、浏览器、provider、DB、TEST、paid、容器或部署。
+本次只改当前入口、旧方向顶部、迁移顺序、准备计划当前入口/模型及 charter 的 UI 覆盖，由协调线按文档 PR 流程收口。
+计划合入仅代表方向与排期生效，不代表 UI 实现、部署或运行验收完成；产品与测试代码均不在本次变更内。
 
 **无新的风格或产品决定待 owner 重选。** 尚需补齐的是组件具体 Specs（含数值、状态、Web availability）的可获取证据、各实施片真实修改 hunk 与原票运行许可条件，
 不是本方向待批准。若未来官方规范与现存业务功能发生实质冲突，先给协调线精确冲突和最小保功能方案，不静默降级确定性能力。
-本次 Linear 去重查到 M3E 已由 YUK-1351/YUK-1473、transport 由 YUK-1358 覆盖；没有新增独立缺陷或跟进票，不重复评论或改写原票进度为完成。
+方向与未完验收继续由 YUK-1351/YUK-1473、transport 由 YUK-1358 承接，不因计划合入将原票整体标为完成。

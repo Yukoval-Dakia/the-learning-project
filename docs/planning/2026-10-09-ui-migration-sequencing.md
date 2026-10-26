@@ -7,8 +7,8 @@
 
 ## 当前现状与已覆盖前置
 
-核查基线 `8fd39d07f270bcb41508ffc51c8300153580e668` 已合 ui-next 基座、做题 #1831、学习伙伴 #2020、题库 #2022、录入 #2023、classic 显式复核 #2031，
-以及 #2066/#2067/#2071 的 Start reader 接线。它们是旧视觉方向的源码交付，不能列作 M3E 已交或真实写入/恢复全部通过。
+核查基线 `93ab3f790ae78652b787b66743d8ae66453921d6` 已合 ui-next 基座、做题 #1831、学习伙伴 #2020、题库 #2022、录入 #2023、classic 显式复核 #2031，
+以及 #2066/#2067/#2071/#2086 的 Start reader 接线。它们是旧视觉方向的源码交付，不能列作 M3E 已交或真实写入/恢复全部通过。
 伙伴真实样本失败与流式 Stop 未验、题库写路径、录入上传/识别/history 全链缺口继续留 YUK-1473；具体证据与限制见正式方向 §2、§6。
 外壳/今日的 V3 仅样稿，不是 M3E main 实现。
 
@@ -34,8 +34,8 @@
   不为「取齐数据」合并独立的 loading、error、pagination、refresh 或时钟；已有聚合直接复用，不造无人消费的 view-model。
 - UI 仅变呈现与交互，不重写排序、选择、恢复、提交确认或重试策略；不能从 GET/read 名称推断无 queue/paid/写入。
   真实 reader 与 write/recovery 对照见正式方向 §5「精确交接合同」。
-- 非视觉 writer 的已批精确接缝继续有效。例如 YUK-1358 的 #2086 `MyHistory` id-only mistakes reader 在本次基线之外，
-  其 client/host/query 接缝保持由原 writer 完成；Astra 只在未来页面片内协调展示 hunk，不冻结整个文件或 practice capability。
+- 非视觉 writer 的已批精确接缝继续有效。例如 YUK-1358 的 #2086 `MyHistory` id-only mistakes reader 已在本次基线内，
+  其 client/host/query 合同保持；Astra 只在未来页面片内协调展示 hunk，不冻结整个文件或 practice capability。
 - `ui-public.ts`、`RootShell`、共享 client 类型、routes/生成 route tree 逐 symbol/hunk 交接；不能凭“UI 文件”或“transport 文件”独占整文件。
   由 Start owner 处理 router/frontdoor/boot 与真实路由挂载，Astra 交已明确的组件与 props；不跨入领域内部端口。
 - 新片开始核 fresh main、原票当前 owner 与真实 diff；共享 hunk 若重叠先由协调线指定先后，不抢写、不复制另一个恢复 owner。
@@ -47,9 +47,9 @@
 
 源码静态、CI、实际部署 revision、真实页面、写入/恢复与 provider 输出分别报告。
 未执行写明 NOT_RUN；真实运行缺口留原票，不把计划、样稿、typecheck/build 或 CI 当页面完成。
-未来测试代码先由 owner 批准文本方案，测试不阻塞开发；本次测试零写零跑，构建/浏览器/provider/DB/TEST/paid/容器/部署均不执行。
+未来测试代码先由 owner 批准文本方案，测试不阻塞开发；本次测试零写零跑，浏览器/provider/DB/TEST/paid/容器/部署均不执行；文档 PR 校验以实际记录为准。
 
-本轮仅正式文档与本地固定提交，由协调线继续读 diff、处理 PR；不 push、启动独立 review、merge 或 watch。
+本轮仅正式文档，由协调线完成文档 PR 的审读与现行 CI；不把文档合入写成产品完成。
 YUK-1351/YUK-1473 仍 In Progress，无新增同义票。已知 Inbox 计数失效、同源字体/CSP、未知费用展示等问题沿用原归属，
 不因 M3E 改名重开，也不把它们混入本片修复。
 
