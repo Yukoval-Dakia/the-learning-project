@@ -2448,7 +2448,7 @@ export const learning_session = pgTable('learning_session', {
   // YUK-936 — Agent SDK session id for foreground inline Copilot resume (ADR-0054).
   // Product session_id stays learning_session.id; this is server-owned SDK transcript
   // continuity. NULL when cold-starting or after resume-fail clear. Write path =
-  // Conversation.setAgentSdkSessionId / clearAgentSdkSessionId only.
+  // copilot/server/copilot-run-session-cursor.ts: set/clearAgentSdkSessionId.
   agent_sdk_session_id: text('agent_sdk_session_id'),
   // goal linkage — Phase 1d placeholder
   goal_id: text('goal_id'),

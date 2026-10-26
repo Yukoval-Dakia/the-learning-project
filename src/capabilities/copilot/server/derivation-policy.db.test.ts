@@ -14,11 +14,6 @@ import {
   buildMemoryEventIngestHandler,
   buildMemoryReconcileHandler,
 } from '@/server/memory/triggers';
-import {
-  clearAgentSdkSessionId,
-  getAgentSdkSessionId,
-  setAgentSdkSessionId,
-} from '@/server/session/conversation';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { memoryClientMock } from '../../../../tests/helpers/memory-client-mock';
 import {
@@ -29,6 +24,11 @@ import {
 import { writeCopilotReply, writeTeachingCopilotReply } from './conversation-writes';
 import { createCopilotExecutionOwner } from './copilot-execution';
 import { assembleCopilotRunInput } from './copilot-run-input';
+import {
+  clearAgentSdkSessionId,
+  getAgentSdkSessionId,
+  setAgentSdkSessionId,
+} from './copilot-run-session-cursor';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   isCopilotWorkerSessionOwned,
