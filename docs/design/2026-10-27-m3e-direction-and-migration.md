@@ -148,7 +148,7 @@ Root、三个 primitive 的 React 实现无需改动。未标记消费者、全�
 获取日期 2026-10-27 JST。Buttons / Icon buttons / Chips 的 overview、specs、guidelines、accessibility 及 color/type/shape/motion 站点直读为 JS-only，未获取完整规范正文。
 以下具体数值改由 Google 官方开源实现交叉核实，不声称已读取不可得的页面或已有完整官方 Web Expressive 库：
 
-- AndroidX 固定 [`0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06`](https://github.com/androidx/androidx/tree/0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/tokens)，生成 tokens v0_11_0。
+- AndroidX 固定 [`0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06`](https://github.com/androidx/androidx/tree/0d64d21b2ee80232c76e8ee2c6b8d5373ab03a06/compose/material3/material3/src/commonMain/kotlin/androidx/compose/material3/tokens)，生成版本按文件区分：`ButtonMediumTokens` 为 `v0_11_0`、`TypeScaleTokens` 为 `v0_103`、`SmallIconButtonTokens` 为 `14_1_0`、`FilterChipTokens` 为 `7_0_1`；其余以对应文件头为准。
 - Google Material Web 固定 [`fd45953c77876d7964dfe1181e1e30ae55b69a73`](https://github.com/material-components/material-web/tree/fd45953c77876d7964dfe1181e1e30ae55b69a73/docs/components)：button / icon-button / chip 的 Usage、Accessibility；保留真实动作标签、原生 disabled、图标名称与既有键盘次序，不采用另一套 toolbar 导航。
 - [Google Material Android Chips](https://github.com/material-components/material-components-android/blob/66b0eeb53afeb6025ffbbd37734b08e5bce197ed/docs/components/Chip.md)：选择型 chip 与单选集合用法；本片评级只是其视觉映射，不重写选择行为。
 
