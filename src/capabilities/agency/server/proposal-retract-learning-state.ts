@@ -3,7 +3,7 @@ import { LearningItemStateRestoreExperimental } from '@/core/schema/event/learni
 import type { Tx } from '@/db/client';
 import { completion_evidence, learning_item } from '@/db/schema';
 import type { ProposalRetractInput } from '@/kernel/proposals';
-import { applyLearningItemRepair } from '@/server/projections/learning_item';
+import { applyLearningItemRepair } from '@/kernel/records/learning-items';
 export interface LearningStateRetractRuntime {
   findExistingRateEvent: (
     tx: Tx,
