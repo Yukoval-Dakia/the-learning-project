@@ -9,7 +9,6 @@ import {
   deleteQuestion,
   enableDraft,
   forceEnableDraft,
-  patchQuestion,
 } from '../practice-api';
 import { type ServingAction, runServingAction } from './library-api';
 import { type LibraryClient, useLibraryClient } from './library-client';
@@ -73,6 +72,7 @@ export function useForceEnable() {
 }
 
 export function useSaveQuestion(id: string) {
+  const { patchQuestion } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: (body: QuestionPatchBody) => patchQuestion(id, body),

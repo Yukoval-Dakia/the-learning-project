@@ -15,7 +15,7 @@
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { restorePracticeQuestion } from '../server/question-restore-operation';
+import { restorePracticeQuestion } from '../server/question-write-operations';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {

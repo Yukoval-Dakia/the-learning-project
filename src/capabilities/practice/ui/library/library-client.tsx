@@ -1,8 +1,14 @@
 import { createContext, useContext } from 'react';
-import { getDraftDetail, getQuestionFull, getQuestionKnowledgeOptions } from '../practice-api';
+import {
+  getDraftDetail,
+  getQuestionFull,
+  getQuestionKnowledgeOptions,
+  patchQuestion,
+} from '../practice-api';
 import { listQuestionMistakes, restoreQuestion } from './library-api';
 
 export type LibraryClient = {
+  patchQuestion: typeof patchQuestion;
   restoreQuestion: typeof restoreQuestion;
   listQuestionMistakes: typeof listQuestionMistakes;
   getQuestionKnowledgeOptions: typeof getQuestionKnowledgeOptions;
@@ -10,6 +16,7 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  patchQuestion,
   restoreQuestion,
   listQuestionMistakes,
   getQuestionKnowledgeOptions,

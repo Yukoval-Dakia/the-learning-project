@@ -3033,6 +3033,46 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "restorePracticeQuestion",
+      "targetModule": "src/capabilities/practice/server/question-write-operations.ts",
+      "targetSymbol": "restorePracticeQuestion",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/library-question-restore-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start restore host imports the Practice public entry at await-import AST and module path line 14 and calls the complete operation at line 16. Context type references and the same-capability HTTP adapter are not additional runtime public consumers.",
+      "rationale": "The complete restore operation is moved unchanged to the canonical question-write-operations module; original params-before-body validation, writer invocation, error mapping and success DTO remain owned by Practice. Historical target records are preserved.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c7dce5aa-16b7-475b-a5be-8bed96160812",
+      "date": "2026-10-26"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "updatePracticeQuestion",
+      "targetModule": "src/capabilities/practice/server/question-write-operations.ts",
+      "targetSymbol": "updatePracticeQuestion",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/library-question-update-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start update host imports the Practice public entry at await-import AST and module path line 14 and calls the complete operation at line 16. Context type references and the same-capability HTTP adapter are not additional runtime public consumers.",
+      "rationale": "Practice owns the complete question update operation: params before body decoding, explicit bloodline rejection, strict schema, version-only rejection, original knowledge preflight, state-writer invocation, error mappings and full success DTO. HTTP and Start consume this permanent operation without duplicating its decisions.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c7dce5aa-16b7-475b-a5be-8bed96160812",
+      "date": "2026-10-26"
     }
   ],
   "edgeRecords": [
@@ -4895,6 +4935,36 @@
       "symbols": ["findReusableCopilotConversation", "lockCopilotSessionSelection"],
       "issue": "YUK-1570",
       "owns": "Own current-Copilot-conversation selection and selection-lock acquisition as the first steps of checkpoint reversion; preserve checkpoint-specific advisory lock order, query predicates and transaction lifetime.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-write-operations.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error type and wire-error vocabulary; Practice owns complete question update and restore input validation, original result-to-error mapping, and safe success DTOs.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-write-operations.ts",
+      "module": "src/kernel/read-models/knowledge-validate.ts",
+      "kind": "value",
+      "symbols": ["assertKnowledgeIdsExist"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns existence and non-archived knowledge-ID facts; Practice owns the original non-empty update preflight timing, while the unchanged question writer retains its in-transaction recheck.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/question-write-operations.ts",
+      "module": "src/server/questions/write.ts",
+      "kind": "value",
+      "symbols": ["BLOODLINE_FIELDS", "editQuestion", "restoreQuestion"],
+      "issue": "YUK-1358",
+      "owns": "The existing question writer owns lineage-field vocabulary and edit/restore transactions, lock order, version CAS, no-op checks, content claims, derived embedding state, publication and audit events; Practice owns the two complete resource operations, ordered transport-input validation, writer invocation and error/success projection.",
       "date": "2026-10-26"
     }
   ],
