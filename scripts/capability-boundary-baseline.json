@@ -2981,6 +2981,26 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "restorePracticeQuestion",
+      "targetModule": "src/capabilities/practice/server/question-restore-operation.ts",
+      "targetSymbol": "restorePracticeQuestion",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/library-question-restore-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start host imports the existing Practice public entry at await-import AST and module path line 14, then calls the complete restore operation at line 16. Context type references and the same-capability HTTP call are not additional public runtime consumers.",
+      "rationale": "Practice owns the complete params trim and validation, strict body validation, existing state-writer invocation, special error mappings and success DTO shared by HTTP and Start. The readBody callback delays only transport JSON decoding so invalid id still precedes body reads and parse failure remains null; it receives no transaction, row or recovery decision. This is a permanent complete operation entry, not a compatibility shim.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-16eef657-9241-4e0a-995a-eed9a9b98639",
+      "date": "2026-10-26"
     }
   ],
   "edgeRecords": [
@@ -4764,6 +4784,26 @@
       "issue": "YUK-1570",
       "owns": "Append each complete learning-item knowledge-id repair and guarded materialization in the caller-held merge Tx and ordered item row locks; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned knowledge-id selection.",
       "date": "2026-10-26"
+    },
+    {
+      "file": "src/capabilities/practice/server/question-restore-operation.ts",
+      "kind": "value",
+      "issue": "YUK-1358",
+      "date": "2026-10-26",
+      "debt": "capabilityToKernel",
+      "module": "src/kernel/http.ts",
+      "symbols": ["ApiError"],
+      "owns": "Kernel owns the shared API error value contract; the complete Practice restore operation retains original input validation, state-to-error mapping and wire projection. HTTP and Start only adapt transport. The HTTP adapter still physically imports errorResponse from this module."
+    },
+    {
+      "file": "src/capabilities/practice/server/question-restore-operation.ts",
+      "kind": "value",
+      "issue": "YUK-1358",
+      "date": "2026-10-26",
+      "debt": "capabilityToServer",
+      "module": "src/server/questions/write.ts",
+      "symbols": ["restoreQuestion"],
+      "owns": "The existing server state writer retains the restore transaction, root and part locks, version CAS, archived content claims, lifecycle/republish and event writes. Practice owns complete resource validation and the original state-to-error/DTO mapping without copying SQL or reordering the state operation. The old direct HTTP writer import is removed."
     }
   ],
   "sourceSizeRecords": [
