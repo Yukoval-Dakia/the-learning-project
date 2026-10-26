@@ -71,8 +71,8 @@ import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server
 import { classifyCrisisExpression, crisisTemplateForClass } from '@/core/crisis/classify';
 import type { Db, Tx } from '@/db/client';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { computeReplay } from '@/kernel/job-events';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
-import { computeReplay } from '@/server/events/sse_replay';
 import {
   DURABLE_COPILOT_EXECUTION_BUDGET,
   type ExecuteCopilotTurn,

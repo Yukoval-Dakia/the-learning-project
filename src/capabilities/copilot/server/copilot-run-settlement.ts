@@ -49,12 +49,12 @@ import {
 import type { CopilotPrimaryView } from '@/capabilities/copilot/server/turns';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
+import { writeJobEvent } from '@/kernel/job-events';
 import {
   type BossJobObservation,
   type BossJobObserver,
   observeBossJob,
 } from '@/server/boss/job-observation';
-import { writeJobEvent } from '@/server/events/writer';
 
 export const COPILOT_RUN_QUEUE = 'copilot_run' as const;
 

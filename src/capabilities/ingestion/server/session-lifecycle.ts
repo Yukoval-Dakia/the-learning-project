@@ -7,10 +7,10 @@ import type { Db, Tx } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { writeJobEvent } from '@/kernel/job-events';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
 import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
-import { writeJobEvent } from '@/server/events/writer';
 import { assertFromState } from '@/server/session/guards';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
 

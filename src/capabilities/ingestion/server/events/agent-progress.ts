@@ -1,5 +1,5 @@
 import type { Db, Tx } from '@/db/client';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 import {
   AGENT_ITEM_STATE,
   AGENT_PAID_ATTEMPT,

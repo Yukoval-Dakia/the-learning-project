@@ -1,5 +1,5 @@
 import type { Db } from '@/db/client';
-import { computeReplay } from './sse_replay';
+import { computeReplay } from '@/kernel/job-events';
 
 // Process-local pub/sub and complete SSE responses for job-event channels.
 // The listen loop parses NOTIFY and fans out here. Only the app process

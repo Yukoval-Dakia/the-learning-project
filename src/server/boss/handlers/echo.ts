@@ -3,7 +3,7 @@ import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { echo_jobs } from '@/db/schema';
-import { writeJobEvent } from '@/server/events/writer';
+import { writeJobEvent } from '@/kernel/job-events';
 
 export type EchoJobData = {
   businessId: string;

@@ -19,8 +19,8 @@ import {
   question,
 } from '@/db/schema';
 import * as domainEvents from '@/kernel/events';
+import * as jobEvents from '@/kernel/job-events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
-import * as jobEvents from '@/server/events/writer';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
