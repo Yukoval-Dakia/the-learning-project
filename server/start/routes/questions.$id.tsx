@@ -6,6 +6,7 @@ import {
   loadQuestionPage,
 } from '@/capabilities/practice/ui-public';
 import { startLibraryDraftDetailClient } from '../library-draft-detail-client';
+import { startLibraryQuestionDeleteClient } from '../library-question-delete-client';
 import { startLibraryQuestionDetailClient } from '../library-question-detail-client';
 import { startLibraryQuestionMistakesClient } from '../library-question-mistakes-client';
 import { startLibraryQuestionRestoreClient } from '../library-question-restore-client';
@@ -14,6 +15,7 @@ import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const libraryClient: LibraryClient = {
+  deleteQuestion: startLibraryQuestionDeleteClient,
   patchQuestion: startLibraryQuestionUpdateClient,
   restoreQuestion: startLibraryQuestionRestoreClient,
   listQuestionMistakes: startLibraryQuestionMistakesClient,

@@ -11,6 +11,7 @@ import type { thinCreateSubject } from '@/capabilities/observability/public';
 import type { AdminControlClient } from '@/capabilities/observability/ui/admin-control-client';
 import type {
   PlacementProfileResponse,
+  archivePracticeQuestion,
   createPracticeHintRequest,
   createPracticePaperSubmission,
   createPracticeSolveSession,
@@ -100,6 +101,10 @@ export type FrontdoorContext = {
     id: string;
     body: string;
   }) => Promise<Awaited<ReturnType<typeof updatePracticeQuestion>>>;
+  archiveLibraryQuestion: (input: {
+    id: string;
+    query: string;
+  }) => Promise<Awaited<ReturnType<typeof archivePracticeQuestion>>>;
   readLibraryQuestionDetail: (
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readQuestionDetail>>>;

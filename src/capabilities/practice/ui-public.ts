@@ -5,6 +5,7 @@ export {
   buildPaperSubmissionBody,
   computeLatencyMs,
   getQuestion,
+  projectQuestionDeleteResponse,
   saveResponseDraft,
 } from './ui/practice-api';
 export { type PracticeClient, PracticeClientProvider } from './ui/practice-client';

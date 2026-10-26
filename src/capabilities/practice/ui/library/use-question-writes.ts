@@ -4,12 +4,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/ui/lib/api';
 import { showToast } from '@/ui-next/feedback/toast-store';
-import {
-  type QuestionPatchBody,
-  deleteQuestion,
-  enableDraft,
-  forceEnableDraft,
-} from '../practice-api';
+import { type QuestionPatchBody, enableDraft, forceEnableDraft } from '../practice-api';
 import { type ServingAction, runServingAction } from './library-api';
 import { type LibraryClient, useLibraryClient } from './library-client';
 import { LIBRARY_KEY } from './use-library';
@@ -82,6 +77,7 @@ export function useSaveQuestion(id: string) {
 
 /** First step of delete: what the question is tied to (nothing is written). */
 export function useDeletePreview(id: string) {
+  const { deleteQuestion } = useLibraryClient();
   return useMutation({
     mutationFn: (fallbackChildren: number) => deleteQuestion(id, { fallbackChildren }),
   });
@@ -121,7 +117,7 @@ export function useRestore(id: string) {
 
 /** Delete, then offer 撤销 for the toast's lifetime (restore works later too). */
 export function useDelete(id: string) {
-  const { getQuestionFull, restoreQuestion } = useLibraryClient();
+  const { getQuestionFull, restoreQuestion, deleteQuestion } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: (input: { version: number; children: number }) =>
