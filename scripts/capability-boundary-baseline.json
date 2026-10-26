@@ -3092,15 +3092,12 @@
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-5b10b470-26b1-488f-a2d6-f8a8559924d7",
-      "date": "2026-10-26",
       "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
       "symbol": "archivePracticeQuestion",
       "targetModule": "src/capabilities/practice/server/question-write-operations.ts",
       "targetSymbol": "archivePracticeQuestion",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-question-delete-operation.ts",
@@ -3108,19 +3105,19 @@
         }
       ],
       "evidence": "The authenticated Start archive host imports the Practice public entry at await-import AST and module path line 14, then calls the complete archive operation at line 16. Context type references and the same-capability HTTP adapter are not additional public runtime consumers.",
-      "rationale": "Practice owns the complete ordered ID, query, association-count, confirmation, child-confirmation, version and writer protocol, including original errors and full status/body projection. The query callback only delays URL decoding until after ID validation; HTTP and Start do not reconstruct domain decisions."
+      "rationale": "Practice owns the complete ordered ID, query, association-count, confirmation, child-confirmation, version and writer protocol, including original errors and full status/body projection. The query callback only delays URL decoding until after ID validation; HTTP and Start do not reconstruct domain decisions.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-5b10b470-26b1-488f-a2d6-f8a8559924d7",
+      "date": "2026-10-26"
     },
     {
       "type": "stable_contract",
-      "siteKind": "site",
-      "owner": "practice",
-      "issue": "YUK-1358",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-5b10b470-26b1-488f-a2d6-f8a8559924d7",
-      "date": "2026-10-26",
       "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
       "symbol": "projectQuestionDeleteResponse",
       "targetModule": "src/capabilities/practice/ui/practice-api.ts",
       "targetSymbol": "projectQuestionDeleteResponse",
+      "owner": "practice",
       "consumers": [
         {
           "file": "server/start/library-question-delete-client.ts",
@@ -3128,7 +3125,18 @@
         }
       ],
       "evidence": "The Start delete client imports the shared response projector at ImportDeclaration AST line 1 and module path line 4, then calls it at lines 28 and 36. LibraryClient is type-only. The retained same-capability HTTP helper consumes the same implementation.",
-      "rationale": "Practice owns the complete browser response projection shared by HTTP and Start: only 409 confirm_required becomes a confirmation value; association defaults, conservative children fallback and OR, other ApiError values without details, and successful archive projection retain the existing behavior. The Start adapter reconstructs transport status/body only and introduces no schema or codec."
+      "rationale": "Practice owns the complete browser response projection shared by HTTP and Start: only 409 confirm_required becomes a confirmation value; association defaults, conservative children fallback and OR, other ApiError values without details, and successful archive projection retain the existing behavior. The Start adapter reconstructs transport status/body only and introduces no schema or codec.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-5b10b470-26b1-488f-a2d6-f8a8559924d7",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-26",
+      "from": 10,
+      "to": 9,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5022,6 +5030,26 @@
       "issue": "YUK-1358",
       "owns": "The existing question writer owns lineage-field vocabulary and edit/restore transactions, lock order, version CAS, no-op checks, content claims, derived embedding state, publication and audit events; Practice owns the two complete resource operations, ordered transport-input validation, writer invocation and error/success projection.",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-parts.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Own generated question-part materialization in Practice, retaining the existing part INSERT answer-class derivation and parent/part identity. QuizGen retains normalization, parent dedup/admission and placement decisions; no new default or answer policy.",
+      "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-parts.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "Own ordered generated-part projection and creation together: preserve root lock before each part INSERT and republish the parent group in the same caller Tx after every part, with the original actor, timestamp and failure propagation. Parent final publication, verify intent and paid boundaries remain with QuizGen.",
+      "date": "2026-10-26"
     }
   ],
   "sourceSizeRecords": [
@@ -5942,7 +5970,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 273,
+      "total": 272,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -5995,7 +6023,7 @@
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> proposals": 5,
-        "practice -> questions": 10,
+        "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
         "practice -> session": 6,
