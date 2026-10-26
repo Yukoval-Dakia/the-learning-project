@@ -238,7 +238,16 @@ export async function deleteQuestion(
     throw new ApiAuthError('token 无效或已过期');
   }
 
-  const body = (await res.json().catch(() => null)) as {
+  const body = await res.json().catch(() => null);
+  return projectQuestionDeleteResponse(res, body, opts.fallbackChildren ?? 0);
+}
+
+export function projectQuestionDeleteResponse(
+  res: Pick<Response, 'status' | 'ok' | 'statusText'>,
+  raw: unknown,
+  fallbackChildren: number,
+): DeleteQuestionResult {
+  const body = raw as {
     error?: string;
     message?: string;
     archived?: boolean;
@@ -250,10 +259,7 @@ export async function deleteQuestion(
 
   // 409 confirm_required：约束门（version 校验之前，无写库副作用）→ 回计数给 UI 展示。
   if (res.status === 409 && body?.error === 'confirm_required') {
-    const associations = normalizeQuestionAssociationCounts(
-      body.associations,
-      opts.fallbackChildren ?? 0,
-    );
+    const associations = normalizeQuestionAssociationCounts(body.associations, fallbackChildren);
     return {
       kind: 'confirm_required',
       associations,
@@ -273,10 +279,7 @@ export async function deleteQuestion(
     kind: 'archived',
     event_id: body?.event_id ?? null,
     cascaded_part_ids: body?.cascaded_part_ids ?? [],
-    associations: normalizeQuestionAssociationCounts(
-      body?.associations,
-      opts.fallbackChildren ?? 0,
-    ),
+    associations: normalizeQuestionAssociationCounts(body?.associations, fallbackChildren),
   };
 }
 
