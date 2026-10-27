@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { jobEventStreamResponse } from '@/server/events/sse_router';
+import { jobEventStreamResponse } from '@/kernel/job-event-stream';
 
 /**
  * GET /api/ingestion/[id]/events — ingestion notification-driven SSE.
