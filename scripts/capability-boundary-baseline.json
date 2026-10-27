@@ -6187,6 +6187,16 @@
       "issue": "YUK-1570",
       "owns": "Reuse the existing shared allowed-state assertion and exact conflict error contract without copying or wrapping the guard. Practice owns Tutor from/to policy and transition timing; keep the assertion after the original locked read and before the original clock, UPDATE and same-transaction job event.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/overnight-handoff.ts",
+      "module": "src/server/today/overnight-digest.ts",
+      "kind": "value",
+      "symbols": ["LoadTodayOvernightDigest", "OvernightDigest", "loadTodayOvernightDigest"],
+      "issue": "YUK-1570",
+      "owns": "Consume the unchanged shared overnight digest facts and default dynamic Shell/Observability composition. Copilot owns its complete quiet/cost/degraded handoff sentence and original Promise rejection warning/unavailable policy; preserve the caller override snapshot and invocation order, synchronous throws, the shared default clock and cost-reader injection, and the distinct HTTP/Start error contracts.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
