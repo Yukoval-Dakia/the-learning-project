@@ -4176,6 +4176,26 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "requestCopilotCheckpointRevert",
+      "targetModule": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
+      "targetSymbol": "requestCopilotCheckpointRevert",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-checkpoint-revert-operation.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "The authenticated Start checkpoint-revert host imports this complete request at await-import AST and module path line 13 and invokes it at line 15 with db and the original eventId params. The context reference is type-only; the retained HTTP POST consumes the same request internally. The existing stable client reaches TurnActions.revert, preserving its separate request-error and refresh-error handling.",
+      "rationale": "Copilot owns the complete checkpoint-revert request: original eventId schema parsing, message-only Zod validation_error/400 mapping over the original call, and the complete status/body outcome from the unchanged transactional checkpoint operation. HTTP and Start retain success and refusal envelopes; the Start function throws non-200 Response bodies outside the host errorResponse catch so apiFetch preserves refusal details without a second 500 or a success union. No UI, lock, cascade, savepoint, retry or replay policy moves into the caller.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/notes/public.ts",
       "siteKind": "module",
       "symbol": "listNoteRefineChanges",
@@ -6468,6 +6488,26 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Own the original ZodError-to-validation_error/400 translation for the complete Copilot cancellation request, preserving issues.map(issue => issue.message).join('; ') across the original schema and cancellation call. Preserve every other exception for the HTTP and Start errorResponse adapters; do not add trimming, eligibility, retry or transaction policy.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-cost-evidence.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Shared safe HTTP error envelope and status; session cost reader emits fixed errors without raw persisted/provider data.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-cost-evidence.ts",
+      "module": "src/kernel/read-models/provider-cost-projection.ts",
+      "kind": "value",
+      "symbols": ["providerCostProjectedCte"],
+      "issue": "YUK-1522",
+      "owns": "Canonical all-time provider attempt authority and linked ledger suppression; session cost reader filters only exact durable session-owned identities.",
       "date": "2026-10-27"
     },
     {

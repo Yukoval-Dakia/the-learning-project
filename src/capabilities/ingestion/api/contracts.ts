@@ -617,6 +617,76 @@ export const IngestionHistoryPriorRunSchema = z
   })
   .strict();
 
+const IngestionCostIdentitySchema = z.object({
+  kind: z.enum(['agent_task', 'ocr']),
+  task_run_id: z.string(),
+  attempt_id: z.string().nullable(),
+  operation_id: z.string().nullable(),
+});
+
+/** Session-owned observed evidence only; never the full package/admission bill. */
+export const IngestionSessionCostEvidenceSchema = z
+  .object({
+    scope: z.literal('ingestion_agent_observed'),
+    coverage: z.literal('partial'),
+    /** DB snapshot time of cost identities + canonical costs, not all history. */
+    as_of: z.iso.datetime(),
+    /** Full-session total is unknown under partial coverage, even with known zeros. */
+    total: z.null(),
+    by_currency: z.array(
+      z
+        .object({
+          currency: z.string(),
+          /** Null means no known amount; numeric zero requires actual amount evidence. */
+          known_subtotal: z.number().nonnegative().nullable(),
+          reported: z.number().nonnegative().nullable(),
+          estimated: z.number().nonnegative().nullable(),
+          legacy: z.number().nonnegative().nullable(),
+        })
+        .strict(),
+    ),
+    /** Canonical rows, without provider payloads or synthetic call counts. */
+    records: z.array(
+      IngestionCostIdentitySchema.extend({
+        provider: z.string(),
+        model: z.string().nullable(),
+        source: z.enum(['cost_ledger', 'provider_attempt']),
+        entry_kind: z.enum(['legacy', 'attempt']),
+        cost_basis: z.enum(['reported', 'estimated', 'unknown']).nullable(),
+        cost_ref: z.string().nullable(),
+        currency: z.string(),
+        amount: z.number().nonnegative().nullable(),
+      }).strict(),
+    ),
+    /** One entry per durable identity with gaps; entries are not unknown calls. */
+    unsettled: z.array(
+      IngestionCostIdentitySchema.extend({
+        reasons: z.array(
+          z.enum([
+            'missing_task_run',
+            'task_in_progress',
+            'missing_attempt_binding',
+            'missing_canonical_cost',
+            'unknown_cost_basis',
+            'missing_amount',
+            'missing_cost_reference',
+            'unknown_currency',
+          ]),
+        ),
+      }).strict(),
+    ),
+    missing: z.array(
+      z.enum([
+        'outside_agent_scope',
+        'no_budget',
+        'no_durable_identities',
+        'historical_ocr_attribution_unproven',
+      ]),
+    ),
+  })
+  .strict();
+export type IngestionSessionCostEvidence = z.infer<typeof IngestionSessionCostEvidenceSchema>;
+
 export const IngestionSessionHistoryResponseSchema = z
   .object({
     session: z
@@ -643,6 +713,8 @@ export const IngestionSessionHistoryResponseSchema = z
     prior_runs: z.array(IngestionHistoryPriorRunSchema),
     items: z.array(IngestionHistoryItemSchema),
     asks: z.array(IngestionHistoryAskSchema),
+    /** Absent only on older servers; consumers must treat absence as unavailable. */
+    cost_evidence: IngestionSessionCostEvidenceSchema.optional(),
     evidence: z
       .object({
         snapshot: z.boolean(),
