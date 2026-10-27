@@ -3941,6 +3941,22 @@
       "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 10 after parsing the complete JSON returned by the existing library question-list function. The Notes HTTP helper consumes the same projector internally.",
       "rationale": "Notes owns the existing question-reference response projection: map response.items to the unchanged id, kind and prompt_md fields. The shared projector preserves the same consumer result over HTTP and Start while the canonical Practice reader continues to own validation, filtering, pagination and the full collection.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> session",
+      "date": "2026-10-27",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-27",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7088,7 +7104,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 243,
+      "total": 241,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7113,7 +7129,6 @@
         "ingestion -> questions": 9,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
-        "ingestion -> session": 1,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -7144,7 +7159,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 5,
+        "practice -> session": 4,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
