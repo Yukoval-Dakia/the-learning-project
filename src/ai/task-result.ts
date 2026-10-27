@@ -76,6 +76,14 @@ export interface AiTaskUsage {
   transport?: ProviderTransportEvidence;
 }
 
+/** The one semantic cost truth owned by a central-runner model attempt. */
+export type AttemptCostTruth =
+  | { basis: 'reported'; amountUsd: number; ref: string }
+  | { basis: 'estimated'; amountUsd: number; ref: string }
+  | { basis: 'unknown'; amountUsd: null; ref: string };
+
+export type AttemptCostBasis = AttemptCostTruth['basis'];
+
 export type TransportLane = 'undici_agent' | 'observer_fetch';
 export type RequestSendState =
   | 'not_sent'
