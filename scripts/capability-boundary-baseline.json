@@ -3573,6 +3573,46 @@
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 11 and calls the complete draft-list reader at line 13. The context reference is type-only; the existing HTTP GET is an internal consumer of the same owner.",
       "rationale": "Practice owns the complete draft-list request: original query/schema validation and errors, cursor and explicit-offset compatibility, limit normalization, unchanged draft aggregate invocation, and the full collection envelope. Both transports preserve that operation without copying SQL, verification status or pagination policy.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-cfad9234-b0b6-48b6-9516-31b0e0660d23"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-27",
+      "from": 18,
+      "to": 14,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> ai",
+      "date": "2026-10-27",
+      "from": 12,
+      "to": 11,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-27",
+      "from": 13,
+      "to": 12,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-27",
+      "from": 8,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-27",
+      "from": 45,
+      "to": 41,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6670,15 +6710,15 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 255,
+      "total": 244,
       "byOwnerPair": {
-        "agency -> ai": 18,
+        "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
         "agency -> questions": 1,
         "agency -> runtime-env": 1,
-        "copilot -> ai": 12,
+        "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
@@ -6687,7 +6727,7 @@
         "copilot -> runtime-env": 1,
         "copilot -> session": 5,
         "copilot -> today": 1,
-        "ingestion -> ai": 13,
+        "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> events": 1,
         "ingestion -> projections": 2,
@@ -6696,7 +6736,7 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,
-        "knowledge -> ai": 8,
+        "knowledge -> ai": 7,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
@@ -6714,7 +6754,7 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "practice -> ai": 45,
+        "practice -> ai": 41,
         "practice -> assessment": 1,
         "practice -> boss": 12,
         "practice -> calibration": 1,

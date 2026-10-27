@@ -6,9 +6,8 @@
 // per-new-row hook → `experimental:<surface>_scan` success/failure events → rethrow. Surface
 // differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
 
-import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
-import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { createId } from '@paralleldrive/cuid2';
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -21,6 +20,7 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { ContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
 
 /**

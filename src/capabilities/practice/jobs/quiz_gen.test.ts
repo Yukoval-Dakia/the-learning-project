@@ -13,6 +13,7 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { acquirePlacementAttempt } from '@/capabilities/practice/public';
 import {
   artifact,
@@ -25,7 +26,6 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import { buildQuizGenHandler, runQuizGen } from './quiz_gen';

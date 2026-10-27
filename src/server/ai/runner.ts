@@ -8,10 +8,10 @@
 // Memory-layer extensibility: `RunTaskCtx.middleware` applies uniformly across
 // runTask / runAgentTask / streamTask.
 
-import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';

@@ -13,10 +13,10 @@
 //   3. Ordered in-memory trace persisted by the orchestration layer after the run,
 //      because the task_run_id is minted inside runTask and unavailable to handlers.
 
-import { piCustomTool } from '@/ai/pi-tool-mount';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { piCustomTool } from '@/ai/pi-tool-mount';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import type { Db } from '@/db/client';
 import { event, kc_typed_state, question } from '@/db/schema';
