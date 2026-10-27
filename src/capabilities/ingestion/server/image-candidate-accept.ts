@@ -46,7 +46,7 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { persistImageAsset } from '@/kernel/records/asset-store';
-import { writeCostLedger } from '@/server/ai/log';
+import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';

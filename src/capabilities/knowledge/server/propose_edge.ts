@@ -20,7 +20,7 @@ import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
-import { writeRetryableAiFailureLedger } from '@/server/ai/failure-ledger';
+import { writeRetryableAiFailureLedger } from '@/kernel/records/ai-attempt-facts';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import type { Env } from '@/server/memory/client';
 import type { SubjectProfile } from '@/subjects/profile';
