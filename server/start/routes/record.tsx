@@ -7,6 +7,7 @@ import {
 } from '@/capabilities/ingestion/ui-public';
 import { startRecordBlocksClient } from '../record-blocks-client';
 import { startRecordSessionCreateClient } from '../record-session-create-client';
+import { startRecordSessionDetailClient } from '../record-session-detail-client';
 import { startRecordSessionsClient } from '../record-session-list-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
@@ -16,6 +17,7 @@ const recordClient: RecordClient = {
   listBlocks: startRecordBlocksClient,
   listKnowledge: () => startWorkbenchClient.getTree().then((result) => result.rows),
   createSession: startRecordSessionCreateClient,
+  getSession: startRecordSessionDetailClient,
 };
 const Page = lazy(() => loadRecordPage().then((defaultPage) => ({ default: defaultPage })));
 export const Route = createFileRoute('/record')({
