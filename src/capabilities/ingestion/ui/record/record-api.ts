@@ -109,12 +109,18 @@ export type AskAnswerBody =
   | { kind: 'text'; text: string; via_option?: 'none_of_these' }
   | { kind: 'skipped'; by: 'learner' };
 
+export function projectSessionListResponse(
+  body: ApiOperationJsonResponse<'listIngestionSessions'>,
+): SessionRow[] {
+  return body.data as SessionRow[];
+}
+
 export async function listSessions(): Promise<SessionRow[]> {
   const body = await apiOperationJson('listIngestionSessions', {
     url: '/api/ingestion-sessions?limit=30',
     method: 'GET',
   });
-  return body.data as SessionRow[];
+  return projectSessionListResponse(body);
 }
 
 export const getHistory = (id: string) =>
