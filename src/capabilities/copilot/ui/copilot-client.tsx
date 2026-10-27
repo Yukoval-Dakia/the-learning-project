@@ -31,6 +31,7 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  getNudges: () => Promise<ApiOperationJsonResponse<'listCopilotNudges'>>;
   getSummary: () => Promise<ApiOperationJsonResponse<'getTodayCopilotSummary'>>;
   /** Fresh server capabilities, including before restricted sends; never a cached snapshot. */
   listSessions: (signal?: AbortSignal) => Promise<CopilotSessionsResponse>;
@@ -45,6 +46,7 @@ export type CopilotClient = {
 };
 
 export const httpCopilotClient: CopilotClient = {
+  getNudges: () => apiJson<ApiOperationJsonResponse<'listCopilotNudges'>>('/api/copilot/nudges'),
   getSummary: () =>
     apiJson<ApiOperationJsonResponse<'getTodayCopilotSummary'>>('/api/today/copilot-summary'),
   listSessions: (signal) =>
