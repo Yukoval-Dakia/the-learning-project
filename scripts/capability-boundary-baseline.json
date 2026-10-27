@@ -3403,6 +3403,150 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/server/boss-port.ts",
+      "siteKind": "function",
+      "symbol": "notesBossTransaction",
+      "targetModule": "src/db/pg-boss-drizzle.ts",
+      "targetSymbol": "fromPgBossDrizzleTx",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+          "line": 7
+        },
+        {
+          "file": "src/capabilities/notes/server/mastery-refine-effect.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Both real value imports start at AST7. Calls at note-refine-triggers112 and mastery-refine-effect113 adapt the caller transaction; ReturnType references are additional type evidence, not separate consumers. The existing wrapper body is unchanged.",
+      "rationale": "Preserve the existing Notes transaction port while the complete execute-result adapter belongs to db. Notes retains conditional transactional sending, debounce or null handling and effect writes; the adapter does not own lock timing, transaction lifetime or recovery policy.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f485904e-06e1-4916-a8b6-43d9799e8e05",
+      "date": "2026-10-27"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/server/queue-runtime.ts",
+      "siteKind": "function",
+      "symbol": "practiceBossTransaction",
+      "targetModule": "src/db/pg-boss-drizzle.ts",
+      "targetSymbol": "fromPgBossDrizzleTx",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/jobs/failure-learning-jobs.ts",
+          "line": 8
+        },
+        {
+          "file": "src/capabilities/practice/server/admission/enqueue.ts",
+          "line": 10
+        },
+        {
+          "file": "src/capabilities/practice/server/admission/reauthorization.ts",
+          "line": 15
+        },
+        {
+          "file": "scripts/yuk1537-admission-reopen.ts",
+          "line": 221
+        }
+      ],
+      "evidence": "Actual imports begin at failure-learning-jobs8, enqueue10, reauthorization15 and the script dynamic import221 (module string222). Calls53/138/456/346 preserve each caller transaction. ReturnType annotations are type evidence. The existing wrapper and queue getters are unchanged.",
+      "rationale": "Preserve the existing Practice transaction port to the canonical db adapter. Practice retains conditional tx usage, admission, stable identity and distinct null/error rules; worksheet post-commit send and boss startup remain in their original owners. No new transaction or queue policy is introduced.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f485904e-06e1-4916-a8b6-43d9799e8e05",
+      "date": "2026-10-27"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/kernel/placement-jobs.ts",
+      "siteKind": "site",
+      "symbol": "fromPgBossDrizzleTx",
+      "targetModule": "src/db/pg-boss-drizzle.ts",
+      "targetSymbol": "fromPgBossDrizzleTx",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-supply/placement-starter.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "The production named import begins at placement-starter AST5; binding9 is not the import start. The actual adapter call128 receives the nested savepoint sp, while the other placement-jobs exports and lazy boss access remain unchanged.",
+      "rationale": "Preserve the existing placement transaction contract while its complete result-shape implementation belongs to db. The placement owner continues to choose the savepoint, lock and null-send behavior; the canonical adapter receives the same object and does not create or substitute a transaction.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f485904e-06e1-4916-a8b6-43d9799e8e05",
+      "date": "2026-10-27"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/boss/client.ts",
+      "siteKind": "site",
+      "symbol": "fromPgBossDrizzleTx",
+      "targetModule": "src/db/pg-boss-drizzle.ts",
+      "targetSymbol": "fromPgBossDrizzleTx",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/chat-acceptance.ts",
+          "line": 6
+        },
+        {
+          "file": "src/capabilities/copilot/jobs/copilot_run_reconcile.ts",
+          "line": 10
+        },
+        {
+          "file": "src/capabilities/copilot/manifest.ts",
+          "line": 95
+        },
+        {
+          "file": "src/capabilities/copilot/manifest.ts",
+          "line": 202
+        },
+        {
+          "file": "src/capabilities/copilot/server/durable-session-queue.db.test.ts",
+          "line": 10
+        }
+      ],
+      "evidence": "Real production imports at chat-acceptance6 and reconcile10 inject the adapter at66/274 and90/125. Manifest dynamic namespace imports at95/202 read bossClient.fromPgBossDrizzleTx at101/209; getStartedBoss consumption is distinct. The existing DB test import10 injects it at72/234/330. review-answer test mock40-43 is evidence only, not a production consumer.",
+      "rationale": "Preserve the real existing boss client entry for production namespace/named consumers and the unchanged test contract. The client keeps singleton/env/start functionality; only its adapter re-export points to the complete db mechanism. No empty legacy adapter file, runtime move, mock rewrite or new safety claim is introduced.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-f485904e-06e1-4916-a8b6-43d9799e8e05",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> boss",
+      "date": "2026-10-27",
+      "from": 10,
+      "to": 7,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> boss",
+      "date": "2026-10-27",
+      "from": 7,
+      "to": 6,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> boss",
+      "date": "2026-10-27",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> boss",
+      "date": "2026-10-27",
+      "from": 14,
+      "to": 12,
+      "direction": "decrease"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "practice -> calibration",
       "date": "2026-10-27",
@@ -6496,10 +6640,10 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 262,
+      "total": 255,
       "byOwnerPair": {
         "agency -> ai": 18,
-        "agency -> boss": 10,
+        "agency -> boss": 7,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
         "agency -> questions": 1,
@@ -6514,7 +6658,7 @@
         "copilot -> session": 5,
         "copilot -> today": 1,
         "ingestion -> ai": 13,
-        "ingestion -> boss": 7,
+        "ingestion -> boss": 6,
         "ingestion -> events": 1,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
@@ -6533,7 +6677,7 @@
         "knowledge -> proposals": 3,
         "notes -> ai": 6,
         "notes -> artifacts": 2,
-        "notes -> boss": 2,
+        "notes -> boss": 1,
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,
@@ -6542,7 +6686,7 @@
         "observability -> r2": 2,
         "practice -> ai": 45,
         "practice -> assessment": 1,
-        "practice -> boss": 14,
+        "practice -> boss": 12,
         "practice -> calibration": 1,
         "practice -> coldstart": 1,
         "practice -> fsrs": 2,
