@@ -3,9 +3,11 @@
 export type { QuestionDetail } from './ui/practice-api';
 export {
   buildPaperSubmissionBody,
+  buildQuestionsListQuery,
   computeLatencyMs,
   getQuestion,
   projectQuestionDeleteResponse,
+  projectQuestionsListResponse,
   saveResponseDraft,
 } from './ui/practice-api';
 export { type PracticeClient, PracticeClientProvider } from './ui/practice-client';
