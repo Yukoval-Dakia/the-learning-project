@@ -7,6 +7,7 @@
 // The diff helper is shared with the offline audit so both agree on what "fold == row" means.
 
 import { and, eq, inArray, or } from 'drizzle-orm';
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
@@ -27,7 +28,6 @@ import {
   gatherAndFoldKnowledgeNode,
   gatherAndFoldQuestionBlock,
 } from './gather';
-import { diffSnapshots } from './snapshot-diff';
 
 export { goalRowToSnapshot as goalLiveRowToSnapshot } from '@/kernel/records/goal-history';
 export { knowledgeLiveRowToSnapshot } from '@/kernel/records/knowledge-node-history';

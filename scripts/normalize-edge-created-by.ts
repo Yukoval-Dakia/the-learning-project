@@ -17,10 +17,10 @@
 import './load-env';
 
 import { eq } from 'drizzle-orm';
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import { type Db, type Tx, db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { edgeRowToSnapshot, gatherAndFoldKnowledgeEdgeWithMesh } from '@/server/projections/gather';
-import { diffSnapshots } from '@/server/projections/snapshot-diff';
 
 type DbLike = Db | Tx;
 

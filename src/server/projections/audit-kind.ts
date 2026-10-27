@@ -4,9 +4,9 @@
 //
 // Consumed by scripts/audit-projection.ts, scripts/b3-gate.ts, and the oracle sweep.
 
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type { Db, Tx } from '@/db/client';
 import { PROJECTION_ENTITIES, type ProjectionKind } from './entity-registry';
-import { diffSnapshots } from './snapshot-diff';
 
 type DbLike = Db | Tx;
 
