@@ -28,7 +28,6 @@ export {
   type ReplayStep,
   replayTheta,
 } from './replay';
-export { mulberry32 } from './rng';
 export {
   type AssembledClusters,
   type VA1Config,

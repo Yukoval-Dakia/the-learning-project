@@ -23,7 +23,7 @@ loadEnv();
 
 // Owner-tunable RNG seed for the bootstrap (deterministic report across re-runs of the
 // SAME data). The mulberry32 import is pure (no DB) so it is safe at module top.
-import { mulberry32 } from '@/server/calibration/rng';
+import { mulberry32 } from '@/core/rng';
 
 const BOOTSTRAP_SEED = 0x5eed_a1c0;
 

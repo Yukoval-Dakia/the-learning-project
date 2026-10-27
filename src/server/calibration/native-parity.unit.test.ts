@@ -13,13 +13,13 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { mulberry32 } from '@/core/rng';
 import { forwardAuc } from '@/server/calibration/auc';
 import {
   type ClusterForwardPreds,
   deltaAucClusterBootstrap,
   resolveBootstrapB,
 } from '@/server/calibration/bootstrap';
-import { mulberry32 } from '@/server/calibration/rng';
 
 const NODE_PATH = resolve('crates/calibration-native/calibration-native.node');
 const present = existsSync(NODE_PATH);
