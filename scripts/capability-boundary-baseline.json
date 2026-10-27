@@ -5367,9 +5367,7 @@
       "file": "src/capabilities/agency/server/ai-runtime.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable legacy failure fact writer through the existing Agency AI port. Agency retains failure eligibility, caller Db or Tx, throwOnError selection and all orchestration; kernel owns the unchanged legacy insert and catch/rethrow policy.",
       "date": "2026-10-27"
@@ -5379,9 +5377,7 @@
       "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeCostLedger"
-      ],
+      "symbols": ["writeCostLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical legacy cost fact writer inside the original image-candidate acceptance transaction. Ingestion retains task identity, zero VisionExtract correlation, caller transaction, eligibility and invocation order; kernel preserves fields, defaults and insert timing.",
       "date": "2026-10-27"
@@ -5391,9 +5387,7 @@
       "file": "src/capabilities/knowledge/server/propose_edge.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable legacy failure fact writer from the unchanged proposal failure path. Knowledge retains proposal decisions, watermark and error ordering; kernel preserves legacy zero marker semantics and catch behavior without claiming measured free usage.",
       "date": "2026-10-27"
@@ -5403,10 +5397,7 @@
       "file": "src/capabilities/practice/server/failure-learning-ledger.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writePermanentAiFailureLedger",
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writePermanentAiFailureLedger", "writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable and permanent legacy failure fact writers. Practice retains marker lookup, eligibility, stable job identity and throwOnError selection; kernel preserves legacy null correlation, zero marker, insert and error behavior.",
       "date": "2026-10-27"
