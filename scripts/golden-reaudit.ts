@@ -26,13 +26,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import { KnowledgeEdgeRowSnapshot } from '@/core/schema/event/genesis';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
 // PURE reducer registry (K10/K13): its ONLY runtime imports are the seven @/core reducers — the exact
 // edges the removed per-reducer imports had — so this keeps golden-reaudit's "no DB" property (a value
 // import of the DB-heavy PROJECTION_ENTITIES would have pulled @/db/client and broken it).
 import { PROJECTION_FOLDS } from '@/server/projections/projection-folds';
-import { diffSnapshots } from '@/server/projections/snapshot-diff';
 import type { GoldenSnapshot } from './capture-golden';
 import { parseKindArg } from './projection-kind-arg';
 

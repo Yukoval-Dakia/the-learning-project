@@ -1,15 +1,13 @@
 // Strict pre-mutation knowledge history authority. Caller holds the node row lock;
 // structural materialization uses the shared kernel history without owning this guard.
 
+import { diffSnapshots } from '@/core/projections/snapshot-diff';
 import type { Db, Tx } from '@/db/client';
 import type { knowledge } from '@/db/schema';
 import {
   gatherAndFoldKnowledgeNode,
   knowledgeLiveRowToSnapshot,
 } from '@/kernel/records/knowledge-node-history';
-import { diffSnapshots } from './snapshot-diff';
-
-export { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 
 type DbLike = Db | Tx;
 
