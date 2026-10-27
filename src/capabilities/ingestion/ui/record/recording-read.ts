@@ -10,7 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
-import { getHistory, getSession, listBlocks, listKnowledge } from './record-api';
+import { getHistory, getSession, listBlocks } from './record-api';
 import { useRecordClient } from './record-client';
 import { useStartState } from './record-start';
 import { foldLive } from './recording-live';
@@ -112,5 +112,6 @@ export function useRecordingList() {
 }
 
 export function useKnowledgeList() {
+  const { listKnowledge } = useRecordClient();
   return useQuery({ queryKey: recordKeys.knowledge, queryFn: listKnowledge, staleTime: 60_000 });
 }
