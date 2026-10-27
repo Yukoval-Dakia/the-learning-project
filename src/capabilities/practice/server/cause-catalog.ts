@@ -14,13 +14,14 @@ import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { pendingProposalWithCooldown } from '@/server/proposals/practice-runtime';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type CauseCategoryProposeInput,
   parseCauseCategoryProposeOutput,
 } from '../tasks/cause-category-propose';
-import { effectiveCauseForFailureAttempt, getFailureAttempts } from './attempt-events';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
