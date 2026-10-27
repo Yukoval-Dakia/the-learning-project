@@ -3941,6 +3941,26 @@
       "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 10 after parsing the complete JSON returned by the existing library question-list function. The Notes HTTP helper consumes the same projector internally.",
       "rationale": "Notes owns the existing question-reference response projection: map response.items to the unchanged id, kind and prompt_md fields. The shared projector preserves the same consumer result over HTTP and Start while the canonical Practice reader continues to own validation, filtering, pagination and the full collection.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "loadCopilotSummary",
+      "targetModule": "src/capabilities/copilot/server/copilot-summary.ts",
+      "targetSymbol": "loadCopilotSummary",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-summary-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start summary reader imports this complete owner at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP handler is an internal consumer. The Start shell's existing CopilotClientProvider reaches the live SummaryCard query through RootShell and CompanionMount.",
+      "rationale": "Copilot owns the complete companion summary: original Coach and Dreaming event selection, guarded daily focus, plan counts, due-review inventory, brief truncation, safe proposal preview and capped pending total, with all eight response fields. HTTP and Start reuse this owner without copying aggregation, defaults or error behavior; transport adds no transaction or alternate summary policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-af3992df-460e-4e9f-a571-9f82b358c784"
     }
   ],
   "edgeRecords": [
