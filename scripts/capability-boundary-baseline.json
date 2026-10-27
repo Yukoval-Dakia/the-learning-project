@@ -4133,6 +4133,46 @@
       "evidence": "The Start turns client imports this value in the ImportDeclaration at AST and module path line 1 and invokes it at line 9. The existing HTTP listTurns method consumes the same helper internally. Both retain the original typed sessionId/limit call and full response; the real run-tracker continues to supply REPLAY_LIMIT 20.",
       "rationale": "Copilot owns the original turns-query encoding: interpolate limit first and encodeURIComponent(sessionId) second, with no new defaults, clamping, cache, signal or retry policy. Sharing this exact builder keeps HTTP and Start request semantics together instead of duplicating or substituting another list builder.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "cancelCopilotRun",
+      "targetModule": "src/capabilities/copilot/server/run-cancel-request.ts",
+      "targetSymbol": "cancelCopilotRun",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-cancel-run-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start Stop host imports this complete request in the await-import AST at line 11 (module path line 12) and invokes it at line 16. The context reference is type-only. The retained HTTP handler also consumes the same request, while the stable Copilot client reaches RunFooter and run-tracker.stopRun without changing the UI or default HTTP implementation.",
+      "rationale": "Copilot owns the complete cancellation request: the existing ID schema, message-only Zod validation_error/400 mapping across the call, invocation of the original cancellation operation with its production wake dependency, and the full ok/run_id/status response. HTTP and Start share this owner without duplicating cancellation decisions, transaction ordering or response semantics.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "dispatchSessionHead",
+      "targetModule": "src/capabilities/copilot/server/durable-dispatch.ts",
+      "targetSymbol": "dispatchSessionHead",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-cancel-run-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The Start composition host imports this existing complete dispatcher in the same await-import AST at line 11 (module path line 12) and invokes it at line 17 inside the wakeSession callback supplied to the complete cancellation request. getStartedBoss is invoked only inside that callback at line 18, matching the retained HTTP manifest's production wake composition.",
+      "rationale": "Copilot owns complete current-session-head dispatch, including the session queue transaction/lock, canonical head and protocol checks, already-dispatched decision and transactional job dispatch. The Start composition root supplies the existing boss and transaction adapter; the unchanged cancellation owner alone decides whether to wake after commit and retains its logged wake-failure/reconciler behavior. This is a production dependency port, not a second cancellation or queue algorithm.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e7eda102-abf7-48f4-88aa-e84094573939"
     }
   ],
   "edgeRecords": [
@@ -6382,6 +6422,16 @@
       "symbols": ["createCopilotConversation", "listCopilotConversations"],
       "issue": "YUK-1358",
       "owns": "Own the complete Copilot GET and POST session requests while reusing the canonical conversation list and creation operations with db and no options. Preserve list defaults, ordering and projection, sample server_time only after the list, and preserve the create transaction, timestamp, ID and job event. Keep the two requests independent, HTTP create status 201 and unknown duplicate-creation boundary; do not add Start create or a shared transaction or receipt.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/run-cancel-request.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Own the original ZodError-to-validation_error/400 translation for the complete Copilot cancellation request, preserving issues.map(issue => issue.message).join('; ') across the original schema and cancellation call. Preserve every other exception for the HTTP and Start errorResponse adapters; do not add trimming, eligibility, retry or transaction policy.",
       "date": "2026-10-27"
     },
     {
