@@ -22,6 +22,7 @@ import { Route as PlacementRouteImport } from './routes/placement'
 import { Route as PracticeRouteImport } from './routes/practice'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as QuestionsRouteImport } from './routes/questions'
+import { Route as RecordRouteImport } from './routes/record'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
@@ -103,6 +104,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const QuestionsRoute = QuestionsRouteImport.update({
   id: '/questions',
   path: '/questions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecordRoute = RecordRouteImport.update({
+  id: '/record',
+  path: '/record',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TodayRoute = TodayRouteImport.update({
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
   '/questions': typeof QuestionsRouteWithChildren
+  '/record': typeof RecordRoute
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
   '/questions': typeof QuestionsRouteWithChildren
+  '/record': typeof RecordRoute
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -270,6 +278,7 @@ export interface FileRoutesById {
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
   '/questions': typeof QuestionsRouteWithChildren
+  '/record': typeof RecordRoute
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -304,6 +313,7 @@ export interface FileRouteTypes {
     | '/practice'
     | '/profile'
     | '/questions'
+    | '/record'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -336,6 +346,7 @@ export interface FileRouteTypes {
     | '/practice'
     | '/profile'
     | '/questions'
+    | '/record'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -368,6 +379,7 @@ export interface FileRouteTypes {
     | '/practice'
     | '/profile'
     | '/questions'
+    | '/record'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -401,6 +413,7 @@ export interface RootRouteChildren {
   PracticeRoute: typeof PracticeRoute
   ProfileRoute: typeof ProfileRoute
   QuestionsRoute: typeof QuestionsRouteWithChildren
+  RecordRoute: typeof RecordRoute
   TodayRoute: typeof TodayRoute
   WelcomeRoute: typeof WelcomeRoute
   BuildSplatRoute: typeof BuildSplatRoute
@@ -507,6 +520,13 @@ declare module '@tanstack/react-router' {
       path: '/questions'
       fullPath: '/questions'
       preLoaderRoute: typeof QuestionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/record': {
+      id: '/record'
+      path: '/record'
+      fullPath: '/record'
+      preLoaderRoute: typeof RecordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/today': {
@@ -691,6 +711,7 @@ const rootRouteChildren: RootRouteChildren = {
   PracticeRoute: PracticeRoute,
   ProfileRoute: ProfileRoute,
   QuestionsRoute: QuestionsRouteWithChildren,
+  RecordRoute: RecordRoute,
   TodayRoute: TodayRoute,
   WelcomeRoute: WelcomeRoute,
   BuildSplatRoute: BuildSplatRoute,

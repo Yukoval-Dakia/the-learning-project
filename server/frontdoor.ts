@@ -44,6 +44,7 @@ import { updateStartPracticeStreamItem } from './start/practice-stream-item-oper
 import { getStartPracticeStream } from './start/practice-stream-operation';
 import { recomposeStartPracticeStream } from './start/practice-stream-recompose-operation';
 import { readStartPlacementProfile } from './start/profile-reader';
+import { readStartRecordSessions } from './start/record-session-list-reader';
 import { saveStartResponseDraft } from './start/response-draft-operation';
 import { createStartHintRequest, createStartSolveSession } from './start/solve-operation';
 import { revealStartStudyReference } from './start/study-reference-operation';
@@ -88,6 +89,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     createIngestionSession: createStartIngestionSession,
+    readRecordSessions: readStartRecordSessions,
     readPapers: readStartPapers,
     startPaperSession,
     submitPaperSlot: submitStartPaperSlot,
