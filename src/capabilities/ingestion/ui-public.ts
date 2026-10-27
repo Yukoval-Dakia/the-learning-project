@@ -5,6 +5,7 @@ export const loadRecordPage = () =>
 export {
   buildRecordSessionCreateBody,
   projectRecordSessionCreateResponse,
+  projectRecordSessionDetailResponse,
   projectSessionBlocksResponse,
   projectSessionListResponse,
 } from './ui/record/record-api';

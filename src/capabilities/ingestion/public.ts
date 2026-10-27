@@ -29,6 +29,7 @@ export type {
 export { writeIngestionUsageReceipt } from './server/privacy-guard';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
 export { readIngestionSessionBlocks } from './server/session-blocks-read';
+export { readIngestionSessionDetail } from './server/session-detail';
 export { readIngestionSessions } from './server/session-list-read';
 export {
   bodyBlockSummaries,

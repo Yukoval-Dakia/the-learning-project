@@ -130,13 +130,19 @@ export const getHistory = (id: string) =>
     init: { cache: 'no-store' },
   });
 
+export function projectRecordSessionDetailResponse(
+  body: ApiOperationJsonResponse<'getIngestionSession'>,
+): SessionDetail {
+  return body as SessionDetail;
+}
+
 export async function getSession(id: string): Promise<SessionDetail> {
   const body = await apiOperationJson('getIngestionSession', {
     url: `/api/ingestion-sessions/${encodeURIComponent(id)}`,
     method: 'GET',
     init: { cache: 'no-store' },
   });
-  return body as SessionDetail;
+  return projectRecordSessionDetailResponse(body);
 }
 
 export function projectSessionBlocksResponse(
