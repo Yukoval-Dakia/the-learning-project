@@ -3853,6 +3853,14 @@
       "evidence": "The Start manual-mistake client imports the shared builder at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 before JSON serialization. The canonical HTTP helper uses the same builder in its original body position.",
       "rationale": "Ingestion UI owns its existing typed-question body mapping, including learner text and knowledge IDs, null reference and cause, difficulty 3, short_answer kind and empty image arrays. Both transports reuse those exact values without adding a schema, response projector, key or retry policy.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-27",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6033,6 +6041,36 @@
       "issue": "YUK-1358",
       "date": "2026-10-27",
       "owns": "Kernel owns learner-visible knowledge identity filtering. Ingestion owns the full recording-block and historical observation read and applies the same existing filter only to the observation's suggested knowledge IDs while preserving its tolerant field projection."
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the canonical ApiError for the unchanged Tutor not-found and solve-detail not-found results. Practice owns the complete ordered snapshot/binding/detail operation; preserve the two distinct 404 messages and failure priority, while HTTP retains its original errorResponse and JSON serialization.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the existing job-event persistence and notification mechanism at the original Tutor start and transition call sites. Practice owns the complete Tutor lifecycle; preserve caller-supplied Tx variants, start-owned transactions, FOR UPDATE, ID and clock order, version updates, event payloads and same-transaction event writes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/server/session/guards.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the existing shared allowed-state assertion and exact conflict error contract without copying or wrapping the guard. Practice owns Tutor from/to policy and transition timing; keep the assertion after the original locked read and before the original clock, UPDATE and same-transaction job event.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
@@ -6970,7 +7008,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 244,
+      "total": 243,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7026,7 +7064,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 6,
+        "practice -> session": 5,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,

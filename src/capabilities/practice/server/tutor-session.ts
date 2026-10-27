@@ -6,7 +6,7 @@ import { job_events, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 
-import { assertFromState } from './guards';
+import { assertFromState } from '@/server/session/guards';
 
 // LearningSession.Tutor.* — YUK-193 solve-tutor session (spec §3.1).
 //
@@ -183,5 +183,37 @@ export async function getTutorQuestionId(
     questionId: row.goal_id,
     status: row.status,
     ...(typeof issuanceId === 'string' ? { issuanceId } : {}),
+  };
+}
+
+/** Read the solve-session snapshot and its existing issuance correlation. */
+export async function readTutorSessionDetail(db: Db, sessionId: string) {
+  const rows = await db
+    .select({
+      id: learning_session.id,
+      type: learning_session.type,
+      status: learning_session.status,
+      question_id: learning_session.goal_id,
+      started_at: learning_session.started_at,
+      ended_at: learning_session.ended_at,
+      updated_at: learning_session.updated_at,
+    })
+    .from(learning_session)
+    .where(and(eq(learning_session.id, sessionId), eq(learning_session.type, 'tutor')))
+    .limit(1);
+  const session = rows[0];
+  if (!session) {
+    throw new ApiError('not_found', `solve session ${sessionId} not found`, 404);
+  }
+  const binding = await getTutorQuestionId(db, session.id);
+  return {
+    ...session,
+    ...(binding.issuanceId
+      ? {
+          issuance_id: binding.issuanceId,
+          evaluation_group_id: `solve_${session.id}`,
+          idempotency_key: `solve_${session.id}`,
+        }
+      : {}),
   };
 }
