@@ -5703,6 +5703,16 @@
       "issue": "YUK-1570",
       "owns": "Consume the existing pending proposal counter and ranked inbox page as one complete Copilot summary aggregation. Preserve batch and cap defaults, unknown-kind totals, lower-bound warning, Dreaming actor filter, preview ordering and original call timing; do not migrate proposal policy.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/overnight-handoff.ts",
+      "module": "src/server/today/overnight-digest.ts",
+      "kind": "value",
+      "symbols": ["LoadTodayOvernightDigest", "OvernightDigest", "loadTodayOvernightDigest"],
+      "issue": "YUK-1570",
+      "owns": "Consume the unchanged shared overnight digest facts and default dynamic Shell/Observability composition. Copilot owns its complete quiet/cost/degraded handoff sentence and original Promise rejection warning/unavailable policy; preserve the caller override snapshot and invocation order, synchronous throws, the shared default clock and cost-reader injection, and the distinct HTTP/Start error contracts.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
