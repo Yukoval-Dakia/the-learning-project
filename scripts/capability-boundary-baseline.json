@@ -3207,6 +3207,14 @@
       "rationale": "Practice owns the complete force-enable request: ID-before-body order, original reason schema and errors, the throwing no-dispatch guard, unchanged override gate invocation, not-found mapping and full promotion DTO. The transport does not decide override eligibility or reproduce promotion state."
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-27",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
       "type": "stable_contract",
       "siteKind": "site",
       "owner": "practice",
@@ -5295,6 +5303,26 @@
       "owns": "Server AI owns binding the canonical task runner to the host Db and its existing execution context. Practice owns when the complete normal draft enable operation constructs that binding and invokes the unchanged verification gate. Force-enable retains its throwing noRunTask guard and does not receive an executable runner."
     },
     {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-history-guard.ts",
+      "module": "src/kernel/records/knowledge-node-history.ts",
+      "kind": "value",
+      "symbols": ["gatherAndFoldKnowledgeNode", "knowledgeLiveRowToSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Own the existing strict pre-mutation knowledge-history check: gather the full history, reject a null fold, then compare the live structural snapshot against the fold. Preserve caller-owned row locks, Db or Tx, error text, embedding exclusion and all B/control call ordering.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/knowledge-node-materialization.ts",
+      "kind": "value",
+      "symbols": ["projectKnowledgeNodeGuarded"],
+      "issue": "YUK-1570",
+      "owns": "Consume the same canonical guarded knowledge projector formerly re-exported by server/projections/knowledge. Only the import source changes; preserve B policy, caller transaction, lock timing, all mutation ordering and the old-row guarded projection behavior.",
+      "date": "2026-10-27"
+    },
+    {
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
@@ -6250,7 +6278,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 271,
+      "total": 269,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -6283,7 +6311,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 5,
+        "knowledge -> projections": 3,
         "knowledge -> proposals": 3,
         "notes -> ai": 6,
         "notes -> artifacts": 2,
