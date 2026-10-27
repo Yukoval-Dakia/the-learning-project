@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { jobEventStreamResponse } from '@/server/events/sse_router';
+import { jobEventStreamResponse } from '@/kernel/job-event-stream';
 import { JOB_EVENT_KIND_SET } from './event-contracts';
 
 // Generic SSE tracker for job_events, keyed by business kind and id. The stream

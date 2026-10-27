@@ -4037,6 +4037,22 @@
       "evidence": "The authenticated Start opened host imports this complete request at await-import AST and module path line 22 and invokes it at line 24 with db and the original id params. The context reference is type-only; the retained HTTP handler is an internal consumer. The stable shell client reaches NudgeBar's existing void markOpened call before its immediate conversation-open action.",
       "rationale": "Copilot owns the complete opened-nudge request and fixes the original opened action inside the capability. Its shared private execution preserves schema, existence, new ID, event construction, unique-violation deduplication and response policy. Transport cannot choose an arbitrary event action or redefine opened versus dismissed identity.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> events",
+      "date": "2026-10-27",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> events",
+      "date": "2026-10-27",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7214,7 +7230,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 241,
+      "total": 239,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7233,7 +7249,6 @@
         "copilot -> today": 1,
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
-        "ingestion -> events": 1,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
         "ingestion -> questions": 9,
@@ -7254,7 +7269,6 @@
         "notes -> proposals": 1,
         "notes -> runtime-env": 1,
         "observability -> boss": 1,
-        "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
         "practice -> ai": 41,
