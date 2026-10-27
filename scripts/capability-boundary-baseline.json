@@ -3137,6 +3137,14 @@
       "from": 10,
       "to": 9,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> today",
+      "date": "2026-10-27",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5103,6 +5111,21 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/proposal-kpi.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": [
+        "PENDING_PROPOSAL_COUNT_BATCH_SIZE",
+        "PENDING_PROPOSAL_COUNT_MAX_BATCHES",
+        "ProposalStatus",
+        "countPendingProposalInboxByKind"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Own the complete workbench pending-proposal count projection, including known-kind zero fill, decision_total excluding C strength, shared scan-cap lower-bound signal and pending status. Preserve the original Db or Tx read, batch limits, defaults and A/B/C classification without deciding or mutating proposals.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/ingestion/server/pdf-upload-operation.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
@@ -6040,7 +6063,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 272,
+      "total": 271,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -6101,7 +6124,7 @@
         "shell -> proposals": 2,
         "shell -> records": 1,
         "shell -> subjects": 1,
-        "shell -> today": 3
+        "shell -> today": 2
       }
     },
     "serverToCapabilityDeep": {
