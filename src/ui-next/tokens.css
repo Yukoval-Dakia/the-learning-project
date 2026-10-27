@@ -303,6 +303,14 @@
   --un-md-sys-color-on-surface: #1d1b20;
   --un-md-sys-color-on-surface-variant: #49454f;
   --un-md-sys-color-outline-variant: #cac4d0;
+  --un-md-sys-color-surface: #fef7ff;
+  --un-md-sys-color-surface-container-lowest: #ffffff;
+  --un-md-sys-color-surface-container-low: #f7f2fa;
+  --un-md-sys-color-surface-container-high: #ece6f0;
+  --un-md-sys-color-surface-container-highest: #e6e0e9;
+  --un-md-sys-color-outline: #79747e;
+  --un-md-sys-color-error-container: #f9dedc;
+  --un-md-sys-color-on-error-container: #410e0b;
 
   --un-md-sys-typescale-headline-small-size: 1.5rem;
   --un-md-sys-typescale-headline-small-line-height: 2rem;
@@ -315,6 +323,14 @@
   --un-md-sys-typescale-title-medium-size: 1rem;
   --un-md-sys-typescale-title-medium-line-height: 1.5rem;
   --un-md-sys-typescale-title-medium-tracking: 0.0125rem;
+  --un-md-sys-typescale-body-large-size: 1rem;
+  --un-md-sys-typescale-body-large-line-height: 1.5rem;
+  --un-md-sys-typescale-body-large-tracking: 0.03125rem;
+  --un-md-sys-typescale-body-medium-size: 0.875rem;
+  --un-md-sys-typescale-body-medium-line-height: 1.25rem;
+  --un-md-sys-typescale-body-medium-tracking: 0.0125rem;
+  --un-md-sys-shape-extra-small: 4px;
+  --un-md-sys-shape-large: 16px;
   --un-md-sys-shape-full: 9999px;
   --un-md-sys-shape-small: 8px;
   --un-md-sys-shape-medium: 12px;
@@ -351,6 +367,14 @@
   --un-md-sys-color-on-surface: #e6e0e9;
   --un-md-sys-color-on-surface-variant: #cac4d0;
   --un-md-sys-color-outline-variant: #49454f;
+  --un-md-sys-color-surface: #141218;
+  --un-md-sys-color-surface-container-lowest: #0f0d13;
+  --un-md-sys-color-surface-container-low: #1d1b20;
+  --un-md-sys-color-surface-container-high: #2b2930;
+  --un-md-sys-color-surface-container-highest: #36343b;
+  --un-md-sys-color-outline: #938f99;
+  --un-md-sys-color-error-container: #8c1d18;
+  --un-md-sys-color-on-error-container: #f9dedc;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -364,5 +388,13 @@
     --un-md-sys-color-on-surface: #e6e0e9;
     --un-md-sys-color-on-surface-variant: #cac4d0;
     --un-md-sys-color-outline-variant: #49454f;
+    --un-md-sys-color-surface: #141218;
+    --un-md-sys-color-surface-container-lowest: #0f0d13;
+    --un-md-sys-color-surface-container-low: #1d1b20;
+    --un-md-sys-color-surface-container-high: #2b2930;
+    --un-md-sys-color-surface-container-highest: #36343b;
+    --un-md-sys-color-outline: #938f99;
+    --un-md-sys-color-error-container: #8c1d18;
+    --un-md-sys-color-on-error-container: #f9dedc;
   }
 }
