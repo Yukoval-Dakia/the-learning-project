@@ -2,7 +2,7 @@ import { Outlet, createFileRoute, useRouter, useRouterState } from '@tanstack/re
 import { Suspense, lazy } from 'react';
 import { LibraryClientProvider, loadQuestionLibraryPage } from '@/capabilities/practice/ui-public';
 import { startLibraryClient } from '../library-client';
-import { StartWorkbenchShell } from '../workbench-shell';
+import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() =>
   loadQuestionLibraryPage().then((defaultPage) => ({ default: defaultPage })),
@@ -25,7 +25,7 @@ function LibraryPage() {
         <Suspense>
           <Page
             searchStr={searchStr}
-            navigate={(to) => router.history.push(to)}
+            navigate={(to) => (to === '/record' ? startNavigate(to) : router.history.push(to))}
             replace={(href) => router.history.replace(href)}
           />
         </Suspense>
