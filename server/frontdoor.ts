@@ -13,6 +13,7 @@ import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
 import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
+import { readStartLibraryDrafts } from './start/library-draft-list-reader';
 import {
   enableStartLibraryDraft,
   forceEnableStartLibraryDraft,
@@ -100,6 +101,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     runLibraryServingAction: runStartLibraryServingAction,
     archiveLibraryQuestion: archiveStartLibraryQuestion,
     readLibraryDraftDetail: readStartLibraryDraftDetail,
+    readLibraryDrafts: readStartLibraryDrafts,
     enableLibraryDraft: enableStartLibraryDraft,
     forceEnableLibraryDraft: forceEnableStartLibraryDraft,
     getPracticeStream: getStartPracticeStream,
