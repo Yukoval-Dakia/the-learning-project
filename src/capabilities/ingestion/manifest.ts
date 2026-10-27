@@ -127,7 +127,11 @@ export const ingestionCapability = defineCapability({
         path: '/api/ingestion-sessions/[id]/history',
         operationId: 'getIngestionSessionHistory',
         request: { params: ApiIdParamsSchema },
-        responses: { 200: IngestionSessionHistoryResponseSchema, ...API_ERROR_RESPONSES },
+        responses: {
+          200: IngestionSessionHistoryResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/session-history').then((m) => m.GET),
