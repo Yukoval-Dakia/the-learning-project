@@ -177,21 +177,33 @@ export async function uploadPages(files: File[], onPage: (done: number) => void)
   return ids;
 }
 
-export async function createSession(input: {
+export type CreateRecordSessionInput = {
   entrypoint: Exclude<Entrypoint, 'docx'>;
   assetIds: string[];
   policy: UsePolicy;
-}): Promise<string> {
+};
+
+export function buildRecordSessionCreateBody(input: CreateRecordSessionInput) {
+  return {
+    entrypoint: input.entrypoint,
+    asset_ids: input.assetIds,
+    ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' as const } : {}),
+  };
+}
+
+export function projectRecordSessionCreateResponse(
+  body: ApiOperationJsonResponse<'createIngestionSession'>,
+): string {
+  return body.session.id;
+}
+
+export async function createSession(input: CreateRecordSessionInput): Promise<string> {
   const body = await apiOperationJson('createIngestionSession', {
     url: '/api/ingestion-sessions',
     method: 'POST',
-    body: {
-      entrypoint: input.entrypoint,
-      asset_ids: input.assetIds,
-      ...(input.policy === 'answer_only' ? { derivation_policy: 'answer_only' as const } : {}),
-    },
+    body: buildRecordSessionCreateBody(input),
   });
-  return body.session.id;
+  return projectRecordSessionCreateResponse(body);
 }
 
 export async function createDocxSession(file: File, policy: UsePolicy): Promise<string> {
