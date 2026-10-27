@@ -21,6 +21,7 @@ import { Route as NotesRouteImport } from './routes/notes'
 import { Route as PlacementRouteImport } from './routes/placement'
 import { Route as PracticeRouteImport } from './routes/practice'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as QuestionsRouteImport } from './routes/questions'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
@@ -99,6 +100,11 @@ const ProfileRoute = ProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QuestionsRoute = QuestionsRouteImport.update({
+  id: '/questions',
+  path: '/questions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TodayRoute = TodayRouteImport.update({
   id: '/today',
   path: '/today',
@@ -175,9 +181,9 @@ const OnboardingUploadRoute = OnboardingUploadRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const QuestionsIdRoute = QuestionsIdRouteImport.update({
-  id: '/questions/$id',
-  path: '/questions/$id',
-  getParentRoute: () => rootRouteImport,
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => QuestionsRoute,
 } as any)
 const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
   id: '/$id',
@@ -198,6 +204,7 @@ export interface FileRoutesByFullPath {
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
+  '/questions': typeof QuestionsRouteWithChildren
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -229,6 +236,7 @@ export interface FileRoutesByTo {
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
+  '/questions': typeof QuestionsRouteWithChildren
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -261,6 +269,7 @@ export interface FileRoutesById {
   '/placement': typeof PlacementRoute
   '/practice': typeof PracticeRoute
   '/profile': typeof ProfileRoute
+  '/questions': typeof QuestionsRouteWithChildren
   '/today': typeof TodayRoute
   '/welcome': typeof WelcomeRoute
   '/_build/$': typeof BuildSplatRoute
@@ -294,6 +303,7 @@ export interface FileRouteTypes {
     | '/placement'
     | '/practice'
     | '/profile'
+    | '/questions'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -325,6 +335,7 @@ export interface FileRouteTypes {
     | '/placement'
     | '/practice'
     | '/profile'
+    | '/questions'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -356,6 +367,7 @@ export interface FileRouteTypes {
     | '/placement'
     | '/practice'
     | '/profile'
+    | '/questions'
     | '/today'
     | '/welcome'
     | '/_build/$'
@@ -388,6 +400,7 @@ export interface RootRouteChildren {
   PlacementRoute: typeof PlacementRoute
   PracticeRoute: typeof PracticeRoute
   ProfileRoute: typeof ProfileRoute
+  QuestionsRoute: typeof QuestionsRouteWithChildren
   TodayRoute: typeof TodayRoute
   WelcomeRoute: typeof WelcomeRoute
   BuildSplatRoute: typeof BuildSplatRoute
@@ -401,7 +414,6 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   EventsIdRoute: typeof EventsIdRoute
   OnboardingUploadRoute: typeof OnboardingUploadRoute
-  QuestionsIdRoute: typeof QuestionsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -488,6 +500,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/questions': {
+      id: '/questions'
+      path: '/questions'
+      fullPath: '/questions'
+      preLoaderRoute: typeof QuestionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/today': {
@@ -597,10 +616,10 @@ declare module '@tanstack/react-router' {
     }
     '/questions/$id': {
       id: '/questions/$id'
-      path: '/questions/$id'
+      path: '/$id'
       fullPath: '/questions/$id'
       preLoaderRoute: typeof QuestionsIdRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof QuestionsRoute
     }
     '/admin/subjects/$id': {
       id: '/admin/subjects/$id'
@@ -634,6 +653,18 @@ const NotesRouteChildren: NotesRouteChildren = {
 
 const NotesRouteWithChildren = NotesRoute._addFileChildren(NotesRouteChildren)
 
+interface QuestionsRouteChildren {
+  QuestionsIdRoute: typeof QuestionsIdRoute
+}
+
+const QuestionsRouteChildren: QuestionsRouteChildren = {
+  QuestionsIdRoute: QuestionsIdRoute,
+}
+
+const QuestionsRouteWithChildren = QuestionsRoute._addFileChildren(
+  QuestionsRouteChildren,
+)
+
 interface AdminSubjectsRouteChildren {
   AdminSubjectsIdRoute: typeof AdminSubjectsIdRoute
 }
@@ -659,6 +690,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlacementRoute: PlacementRoute,
   PracticeRoute: PracticeRoute,
   ProfileRoute: ProfileRoute,
+  QuestionsRoute: QuestionsRouteWithChildren,
   TodayRoute: TodayRoute,
   WelcomeRoute: WelcomeRoute,
   BuildSplatRoute: BuildSplatRoute,
@@ -672,7 +704,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   EventsIdRoute: EventsIdRoute,
   OnboardingUploadRoute: OnboardingUploadRoute,
-  QuestionsIdRoute: QuestionsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

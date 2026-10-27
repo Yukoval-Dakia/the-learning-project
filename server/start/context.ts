@@ -28,6 +28,7 @@ import type {
   readJudgeRunStatus,
   readPaperList,
   readPlacementSession,
+  readPracticeQuestionList,
   readQuestionDetail,
   recomposePracticeStream,
   releaseHeldPlacement,
@@ -105,6 +106,9 @@ export type FrontdoorContext = {
     id: string,
   ) => Promise<Awaited<ReturnType<typeof readDraftReviewDetail>>>;
   readLibraryQuestionMistakes: (id: string) => Promise<Awaited<ReturnType<typeof readMistakes>>>;
+  readLibraryQuestions: (
+    query: string,
+  ) => Promise<Awaited<ReturnType<typeof readPracticeQuestionList>>>;
   restoreLibraryQuestion: (input: {
     id: string;
     body: string;

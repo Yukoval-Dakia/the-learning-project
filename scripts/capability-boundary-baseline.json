@@ -3213,6 +3213,66 @@
       "from": 5,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "siteKind": "site",
+      "owner": "practice",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "file": "src/capabilities/practice/public.ts",
+      "symbol": "readPracticeQuestionList",
+      "targetModule": "src/capabilities/practice/server/question-list-read.ts",
+      "targetSymbol": "readPracticeQuestionList",
+      "consumers": [
+        {
+          "file": "server/start/library-question-list-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 11 and invokes the complete list reader at line 13. The context reference is type-only; the original HTTP GET is an internal consumer of the same owner.",
+      "rationale": "Practice owns the complete question-list request: repeated query parameters and boolean parsing, original schema and errors, cursor compatibility, subject knowledge resolution, complete list options and the full collection payload. HTTP and Start adapt transport without reproducing filtering or pagination policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+    },
+    {
+      "type": "stable_contract",
+      "siteKind": "site",
+      "owner": "practice",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "symbol": "buildQuestionsListQuery",
+      "targetModule": "src/capabilities/practice/ui/practice-api.ts",
+      "targetSymbol": "buildQuestionsListQuery",
+      "consumers": [
+        {
+          "file": "server/start/library-question-list-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start list client imports the builder at ImportDeclaration AST line 1 and module path line 5, then calls it at line 14. The existing HTTP client continues using the unchanged same-file builder.",
+      "rationale": "Practice UI owns the existing list filter-to-query contract, including repeated values, enrich, omitted fields, search trimming and finite integer limit/offset normalization. Both transports reuse that exact builder rather than maintaining a second query codec.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+    },
+    {
+      "type": "stable_contract",
+      "siteKind": "site",
+      "owner": "practice",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "symbol": "projectQuestionsListResponse",
+      "targetModule": "src/capabilities/practice/ui/practice-api.ts",
+      "targetSymbol": "projectQuestionsListResponse",
+      "consumers": [
+        {
+          "file": "server/start/library-question-list-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start list client imports the projector at ImportDeclaration AST line 1 and module path line 5, then calls it at line 10 after parsing the complete JSON response. The HTTP client calls the same projector in its original response continuation.",
+      "rationale": "Practice UI owns the existing full-response spread and items/children projection. The shared projector preserves collection fields, pagination and serving counts and reuses the unchanged toQBankQuestion mapping without adding a second schema or recomputing page state.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
     }
   ],
   "edgeRecords": [
@@ -5261,6 +5321,43 @@
       "issue": "YUK-1570",
       "owns": "Consume the same canonical guarded knowledge projector formerly re-exported by server/projections/knowledge. Only the import source changes; preserve B policy, caller transaction, lock timing, all mutation ordering and the old-row guarded projection behavior.",
       "date": "2026-10-27"
+    },
+    {
+      "file": "src/capabilities/practice/server/question-list-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "collectionPayload"],
+      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the original list validation order and errors and supplies the complete list data, page and extension fields to that envelope.",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "debt": "capabilityToKernel"
+    },
+    {
+      "file": "src/capabilities/practice/server/question-list-read.ts",
+      "module": "src/kernel/read-models/knowledge-tree.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectKnowledgeIds"],
+      "owns": "Kernel owns the subject-to-knowledge read model. Practice owns invoking it before the question list and preserving the distinction between an absent subject filter and an empty resolved subject set.",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "debt": "capabilityToKernel"
+    },
+    {
+      "file": "src/capabilities/practice/server/question-list-read.ts",
+      "module": "src/kernel/read-models/questions.ts",
+      "kind": "value",
+      "symbols": [
+        "QuestionFamily",
+        "QuestionListDraftStatus",
+        "QuestionListItem",
+        "QuestionListSortBy",
+        "QuestionListSortDir",
+        "listQuestions"
+      ],
+      "owns": "Kernel owns the existing question list read model and result types. Practice owns the complete request policy, cursor compatibility, all original filters and serving options, and full collection projection without rewriting the underlying query or pagination algorithm.",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "debt": "capabilityToKernel"
     }
   ],
   "sourceSizeRecords": [
