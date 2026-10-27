@@ -2,5 +2,10 @@
 export const loadRecordPage = () =>
   import('./ui/record/RecordPage').then((module) => module.default);
 
-export { projectSessionBlocksResponse, projectSessionListResponse } from './ui/record/record-api';
+export {
+  buildRecordSessionCreateBody,
+  projectRecordSessionCreateResponse,
+  projectSessionBlocksResponse,
+  projectSessionListResponse,
+} from './ui/record/record-api';
 export { type RecordClient, RecordClientProvider } from './ui/record/record-client';
