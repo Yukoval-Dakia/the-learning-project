@@ -29,6 +29,7 @@ import {
   editingHeartbeat,
   getAiChanges,
   getNotePage,
+  questionsForKnowledge,
   saveBodyBlocks,
   searchArtifacts,
   undoAiChange,
@@ -170,6 +171,7 @@ export default function NoteReaderPage({
   readAiChanges = getAiChanges,
   undo = undoAiChange,
   searchReferences = searchArtifacts,
+  readQuestions = questionsForKnowledge,
 }: {
   id: string;
   navigate: (to: string) => void;
@@ -178,6 +180,7 @@ export default function NoteReaderPage({
   readAiChanges?: typeof getAiChanges;
   undo?: typeof undoAiChange;
   searchReferences?: typeof searchArtifacts;
+  readQuestions?: typeof questionsForKnowledge;
 }) {
   const qc = useQueryClient();
   const noteQ = useQuery({ queryKey: ['note-page', id], queryFn: () => read(id) });
@@ -492,6 +495,7 @@ export default function NoteReaderPage({
               onChange={setDraft}
               rootRef={editSessionRef}
               searchReferences={searchReferences}
+              readQuestions={readQuestions}
             />
           ) : (
             <NoteDocBody

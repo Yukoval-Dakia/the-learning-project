@@ -92,16 +92,24 @@ export type QuestionPickRow = Pick<QuestionListWire['items'][number], 'id' | 'ki
 
 // 题库无文本搜索参数——按笔记 labels 的知识点过滤（贴本笔记语境）。
 // 响应形 = ListQuestionsResult（items 轴，src/server/questions/list.ts）。
-export const questionsForKnowledge = (knowledgeIds: string[], limit = 20) => {
+export function buildNoteQuestionsQuery(knowledgeIds: string[], limit = 20): string {
   const sp = new URLSearchParams();
   for (const kid of knowledgeIds) sp.append('knowledge_id', kid);
   sp.set('limit', String(limit));
-  return apiOperationJson('listQuestions', {
-    url: `/api/questions?${sp.toString()}`,
-    method: 'GET',
-  }).then((response) => ({
+  return sp.toString();
+}
+
+export function projectNoteQuestionsResponse(response: QuestionListWire) {
+  return {
     items: response.items.map(({ id, kind, prompt_md }) => ({ id, kind, prompt_md })),
-  }));
+  };
+}
+
+export const questionsForKnowledge = (knowledgeIds: string[], limit = 20) => {
+  return apiOperationJson('listQuestions', {
+    url: `/api/questions?${buildNoteQuestionsQuery(knowledgeIds, limit)}`,
+    method: 'GET',
+  }).then(projectNoteQuestionsResponse);
 };
 
 // ── AI refine 痕迹（T5 验过的 ai-changes 链） ────────────────────
