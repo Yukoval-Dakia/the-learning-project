@@ -31,6 +31,7 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  getSummary: () => Promise<ApiOperationJsonResponse<'getTodayCopilotSummary'>>;
   /** Fresh server capabilities, including before restricted sends; never a cached snapshot. */
   listSessions: (signal?: AbortSignal) => Promise<CopilotSessionsResponse>;
   createSession: () => Promise<CopilotCreateSessionResponse>;
@@ -44,6 +45,8 @@ export type CopilotClient = {
 };
 
 export const httpCopilotClient: CopilotClient = {
+  getSummary: () =>
+    apiJson<ApiOperationJsonResponse<'getTodayCopilotSummary'>>('/api/today/copilot-summary'),
   listSessions: (signal) =>
     apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal, cache: 'no-store' }),
   createSession: () =>
