@@ -2,7 +2,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
-import { type Block, rescueBlock, revertBlock } from './record-api';
+import { type Block, rescueBlock } from './record-api';
+import { useRecordClient } from './record-client';
 import { recordKeys } from './recording-read';
 
 /** Takes a question the helper put in automatically back out, after one confirm. */
@@ -16,6 +17,7 @@ export function RevertButton({
   /** Held while a review is being recorded, like 再认一次. */
   disabled?: boolean;
 }) {
+  const { revertBlock } = useRecordClient();
   const [asking, setAsking] = useState(false);
   const qc = useQueryClient();
   const undo = useMutation({

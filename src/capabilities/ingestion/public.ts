@@ -1,7 +1,8 @@
 // Stable server contract for consumers outside the ingestion capability.
 
 export type { MistakeProjection } from './api/contracts';
-export { CreateIngestionSessionBody } from './api/contracts';
+export { CreateIngestionSessionBody, CreateMistakeBodySchema } from './api/contracts';
+export { answerIngestionAsk } from './server/agent/asks';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
 export {
   ColdStartBridgeError,
@@ -9,6 +10,7 @@ export {
 } from './server/cold-start-bridge';
 // Ingestion-owned config keys expose consumer-effective facts to the admin config seam.
 export { ingestionConfigEffectiveFacts } from './server/config-effective-facts';
+export { createManualMistake } from './server/create-manual-mistake';
 export { createIngestionSession } from './server/create-session';
 export type {
   ImageCandidateAcceptDeps,
@@ -28,7 +30,9 @@ export type {
 } from './server/privacy-guard';
 export { writeIngestionUsageReceipt } from './server/privacy-guard';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
+export { revertIngestionBlock } from './server/revert-auto-enroll';
 export { readIngestionSessionBlocks } from './server/session-blocks-read';
+export { readIngestionSessionDetail } from './server/session-detail';
 export { readIngestionSessions } from './server/session-list-read';
 export {
   bodyBlockSummaries,

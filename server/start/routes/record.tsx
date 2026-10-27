@@ -5,15 +5,25 @@ import {
   RecordClientProvider,
   loadRecordPage,
 } from '@/capabilities/ingestion/ui-public';
+import { startRecordAskAnswerClient } from '../record-ask-answer-client';
 import { startRecordBlocksClient } from '../record-blocks-client';
+import { startRecordManualMistakeClient } from '../record-manual-mistake-client';
+import { startRecordRevertClient } from '../record-revert-client';
+import { startRecordSessionCreateClient } from '../record-session-create-client';
+import { startRecordSessionDetailClient } from '../record-session-detail-client';
 import { startRecordSessionsClient } from '../record-session-list-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
 
 const recordClient: RecordClient = {
+  answerAsk: startRecordAskAnswerClient,
   listSessions: startRecordSessionsClient,
   listBlocks: startRecordBlocksClient,
   listKnowledge: () => startWorkbenchClient.getTree().then((result) => result.rows),
+  createSession: startRecordSessionCreateClient,
+  getSession: startRecordSessionDetailClient,
+  createWrongAnswer: startRecordManualMistakeClient,
+  revertBlock: startRecordRevertClient,
 };
 const Page = lazy(() => loadRecordPage().then((defaultPage) => ({ default: defaultPage })));
 export const Route = createFileRoute('/record')({

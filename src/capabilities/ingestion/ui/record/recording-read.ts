@@ -10,7 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useIngestionSSE } from '@/ui/lib/sse';
-import { getHistory, getSession } from './record-api';
+import { type getSession as GetSession, getHistory } from './record-api';
 import { useRecordClient } from './record-client';
 import { useStartState } from './record-start';
 import { foldLive } from './recording-live';
@@ -29,7 +29,7 @@ export const recordKeys = {
 
 export interface RecordingRead {
   recording: Recording;
-  detail: Awaited<ReturnType<typeof getSession>> | undefined;
+  detail: Awaited<ReturnType<typeof GetSession>> | undefined;
   /** The server's title for this recording; null today for most material. */
   title: string | null;
   failedToLoad: boolean;
@@ -37,7 +37,7 @@ export interface RecordingRead {
 }
 
 export function useRecording(id: string): RecordingRead {
-  const { listBlocks } = useRecordClient();
+  const { listBlocks, getSession } = useRecordClient();
   const start = useStartState(id);
   const detailQ = useQuery({
     queryKey: recordKeys.session(id),

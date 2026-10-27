@@ -3713,6 +3713,234 @@
       "evidence": "The Start blocks client imports the projector at ImportDeclaration AST line 1 and module path line 4 and invokes it at line 9 after complete JSON parsing. The existing HTTP helper calls the same projector in its original return position.",
       "rationale": "Ingestion UI owns the original body.rows as Block[] projection. Both transports reuse that exact projection without introducing a second codec, trimming wire fields or changing the recording status gates and query lifecycle.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildRecordSessionCreateBody",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "buildRecordSessionCreateBody",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-create-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start recording-create client imports the builder at ImportDeclaration AST line 1 and module path line 5 and calls it at line 14 before JSON serialization. The canonical HTTP helper calls the same builder in its original body position.",
+      "rationale": "Ingestion UI owns its recording-create input mapping: unchanged entrypoint, assetIds to asset_ids and the answer_only-only derivation_policy spread. Sharing that mapping preserves field omission and values across the HTTP and Start transports without adding a schema, key or retry policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectRecordSessionCreateResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectRecordSessionCreateResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-create-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start recording-create client imports the projector at ImportDeclaration AST line 1 and module path line 5 and invokes it at line 10 after complete JSON parsing. The canonical HTTP helper calls the same projector in its original return position.",
+      "rationale": "Ingestion UI owns the existing body.session.id projection used by both initial send and manual retry. The shared projector preserves that narrow consumer result while the existing creation owner and transport retain terminal errors, Location and replay metadata; it does not promise safe replay for this unkeyed caller.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessionDetail",
+      "targetModule": "src/capabilities/ingestion/server/session-detail.ts",
+      "targetSymbol": "readIngestionSessionDetail",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-detail-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and invokes the complete session-detail reader at line 12. The context reference is type-only; the existing HTTP handler remains an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the session and its complete trusted usage receipts plus live derivation policy in one repeatable-read, read-only snapshot. The existing owner retains identity, not-found and accounting-error rules, unknown/null semantics and the full projection; Start transports that result without splitting the read or recreating privacy accounting.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectRecordSessionDetailResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectRecordSessionDetailResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-detail-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start session-detail client imports the projector at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 after complete JSON parsing. The HTTP helper calls the same projector in its original return position and retains its no-store request.",
+      "rationale": "Ingestion UI owns its existing body-as-SessionDetail projection. Sharing that exact projection preserves all session and usage fields across transports while retaining the recording query's status gates and polling cadence; the narrow TypeScript view does not trim the wire or synthesize unavailable accounting.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "CreateMistakeBodySchema",
+      "targetModule": "src/capabilities/ingestion/api/contracts.ts",
+      "targetSymbol": "CreateMistakeBodySchema",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports the existing request schema at await-import AST line 20 and module path line 21 and parses the request at line 23. The HTTP handler consumes the same schema internally; no second payload codec is introduced.",
+      "rationale": "Ingestion owns the manual-mistake creation input contract, including null, default and strip behavior. The Start adapter reuses that exact schema and HTTP issue formatting before invoking the complete owner, without changing learner content or key policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "createManualMistake",
+      "targetModule": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "targetSymbol": "createManualMistake",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports createManualMistake at await-import AST line 20 and module path line 21 and calls the complete operation at line 31 with the parsed body and actual request key. Context use is type-only; HTTP remains an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the complete manual creation and receipt transaction: live knowledge, subject/cause and asset checks, original identities, question publication and frozen evidence, attempt and learning-record writes, terminal result and keyed replay. Start preserves that operation and its 201 body and metadata without copying SQL, splitting transactions or inventing replay for the unkeyed UI.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildRecordManualMistakeBody",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "buildRecordManualMistakeBody",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start manual-mistake client imports the shared builder at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 before JSON serialization. The canonical HTTP helper uses the same builder in its original body position.",
+      "rationale": "Ingestion UI owns its existing typed-question body mapping, including learner text and knowledge IDs, null reference and cause, difficulty 3, short_answer kind and empty image arrays. Both transports reuse those exact values without adding a schema, response projector, key or retry policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-27",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "revertIngestionBlock",
+      "targetModule": "src/capabilities/ingestion/server/revert-auto-enroll.ts",
+      "targetSymbol": "revertIngestionBlock",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-revert-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports the complete request entry at await-import AST and module path line 20 and invokes it at line 22 with the unchanged session ID and decoded raw body. The context reference is type-only; HTTP is an internal consumer of the same entry.",
+      "rationale": "Ingestion owns the complete auto-enrollment revert request: original body schema and message-only errors, block/session/reason mapping and the existing full revert operation. That operation retains its transaction, guards, capture withdrawal, correction event, record archive and block restoration; callers do not duplicate validation or recovery orchestration.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b5b930-fc1d-45e5-a00a-c16d68ef3b8c"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "answerIngestionAsk",
+      "targetModule": "src/capabilities/ingestion/server/agent/asks.ts",
+      "targetSymbol": "answerIngestionAsk",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-ask-answer-operation.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "The authenticated Start host imports the complete ask-answer request at await-import AST and module path line 16 and invokes it at line 18 with the original session/ask IDs, actual request header and delayed JSON decoder. The context reference is type-only; the canonical HTTP handler is an internal consumer of the same entry.",
+      "rationale": "Ingestion owns the complete durable ask-answer request: original ID presence checks, header trim and schema, delayed JSON/body validation and the existing complete acceptance operation. The existing acceptance owner retains ask locking, answer fingerprint replay, active-run checks, transactional claim/resolution/history/resume marker and post-commit dispatch; HTTP and Start callers do not duplicate those decisions.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-1443f795-41de-40b0-b67f-c5e42ae303dd"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/ui-public.ts",
+      "siteKind": "site",
+      "targetModule": "src/capabilities/notes/ui/notes-api.ts",
+      "owner": "notes",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/note-question-list-client.ts",
+          "line": 1
+        }
+      ],
+      "symbol": "buildNoteQuestionsQuery",
+      "targetSymbol": "buildNoteQuestionsQuery",
+      "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 14 before invoking the existing complete library question-list function. NoteQuestionListClient is type-only; the Notes HTTP helper is an internal consumer.",
+      "rationale": "Notes owns the existing question-reference consumer's request projection: append every knowledge_id in its original order and preserve the default limit 20 and String(limit). Sharing this exact builder keeps HTTP and Start aligned without adopting the library UI builder's enrich=true or limit normalization.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/ui-public.ts",
+      "siteKind": "site",
+      "targetModule": "src/capabilities/notes/ui/notes-api.ts",
+      "owner": "notes",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/note-question-list-client.ts",
+          "line": 1
+        }
+      ],
+      "symbol": "projectNoteQuestionsResponse",
+      "targetSymbol": "projectNoteQuestionsResponse",
+      "evidence": "The Start note question-list adapter imports this value in the ImportDeclaration at AST line 1 (module path line 5) and calls it at line 10 after parsing the complete JSON returned by the existing library question-list function. The Notes HTTP helper consumes the same projector internally.",
+      "rationale": "Notes owns the existing question-reference response projection: map response.items to the unchanged id, kind and prompt_md fields. The shared projector preserves the same consumer result over HTTP and Start while the canonical Practice reader continues to own validation, filtering, pagination and the full collection.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f1f81a5e-0c7e-4352-b2c4-3f2cd8f637f6"
     }
   ],
   "edgeRecords": [
@@ -5895,6 +6123,36 @@
       "owns": "Kernel owns learner-visible knowledge identity filtering. Ingestion owns the full recording-block and historical observation read and applies the same existing filter only to the observation's suggested knowledge IDs while preserving its tolerant field projection."
     },
     {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the canonical ApiError for the unchanged Tutor not-found and solve-detail not-found results. Practice owns the complete ordered snapshot/binding/detail operation; preserve the two distinct 404 messages and failure priority, while HTTP retains its original errorResponse and JSON serialization.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the existing job-event persistence and notification mechanism at the original Tutor start and transition call sites. Practice owns the complete Tutor lifecycle; preserve caller-supplied Tx variants, start-owned transactions, FOR UPDATE, ID and clock order, version updates, event payloads and same-transaction event writes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/tutor-session.ts",
+      "module": "src/server/session/guards.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "Reuse the existing shared allowed-state assertion and exact conflict error contract without copying or wrapping the guard. Practice owns Tutor from/to policy and transition timing; keep the assertion after the original locked read and before the original clock, UPDATE and same-transaction job event.",
+      "date": "2026-10-27"
+    },
+    {
       "debt": "capabilityToServer",
       "file": "src/capabilities/copilot/server/overnight-handoff.ts",
       "module": "src/server/today/overnight-digest.ts",
@@ -6840,7 +7098,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 244,
+      "total": 243,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -6896,7 +7154,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 6,
+        "practice -> session": 5,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,

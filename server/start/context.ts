@@ -1,10 +1,14 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
 import type {
+  answerIngestionAsk,
   createIngestionSession,
+  createManualMistake,
   readIngestionSessionBlocks,
+  readIngestionSessionDetail,
   readIngestionSessions,
   readMistakes,
+  revertIngestionBlock,
 } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
@@ -63,7 +67,26 @@ export type FrontdoorContext = {
     idempotencyKey: string | null;
   }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
+  answerRecordAsk: (input: {
+    sessionId: string;
+    askId: string;
+    body: string;
+    key: string | null;
+  }) => Promise<Awaited<ReturnType<typeof answerIngestionAsk>>>;
+  revertRecordBlock: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof revertIngestionBlock>>>;
+  createRecordManualMistake: (input: {
+    body: string;
+    key: string | null;
+  }) => Promise<
+    Extract<Awaited<ReturnType<typeof createManualMistake>>, { body: { mistake_id: string } }>
+  >;
   readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
+  readRecordSessionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
   readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
   createIngestionSession: (input: {
     body: string;
