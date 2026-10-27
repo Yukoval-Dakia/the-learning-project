@@ -28,6 +28,7 @@ export type {
 } from './server/privacy-guard';
 export { writeIngestionUsageReceipt } from './server/privacy-guard';
 export type { BlockMergeAcceptResult } from './server/proposal-appliers';
+export { readIngestionSessions } from './server/session-list-read';
 export {
   bodyBlockSummaries,
   excerpt,
