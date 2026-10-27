@@ -166,9 +166,12 @@ pnpm smoke:local
 `src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
 配置保存、运行时配置解析（task opt-in、Memory LLM、provider `/models` 端点）与
 adapter 启动都过同一道可运行性门（`createLoomPiModels().getModel`，同步读面为
-`executablePiModel`）；task、global 和 pin 设置均先校验必需事实，再校验任务能力，
-不接受保存成功但无法启动的模型。
-目录缺失的四个旧模型以固定 main 快照补缺，Grok 另有已封存实测；这些依据不等同于新的付费准入。
+`executablePiModel`）；task、global 和 pin 设置先校验必需事实，再校验任务能力。
+该门只覆盖目录事实与任务能力——凭据缺失、工具挂载为空或 effort 双设仍会在启动期
+失败，保存通过不保证启动成功。
+目录缺失的四个旧模型以固定 main 快照补缺，三个 OpenCode Go 旧模型的端点钉在
+overrides 兜底；Grok 的封存实测仅覆盖单任务 text/reasoning，端点、限额与 image
+输入未实测。这些依据不等同于新的付费准入。
 压缩沿用 85% 触发、60% 裁剪目标，基数为目录 context 与显式 input 上限的较小值，
 取整后至少为 1；最新工具结果与其调用成组保留，即使该组超出裁剪目标。
 请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。
