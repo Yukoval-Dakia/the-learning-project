@@ -7,6 +7,7 @@ import type {
   loadCopilotSummary,
   markCopilotNudgeOpened,
   readCopilotSessions,
+  readCopilotTurns,
 } from '@/capabilities/copilot/public';
 import type {
   answerIngestionAsk,
@@ -65,6 +66,7 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  readCopilotTurns: (query: string) => Promise<Awaited<ReturnType<typeof readCopilotTurns>>>;
   createCopilotSession: () => Promise<Awaited<ReturnType<typeof createCopilotSession>>>;
   readCopilotSessions: () => Promise<Awaited<ReturnType<typeof readCopilotSessions>>>;
   dismissCopilotNudge: (id: string) => Promise<Awaited<ReturnType<typeof dismissCopilotNudge>>>;

@@ -10,6 +10,7 @@ export {
   type CopilotCreateSessionResponse,
   type CopilotSessionsResponse,
   type CopilotTurnsResponse,
+  buildCopilotTurnsQuery,
   httpCopilotClient,
   useCopilotClient,
 } from './ui/copilot-client';
