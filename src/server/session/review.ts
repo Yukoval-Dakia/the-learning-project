@@ -7,7 +7,7 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 
-import { assertFromState } from './guards';
+import { assertFromState } from '@/kernel/learning-session-guard';
 
 // LearningSession.Review.* — Phase 1c.1 Step 5 minimal state envelope.
 //

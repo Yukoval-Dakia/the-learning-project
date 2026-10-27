@@ -3981,6 +3981,22 @@
       "evidence": "The authenticated Start nudge reader imports this complete owner at await-import AST and module path line 11 and invokes it at line 13 with db and no now argument. The context reference is type-only; the retained HTTP handler is an internal consumer. The existing shell CopilotClientProvider reaches the always-mounted CompanionMount nudge query, and RootShell observes the same query key for its badge.",
       "rationale": "Copilot owns the complete active-nudge read: original event eligibility, shadow and expiry predicates, consumed-event exclusion, created_at/id ordering, current active-practice backstop, six-field ISO projection and interrupt-sensitive filtering. HTTP and Start reuse this owner and the full nudges envelope without copying policy or adding pagination, configuration, transactions or alternate timing.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-2e5ddacf-dcbb-427f-a083-3f68e8eee5f8"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> session",
+      "date": "2026-10-27",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-27",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7138,7 +7154,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 243,
+      "total": 241,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7163,7 +7179,6 @@
         "ingestion -> questions": 9,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
-        "ingestion -> session": 1,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
@@ -7194,7 +7209,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 5,
+        "practice -> session": 4,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,

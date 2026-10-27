@@ -7,7 +7,7 @@ import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 
-import { assertFromState } from './guards';
+import { assertFromState } from '@/kernel/learning-session-guard';
 
 // LearningSession.Placement.* — cold-start inc-B (YUK-468) bounded first-session
 // envelope (docs/design/2026-06-20-cold-start-day-one-design.md §2 步骤3 / §5 inc-B).
