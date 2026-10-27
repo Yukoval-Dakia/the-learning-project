@@ -21,6 +21,7 @@ export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-acti
 export { loadActiveNudges } from './server/nudge-read';
 // memory-brief reader for non-LLM read paths (today summary, demos).
 export { MEMORY_BRIEF_STALE_AFTER_MS, executeMemoryBrief } from './server/tools/memory-brief';
+export { readCopilotTurns } from './server/turns-request';
 
 // task composition uses the narrow task-public entry directly.
 export { copilotTaskSpecs } from './task-public';

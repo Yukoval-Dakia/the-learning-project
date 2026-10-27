@@ -8,9 +8,11 @@ import { getStartCopilotNudgesFunction } from './copilot-nudges-function';
 import { startCopilotCreateSessionClient } from './copilot-session-create-client';
 import { startCopilotSessionsClient } from './copilot-sessions-client';
 import { getStartCopilotSummaryFunction } from './copilot-summary-function';
+import { startCopilotTurnsClient } from './copilot-turns-client';
 
 export const startCopilotClient: CopilotClient = {
   ...httpCopilotClient,
+  listTurns: startCopilotTurnsClient,
   createSession: startCopilotCreateSessionClient,
   listSessions: startCopilotSessionsClient,
   dismissNudge: async (id) => {
