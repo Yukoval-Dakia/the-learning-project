@@ -3861,6 +3861,26 @@
       "from": 6,
       "to": 5,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "revertIngestionBlock",
+      "targetModule": "src/capabilities/ingestion/server/revert-auto-enroll.ts",
+      "targetSymbol": "revertIngestionBlock",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-revert-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports the complete request entry at await-import AST and module path line 20 and invokes it at line 22 with the unchanged session ID and decoded raw body. The context reference is type-only; HTTP is an internal consumer of the same entry.",
+      "rationale": "Ingestion owns the complete auto-enrollment revert request: original body schema and message-only errors, block/session/reason mapping and the existing full revert operation. That operation retains its transaction, guards, capture withdrawal, correction event, record archive and block restoration; callers do not duplicate validation or recovery orchestration.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b5b930-fc1d-45e5-a00a-c16d68ef3b8c"
     }
   ],
   "edgeRecords": [
