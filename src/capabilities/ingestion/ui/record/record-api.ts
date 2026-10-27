@@ -2,7 +2,13 @@
 // src/capabilities/ingestion/manifest.ts; no learner rules live here.
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { ApiError, type ApiOperationJsonResponse, apiFetch, apiOperationJson } from '@/ui/lib/api';
+import {
+  ApiError,
+  type ApiOperationJsonResponse,
+  type ApiOperationRequestBody,
+  apiFetch,
+  apiOperationJson,
+} from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import {
   type IngestionOperationResource,
@@ -288,24 +294,32 @@ export async function revertBlock(id: string, blockId: string) {
   });
 }
 
-export async function createWrongAnswer(input: {
+export type RecordManualMistakeInput = {
   prompt: string;
   answer: string;
   knowledgeIds: string[];
-}) {
+};
+
+export function buildRecordManualMistakeBody(
+  input: RecordManualMistakeInput,
+): ApiOperationRequestBody<'createMistake'> {
+  return {
+    prompt_md: input.prompt,
+    reference_md: null,
+    wrong_answer_md: input.answer,
+    knowledge_ids: input.knowledgeIds,
+    cause: null,
+    difficulty: 3,
+    question_kind: 'short_answer',
+    prompt_image_refs: [],
+    wrong_answer_image_refs: [],
+  };
+}
+
+export async function createWrongAnswer(input: RecordManualMistakeInput) {
   return apiOperationJson('createMistake', {
     url: '/api/mistakes',
     method: 'POST',
-    body: {
-      prompt_md: input.prompt,
-      reference_md: null,
-      wrong_answer_md: input.answer,
-      knowledge_ids: input.knowledgeIds,
-      cause: null,
-      difficulty: 3,
-      question_kind: 'short_answer',
-      prompt_image_refs: [],
-      wrong_answer_image_refs: [],
-    },
+    body: buildRecordManualMistakeBody(input),
   });
 }
