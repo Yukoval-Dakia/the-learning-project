@@ -2,7 +2,8 @@
 // design: docs/design/2026-07-07-yuk577-proactive-triggers.md §4. 新文件，零撞车。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch, apiJson } from '@/ui/lib/api';
+import { apiFetch } from '@/ui/lib/api';
+import { useCopilotClient } from './copilot-client';
 
 export interface CopilotNudge {
   id: string;
@@ -30,10 +31,11 @@ export interface UseCopilotNudgesResult {
 }
 
 export function useCopilotNudges(): UseCopilotNudgesResult {
+  const { getNudges } = useCopilotClient();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: NUDGES_KEY,
-    queryFn: () => apiJson<{ nudges: CopilotNudge[] }>('/api/copilot/nudges'),
+    queryFn: () => getNudges(),
     // nudge 极稀（一次 ingestion / streak 才一条）；低频轮询即可，不给后端压力。
     refetchInterval: 60_000,
   });

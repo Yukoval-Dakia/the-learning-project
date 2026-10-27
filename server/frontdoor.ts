@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
+import { readStartCopilotNudges } from './start/copilot-nudges-reader';
 import { readStartCopilotSummary } from './start/copilot-summary-reader';
 import { createStartGoal } from './start/goal-create-operation';
 import { createStartIngestionSession } from './start/ingestion-session-create-operation';
@@ -93,6 +94,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   );
   const context: FrontdoorContext = {
     api,
+    readCopilotNudges: readStartCopilotNudges,
     readCopilotSummary: readStartCopilotSummary,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     createIngestionSession: createStartIngestionSession,
