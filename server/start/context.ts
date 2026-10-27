@@ -31,6 +31,7 @@ import type {
   releaseHeldPlacement,
   restorePracticeQuestion,
   revealFrozenStudyReference,
+  runPracticeServingAction,
   saveResponseDraft,
   selectNextPlacementQuestion,
   startPlacementProbe,
@@ -43,6 +44,10 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  runLibraryServingAction: (input: {
+    path: string;
+    idempotencyKey: string | null;
+  }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
   createIngestionSession: (input: {
     body: string;

@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/ui/lib/api';
 import { showToast } from '@/ui-next/feedback/toast-store';
 import { type QuestionPatchBody, enableDraft, forceEnableDraft } from '../practice-api';
-import { type ServingAction, runServingAction } from './library-api';
+import type { ServingAction } from './library-api';
 import { type LibraryClient, useLibraryClient } from './library-client';
 import { LIBRARY_KEY } from './use-library';
 
@@ -31,6 +31,7 @@ export function writeErrorText(err: unknown): string {
 
 /** Run the one release action the server offers (same idempotency key on network retries). */
 export function useServingAction() {
+  const { runServingAction } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: ({ action, key }: { action: ServingAction; key: string }) =>

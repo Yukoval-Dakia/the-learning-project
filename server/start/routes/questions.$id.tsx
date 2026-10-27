@@ -11,10 +11,12 @@ import { startLibraryQuestionDetailClient } from '../library-question-detail-cli
 import { startLibraryQuestionMistakesClient } from '../library-question-mistakes-client';
 import { startLibraryQuestionRestoreClient } from '../library-question-restore-client';
 import { startLibraryQuestionUpdateClient } from '../library-question-update-client';
+import { startLibraryServingActionClient } from '../library-serving-action-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const libraryClient: LibraryClient = {
+  runServingAction: startLibraryServingActionClient,
   deleteQuestion: startLibraryQuestionDeleteClient,
   patchQuestion: startLibraryQuestionUpdateClient,
   restoreQuestion: startLibraryQuestionRestoreClient,

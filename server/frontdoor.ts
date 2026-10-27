@@ -18,6 +18,7 @@ import { readStartLibraryQuestionDetail } from './start/library-question-detail-
 import { readStartLibraryQuestionMistakes } from './start/library-question-mistakes-reader';
 import { restoreStartLibraryQuestion } from './start/library-question-restore-operation';
 import { updateStartLibraryQuestion } from './start/library-question-update-operation';
+import { runStartLibraryServingAction } from './start/library-serving-action-operation';
 import { readStartPaperDetail } from './start/paper-detail-reader';
 import { endStartPaperSession } from './start/paper-end-operation';
 import { startPaperSession } from './start/paper-start-operation';
@@ -90,6 +91,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readLibraryQuestionMistakes: readStartLibraryQuestionMistakes,
     restoreLibraryQuestion: restoreStartLibraryQuestion,
     updateLibraryQuestion: updateStartLibraryQuestion,
+    runLibraryServingAction: runStartLibraryServingAction,
     archiveLibraryQuestion: archiveStartLibraryQuestion,
     readLibraryDraftDetail: readStartLibraryDraftDetail,
     getPracticeStream: getStartPracticeStream,

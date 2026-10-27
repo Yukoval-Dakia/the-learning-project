@@ -19,33 +19,12 @@
 // mirrors the sibling question routes (zod, ApiError, errorResponse).
 
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { runServingAction } from '../server/serving-actions';
-import { QuestionServingActionParamsSchema } from './question-solve-contracts';
+import { errorResponse } from '@/kernel/http';
+import { runPracticeServingAction } from '../server/serving-action-operation';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const parsedParams = QuestionServingActionParamsSchema.safeParse(params);
-    if (!parsedParams.success) {
-      throw new ApiError(
-        'validation_error',
-        'expected /api/questions/[id]/serving-actions/[reverify|recheck_source|release_verify_hold]',
-        400,
-      );
-    }
-    const idempotencyKey = req.headers.get('idempotency-key')?.trim();
-    if (!idempotencyKey) {
-      throw new ApiError('validation_error', 'Idempotency-Key header is required', 400);
-    }
-    if (idempotencyKey.length > 200) {
-      throw new ApiError('validation_error', 'Idempotency-Key exceeds 200 characters', 400);
-    }
-
-    const result = await runServingAction(db, {
-      questionId: parsedParams.data.id,
-      command: parsedParams.data.command,
-      idempotencyKey,
-    });
+    const result = await runPracticeServingAction(db, params, req.headers.get('idempotency-key'));
     return Response.json(result);
   } catch (err) {
     return errorResponse(err);

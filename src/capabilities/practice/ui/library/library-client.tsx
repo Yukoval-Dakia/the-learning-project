@@ -6,9 +6,10 @@ import {
   getQuestionKnowledgeOptions,
   patchQuestion,
 } from '../practice-api';
-import { listQuestionMistakes, restoreQuestion } from './library-api';
+import { listQuestionMistakes, restoreQuestion, runServingAction } from './library-api';
 
 export type LibraryClient = {
+  runServingAction: typeof runServingAction;
   deleteQuestion: typeof deleteQuestion;
   patchQuestion: typeof patchQuestion;
   restoreQuestion: typeof restoreQuestion;
@@ -18,6 +19,7 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  runServingAction,
   deleteQuestion,
   patchQuestion,
   restoreQuestion,
