@@ -2,7 +2,6 @@
 // design: docs/design/2026-07-07-yuk577-proactive-triggers.md §4. 新文件，零撞车。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/ui/lib/api';
 import { useCopilotClient } from './copilot-client';
 
 export interface CopilotNudge {
@@ -31,7 +30,7 @@ export interface UseCopilotNudgesResult {
 }
 
 export function useCopilotNudges(): UseCopilotNudgesResult {
-  const { getNudges } = useCopilotClient();
+  const { getNudges, dismissNudge, markNudgeOpened } = useCopilotClient();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: NUDGES_KEY,
@@ -43,13 +42,13 @@ export function useCopilotNudges(): UseCopilotNudgesResult {
   // useMutation gives isPending so the dock can disable 看看/× during the POST — the DB
   // companion unique index (0061) is the hard idempotency backstop; this is the UX soft gate.
   const dismissM = useMutation({
-    mutationFn: (id: string) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
+    mutationFn: (id: string) => dismissNudge(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: NUDGES_KEY });
     },
   });
   const openedM = useMutation({
-    mutationFn: (id: string) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
+    mutationFn: (id: string) => markNudgeOpened(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: NUDGES_KEY });
     },

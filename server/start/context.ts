@@ -1,6 +1,11 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
-import type { loadActiveNudges, loadCopilotSummary } from '@/capabilities/copilot/public';
+import type {
+  dismissCopilotNudge,
+  loadActiveNudges,
+  loadCopilotSummary,
+  markCopilotNudgeOpened,
+} from '@/capabilities/copilot/public';
 import type {
   answerIngestionAsk,
   createIngestionSession,
@@ -58,6 +63,10 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  dismissCopilotNudge: (id: string) => Promise<Awaited<ReturnType<typeof dismissCopilotNudge>>>;
+  markCopilotNudgeOpened: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof markCopilotNudgeOpened>>>;
   readCopilotNudges: () => Promise<{ nudges: Awaited<ReturnType<typeof loadActiveNudges>> }>;
   readCopilotSummary: () => Promise<Awaited<ReturnType<typeof loadCopilotSummary>>>;
   enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
