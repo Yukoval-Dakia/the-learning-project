@@ -10,6 +10,7 @@ import type {
   readCopilotSessions,
   readCopilotTurns,
   requestCopilotCheckpointRevert,
+  requestTeachingChipAcceptance,
 } from '@/capabilities/copilot/public';
 import type {
   answerIngestionAsk,
@@ -68,6 +69,10 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  acceptTeachingChip: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof requestTeachingChipAcceptance>>>;
   revertCopilotCheckpoint: (
     checkpointEventId: string,
   ) => Promise<Awaited<ReturnType<typeof requestCopilotCheckpointRevert>>>;

@@ -10,10 +10,12 @@ import { getStartCopilotNudgesFunction } from './copilot-nudges-function';
 import { startCopilotCreateSessionClient } from './copilot-session-create-client';
 import { startCopilotSessionsClient } from './copilot-sessions-client';
 import { getStartCopilotSummaryFunction } from './copilot-summary-function';
+import { startCopilotTeachingChipClient } from './copilot-teaching-chip-client';
 import { startCopilotTurnsClient } from './copilot-turns-client';
 
 export const startCopilotClient: CopilotClient = {
   ...httpCopilotClient,
+  acceptTeachingChip: startCopilotTeachingChipClient,
   revertCheckpoint: startCopilotCheckpointRevertClient,
   cancelRun: startCopilotCancelRunClient,
   listTurns: startCopilotTurnsClient,
