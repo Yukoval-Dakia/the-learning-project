@@ -4093,6 +4093,46 @@
       "evidence": "The authenticated Start create host imports this existing complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP POST is an internal consumer. The stable Copilot client reaches visit-sessions' shared creation method for explicit controls and the automatic visit bootstrap, both of which consume the complete session object.",
       "rationale": "Copilot owns the existing complete session-creation request and its body/status descriptor. HTTP and Start reuse it without exposing or copying the conversation transaction, ID/time generation or job-event construction. Start sets the original 201 only after awaiting the owner and returns the full session; it introduces no key, receipt, retry or alternate creation policy.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f19dc7f-20e6-4795-a06d-70683d154cde"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "readCopilotTurns",
+      "targetModule": "src/capabilities/copilot/server/turns-request.ts",
+      "targetSymbol": "readCopilotTurns",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-turns-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start turns host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and URLSearchParams. The context reference is type-only; the retained HTTP GET is an internal consumer. The stable Copilot client reaches run-tracker's existing session/sequence-checked snapshot refresh and unchanged five-second polling.",
+      "rationale": "Copilot owns the complete turns request: first-value query selection, null-to-undefined handling, the existing query schema, parseInt mapping and invocation of the unchanged complete conversation snapshot. HTTP and Start reuse this policy and full session_id/turns/active_runs result without duplicating parsing, tightening validation or altering the repeatable-read snapshot and recovery algorithms.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/ui-public.ts",
+      "siteKind": "module",
+      "symbol": "buildCopilotTurnsQuery",
+      "targetModule": "src/capabilities/copilot/ui/copilot-client.tsx",
+      "targetSymbol": "buildCopilotTurnsQuery",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-turns-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start turns client imports this value in the ImportDeclaration at AST and module path line 1 and invokes it at line 9. The existing HTTP listTurns method consumes the same helper internally. Both retain the original typed sessionId/limit call and full response; the real run-tracker continues to supply REPLAY_LIMIT 20.",
+      "rationale": "Copilot owns the original turns-query encoding: interpolate limit first and encodeURIComponent(sessionId) second, with no new defaults, clamping, cache, signal or retry policy. Sharing this exact builder keeps HTTP and Start request semantics together instead of duplicating or substituting another list builder.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b61718c-ccc4-4be6-99ea-cbc624ed662a"
     }
   ],
   "edgeRecords": [

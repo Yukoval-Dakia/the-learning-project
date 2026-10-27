@@ -47,6 +47,10 @@ export type CopilotClient = {
   revertCheckpoint: (checkpointEventId: string) => Promise<unknown>;
 };
 
+export function buildCopilotTurnsQuery(sessionId: string, limit: number): string {
+  return `limit=${limit}&session_id=${encodeURIComponent(sessionId)}`;
+}
+
 export const httpCopilotClient: CopilotClient = {
   dismissNudge: (id) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
   markNudgeOpened: (id) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
@@ -58,9 +62,7 @@ export const httpCopilotClient: CopilotClient = {
   createSession: () =>
     apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', { method: 'POST' }),
   listTurns: (sessionId, limit) =>
-    apiJson<CopilotTurnsResponse>(
-      `/api/copilot/turns?limit=${limit}&session_id=${encodeURIComponent(sessionId)}`,
-    ),
+    apiJson<CopilotTurnsResponse>(`/api/copilot/turns?${buildCopilotTurnsQuery(sessionId, limit)}`),
   sendChat: (body, idempotencyKey) =>
     apiFetch('/api/copilot/chat', {
       method: 'POST',
