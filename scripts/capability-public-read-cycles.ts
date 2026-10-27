@@ -160,7 +160,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'knowledge',
     consumer: 'practice',
     files: [
-      'src/capabilities/practice/server/attempt-events.ts',
       'src/capabilities/practice/server/knowledge-runtime.ts',
       'src/capabilities/practice/server/learnable-frontier.ts',
       'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
