@@ -9,7 +9,7 @@ export const runStartLibraryServingActionFunction = createServerFn({ method: 'PO
     return runAuthenticatedStartWorkbench(context, request, async () =>
       JSON.stringify(
         await context.runLibraryServingAction({
-          path: data.path,
+          path: data?.path,
           idempotencyKey: request.headers.get('Idempotency-Key'),
         }),
       ),
