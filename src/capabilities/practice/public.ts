@@ -343,6 +343,7 @@ export {
   restorePracticeQuestion,
   updatePracticeQuestion,
 } from './server/question-write-operations';
+export { runPracticeServingAction } from './server/serving-action-operation';
 export { releaseHeldPlacement } from './server/session-operations/placement-held-release';
 export { selectNextPlacementQuestion } from './server/session-operations/placement-next';
 export {
