@@ -18,6 +18,7 @@ import {
   enableStartLibraryDraft,
   forceEnableStartLibraryDraft,
 } from './start/library-draft-promotion-operation';
+import { readStartLibraryMistakes } from './start/library-mistake-list-reader';
 import { archiveStartLibraryQuestion } from './start/library-question-delete-operation';
 import { readStartLibraryQuestionDetail } from './start/library-question-detail-reader';
 import { readStartLibraryQuestions } from './start/library-question-list-reader';
@@ -96,6 +97,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     readLibraryQuestionDetail: readStartLibraryQuestionDetail,
     readLibraryQuestions: readStartLibraryQuestions,
     readLibraryQuestionMistakes: readStartLibraryQuestionMistakes,
+    readLibraryMistakes: readStartLibraryMistakes,
     restoreLibraryQuestion: restoreStartLibraryQuestion,
     updateLibraryQuestion: updateStartLibraryQuestion,
     runLibraryServingAction: runStartLibraryServingAction,

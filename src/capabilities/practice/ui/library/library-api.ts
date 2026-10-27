@@ -98,11 +98,17 @@ type MistakeList = ApiOperationJsonResponse<'listMistakes'>;
 /** One mistake record as /api/mistakes sends it. */
 export type MistakeRow = MistakeList['rows'][number];
 
-function listMistakes(query: URLSearchParams): Promise<MistakeList> {
+export function listMistakes(query: URLSearchParams): Promise<MistakeList> {
   return apiOperationJson('listMistakes', { url: `/api/mistakes?${query}`, method: 'GET' });
 }
 
-export function listMistakePage(scope: LibraryScope, cursor: string | null) {
+type MistakeListReader = typeof listMistakes;
+
+export function listMistakePage(
+  scope: LibraryScope,
+  cursor: string | null,
+  listMistakes: MistakeListReader,
+) {
   const sp = new URLSearchParams({ limit: String(MISTAKE_PAGE) });
   if (scope.subject) sp.set('subject', scope.subject);
   if (cursor) sp.set('cursor', cursor);

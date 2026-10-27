@@ -5,6 +5,7 @@ import {
   startLibraryDraftEnableClient,
   startLibraryDraftForceEnableClient,
 } from './library-draft-promotion-client';
+import { startLibraryMistakesClient } from './library-mistake-list-client';
 import { startLibraryQuestionDeleteClient } from './library-question-delete-client';
 import { startLibraryQuestionDetailClient } from './library-question-detail-client';
 import { startLibraryQuestionsClient } from './library-question-list-client';
@@ -15,6 +16,7 @@ import { startLibraryServingActionClient } from './library-serving-action-client
 import { startWorkbenchClient } from './workbench-client';
 
 export const startLibraryClient: LibraryClient = {
+  listMistakes: startLibraryMistakesClient,
   getReviewDrafts: startLibraryDraftsClient,
   getQuestionsList: startLibraryQuestionsClient,
   enableDraft: startLibraryDraftEnableClient,
