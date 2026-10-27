@@ -6,6 +6,8 @@
 // per-new-row hook → `experimental:<surface>_scan` success/failure events → rethrow. Surface
 // differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
 
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
+import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { createId } from '@paralleldrive/cuid2';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
@@ -20,8 +22,6 @@ import {
 import type { ContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
-import { piDomainMount } from '@/server/ai/tools/pi-tools';
 
 /**
  * The inbox row slice the scan diff needs. Only Dreaming's note-refine fan-out reads

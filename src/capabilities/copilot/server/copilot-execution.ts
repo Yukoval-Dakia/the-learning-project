@@ -1,3 +1,4 @@
+import { type BuildMcpServerOptions, piDomainMount, piRemoteMcpMount, type RemoteMcpHttpConfig } from '@/ai/pi-tool-mount';
 import { observeTaskOperation } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
@@ -20,15 +21,7 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import {
-  type BuildMcpServerOptions,
-  shouldEmitToolUseForCaller,
-} from '@/server/ai/tools/mcp-bridge';
-import {
-  type RemoteMcpHttpConfig,
-  piDomainMount,
-  piRemoteMcpMount,
-} from '@/server/ai/tools/pi-tools';
+import { shouldEmitToolUseForCaller } from '@/server/ai/tools/mcp-bridge';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';

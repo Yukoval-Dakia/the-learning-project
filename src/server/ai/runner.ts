@@ -8,6 +8,7 @@
 // Memory-layer extensibility: `RunTaskCtx.middleware` applies uniformly across
 // runTask / runAgentTask / streamTask.
 
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
@@ -62,7 +63,6 @@ import type {
   SDKUserMessage,
 } from './sdk-types';
 import { addStreamText, emptyStreamTextStats } from './timeout-usage';
-import type { PiToolMount } from './tools/pi-tools';
 
 // The runner is loaded before capability execution. Keep the shared observation
 // contract backend-free while using the same async trace context as task/model spans.

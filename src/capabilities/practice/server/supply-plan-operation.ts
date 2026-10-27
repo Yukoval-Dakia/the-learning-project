@@ -18,6 +18,7 @@
 // 本模块自身不写 DB、不写事件——除注入 run 自身的运行留痕（ai_task_runs /
 // cost ledger 语义不变）。run 异常原样上抛（pg-boss DLQ 重试语义不变）。
 
+import { piDomainMount, type PiToolMount } from '@/ai/pi-tool-mount';
 import { createId } from '@paralleldrive/cuid2';
 import type { SupplyPlanV1T } from '@/core/schema/supply_plan';
 import type { Db } from '@/db/client';
@@ -27,7 +28,6 @@ import {
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
 import { runAgentTask } from '@/server/ai/runner';
-import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   checkSupplyPlanKnowledgeIds,

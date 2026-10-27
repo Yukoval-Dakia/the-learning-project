@@ -8,6 +8,7 @@
 // never write the DB or self-report server-owned numbers (baseline_p / confidence /
 // recurrence). Caps are closure counters shared with the orchestrator.
 
+import { piCustomTool } from '@/ai/pi-tool-mount';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { and, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
@@ -47,7 +48,6 @@ import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { piCustomTool } from '@/server/ai/tools/pi-tools';
 import { filterPrimaryEvidenceRefs, isPrimaryEvidenceRef } from '../scout/report-findings';
 import {
   DIRECTOR_SERVER_NAME,

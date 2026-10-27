@@ -12,7 +12,7 @@
 // The hosted server exposes two tools, `web_search_exa` and `web_fetch_exa` — the
 // 1:1 successor of tavily_search / tavily_extract.
 
-import type { RemoteMcpHttpConfig } from '@/server/ai/tools/pi-tools';
+import type { RemoteMcpHttpConfig } from '@/ai/pi-tool-mount';
 
 /** MCP server name this helper registers under (drives the mcp__<name>__* prefix). */
 export const EXA_MCP_SERVER_NAME = 'exa';

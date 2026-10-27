@@ -21,6 +21,7 @@
 // draft_status='draft' (NOT in the review pool, no FSRS yet). The chained
 // quiz_verify job (Q5) promotes draft→active + FSRS-enrolls on pass.
 
+import { type BuildMcpServerOptions, piDomainMount, piRemoteMcpMount, type PiToolMount, type RemoteMcpHttpConfig } from '@/ai/pi-tool-mount';
 import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -63,13 +64,6 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import {
-  type PiToolMount,
-  type RemoteMcpHttpConfig,
-  piDomainMount,
-  piRemoteMcpMount,
-} from '@/server/ai/tools/pi-tools';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';

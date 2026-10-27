@@ -25,7 +25,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
-import type { PiToolMount } from '@/server/ai/tools/pi-tools';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import { buildQuizGenHandler, runQuizGen } from './quiz_gen';

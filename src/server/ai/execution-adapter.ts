@@ -6,6 +6,7 @@
 // The consume loop still reads SDKMessage-shaped frames — our protocol types now
 // (sdk-types.ts), produced by the pi adapter.
 
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { EffortLevel } from '@/ai/task-spec';
 import type { TaskKind } from '@/capabilities/task-registry';
@@ -20,7 +21,6 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from './sdk-types';
-import type { PiToolMount } from './tools/pi-tools';
 
 /** The only engine id; the field stays so a future adapter has a home. */
 export type ExecutionAdapterId = 'pi';

@@ -1,3 +1,4 @@
+import { piDomainMount } from '@/ai/pi-tool-mount';
 import { eq, sql } from 'drizzle-orm';
 
 import {
@@ -20,7 +21,6 @@ import { ProviderSessionAdmissionError } from '@/server/ai/provider-session-admi
 // Import failure-vocabulary modules directly: re-exporting them from runner-fn
 // pulls providers/task-catalog/schema into its cone and breaks vitest module order.
 import { type BoundRunTaskFn, makeRunTaskFn } from '@/server/ai/runner-fn';
-import { piDomainMount } from '@/server/ai/tools/pi-tools';
 import {
   writeAgentErrorEvent,
   writeAgentItemEvent,

@@ -10,6 +10,7 @@
 //
 // `ctx.piQueues` (steering/follow-up) is wired but has no live consumer yet.
 
+import { piCustomTool, type PiToolMount } from '@/ai/pi-tool-mount';
 import { randomUUID } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type {
@@ -82,13 +83,7 @@ import {
   repairToolArguments,
 } from './tool-param-contract';
 import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
-import {
-  type PiRemoteMcpMountHandle,
-  type PiToolMount,
-  buildPiDomainAgentTools,
-  connectPiRemoteMcp,
-  piCustomTool,
-} from './tools/pi-tools';
+import { type PiRemoteMcpMountHandle, buildPiDomainAgentTools, connectPiRemoteMcp } from './tools/pi-tools';
 
 type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;
 type PiUserContent = Extract<PiMessage, { role: 'user' }>['content'];

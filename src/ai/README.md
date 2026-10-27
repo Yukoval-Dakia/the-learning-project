@@ -7,6 +7,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 ## 边界
 
 - **共享契约** (`src/ai/`)：TaskSpec 类型、不可变 catalog composer、接收 catalog 的 registry / budget / prompt reader。没有 capability import、API key 或通用 `runTask()` client helper。
+- **工具挂载契约与构造** (`src/ai/pi-tool-mount.ts`)：服务端共享的 mount/options 声明、wire 命名与 custom AgentTool 构造；不拥有 registry 执行、远程 MCP 连接、工具留痕或 session 生命周期，不将整个目录承诺为 browser-safe。
 - **任务组合** (`src/capabilities/task-catalog.ts` + `task-registry.ts`)：通过六个 `task-public.ts` 入口静态装配，再注入共享 reader。具体 TaskSpecs 包含 Node helper，不能将完整目录承诺为浏览器 bundle。
 - **Server 端** (`server/` + `src/server/ai/`)：generic `/api/ai/[task]` route 已退场。所有 task 都走 capability 领域 route / worker，由该入口解析 profile、注入工具或补齐 ingestion context。
 - **Async worker** (`scripts/worker.ts` / pg-boss handlers)：复用同一个 runner 处理 OCR、归因、note generation、maintenance 等后台任务。
@@ -40,7 +41,7 @@ Task 层抽象。**不是 chat()** —— 每种产物一个 Task；tool-calling
 - `src/server/ai/runner.ts` 支持 `piToolMounts`、`allowedTools`、`maxTurns`，并把所有 task 统一送进 pi in-process `agentLoop`（`pi-agent-adapter.ts`）。
 - DomainTool callers 使用 `src/server/ai/tools/allowlists.ts` 生成 surface-specific `mcp__loom__*` allowlist；`KnowledgeReviewTask` 的 `knowledge_review` 面只挂 readers + `propose_knowledge_mutation` / `propose_knowledge_edge`。
 - `src/capabilities/knowledge/server/review.ts` 在每次 review 请求内经 `piDomainMount` 暴露 `knowledge_review` 面（共享 registry 工具）。
-- capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`piDomainMount` 把 registry 工具编译成 pi `AgentTool`，并写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
+- capability manifests 经 `src/server/ai/tools/register-capability-tools.ts` 在 API/worker 启动期注册完整 DomainTools；`piDomainMount` 只构造描述子；server 的 `buildPiDomainAgentTools` 编译 registry 工具为 pi `AgentTool`，执行仍经原 bridge 写 `tool_call_log` / `tool_use` mirror（ADR-0011 §1.1 promote 自 `experimental:tool_use`）。
 - Concrete DomainTools live with their owning capabilities（knowledge / agency / ingestion / practice / copilot 包内 `tools`）；`src/server/ai/tools/` 只保留共享基础设施（registry、mcp-bridge、types、allowlists、budgets、context-throttle）。YUK-885 过渡期仍居中央的 7 个工具文件（proposal-tools / context-readers / get-attempt-context / query-mistakes / query-questions / write-quiz / tool-quiz-core）由 `audit-architecture-ownership` 的 transitional allowlist 显式登记，新增中央工具会被审计拒绝。
 - generic `/api/ai/[task]` 已整体退场；不要为新 task 建通用 dispatch 入口。
 - 已实现：Copilot drawer 的 operation/subagent lifecycle projection。尚未实现：公共/standalone MCP server、外部 MCP 消费，以及 Dreaming / Coach 的具体 runtime 接入。

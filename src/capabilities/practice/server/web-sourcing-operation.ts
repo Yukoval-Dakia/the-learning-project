@@ -20,6 +20,7 @@
 // 候选 parse/kind 门/活 knowledge 校验与全部后续正确性路径。本模块不写 DB、
 // 不写事件——除 runAgentTask 自身的运行留痕（ai_task_runs/cost ledger 不变）。
 
+import { piDomainMount, piRemoteMcpMount, type PiToolMount } from '@/ai/pi-tool-mount';
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -33,7 +34,6 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import { type PiToolMount, piDomainMount, piRemoteMcpMount } from '@/server/ai/tools/pi-tools';
 import type {
   RunWebFetchCandidatesDeps,
   RunWebSourcingAgentFn,
