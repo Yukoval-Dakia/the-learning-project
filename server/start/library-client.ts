@@ -1,5 +1,6 @@
 import type { LibraryClient } from '@/capabilities/practice/ui-public';
 import { startLibraryDraftDetailClient } from './library-draft-detail-client';
+import { startLibraryDraftsClient } from './library-draft-list-client';
 import {
   startLibraryDraftEnableClient,
   startLibraryDraftForceEnableClient,
@@ -14,6 +15,7 @@ import { startLibraryServingActionClient } from './library-serving-action-client
 import { startWorkbenchClient } from './workbench-client';
 
 export const startLibraryClient: LibraryClient = {
+  getReviewDrafts: startLibraryDraftsClient,
   getQuestionsList: startLibraryQuestionsClient,
   enableDraft: startLibraryDraftEnableClient,
   forceEnableDraft: startLibraryDraftForceEnableClient,

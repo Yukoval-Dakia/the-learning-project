@@ -9,9 +9,15 @@ import {
   getQuestionsList,
   patchQuestion,
 } from '../practice-api';
-import { listQuestionMistakes, restoreQuestion, runServingAction } from './library-api';
+import {
+  getReviewDrafts,
+  listQuestionMistakes,
+  restoreQuestion,
+  runServingAction,
+} from './library-api';
 
 export type LibraryClient = {
+  getReviewDrafts: typeof getReviewDrafts;
   getQuestionsList: typeof getQuestionsList;
   enableDraft: typeof enableDraft;
   forceEnableDraft: typeof forceEnableDraft;
@@ -25,6 +31,7 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  getReviewDrafts,
   enableDraft,
   forceEnableDraft,
   runServingAction,
