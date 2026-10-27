@@ -30,7 +30,7 @@ import {
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { Tutor } from '@/server/session';
+import * as Tutor from '../tutor-session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { createSolveSubmissionResource } from '../../api/resource-routes';
 import { startSolveSession } from '../solve-session';

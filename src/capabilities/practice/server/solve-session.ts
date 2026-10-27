@@ -13,7 +13,7 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import { Tutor } from '@/server/session';
+import * as Tutor from './tutor-session';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt } from './assessment/attempt';
 import {
