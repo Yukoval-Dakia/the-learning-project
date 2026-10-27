@@ -57,7 +57,7 @@ mutator-mode 友好度提示：
 - 如果触发的改动确实需要更大范围重写，按需输出更长 patch；P4-B 的 propose-mode 会把它当 review 项交给用户
 - 没有可行 refine 时输出 {"ops":[]}，apply 路径会 no-op，不写 event
 
-禁止：rewrite 整篇 note、嵌 markdown 代码块、输出 JSON 之外的文字、引入 source_tier / lineage 字段。`;
+禁止：rewrite 整篇 note、嵌 markdown 代码块、输出 JSON 之外的文字、引入 source_tier / source_markdown / lineage 字段（source_markdown 由服务端 apply 时从 block content 推导，模型只写 content）。`;
 }
 
 export const noteRefineTaskSpec = {
