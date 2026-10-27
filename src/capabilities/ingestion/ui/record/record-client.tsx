@@ -1,10 +1,11 @@
 import { createContext, useContext } from 'react';
-import { listSessions } from './record-api';
+import { listKnowledge, listSessions } from './record-api';
 
 export type RecordClient = {
   listSessions: typeof listSessions;
+  listKnowledge: typeof listKnowledge;
 };
-const httpRecordClient: RecordClient = { listSessions };
+const httpRecordClient: RecordClient = { listSessions, listKnowledge };
 const RecordClientContext = createContext<RecordClient | undefined>(undefined);
 export const RecordClientProvider = RecordClientContext.Provider;
 export function useRecordClient(): RecordClient {
