@@ -37,10 +37,7 @@ import {
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
 import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
-import {
-  type LoadTodayOvernightDigest,
-  readOvernightHandoffSentence,
-} from './overnight-handoff';
+import { type LoadTodayOvernightDigest, readOvernightHandoffSentence } from './overnight-handoff';
 
 type DbLike = Db | Tx;
 
