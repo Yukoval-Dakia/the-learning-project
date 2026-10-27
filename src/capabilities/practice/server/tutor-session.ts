@@ -6,7 +6,7 @@ import { job_events, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 
-import { assertFromState } from '@/server/session/guards';
+import { assertFromState } from '@/kernel/learning-session-guard';
 
 // LearningSession.Tutor.* — YUK-193 solve-tutor session (spec §3.1).
 //
