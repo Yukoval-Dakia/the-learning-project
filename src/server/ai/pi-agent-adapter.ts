@@ -31,6 +31,7 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
+import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
@@ -84,10 +85,8 @@ import {
 import { type PiSubagentHost, buildPiSpawnAgentTools } from './tools/pi-subagent';
 import {
   type PiRemoteMcpMountHandle,
-  type PiToolMount,
   buildPiDomainAgentTools,
   connectPiRemoteMcp,
-  piCustomTool,
 } from './tools/pi-tools';
 
 type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;

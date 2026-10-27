@@ -26,8 +26,8 @@ const mockPi = vi.hoisted(() => ({
   >(),
 }));
 
-vi.mock('@/server/ai/tools/pi-tools', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/ai/tools/pi-tools')>();
+vi.mock('@/ai/pi-tool-mount', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ai/pi-tool-mount')>();
   return {
     ...actual,
     piCustomTool: (

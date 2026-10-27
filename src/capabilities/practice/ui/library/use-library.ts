@@ -70,9 +70,10 @@ export function useDraftPages(scope: LibraryScope) {
 
 /** Partial read: questions grouped from the mistake pages loaded so far. */
 export function useMistakeQuestions(scope: LibraryScope) {
+  const { listMistakes } = useLibraryClient();
   const query = useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'mistakes', scope.subject],
-    queryFn: ({ pageParam }) => listMistakePage(scope, pageParam),
+    queryFn: ({ pageParam }) => listMistakePage(scope, pageParam, listMistakes),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });

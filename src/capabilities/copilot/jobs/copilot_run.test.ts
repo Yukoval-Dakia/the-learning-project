@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { POST as cancelCopilotRun } from '@/capabilities/copilot/api/cancel-run';
 import {
   type CopilotExecutionAdapters,
@@ -32,7 +33,6 @@ import {
 } from '@/capabilities/copilot/ui/subtask-events';
 import { event, learning_session } from '@/db/schema';
 import { computeReplay, writeJobEvent } from '@/kernel/job-events';
-import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getRecentCopilotTurns } from '../server/turns';
 import {

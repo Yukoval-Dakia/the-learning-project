@@ -25,6 +25,13 @@ import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
+import {
+  type BuildMcpServerOptions,
+  type PiToolMount,
+  type RemoteMcpHttpConfig,
+  piDomainMount,
+  piRemoteMcpMount,
+} from '@/ai/pi-tool-mount';
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import {
   DifficultyEvidence,
@@ -63,13 +70,6 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import {
-  type PiToolMount,
-  type RemoteMcpHttpConfig,
-  piDomainMount,
-  piRemoteMcpMount,
-} from '@/server/ai/tools/pi-tools';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
