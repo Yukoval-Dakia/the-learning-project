@@ -4053,6 +4053,26 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "readCopilotSessions",
+      "targetModule": "src/capabilities/copilot/server/conversation-requests.ts",
+      "targetSymbol": "readCopilotSessions",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-sessions-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start session-list host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP GET is an internal consumer. The existing stable Copilot client serves both visit-session fetchQuery with its signal and the fresh policy read before each restricted send.",
+      "rationale": "Copilot owns the complete session-list response and successful no-store policy: await the existing conversation list, then create server_time, include the original supported derivation policies and full session rows, and return typed body and headers. HTTP and Start consume the same descriptor without duplicating policy, changing the query or adding a transaction; the separate create request remains HTTP-only.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9307c5bb-6345-448a-b28b-d294c19537b7"
     }
   ],
   "edgeRecords": [
@@ -6292,6 +6312,16 @@
       "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Own the original missing-nudge not_found/404 decision after params parsing and the existence query. Preserve the original Zod and other exception behavior for the retained HTTP and Start errorResponse adapters; do not add validation translation or new eligibility checks.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/conversation-requests.ts",
+      "module": "src/server/session/conversation.ts",
+      "kind": "value",
+      "symbols": ["createCopilotConversation", "listCopilotConversations"],
+      "issue": "YUK-1358",
+      "owns": "Own the complete Copilot GET and POST session requests while reusing the canonical conversation list and creation operations with db and no options. Preserve list defaults, ordering and projection, sample server_time only after the list, and preserve the create transaction, timestamp, ID and job event. Keep the two requests independent, HTTP create status 201 and unknown duplicate-creation boundary; do not add Start create or a shared transaction or receipt.",
       "date": "2026-10-27"
     }
   ],
