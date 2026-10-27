@@ -50,8 +50,9 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     'deepseek-v4-flash': {
       when: 'missing',
       reason:
-        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint still comes from the current provider catalog.',
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins.',
       facts: {
+        baseUrl: 'https://opencode.ai/inference/go/openai/v1',
         reasoning: true,
         reasoningMode: 'effort',
         supportedEfforts: ['low', 'high', 'max'],
@@ -64,8 +65,9 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     'deepseek-v4-flash-vision-exp': {
       when: 'missing',
       reason:
-        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, including image input; not a new live-provider admission. Endpoint still comes from the current provider catalog.',
+        'Absent from models.dev. Preserve the wired metadata in main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, including image input; not a new live-provider admission. Endpoint pinned to the OpenCode Go openai path so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins.',
       facts: {
+        baseUrl: 'https://opencode.ai/inference/go/openai/v1',
         reasoning: true,
         reasoningMode: 'effort',
         supportedEfforts: ['low', 'high', 'max'],
@@ -78,8 +80,9 @@ const overrides: Partial<Record<Provider, Record<string, CatalogOverride>>> = {
     'grok-4.6': {
       when: 'missing',
       reason:
-        'Absent from models.dev. Text/reasoning run: docs/planning/evidence/2026-09-19-pi-adapter-grok-4.6-actual.json (task_run_id toumilrkxa6vfdqxy4a20toy). Limits, image input and effort tiers: main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json, not measured by that run. Endpoint still comes from the current provider catalog.',
+        'Absent from models.dev. Sealed evidence covers a single text+reasoning AttributionTask run only (docs/planning/evidence/2026-09-19-pi-adapter-grok-4.6-actual.json, task_run_id toumilrkxa6vfdqxy4a20toy); endpoint, limits, image input and effort tiers are untested by it and carried from main 518c8b21:src/server/ai/pi-provider-catalog.snapshot.json. Endpoint pinned to the OpenCode Go openai path (its listed sibling grok-4.7 serves the same path) so a catalog regen that drops the provider-level api field cannot unlist the model (YUK-1658); a live catalog endpoint still wins.',
       facts: {
+        baseUrl: 'https://opencode.ai/inference/go/openai/v1',
         reasoning: true,
         reasoningMode: 'effort',
         supportedEfforts: ['low', 'medium', 'high', 'xhigh'],
