@@ -15,10 +15,12 @@ export {
 export { copilotConfigEffectiveFacts } from './server/config-effective-facts';
 export { createCopilotSession, readCopilotSessions } from './server/conversation-requests';
 export { loadCopilotSummary } from './server/copilot-summary';
+export { dispatchSessionHead } from './server/durable-dispatch';
 // Migration readiness checks consume this read-only port.
 export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
 export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-actions';
 export { loadActiveNudges } from './server/nudge-read';
+export { cancelCopilotRun } from './server/run-cancel-request';
 // memory-brief reader for non-LLM read paths (today summary, demos).
 export { MEMORY_BRIEF_STALE_AFTER_MS, executeMemoryBrief } from './server/tools/memory-brief';
 export { readCopilotTurns } from './server/turns-request';

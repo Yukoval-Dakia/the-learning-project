@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
 import type {
+  cancelCopilotRun,
   createCopilotSession,
   dismissCopilotNudge,
   loadActiveNudges,
@@ -66,6 +67,7 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  cancelCopilotRun: (runId: string) => Promise<Awaited<ReturnType<typeof cancelCopilotRun>>>;
   readCopilotTurns: (query: string) => Promise<Awaited<ReturnType<typeof readCopilotTurns>>>;
   createCopilotSession: () => Promise<Awaited<ReturnType<typeof createCopilotSession>>>;
   readCopilotSessions: () => Promise<Awaited<ReturnType<typeof readCopilotSessions>>>;
