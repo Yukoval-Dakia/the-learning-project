@@ -3,10 +3,10 @@ import { type SQL, and, asc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Job, JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { getRunningBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
 import {
   PREPARE_INTERVENTION_JOB,
   type PrepareInterventionJobData,
