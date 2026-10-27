@@ -1,5 +1,6 @@
 import { Button } from '@/ui-next/public';
 import { MaterialTiles } from './MaterialTiles';
+import { useRecordClient } from './record-client';
 import { dropDraft, recordMaterial, useDraft } from './record-start';
 
 /**
@@ -7,6 +8,7 @@ import { dropDraft, recordMaterial, useDraft } from './record-start';
  * when the server takes it over. On failure the material is kept for one more try.
  */
 export function DraftSheet({ onStarted }: { onStarted: (sessionId: string) => void }) {
+  const { createSession } = useRecordClient();
   const draft = useDraft();
   if (!draft) return null;
   const { material, previews, done, failed } = draft;
@@ -45,7 +47,7 @@ export function DraftSheet({ onStarted }: { onStarted: (sessionId: string) => vo
             <Button
               variant="primary"
               onClick={() =>
-                void recordMaterial(draft).then((id) => {
+                void recordMaterial(draft, createSession).then((id) => {
                   if (id) onStarted(id);
                 })
               }
