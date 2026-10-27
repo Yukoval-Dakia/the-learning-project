@@ -31,7 +31,6 @@ import {
 import { UsageReceiptLine } from '@/ui/components/UsageReceiptLine';
 import { ApiAuthError } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
-import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
 import { latestProgress } from '@/ui/lib/ingestion-phase';
 import { useIngestionSSE } from '@/ui/lib/sse';
 import { Btn } from '@/ui/primitives/Btn';
@@ -127,7 +126,7 @@ export interface OnboardRecordProps {
 }
 
 export default function OnboardRecord({ navigate }: OnboardRecordProps) {
-  const { createIngestionSession } = useIngestionSessionCreateClient();
+  const { createIngestionSession, startIngestionOperation } = useIngestionSessionCreateClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   // OCR review (#551): synchronous re-entrancy lock (state is async → a rapid
   // double-click could fire two uploads before the button hides).

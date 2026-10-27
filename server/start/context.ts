@@ -1,6 +1,10 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
-import type { createIngestionSession, readMistakes } from '@/capabilities/ingestion/public';
+import type {
+  createIngestionSession,
+  readMistakes,
+  requestIngestionOperation,
+} from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
   loadKnowledgeNodePage,
@@ -46,6 +50,11 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  createIngestionOperation: (input: {
+    sessionId: string;
+    body: string;
+    key: string | null;
+  }) => Promise<Awaited<ReturnType<typeof requestIngestionOperation>>>;
   enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
   forceEnableLibraryDraft: (input: {
     id: string;
