@@ -2,7 +2,7 @@
 // call these through React Query and never build URLs themselves.
 
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
-import { type QBankQuestion, type QuestionFullDetail, getQuestionsList } from '../practice-api';
+import type { QBankQuestion, QuestionFullDetail, getQuestionsList } from '../practice-api';
 import type { LibraryScope } from './library-url';
 
 export type { QBankQuestion, QuestionFullDetail };
@@ -10,6 +10,7 @@ export type { QBankQuestion, QuestionFullDetail };
 export const LIBRARY_PAGE = 30;
 
 type ServingStatus = 'active' | 'not_servable';
+type QuestionListReader = typeof getQuestionsList;
 
 export interface QuestionPage {
   items: QBankQuestion[];
@@ -23,6 +24,7 @@ export async function listQuestionPage(
   status: ServingStatus,
   scope: LibraryScope,
   offset: number,
+  getQuestionsList: QuestionListReader,
 ): Promise<QuestionPage> {
   const result = await getQuestionsList({
     status,
@@ -48,7 +50,10 @@ export async function listQuestionPage(
 }
 
 /** True totals for the view switch. 做错过 has none until the backend adds has_mistake. */
-export async function countQuestions(status: ServingStatus): Promise<number> {
+export async function countQuestions(
+  status: ServingStatus,
+  getQuestionsList: QuestionListReader,
+): Promise<number> {
   const page = await getQuestionsList({
     status,
     includeDrafts: status === 'not_servable',

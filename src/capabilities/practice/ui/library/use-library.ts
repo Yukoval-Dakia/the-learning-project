@@ -23,22 +23,24 @@ import { groupMistakes } from './mistake-read';
 export const LIBRARY_KEY = 'questions-lib';
 
 export function useViewCounts() {
+  const { getQuestionsList } = useLibraryClient();
   const all = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'all'],
-    queryFn: () => countQuestions('active'),
+    queryFn: () => countQuestions('active', getQuestionsList),
   });
   const review = useQuery({ queryKey: [LIBRARY_KEY, 'count', 'review'], queryFn: countDrafts });
   const held = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'held'],
-    queryFn: () => countQuestions('not_servable'),
+    queryFn: () => countQuestions('not_servable', getQuestionsList),
   });
   return { all: all.data, review: review.data, held: held.data };
 }
 
 export function useQuestionPages(status: 'active' | 'not_servable', scope: LibraryScope) {
+  const { getQuestionsList } = useLibraryClient();
   return useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'list', status, scope],
-    queryFn: ({ pageParam }) => listQuestionPage(status, scope, pageParam),
+    queryFn: ({ pageParam }) => listQuestionPage(status, scope, pageParam, getQuestionsList),
     initialPageParam: 0,
     getNextPageParam: (last) => (last.hasMore ? last.nextOffset : undefined),
   });

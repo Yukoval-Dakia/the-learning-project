@@ -463,14 +463,18 @@ export function buildQuestionsListQuery(filters: QBankListFilters = {}): string 
   return sp.toString();
 }
 
+export function projectQuestionsListResponse(response: QBankWireResult): QBankListResult {
+  return {
+    ...response,
+    items: response.items.map(toQBankQuestion),
+  };
+}
+
 export const getQuestionsList = (filters: QBankListFilters = {}): Promise<QBankListResult> =>
   apiOperationJson('listQuestions', {
     url: `/api/questions?${buildQuestionsListQuery(filters)}`,
     method: 'GET',
-  }).then((response) => ({
-    ...response,
-    items: response.items.map(toQBankQuestion),
-  }));
+  }).then(projectQuestionsListResponse);
 
 // ── 卷（papers list / detail / 草稿 / 逐题提交 / 会话） ─────────
 export interface PaperListItem {
