@@ -4193,6 +4193,26 @@
       "evidence": "The authenticated Start checkpoint-revert host imports this complete request at await-import AST and module path line 13 and invokes it at line 15 with db and the original eventId params. The context reference is type-only; the retained HTTP POST consumes the same request internally. The existing stable client reaches TurnActions.revert, preserving its separate request-error and refresh-error handling.",
       "rationale": "Copilot owns the complete checkpoint-revert request: original eventId schema parsing, message-only Zod validation_error/400 mapping over the original call, and the complete status/body outcome from the unchanged transactional checkpoint operation. HTTP and Start retain success and refusal envelopes; the Start function throws non-200 Response bodies outside the host errorResponse catch so apiFetch preserves refusal details without a second 500 or a success union. No UI, lock, cascade, savepoint, retry or replay policy moves into the caller.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "requestTeachingChipAcceptance",
+      "targetModule": "src/capabilities/copilot/server/accept-teaching-chip.ts",
+      "targetSymbol": "requestTeachingChipAcceptance",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-teaching-chip-operation.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "The authenticated Start teaching-chip host imports this complete request at await-import AST and module path line 14 and invokes it at line 16 with db, the original id params and an async JSON reader. The context reference is type-only; the retained HTTP POST also consumes this request. The existing stable Copilot client reaches MessageStream's corrective-chip callback and TurnActions.acceptCorrectiveChip without changing its pending, acknowledgement or silent failure behavior.",
+      "rationale": "Copilot owns the complete teaching-chip request: original ID parsing before deferred JSON decoding, malformed JSON to null, the existing body schema and message-only validation_error/400, invocation of the unchanged acceptance owner and the full ok/event_id response. HTTP and Start preserve the original generic ID error, anchor rules, proposal acceptance before fire-and-forget wake and chip-event write, and partial-commit/unknown boundaries; no parsing, eligibility or transaction policy is duplicated in the UI or host.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-6b1cd8b4-93b1-4f47-baf5-7721bb3218c7"
     }
   ],
   "edgeRecords": [
