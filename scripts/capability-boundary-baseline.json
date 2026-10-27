@@ -3273,6 +3273,34 @@
       "evidence": "The Start list client imports the projector at ImportDeclaration AST line 1 and module path line 5, then calls it at line 10 after parsing the complete JSON response. The HTTP client calls the same projector in its original response continuation.",
       "rationale": "Practice UI owns the existing full-response spread and items/children projection. The shared projector preserves collection fields, pagination and serving counts and reuses the unchanged toQBankQuestion mapping without adding a second schema or recomputing page state.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4558419c-227e-4c64-b355-2ab538edf1b7"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/server/practice-port.ts",
+      "siteKind": "module",
+      "symbol": "executeGetReviewDue",
+      "targetModule": "src/capabilities/practice/public.ts",
+      "targetSymbol": "executeGetReviewDue",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/copilot-summary.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The complete Copilot summary imports this existing same-domain port at AST20 and calls executeGetReviewDue with its unchanged ToolContext and limit at line132. Practice public directly re-exports the same function from server/tools/question-context; the port declaration at AST1/binding10 is re-export evidence, not a fabricated import consumer. Other existing port symbols and consumers remain unchanged.",
+      "rationale": "Practice retains the complete due-review read policy, while Copilot owns the existing six-source summary aggregation. Reuse the already established Copilot-to-Practice port with the same named binding; no wrapper, new port, public summary export or runtime migration. The logical cross-capability dependency remains, and the existing physical port-to-public edge remains one edge. This is complete ownership relocation with zero new interface depth.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-9f499fa6-32f4-4918-ad71-95534ea17f65",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> today",
+      "date": "2026-10-27",
+      "from": 3,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -5358,6 +5386,31 @@
       "issue": "YUK-1358",
       "date": "2026-10-27",
       "debt": "capabilityToKernel"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/copilot-summary.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["getEvents"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing event read owner for latest successful Coach and Dreaming scans; preserve caller Db or Tx, filters, limit, tie-breaking and the original six-way Promise.all evaluation order.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/copilot-summary.ts",
+      "module": "src/kernel/proposals/inbox.ts",
+      "kind": "value",
+      "symbols": [
+        "PENDING_PROPOSAL_COUNT_BATCH_SIZE",
+        "PENDING_PROPOSAL_COUNT_MAX_BATCHES",
+        "countPendingProposalInboxByKind",
+        "listProposalInboxPage"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing pending proposal counter and ranked inbox page as one complete Copilot summary aggregation. Preserve batch and cap defaults, unknown-kind totals, lower-bound warning, Dreaming actor filter, preview ordering and original call timing; do not migrate proposal policy.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
@@ -6278,7 +6331,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 269,
+      "total": 267,
       "byOwnerPair": {
         "agency -> ai": 19,
         "agency -> boss": 10,
@@ -6294,7 +6347,7 @@
         "copilot -> revert": 1,
         "copilot -> runtime-env": 1,
         "copilot -> session": 5,
-        "copilot -> today": 3,
+        "copilot -> today": 1,
         "ingestion -> ai": 14,
         "ingestion -> boss": 7,
         "ingestion -> events": 1,
