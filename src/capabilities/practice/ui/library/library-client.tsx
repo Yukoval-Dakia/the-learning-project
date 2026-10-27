@@ -11,12 +11,14 @@ import {
 } from '../practice-api';
 import {
   getReviewDrafts,
+  listMistakes,
   listQuestionMistakes,
   restoreQuestion,
   runServingAction,
 } from './library-api';
 
 export type LibraryClient = {
+  listMistakes: typeof listMistakes;
   getReviewDrafts: typeof getReviewDrafts;
   getQuestionsList: typeof getQuestionsList;
   enableDraft: typeof enableDraft;
@@ -31,6 +33,7 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  listMistakes,
   getReviewDrafts,
   enableDraft,
   forceEnableDraft,
