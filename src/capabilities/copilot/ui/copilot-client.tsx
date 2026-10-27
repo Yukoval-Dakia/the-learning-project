@@ -31,6 +31,8 @@ export interface CopilotCancelResult {
 }
 
 export type CopilotClient = {
+  dismissNudge: (id: string) => Promise<unknown>;
+  markNudgeOpened: (id: string) => Promise<unknown>;
   getNudges: () => Promise<ApiOperationJsonResponse<'listCopilotNudges'>>;
   getSummary: () => Promise<ApiOperationJsonResponse<'getTodayCopilotSummary'>>;
   /** Fresh server capabilities, including before restricted sends; never a cached snapshot. */
@@ -46,6 +48,8 @@ export type CopilotClient = {
 };
 
 export const httpCopilotClient: CopilotClient = {
+  dismissNudge: (id) => apiFetch(`/api/copilot/nudges/${id}/dismiss`, { method: 'POST' }),
+  markNudgeOpened: (id) => apiFetch(`/api/copilot/nudges/${id}/opened`, { method: 'POST' }),
   getNudges: () => apiJson<ApiOperationJsonResponse<'listCopilotNudges'>>('/api/copilot/nudges'),
   getSummary: () =>
     apiJson<ApiOperationJsonResponse<'getTodayCopilotSummary'>>('/api/today/copilot-summary'),
