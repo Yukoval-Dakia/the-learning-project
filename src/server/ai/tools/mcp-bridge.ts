@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 
 import { createId } from '@paralleldrive/cuid2';
+import type { BuildMcpServerOptions } from '@/ai/pi-tool-mount';
 import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
@@ -155,69 +156,6 @@ function proposalEffectContract(
     };
   }
   return base;
-}
-
-/**
- * Result of the per-call input interceptor (P5.1 / YUK-143): `args` is what the
- * tool actually runs with; a `truncationNote` is merged into output under
- * `context_budget` so the agent can self-correct.
- */
-export interface ToolInputInterceptResult {
-  args: unknown;
-  /** Budget notice merged verbatim as `context_budget`; kept loosely typed so the
-   *  bridge stays decoupled from the throttle's notice type. */
-  truncationNote?: object | null;
-  /**
-   * Soft-stop: when a budget dimension is exhausted the interceptor returns a
-   * reason here INSTEAD of capped args. The tool does not run and the reason is
-   * surfaced as the result (never a hard reject/throw, never `limit:0`).
-   */
-  softStop?: string | null;
-}
-
-export interface BuildMcpServerOptions {
-  ctx: ToolContext;
-  /** YUK-1557 — active ai_task_runs.id for tool log/mirror attribution. */
-  logTaskRunId?: string;
-  /** Logical mount name; tools surface as `mcp__<name>__<tool>`. */
-  serverName: string;
-  /** Subset of registered DomainTool names to expose. */
-  toolNames: readonly string[];
-  /** `task_kind` recorded on each tool_call_log row (defaults to ctx.callerActor.ref). */
-  taskKind?: string;
-  toolOperations?: ToolOperations;
-  cancellationSignals?: ReadonlyArray<{
-    signal: AbortSignal;
-    requestedBy: 'system' | 'user';
-  }>;
-  /** Optional per-call runtime gate. Return a reason string to block execution. */
-  beforeExecute?: (
-    tool: ToolExecutionGateInput,
-  ) => string | undefined | Promise<string | undefined>;
-  /** Begins the in-flight effect barrier immediately before DomainTool.execute. */
-  onExecuteStart?: (tool: ToolExecutionGateInput) => Promise<void> | void;
-  /** Releases the barrier only after execution, logging and event mirroring settle. */
-  onExecuteSettled?: (tool: ToolExecutionGateInput) => Promise<void> | void;
-  /** Observes the exact agent-visible result after input interception and output decoration. */
-  onResult?: (result: ToolExecutionResultObservation) => Promise<void> | void;
-  /**
-   * YUK-457 — fires with the human-facing summary after summarize, for Copilot
-   * inline SSE done-state cards. Fires only when the mirror policy fires: a live
-   * card without a persisted mirror would vanish on refresh. Failures swallowed.
-   */
-  onToolComplete?: (result: {
-    toolName: string;
-    input: Record<string, unknown>;
-    summary: string;
-    errorReason?: string;
-    /** YUK-920 — correlation id for same-name parallel calls. */
-    toolUseId?: string;
-  }) => void;
-  /**
-   * P5.1 / YUK-143 — runs after `beforeExecute` clears and before execute on the
-   * happy path; returns possibly limit-capped args plus an optional note.
-   */
-  interceptInput?: (tool: ToolExecutionGateInput, args: unknown) => ToolInputInterceptResult;
 }
 
 /**
