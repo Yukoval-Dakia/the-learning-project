@@ -3137,6 +3137,26 @@
       "from": 10,
       "to": 9,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "runPracticeServingAction",
+      "targetModule": "src/capabilities/practice/server/serving-action-operation.ts",
+      "targetSymbol": "runPracticeServingAction",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "server/start/library-serving-action-operation.ts",
+          "line": 38
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 38 and calls the complete request operation at line 40. Context type references and the same-capability HTTP adapter are not additional public runtime consumers.",
+      "rationale": "Practice owns the complete original params schema, idempotency-header trim/required/length validation, unchanged execution and recovery owner invocation, and full accepted/serving result. HTTP and Start adapt transport without exposing locks, paid claims or recovery ordering. The Start canonical relative-path boundary is separately approved.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c620004f-7fc5-424b-9f19-64556cbcc6cf",
+      "date": "2026-10-27"
     }
   ],
   "edgeRecords": [
@@ -5100,6 +5120,16 @@
       "issue": "YUK-1570",
       "owns": "Retain the existing Conversation.assertActive business precondition before anchor queries; never substitute assertAcceptingTurns or add idle resume, lifecycle writes, transaction or locks.",
       "date": "2026-10-26"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/serving-action-operation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error type and error-wire vocabulary; Practice owns the complete serving-action request validation order, original params and idempotency-header errors, and invocation of the unchanged execution/recovery owner. HTTP and Start retain their transport error adaptation.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
