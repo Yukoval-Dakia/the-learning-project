@@ -4,7 +4,7 @@ import { cost_ledger } from '@/db/schema';
 import {
   writePermanentAiFailureLedger,
   writeRetryableAiFailureLedger,
-} from '@/server/ai/failure-ledger';
+} from '@/kernel/records/ai-attempt-facts';
 import {
   ATTRIBUTION_FOLLOWUP_QUEUE,
   VARIANT_GEN_QUEUE,

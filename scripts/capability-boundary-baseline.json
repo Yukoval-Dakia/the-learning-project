@@ -3276,6 +3276,106 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/agency/server/ai-runtime.ts",
+      "siteKind": "module",
+      "symbol": "writeRetryableAiFailureLedger",
+      "targetModule": "src/kernel/records/ai-attempt-facts.ts",
+      "targetSymbol": "writeRetryableAiFailureLedger",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/capabilities/agency/jobs/research_meeting_nightly.ts",
+          "line": 77
+        },
+        {
+          "file": "src/capabilities/agency/server/goals/scope.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "Existing Agency port re-export at AST2; nightly imports at AST77, defaults at 697-698 and calls at 938 (Db) and 1043 (Tx with throwOnError true); Goal scope imports at AST16 and calls at 167. The port declaration is re-export evidence, not a fabricated value-import consumer.",
+      "rationale": "Preserve the existing Agency dependency port while its complete failure-fact implementation belongs to kernel. Agency owns eligibility and execution recovery; the fact operation retains the original Db/Tx and catch/rethrow semantics. This is ownership relocation, not a new operation or new safety guarantee.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-e10a109a-b72e-42ff-aa5c-ddcdbb86b11b",
+      "date": "2026-10-27"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/ai/log.ts",
+      "siteKind": "site",
+      "symbol": "writeAiTaskAttemptFinished",
+      "targetModule": "src/kernel/records/ai-attempt-facts.ts",
+      "targetSymbol": "writeAiTaskAttemptFinished",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/server/ai/run-lifecycle.ts",
+          "line": 33
+        },
+        {
+          "file": "src/server/boss/handlers/ai_task_run_reconcile.ts",
+          "line": 15
+        }
+      ],
+      "evidence": "Production imports start at run-lifecycle AST33 and reconcile handler AST15; actual calls 818 and 50. Existing runner stream/fallback and assessment JEV mock properties are test evidence only, not extra production consumers.",
+      "rationale": "Retain the existing terminal logging contract for runner lifecycle and orphan reconciliation. Kernel owns the complete preexisting running CAS plus same-transaction cost insert. Task start, retry, pricing and provider execution remain in their existing owners; no new exactly-once guarantee.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-e10a109a-b72e-42ff-aa5c-ddcdbb86b11b",
+      "date": "2026-10-27"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/ai/log.ts",
+      "siteKind": "site",
+      "symbol": "writeModelCatalogProbeCost",
+      "targetModule": "src/kernel/records/ai-attempt-facts.ts",
+      "targetSymbol": "writeModelCatalogProbeCost",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "src/server/ai/model-catalog.ts",
+          "line": 935
+        }
+      ],
+      "evidence": "Actual dynamic import begins at model-catalog line935 and the writer is invoked at944; typeof import at933 is type evidence only. Preserve the lazy import and its original catch boundary.",
+      "rationale": "Retain the catalog probe logging entry while kernel owns its complete unchanged cost fact conversion and insert. Unknown costs remain null with unknown basis; pricing and catalog probing remain in server AI. No provider or initialization equivalence is claimed.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-e10a109a-b72e-42ff-aa5c-ddcdbb86b11b",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> ai",
+      "date": "2026-10-27",
+      "from": 19,
+      "to": 18,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> ai",
+      "date": "2026-10-27",
+      "from": 14,
+      "to": 13,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> ai",
+      "date": "2026-10-27",
+      "from": 9,
+      "to": 8,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-27",
+      "from": 46,
+      "to": 45,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/copilot/server/practice-port.ts",
       "siteKind": "module",
       "symbol": "executeGetReviewDue",
@@ -5389,6 +5489,46 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/ai-runtime.ts",
+      "module": "src/kernel/records/ai-attempt-facts.ts",
+      "kind": "value",
+      "symbols": ["writeRetryableAiFailureLedger"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical retryable legacy failure fact writer through the existing Agency AI port. Agency retains failure eligibility, caller Db or Tx, throwOnError selection and all orchestration; kernel owns the unchanged legacy insert and catch/rethrow policy.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/ai-attempt-facts.ts",
+      "kind": "value",
+      "symbols": ["writeCostLedger"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical legacy cost fact writer inside the original image-candidate acceptance transaction. Ingestion retains task identity, zero VisionExtract correlation, caller transaction, eligibility and invocation order; kernel preserves fields, defaults and insert timing.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/propose_edge.ts",
+      "module": "src/kernel/records/ai-attempt-facts.ts",
+      "kind": "value",
+      "symbols": ["writeRetryableAiFailureLedger"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical retryable legacy failure fact writer from the unchanged proposal failure path. Knowledge retains proposal decisions, watermark and error ordering; kernel preserves legacy zero marker semantics and catch behavior without claiming measured free usage.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-ledger.ts",
+      "module": "src/kernel/records/ai-attempt-facts.ts",
+      "kind": "value",
+      "symbols": ["writePermanentAiFailureLedger", "writeRetryableAiFailureLedger"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical retryable and permanent legacy failure fact writers. Practice retains marker lookup, eligibility, stable job identity and throwOnError selection; kernel preserves legacy null correlation, zero marker, insert and error behavior.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/copilot/server/copilot-summary.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
@@ -6327,13 +6467,30 @@
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a4f455f7-b6fc-4d53-aea3-c13b568fe9a2",
       "date": "2026-10-22",
       "deadline": "2026-11-05"
+    },
+    {
+      "path": "src/server/ai/log.ts",
+      "kind": "site",
+      "symbol": "writeAiTaskRunFinished",
+      "targetModule": "src/kernel/records/ai-attempt-facts.ts",
+      "consumers": [
+        {
+          "file": "src/server/ai/runner.stream-collect.test.ts",
+          "line": 332
+        }
+      ],
+      "exitCondition": "The only old-path value import is the existing stream-collect test dynamic import at AST332, reading the mocked finished call at333. Mock declarations at stream-collect76 and runner.fallback37 are evidence, not production consumers. Retire this export only after an explicitly scoped migration of that test import and corresponding log mock observation is authorized under the then-current Owner test rules; preserve all other mock members and assertions, and do not run tests without authorization. The deadline does not authorize deleting a live pin or changing test semantics. The canonical inner terminal writer remains for the paired transaction operation.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-e10a109a-b72e-42ff-aa5c-ddcdbb86b11b",
+      "date": "2026-10-27",
+      "deadline": "2026-11-10"
     }
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 267,
+      "total": 263,
       "byOwnerPair": {
-        "agency -> ai": 19,
+        "agency -> ai": 18,
         "agency -> boss": 10,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
@@ -6348,7 +6505,7 @@
         "copilot -> runtime-env": 1,
         "copilot -> session": 5,
         "copilot -> today": 1,
-        "ingestion -> ai": 14,
+        "ingestion -> ai": 13,
         "ingestion -> boss": 7,
         "ingestion -> events": 1,
         "ingestion -> projections": 2,
@@ -6357,7 +6514,7 @@
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "ingestion -> session": 1,
-        "knowledge -> ai": 9,
+        "knowledge -> ai": 8,
         "knowledge -> boss": 3,
         "knowledge -> calibration": 1,
         "knowledge -> conjectures": 1,
@@ -6375,7 +6532,7 @@
         "observability -> events": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "practice -> ai": 46,
+        "practice -> ai": 45,
         "practice -> assessment": 1,
         "practice -> boss": 14,
         "practice -> calibration": 2,
