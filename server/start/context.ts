@@ -7,6 +7,7 @@ import type {
   readIngestionSessionDetail,
   readIngestionSessions,
   readMistakes,
+  revertIngestionBlock,
 } from '@/capabilities/ingestion/public';
 import type {
   createManualKnowledgeEdge,
@@ -65,6 +66,10 @@ export type FrontdoorContext = {
     idempotencyKey: string | null;
   }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
+  revertRecordBlock: (input: {
+    sessionId: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof revertIngestionBlock>>>;
   createRecordManualMistake: (input: {
     body: string;
     key: string | null;
