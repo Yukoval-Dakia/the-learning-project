@@ -23,13 +23,13 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { polyExp, polySigmoid } from '@/core/poly-exp';
+import { mulberry32 } from '@/core/rng';
 import { forwardAuc } from '@/server/calibration/auc';
 import {
   type ClusterForwardPreds,
   deltaAucClusterBootstrap,
   resolveBootstrapB,
 } from '@/server/calibration/bootstrap';
-import { mulberry32 } from '@/server/calibration/rng';
 
 // Load the WASI loader DIRECTLY (not the index.js dispatcher) so this suite always
 // exercises the WASM binding — never a stray `.node` (index.js prefers native). The

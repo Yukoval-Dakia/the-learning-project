@@ -5,7 +5,7 @@
 // are logged rather than stored, so replay needs the log plus an injected rng. Compose and
 // rerank derive independent seeds.
 
-import { mulberry32 } from '@/server/calibration/rng';
+import { mulberry32 } from '@/core/rng';
 
 /**
  * 选题抽样事件的种别（的两独立抽样事件 + 其 compose 变体）。

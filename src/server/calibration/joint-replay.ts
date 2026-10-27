@@ -22,6 +22,7 @@ import {
   priorTau,
   updateDifficultyPosterior,
 } from '@/core/difficulty-posterior';
+import { mulberry32 } from '@/core/rng';
 import {
   ELO_K_GLOBAL,
   HIERARCHICAL_ELO_ENABLED,
@@ -39,7 +40,6 @@ import {
   impliedBLabel,
 } from '@/server/mastery/recalibration';
 import { ece } from './ece';
-import { mulberry32 } from './rng';
 
 /** 一条作答史记录（loader 产出；synthetic 模式由脚本生成）。 */
 export interface JointReplayAttempt {
