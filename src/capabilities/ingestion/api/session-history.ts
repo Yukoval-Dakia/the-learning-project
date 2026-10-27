@@ -11,6 +11,7 @@ import {
   hasAgentEvidence,
   readAgentRunHistory,
 } from '../server/agent/history';
+import { readSessionCostEvidence } from '../server/session-cost-evidence';
 import { readSessionTitles } from '../server/session-titles';
 import type { IngestionHistoryItem, IngestionSessionHistoryResponse } from './contracts';
 
@@ -434,6 +435,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       prior_runs,
       items,
       asks,
+      cost_evidence: await readSessionCostEvidence(db, sessionId),
       evidence: {
         snapshot: history?.snapshot ?? false,
         live_events: history?.live_events ?? false,
