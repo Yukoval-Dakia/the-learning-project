@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
 import { Button } from '@/ui-next/public';
-import { type AskAnswerBody, answerAsk } from './record-api';
+import type { AskAnswerBody } from './record-api';
+import { useRecordClient } from './record-client';
 import { answerRejectWords, whenWords } from './record-copy';
 import type { Ask } from './recording-model';
 
@@ -27,6 +28,7 @@ function answeredAt(ask: Ask): string | null {
  * answer sends on 回答. It only counts as answered once the helper confirms it on the stream.
  */
 export function AskReply({ sessionId, ask }: { sessionId: string; ask: Ask }) {
+  const { answerAsk } = useRecordClient();
   const [text, setText] = useState('');
   const [noneOfThese, setNoneOfThese] = useState(false);
   // Same answer → same key, so pressing again after a network error cannot answer twice.

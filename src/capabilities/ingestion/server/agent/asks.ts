@@ -24,6 +24,8 @@ import {
   INGESTION_ASK_ANSWER_TEXT_MAX,
   INGESTION_ASK_TABLE,
   IngestionAgentAskPayload,
+  IngestionAskAnswerBody,
+  IngestionAskAnswerHeaders,
   type IngestionAskAnswerPostT,
   type IngestionAskAnswerT,
 } from './contract';
@@ -617,4 +619,45 @@ export async function listStaleRunningSessions(
     ...(row.operation_id ? { operation_id: row.operation_id } : {}),
     ...(row.run_ref ? { run_ref: row.run_ref } : {}),
   }));
+}
+
+export async function answerIngestionAsk(
+  db: Db,
+  params: Record<string, string>,
+  idempotencyKey: string | null,
+  readBody: () => Promise<unknown>,
+): Promise<AnswerAskResult> {
+  const sessionId = params.id;
+  const askId = params.ask_id;
+  if (!sessionId || !askId) {
+    throw new ApiError('validation_error', 'session id and ask id are required', 400);
+  }
+
+  const keyParse = IngestionAskAnswerHeaders.safeParse({
+    'Idempotency-Key': idempotencyKey?.trim() ?? '',
+  });
+  if (!keyParse.success) {
+    throw new ApiError(
+      'validation_error',
+      'Idempotency-Key header is required (1–200 characters)',
+      400,
+    );
+  }
+
+  const raw = await readBody().catch(() => null);
+  const parsed = IngestionAskAnswerBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ApiError(
+      'validation_error',
+      parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; '),
+      400,
+    );
+  }
+
+  return await acceptAskAnswer(db, {
+    sessionId,
+    askId,
+    idempotencyKey: keyParse.data['Idempotency-Key'],
+    answer: parsed.data.answer,
+  });
 }

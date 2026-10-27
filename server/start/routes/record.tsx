@@ -5,6 +5,7 @@ import {
   RecordClientProvider,
   loadRecordPage,
 } from '@/capabilities/ingestion/ui-public';
+import { startRecordAskAnswerClient } from '../record-ask-answer-client';
 import { startRecordBlocksClient } from '../record-blocks-client';
 import { startRecordManualMistakeClient } from '../record-manual-mistake-client';
 import { startRecordRevertClient } from '../record-revert-client';
@@ -15,6 +16,7 @@ import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
 
 const recordClient: RecordClient = {
+  answerAsk: startRecordAskAnswerClient,
   listSessions: startRecordSessionsClient,
   listBlocks: startRecordBlocksClient,
   listKnowledge: () => startWorkbenchClient.getTree().then((result) => result.rows),
