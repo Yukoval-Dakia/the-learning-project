@@ -3613,6 +3613,66 @@
       "from": 45,
       "to": 41,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessions",
+      "targetModule": "src/capabilities/ingestion/server/session-list-read.ts",
+      "targetSymbol": "readIngestionSessions",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-list-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and invokes the complete session-list reader at line 13. The context reference is type-only; HTTP consumes the same owner inside Ingestion.",
+      "rationale": "Ingestion owns the complete recording-list request and aggregation: limit and cursor rules, evidence-qualified pagination, frozen title lookup, counts and agent-item deduplication, time/null mappings and the full collection envelope. Start transports the result without duplicating SQL or deriving titles from mutable question text.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectSessionListResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectSessionListResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-list-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start recording-list client imports the projector at ImportDeclaration AST and module path line 1 and calls it at line 6 after complete JSON parsing. The existing HTTP helper consumes the same projector in its original return position.",
+      "rationale": "Ingestion UI owns its original full-response data projection to SessionRow[]. Sharing that exact projection keeps both transports aligned without introducing a second response schema, removing wire fields before serialization or changing page semantics.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "RecordClientProvider",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-client.tsx",
+      "targetSymbol": "RecordClientProvider",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/routes/record.tsx",
+          "line": 3
+        }
+      ],
+      "evidence": "The live /record Start route imports RecordClientProvider at ImportDeclaration AST line 3 and module path line 7 and renders it at JSX lines 22 and 37. It supplies a module-stable list binding to the unchanged RecordPage and its useRecordingList consumer.",
+      "rationale": "Ingestion owns the recording UI's narrow list transport port and default HTTP implementation. The route injects the authenticated Start implementation while preserving the original page, query callbacks, asynchronous flows and other HTTP transports.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
     }
   ],
   "edgeRecords": [
@@ -5773,6 +5833,16 @@
       "issue": "YUK-1358",
       "date": "2026-10-27",
       "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the draft-list validation order, cursor/offset request policy and aggregate invocation, and supplies the unchanged rows, page and complete extension fields to that envelope."
+    },
+    {
+      "file": "src/capabilities/ingestion/server/session-list-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "collectionPayload"],
+      "debt": "capabilityToKernel",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "owns": "Kernel owns the shared API error vocabulary and collection envelope. Ingestion owns the original recording-list cursor errors, limit rules, evidence-qualified aggregation and complete row projection, and passes its unchanged data and page fields to that envelope."
     }
   ],
   "sourceSizeRecords": [
