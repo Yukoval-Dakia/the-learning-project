@@ -5146,6 +5146,26 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/pdf-upload-operation.ts",
+      "module": "src/kernel/records/asset-store.ts",
+      "kind": "value",
+      "symbols": ["persistImageAsset"],
+      "issue": "YUK-1570",
+      "owns": "Own sequential rendered-page persistence with the matching PDF source-package stamp after original PDF and text-layer assets are persisted. Preserve the original per-asset storage protocol and partial-write failure window without aggregate transaction or new compensation.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/pdf-upload-operation.ts",
+      "module": "src/server/r2.ts",
+      "kind": "value",
+      "symbols": ["getR2"],
+      "issue": "YUK-1570",
+      "owns": "Acquire the existing R2 client only after rendering succeeds and before text extraction, within the complete PDF expansion operation. Preserve original lazy acquisition, failure propagation and ordered source/text/page persistence; no provider or paid execution is added.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/serving-action-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
