@@ -7,8 +7,6 @@
 // The DomainTool execute fns keep their SQL predicates single-sourced; this bypasses the
 // MCP bridge (and its ADR-0011 audit) on purpose for a read-only surface.
 
-import { executeMemoryBrief } from '@/capabilities/copilot/public';
-import { executeGetReviewDue } from '@/capabilities/practice/public';
 import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
 import type { Db, Tx } from '@/db/client';
 import { getEvents } from '@/kernel/events';
@@ -19,6 +17,8 @@ import {
   listProposalInboxPage,
 } from '@/kernel/proposals/inbox';
 import type { ToolContext } from '@/kernel/tools/types';
+import { executeGetReviewDue } from './practice-port';
+import { executeMemoryBrief } from './tools/memory-brief';
 
 type DbLike = Db | Tx;
 

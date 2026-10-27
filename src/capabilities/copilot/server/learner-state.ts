@@ -36,7 +36,7 @@ import {
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
-import { type CopilotSummary, loadCopilotSummary } from '@/server/today/copilot-summary';
+import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
 import {
   type LoadTodayOvernightDigest,
   OVERNIGHT_HANDOFF_UNAVAILABLE,

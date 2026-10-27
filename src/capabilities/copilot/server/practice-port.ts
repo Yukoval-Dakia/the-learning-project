@@ -7,6 +7,7 @@ export {
   buildSolveHintInput,
   captureReviewAnswerBinding,
   consumeReviewAnswerBinding,
+  executeGetReviewDue,
   isLiveQuestionReference,
   parseHintTurn,
   validateLearningContent,
