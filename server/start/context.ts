@@ -3,6 +3,7 @@ import type { createGoal } from '@/capabilities/agency/public';
 import type {
   createIngestionSession,
   readIngestionSessionBlocks,
+  readIngestionSessionDetail,
   readIngestionSessions,
   readMistakes,
 } from '@/capabilities/ingestion/public';
@@ -64,6 +65,9 @@ export type FrontdoorContext = {
   }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
   readRecordBlocks: (id: string) => Promise<Awaited<ReturnType<typeof readIngestionSessionBlocks>>>;
+  readRecordSessionDetail: (
+    id: string,
+  ) => Promise<Awaited<ReturnType<typeof readIngestionSessionDetail>>>;
   readRecordSessions: (query: string) => Promise<Awaited<ReturnType<typeof readIngestionSessions>>>;
   createIngestionSession: (input: {
     body: string;
