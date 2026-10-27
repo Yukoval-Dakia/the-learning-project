@@ -3713,6 +3713,46 @@
       "evidence": "The Start blocks client imports the projector at ImportDeclaration AST line 1 and module path line 4 and invokes it at line 9 after complete JSON parsing. The existing HTTP helper calls the same projector in its original return position.",
       "rationale": "Ingestion UI owns the original body.rows as Block[] projection. Both transports reuse that exact projection without introducing a second codec, trimming wire fields or changing the recording status gates and query lifecycle.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildRecordSessionCreateBody",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "buildRecordSessionCreateBody",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-create-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start recording-create client imports the builder at ImportDeclaration AST line 1 and module path line 5 and calls it at line 14 before JSON serialization. The canonical HTTP helper calls the same builder in its original body position.",
+      "rationale": "Ingestion UI owns its recording-create input mapping: unchanged entrypoint, assetIds to asset_ids and the answer_only-only derivation_policy spread. Sharing that mapping preserves field omission and values across the HTTP and Start transports without adding a schema, key or retry policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectRecordSessionCreateResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectRecordSessionCreateResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-create-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start recording-create client imports the projector at ImportDeclaration AST line 1 and module path line 5 and invokes it at line 10 after complete JSON parsing. The canonical HTTP helper calls the same projector in its original return position.",
+      "rationale": "Ingestion UI owns the existing body.session.id projection used by both initial send and manual retry. The shared projector preserves that narrow consumer result while the existing creation owner and transport retain terminal errors, Location and replay metadata; it does not promise safe replay for this unkeyed caller.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
     }
   ],
   "edgeRecords": [
