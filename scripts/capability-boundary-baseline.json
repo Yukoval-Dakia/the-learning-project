@@ -4073,6 +4073,26 @@
       "evidence": "The authenticated Start session-list host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP GET is an internal consumer. The existing stable Copilot client serves both visit-session fetchQuery with its signal and the fresh policy read before each restricted send.",
       "rationale": "Copilot owns the complete session-list response and successful no-store policy: await the existing conversation list, then create server_time, include the original supported derivation policies and full session rows, and return typed body and headers. HTTP and Start consume the same descriptor without duplicating policy, changing the query or adding a transaction; the separate create request remains HTTP-only.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-9307c5bb-6345-448a-b28b-d294c19537b7"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "createCopilotSession",
+      "targetModule": "src/capabilities/copilot/server/conversation-requests.ts",
+      "targetSymbol": "createCopilotSession",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-session-create-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start create host imports this existing complete request at await-import AST and module path line 11 and invokes it at line 13 with db and no options. The context reference is type-only; the retained HTTP POST is an internal consumer. The stable Copilot client reaches visit-sessions' shared creation method for explicit controls and the automatic visit bootstrap, both of which consume the complete session object.",
+      "rationale": "Copilot owns the existing complete session-creation request and its body/status descriptor. HTTP and Start reuse it without exposing or copying the conversation transaction, ID/time generation or job-event construction. Start sets the original 201 only after awaiting the owner and returns the full session; it introduces no key, receipt, retry or alternate creation policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f19dc7f-20e6-4795-a06d-70683d154cde"
     }
   ],
   "edgeRecords": [
