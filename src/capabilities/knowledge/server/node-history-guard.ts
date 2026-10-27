@@ -9,8 +9,6 @@ import {
   knowledgeLiveRowToSnapshot,
 } from '@/kernel/records/knowledge-node-history';
 
-export { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
-
 type DbLike = Db | Tx;
 
 /** Strict pre-mutation guard. Caller must hold the node row lock; derived embedding is excluded. */

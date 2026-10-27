@@ -8,8 +8,8 @@ import { writeEvent } from '@/kernel/events';
 import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
-import { requireKnowledgeHistory } from '@/server/projections/knowledge';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { requireKnowledgeHistory } from './node-history-guard';
 
 type InitialKnowledge = Pick<
   KnowledgeRowSnapshotT,
