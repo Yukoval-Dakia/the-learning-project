@@ -3999,6 +3999,46 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "dismissCopilotNudge",
+      "targetModule": "src/capabilities/copilot/server/nudge-actions.ts",
+      "targetSymbol": "dismissCopilotNudge",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-nudge-actions-operation.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start dismiss host imports this complete request at await-import AST and module path line 11 and invokes it at line 13 with db and the original id params. The context reference is type-only; the retained HTTP handler is an internal consumer. The stable shell client reaches the live NudgeBar dismiss mutation through useCopilotNudges.",
+      "rationale": "Copilot owns the complete dismissed-nudge request: original params schema, nudge existence check, ID generation, event fields, bounded cause-chain unique-violation handling and full success result. HTTP and Start reuse the same fixed-action entry and private execution without duplicating request policy, adding transactions or changing per-action deduplication.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "markCopilotNudgeOpened",
+      "targetModule": "src/capabilities/copilot/server/nudge-actions.ts",
+      "targetSymbol": "markCopilotNudgeOpened",
+      "owner": "copilot",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/copilot-nudge-actions-operation.ts",
+          "line": 22
+        }
+      ],
+      "evidence": "The authenticated Start opened host imports this complete request at await-import AST and module path line 22 and invokes it at line 24 with db and the original id params. The context reference is type-only; the retained HTTP handler is an internal consumer. The stable shell client reaches NudgeBar's existing void markOpened call before its immediate conversation-open action.",
+      "rationale": "Copilot owns the complete opened-nudge request and fixes the original opened action inside the capability. Its shared private execution preserves schema, existence, new ID, event construction, unique-violation deduplication and response policy. Transport cannot choose an arbitrary event action or redefine opened versus dismissed identity.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0b435d18-d6e6-49f1-9919-b482e848aab8"
+    },
+    {
       "debt": "capabilityToServer",
       "pair": "ingestion -> events",
       "date": "2026-10-27",
@@ -6232,6 +6272,26 @@
       "symbols": ["LoadTodayOvernightDigest", "OvernightDigest", "loadTodayOvernightDigest"],
       "issue": "YUK-1570",
       "owns": "Consume the unchanged shared overnight digest facts and default dynamic Shell/Observability composition. Copilot owns its complete quiet/cost/degraded handoff sentence and original Promise rejection warning/unavailable policy; preserve the caller override snapshot and invocation order, synchronous throws, the shared default clock and cost-reader injection, and the distinct HTTP/Start error contracts.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/nudge-actions.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1358",
+      "owns": "Consume the canonical event writer for the complete Copilot nudge disposition request. Preserve the original user/self event fields, caused-by nudge identity, default timestamp and outbox intent, bare-Db insertion and per-action 23505 handling; do not add a transaction, action-level mutual exclusion or dispatch policy.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/nudge-actions.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Own the original missing-nudge not_found/404 decision after params parsing and the existence query. Preserve the original Zod and other exception behavior for the retained HTTP and Start errorResponse adapters; do not add validation translation or new eligibility checks.",
       "date": "2026-10-27"
     }
   ],

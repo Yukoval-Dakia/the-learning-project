@@ -16,6 +16,7 @@ export { copilotConfigEffectiveFacts } from './server/config-effective-facts';
 export { loadCopilotSummary } from './server/copilot-summary';
 // Migration readiness checks consume this read-only port.
 export { assertCopilotLegacyDrained } from './server/legacy-drain-readiness';
+export { dismissCopilotNudge, markCopilotNudgeOpened } from './server/nudge-actions';
 export { loadActiveNudges } from './server/nudge-read';
 // memory-brief reader for non-LLM read paths (today summary, demos).
 export { MEMORY_BRIEF_STALE_AFTER_MS, executeMemoryBrief } from './server/tools/memory-brief';
