@@ -13,7 +13,6 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { hasPriorSolutionExposure } from '@/kernel/records/study-reference';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
-import * as Tutor from './tutor-session';
 import { recordAssistanceExposure } from './assessment/assistance';
 import { commitFormalAttempt } from './assessment/attempt';
 import {
@@ -23,6 +22,7 @@ import {
 } from './assessment/study-context';
 import type { SaveSubmissionRequest } from './assessment/submit';
 import { createAssessmentAssetLoader } from './assets';
+import * as Tutor from './tutor-session';
 export type RunTaskFn = (kind: string, input: unknown, ctx: unknown) => Promise<{ text: string }>;
 
 // Default mastery threshold for solve-tutor: a judged attempt scoring below this
