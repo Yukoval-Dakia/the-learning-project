@@ -3,6 +3,7 @@ import type { Job, PgBoss } from 'pg-boss';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event } from '@/db/schema';
 import {
   eventAllowsDerivationSql,
@@ -19,7 +20,6 @@ import {
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   EXPIRE_LLM,
   FAST_QUEUE_OPTS,

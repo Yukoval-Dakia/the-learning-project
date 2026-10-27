@@ -1,6 +1,6 @@
 import type { Tx } from '@/db/client';
-import { getStartedBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
+import { getStartedBoss } from '@/server/boss/client';
 import { WORKSHEET_RENDER_QUEUE } from '../worksheet-render-queue';
 
 /** Capability-local durable-queue runtime boundary. */

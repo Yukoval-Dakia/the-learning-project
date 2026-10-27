@@ -4,10 +4,10 @@ import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzl
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 import { writeEvent, writeEvents } from '@/kernel/events';
-import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import type { PlacementVerificationAuthority } from './question-supply/placement-starter-attempts';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';

@@ -1,6 +1,6 @@
 import type { Tx } from '@/db/client';
-import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
+import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
 
 export async function getNotesBoss() {
   return getStartedBoss();
