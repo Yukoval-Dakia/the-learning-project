@@ -132,6 +132,8 @@ User 标注「我做错过」+ 可选填错答
 Mistake.create({source: 'vision_single', ...})
 ```
 
+**幂等**：创建入口 `POST /api/ingestion-sessions`（legacy `POST /api/ingestion` 同契约，成功码 200）接受可选请求头 `Idempotency-Key`（1–200 字符，显式空串/纯空白非法，400）。同 key 同输入重放已提交的终态响应并带 `Idempotency-Replayed: true`，不重跑资产与科目校验、不再建 session；同 key 不同输入 409 `idempotency_conflict`，收据不可用或提交结果不确定 503 `creation_receipt_unavailable`（用同 key 与原输入重试）；不带 key 则照旧创建、不落收据（收据表见[架构基础](../architecture.md) §七）。source package 物化失败以 500 `ingestion_source_package_failed` 作为终态落库，同 key 重试重放该失败，不会另建 session。
+
 **必审字段**：题面、参考答案、关联知识点（影响 mastery 计算）。其他自动通过。
 
 ### 2.3 卷子拍照 / 批改识别（vision_paper，Phase 1.5）
@@ -182,6 +184,8 @@ Mistake.create({source: 'manual', source_ref: null})
 ```
 
 无 AI 介入题面识别（已结构化文本输入），AttributionTask 仍跑。
+
+**幂等**：`POST /api/mistakes` 与 §2.2 同语义（`Idempotency-Key` 校验、重放、409 / 503、不带 key 的规则一致），唯一差异是成功码固定 201，重放时复用原 `Location`（`/api/events/<mistake_id>`）。
 
 ### 2.5 从 artifact 或会话反向标记（reverse_mark）
 

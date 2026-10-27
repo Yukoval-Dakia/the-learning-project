@@ -322,6 +322,7 @@ DDL 唯一真相源是 `src/db/schema.ts`（单文件、按段注释）；本节
 - `event.task_run_id`、`tool_call_log.task_run_id`、`cost_ledger.task_run_id` 都是 loose text ref，故意不建 FK（常早于 `ai_task_runs` 行写入）。
 - `learning_record.knowledge_ids` 在 KC merge 时故意不重写，unmerge 才能重算（见该表注释）。
 - `artifact.knowledge_ids` 是数组列，单值 `knowledge_id` 已不存在。
+- `ingestion_creation_receipt` 是两个创建操作（`ingestion_session.create.v1` / `manual_mistake.create.v1`）的永久幂等回执，刻意不建 FK 并随 `FK_ORDER` 进备份（`SCHEMA_VERSION` 4.33 / migration 0133）：收据必须在资源删除后仍在、恢复后仍能命中，否则同 key 重试会重复造资源。收据版本不识别或内容损坏一律 503，绝不当作 cache miss 重建；重放与校验语义见 [`modules/mistakes.md`](modules/mistakes.md) §2.2 / §2.4。
 
 In-code registries（非 DB）以代码为准：`DomainTool` 契约在 `src/kernel/tools/types.ts`，`TaskDefinition` 在 `src/ai/task-spec.ts`，`JudgeKind` 在 `src/core/schema/business.ts`。
 
