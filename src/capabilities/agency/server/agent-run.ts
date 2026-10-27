@@ -7,6 +7,7 @@
 // differences stay in the spec: actor_ref, payload slots, TodayPlan extras, note-refine fan-out.
 
 import { createId } from '@paralleldrive/cuid2';
+import { type BuildMcpServerOptions, piDomainMount } from '@/ai/pi-tool-mount';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { Db } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
@@ -19,9 +20,8 @@ import {
 } from '@/kernel/tools/allowlists';
 import type { ContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
+import type { ToolExecutionGateInput } from '@/kernel/tools/types';
 import { type RunAgentTaskCtx, runAgentTask } from '@/server/ai/runner';
-import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
-import { piDomainMount } from '@/server/ai/tools/pi-tools';
 
 /**
  * The inbox row slice the scan diff needs. Only Dreaming's note-refine fan-out reads
