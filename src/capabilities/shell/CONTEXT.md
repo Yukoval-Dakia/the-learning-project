@@ -20,5 +20,5 @@ src/server/proposals/actions.ts 瘦壳。
   week_heat（event 近 7 天 BJT 分天 count，旧 today 页 OMITTED 的新聚合）
 - ui/ —— T6：TodayPage（/today）+ InboxPage（/inbox）+ workbench-api / inbox-api
 - 包外依赖：src/server/proposals/{inbox,actions}（跨包横切面瘦壳）、
-  practice/server/due-list、src/server/records/mistakes、
-  src/server/today/proposal-kpi
+  practice/server/due-list、src/server/records/mistakes
+- server/proposal-kpi.ts — 工作台完整提议计数投影（含人工决定计数与扫描下界信号）。

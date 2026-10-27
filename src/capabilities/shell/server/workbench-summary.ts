@@ -15,8 +15,8 @@ import {
   source_document,
 } from '@/db/schema';
 import { listMistakeProjectionRows } from '@/server/records/mistakes';
-import { type TodayProposalKpi, loadTodayProposalKpi } from '@/server/today/proposal-kpi';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
+import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
 
 // KPI sampling cap: these are magnitude signals, not exact totals.
 const KPI_SAMPLE_LIMIT = 200;
