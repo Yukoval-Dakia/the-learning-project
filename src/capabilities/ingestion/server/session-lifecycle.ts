@@ -9,9 +9,9 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { learning_session, question_block, source_document } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
+import { assertFromState } from '@/kernel/learning-session-guard';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { assertFromState } from '@/server/session/guards';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
