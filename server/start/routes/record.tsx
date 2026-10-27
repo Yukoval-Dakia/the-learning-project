@@ -5,12 +5,14 @@ import {
   RecordClientProvider,
   loadRecordPage,
 } from '@/capabilities/ingestion/ui-public';
+import { startRecordBlocksClient } from '../record-blocks-client';
 import { startRecordSessionsClient } from '../record-session-list-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
 
 const recordClient: RecordClient = {
   listSessions: startRecordSessionsClient,
+  listBlocks: startRecordBlocksClient,
   listKnowledge: () => startWorkbenchClient.getTree().then((result) => result.rows),
 };
 const Page = lazy(() => loadRecordPage().then((defaultPage) => ({ default: defaultPage })));
