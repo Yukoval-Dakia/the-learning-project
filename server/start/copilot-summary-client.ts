@@ -5,10 +5,12 @@ import {
   markStartCopilotNudgeOpenedFunction,
 } from './copilot-nudge-actions-function';
 import { getStartCopilotNudgesFunction } from './copilot-nudges-function';
+import { startCopilotSessionsClient } from './copilot-sessions-client';
 import { getStartCopilotSummaryFunction } from './copilot-summary-function';
 
 export const startCopilotClient: CopilotClient = {
   ...httpCopilotClient,
+  listSessions: startCopilotSessionsClient,
   dismissNudge: async (id) => {
     await dismissStartCopilotNudgeFunction({ fetch: authenticatedStartFetch, data: { id } });
   },

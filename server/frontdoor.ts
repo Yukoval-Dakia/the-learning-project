@@ -8,6 +8,7 @@ import {
   markStartCopilotNudgeOpened,
 } from './start/copilot-nudge-actions-operation';
 import { readStartCopilotNudges } from './start/copilot-nudges-reader';
+import { readStartCopilotSessions } from './start/copilot-sessions-reader';
 import { readStartCopilotSummary } from './start/copilot-summary-reader';
 import { createStartGoal } from './start/goal-create-operation';
 import { createStartIngestionSession } from './start/ingestion-session-create-operation';
@@ -98,6 +99,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   );
   const context: FrontdoorContext = {
     api,
+    readCopilotSessions: readStartCopilotSessions,
     dismissCopilotNudge: dismissStartCopilotNudge,
     markCopilotNudgeOpened: markStartCopilotNudgeOpened,
     readCopilotNudges: readStartCopilotNudges,

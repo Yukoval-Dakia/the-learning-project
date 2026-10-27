@@ -1,19 +1,11 @@
-import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { createCopilotConversation, listCopilotConversations } from '@/server/session/conversation';
+import { createCopilotSession, readCopilotSessions } from '../server/conversation-requests';
 
 export async function GET(): Promise<Response> {
   try {
-    const sessions = await listCopilotConversations(db);
-    return Response.json(
-      {
-        sessions,
-        server_time: new Date().toISOString(),
-        supported_derivation_policies: DerivationPolicy.options,
-      },
-      { headers: { 'Cache-Control': 'no-store' } },
-    );
+    const result = await readCopilotSessions(db);
+    return Response.json(result.body, { headers: result.headers });
   } catch (err) {
     return errorResponse(err);
   }
@@ -21,8 +13,8 @@ export async function GET(): Promise<Response> {
 
 export async function POST(): Promise<Response> {
   try {
-    const { session } = await createCopilotConversation(db);
-    return Response.json({ session }, { status: 201 });
+    const result = await createCopilotSession(db);
+    return Response.json(result.body, { status: result.status });
   } catch (err) {
     return errorResponse(err);
   }
