@@ -1,5 +1,6 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
+import type { loadCopilotSummary } from '@/capabilities/copilot/public';
 import type {
   answerIngestionAsk,
   createIngestionSession,
@@ -57,6 +58,7 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  readCopilotSummary: () => Promise<Awaited<ReturnType<typeof loadCopilotSummary>>>;
   enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
   forceEnableLibraryDraft: (input: {
     id: string;
