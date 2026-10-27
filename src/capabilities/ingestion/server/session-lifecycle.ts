@@ -10,7 +10,7 @@ import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { USAGE_POLICY_PROVENANCE_KEY } from '@/kernel/read-models/usage-policy';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { assertFromState } from '@/server/session/guards';
 import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx/omission';
 

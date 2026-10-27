@@ -3,7 +3,7 @@ import { PgBoss } from 'pg-boss';
 import { getServerEnv, resolveBossAutomationMode } from '@/server/env';
 
 // Callers that own a queue import the singleton and the transaction adapter from here.
-export { fromPgBossDrizzleTx } from './pg-boss-drizzle';
+export { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 
 // One PgBoss per process. It owns its pool. v12 sets retention, expiry, and the
 // poll interval on createQueue or work, not on this constructor. schema 'pgboss'

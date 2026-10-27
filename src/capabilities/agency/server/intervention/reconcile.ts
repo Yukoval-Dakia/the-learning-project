@@ -6,7 +6,7 @@ import { withLearningStateLock } from '@/db/learning-state-lock';
 import { intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { getRunningBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   PREPARE_INTERVENTION_JOB,
   type PrepareInterventionJobData,

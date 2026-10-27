@@ -7,7 +7,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 import { writeEvent, writeEvents } from '@/kernel/events';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import type { PlacementVerificationAuthority } from './question-supply/placement-starter-attempts';
 
 export const VERIFY_DISPATCH_INTENT_ACTION = 'experimental:verify_dispatch_intent';

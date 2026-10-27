@@ -1,6 +1,6 @@
 import type { Tx } from '@/db/client';
 import { getStartedBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { PREPARE_INTERVENTION_JOB } from './probe-result-subscription';
 
 /**

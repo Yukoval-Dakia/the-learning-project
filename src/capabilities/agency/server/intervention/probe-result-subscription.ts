@@ -13,7 +13,7 @@ import type {
   EventSubscriptionOutcome,
 } from '@/kernel/manifest';
 import { getStartedBoss } from '@/server/boss/client';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   InterventionSourceProbeResultPayload,
   buildInterventionSnapshotFromProbeResult,

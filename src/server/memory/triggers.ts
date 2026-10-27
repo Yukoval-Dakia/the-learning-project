@@ -19,7 +19,7 @@ import {
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
 import { createMem0OpaqueOperationContext } from '@/server/ai/provider-attempt-runtime';
-import { fromPgBossDrizzleTx } from '@/server/boss/pg-boss-drizzle';
+import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import {
   EXPIRE_LLM,
   FAST_QUEUE_OPTS,
