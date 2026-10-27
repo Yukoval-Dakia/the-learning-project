@@ -36,13 +36,13 @@ import {
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
-import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
 import {
   type LoadTodayOvernightDigest,
   OVERNIGHT_HANDOFF_UNAVAILABLE,
   formatOvernightHandoffSentence,
   loadTodayOvernightDigest,
 } from '@/server/today/overnight-digest';
+import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
 
 type DbLike = Db | Tx;
 
