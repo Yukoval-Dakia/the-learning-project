@@ -3753,6 +3753,46 @@
       "evidence": "The Start recording-create client imports the projector at ImportDeclaration AST line 1 and module path line 5 and invokes it at line 10 after complete JSON parsing. The canonical HTTP helper calls the same projector in its original return position.",
       "rationale": "Ingestion UI owns the existing body.session.id projection used by both initial send and manual retry. The shared projector preserves that narrow consumer result while the existing creation owner and transport retain terminal errors, Location and replay metadata; it does not promise safe replay for this unkeyed caller.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-47b0092e-7a15-4b43-9ad0-143d62aec2be"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessionDetail",
+      "targetModule": "src/capabilities/ingestion/server/session-detail.ts",
+      "targetSymbol": "readIngestionSessionDetail",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-detail-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and invokes the complete session-detail reader at line 12. The context reference is type-only; the existing HTTP handler remains an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the session and its complete trusted usage receipts plus live derivation policy in one repeatable-read, read-only snapshot. The existing owner retains identity, not-found and accounting-error rules, unknown/null semantics and the full projection; Start transports that result without splitting the read or recreating privacy accounting.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectRecordSessionDetailResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectRecordSessionDetailResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-session-detail-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start session-detail client imports the projector at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 after complete JSON parsing. The HTTP helper calls the same projector in its original return position and retains its no-store request.",
+      "rationale": "Ingestion UI owns its existing body-as-SessionDetail projection. Sharing that exact projection preserves all session and usage fields across transports while retaining the recording query's status gates and polling cadence; the narrow TypeScript view does not trim the wire or synthesize unavailable accounting.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
     }
   ],
   "edgeRecords": [
