@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, job_events } from '@/db/schema';
@@ -13,7 +14,10 @@ import {
   findReusableCopilotConversation,
   lockCopilotSessionSelection,
 } from '@/server/session/conversation';
-import type { CopilotCheckpointRevertRefusalT } from '../api/contracts';
+import {
+  CopilotCheckpointParamsSchema,
+  type CopilotCheckpointRevertRefusalT,
+} from '../api/contracts';
 import { COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 
@@ -175,4 +179,18 @@ export async function revertCopilotCheckpoint(db: Db, checkpointEventId: string)
       },
     } as const;
   });
+}
+
+export async function requestCopilotCheckpointRevert(db: Db, params: Record<string, string>) {
+  try {
+    const { eventId: checkpointEventId } = CopilotCheckpointParamsSchema.parse(params);
+    return await revertCopilotCheckpoint(db, checkpointEventId);
+  } catch (err) {
+    // A bad path param is a 400 validation_error, not a generic 500 (a bare
+    // errorResponse(ZodError) would fall through to 500).
+    if (err instanceof ZodError) {
+      throw new ApiError('validation_error', err.issues.map((i) => i.message).join('; '), 400);
+    }
+    throw err;
+  }
 }
