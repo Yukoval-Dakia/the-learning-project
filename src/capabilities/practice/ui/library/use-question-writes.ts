@@ -4,7 +4,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/ui/lib/api';
 import { showToast } from '@/ui-next/feedback/toast-store';
-import { type QuestionPatchBody, enableDraft, forceEnableDraft } from '../practice-api';
+import type { QuestionPatchBody } from '../practice-api';
 import type { ServingAction } from './library-api';
 import { type LibraryClient, useLibraryClient } from './library-client';
 import { LIBRARY_KEY } from './use-library';
@@ -52,6 +52,7 @@ export function useServingAction() {
 
 /** 核验并启用: the server runs the check and turns the draft on only if it passes. */
 export function useVerifyDraft() {
+  const { enableDraft } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: (id: string) => enableDraft(id),
@@ -60,6 +61,7 @@ export function useVerifyDraft() {
 }
 
 export function useForceEnable() {
+  const { forceEnableDraft } = useLibraryClient();
   const refresh = useRefresh();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => forceEnableDraft(id, reason),

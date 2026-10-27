@@ -13,6 +13,10 @@ import { readStartKnowledgeEdges } from './start/knowledge-edges-reader';
 import { readStartKnowledgeMisconceptions } from './start/knowledge-misconceptions-reader';
 import { readStartKnowledgeNodePage } from './start/knowledge-node-reader';
 import { readStartLibraryDraftDetail } from './start/library-draft-detail-reader';
+import {
+  enableStartLibraryDraft,
+  forceEnableStartLibraryDraft,
+} from './start/library-draft-promotion-operation';
 import { archiveStartLibraryQuestion } from './start/library-question-delete-operation';
 import { readStartLibraryQuestionDetail } from './start/library-question-detail-reader';
 import { readStartLibraryQuestionMistakes } from './start/library-question-mistakes-reader';
@@ -94,6 +98,8 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     runLibraryServingAction: runStartLibraryServingAction,
     archiveLibraryQuestion: archiveStartLibraryQuestion,
     readLibraryDraftDetail: readStartLibraryDraftDetail,
+    enableLibraryDraft: enableStartLibraryDraft,
+    forceEnableLibraryDraft: forceEnableStartLibraryDraft,
     getPracticeStream: getStartPracticeStream,
     recomposePracticeStream: recomposeStartPracticeStream,
     updatePracticeStreamItem: updateStartPracticeStreamItem,
