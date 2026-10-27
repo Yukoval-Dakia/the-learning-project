@@ -3793,6 +3793,66 @@
       "evidence": "The Start session-detail client imports the projector at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 after complete JSON parsing. The HTTP helper calls the same projector in its original return position and retains its no-store request.",
       "rationale": "Ingestion UI owns its existing body-as-SessionDetail projection. Sharing that exact projection preserves all session and usage fields across transports while retaining the recording query's status gates and polling cadence; the narrow TypeScript view does not trim the wire or synthesize unavailable accounting.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4e0ec3b2-d64c-4534-91eb-06dfc2203198"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "CreateMistakeBodySchema",
+      "targetModule": "src/capabilities/ingestion/api/contracts.ts",
+      "targetSymbol": "CreateMistakeBodySchema",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports the existing request schema at await-import AST line 20 and module path line 21 and parses the request at line 23. The HTTP handler consumes the same schema internally; no second payload codec is introduced.",
+      "rationale": "Ingestion owns the manual-mistake creation input contract, including null, default and strip behavior. The Start adapter reuses that exact schema and HTTP issue formatting before invoking the complete owner, without changing learner content or key policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "createManualMistake",
+      "targetModule": "src/capabilities/ingestion/server/create-manual-mistake.ts",
+      "targetSymbol": "createManualMistake",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-operation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "The authenticated Start host imports createManualMistake at await-import AST line 20 and module path line 21 and calls the complete operation at line 31 with the parsed body and actual request key. Context use is type-only; HTTP remains an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the complete manual creation and receipt transaction: live knowledge, subject/cause and asset checks, original identities, question publication and frozen evidence, attempt and learning-record writes, terminal result and keyed replay. Start preserves that operation and its 201 body and metadata without copying SQL, splitting transactions or inventing replay for the unkeyed UI.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "buildRecordManualMistakeBody",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "buildRecordManualMistakeBody",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-manual-mistake-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start manual-mistake client imports the shared builder at ImportDeclaration AST line 1 and module path line 4 and calls it at line 12 before JSON serialization. The canonical HTTP helper uses the same builder in its original body position.",
+      "rationale": "Ingestion UI owns its existing typed-question body mapping, including learner text and knowledge IDs, null reference and cause, difficulty 3, short_answer kind and empty image arrays. Both transports reuse those exact values without adding a schema, response projector, key or retry policy.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-0f95c1f1-b006-41a9-b5ac-4991d91388e0"
     }
   ],
   "edgeRecords": [

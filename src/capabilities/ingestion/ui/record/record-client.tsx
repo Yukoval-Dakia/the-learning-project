@@ -1,5 +1,12 @@
 import { createContext, useContext } from 'react';
-import { createSession, getSession, listBlocks, listKnowledge, listSessions } from './record-api';
+import {
+  createSession,
+  createWrongAnswer,
+  getSession,
+  listBlocks,
+  listKnowledge,
+  listSessions,
+} from './record-api';
 
 export type RecordClient = {
   listSessions: typeof listSessions;
@@ -7,6 +14,7 @@ export type RecordClient = {
   listBlocks: typeof listBlocks;
   createSession: typeof createSession;
   getSession: typeof getSession;
+  createWrongAnswer: typeof createWrongAnswer;
 };
 const httpRecordClient: RecordClient = {
   listSessions,
@@ -14,6 +22,7 @@ const httpRecordClient: RecordClient = {
   listBlocks,
   createSession,
   getSession,
+  createWrongAnswer,
 };
 const RecordClientContext = createContext<RecordClient | undefined>(undefined);
 export const RecordClientProvider = RecordClientContext.Provider;
