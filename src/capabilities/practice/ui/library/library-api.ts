@@ -65,26 +65,30 @@ export async function countQuestions(
 type DraftList = ApiOperationJsonResponse<'listReviewDrafts'>;
 export type DraftRow = DraftList['rows'][number];
 
+type DraftListReader = (query: string) => Promise<DraftList>;
+
+export function getReviewDrafts(query: string): Promise<DraftList> {
+  return apiOperationJson('listReviewDrafts', {
+    url: `/api/review/drafts?${query}`,
+    method: 'GET',
+  });
+}
+
 export async function listDraftPage(
   scope: LibraryScope,
   cursor: string | null,
+  getReviewDrafts: DraftListReader,
 ): Promise<{ rows: DraftRow[]; total: number; nextCursor: string | null }> {
   const sp = new URLSearchParams({ limit: String(LIBRARY_PAGE) });
   if (scope.kind) sp.set('kind', scope.kind);
   if (scope.source) sp.set('source', scope.source);
   if (cursor) sp.set('cursor', cursor);
-  const page = await apiOperationJson('listReviewDrafts', {
-    url: `/api/review/drafts?${sp}`,
-    method: 'GET',
-  });
+  const page = await getReviewDrafts(sp.toString());
   return { rows: page.rows, total: page.total, nextCursor: page.next_cursor };
 }
 
-export async function countDrafts(): Promise<number> {
-  const page = await apiOperationJson('listReviewDrafts', {
-    url: '/api/review/drafts?limit=1',
-    method: 'GET',
-  });
+export async function countDrafts(getReviewDrafts: DraftListReader): Promise<number> {
+  const page = await getReviewDrafts('limit=1');
   return page.total;
 }
 

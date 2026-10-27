@@ -23,12 +23,15 @@ import { groupMistakes } from './mistake-read';
 export const LIBRARY_KEY = 'questions-lib';
 
 export function useViewCounts() {
-  const { getQuestionsList } = useLibraryClient();
+  const { getQuestionsList, getReviewDrafts } = useLibraryClient();
   const all = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'all'],
     queryFn: () => countQuestions('active', getQuestionsList),
   });
-  const review = useQuery({ queryKey: [LIBRARY_KEY, 'count', 'review'], queryFn: countDrafts });
+  const review = useQuery({
+    queryKey: [LIBRARY_KEY, 'count', 'review'],
+    queryFn: () => countDrafts(getReviewDrafts),
+  });
   const held = useQuery({
     queryKey: [LIBRARY_KEY, 'count', 'held'],
     queryFn: () => countQuestions('not_servable', getQuestionsList),
@@ -47,9 +50,10 @@ export function useQuestionPages(status: 'active' | 'not_servable', scope: Libra
 }
 
 export function useDraftPages(scope: LibraryScope) {
+  const { getReviewDrafts } = useLibraryClient();
   const query = useInfiniteQuery({
     queryKey: [LIBRARY_KEY, 'drafts', scope.kind, scope.source],
-    queryFn: ({ pageParam }) => listDraftPage(scope, pageParam),
+    queryFn: ({ pageParam }) => listDraftPage(scope, pageParam, getReviewDrafts),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
