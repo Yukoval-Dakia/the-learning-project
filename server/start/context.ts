@@ -16,6 +16,8 @@ import type {
   createPracticePaperSubmission,
   createPracticeSolveSession,
   createReviewSession,
+  enablePracticeDraft,
+  forceEnablePracticeDraft,
   getIssuanceState,
   getPaperDetail,
   getPracticeStream,
@@ -44,6 +46,11 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  enableLibraryDraft: (id: string) => Promise<Awaited<ReturnType<typeof enablePracticeDraft>>>;
+  forceEnableLibraryDraft: (input: {
+    id: string;
+    body: string;
+  }) => Promise<Awaited<ReturnType<typeof forceEnablePracticeDraft>>>;
   runLibraryServingAction: (input: {
     path: string;
     idempotencyKey: string | null;

@@ -8,50 +8,13 @@
 // non-soft-archived drafts may be force-promoted). Auth is enforced upstream by the
 // /api/* internal-token middleware.
 
-import type { RunTaskFn } from '@/capabilities/practice/jobs/quiz_verify';
-import { verifyAndPromote } from '@/capabilities/practice/server/quiz/verify-and-promote';
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { DraftForceEnableBodySchema } from './draft-moderation-contracts';
-
-// The override branch never consults runTaskFn (no AI on force-enable), but the gate
-// signature requires it; a throwing stub makes any accidental dispatch loud rather
-// than silently hitting the network.
-const noRunTask: RunTaskFn = async () => {
-  throw new Error('force-enable must not dispatch a verify task (override skips AI)');
-};
+import { errorResponse } from '@/kernel/http';
+import { forceEnablePracticeDraft } from '../server/draft-promotion-operations';
 
 export async function POST(req: Request, params: Record<string, string>): Promise<Response> {
   try {
-    const id = (params.id ?? '').trim();
-    if (!id) {
-      throw new ApiError('validation_error', 'question id is required', 400);
-    }
-
-    const raw = await req.json().catch(() => null);
-    const parsed = DraftForceEnableBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError('validation_error', 'reason is required (non-empty)', 400);
-    }
-
-    const result = await verifyAndPromote({
-      db,
-      questionId: id,
-      runTaskFn: noRunTask,
-      actor: { kind: 'user', ref: 'self' },
-      skipVerify: { reason: parsed.data.reason },
-    });
-
-    if (result.status === 'skipped:not_found') {
-      throw new ApiError('not_found', `question ${id} not found`, 404);
-    }
-
-    return Response.json({
-      promoted: result.promoted,
-      status: result.status,
-      verify_event_id: result.verifyEventId ?? null,
-      reason: result.reason ?? null,
-    });
+    return Response.json(await forceEnablePracticeDraft(db, params, () => req.json()));
   } catch (err) {
     return errorResponse(err);
   }

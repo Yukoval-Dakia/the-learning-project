@@ -1,6 +1,8 @@
 import { createContext, useContext } from 'react';
 import {
   deleteQuestion,
+  enableDraft,
+  forceEnableDraft,
   getDraftDetail,
   getQuestionFull,
   getQuestionKnowledgeOptions,
@@ -9,6 +11,8 @@ import {
 import { listQuestionMistakes, restoreQuestion, runServingAction } from './library-api';
 
 export type LibraryClient = {
+  enableDraft: typeof enableDraft;
+  forceEnableDraft: typeof forceEnableDraft;
   runServingAction: typeof runServingAction;
   deleteQuestion: typeof deleteQuestion;
   patchQuestion: typeof patchQuestion;
@@ -19,6 +23,8 @@ export type LibraryClient = {
   getQuestionFull: (id: string) => ReturnType<typeof getQuestionFull>;
 };
 const httpLibraryClient: LibraryClient = {
+  enableDraft,
+  forceEnableDraft,
   runServingAction,
   deleteQuestion,
   patchQuestion,
