@@ -36,13 +36,8 @@ import {
   type LearnerStateHeaderBudget,
   PROPOSAL_FEEDBACK_BUDGET,
 } from '@/kernel/tools/budgets';
-import {
-  type LoadTodayOvernightDigest,
-  OVERNIGHT_HANDOFF_UNAVAILABLE,
-  formatOvernightHandoffSentence,
-  loadTodayOvernightDigest,
-} from '@/server/today/overnight-digest';
 import { type CopilotSummary, loadCopilotSummary } from './copilot-summary';
+import { type LoadTodayOvernightDigest, readOvernightHandoffSentence } from './overnight-handoff';
 
 type DbLike = Db | Tx;
 
@@ -293,7 +288,7 @@ export async function readLearnerStateProjection(
   deps: ReadProjectionDeps = {},
 ): Promise<LearnerStateProjection> {
   const loadSummary = deps.loadCopilotSummaryFn ?? ((d: DbLike) => loadCopilotSummary(d));
-  const loadOvernightDigest = deps.loadOvernightDigestFn ?? loadTodayOvernightDigest;
+  const loadOvernightDigest = deps.loadOvernightDigestFn;
   // Resolved read: the default is only invoked with the outer Db (call site below);
   // the DbLike dep shape stays for fakes, hence the narrow cast.
   const loadGoals =
@@ -302,15 +297,7 @@ export async function readLearnerStateProjection(
     deps.getFailureAttemptsFn ??
     ((d: DbLike) => getFailureAttempts(d, { limit: FAILURE_SCAN_LIMIT }));
 
-  const overnightSentencePromise = loadOvernightDigest(db)
-    .then(formatOvernightHandoffSentence)
-    .catch((err) => {
-      console.warn('[learner-state] overnight_digest_unavailable', {
-        event: 'overnight_digest_unavailable',
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return OVERNIGHT_HANDOFF_UNAVAILABLE;
-    });
+  const overnightSentencePromise = readOvernightHandoffSentence(db, loadOvernightDigest);
   const [summary, goals, failures, overnightSentence] = await Promise.all([
     loadSummary(db),
     loadGoals(db),
