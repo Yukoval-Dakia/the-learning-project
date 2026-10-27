@@ -2,6 +2,7 @@
 
 export type { MistakeProjection } from './api/contracts';
 export { CreateIngestionSessionBody, CreateMistakeBodySchema } from './api/contracts';
+export { answerIngestionAsk } from './server/agent/asks';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
 export {
   ColdStartBridgeError,

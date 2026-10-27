@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import type { createGoal } from '@/capabilities/agency/public';
 import type {
+  answerIngestionAsk,
   createIngestionSession,
   createManualMistake,
   readIngestionSessionBlocks,
@@ -66,6 +67,12 @@ export type FrontdoorContext = {
     idempotencyKey: string | null;
   }) => Promise<Awaited<ReturnType<typeof runPracticeServingAction>>>;
   adminControls: () => Promise<AdminControlClient>;
+  answerRecordAsk: (input: {
+    sessionId: string;
+    askId: string;
+    body: string;
+    key: string | null;
+  }) => Promise<Awaited<ReturnType<typeof answerIngestionAsk>>>;
   revertRecordBlock: (input: {
     sessionId: string;
     body: string;

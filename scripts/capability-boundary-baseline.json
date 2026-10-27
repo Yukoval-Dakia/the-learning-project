@@ -3881,6 +3881,26 @@
       "evidence": "The authenticated Start host imports the complete request entry at await-import AST and module path line 20 and invokes it at line 22 with the unchanged session ID and decoded raw body. The context reference is type-only; HTTP is an internal consumer of the same entry.",
       "rationale": "Ingestion owns the complete auto-enrollment revert request: original body schema and message-only errors, block/session/reason mapping and the existing full revert operation. That operation retains its transaction, guards, capture withdrawal, correction event, record archive and block restoration; callers do not duplicate validation or recovery orchestration.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-62b5b930-fc1d-45e5-a00a-c16d68ef3b8c"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "answerIngestionAsk",
+      "targetModule": "src/capabilities/ingestion/server/agent/asks.ts",
+      "targetSymbol": "answerIngestionAsk",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-ask-answer-operation.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "The authenticated Start host imports the complete ask-answer request at await-import AST and module path line 16 and invokes it at line 18 with the original session/ask IDs, actual request header and delayed JSON decoder. The context reference is type-only; the canonical HTTP handler is an internal consumer of the same entry.",
+      "rationale": "Ingestion owns the complete durable ask-answer request: original ID presence checks, header trim and schema, delayed JSON/body validation and the existing complete acceptance operation. The existing acceptance owner retains ask locking, answer fingerprint replay, active-run checks, transactional claim/resolution/history/resume marker and post-commit dispatch; HTTP and Start callers do not duplicate those decisions.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-1443f795-41de-40b0-b67f-c5e42ae303dd"
     }
   ],
   "edgeRecords": [
