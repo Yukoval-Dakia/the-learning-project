@@ -1,6 +1,6 @@
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadCopilotSummary } from '@/server/today/copilot-summary';
+import { loadCopilotSummary } from '../server/copilot-summary';
 
 export async function GET(): Promise<Response> {
   try {
