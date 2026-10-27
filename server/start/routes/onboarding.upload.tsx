@@ -5,11 +5,13 @@ import {
   IngestionSessionCreateClientProvider,
   loadOnboardRecordPage,
 } from '@/capabilities/onboarding/ui-public';
+import { startIngestionOperationClient } from '../ingestion-operation-create-client';
 import { startIngestionSessionCreateClient } from '../ingestion-session-create-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
 
 const Page = lazy(() => loadOnboardRecordPage().then((defaultPage) => ({ default: defaultPage })));
 const ingestionClient: IngestionSessionCreateClient = {
+  startIngestionOperation: startIngestionOperationClient,
   createIngestionSession: startIngestionSessionCreateClient,
 };
 export const Route = createFileRoute('/onboarding/upload')({

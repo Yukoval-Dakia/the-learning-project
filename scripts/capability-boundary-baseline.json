@@ -3205,6 +3205,26 @@
       ],
       "evidence": "The authenticated Start host imports the Practice public entry at await-import AST and module path line 25 and invokes the complete force-enable operation at line 27. Its callback only decodes JSON after the operation has validated the ID.",
       "rationale": "Practice owns the complete force-enable request: ID-before-body order, original reason schema and errors, the throwing no-dispatch guard, unchanged override gate invocation, not-found mapping and full promotion DTO. The transport does not decide override eligibility or reproduce promotion state."
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "requestIngestionOperation",
+      "targetModule": "src/capabilities/ingestion/server/operation-request.ts",
+      "targetSymbol": "requestIngestionOperation",
+      "owner": "ingestion",
+      "consumers": [
+        {
+          "file": "server/start/ingestion-operation-create-operation.ts",
+          "line": 15
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 15 and calls the complete operation request at line 17. The context reference is type-only; the HTTP adapter is an internal consumer of the same owner.",
+      "rationale": "Ingestion owns the full operation request contract: session identity, deferred body parsing and schema errors, idempotency-header validation, unchanged acceptance and dispatch invocation, and the complete resource response descriptor with status and headers. HTTP and Start transport that descriptor without reproducing acceptance, recovery or response policy.",
+      "issue": "YUK-1358",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-462603d8-558b-48f6-86fd-4f28857b776e",
+      "date": "2026-10-27"
     }
   ],
   "edgeRecords": [
@@ -5233,6 +5253,16 @@
       "module": "src/server/ai/runner-fn.ts",
       "symbols": ["makeRunTaskFn"],
       "owns": "Server AI owns binding the canonical task runner to the host Db and its existing execution context. Practice owns when the complete normal draft enable operation constructs that binding and invokes the unchanged verification gate. Force-enable retains its throwing noRunTask guard and does not receive an executable runner."
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/operation-request.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Kernel owns the shared API error type and error-wire vocabulary; Ingestion owns the original operation request validation order and errors, calls its unchanged acceptance owner, and projects the complete resource response policy. HTTP and Start retain transport error adaptation.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [

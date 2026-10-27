@@ -4,6 +4,7 @@ import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { createStartGoal } from './start/goal-create-operation';
+import { createStartIngestionOperation } from './start/ingestion-operation-create-operation';
 import { createStartIngestionSession } from './start/ingestion-session-create-operation';
 import { createStartIssuance } from './start/issuance-create-operation';
 import { readStartIssuanceState } from './start/issuance-state-reader';
@@ -85,6 +86,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
     api,
     adminControls: () => (controls ??= createStartAdminControlReader()),
     createIngestionSession: createStartIngestionSession,
+    createIngestionOperation: createStartIngestionOperation,
     readPapers: readStartPapers,
     startPaperSession,
     submitPaperSlot: submitStartPaperSlot,
