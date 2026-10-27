@@ -1,19 +1,12 @@
-import { renderPdfToPngPages } from '@/capabilities/ingestion/server/pdf-render';
-import { extractPdfTextLayers } from '@/capabilities/ingestion/server/pdf-text';
-import {
-  pdfPageImageProvenance,
-  preparePdfSourceAssets,
-} from '@/capabilities/ingestion/server/source-package';
+import { expandPdfUpload } from '@/capabilities/ingestion/server/pdf-upload-operation';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { persistImageAsset } from '@/kernel/records/asset-store';
-import { getR2 } from '@/server/r2';
 
 // PDF expansion: one upload renders into page images persisted through the shared
 // content-addressed asset path. The page rows are ordinary images, so the rest of
 // the pipeline needs no special case.
 //
-// Rendering runs in the route because the user is waiting; the render timeout and
+// Rendering remains synchronous because the user is waiting; the render timeout and
 // page cap bound the worst case to one loud failure rather than a hang.
 
 // Source-PDF cap, larger than the per-image cap because a scanned exam can exceed
@@ -47,37 +40,14 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
-    // Corrupt, encrypted, empty, over-cap, timed-out, or oversized pages are 400.
-    // req.signal aborts cooperatively between page renders on client disconnect.
-    const pages = await renderPdfToPngPages(pdfBytes, req.signal);
-
-    const r2 = getR2();
-
-    // The original PDF and each text layer become SHA'd assets; page-image stamps
-    // let session creation assemble the source package without a contract change.
-    const textLayers = await extractPdfTextLayers(pdfBytes, req.signal);
-    const { stamps } = await preparePdfSourceAssets(db, r2, { pdfBytes, textLayers });
-
-    const assetIds: string[] = [];
-    // Sequential so page order is preserved; content addressing dedups re-renders.
-    for (const [index, page] of pages.entries()) {
-      const row = await persistImageAsset(db, r2, {
-        bytes: page.png,
-        mime: 'image/png',
-        provenance: pdfPageImageProvenance(stamps[index]),
-      });
-      assetIds.push(row.id);
-    }
+    const { assetIds, pageCount } = await expandPdfUpload(db, pdfBytes, req.signal);
 
     const headers = new Headers();
     headers.set('Location', `/api/assets/${encodeURIComponent(assetIds[0])}/content`);
     for (const assetId of assetIds) {
       headers.append('Link', `</api/assets/${encodeURIComponent(assetId)}/content>; rel="item"`);
     }
-    return Response.json(
-      { asset_ids: assetIds, page_count: pages.length },
-      { status: 201, headers },
-    );
+    return Response.json({ asset_ids: assetIds, page_count: pageCount }, { status: 201, headers });
   } catch (err) {
     return errorResponse(err);
   }
