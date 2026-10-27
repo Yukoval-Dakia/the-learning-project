@@ -139,12 +139,18 @@ export async function getSession(id: string): Promise<SessionDetail> {
   return body as SessionDetail;
 }
 
+export function projectSessionBlocksResponse(
+  body: ApiOperationJsonResponse<'listIngestionSessionBlocks'>,
+): Block[] {
+  return body.rows as Block[];
+}
+
 export async function listBlocks(id: string): Promise<Block[]> {
   const body = await apiOperationJson('listIngestionSessionBlocks', {
     url: `/api/ingestion/${encodeURIComponent(id)}/blocks`,
     method: 'GET',
   });
-  return body.rows as Block[];
+  return projectSessionBlocksResponse(body);
 }
 
 export async function listKnowledge(): Promise<KnowledgeNode[]> {
