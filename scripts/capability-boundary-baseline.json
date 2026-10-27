@@ -3673,6 +3673,46 @@
       "evidence": "The live /record Start route imports RecordClientProvider at ImportDeclaration AST line 3 and module path line 7 and renders it at JSX lines 22 and 37. It supplies a module-stable list binding to the unchanged RecordPage and its useRecordingList consumer.",
       "rationale": "Ingestion owns the recording UI's narrow list transport port and default HTTP implementation. The route injects the authenticated Start implementation while preserving the original page, query callbacks, asynchronous flows and other HTTP transports.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-c5413772-01ff-464f-81ec-f968a8301696"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessionBlocks",
+      "targetModule": "src/capabilities/ingestion/server/session-blocks-read.ts",
+      "targetSymbol": "readIngestionSessionBlocks",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-blocks-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start host imports the Ingestion public entry at await-import AST and module path line 11 and calls the complete blocks reader at line 13. The context reference is type-only; the existing HTTP handler consumes the same owner inside Ingestion.",
+      "rationale": "Ingestion owns the complete session-block read: unchanged session-id lookup, ordinal/id ordering, observation lookup and overwrite order, tolerant historical payload projection, learner-visible knowledge filtering and the full rows envelope. Start transports the complete result without copying SQL or reconstructing observations.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "projectSessionBlocksResponse",
+      "targetModule": "src/capabilities/ingestion/ui/record/record-api.ts",
+      "targetSymbol": "projectSessionBlocksResponse",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "consumers": [
+        {
+          "file": "server/start/record-blocks-client.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "The Start blocks client imports the projector at ImportDeclaration AST line 1 and module path line 4 and invokes it at line 9 after complete JSON parsing. The existing HTTP helper calls the same projector in its original return position.",
+      "rationale": "Ingestion UI owns the original body.rows as Block[] projection. Both transports reuse that exact projection without introducing a second codec, trimming wire fields or changing the recording status gates and query lifecycle.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-e17b4a6e-1ac4-4cc5-854a-7695ad8d7975"
     }
   ],
   "edgeRecords": [
@@ -5843,6 +5883,16 @@
       "issue": "YUK-1358",
       "date": "2026-10-27",
       "owns": "Kernel owns the shared API error vocabulary and collection envelope. Ingestion owns the original recording-list cursor errors, limit rules, evidence-qualified aggregation and complete row projection, and passes its unchanged data and page fields to that envelope."
+    },
+    {
+      "file": "src/capabilities/ingestion/server/session-blocks-read.ts",
+      "module": "src/kernel/read-models/learner-knowledge-visibility.ts",
+      "kind": "value",
+      "symbols": ["learnerVisibleKnowledgeIds"],
+      "debt": "capabilityToKernel",
+      "issue": "YUK-1358",
+      "date": "2026-10-27",
+      "owns": "Kernel owns learner-visible knowledge identity filtering. Ingestion owns the full recording-block and historical observation read and applies the same existing filter only to the observation's suggested knowledge IDs while preserving its tolerant field projection."
     },
     {
       "debt": "capabilityToServer",
