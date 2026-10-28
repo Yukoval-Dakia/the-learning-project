@@ -1,5 +1,4 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/server/conjecture/probe-evidence';
 import { newId } from '@/core/ids';
 import {
   INTERVENTION_ACTIVATED_ACTION,
@@ -31,6 +30,7 @@ import type { Db, Tx } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
 import { event, intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
+import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 
 type DbLike = Db | Tx;
 type InterventionRow = typeof intervention.$inferSelect;

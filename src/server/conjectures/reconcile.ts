@@ -18,7 +18,6 @@
 // is reserved; both stay on the loose experimental event.
 
 import { ZodError, z } from 'zod';
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -27,6 +26,7 @@ import {
   isCanonicalEvidenceProbeOutcomeResolution,
 } from '@/core/schema/conjecture';
 import { type WriteEventInput, getEventById, writeEvent } from '@/kernel/events';
+import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 
 export {
   PREDICTION_SCORE_ACTION,

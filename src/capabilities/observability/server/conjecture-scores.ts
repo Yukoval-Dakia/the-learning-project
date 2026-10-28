@@ -8,10 +8,10 @@
 // score_basis='single_point' keeps consumers from reading it as window-calibrated.
 
 import { and, desc, eq } from 'drizzle-orm';
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
+import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 
 /** One mapped prediction_score row. */
 export interface ConjecturePredictionScoreRow {

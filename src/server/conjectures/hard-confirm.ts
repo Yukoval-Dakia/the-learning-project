@@ -9,8 +9,6 @@
 // A soft-to-hard label still needs a fresh owner confirmation. The nightly pass never infers it.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-
-import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_ACTION,
@@ -19,6 +17,7 @@ import {
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 import { scorePrediction } from '@/server/conjectures/scoring';
 
 /**

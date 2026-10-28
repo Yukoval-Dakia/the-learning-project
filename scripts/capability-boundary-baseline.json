@@ -4357,6 +4357,22 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> agency",
+      "date": "2026-10-28",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> agency",
+      "date": "2026-10-28",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7037,6 +7053,111 @@
       "issue": "YUK-1570",
       "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/api/probe-answer.ts",
+      "module": "src/kernel/read-models/completed-probe-provenance.ts",
+      "kind": "value",
+      "symbols": ["validateIssuedProbeProvenance"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/history.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["EffectiveProbeResultStatus", "getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/prepare.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/probe-result-subscription.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/snapshot.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/store.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/scout/evidence-mcp.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/conjecture-scores.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/teaching-brief.ts",
+      "module": "src/kernel/read-models/completed-probe-provenance.ts",
+      "kind": "value",
+      "symbols": [
+        "CompletedProbeProposal",
+        "loadCompletedProbeAssessmentAnchors",
+        "validateCompletedProbeProvenance",
+        "validateIssuedProbeProvenance"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/teaching-brief.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["EffectiveProbeResultStatus", "getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7408,6 +7529,15 @@
       "to": 1328,
       "issue": "YUK-1654",
       "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief.ts",
+      "date": "2026-10-28",
+      "baseBlob": "ca4515ddf707c9c0877ac858e03e54ec7669d246",
+      "from": 1349,
+      "to": 1351,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Split the existing mixed Agency public import into the two complete canonical probe fact owners. Only the necessary import declaration adds two lines; TeachingBrief projection, acknowledgment, TTL, defaults, serial reads, failure handling and all non-import source remain unchanged. No new responsibility, policy, helper or wrapper is added."
     }
   ],
   "compatShims": [
@@ -8054,7 +8184,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 34,
+      "total": 32,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -8065,11 +8195,11 @@
         "ingestion -> knowledge": 2,
         "knowledge -> agency": 1,
         "knowledge -> practice": 1,
-        "observability -> agency": 2,
+        "observability -> agency": 1,
         "observability -> practice": 1,
         "practice -> agency": 2,
         "practice -> knowledge": 3,
-        "shell -> agency": 2,
+        "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,
         "shell -> onboarding": 3,
