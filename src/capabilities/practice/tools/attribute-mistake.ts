@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import {
-  type FailureAttemptJudge,
-  getFailureAttemptWithReasoningTraceById,
-} from '@/capabilities/practice/server/attempt-events';
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import {
+  type FailureAttemptJudge,
+  getFailureAttemptWithReasoningTraceById,
+} from '@/kernel/read-models/failure-attempts';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 

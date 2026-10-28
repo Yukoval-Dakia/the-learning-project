@@ -18,6 +18,7 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import * as runtimeEnv from '@/kernel/background-job-enqueue';
 import * as domainEvents from '@/kernel/events';
 import * as jobEvents from '@/kernel/job-events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
@@ -26,7 +27,6 @@ import {
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import * as runtimeEnv from '@/server/runtime-env';
 import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';

@@ -2,8 +2,11 @@ import { eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import {
+  getFailureAttemptById,
+  getFailureAttemptWithReasoningTraceById,
+} from '@/kernel/read-models/failure-attempts';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { getFailureAttemptById, getFailureAttemptWithReasoningTraceById } from './attempt-events';
 import {
   type AttributionOutcome,
   runAttributionAndWriteJudgeEvent,

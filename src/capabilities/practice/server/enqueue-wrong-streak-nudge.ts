@@ -1,6 +1,6 @@
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { getStartedBoss } from '@/server/boss/client';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 
 export async function enqueueWrongStreakNudge(
   outcome: 'success' | 'failure' | 'partial',
