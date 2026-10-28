@@ -4349,6 +4349,14 @@
       "from": 4,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "onboarding -> practice",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8046,7 +8054,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 35,
+      "total": 34,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -8059,7 +8067,6 @@
         "knowledge -> practice": 1,
         "observability -> agency": 2,
         "observability -> practice": 1,
-        "onboarding -> practice": 1,
         "practice -> agency": 2,
         "practice -> knowledge": 3,
         "shell -> agency": 2,
