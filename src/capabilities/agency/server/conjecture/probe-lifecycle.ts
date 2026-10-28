@@ -39,13 +39,13 @@ import {
 } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { EventSubscriptionHandlerFactory } from '@/kernel/manifest';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { issueAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import {
   acquireProposalDecisionLock,
   findExistingRateEvent,
 } from '@/server/proposals/applier-helpers';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   type PriorProbeResult,
   isEvidenceResult,

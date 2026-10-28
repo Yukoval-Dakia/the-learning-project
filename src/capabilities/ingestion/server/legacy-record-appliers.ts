@@ -22,6 +22,7 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import { updateLearningRecord } from '@/kernel/records/queries';
 import {
@@ -30,7 +31,6 @@ import {
   existingAcceptRate,
   requiredString,
 } from '@/server/proposals/applier-helpers';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
