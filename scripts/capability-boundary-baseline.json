@@ -4275,6 +4275,42 @@
       "direction": "decrease"
     },
     {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "listNoteRefineChanges",
+      "targetModule": "src/kernel/read-models/note-refine-changes.ts",
+      "targetSymbol": "listNoteRefineChanges",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "server/start/note-page-reader.ts",
+          "line": 35
+        },
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 92
+        },
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 129
+        }
+      ],
+      "evidence": "Fixed 6666f938d88b3a3944d6352e6bc3600507660403: public export AST1, canonical function AST25. Real Start dynamic imports at note-page-reader AST35/path35 with call37, workbench-reader AST92/path92 with call93 and AST129/path130 with call133. The last import also binds undoNoteRefineApplyEvent; all auth/database override/lazy import/catch and caller limits remain unchanged. No test or unused export is claimed as a production consumer.",
+      "rationale": "Retain the existing Notes public reader contract for the three real Start call sites while the complete shared apply/undo history projection belongs to kernel. Preserve 50-item note history, 25-item recent history, and 200-item ownership validation before the unchanged Notes undo operation. This changes ownership and loading dependencies, not mutation, restore guarantees or paid policy; runtime initialization remains unverified.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-853a1ece-708c-4cb5-9617-eb5622ae176b",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> notes",
+      "date": "2026-10-28",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
       "debt": "crossCapabilityValue",
       "pair": "practice -> knowledge",
       "date": "2026-10-28",
@@ -6734,6 +6770,76 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/notes-integration.ts",
+      "module": "src/kernel/read-models/live-artifact-reference.ts",
+      "kind": "value",
+      "symbols": ["getLiveArtifactType"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared ready/non-archived artifact reference predicate and type lookup from its canonical owner. Preserve the original product ArtifactType validation and Db/Tx lookup; Notes retains picker type permissions and literal search, Copilot retains navigation aliases and error handling, and neither gains correction-chain traversal.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-change-undo.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-changes-recent.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-changes.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/public.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/artifact-reference-search.ts",
+      "module": "src/kernel/read-models/live-artifact-reference.ts",
+      "kind": "value",
+      "symbols": ["readyArtifactReferenceCondition"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared ready/non-archived artifact reference predicate and type lookup from its canonical owner. Preserve the original product ArtifactType validation and Db/Tx lookup; Notes retains picker type permissions and literal search, Copilot retains navigation aliases and error handling, and neither gains correction-chain traversal.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/overnight-digest.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/cause-catalog.ts",
       "module": "src/kernel/read-models/cause-policy.ts",
       "kind": "value",
@@ -7842,7 +7948,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 36,
+      "total": 35,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -7860,7 +7966,7 @@
         "practice -> knowledge": 3,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
-        "shell -> notes": 2,
+        "shell -> notes": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },

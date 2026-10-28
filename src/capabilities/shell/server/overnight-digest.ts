@@ -4,11 +4,11 @@
 // the previous Asia/Shanghai calendar day (fixed UTC+8, no last-visited anchor).
 
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
-import { listNoteRefineChanges } from '@/capabilities/notes/public';
 import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
+import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 import {
   type DegradedScanRow,
   type OvernightDigest,
