@@ -7575,7 +7575,7 @@
       "date": "2026-10-28",
       "baseBlob": "e8d45825bbaebe577603b8d62ce5cfbb4368982a",
       "from": 1308,
-      "to": 1309,
+      "to": 1318,
       "issue": "YUK-1522",
       "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
     },
@@ -7602,9 +7602,18 @@
       "date": "2026-10-28",
       "baseBlob": "42f91186583ea90c81b260b4ddfb22da9a498047",
       "from": 1161,
-      "to": 1166,
+      "to": 1167,
       "issue": "YUK-1522",
       "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
+    },
+    {
+      "path": "src/capabilities/practice/server/proposal-appliers.ts",
+      "date": "2026-10-28",
+      "baseBlob": "0f640fde029a886e001b51e5921477f1a4d07a5e",
+      "from": 1767,
+      "to": 1787,
+      "issue": "YUK-1522",
+      "responsibilityReason": "The existing unified question-edit acceptance producer carries the immutable proposal event session/task/cause into its existing save/submit service context. This is the owner-approved single-producer source-compatibility correction; no proposal decisions, lock ordering, paid identity, public parameters or new wrapper are introduced."
     }
   ],
   "compatShims": [

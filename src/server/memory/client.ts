@@ -48,7 +48,11 @@ export type Mem0Like = {
     query: string,
     config: { topK?: number; filters?: Record<string, unknown> },
   ): Promise<SearchResult>;
-  getAll(config: { topK?: number; filters: Record<string, unknown> }): Promise<SearchResult>;
+  // The pinned OSS runtime emits user_id beside metadata, but its MemoryItem
+  // declaration omits that key. Absence remains representable and untrusted.
+  getAll(config: { topK?: number; filters: Record<string, unknown> }): Promise<{
+    results: (MemoryItem & { user_id?: string })[];
+  }>;
   // Official delete writes a history tombstone before the vector DELETE.
   delete(memoryId: string): Promise<{ message: string }>;
   // Memory history rows back the undo face.
@@ -312,10 +316,7 @@ export function createMemoryClient(
     const result = parseEventMemoryResult(raw, 'Mem0 getAll(event_id)');
     for (const item of raw.results) {
       const metadata = item.metadata as Record<string, unknown> | undefined;
-      if (
-        metadata?.event_id !== eventId ||
-        (item as unknown as Record<string, unknown>).user_id !== 'self'
-      )
+      if (metadata?.event_id !== eventId || item.user_id !== 'self')
         throw new Mem0EventLookupError('Mem0 event lookup returned unproven source/user metadata');
     }
     if (result.results.length >= EVENT_LOOKUP_COMPLETENESS_BOUND) {

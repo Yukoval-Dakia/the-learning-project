@@ -270,7 +270,7 @@ const COMMIT_ROUTE_CONFIG = {
 
 type CandidateSubmitContext = Pick<
   ToolContext,
-  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId'
+  'db' | 'sessionId' | 'taskRunId' | 'logTaskRunId' | 'causedByEventId' | 'beforeIngestionWrite'
 > & {
   callerActor?: ToolContext['callerActor'];
 };
@@ -418,15 +418,16 @@ async function runCandidateSubmit(
     }
   }
 
-  const merged = await db.transaction((tx) =>
-    mergeExactQuestionDuplicateKnowledgeIds(tx, {
+  const merged = await db.transaction(async (tx) => {
+    await ctx.beforeIngestionWrite?.(tx);
+    return mergeExactQuestionDuplicateKnowledgeIds(tx, {
       canonicalContentHash: canonicalHash,
       knowledgeIds,
       actorRef: routeConfig.mergeActorRef,
       taskRunId: ctx.taskRunId,
       now,
-    }),
-  );
+    });
+  });
   if (merged?.disposition === 'merged') {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     return {
@@ -446,7 +447,10 @@ async function runCandidateSubmit(
     now,
     onTerminal: 'defer' as const,
   };
-  const claimedSource = await db.transaction((tx) => claimHttpSourceDuplicate(tx, sourceClaim));
+  const claimedSource = await db.transaction(async (tx) => {
+    await ctx.beforeIngestionWrite?.(tx);
+    return claimHttpSourceDuplicate(tx, sourceClaim);
+  });
   if (claimedSource != null) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     return {
@@ -534,6 +538,7 @@ async function runCandidateSubmit(
     | { status: 'source_duplicate'; existingId: string };
   try {
     persisted = await db.transaction(async (tx) => {
+      await ctx.beforeIngestionWrite?.(tx);
       const racedSource = await claimHttpSourceDuplicate(tx, {
         ...sourceClaim,
         onTerminal: 'release',
@@ -992,6 +997,7 @@ async function runDeclaredCandidateSubmit(
     ctx: {
       actorRef: routeConfig.mergeActorRef,
       actorKind: 'agent',
+      beforeWrite: ctx.beforeIngestionWrite,
       sessionId: ctx.sessionId ?? null,
       taskRunId: ctx.taskRunId,
       causedByEventId: ctx.causedByEventId ?? null,
@@ -1082,21 +1088,24 @@ async function runDeclaredCandidateSubmit(
         // 同内容 CAS：canonical_content_hash 是仓库既有的内容身份原语（非
         // 受管内容列）——读写间任何内容编辑都会变 hash，谓词不匹配 ⇒ 零行
         // 更新，戳不落。
-        await db
-          .update(question)
-          .set({
-            embedding: stamp.embedding,
-            embed_model: stamp.embed_model,
-            embed_version: stamp.embed_version,
-            embed_content_hash: stamp.embed_content_hash,
-            updated_at: now,
-          })
-          .where(
-            and(
-              eq(question.id, questionId),
-              sql`${question.canonical_content_hash} IS NOT DISTINCT FROM ${stored.contentHash}`,
-            ),
-          );
+        await db.transaction(async (tx) => {
+          await ctx.beforeIngestionWrite?.(tx);
+          await tx
+            .update(question)
+            .set({
+              embedding: stamp.embedding,
+              embed_model: stamp.embed_model,
+              embed_version: stamp.embed_version,
+              embed_content_hash: stamp.embed_content_hash,
+              updated_at: now,
+            })
+            .where(
+              and(
+                eq(question.id, questionId),
+                sql`${question.canonical_content_hash} IS NOT DISTINCT FROM ${stored.contentHash}`,
+              ),
+            );
+        });
       }
     } catch (err) {
       console.warn('[submit_question] declared-path embed stamp skipped:', err);

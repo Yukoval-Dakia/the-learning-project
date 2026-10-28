@@ -190,3 +190,35 @@ provider lanes/attempt truth 均 exit 0。boundary 实测新增 15 个 kernel �
 固定候选、逐门命令/exit/log、47 个 owned 完整文件与完整 diff：
 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/yuk1522-purpose-change-full-20261028/delivery.md`。
 早期失败日志原样保留；旧检查不冒称覆盖新增三字段之前/之后的其它候选。
+
+## CI 与首次独立审查后的源码修复
+
+首次 R1 固定 `3a65838e33f84be8a5160a771b5b8f09873d1b4a`，结论 CHANGES_REQUESTED，
+父接受 F1–F4；原报告与 GitHub 40697664788 的六 DB 分区/11 失败保持原件。
+本次同一 writer 保留父 `ed9929c59` 的 inArray SQL22P02 修复，并恢复 admission 真正结构/digest
+stale 的优先状态；已有 paid receipt/applied/unknown 分支、身份与结算不变。
+
+领取后的完整 executor 生命周期共用 finally：免费门和首次 policy 检查也在内，async finalize 等待真实
+完成；先 drain 原工具 execute/log/mirror barrier 再由原 helper 确认停止。busy 与旧 unknown settlement
+不冒认本次执行，sweeper 不凭时间/队列缺失关闭 running。
+
+candidate 合法变体保持，原 ctx fence 进入 duplicate merge、URL claim、flat/raced publish/outbox、
+typed 原子首发和后续 embedding stamp 的真实事务；typed owner 在 caller request 锁前复核。
+原安全结果/审计 receipt 不抹除已提交事实。普通 Copilot 提案 accept 仅在原 serviceCtx 构造处
+读取同一 proposal event 的真实 session/task，并以 proposal ID 固定既有因果链，供原 save/submit
+新 receipt 使用；不信任 change/source 字段，不使用 latest/time/text，不改提案决策/锁/重放。
+
+Mem0 锁定 3.0.13 的真实 getAll 将 user_id 放顶层、event_id 留 metadata；本地 SDK port 仅补
+上游声明遗漏的可选顶层字段，缺证继续失败。九个旧 fixture 缺根 source/doc/SDK metadata 的失败
+只有精确 NOT_APPLIED TEXT；不是生产放宽理由，未改测试/断言，也未执行测试来冒称修复成功。
+
+逐 F 修法、11 失败因果、fixture TEXT、新固定候选/diff/静态门日志另存：
+`/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/yuk1522-purpose-change-full-20261028/ci-repair-ed9929/`。
+原 main baseline 前缀完整保留，本 PR 仍为 15 个实际 kernel 边；原 owned 尺寸更新实测值，并新增
+单 proposal ctx producer 的必要增长记录。未降低 ratchet、未自签 stable/compat。
+本轮 R2 未启动，唯一验证审由父安排；源码、静态门与 CI/运行验收继续分开。
+
+本次修复后的 typecheck、lint（166 warnings）、build、capability boundaries、architecture deepening、
+provider lanes/attempt truth 均 exit 0。实际债务230/0/35，15新kernel边，>1500文件9/base9。
+本修没有API wire/生成物变化，未重复跑生成器；旧生成门是原候选历史证据。
+原3a的11个CI失败与9项未实施fixture TEXT仍如实保留；新候选CI与R2未观测，不声称green。

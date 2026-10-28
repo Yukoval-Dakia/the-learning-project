@@ -328,11 +328,17 @@ export async function runAdmissionForQuestion(
           originalDelivery === delivery.id ? delivery.jobData : undefined,
         )
       : purpose;
-    return { ...claimed, purpose: originalPurpose, sourceDeliveryId: originalDelivery };
+    return {
+      ...claimed,
+      purpose: originalPurpose,
+      sourceDeliveryId: originalDelivery,
+      staleInput: !pinned || !eligible || declaredUnsupported,
+    };
   });
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
-  if (batch.kind === 'stale') return simple(batch.purpose.state === 'allow' ? 'stale' : 'pending');
+  if (batch.kind === 'stale')
+    return simple(batch.staleInput || batch.purpose.state === 'allow' ? 'stale' : 'pending');
   if (batch.kind === 'held') return simple('pending');
 
   const checkPurpose = async (tx: Tx) =>

@@ -1000,6 +1000,7 @@ export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
+  await params.ctx.beforeWrite?.(tx);
   const caller = params.caller;
   const now = params.ctx.now ?? new Date();
   const writeCallerReceipt = async (outcome: DeclaredGroupDomainOutcome) => {
