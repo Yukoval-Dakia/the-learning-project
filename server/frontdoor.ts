@@ -13,6 +13,7 @@ import { readStartCopilotNudges } from './start/copilot-nudges-reader';
 import { createStartCopilotSession } from './start/copilot-session-create-operation';
 import { readStartCopilotSessions } from './start/copilot-sessions-reader';
 import { readStartCopilotSummary } from './start/copilot-summary-reader';
+import { acceptStartTeachingChip } from './start/copilot-teaching-chip-operation';
 import { readStartCopilotTurns } from './start/copilot-turns-reader';
 import { createStartGoal } from './start/goal-create-operation';
 import { createStartIngestionSession } from './start/ingestion-session-create-operation';
@@ -103,6 +104,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   );
   const context: FrontdoorContext = {
     api,
+    acceptTeachingChip: acceptStartTeachingChip,
     revertCopilotCheckpoint: revertStartCopilotCheckpoint,
     cancelCopilotRun: cancelStartCopilotRun,
     readCopilotTurns: readStartCopilotTurns,
