@@ -1366,7 +1366,7 @@
   [data-ui-next][data-un-m3e="practice-foundation"] .un-ps-state {
     padding: var(--un-sp-4);
   }
-  &
+  [data-ui-next][data-un-m3e="practice-foundation"]
     .un-ps-sheet
     > :is(.un-ps-write, .un-ps-extras, .un-ps-indent, .un-ps-sheet-result, .un-ps-section) {
     margin-left: 0;
