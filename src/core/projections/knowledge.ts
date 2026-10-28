@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   GenesisExperimental,
+  KnowledgeRoleUpdateExperimental,
   KnowledgeRowSnapshot,
   type KnowledgeRowSnapshotT,
   ProposeKnowledge,
@@ -43,6 +44,11 @@ function mutationPreviousVersionForNode(fe: FoldEvent, nodeId: string): number |
 
   if (fe.action === 'experimental:subject_root_name_update' && fe.subject_id === nodeId) {
     const update = SubjectRootNameUpdateExperimental.safeParse(toParseInput(fe));
+    return update.success ? update.data.payload.previous_version : null;
+  }
+
+  if (fe.action === 'experimental:knowledge_role_update' && fe.subject_id === nodeId) {
+    const update = KnowledgeRoleUpdateExperimental.safeParse(toParseInput(fe));
     return update.success ? update.data.payload.previous_version : null;
   }
 
@@ -163,7 +169,36 @@ export function foldKnowledgeNode(
         warnMalformed('experimental:genesis(row)', fe.id, knownRow.error);
         continue;
       }
-      row = { ...knownRow.data, merged_from: [...knownRow.data.merged_from] };
+      // Default the optional identity role the way the DB column default does, so every
+      // folded row carries a defined role (legacy genesis payloads predate the column).
+      row = {
+        ...knownRow.data,
+        role: knownRow.data.role ?? 'kc',
+        merged_from: [...knownRow.data.merged_from],
+      };
+      continue;
+    }
+
+    // YUK-1600 — identity-role repair (ops backfill of pre-column nodes). Same discipline
+    // as the root rename below: control-plane authorization at write time, not
+    // proposal-gated, and the folded version increments so each event counts once.
+    if (
+      fe.action === 'experimental:knowledge_role_update' &&
+      fe.subject_kind === 'knowledge' &&
+      fe.subject_id === nodeId
+    ) {
+      const update = KnowledgeRoleUpdateExperimental.safeParse(toParseInput(fe));
+      if (!update.success) {
+        warnMalformed('experimental:knowledge_role_update', fe.id, update.error);
+        continue;
+      }
+      if (row === null) continue;
+      row = {
+        ...row,
+        role: update.data.payload.role,
+        updated_at: fe.created_at,
+        version: row.version + 1,
+      };
       continue;
     }
 
@@ -335,7 +370,10 @@ export function foldKnowledgeNode(
 
 // Canonical create shape. approval_status defaults to approved for accept-path appliers;
 // auto_tag may override to pending. `domain` is the root anchor: null for children, the
-// declared domain for root proposals. embed_* is derived maintenance state, not truth.
+// declared domain for root proposals. role defaults to kc — proposal/auto-tag creations
+// mint knowledge components; goal/container identity is stamped only by the creators that
+// own it (seed roots, LearningIntent topic roots). embed_* is derived maintenance state,
+// not truth.
 function createRow(
   id: string,
   name: string,
@@ -352,6 +390,7 @@ function createRow(
     archived_at: null,
     proposed_by_ai: true,
     approval_status: 'approved',
+    role: 'kc',
     created_at: at,
     updated_at: at,
     version: 0,
