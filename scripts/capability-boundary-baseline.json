@@ -4357,6 +4357,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-28",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7037,6 +7045,56 @@
       "issue": "YUK-1570",
       "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/failure-learning-knowledge.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1570",
+      "owns": "Read complete failure-learning knowledge and misconception facts, or the same existing subject-profile resolver, directly from the canonical shared read owner after retiring the pure Knowledge public and Practice knowledge-runtime forwarding path. Preserve requested-id order, trim/dedup, active/archive filters, ancestor failure fallback, Promise.all, descending seen/id order, cap 50, Db/Tx identity and caller failure/paid/recovery policy; no scoring or activation policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "module": "src/kernel/read-models/failure-learning-knowledge.ts",
+      "kind": "value",
+      "symbols": ["listActiveMisconceptionsForKcs"],
+      "issue": "YUK-1570",
+      "owns": "Read complete failure-learning knowledge and misconception facts, or the same existing subject-profile resolver, directly from the canonical shared read owner after retiring the pure Knowledge public and Practice knowledge-runtime forwarding path. Preserve requested-id order, trim/dedup, active/archive filters, ancestor failure fallback, Promise.all, descending seen/id order, cap 50, Db/Tx identity and caller failure/paid/recovery policy; no scoring or activation policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/failure-learning-knowledge.ts",
+      "kind": "value",
+      "symbols": ["getMisconceptionsByIds"],
+      "issue": "YUK-1570",
+      "owns": "Read complete failure-learning knowledge and misconception facts, or the same existing subject-profile resolver, directly from the canonical shared read owner after retiring the pure Knowledge public and Practice knowledge-runtime forwarding path. Preserve requested-id order, trim/dedup, active/archive filters, ancestor failure fallback, Promise.all, descending seen/id order, cap 50, Db/Tx identity and caller failure/paid/recovery policy; no scoring or activation policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning.ts",
+      "module": "src/kernel/read-models/failure-learning-knowledge.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1570",
+      "owns": "Read complete failure-learning knowledge and misconception facts, or the same existing subject-profile resolver, directly from the canonical shared read owner after retiring the pure Knowledge public and Practice knowledge-runtime forwarding path. Preserve requested-id order, trim/dedup, active/archive filters, ancestor failure fallback, Promise.all, descending seen/id order, cap 50, Db/Tx identity and caller failure/paid/recovery policy; no scoring or activation policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1570",
+      "owns": "Read complete failure-learning knowledge and misconception facts, or the same existing subject-profile resolver, directly from the canonical shared read owner after retiring the pure Knowledge public and Practice knowledge-runtime forwarding path. Preserve requested-id order, trim/dedup, active/archive filters, ancestor failure fallback, Promise.all, descending seen/id order, cap 50, Db/Tx identity and caller failure/paid/recovery policy; no scoring or activation policy moves.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -8054,7 +8112,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 34,
+      "total": 33,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -8068,7 +8126,7 @@
         "observability -> agency": 2,
         "observability -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 3,
+        "practice -> knowledge": 2,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
         "shell -> notes": 1,

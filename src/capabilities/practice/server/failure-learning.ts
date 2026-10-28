@@ -6,6 +6,7 @@ import {
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,
 } from '@/kernel/read-models/failure-attempts';
+import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-knowledge';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import {
   type AttributionOutcome,
@@ -13,7 +14,6 @@ import {
 } from './failure-learning-attribution';
 import { loadNativeFailureContext } from './failure-learning-native';
 import { type RunVariantGenResult, runVariantGen } from './failure-learning-variant';
-import { loadFailureLearningKnowledgeContext } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 export type FailureLearningSkipReason =

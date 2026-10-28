@@ -10,6 +10,7 @@ import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { listActiveMisconceptionsForKcs } from '@/kernel/read-models/failure-learning-knowledge';
 import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 // stale-const 收口（v2①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile（每次调用求值，owner 编辑 general 即跟随）。
@@ -33,7 +34,6 @@ import {
   recordAttributionRetryable,
 } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
-import { listActiveMisconceptionsForKcs } from './knowledge-runtime';
 import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {

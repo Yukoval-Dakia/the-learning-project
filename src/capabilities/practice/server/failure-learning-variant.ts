@@ -27,6 +27,7 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
+import { getMisconceptionsByIds } from '@/kernel/read-models/failure-learning-knowledge';
 import { createMistakeVariantDraft } from '@/kernel/records/mistake-variant-facts';
 import {
   hasProposalWithCooldownKey,
@@ -38,7 +39,6 @@ import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
-import { getMisconceptionsByIds } from './knowledge-runtime';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 // per-parent in-flight variant cap. Counts
