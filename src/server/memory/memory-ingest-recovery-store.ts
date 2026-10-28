@@ -2,6 +2,10 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
+import {
+  lockEventDerivationSources,
+  readEventDerivationPolicy,
+} from '@/kernel/events/derivation-policy';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import {
   type MemoryIngestReplayGrant,
@@ -68,6 +72,8 @@ async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIng
 }
 
 async function assertUserSource(db: Db | Tx, sourceId: string): Promise<void> {
+  if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow')
+    throw new MemoryReconcileHandoffError('restricted operator source');
   const rows = await db
     .select({ actor: event.actor_kind, payload: event.payload })
     .from(event)
@@ -203,6 +209,8 @@ export async function claimMemoryIngestReplay(
   await db.transaction(async (tx) => {
     await lockSource(tx, sourceId);
     await assertMemoryIngestReplayGrant(tx, grant, sourceId);
+    await lockEventDerivationSources(tx, sourceId);
+    await assertUserSource(tx, sourceId);
     if (await readIngestCompleted(tx, sourceId))
       throw new MemoryReconcileHandoffError('ingest already completed');
     if (!(await readMemoryIngestStarted(tx, sourceId)))

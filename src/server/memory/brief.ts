@@ -2,9 +2,15 @@ import { and, desc, eq, gt, inArray, isNull, like, lt, not, or, sql } from 'driz
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import { event, memory_brief_note } from '@/db/schema';
-import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import { allowedEventIds, eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
+import {
+  PURPOSE_BRIEF_LOCK,
+  briefPurposeCurrent,
+  latestPurposeWithdrawal,
+} from '@/kernel/read-models/purpose-change';
 import { BRIEF_REFRESH_BUDGET, LONG_TERM_FRESHNESS_BUDGET } from '@/kernel/tools/budgets';
 import { scoreLongTermFreshness } from './brief-freshness';
+import { markBriefPurpose, scopeBriefPurposeCurrent } from './brief-purpose';
 import { learnerEvidenceSql } from './learner-evidence';
 
 // Reserved rollback-ledger actions written before writeEvent persisted insert-time
@@ -65,6 +71,7 @@ export type BriefDraft = {
 };
 
 export type GenerateBrief = (input: {
+  taskRunId?: string;
   scopeKey: string;
   template: string;
   events: BriefEvent[];
@@ -130,30 +137,51 @@ async function loadEventsFromDb(db: Db, scopeKey: string): Promise<BriefEvent[]>
   }));
 }
 
-async function upsertBriefInDb(db: Db, row: BriefRow): Promise<void> {
-  await db
-    .insert(memory_brief_note)
-    .values(row)
-    .onConflictDoUpdate({
-      target: memory_brief_note.scope_key,
-      set: {
-        subject_id: row.subject_id,
-        recent_week_md: row.recent_week_md,
-        recent_months_md: row.recent_months_md,
-        long_term_md: row.long_term_md,
-        recent_week_evidence_ids: row.recent_week_evidence_ids,
-        recent_months_evidence_ids: row.recent_months_evidence_ids,
-        long_term_evidence_ids: row.long_term_evidence_ids,
-        // Also write on UPDATE so audit:schema sees a write path for the column.
-        long_term_freshness_score: row.long_term_freshness_score,
-        source_event_id: row.source_event_id,
-        latest_evidence_at: row.latest_evidence_at,
-        evidence_count: row.evidence_count,
-        refreshed_at: row.refreshed_at,
-        updated_at: row.updated_at,
-        version: sql`${memory_brief_note.version} + 1`,
-      },
-    });
+async function upsertBriefInDb(db: Db, row: BriefRow, withdrawal: string | null): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${PURPOSE_BRIEF_LOCK}, 0))`);
+    if ((await latestPurposeWithdrawal(tx)) !== withdrawal)
+      throw new Error('purpose changed during brief generation; discard prose');
+    const ids = [
+      ...row.recent_week_evidence_ids,
+      ...row.recent_months_evidence_ids,
+      ...row.long_term_evidence_ids,
+    ];
+    if (ids.length) {
+      const invalid = await tx
+        .select({ id: event.id })
+        .from(event)
+        .where(and(inArray(event.id, ids), sql`NOT (${eventAllowsDerivationSql()})`))
+        .limit(1);
+      if (invalid.length) throw new Error('restricted brief input; discard prose');
+    }
+    const [stored] = await tx
+      .insert(memory_brief_note)
+      .values(row)
+      .onConflictDoUpdate({
+        target: memory_brief_note.scope_key,
+        set: {
+          subject_id: row.subject_id,
+          recent_week_md: row.recent_week_md,
+          recent_months_md: row.recent_months_md,
+          long_term_md: row.long_term_md,
+          recent_week_evidence_ids: row.recent_week_evidence_ids,
+          recent_months_evidence_ids: row.recent_months_evidence_ids,
+          long_term_evidence_ids: row.long_term_evidence_ids,
+          // Also write on UPDATE so audit:schema sees a write path for the column.
+          long_term_freshness_score: row.long_term_freshness_score,
+          source_event_id: row.source_event_id,
+          latest_evidence_at: row.latest_evidence_at,
+          evidence_count: row.evidence_count,
+          refreshed_at: row.refreshed_at,
+          updated_at: row.updated_at,
+          version: sql`${memory_brief_note.version} + 1`,
+        },
+      })
+      .returning({ version: memory_brief_note.version });
+    if (!stored) throw new Error('brief upsert unavailable');
+    await markBriefPurpose(tx, row.scope_key, stored.version, withdrawal);
+  });
 }
 
 // Test seam: proves the affected_scopes path returns 0 rows for subjects made
@@ -179,6 +207,12 @@ export async function listStaleBriefScopes(db: Db, now = new Date()): Promise<st
 }
 
 export async function scopeHasNewEvidence(db: Db, scopeKey: string): Promise<boolean> {
+  const [current] = await db
+    .select({ version: memory_brief_note.version })
+    .from(memory_brief_note)
+    .where(eq(memory_brief_note.scope_key, scopeKey))
+    .limit(1);
+  if (current && !(await briefPurposeCurrent(db, scopeKey, current.version))) return true;
   const rows = await db
     .select({ latest_evidence_at: memory_brief_note.latest_evidence_at })
     .from(memory_brief_note)
@@ -244,6 +278,8 @@ export async function resolveEvidenceTimestamps(
 }
 
 export async function regenerateMemoryBrief(params: {
+  purposeRepair?: boolean;
+  taskRunId?: string;
   db?: Db;
   scopeKey: string;
   loadEvents?: (scopeKey: string) => Promise<BriefEvent[]>;
@@ -254,14 +290,37 @@ export async function regenerateMemoryBrief(params: {
   loadEventTimestamps?: (ids: string[]) => Promise<{ id: string; created_at: Date }[]>;
   now?: () => Date;
 }): Promise<{ wrote: boolean; row: BriefRow }> {
+  if (
+    params.db &&
+    !params.purposeRepair &&
+    !(await scopeBriefPurposeCurrent(params.db, params.scopeKey))
+  )
+    throw new Error(
+      'purpose repair owns this invalidated scope; ordinary jobs cannot retry its paid/unknown work',
+    );
+  const withdrawal = params.db ? await latestPurposeWithdrawal(params.db) : null;
   const now = params.now?.() ?? new Date();
   const template = BRIEF_TEMPLATES[prefixForScope(params.scopeKey)];
   const loadedEvents = params.loadEvents
     ? await params.loadEvents(params.scopeKey)
     : await loadEventsFromDb(params.db as Db, params.scopeKey);
-  const events = loadedEvents.filter((row) => allowsDerivation(row.payload));
+  const allowed = params.db
+    ? await allowedEventIds(
+        params.db,
+        loadedEvents.map((row) => row.id),
+      )
+    : null;
+  const events = loadedEvents.filter(
+    (row) => allowsDerivation(row.payload) && (!allowed || allowed.has(row.id)),
+  );
   const facts = params.searchFacts ? await params.searchFacts(params.scopeKey) : [];
-  const generated = await params.generate({ scopeKey: params.scopeKey, template, events, facts });
+  const generated = await params.generate({
+    scopeKey: params.scopeKey,
+    template,
+    events,
+    facts,
+    taskRunId: params.taskRunId,
+  });
   const restrictedIds = new Set(
     loadedEvents.filter((row) => !allowsDerivation(row.payload)).map((row) => row.id),
   );
@@ -291,6 +350,9 @@ export async function regenerateMemoryBrief(params: {
     ),
     long_term_evidence_ids: generated.long_term_evidence_ids.filter((id) => !restrictedIds.has(id)),
   };
+  // Filtering ids cannot remove prose that was already generated from those inputs.
+  if (restrictedIds.size)
+    throw new Error('restricted input reached brief writer; discard entire draft');
   const latestEvidenceAt =
     events.length === 0
       ? null
@@ -324,7 +386,7 @@ export async function regenerateMemoryBrief(params: {
   if (params.upsertBrief) {
     await params.upsertBrief(row);
   } else {
-    await upsertBriefInDb(params.db as Db, row);
+    await upsertBriefInDb(params.db as Db, row, withdrawal);
   }
   return { wrote: true, row };
 }

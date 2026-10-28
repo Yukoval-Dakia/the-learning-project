@@ -1143,6 +1143,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingestion-sessions/{id}/purpose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestionPurposeImpact"];
+        put?: never;
+        post: operations["changeIngestionPurpose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion/{id}/blocks": {
         parameters: {
             query?: never;
@@ -15875,6 +15891,429 @@ export interface operations {
             };
             /** @description Internal error */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getIngestionPurposeImpact: {
+        parameters: {
+            query?: {
+                request_id?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        admission: {
+                            deliveries: {
+                                application_error: string | null;
+                                group_id: string;
+                                job_id: string;
+                                paid_state: string;
+                                revision_id: string;
+                                source_event_id: string;
+                                /** @enum {string} */
+                                source_policy: "allow" | "answer_only" | "crisis";
+                                usage_source_event_id: string;
+                            }[];
+                            /** @enum {string} */
+                            effect: "unknown";
+                            /** @enum {string} */
+                            fence: "active";
+                            operation_id: string | null;
+                            /** @enum {string} */
+                            reason: "source_fence_active_history_unknown";
+                            source_document_id: string;
+                            /** @enum {string} */
+                            state: "pending" | "unknown";
+                            /** @enum {string} */
+                            unattributed_history: "unknown";
+                        };
+                        /** @enum {string} */
+                        backup: "unknown";
+                        /** @enum {string} */
+                        cleanup: "pending_or_partial" | "not_requested";
+                        current: {
+                            epoch: string;
+                            /** @enum {string} */
+                            policy: "allow" | "answer_only" | "crisis";
+                            session_id: string;
+                            source_document_id: string;
+                            version: number;
+                        };
+                        /** @enum {string} */
+                        external_effect: "unknown_or_irreversible";
+                        receipt: {
+                            admission_obligation: {
+                                /** @enum {string} */
+                                effect: "unknown";
+                                /** @enum {string} */
+                                reason: "source_fence_active_history_unknown";
+                                source_document_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                            } | null;
+                            brief_scopes: {
+                                scope_key: string;
+                                version: number;
+                            }[];
+                            changed: boolean;
+                            cleanup_required: boolean;
+                            committed_version: number;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            epoch: string;
+                            /** @enum {string} */
+                            external_effect: "unknown_or_irreversible";
+                            input: {
+                                expected_version: number;
+                                /** Format: uuid */
+                                request_id: string;
+                                source_document_id: string;
+                                /** @enum {string} */
+                                target: "allow" | "answer_only";
+                            };
+                            operation_id: string;
+                            /** @enum {boolean} */
+                            policy_committed: true;
+                            /** @enum {string} */
+                            previous_policy: "allow" | "answer_only";
+                            session_id: string;
+                            stop: {
+                                operation_id: string | null;
+                                run_ref: string | null;
+                                session_id: string;
+                            }[];
+                            /** @enum {number} */
+                            version: 1;
+                        } | null;
+                        repairs: {
+                            cursor?: string;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            detail: string;
+                            /** Format: uuid */
+                            job_id?: string;
+                            memory_ids?: string[];
+                            operation_id: string;
+                            /** @enum {string} */
+                            sink: "mem0" | "brief" | "brief_dispatch" | "mem0_scan";
+                            source_id: string;
+                            /** @enum {string} */
+                            state: "complete" | "pending" | "failed" | "unknown";
+                            task_run_id?: string;
+                            /** @enum {number} */
+                            version: 1;
+                        }[];
+                        sinks: {
+                            briefs: {
+                                scope_key: string;
+                                /** @enum {string} */
+                                state: "complete" | "pending" | "failed" | "unknown";
+                            }[];
+                            /** @enum {string} */
+                            mem0: "pending_or_partial" | "not_requested";
+                        };
+                        /** @enum {string} */
+                        sqlite_history: "unknown";
+                        stop: {
+                            operation_id: string | null;
+                            run_ref: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "confirmed" | "pending" | "unknown";
+                        }[];
+                        /** @enum {string} */
+                        trace: "unknown";
+                        /** @enum {string} */
+                        unattributed: "unknown";
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    changeIngestionPurpose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expected_version: number;
+                    /** Format: uuid */
+                    request_id: string;
+                    source_document_id: string;
+                    /** @enum {string} */
+                    target: "allow" | "answer_only";
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        receipt: {
+                            admission_obligation: {
+                                /** @enum {string} */
+                                effect: "unknown";
+                                /** @enum {string} */
+                                reason: "source_fence_active_history_unknown";
+                                source_document_id: string;
+                                /** @enum {string} */
+                                state: "pending";
+                            } | null;
+                            brief_scopes: {
+                                scope_key: string;
+                                version: number;
+                            }[];
+                            changed: boolean;
+                            cleanup_required: boolean;
+                            committed_version: number;
+                            /** @enum {string} */
+                            derivation_policy: "answer_only";
+                            epoch: string;
+                            /** @enum {string} */
+                            external_effect: "unknown_or_irreversible";
+                            input: {
+                                expected_version: number;
+                                /** Format: uuid */
+                                request_id: string;
+                                source_document_id: string;
+                                /** @enum {string} */
+                                target: "allow" | "answer_only";
+                            };
+                            operation_id: string;
+                            /** @enum {boolean} */
+                            policy_committed: true;
+                            /** @enum {string} */
+                            previous_policy: "allow" | "answer_only";
+                            session_id: string;
+                            stop: {
+                                operation_id: string | null;
+                                run_ref: string | null;
+                                session_id: string;
+                            }[];
+                            /** @enum {number} */
+                            version: 1;
+                        };
+                        replayed: boolean;
+                    };
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description State or version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Rate limited */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { MemoryConfig, MemoryItem, SearchResult } from 'mem0ai/oss';
 import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
+import { allowedEventIds, readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { latestPurposeWithdrawal } from '@/kernel/read-models/purpose-change';
 import {
   type Mem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
@@ -303,13 +305,19 @@ export function createMemoryClient(
   };
   const findByEventId = async (eventId: string): Promise<MemoryEventResult> => {
     const memory = await getMemory();
-    const result = parseEventMemoryResult(
-      await memory.getAll({
-        topK: EVENT_LOOKUP_COMPLETENESS_BOUND,
-        filters: { user_id: 'self', event_id: eventId },
-      }),
-      'Mem0 getAll(event_id)',
-    );
+    const raw = await memory.getAll({
+      topK: EVENT_LOOKUP_COMPLETENESS_BOUND,
+      filters: { user_id: 'self', event_id: eventId },
+    });
+    const result = parseEventMemoryResult(raw, 'Mem0 getAll(event_id)');
+    for (const item of raw.results) {
+      const metadata = item.metadata as Record<string, unknown> | undefined;
+      if (
+        metadata?.event_id !== eventId ||
+        (item as unknown as Record<string, unknown>).user_id !== 'self'
+      )
+        throw new Mem0EventLookupError('Mem0 event lookup returned unproven source/user metadata');
+    }
     if (result.results.length >= EVENT_LOOKUP_COMPLETENESS_BOUND) {
       throw new Mem0EventLookupError(
         `Mem0 getAll(event_id) exceeded completeness bound ${EVENT_LOOKUP_COMPLETENESS_BOUND}`,
@@ -389,9 +397,29 @@ export function createMemoryClient(
         filters.affected_scopes ??= { contains: scopeKey };
       }
       filters.user_id = 'self';
-      return executeMem0OpaqueOperation(providerOperation, 'search', () =>
+      const result = await executeMem0OpaqueOperation(providerOperation, 'search', () =>
         memory.search(query, { topK: searchOpts.topK, filters }),
       );
+      if (!providerOperation.db) return { results: [] };
+      const withdrawal = await latestPurposeWithdrawal(providerOperation.db);
+      const eventId = (item: SearchResult['results'][number]) => {
+        const value = (item.metadata as Record<string, unknown> | undefined)?.event_id;
+        return typeof value === 'string' ? value : null;
+      };
+      const allowed = await allowedEventIds(
+        providerOperation.db,
+        result.results.flatMap((item) => {
+          const id = eventId(item);
+          return id ? [id] : [];
+        }),
+      );
+      // Missing or unknown lineage is withheld, never guessed from text/time.
+      return {
+        results: result.results.filter((item) => {
+          const id = eventId(item);
+          return id !== null ? allowed.has(id) : !withdrawal && allowsDerivation(item.metadata);
+        }),
+      };
     },
     // Idempotent: a half-applied batch may replay. On any delete error, verify
     // absence via get() (null means absent). Absent → treat as success. Still
@@ -429,6 +457,13 @@ export function createMemoryClient(
     },
     async restoreVerbatim(text, metadata, providerOperation) {
       if (!allowsDerivation(metadata)) throw new Error('answer_only content cannot enter memory');
+      if (
+        !providerOperation.db ||
+        (typeof metadata.event_id === 'string'
+          ? (await readEventDerivationPolicy(providerOperation.db, metadata.event_id)) !== 'allow'
+          : (await latestPurposeWithdrawal(providerOperation.db)) !== null)
+      )
+        throw new Error('restore requires an authorized current source event');
       const memory = await getMemory();
       // infer:false skips the extraction LLM and inserts the raw text as one new
       // memory (new UUID, no MD5 dedup — dedup only exists on the infer:true path).

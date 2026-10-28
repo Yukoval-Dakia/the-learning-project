@@ -9,6 +9,7 @@ import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -41,6 +42,7 @@ import {
   recordAgentOperationRunning,
   settleAgentRunBudget,
 } from './budget';
+import { writeAgentBudgetPath } from './budget-state';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
 import { persistAgentRunHistory } from './history';
@@ -55,7 +57,9 @@ import {
   enterAgentExecution,
   recordAgentExecutionIntent,
   requireAgentExecutionOwner,
+  watchAgentPurpose,
 } from './ownership';
+import { confirmAgentPurposeStop } from './purpose-stop';
 import { agentInterceptInput, buildAgentSegmentInput } from './run-input';
 import { retainAgentTaskLiability } from './spend';
 
@@ -204,7 +208,25 @@ export async function runIngestionAgentSegment(
     if (!entered) return null;
     if (entered.status === 'queued') await Ingestion.markExtractionStarted(tx, sessionId);
     const claim = await claimRunSegment(tx, sessionId, trigger, MAX_SEGMENTS);
-    return { session: entered, claim };
+    if (claim.kind === 'ok')
+      await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+        ...entered.owner,
+        segment_state: 'running',
+      });
+    const sourceEventId = `ingestion-execution-source:${entered.owner.run_ref}`;
+    await writeEvent(tx, {
+      id: sourceEventId,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'ingestion-execution',
+      action: 'experimental:ingestion_execution_source',
+      subject_kind: 'source_document',
+      subject_id: entered.source_document_id ?? sessionId,
+      payload: { version: 1, run_ref: entered.owner.run_ref },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    });
+    return { session: entered, claim, sourceEventId };
   });
   if (!entry) return { outcome: 'skipped', status: 'execution_not_owned' };
   const { session, claim } = entry;
@@ -406,10 +428,23 @@ export async function runIngestionAgentSegment(
   }
 
   const providerDeadline = Date.now() + SEGMENT_TIMEOUT_MS;
+  const purpose = watchAgentPurpose(db, sessionId, runRef);
+  let activeTools = 0;
+  let toolsSettled: (() => void) | undefined;
+  const drainTools = () =>
+    activeTools === 0
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          toolsSettled = resolve;
+        });
   // The grant's operation_id is the stable identity (sessionId for legacy runs).
   // Resume/continue reuse the same runRef; task/tool run ids derive from
   // (runRef, segment) so the GLM OCR anchor belongs to this start.
   const toolCtx = {
+    sessionId,
+    causedByEventId: entry.sourceEventId,
+    signal: purpose.controller.signal,
+    beforeIngestionWrite: (tx: Tx) => requireAgentExecutionOwner(tx, sessionId, runRef),
     db,
     taskRunId: agentToolRunId(runRef, segment),
     providerAttemptCaller: 'worker' as const,
@@ -420,12 +455,25 @@ export async function runIngestionAgentSegment(
   };
   const redactionSink: AgentRedactionSink = attachAgentRedactionSink(sessionId);
   try {
+    await purpose.check();
     const mount = piDomainMount({
       ctx: toolCtx,
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: resolveDomainToolNames('ingestion'),
       taskKind: 'IngestionAgentTask',
       interceptInput: agentInterceptInput(sessionId),
+      beforeExecute: async () => {
+        await purpose.check();
+        return undefined;
+      },
+      onExecuteStart: async () => {
+        await purpose.check();
+        activeTools += 1;
+      },
+      onExecuteSettled: () => {
+        activeTools = Math.max(0, activeTools - 1);
+        if (activeTools === 0) toolsSettled?.();
+      },
     });
 
     const input = buildAgentSegmentInput({
@@ -462,6 +510,11 @@ export async function runIngestionAgentSegment(
         phase: 'sent',
       });
       const result = await runTask('IngestionAgentTask', input, {
+        beforeProviderQuery: async () => {
+          await purpose.check();
+        },
+        signal: purpose.controller.signal,
+        lifecycleAbortController: purpose.controller,
         piToolMounts: [mount],
         allowedTools: [...resolveMcpAllowedTools('ingestion')],
         budgetOverride: { maxIterations: SEGMENT_MAX_ITERATIONS, timeoutMs: SEGMENT_TIMEOUT_MS },
@@ -477,6 +530,9 @@ export async function runIngestionAgentSegment(
         ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
       });
     } catch (err) {
+      await drainTools();
+      if (await confirmAgentPurposeStop(db, sessionId, runRef))
+        return { outcome: 'failed', status: 'purpose_stopped', segment };
       const { code, retryable } = classifyRunFailure(err);
       const message = err instanceof Error ? err.message : String(err);
       // Paid work happened — the receipt is written on failure paths too.
@@ -533,6 +589,7 @@ export async function runIngestionAgentSegment(
     // sweeper, and returns so pg-boss never retries the paid segment.
     try {
       deps.throwBeforeBookkeeping?.();
+      await purpose.check();
       const after = await readAgentRunLedger(db, sessionId);
 
       // A model-declared terminal request becomes the session error and stops the
@@ -704,6 +761,9 @@ export async function runIngestionAgentSegment(
       );
       return { outcome: 'continue', segment };
     } catch (bookkeepingErr) {
+      await drainTools();
+      if (await confirmAgentPurposeStop(db, sessionId, runRef))
+        return { outcome: 'failed', status: 'purpose_stopped', segment };
       console.error('[ingestion-agent] post-model bookkeeping failed — segment left for sweep', {
         session_id: sessionId,
         segment,
@@ -717,6 +777,7 @@ export async function runIngestionAgentSegment(
       };
     }
   } finally {
+    purpose.close();
     detachAgentRedactionSink(sessionId);
   }
 }

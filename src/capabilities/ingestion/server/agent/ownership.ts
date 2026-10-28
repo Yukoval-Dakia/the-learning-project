@@ -1,5 +1,10 @@
 import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
+import { ApiError } from '@/kernel/http';
+import {
+  documentUsageEpoch,
+  readDocumentDerivationPolicy,
+} from '@/kernel/read-models/usage-policy';
 import { writeAgentRunSegment } from '../events/agent-progress';
 import {
   type AgentExecutionOwner,
@@ -29,6 +34,8 @@ export async function bindGrantedAgentExecution(tx: Tx, sessionId: string, opera
     protocol: 'transactional-v1',
     state: 'active',
     event_floor: floor?.id ?? 0,
+    usage_epoch: (await readExecutionUsage(tx, sessionId)).epoch,
+    segment_state: 'idle',
   } satisfies AgentExecutionOwner);
   await writeAgentBudgetPath(tx, sessionId, ['operations', operationId], {
     ...identity,
@@ -107,6 +114,8 @@ export async function enterAgentExecution(tx: Tx, input: DeliveryIdentity) {
   `);
   const session = rows[0];
   if (!session) return null;
+  const usage = await readExecutionUsage(tx, input.sessionId);
+  if (usage.policy !== 'allow') return null;
   const owner = ['queued', 'extracting'].includes(session.status)
     ? await resolveOwner(tx, input)
     : null;
@@ -129,6 +138,7 @@ export async function enterAgentExecution(tx: Tx, input: DeliveryIdentity) {
     }
     return null;
   }
+  if (owner.stop_request_id || (owner.usage_epoch ?? 'legacy') !== usage.epoch) return null;
   return { ...session, owner };
 }
 
@@ -144,6 +154,7 @@ export async function recordAgentExecutionIntent(
   const current = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
   const bound = current?.state === 'active' ? current : owner;
   if (!bound) budgetUnavailable('budget_read_unavailable');
+  await requireAgentExecutionOwner(tx, sessionId, bound.run_ref);
   const id = await writeAgentRunSegment(tx, sessionId, {
     segment: 0,
     trigger,
@@ -177,6 +188,7 @@ export async function agentIntentPayload(
       owner = (await resolveOwner(tx, { sessionId, trigger })) ?? undefined;
     }
     if (owner?.state !== 'active') budgetUnavailable('budget_read_unavailable');
+    await requireAgentExecutionOwner(tx, sessionId, owner.run_ref);
     const current = (await readAgentBudget(tx, sessionId))?.execution_owner;
     if (
       current?.state !== 'active' ||
@@ -210,4 +222,60 @@ export async function closeAgentExecution(tx: Tx, sessionId: string, operationId
 export async function requireAgentExecutionOwner(tx: Tx, sessionId: string, runRef: string) {
   const owner = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
   if (owner?.state !== 'active' || owner.run_ref !== runRef) budgetUnavailable('unsettled_cost');
+  const usage = await readExecutionUsage(tx, sessionId);
+  if (
+    owner.stop_request_id ||
+    usage.policy !== 'allow' ||
+    (owner.usage_epoch ?? 'legacy') !== usage.epoch
+  )
+    throw new ApiError(
+      'purpose_restricted',
+      'this ingestion execution no longer has purpose authorization',
+      409,
+    );
+}
+
+async function readExecutionUsage(tx: Tx, sessionId: string) {
+  const [row] = await tx.execute<{ provenance: unknown }>(sql`
+    SELECT d.provenance FROM learning_session s JOIN source_document d ON d.id = s.source_document_id
+    WHERE s.id = ${sessionId} FOR SHARE OF d
+  `);
+  if (!row) throw new ApiError('purpose_source_unavailable', 'ingestion source unavailable', 409);
+  return {
+    policy: readDocumentDerivationPolicy(row.provenance),
+    epoch: documentUsageEpoch(row.provenance),
+  };
+}
+
+/** Cross-process cooperative stop. DB intent is authoritative; no second run registry. */
+export function watchAgentPurpose(db: Db, sessionId: string, runRef: string) {
+  const controller = new AbortController();
+  let closed = false;
+  let checking = false;
+  const check = async () => {
+    try {
+      await db.transaction((tx) => requireAgentExecutionOwner(tx, sessionId, runRef));
+    } catch (error) {
+      controller.abort(error);
+      throw error;
+    }
+  };
+  const timer = setInterval(() => {
+    if (closed || checking) return;
+    checking = true;
+    void check()
+      .catch(() => {})
+      .finally(() => {
+        checking = false;
+      });
+  }, 1000);
+  timer.unref();
+  return {
+    controller,
+    check,
+    close: () => {
+      closed = true;
+      clearInterval(timer);
+    },
+  };
 }

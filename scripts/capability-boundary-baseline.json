@@ -6829,6 +6829,166 @@
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/tools/memory-brief.ts",
+      "module": "src/kernel/read-models/purpose-change.ts",
+      "kind": "value",
+      "symbols": ["briefPurposeCurrent"],
+      "issue": "YUK-1522",
+      "owns": "Permanent purpose command/repair schemas and exact original-result, watermark and brief-freshness readers; no policy mutation or external work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/purpose-contracts.ts",
+      "module": "src/kernel/read-models/purpose-change.ts",
+      "kind": "value",
+      "symbols": ["AdmissionPurposeImpact", "PurposeChangeReceipt", "PurposeRepairRecord"],
+      "issue": "YUK-1522",
+      "owns": "Permanent purpose command/repair schemas and exact original-result, watermark and brief-freshness readers; no policy mutation or external work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/purpose.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError", "errorResponse"],
+      "issue": "YUK-1522",
+      "owns": "Canonical typed HTTP errors and error response mapping.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/purpose.ts",
+      "module": "src/kernel/read-models/purpose-change.ts",
+      "kind": "value",
+      "symbols": ["PurposeChangeInput"],
+      "issue": "YUK-1522",
+      "owns": "Permanent purpose command/repair schemas and exact original-result, watermark and brief-freshness readers; no policy mutation or external work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/manifest.ts",
+      "module": "src/kernel/read-models/purpose-change.ts",
+      "kind": "value",
+      "symbols": ["PurposeChangeInput"],
+      "issue": "YUK-1522",
+      "owns": "Permanent purpose command/repair schemas and exact original-result, watermark and brief-freshness readers; no policy mutation or external work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/agent/ownership.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Canonical typed HTTP errors and error response mapping.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/agent/ownership.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["documentUsageEpoch", "readDocumentDerivationPolicy"],
+      "issue": "YUK-1522",
+      "owns": "Canonical source document usage policy and opaque authorization generation reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/agent/run.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1522",
+      "owns": "The sole append-only event INSERT owner, now also binding immutable ingestion usage-source generations atomically.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/purpose-change.ts",
+      "module": "src/kernel/canonical-json.ts",
+      "kind": "value",
+      "symbols": ["sha256CanonicalJson"],
+      "issue": "YUK-1522",
+      "owns": "Canonical business input identity for exact same-request replay/conflict.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/purpose-change.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1522",
+      "owns": "The sole append-only event INSERT owner, now also binding immutable ingestion usage-source generations atomically.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/purpose-change.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1522",
+      "owns": "Canonical typed HTTP errors and error response mapping.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/purpose-change.ts",
+      "module": "src/kernel/read-models/purpose-change.ts",
+      "kind": "value",
+      "symbols": [
+        "PURPOSE_BRIEF_LOCK",
+        "PURPOSE_CHANGE_ACTION",
+        "PurposeChangeInput",
+        "PurposeChangeReceipt",
+        "PurposeChangeReceiptT",
+        "purposeOperationId",
+        "readPurposeReceipt",
+        "readPurposeRepairs",
+        "readAdmissionPurposeImpact"
+      ],
+      "issue": "YUK-1522",
+      "owns": "Permanent purpose command/repair schemas and exact original-result, watermark and brief-freshness readers; no policy mutation or external work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/purpose-change.ts",
+      "module": "src/kernel/read-models/usage-policy.ts",
+      "kind": "value",
+      "symbols": ["documentUsageEpoch", "readDocumentDerivationPolicy"],
+      "issue": "YUK-1522",
+      "owns": "Canonical source document usage policy and opaque authorization generation reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/admission/enqueue.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1522",
+      "owns": "Permanent original-delivery purpose binding fact in the sole event INSERT owner; preserves frozen paid input and queue identity.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/admission/enqueue.ts",
+      "module": "src/kernel/events/derivation-policy.ts",
+      "kind": "value",
+      "symbols": ["lockEventDerivationSources", "readEventDerivationPolicy"],
+      "issue": "YUK-1522",
+      "owns": "Exact immutable source policy and generation checks under source document SHARE locks at enqueue, actual paid send and receipt application boundaries.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7200,6 +7360,51 @@
       "to": 1328,
       "issue": "YUK-1654",
       "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
+    },
+    {
+      "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
+      "date": "2026-10-28",
+      "baseBlob": "819cc75c66752f963512afd455382884543b8702",
+      "from": 1034,
+      "to": 1036,
+      "issue": "YUK-1522",
+      "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-28",
+      "baseBlob": "e8d45825bbaebe577603b8d62ce5cfbb4368982a",
+      "from": 1308,
+      "to": 1309,
+      "issue": "YUK-1522",
+      "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "date": "2026-10-28",
+      "baseBlob": "901bf509a2fb23e7edeecbc6bfe731744a8ef682",
+      "from": 1042,
+      "to": 1089,
+      "issue": "YUK-1522",
+      "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-28",
+      "baseBlob": "53823a6584a8f04e32b3b36855ac20282f65d291",
+      "from": 1273,
+      "to": 1275,
+      "issue": "YUK-1522",
+      "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
+    },
+    {
+      "path": "src/server/questions/shared-submit.ts",
+      "date": "2026-10-28",
+      "baseBlob": "42f91186583ea90c81b260b4ddfb22da9a498047",
+      "from": 1161,
+      "to": 1166,
+      "issue": "YUK-1522",
+      "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
     }
   ],
   "compatShims": [

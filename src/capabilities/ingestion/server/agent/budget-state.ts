@@ -7,6 +7,7 @@ import { ApiError } from '@/kernel/http';
 // Internal persisted representation shared by the two owners: operation identity
 // and spend/grants. Path writes preserve every other owner's history.
 export const AGENT_BUDGET_WEEK_TZ = 'Asia/Shanghai' as const;
+export const AGENT_BUDGET_LOCK_KEY = 'ingestion-agent-weekly-budget';
 export const AGENT_TASK_KIND = 'IngestionAgentTask';
 export const AGENT_TOOL_RUN_ID_PREFIX = 'ingestion_agent_tool';
 export const AGENT_BUDGET_EXCEEDED_CODE = 'ingestion_weekly_budget_exceeded';
@@ -105,6 +106,10 @@ const executionOwnerSchema = z.object({
   protocol: z.enum(['transactional-v1', 'legacy']),
   state: z.enum(['active', 'closed']),
   event_floor: z.number().int().optional(),
+  usage_epoch: z.string().optional(),
+  stop_request_id: z.string().optional(),
+  stop_confirmed: z.boolean().optional(),
+  segment_state: z.enum(['running', 'idle']).optional(),
 });
 export type AgentExecutionOwner = z.infer<typeof executionOwnerSchema>;
 

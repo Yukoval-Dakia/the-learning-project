@@ -12,6 +12,7 @@ import {
   getCorrectionStatuses,
 } from './corrections';
 import { eventAllowsDerivationSql } from './derivation-policy';
+import { bindEventUsage } from './event-usage';
 import { computeAffectedScopes } from './scope-tagger';
 
 type DbLike = Db | Tx;
@@ -268,7 +269,8 @@ function prepareEventInsert(input: WriteEventInput): typeof event.$inferInsert {
 /** Validate the whole batch before one INSERT; duplicate ids keep the first write. */
 export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promise<string[]> {
   if (inputs.length === 0) return [];
-  const rows = inputs.map(prepareEventInsert);
+  // Validate the complete original batch before acquiring any write locks.
+  inputs.forEach(prepareEventInsert);
   const correctionTargetIds = [
     ...new Set(
       inputs
@@ -276,26 +278,21 @@ export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promis
         .map((input) => input.subject_id),
     ),
   ].sort();
-
-  if (correctionTargetIds.length === 0) {
-    await db.insert(event).values(rows).onConflictDoNothing({ target: event.id });
-  } else {
-    // Corrections serialize with activation decisions on their target. On Tx the
-    // lock lasts until the outer transaction ends; sort targets to avoid deadlock.
-    await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    // Preserve correction-global -> target ordering before the new source locks.
+    if (correctionTargetIds.length) {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
       );
-      for (const targetId of correctionTargetIds) {
+      for (const targetId of correctionTargetIds)
         await tx.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(targetId)}, 0))`,
         );
-      }
-      await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
-    });
-  }
-
-  return inputs.map((input) => input.id);
+    }
+    const rows = (await bindEventUsage(tx, inputs)).map(prepareEventInsert);
+    await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
+    return inputs.map((input) => input.id);
+  });
 }
 
 export async function writeEvent(db: DbLike, input: WriteEventInput): Promise<string> {

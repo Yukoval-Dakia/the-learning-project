@@ -229,6 +229,7 @@ export type EditQuestionResult =
   | { status: 'proposed'; proposal_id: string; draft_ref?: string; changes: AppliedChange[] };
 
 interface EditContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   taskRunId?: string;
@@ -503,6 +504,7 @@ export async function saveDraftEditInTx(
   params: SaveDraftParams,
 ): Promise<EditQuestionResult> {
   const { input, ctx } = params;
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {

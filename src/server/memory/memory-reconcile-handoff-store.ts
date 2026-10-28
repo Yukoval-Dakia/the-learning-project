@@ -3,7 +3,10 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-
+import {
+  lockEventDerivationSources,
+  readEventDerivationPolicy,
+} from '@/kernel/events/derivation-policy';
 import {
   MEMORY_RECONCILE_HANDOFF_ACTION,
   MemoryReconcileHandoffError,
@@ -14,6 +17,7 @@ import {
   memoryReconcileHandoffEventId,
   normalizeReconcileInputs,
 } from './memory-reconcile-handoff-identity';
+import { noteRestrictedMemoryCompletion } from './purpose-repair-store';
 
 export {
   MEMORY_RECONCILE_HANDOFF_ACTION,
@@ -94,6 +98,9 @@ export async function claimMemoryIngest(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`memory:ingest:${sourceId}`}, 0))`,
     );
     const completedId = memoryReconcileHandoffEventId('ingest_completed', sourceId);
+    await lockEventDerivationSources(tx, sourceId);
+    if ((await readEventDerivationPolicy(tx, sourceId)) !== 'allow')
+      throw new MemoryReconcileHandoffError('source purpose withdrawn before add');
     const startedId = memoryReconcileHandoffEventId('add_started', sourceId);
     const rows = await tx
       .select({ id: event.id, payload: event.payload })
@@ -174,6 +181,8 @@ export async function persistIngestCompleted(
         );
     }
     await writeMemoryHandoffRecord(tx, input.sourceEventId, 'ingest_completed', completed);
+    await lockEventDerivationSources(tx, input.sourceEventId);
+    if (await noteRestrictedMemoryCompletion(tx, input.sourceEventId)) return;
     if (!input.persistIntents) return;
     for (const memory of memories)
       await writeMemoryHandoffRecord(

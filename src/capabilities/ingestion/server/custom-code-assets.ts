@@ -96,6 +96,7 @@ export async function writeCustomCodeAsset(
         task_run_id: ctx.logTaskRunId ?? ctx.taskRunId,
       },
       authorize: async (tx) => {
+        await ctx.beforeIngestionWrite?.(tx);
         const [session] = await tx
           .select({ type: learning_session.type, status: learning_session.status })
           .from(learning_session)

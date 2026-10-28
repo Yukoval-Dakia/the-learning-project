@@ -43,6 +43,7 @@ import {
   AdmissionJobData,
   isPendingAdmission,
   lockAdmissionGroup,
+  readAdmissionPurpose,
 } from '../server/admission/enqueue';
 import {
   type AdmissionDelivery,
@@ -61,6 +62,7 @@ import {
   resolveQuestionAdmissionPolicyId,
   runQuestionAdmission,
 } from '../server/admission/run-admission';
+import { QUESTION_ADMISSION_TASK_KIND } from '../server/admission/solve';
 import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
@@ -305,21 +307,87 @@ export async function runAdmissionForQuestion(
     // 支在 maySend 判断之前）不受影响；被拦的 claim 以 stale 结束，不产生
     // paid 行、不重置 authorization。
     const declaredUnsupported = !declaredShapesAllSupported(contract.response_spec).ok;
-    return claimAdmissionBatch(tx, input, delivery, {
-      maySend: pinned && eligible && !declaredUnsupported,
+    const purpose = delivery.jobData
+      ? await readAdmissionPurpose(tx, delivery.id, input, delivery.jobData)
+      : { state: 'unknown' as const, sourceId: null };
+    const claimed = await claimAdmissionBatch(tx, input, delivery, {
+      maySend: pinned && eligible && !declaredUnsupported && purpose.state === 'allow',
       historicalTerminal: Boolean(terminal),
     });
+    // A reused paid receipt belongs to its ORIGINAL delivery, not to the new
+    // publication that happened to reach this batch. Never retag its provenance.
+    const originalDelivery =
+      claimed.kind === 'receipt' || claimed.kind === 'winner'
+        ? ((await readPaidEffect(tx, claimed.identity))?.delivery.deliveryId ?? null)
+        : null;
+    const originalPurpose = originalDelivery
+      ? await readAdmissionPurpose(
+          tx,
+          originalDelivery,
+          claimed.input,
+          originalDelivery === delivery.id ? delivery.jobData : undefined,
+        )
+      : purpose;
+    return { ...claimed, purpose: originalPurpose, sourceDeliveryId: originalDelivery };
   });
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
-  if (batch.kind === 'stale') return simple('stale');
+  if (batch.kind === 'stale') return simple(batch.purpose.state === 'allow' ? 'stale' : 'pending');
   if (batch.kind === 'held') return simple('pending');
+
+  const checkPurpose = async (tx: Tx) =>
+    batch.sourceDeliveryId
+      ? readAdmissionPurpose(tx, batch.sourceDeliveryId, batch.input)
+      : { state: 'unknown' as const, sourceId: null };
 
   const attemptedTaskRunIds = new Set<string>();
   let receipt: AdmissionResultReceipt;
   if (batch.kind === 'receipt') {
     receipt = batch.receipt;
   } else {
+    const controller = new AbortController();
+    const abort = () => controller.abort(deps.signal?.reason);
+    if (deps.signal?.aborted) abort();
+    else deps.signal?.addEventListener('abort', abort, { once: true });
+    let purposeStopped = false;
+    let checking = false;
+    const beforeSend = async () => {
+      controller.signal.throwIfAborted();
+      try {
+        await db.transaction(async (tx) => {
+          await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
+          await assertAdmissionDelivery(tx, delivery);
+          await lockAdmissionGroup(tx, rootId);
+          const snapshot = await readPaidEffect(tx, batch.identity);
+          if (
+            snapshot?.state !== 'sending' ||
+            snapshot.fence !== batch.fence ||
+            snapshot.delivery.deliveryId !== delivery.id
+          )
+            throw new Error('Question admission original paid send fence closed');
+          const purpose = await checkPurpose(tx);
+          if (purpose.state !== 'allow')
+            throw new Error(`Question admission original source purpose ${purpose.state}`);
+        });
+        controller.signal.throwIfAborted();
+      } catch (error) {
+        purposeStopped = true;
+        controller.abort(error);
+        throw error;
+      }
+    };
+    // The durable source/paid fences survive worker loss. This timer merely
+    // cooperates with an already issued transport; it cannot prove withdrawal.
+    const timer = setInterval(() => {
+      if (checking || controller.signal.aborted) return;
+      checking = true;
+      void beforeSend()
+        .catch(() => {})
+        .finally(() => {
+          checking = false;
+        });
+    }, 1000);
+    timer.unref();
     try {
       const executeTask =
         deps.runTask ??
@@ -329,7 +397,18 @@ export async function runAdmissionForQuestion(
         });
       const runTask: PracticeTaskRunFn = async (...args) => {
         try {
-          const result = await executeTask(...args);
+          await beforeSend();
+          const [kind, input, ctx] = args;
+          if (kind !== QUESTION_ADMISSION_TASK_KIND)
+            throw new Error('Question admission task kind differs from its frozen solve contract');
+          const result = await executeTask(QUESTION_ADMISSION_TASK_KIND, input, {
+            ...ctx,
+            lifecycleAbortController: controller,
+            beforeProviderQuery: async (started) => {
+              await ctx?.beforeProviderQuery?.(started);
+              await beforeSend();
+            },
+          });
           if (result.task_run_id) attemptedTaskRunIds.add(result.task_run_id);
           return result;
         } catch (error) {
@@ -392,11 +471,26 @@ export async function runAdmissionForQuestion(
           );
         }
       });
+      if (purposeStopped) return simple('pending');
       throw error;
+    } finally {
+      clearInterval(timer);
+      deps.signal?.removeEventListener('abort', abort);
     }
   }
 
   try {
+    const purpose = await db.transaction(checkPurpose);
+    if (purpose.state !== 'allow') {
+      await db.transaction((tx) =>
+        notePaidEffectApplicationFailure(
+          tx,
+          batch.identity,
+          `receipt_waits_for_original_source_purpose:${purpose.state}`,
+        ),
+      );
+      return simple('pending');
+    }
     // The paid result is already durable. Browser/resource work never runs under
     // a paid-effect, business or publication lock; receipt-ready replay is free.
     const preview = await prepareAdmissionCustomPreview(
@@ -424,6 +518,15 @@ export async function runAdmissionForQuestion(
       if (snapshot?.state === 'applied')
         return simple(completedAdmissionStatus(snapshot.application));
       const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
+      const purpose = await checkPurpose(tx);
+      if (purpose.state !== 'allow') {
+        await notePaidEffectApplicationFailure(
+          tx,
+          batch.identity,
+          `receipt_waits_for_original_source_purpose:${purpose.state}`,
+        );
+        return simple('pending');
+      }
       const fresh = root
         ? await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null)
         : null;

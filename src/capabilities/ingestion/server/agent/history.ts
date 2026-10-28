@@ -520,6 +520,14 @@ export async function persistAgentRunHistory(
     ...(unparsedPrevious !== undefined ? { unparsed_previous: unparsedPrevious } : {}),
   };
   await writeAgentBudgetPath(tx, sessionId, ['history'], snapshot);
+  if (input.executionClosed === true) {
+    const owner = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
+    if (owner?.state === 'active')
+      await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+        ...owner,
+        segment_state: 'idle',
+      });
+  }
 }
 
 // ---------- merged read ----------
