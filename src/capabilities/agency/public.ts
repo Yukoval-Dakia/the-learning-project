@@ -1,12 +1,6 @@
 // Stable server contract for consumers outside the agency capability.
 
 export { AgentNotesQuerySchema } from './api/contracts';
-export type { CompletedProbeProposal } from './server/conjecture/completed-probe-provenance';
-export {
-  loadCompletedProbeAssessmentAnchors,
-  validateCompletedProbeProvenance,
-  validateIssuedProbeProvenance,
-} from './server/conjecture/completed-probe-provenance';
 export {
   type ConjectureEvidenceAssetRef,
   type ConjectureEvidenceImageSource,
@@ -28,8 +22,6 @@ export type {
   InduceConjectureResult,
 } from './server/conjecture/induce';
 export { induceConjecture } from './server/conjecture/induce';
-export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
-export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
 // Shared probe lifecycle exercised by shell integration consumers.
 export {
   answerProbe,
