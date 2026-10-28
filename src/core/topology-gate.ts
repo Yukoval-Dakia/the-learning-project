@@ -1,15 +1,17 @@
 // ADR-0034 §2 — write-time topology gate. Pure graph checks on a candidate
 // knowledge_edge; no DB or LLM. Checks run in this order:
-//   ① self-loop prerequisite → reject;
+//   ① self-loop (any relation type) → reject;
 //   ② direct parent-child pair already in the tree → reject;
-//   ③ inverse prerequisite already exists → reject (specific 2-node back-edge);
+//   ③ inverse directed edge already exists → reject (specific 2-node back-edge);
 //   ④ new prerequisite closes a cycle → reject;
 //   ⑤ direct edge duplicates an existing ≥2-hop path → warn.
 //
-// Only `prerequisite` is policed: it is the learning-order relation the ADR names.
-// related_to/contrasts_with are non-ordering; derived_from/applied_in are out of scope.
-// Semantic checks live in rubric-validator.ts and stack with this gate. The ADR §3
-// reconciliation ring is a separate follow-up and not implemented here.
+// Ordering relations policed beyond ①: `prerequisite` (②–⑤, the ADR-0034 scope)
+// and `derived_from` (③ only — a mutual derivation pair is a 2-cycle in the
+// derivation DAG, YUK-1601). related_to/contrasts_with are non-ordering;
+// applied_in stays out of scope. A self-edge is never meaningful for any type
+// (merge rewire collapses them as degenerate). Semantic checks live in
+// rubric-validator.ts and stack with this gate.
 
 export interface TopologyEdge {
   from_knowledge_id: string;
@@ -46,7 +48,7 @@ export type TopologyVerdict =
   | { status: 'reject'; gate: TopologyGate; reason: string }
   | { status: 'warn'; gate: TopologyGate; reason: string };
 
-// The only learning-order relation; the ADR scopes this gate to it.
+// The learning-order relation the ADR names; ②–⑤ apply to it.
 const ORDERED_RELATION = 'prerequisite';
 
 /** Adjacency (from → direct successors) over live prerequisite edges only. */
@@ -87,35 +89,55 @@ function isReachable(adj: Map<string, Set<string>>, start: string, target: strin
 }
 
 /**
- * Run the five checks for one candidate against the live edge set. Reject wins over
+ * Run the checks for one candidate against the live edge set. Reject wins over
  * warn; non-prerequisite candidates return ok.
  *
- *   ① self-loop → reject
- *   ② tree parent pair → reject
- *   ③ inverse prerequisite → reject
- *   ④ closes a cycle → reject
- *   ⑤ duplicates a path → warn
+ *   ① self-loop (any relation type) → reject
+ *   ② tree parent pair → reject (prerequisite)
+ *   ③ inverse directed edge → reject (prerequisite / derived_from)
+ *   ④ closes a cycle → reject (prerequisite)
+ *   ⑤ duplicates a path → warn (prerequisite)
  */
 export function checkEdgeTopology(
   candidate: TopologyEdge,
   existing: readonly TopologyEdge[],
   treeParentLinks: readonly TreeParentLink[],
 ): TopologyVerdict {
-  // Out of scope: only the learning-order relation is policed here.
-  if (candidate.relation_type !== ORDERED_RELATION) {
-    return { status: 'ok' };
-  }
-
   const from = candidate.from_knowledge_id;
   const to = candidate.to_knowledge_id;
+  const relationType = candidate.relation_type;
 
-  // ① self-loop — degenerate one-node cycle.
+  // ① Self-loop — degenerate one-node cycle, never meaningful for any relation.
   if (from === to) {
     return {
       status: 'reject',
       gate: 'cycle',
-      reason: 'prerequisite self-loop: from_knowledge_id equals to_knowledge_id',
+      reason: `${relationType} self-loop: from_knowledge_id equals to_knowledge_id`,
     };
+  }
+
+  if (relationType === 'derived_from') {
+    // ③ (derived_from scope) — a mutual derivation pair is a 2-cycle in the
+    // derivation DAG (ADR-0010: from 派生自 to).
+    const inverseExists = existing.some(
+      (e) =>
+        e.relation_type === 'derived_from' &&
+        e.from_knowledge_id === to &&
+        e.to_knowledge_id === from,
+    );
+    if (inverseExists) {
+      return {
+        status: 'reject',
+        gate: 'direction_contradiction',
+        reason: `direction contradiction: a derived_from edge ${to} → ${from} already exists; ${from} → ${to} reverses it (mutual derivation is a 2-cycle)`,
+      };
+    }
+    return { status: 'ok' };
+  }
+
+  // Out of scope beyond ①: only the learning-order relation is policed here.
+  if (relationType !== ORDERED_RELATION) {
+    return { status: 'ok' };
   }
 
   // ② Tree is the structural backbone; the mesh must not store a second copy of a

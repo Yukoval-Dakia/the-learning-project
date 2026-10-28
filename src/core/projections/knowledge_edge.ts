@@ -48,13 +48,15 @@ type GenerateEdgePayloadT = z.infer<typeof GenerateEdgePayload>;
 
 const ARCHIVE_EDGE_OP = 'archive';
 
-// ADR-0034 topology gate runs only when a create adds a live prerequisite edge. Genesis
-// seeds are trusted and never re-gated; replay could reject a historically valid row.
-// Reject throws; warn proceeds because there is no verdict column.
+// ADR-0034 topology gate runs only when a create adds a live prerequisite or
+// derived_from edge. Genesis seeds are trusted and never re-gated; replay could
+// reject a historically valid row. Reject throws; warn proceeds because there is
+// no verdict column.
 
 /**
  * Project one edge; caller order is irrelevant. `liveMesh` is the currently live edge
- * set used for topology. Throws when a prerequisite create violates ADR-0034.
+ * set used for topology. Throws when a prerequisite or derived_from create violates
+ * ADR-0034.
  */
 export function foldKnowledgeEdge(
   edgeId: string,
@@ -115,8 +117,12 @@ export function foldKnowledgeEdge(
       }
 
       const projected = rowFromGenerateEvent(edgeId, ev, payload);
-      // A create always yields a live edge, so the gate applies to every prerequisite create.
-      if (projected.relation_type === 'prerequisite') {
+      // A create always yields a live edge, so the gate applies to every prerequisite
+      // and derived_from create (YUK-1601: derived_from joins the inversion check).
+      if (
+        projected.relation_type === 'prerequisite' ||
+        projected.relation_type === 'derived_from'
+      ) {
         const verdict = checkEdgeTopology(
           {
             from_knowledge_id: projected.from_knowledge_id,

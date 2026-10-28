@@ -7200,6 +7200,15 @@
       "to": 1328,
       "issue": "YUK-1654",
       "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-28",
+      "baseBlob": "49be1d2e08ebcac5d81807f700ace0db7d241049",
+      "from": 1113,
+      "to": 1162,
+      "issue": "YUK-1601",
+      "responsibilityReason": "The accept flow stays the single structural writer: the added lines are the reparent cycle boundary (self-parent reject, one xact advisory lock serializing concurrent reparent accepts, and a visited-set subtree walk rejecting an ancestor moved under its own descendant). All checks run inside the existing accept transaction and throw before any write; no new writer, module, or responsibility."
     }
   ],
   "compatShims": [
