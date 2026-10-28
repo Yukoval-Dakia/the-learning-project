@@ -4193,6 +4193,38 @@
       "evidence": "The authenticated Start checkpoint-revert host imports this complete request at await-import AST and module path line 13 and invokes it at line 15 with db and the original eventId params. The context reference is type-only; the retained HTTP POST consumes the same request internally. The existing stable client reaches TurnActions.revert, preserving its separate request-error and refresh-error handling.",
       "rationale": "Copilot owns the complete checkpoint-revert request: original eventId schema parsing, message-only Zod validation_error/400 mapping over the original call, and the complete status/body outcome from the unchanged transactional checkpoint operation. HTTP and Start retain success and refusal envelopes; the Start function throws non-200 Response bodies outside the host errorResponse catch so apiFetch preserves refusal details without a second 500 or a success union. No UI, lock, cascade, savepoint, retry or replay policy moves into the caller.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "abandonOrphanReviewSession",
+      "targetModule": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "targetSymbol": "abandonOrphanReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 6
+        },
+        {
+          "file": "src/server/boss/handlers/prune_orphan_review_sessions.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Fixed b7fe0e3761b2b84d24625db7d2e08953475f8775: public export AST368, canonical function AST54; durable consumer import AST6/call249 and legacy job import AST7/call35. Both are real production calls with caller-owned Tx. Six mechanical test imports target the canonical namespace and are not counted as production evidence. The complete 361-line owner is byte-identical to the original.",
+      "rationale": "Expose the complete Review orphan state operation from its Practice owner for existing durable and legacy recovery consumers. Preserve row locking, incarnation/cutoff checks, skipped reasons and version result; caller-owned receipt/phase/fence and transaction lifetime stay with the recovery callers. The unchanged completion feedback release remains within the full lifecycle per the narrow B ruling; no wider B policy, runtime or paid permission is implied. Ownership depth gain is zero; initialization remains unverified.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a2d011fc-ebc7-45db-ac54-d8f72a928f35",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6523,6 +6555,46 @@
       "issue": "YUK-1642",
       "date": "2026-10-28",
       "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review completion transition and per-attempt feedback release in its original transaction, including incarnation filter, event identity and timestamps; no independent B policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review lifecycle missing-session and invalid-transition error contracts, including unchanged statuses, messages and strict versus idempotent behavior.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve original Review state job-event timing and payload inside the same transaction, including creation and reopen; caller recovery and queue policies remain unchanged.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/learning-session-guard.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7478,7 +7550,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 239,
+      "total": 237,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7531,7 +7603,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 4,
+        "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
