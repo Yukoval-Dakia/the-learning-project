@@ -291,10 +291,10 @@
   }
 }
 
-/* YUK-1473: PracticeSolo foundation only. Google token sources and Web mapping:
+/* YUK-1473: explicitly opted-in practice and companion presentation. Google token sources and Web mapping:
    docs/design/2026-10-27-m3e-direction-and-migration.md §8.
    No legacy alias is rebound; only explicitly marked consumers use these roles. */
-[data-ui-next][data-un-m3e="practice-foundation"] {
+[data-ui-next]:is([data-un-m3e="practice-foundation"], [data-un-m3e="companion-content"]) {
   --un-md-sys-color-primary: #6750a4;
   --un-md-sys-color-on-primary: #ffffff;
   --un-md-sys-color-secondary: #625b71;
@@ -357,8 +357,13 @@
 }
 
 :root[data-theme="dark"]
-  [data-ui-next][data-un-m3e="practice-foundation"]:not([data-un-theme="light"]),
-[data-ui-next][data-un-m3e="practice-foundation"][data-un-theme="dark"] {
+  [data-ui-next]:is([data-un-m3e="practice-foundation"], [data-un-m3e="companion-content"]):not(
+    [data-un-theme="light"]
+  ),
+[data-ui-next]:is(
+  [data-un-m3e="practice-foundation"],
+  [data-un-m3e="companion-content"]
+)[data-un-theme="dark"] {
   --un-md-sys-color-primary: #d0bcff;
   --un-md-sys-color-on-primary: #381e72;
   --un-md-sys-color-secondary: #ccc2dc;
@@ -379,7 +384,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme])
-    [data-ui-next][data-un-m3e="practice-foundation"]:not([data-un-theme="light"]) {
+    [data-ui-next]:is([data-un-m3e="practice-foundation"], [data-un-m3e="companion-content"]):not(
+      [data-un-theme="light"]
+    ) {
     --un-md-sys-color-primary: #d0bcff;
     --un-md-sys-color-on-primary: #381e72;
     --un-md-sys-color-secondary: #ccc2dc;
