@@ -11,7 +11,7 @@ This runbook covers two different recovery layers in the current self-hosted sta
   does not depend on the application process. R2 still needs its own backup.
 
 The original Sub 5 design in
-`docs/superpowers/specs/2026-05-10-phase1a-sub5-design.md` explains the archive format, but
+`docs/archive/superpowers/specs/2026-05-10-phase1a-sub5-design.md` explains the archive format, but
 its deployment examples are historical. The commands below are authoritative for the current
 Hono + Postgres + S3-compatible R2 stack.
 

@@ -1,5 +1,5 @@
 // Q3 — search-grounded QuizGen handler DB test
-// (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4).
+// (docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4).
 //
 // Mocks the AI (runAgentTaskFn) + the chained quiz_verify enqueue. Asserts:
 //   - questions INSERT with draft_status='draft' (Option B — NOT in the pool),

@@ -174,7 +174,7 @@ Redis 只是把**同一个用户**的 presence 在 web/worker 两进程间共享
 旧栈拆除（M5 Task 9，gate 选项 b）把共享后端从 Redis 换成 PG 表 `editing_presence`
 （`src/server/artifacts/presence/pg.ts` 的 `PgPresenceStore`，`editing-session.ts` 恒用之；
 in-memory impl 仍是 fast unit 测试默认，经 `vi.mock` 注入）。子计划见
-`docs/superpowers/plans/2026-06-13-yuk-321-pg-presence-subplan.md`。
+`docs/archive/superpowers/plans/2026-06-13-yuk-321-pg-presence-subplan.md`。
 
 **继续成立的核心决策**：
 

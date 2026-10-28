@@ -88,6 +88,8 @@ CREATE INDEX artifact_block_ref_to_idx ON artifact_block_ref (to_artifact_id, to
 
 - artifact 写路径同步扫 body_blocks 抽 `crossLinkBlock` / future cross-link attrs → upsert 索引表
 - 反链查询走索引表 O(log N)
+
+> **演进注（Wave7 D4，源：`docs/archive/superpowers/plans/2026-05-29-wave7-ready-to-launch.md`，YUK-1575 重立档）**：索引由**单一 owner 模块**（`src/capabilities/notes/server/block-refs.ts`）在**每次** body_blocks 写事务内（用户编辑 / AI mutator apply / AI 生成 / hub-sync 终结）以**全量重算**维护（按 from_artifact_id DELETE + 重插当前扫描集），不做 op 级增量——规避 split/merge/delete 漂移；后续 durable hub-sync 重设计复用并保留了这一写策略。
 - **`knowledge_edge` 留作概念关系**（prerequisite / contrasts_with / ...），不与 note ref 混
 
 ### 6. Embedded check (quiz inline)
@@ -247,4 +249,4 @@ Y 是 B 与 C 的折中：schema 层等价 C（共用 body_blocks），type 层�
   有表无触发器的死库）；`triggers_installed` 健康字段是运行时哨兵。回滚：`HUB_SYNC_MODE=off`
   只停 reconciler，触发器记账仍继续——若回滚因触发器本身，紧急停用要 `DROP TRIGGER`
   三条（重建 = 重跑 0071 CREATE TRIGGER 段 + 一次 nightly repair），详见 §十.1「off 语义」。**
-- **决策 D1-D9 / 完整设计**：`docs/superpowers/plans/2026-07-21-yuk-384-durable-hub-sync.md`。
+- **决策 D1-D9 / 完整设计**：`docs/archive/superpowers/plans/2026-07-21-yuk-384-durable-hub-sync.md`。

@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Status:** Decision-gate template (verdict DATA-GATED — pending data accumulation)
-**Part of:** YUK-361 personalized calibration roadmap (`docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md` Phase 7 / Task 12)
+**Part of:** YUK-361 personalized calibration roadmap (`docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md` Phase 7 / Task 12)
 **Tool:** `scripts/replay-urnings-lite.ts` (run `pnpm replay:urnings`)
 **Estimators:** `scripts/lib/urnings-replay-estimators.ts`
 **Decision it re-examines:** ADR-0042 (Elo-over-Urnings verdict for the ONLINE engine) + `docs/design/2026-06-15-urnings-lite-calibration-amendment.md` (full Urnings deferred to THIS offline replay decision gate)

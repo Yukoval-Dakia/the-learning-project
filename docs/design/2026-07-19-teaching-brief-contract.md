@@ -5,7 +5,7 @@
 - **Status**: P0F contract；后续实现以本文为准
 - **Scope**: 一次例会 → 一个关键判断 → 一个已备行动 → 一次结果对账
 - **Planned endpoint**: `GET /api/prep-desk/brief`
-- **Inputs**: `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、
+- **Inputs**: `docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、
   `docs/design/2026-07-12-prep-desk-card-design.md`、
   `docs/design/handoff/2026-06-27-prep-desk-conjectures.md`
 

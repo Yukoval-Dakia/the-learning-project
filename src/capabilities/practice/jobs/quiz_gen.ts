@@ -1,6 +1,6 @@
 // Search-grounded QuizGen — Q3 handler.
 //
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4.
+// docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §4.
 // ADR-0038 决定#2 — plan-then-generate: the run is TWO phases. Phase 1
 // (QuizPlanTask) emits a machine-checkable question plan (knowledge point /
 // kind / objective answer anchor); a deterministic gate validates it (schema +

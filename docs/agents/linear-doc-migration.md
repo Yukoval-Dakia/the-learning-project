@@ -33,7 +33,7 @@ Create these project documents:
 | Linear document | Source | Migration mode |
 |---|---|---|
 | `Doc Catalog — Repo ↔ Linear Manifest` | this file + `pnpm docs:linear-manifest` | full doc + generated manifest summary |
-| `Current Status Snapshot` | `docs/superpowers/status.md` | full doc after freshness refresh |
+| `Current Status Snapshot` | `docs/archive/superpowers/status.md`（已退役，YUK-1575） | 不再迁移——历史快照，留档即可 |
 | `Roadmap Execution Map` | `docs/planning/v0.3-generalized-ai-learning-framework.md` | summarized execution map |
 | `Historical References Index` | ADRs, audits, plans, specs, design bundles | index only; repo keeps full text |
 
@@ -77,7 +77,7 @@ destinations; rerun the command before every Linear document refresh.
 
 | Source | Verdict | Linear destination | Action |
 |---|---|---|---|
-| `docs/superpowers/status.md` | `current` after 2026-05-23 refresh | `Current Status Snapshot` | Full doc. |
+| `docs/archive/superpowers/status.md` | `archived`（YUK-1575 退役，2026-10-28 起仅历史快照） | `Historical References Index` | Link only. |
 | `docs/planning/v0.3-generalized-ai-learning-framework.md` | `current` after 2026-05-23 refresh | `Roadmap Execution Map` | Summary with source link. |
 | `docs/agents/*.md` | `current` | `Doc Catalog — Repo ↔ Linear Manifest` | Mirror operational docs or link from catalog. |
 | `PLANNING.md` | `historical-reference` | `Historical References Index` | Link only; not active roadmap. |
@@ -85,7 +85,7 @@ destinations; rerun the command before every Linear document refresh.
 | `README.md` | `current` | Catalog only | Current project entrance after 2026-05-23 refresh; do not duplicate full README in Linear unless a future mirror is explicitly needed. |
 | `docs/adr/*.md` | `historical-reference` | `Historical References Index` | Link only. |
 | `docs/audit/*.md` | `historical-reference` | `Historical References Index` | Link only. |
-| `docs/superpowers/{plans,specs,brainstorms,audits}/*.md` | `historical-reference` or `current-reference` | `Historical References Index` | Link only. |
+| `docs/archive/superpowers/{plans,specs,brainstorms,audits}/*.md` | `archived`（YUK-1575 整目录退役；仍有效决定已并入现行 ADR / 领域文档，见该目录 README） | `Historical References Index` | Link only. |
 | `docs/modules/*.md` | `needs-review` | `Historical References Index` | Review against module code before promoting. |
 | `docs/design/**` | `historical-reference` | `Historical References Index` | Link only unless refreshed by a new design pass. |
 | `src/**/README.md` | `needs-review` | Catalog only | Keep near code; Linear links only. |

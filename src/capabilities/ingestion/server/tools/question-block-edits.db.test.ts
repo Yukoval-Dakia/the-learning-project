@@ -2,7 +2,7 @@
 //
 // Covers: registry (all 6 registered + summarized), and per-tool written +
 // skipped:* soft-failure branches against a real Postgres testcontainer.
-// Design note: docs/superpowers/specs/2026-06-01-question-edit-domaintools-design.md
+// Design note: docs/archive/superpowers/specs/2026-06-01-question-edit-domaintools-design.md
 // allow: SIZE_OK — one inherited DB contract matrix keeps shared fixtures and cross-tool parity.
 
 import { createId } from '@paralleldrive/cuid2';

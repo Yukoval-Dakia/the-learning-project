@@ -72,11 +72,11 @@
 
 - 本次检查面：M2.1 / M2.2 / M2.3 / M3 引入的所有决策（前次 M1 exit audit @ 5h 前已 cover M-1/M0/M1）。
 - 抽样轮换面：ADR-0001/0004-0008/0010-0013 信任前次审计标 Aligned，本次仅 spot-check 与 M2.3 新增 surface 相关的边界。
-- N+1 follow-ups 列表已固化到 `docs/superpowers/plans/2026-05-22-math-mvp-closeout.md` §"N+1 follow-ups"；后续 audit 跑只关心新代码不关心已记 follow-ups。
+- N+1 follow-ups 列表已固化到 `docs/archive/superpowers/plans/2026-05-22-math-mvp-closeout.md` §"N+1 follow-ups"；后续 audit 跑只关心新代码不关心已记 follow-ups。
 - 假阳性自评：本次 0 false positive。所有 M2/M3 落地决策都在 spec §3 + ADR 体系内，没有 documented-only / undocumented gap。
 
 ---
 
 ## Closing — Math MVP exit verification
 
-Math MVP spec §3 五个 phase（M-1 / M0 / M1 / M2 / M3）全部 exit criteria 命中。详 `docs/superpowers/plans/2026-05-22-math-mvp-closeout.md`。
+Math MVP spec §3 五个 phase（M-1 / M0 / M1 / M2 / M3）全部 exit criteria 命中。详 `docs/archive/superpowers/plans/2026-05-22-math-mvp-closeout.md`。

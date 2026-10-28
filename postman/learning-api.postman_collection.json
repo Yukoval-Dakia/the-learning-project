@@ -132,7 +132,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "admin", "config"]
             },
-            "description": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖\n\n**Notes:** 只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
+            "description": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖\n\n**Notes:** 只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份、auth（YUK-1563：未配置/已配置/认证失败+http状态+错误类型，来自 provider-models-check probe/结算事实，绝无凭据值）及 models[] 目录桶全量模型行（id/api/input/runnable + tool_call/reasoning/structured_output/vision/forced_tool_choice 三态 + context/input/output 限额 + cost 费率卡；缺项为 unknown/null，不编造）。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
           },
           "response": []
         },

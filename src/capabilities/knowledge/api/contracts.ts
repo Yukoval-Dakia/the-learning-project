@@ -6,12 +6,15 @@ import { SubjectProfileSchema } from '@/subjects/profile-schema';
 
 export const KnowledgeIdParamsSchema = z.object({ id: z.string().trim().min(1) });
 
+export const KnowledgeRoleSchema = z.enum(['kc', 'goal', 'container']);
+
 export const KnowledgeTreeNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
   domain: z.string().nullable(),
   parent_id: z.string().nullable(),
   archived_at: z.string().nullable(),
+  role: KnowledgeRoleSchema,
   mastery: z.number().nullable(),
   mastery_lo: z.number().nullable(),
   mastery_hi: z.number().nullable(),
@@ -197,6 +200,7 @@ export const KnowledgeNodePageResponseSchema = z.object({
   parent_id: z.string().nullable(),
   parent_name: z.string().nullable(),
   effective_domain: z.string().nullable(),
+  role: KnowledgeRoleSchema,
   mastery: z.number().nullable(),
   mastery_lo: z.number().nullable(),
   mastery_hi: z.number().nullable(),

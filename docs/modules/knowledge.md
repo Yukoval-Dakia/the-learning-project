@@ -4,7 +4,7 @@
 >
 > 见 [架构基础](../architecture.md) 的 `knowledge_mesh`、[ADR-0010](../adr/0010-knowledge-mesh.md)、[ADR-0011](../adr/0011-tool-use-and-edge-event-paths.md)。
 > Mastery 见 [ADR-0012](../adr/0012-mastery-as-derived-view.md)（derived view）。
-> Agent runtime tool 设计见 [Agent Context Tools Design](../superpowers/specs/2026-05-17-agent-context-tools-design.md)。
+> Agent runtime tool 设计见 [Agent Context Tools Design](../archive/superpowers/specs/2026-05-17-agent-context-tools-design.md)。
 
 知识图谱是学习系统的解释骨架：`knowledge.parent_id` 表达主层级，`knowledge_edge` 表达有类型的横向 mesh。Agent 读图时必须读懂这两层语义，而不是只拿数据库行。
 
@@ -284,7 +284,7 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > terminal `rubric_rejected` inbox status, and is excluded from live-pending dedup/cooldown so a
 > later valid proposal for the same edge is not blocked. Layer 1 is deterministic (no LLM call) and
 > rejects medium/weak evidence for agents.
-> Spec: `docs/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`.
+> Spec: `docs/archive/superpowers/specs/2026-05-31-p5.4-rubric-enforcement-design.md`.
 >
 > **Enforcement status (Layer 2, P5.4-L2 / YUK-174 — shipped 2026-05-31).** The adaptive
 > accept-learned bias is now live as an ADDITIVE soft layer on top of Layer 1, owned by
@@ -305,7 +305,7 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > `knowledge_edge_propose_nightly` path does not yet run Layer 1, so the gate-bump is deferred there
 > to [YUK-175](https://linear.app/yukoval-studios/issue/YUK-175); the reason digest still reaches it.
 > No schema change. Spec:
-> `docs/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md`.
+> `docs/archive/superpowers/specs/2026-05-31-p5.4-l2-adaptive-bias-design.md`.
 >
 > **Suggestion-kind semantics + KPI exclusion (P5.6 / YUK-178 — 2026-05-31).** Proposals (and chips)
 > carry an OPTIONAL `suggestion_kind: 'proactive' | 'corrective'` discriminator (ADR-0011 §2.1 / §11
@@ -325,7 +325,7 @@ This rubric applies to agent-generated graph proposals. Manual user-created edge
 > accept-learned bias (above) measuring only proactive proposal quality — a retry-on-failure
 > acknowledgment never inflates it. There is NO soft-fail / `result_count` coercion (that mechanism was
 > dropped). No DB migration, no new event action, no new table. Spec:
-> `docs/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`.
+> `docs/archive/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`.
 
 ### 4.1 Universal gates
 

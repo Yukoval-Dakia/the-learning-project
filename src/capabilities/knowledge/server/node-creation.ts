@@ -14,7 +14,10 @@ import { requireKnowledgeHistory } from './node-history-guard';
 type InitialKnowledge = Pick<
   KnowledgeRowSnapshotT,
   'id' | 'name' | 'domain' | 'parent_id' | 'proposed_by_ai' | 'created_at'
->;
+> & {
+  /** YUK-1600 identity role. Absent means 'kc' — the default knowledge component. */
+  role?: Exclude<KnowledgeRowSnapshotT['role'], undefined>;
+};
 
 /** Create an approved node from birth history. Existing nodes are never rewritten or backfilled. */
 export async function createKnowledgeNodeFromEvents(
@@ -54,6 +57,7 @@ export async function createKnowledgeNodeFromEvents(
     merged_from: [],
     archived_at: null,
     approval_status: 'approved',
+    role: initial.role ?? 'kc',
     updated_at: initial.created_at,
     version: 0,
   };
@@ -99,6 +103,8 @@ export async function ensureSubjectRoot(
       domain: subjectId,
       parent_id: null,
       proposed_by_ai: false,
+      // A subject root is structural scaffolding, never a testable knowledge point.
+      role: 'container',
       created_at: new Date(),
     },
     { actorRef: 'subject-root-create' },
