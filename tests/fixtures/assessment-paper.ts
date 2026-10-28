@@ -18,6 +18,7 @@ import {
   type PaperSubmitSlotInput,
   submitPaperSlot,
 } from '@/capabilities/practice/server/paper-submit';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { canonicalHash } from '@/core/migration/canonical';
 import { Artifact } from '@/core/schema';
 import type { SlotResponseT } from '@/core/schema/assessment';
@@ -41,7 +42,6 @@ import {
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { Review } from '@/server/session';
 import { seedHistoricalAssessmentIssuance } from './historical-assessment-issuance';
 
 /** Real publication/opening for migrated fixtures; never freezes lazily at submit time. */

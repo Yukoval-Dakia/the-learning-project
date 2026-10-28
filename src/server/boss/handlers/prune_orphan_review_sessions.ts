@@ -4,11 +4,10 @@
 
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-
+import { abandonOrphanReviewSession } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { runReviewOrphanTick } from '@/server/durable/review-orphan-family';
-import { Review } from '@/server/session';
 
 const ORPHAN_AGE_MS = 6 * 60 * 60 * 1000;
 
@@ -33,7 +32,7 @@ export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned:
   for (const r of rows) {
     try {
       const result = await db.transaction((tx) =>
-        Review.abandonOrphanReviewSession(tx, { candidate: r, cutoff }),
+        abandonOrphanReviewSession(tx, { candidate: r, cutoff }),
       );
       if (result.kind === 'abandoned') abandoned += 1;
     } catch (err) {

@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { job_events } from '@/db/schema';
-import { Placement, Review } from '@/server/session';
+import { Placement } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { PlacementSessionTransitionResponseSchema } from './placement-contracts';
 import { PATCH as patchPlacementSession } from './placement-session-detail';
