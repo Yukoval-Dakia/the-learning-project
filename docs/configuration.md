@@ -8,7 +8,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 
 ## 环境变量
 
-表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/server/runtime-env.ts`；`src/server/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
+表中出处写 `registry` 的键都登记在 `src/core/config/registry.ts`，默认值即该键的 `codeDefault`，并且可被 `system_config` 覆盖（优先级见下文）。`NODE_ENV` 与 `VITEST` 只影响运行时判断（测试下跳过校验、不向 pg-boss 入队），不进下表；`HOME` / `PATH` / `TMPDIR` 作为 jyeoo 子进程环境透传，列入 OCR/录入组（`src/kernel/background-job-enqueue.ts`；`src/server/env.ts`；`src/capabilities/practice/server/question-supply/jyeoo-spawn.ts`）。
 
 ### 数据库与进程
 
