@@ -31,7 +31,7 @@ ColorLight/Dark、Palette、TypeScale、Shape、FilledCard 与 OutlinedTextField
 | 现役消费者 | 本片呈现映射 | 合同边界 |
 | --- | --- | --- |
 | CompanionPanel / MessageStream | surfaceContainerLow 面板、lowest 对话区域；头部与底部有明确边界，取消 float 内容透光 | 位置/尺寸/滚动/visit/焦点陷阱和开合全保 |
-| SummaryCard | headlineSmall emphasized 欢迎语、titleMedium 节标题；lowest 摘要容器，折叠按钮保持原 aria-expanded | loading/error/已读摘要的内容条件原样，不把未知变为空 |
+| SummaryCard | headlineSmall emphasized 欢迎语、titleMedium 节标题；low 摘要容器，折叠按钮保持原 aria-expanded | loading/error/已读摘要的内容条件原样，不把未知变为空 |
 | MessageRow | bodyLarge 16/24 正文；用户 secondaryContainer 气泡，AI 直接正文，状态 bodyMedium 14/20 | streaming 仍显式「生成中 · 还未生效」，不把颜色变化当提交；tombstone/partial/错误文本保留 |
 | RunFooter | quiet 低层容器、caution 次级容器、critical errorContainer；文本可换行，按钮原生语义保留 | 接纳未知、断流、Stop、重试分支和可用性不变，不创建进度百分比 |
 | Composer | outlined 项目输入组合、surface/outline，focus-visible 明确描边；发送 primary/onPrimary | Enter/Shift+Enter/IME、disabled、消息用途保护、引用落点与 draft 不变 |
