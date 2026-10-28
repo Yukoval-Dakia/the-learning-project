@@ -5,6 +5,7 @@
 // vector(1024) columns instead of the mem0 black-box collection. EMBED_DIMS MUST
 // equal the vector(dims) in schema.ts.
 
+import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import {
   type DirectProviderOperationContext,
   type DirectProviderOperationOptions,
@@ -152,6 +153,9 @@ export async function embedMany(
   const providerOperation = createDirectProviderOperationContext(providerAttempt);
   const apiKey = process.env.DASHSCOPE_API_KEY?.trim();
   if (!apiKey) throw new Error('embedMany: DASHSCOPE_API_KEY is unset');
+  // YUK-1654 — the DashScope credential only travels to a catalog-declared
+  // embedding endpoint; a rogue MEM0_EMBEDDING_BASE_URL fails before the send.
+  assertModelEndpointHostAllowed(BASE_URL, 'MEM0_EMBEDDING_BASE_URL (domain embedder)');
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBED_MAX_BATCH) {
     const chunk = texts.slice(i, i + EMBED_MAX_BATCH);

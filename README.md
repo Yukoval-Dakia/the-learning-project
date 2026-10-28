@@ -187,9 +187,15 @@ key 环境变量名与协议（openai-completions / anthropic-messages）即可�
 `.env.local` / 容器 env，不进库、不进日志）；变量名必须以 `_API_KEY` / `_TOKEN`
 结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
 （值会被当作 Bearer 发到该 provider）。baseURL 的 host 还必须在 models.dev 目录
-声明的模型端点内（另含代码声明的 anthropic/openai 直连根与 Xiaomi Token Plan
-三区）；保存与执行解析时校验，registry 与目录 bucket 未同步时任务解析 fail closed，
-不向旧端点发 key。该约束只作用于模型端点，不影响 agent 的网页浏览 /
+声明的模型端点内（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan
+三区与 DashScope embedding 双端点）；保存与执行解析时校验，registry 与目录 bucket
+未同步时任务解析 fail closed，不向旧端点发 key；非默认端口必须由目录端点自身声明，
+否则拒绝。`api_key_env` 还与 provider 绑定：内置 provider 的凭据 env
+（如 `ZHIPU_API_KEY`、`OPENROUTER_API_KEY`）只能配给自家端点，内置端点也只收
+自家凭据 env，跨 provider 配置被拒（YUK-1654）。运维 env 端点
+（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、
+`XIAOMI_TOKEN_PLAN_BASE_URL`）走同一套 host 校验，不在白名单即拒绝发送。该约束
+只作用于模型端点，不影响 agent 的网页浏览 /
 fetch 工具。模型列表来自该端点自己的 `GET /models`
 （自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
 同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`
