@@ -32,18 +32,22 @@ import {
   recordNoteFallbackReferenceExposure,
 } from '@/capabilities/notes/server/note-generation-fallback';
 import {
+  type NoteGenerateSourceRow,
+  loadNoteGenerateTaskInput,
+} from '@/capabilities/notes/server/note-generation-input';
+import {
   assertNoteGenerationReferences,
-  loadNoteGenerationReferences,
   lockCurrentNoteGenerationReferences,
 } from '@/capabilities/notes/server/note-generation-references';
 import {
   dispatchNoteVerification,
   writeNoteVerificationIntent,
 } from '@/capabilities/notes/server/note-handoff';
+import { attrsClearingNoteLongCheck } from '@/capabilities/notes/server/note-long-check';
 import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
-import { artifact, knowledge } from '@/db/schema';
+import { artifact } from '@/db/schema';
 import {
   type TaskTextRunFn,
   costUsdToMicroUsd,
@@ -237,50 +241,13 @@ export async function runNoteGenerate(
     return { status: 'skipped:not_pending' };
   }
 
-  let parentHub: { title: string; attrs: unknown } | null = null;
-  if (row.parent_artifact_id) {
-    const parentRows = await db
-      .select({
-        title: artifact.title,
-        attrs: artifact.attrs,
-      })
-      .from(artifact)
-      .where(eq(artifact.id, row.parent_artifact_id))
-      .limit(1);
-    parentHub = parentRows[0] ?? null;
-  }
-
-  let kNode: { id: string; name: string; domain: string | null } | null = null;
-  let kNodes: Array<{ id: string; name: string; domain: string | null }> = [];
-  if (row.knowledge_ids.length > 0) {
-    const kRows = await db
-      .select({ id: knowledge.id, name: knowledge.name, domain: knowledge.domain })
-      .from(knowledge)
-      .where(inArray(knowledge.id, row.knowledge_ids));
-    const byId = new Map(kRows.map((node) => [node.id, node]));
-    kNodes = row.knowledge_ids.map((id) => byId.get(id)).filter((node) => node !== undefined);
-    kNode = kNodes[0] ?? null;
-  }
-
-  const oneLine = (row.attrs as { one_line_intent?: string } | null)?.one_line_intent ?? null;
-  const parentSummary = (parentHub?.attrs as { summary_md?: string } | null)?.summary_md ?? null;
-  const referenceArtifacts = await loadNoteGenerationReferences(db, row);
-
   let attempt: TaskTextResult | undefined;
   const promptStarted = Date.now();
-  const input = {
-    artifact_id: row.id,
-    artifact_type: row.type,
-    atomic_title: row.title,
-    title: row.title,
-    one_line_intent: oneLine,
-    knowledge_node: kNode,
-    knowledge_nodes: kNodes,
-    parent_hub: parentHub ? { title: parentHub.title, summary_md: parentSummary } : null,
-    related_knowledge_ids: row.knowledge_ids.slice(1),
-    reference_artifacts: referenceArtifacts,
-  };
-  const subjectProfile = resolveSubjectProfile(kNode?.domain);
+  const { input, referenceArtifacts } = await loadNoteGenerateTaskInput(
+    db,
+    row satisfies NoteGenerateSourceRow,
+  );
+  const subjectProfile = resolveSubjectProfile(input.knowledge_node?.domain);
   const skillDocs = await resolveNoteSkillDoc(subjectProfile.id);
   const promptBuildMs = Date.now() - promptStarted;
   let modelWaitMs: number | null = null;
@@ -362,6 +329,10 @@ export async function runNoteGenerate(
       const before = beforeRows[0];
       if (!before) return { kind: 'not_pending' }; // concurrently no longer pending
       const clearedFailure = attrsClearingGenerationFailure(before.attrs);
+      // A fresh generation epoch restarts the long-note check cycle (YUK-1642).
+      const clearedLongCheck = attrsClearingNoteLongCheck(clearedFailure.attrs);
+      const clearedAttrs =
+        clearedFailure.cleared || clearedLongCheck.cleared ? { attrs: clearedLongCheck.attrs } : {};
       if (!mayOverwriteNoteBodyForGeneration(before.body_blocks, before.history, before.version)) {
         // Authored over the fallback: keep it and honestly report failed.
         const kept = await tx
@@ -402,7 +373,7 @@ export async function runNoteGenerate(
           generation_status: 'ready',
           verification_status: 'queued',
           generated_by: { ...generatedByRef } as never,
-          ...(clearedFailure.cleared ? { attrs: clearedFailure.attrs } : {}),
+          ...clearedAttrs,
           version: nextVersion,
           updated_at: now,
         })
@@ -439,7 +410,7 @@ export async function runNoteGenerate(
         generationStatus: 'ready',
         verificationStatus: 'queued',
         generatedBy: generatedByRef,
-        ...(clearedFailure.cleared ? { attrs: clearedFailure.attrs } : {}),
+        ...clearedAttrs,
         nextVersion,
         actorKind: 'agent',
         actorRef: 'note_generate',
