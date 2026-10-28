@@ -48,20 +48,26 @@ type GenerateEdgePayloadT = z.infer<typeof GenerateEdgePayload>;
 
 const ARCHIVE_EDGE_OP = 'archive';
 
-// ADR-0034 topology gate runs only when a create adds a live prerequisite or
-// derived_from edge. Genesis seeds are trusted and never re-gated; replay could
-// reject a historically valid row. Reject throws; warn proceeds because there is
-// no verdict column.
+// ADR-0034 topology gate runs only in write mode ('enforce'): when a create adds a
+// live prerequisite or derived_from edge. Replay ('trust', the default) never gates —
+// a create that predates a gate, or whose inverse twin appeared later, must still fold
+// or a legal pre-gate pair could never be archived or repaired (YUK-1601 P1). Genesis
+// seeds are likewise trusted. Reject throws; warn proceeds because there is no
+// verdict column.
+
+export type EdgeTopologyMode = 'enforce' | 'trust';
 
 /**
  * Project one edge; caller order is irrelevant. `liveMesh` is the currently live edge
- * set used for topology. Throws when a prerequisite or derived_from create violates
- * ADR-0034.
+ * set used for topology. Throws only in write mode (`topology: 'enforce'`) when a
+ * prerequisite or derived_from create violates ADR-0034; the default replay mode
+ * trusts history.
  */
 export function foldKnowledgeEdge(
   edgeId: string,
   events: FoldEvent[],
   liveMesh: KnowledgeEdgeRowSnapshotT[],
+  opts?: { topology?: EdgeTopologyMode },
 ): KnowledgeEdgeRowSnapshotT | null {
   const ordered = [...events].sort(byCreatedThenId);
 
@@ -117,12 +123,12 @@ export function foldKnowledgeEdge(
       }
 
       const projected = rowFromGenerateEvent(edgeId, ev, payload);
-      // A create always yields a live edge, so the gate applies to every prerequisite
-      // and derived_from create (YUK-1601: derived_from joins the inversion check).
-      if (
-        projected.relation_type === 'prerequisite' ||
-        projected.relation_type === 'derived_from'
-      ) {
+      // A create always yields a live edge, so the write-mode gate applies to every
+      // prerequisite and derived_from create (YUK-1601: derived_from joins the
+      // inversion check). Replay mode trusts the recorded history.
+      const gatedRelation =
+        projected.relation_type === 'prerequisite' || projected.relation_type === 'derived_from';
+      if (opts?.topology === 'enforce' && gatedRelation) {
         const verdict = checkEdgeTopology(
           {
             from_knowledge_id: projected.from_knowledge_id,
