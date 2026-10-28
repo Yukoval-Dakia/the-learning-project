@@ -31,7 +31,7 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
+import { deriveAnswerClassForValues } from '@/kernel/records/answer-class-write';
 import {
   archiveGroupLifecycle,
   publishQuestionGroupFromRow,
