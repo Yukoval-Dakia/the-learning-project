@@ -3,6 +3,7 @@ import {
   answerAsk,
   createSession,
   createWrongAnswer,
+  getHistory,
   getSession,
   listBlocks,
   listKnowledge,
@@ -11,6 +12,7 @@ import {
 } from './record-api';
 
 export type RecordClient = {
+  getHistory: typeof getHistory;
   answerAsk: typeof answerAsk;
   listSessions: typeof listSessions;
   listKnowledge: typeof listKnowledge;
@@ -21,6 +23,7 @@ export type RecordClient = {
   revertBlock: typeof revertBlock;
 };
 const httpRecordClient: RecordClient = {
+  getHistory,
   answerAsk,
   listSessions,
   listKnowledge,
