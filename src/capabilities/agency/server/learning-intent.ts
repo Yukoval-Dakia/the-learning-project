@@ -489,6 +489,9 @@ export async function acceptLearningIntent(
         parentId: seedRoot?.id ?? null,
         createdAt: now,
         causedByEventId: rateEventId,
+        // The topic root is the learner's declared GOAL (「我想学 X」), not a testable
+        // KC: the proposed children below carry the testable knowledge.
+        role: 'goal',
       });
     }
 

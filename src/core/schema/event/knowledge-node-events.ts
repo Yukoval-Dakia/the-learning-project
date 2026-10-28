@@ -46,3 +46,40 @@ export const SubjectRootNameUpdateExperimental = z
     }
   });
 export type SubjectRootNameUpdateExperimentalT = z.infer<typeof SubjectRootNameUpdateExperimental>;
+
+// YUK-1600 — one-time identity repair for knowledge nodes whose genesis predates the
+// `role` column: the ops backfill stamps the role through this reserved control-plane
+// event so the fold (not raw SQL) owns the write and any later re-projection reproduces
+// it. Birth-time stamping for NEW nodes goes through the genesis payload row instead.
+const KnowledgeRoleUpdatePayload = z
+  .object({
+    role: z.enum(['kc', 'goal', 'container']),
+    previous_role: z.enum(['kc', 'goal', 'container']),
+    reason: z.string().min(1),
+    previous_version: z.number().int().nonnegative(),
+    next_version: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.next_version !== payload.previous_version + 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'next_version must equal previous_version + 1',
+        path: ['next_version'],
+      });
+    }
+  });
+
+export const KnowledgeRoleUpdateExperimental = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.string().min(1),
+  action: z.literal('experimental:knowledge_role_update'),
+  subject_kind: z.literal('knowledge'),
+  subject_id: z.string().min(1),
+  outcome: z.literal('success'),
+  payload: KnowledgeRoleUpdatePayload,
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type KnowledgeRoleUpdateExperimentalT = z.infer<typeof KnowledgeRoleUpdateExperimental>;
