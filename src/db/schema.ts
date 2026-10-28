@@ -2544,7 +2544,7 @@ export const event = pgTable(
     // 'event' | 'chip' | 'query' (locked Lane B contract)
     subject_kind: text('subject_kind').notNull(),
     subject_id: text('subject_id').notNull(),
-    // 'success' | 'failure' | 'partial' | NULL (depends on action)
+    // 'success' | 'failure' | 'partial' | 'degraded' | NULL (depends on action)
     outcome: text('outcome'),
     // Zod-guarded per (action × subject_kind) — see Lane B
     payload: jsonb('payload').$type<JsonObject>().notNull(),
