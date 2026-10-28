@@ -4273,6 +4273,14 @@
       "from": 5,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6723,6 +6731,96 @@
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly read effective user-cause precedence and prior failure facts for the existing cause-category tally from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "Directly read effective user-cause precedence and prior failure facts for the existing cause-category tally from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-context.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the existing bounded cause-bearing prior failures for the same question from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-native.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById"],
+      "issue": "YUK-1570",
+      "owns": "Directly check the existing failure-attempt evidence before projecting frozen study context from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same effective cause and failure facts before the existing variant eligibility and locked recheck from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same effective cause and failure facts before the existing variant eligibility and locked recheck from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById", "getFailureAttemptWithReasoningTraceById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same failure and reasoning-trace facts for the existing attribution and explanation operations from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly resolve effective causes for the unchanged weekly read projection from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/tools/attribute-mistake.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["FailureAttemptJudge", "getFailureAttemptWithReasoningTraceById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same failure with reasoning trace and judge type for the unchanged attribution tool result mapping from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
     }
   ],
   "sourceSizeRecords": [
@@ -7744,7 +7842,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 37,
+      "total": 36,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -7759,7 +7857,7 @@
         "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 4,
+        "practice -> knowledge": 3,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
         "shell -> notes": 2,

@@ -23,6 +23,8 @@ import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, mistake_variant, question } from '@/db/schema';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 // Runtime creation records its complete base, including cause_category, before
 // index and projection. Genesis remains the legacy backfill event, not runtime creation.
 import { createMistakeVariantDraft } from '@/kernel/records/mistake-variant-facts';
@@ -33,7 +35,6 @@ import {
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { MISCONCEPTION_CANDIDATE_PREFIX } from '../tasks/attribute-retrieve';
 import { type VariantGenInput, parseVariantOutput } from '../tasks/variant-gen';
-import { effectiveCauseForFailureAttempt, getFailureAttemptById } from './attempt-events';
 import { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './cause-overlay';
 import { hasVariantPermanent, recordVariantPermanent } from './failure-learning-ledger';
 import { loadNativeFailureContext } from './failure-learning-native';
