@@ -4373,6 +4373,38 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> questions",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> questions",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-28",
+      "from": 9,
+      "to": 5,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-28",
+      "from": 9,
+      "to": 6,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7158,6 +7190,96 @@
       "issue": "YUK-1570",
       "owns": "Consume the complete shared effective probe status and immutable provenance facts from their canonical read owners. Preserve the same Db/Tx, serial read and correction order, direct-chain option, historical unissued fallback, recurrence sequence/proposal identity, issuance/revision/submission/evaluation binding and original reason/default contracts. Admission, scoring, intervention lifecycle, locks, provider/paid effects and recovery remain with the existing callers.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-lifecycle.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching/materialize-ask-check.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/auto-enroll.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/import-completion.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/question-author.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -8122,18 +8244,16 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 230,
+      "total": 221,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
-        "agency -> questions": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
-        "copilot -> questions": 1,
         "copilot -> revert": 1,
         "copilot -> session": 5,
         "copilot -> today": 1,
@@ -8141,7 +8261,7 @@
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
         "ingestion -> proposals": 3,
-        "ingestion -> questions": 9,
+        "ingestion -> questions": 5,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
         "knowledge -> ai": 7,
@@ -8169,7 +8289,7 @@
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> proposals": 5,
-        "practice -> questions": 9,
+        "practice -> questions": 6,
         "practice -> r2": 6,
         "practice -> session": 2,
         "shell -> boss": 1,
