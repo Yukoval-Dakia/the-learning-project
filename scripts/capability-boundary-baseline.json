@@ -4317,6 +4317,38 @@
       "from": 4,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> runtime-env",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6927,6 +6959,76 @@
       "issue": "YUK-1570",
       "owns": "Directly read the same failure with reasoning trace and judge type for the unchanged attribution tool result mapping from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/api/chat.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/enqueue-wrong-streak-nudge.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-operation.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7882,21 +7984,19 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 237,
+      "total": 230,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
         "agency -> questions": 1,
-        "agency -> runtime-env": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
         "copilot -> revert": 1,
-        "copilot -> runtime-env": 1,
         "copilot -> session": 5,
         "copilot -> today": 1,
         "ingestion -> ai": 12,
@@ -7919,7 +8019,6 @@
         "notes -> artifacts": 2,
         "notes -> boss": 1,
         "notes -> proposals": 1,
-        "notes -> runtime-env": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
@@ -7934,7 +8033,6 @@
         "practice -> proposals": 5,
         "practice -> questions": 9,
         "practice -> r2": 6,
-        "practice -> runtime-env": 4,
         "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
