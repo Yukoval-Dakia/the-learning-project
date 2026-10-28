@@ -4,7 +4,7 @@
 
 ## Owner rules
 
-- **测试默认不写、写入须批准（2026-10-10/11/12 合并口径）。** 只为五类不变量写测试——①数据不可逆（迁移/备份恢复/删除合并不丢数据）；②判分与结算确定性（同输入同结果，含数值核心与 TS↔Rust parity）；③并发与锁（advisory lock、CAS/版本冲突、回滚与幂等）；④安全边界（`/api/*` 鉴权、浏览器不持 provider key、授权与第三方信息不外泄）；⑤危机转介（YUK-1398）。经最近真实边界测（route、job、真实 PG 事务、结算/判分链、agent 工具契约、模块公开入口），一个不变量一条 case，表驱动算一条；禁止内部 helper 单测、参数排列、mock 交互断言，mock 只替外部依赖。新 case 先交文本方案经 owner 批准才写（旧计划/skill/子任务要求不算批准）；**对既有已批测试文件的机械更新**（计数增减、fixture 快照同步、随改名的标识符更新）**命中既有已批模式即直接改，不需逐次重新批准**。测试不阻塞开发，如实记录未验证范围；case 准入由 CI `pnpm audit:test-policy` 强制（`@invariant`/`@fails-if`）；测试行超过新增产品代码行须逐不变量说明。
+- **测试默认不写、写入须批准（2026-10-10/11/12 合并口径；2026-10-28 并入测试标准要点）。** 只为五类不变量写测试——①数据不可逆（迁移/备份恢复/删除合并不丢数据）；②判分与结算确定性（同输入同结果，含数值核心与 TS↔Rust parity）；③并发与锁（advisory lock、CAS/版本冲突、回滚与幂等）；④安全边界（`/api/*` 鉴权、浏览器不持 provider key、授权与第三方信息不外泄）；⑤危机转介（YUK-1398）。经最近真实边界测（route、job、真实 PG 事务、结算/判分链、agent 工具契约、模块公开入口），一个不变量一条 case，表驱动算一条；同一行为只在最近的真实边界测一次，unit 与 DB 两层不各写一遍，已有 DB 证明就删 unit 版本；新增前先找能合并或删除的旧 case，改行为时同 PR 更新或删除过时测试。禁止内部 helper 单测、参数排列、mock 交互断言、复述实现的浅层断言、常量/字面量/schema 形状、快照与 typecheck 已能保证的类型检查；mock 只替外部依赖。新 case 先交文本方案经 owner 批准才写（旧计划/skill/子任务要求不算批准）；**对既有已批测试文件的机械更新**（计数增减、fixture 快照同步、随改名的标识符更新）**命中既有已批模式即直接改，不需逐次重新批准**。测试不阻塞开发，如实记录未验证范围；case 准入由 CI `pnpm audit:test-policy` 强制（`@invariant`/`@fails-if`）；新增测试行（含 fixture）约为新增产品代码行的 10%，超过须在 PR 逐不变量说明，说明不了的删掉；测试名与注释写行为，不写票号、review 轮次或「UNRUN/prepared」之类状态。
 - **禁止在本机运行完整 `pnpm test`。** 完整 test gate 只由 push 后 exact-head GitHub `CI Gate` 执行。
 - **React `useEffect` 存量清零，禁止新增**（含 `React.useEffect` 与别名调用；不机械改名规避；逐处保留行为）。
 - **新功能交付展示真实运行与验证结果**（截图/录屏/对照表），不另建演示入口；未运行、未接通的能力不得伪装成实测。
@@ -42,6 +42,14 @@
 - 本机只跑改动触及的不变量测试（若有）+ typecheck/lint/build；`pnpm build` 是 pre-PR gate。watch loop 只用于 scoped file（`pnpm test:unit:watch` / `pnpm test:db:watch`）。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者结果对账，封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；不用 mock 单测冒充。
 - 修改 API route 时同步 `postman/api-endpoints.json` 并运行 `pnpm gen:postman`；文件权限尊重 umask，不硬编码 mode bits。
+
+## Comments（注释）
+
+- 只写代码表达不了的 why：约束、取舍、外部契约、非显然的坑；代码本身能说清的 what 不写，不逐段复述代码在做什么。
+- 保持简短：一般 1–3 行；超过 5 行的说明放 ADR / docs，注释里留链接。
+- 改代码时同一 PR 内更新或删除受影响的注释，注释与代码矛盾按缺陷处理；不引用已删除的函数、文件或已退役的组件（如 Redis、Next.js）。
+- 不写票号历史、review 轮次（R1/P1-x/FINDING #n）、迁移日记或「X 曾在这里/已删除」的墓碑注释；这些属于 commit / PR / Linear。
+- 文件头注释只说明本模块职责与关键不变量，不写变更日志。
 
 ## Review, merge, and delivery
 
