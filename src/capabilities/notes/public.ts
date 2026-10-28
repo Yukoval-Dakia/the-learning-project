@@ -1,3 +1,4 @@
+export { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 // Stable server contract for consumers outside the notes capability.
 
 export {
@@ -35,7 +36,6 @@ export type {
   CreateLearningIntentNoteInput,
 } from './server/learning-intent-note';
 export { createLearningIntentNote } from './server/learning-intent-note';
-export { getLiveArtifactType } from './server/live-artifact-reference';
 export {
   NOTE_HANDOFF_ACTION,
   dispatchNoteGeneration,
@@ -46,7 +46,6 @@ export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';
 export {
   type PersistNoteRefineApplyResult,
-  listNoteRefineChanges,
   persistNoteRefineApply,
   undoNoteRefineApplyEvent,
 } from './server/note-refine-apply';
