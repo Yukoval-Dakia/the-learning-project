@@ -87,9 +87,17 @@ function noteRefineReversePatch(bodyBlocks: unknown, previousArtifactVersion: nu
   };
 }
 
-// Reference-only blocks render from their own attrs (title / prompt preview),
-// so they carry no mirror — same exclusion as materializeGeneratedBodyBlocks.
-const REF_ONLY_BLOCK_TYPES = new Set(['crossLinkBlock', 'artifactRefBlock', 'questionRefBlock']);
+// Blocks that never read a source mirror. Pure reference blocks render from
+// their own attrs (title / prompt preview) — same exclusion as
+// materializeGeneratedBodyBlocks — and autoLinksContainer is the server-built
+// hub auto-zone container (hub-auto-zone.ts) whose readers walk its children;
+// the model is told never to emit either kind.
+const MIRROR_EXEMPT_BLOCK_TYPES = new Set([
+  'crossLinkBlock',
+  'artifactRefBlock',
+  'questionRefBlock',
+  'autoLinksContainer',
+]);
 
 /**
  * The reader renders attrs.source_markdown, but the model never authors it: the
@@ -98,7 +106,7 @@ const REF_ONLY_BLOCK_TYPES = new Set(['crossLinkBlock', 'artifactRefBlock', 'que
  */
 function withDerivedSourceMirror(patch: NotePatchT): NotePatchT {
   const derive = (op: NotePatchOpT): NotePatchOpT => {
-    if (!('block' in op) || REF_ONLY_BLOCK_TYPES.has(String(op.block.type))) return op;
+    if (!('block' in op) || MIRROR_EXEMPT_BLOCK_TYPES.has(String(op.block.type))) return op;
     try {
       const block = op.block as Record<string, unknown>;
       const attrs = { ...(block.attrs as Record<string, unknown> | undefined) };
