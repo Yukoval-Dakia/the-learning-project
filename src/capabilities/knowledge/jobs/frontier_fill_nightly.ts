@@ -15,13 +15,13 @@ import {
   learnableFrontierResolved,
 } from '@/capabilities/knowledge/server/frontier-read';
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import { isDirectTreePair } from '@/core/topology-gate';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge } from '@/db/schema';
 import { FRONTIER_PENDING_CAP } from '@/kernel/nightly-eligibility';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';

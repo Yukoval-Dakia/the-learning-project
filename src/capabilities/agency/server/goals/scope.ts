@@ -4,11 +4,11 @@
 // dismisses it in the proposal inbox; accepting materializes the `goal` row (accept.ts).
 // Any failure is swallowed + logged so a transient LLM outage never breaks goal-create.
 
-import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { knowledge_edge } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import type { GoalScopeIntent } from '@/kernel/task-intents';
 import type { ToolContext } from '@/kernel/tools/types';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';

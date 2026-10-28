@@ -15,10 +15,9 @@
 import type { Job } from 'pg-boss';
 
 import { runGoalScopeAndWrite } from '@/capabilities/agency/server/goals/scope';
-// 跨包深 import knowledge 内部模块——包边界收紧时应换走 knowledge 包对外导出面。
-import { loadTreeSnapshot } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { listActiveGoals } from '@/kernel/read-models/active-goal-scope';
+import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
