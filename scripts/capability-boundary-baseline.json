@@ -4405,6 +4405,46 @@
       "from": 9,
       "to": 6,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> proposals",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> proposals",
+      "date": "2026-10-28",
+      "from": 3,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> proposals",
+      "date": "2026-10-28",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> proposals",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> proposals",
+      "date": "2026-10-28",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7280,6 +7320,54 @@
       "issue": "YUK-1570",
       "owns": "Consume the existing complete structural answer-class write rule directly from its canonical owner. Preserve explicit non-null answer_class, absent-kind null/no-change behavior, in-memory kind normalization and raw-unknown fallback, choices/rubric defaults and original object identity. Callers retain their original inputs, invocation timing, Db/Tx, locks, draft/admission policy, judge override, publication, errors, retries, recovery and paid effects.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": [
+        "acquireProposalDecisionLock",
+        "asPlainRecord",
+        "ensureAcceptOnly",
+        "existingAcceptRate",
+        "findExistingRateEvent",
+        "requiredString",
+        "writeProposalRateEvent"
+      ],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete existing shared proposal decision lock/rate and applier-input mechanism directly from its canonical kernel owner. Preserve all function identities, SQL, errors, Db/Tx contracts, caller lock timing/order, replay and event ID/time behavior. Proposal kind policies, lifecycle transactions, signals, parity and archive remain with their existing owners; no new idempotency or hidden lifecycle policy.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-accept-applier.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": ["asPlainRecord", "findExistingRateEvent", "writeProposalRateEvent"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete existing shared proposal decision lock/rate and applier-input mechanism directly from its canonical kernel owner. Preserve all function identities, SQL, errors, Db/Tx contracts, caller lock timing/order, replay and event ID/time behavior. Proposal kind policies, lifecycle transactions, signals, parity and archive remain with their existing owners; no new idempotency or hidden lifecycle policy.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": ["acquireProposalDecisionLock", "findExistingRateEvent", "writeProposalRateEvent"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete existing shared proposal decision lock/rate and applier-input mechanism directly from its canonical kernel owner. Preserve all function identities, SQL, errors, Db/Tx contracts, caller lock timing/order, replay and event ID/time behavior. Proposal kind policies, lifecycle transactions, signals, parity and archive remain with their existing owners; no new idempotency or hidden lifecycle policy.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposal-appliers.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": ["findExistingRateEvent"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete existing shared proposal decision lock/rate and applier-input mechanism directly from its canonical kernel owner. Preserve all function identities, SQL, errors, Db/Tx contracts, caller lock timing/order, replay and event ID/time behavior. Proposal kind policies, lifecycle transactions, signals, parity and archive remain with their existing owners; no new idempotency or hidden lifecycle policy.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7660,6 +7748,15 @@
       "to": 1351,
       "issue": "YUK-1570",
       "responsibilityReason": "Split the existing mixed Agency public import into the two complete canonical probe fact owners. Only the necessary import declaration adds two lines; TeachingBrief projection, acknowledgment, TTL, defaults, serial reads, failure handling and all non-import source remain unchanged. No new responsibility, policy, helper or wrapper is added."
+    },
+    {
+      "path": "src/capabilities/practice/server/proposal-appliers.ts",
+      "date": "2026-10-28",
+      "baseBlob": "32c53027d606bba88d59a5db3cdb14e322b4a567",
+      "from": 1767,
+      "to": 1769,
+      "issue": "YUK-1570",
+      "responsibilityReason": "Split only the existing mixed proposal runtime import into canonical helper bindings and retained non-helper type/signal bindings. All proposal business functions, lock/transaction order, query/error/return behavior and non-import source remain unchanged except the necessary old helper-source comment path."
     }
   ],
   "compatShims": [
@@ -8244,12 +8341,12 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 221,
+      "total": 212,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> conjectures": 2,
-        "agency -> proposals": 4,
+        "agency -> proposals": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
@@ -8260,7 +8357,6 @@
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "ingestion -> proposals": 3,
         "ingestion -> questions": 5,
         "ingestion -> r2": 13,
         "ingestion -> records": 1,
@@ -8272,11 +8368,10 @@
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 3,
-        "knowledge -> proposals": 3,
+        "knowledge -> proposals": 2,
         "notes -> ai": 6,
         "notes -> artifacts": 2,
         "notes -> boss": 1,
-        "notes -> proposals": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
@@ -8288,7 +8383,7 @@
         "practice -> fsrs": 2,
         "practice -> mastery": 3,
         "practice -> memory": 1,
-        "practice -> proposals": 5,
+        "practice -> proposals": 4,
         "practice -> questions": 6,
         "practice -> r2": 6,
         "practice -> session": 2,

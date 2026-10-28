@@ -17,6 +17,12 @@ import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/a
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { lockPlacementSupplyScopes } from '@/kernel/placement';
+import {
+  asPlainRecord,
+  ensureAcceptOnly,
+  existingAcceptRate,
+  requiredString,
+} from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
@@ -25,12 +31,6 @@ import {
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import { updateLearningRecord } from '@/kernel/records/queries';
-import {
-  asPlainRecord,
-  ensureAcceptOnly,
-  existingAcceptRate,
-  requiredString,
-} from '@/server/proposals/applier-helpers';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
