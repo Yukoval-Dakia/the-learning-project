@@ -25,6 +25,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
+import { assertModelEndpointHostAllowed } from '../src/core/config/model-endpoint-allowlist';
 import { resolveTaskBinding } from '../src/server/ai/providers';
 import { visionJudgeProviderOverride } from '../src/server/ai/vision-judge-config';
 import { xiaomiTokenPlanVisionBaseUrl } from '../src/server/ai/xiaomi-token-plan';
@@ -39,9 +40,18 @@ const OUT_FILE = resolve(OUT_DIR, `${today}-vision-preflight.json`);
 const tokenPlan = process.env.AI_PROVIDER_OVERRIDE === 'xiaomi-token-plan';
 const credentialEnv = tokenPlan ? 'XIAOMI_TOKEN_PLAN_API_KEY' : 'XIAOMI_API_KEY';
 const apiKey = process.env[credentialEnv];
-const baseURL = tokenPlan
-  ? xiaomiTokenPlanVisionBaseUrl()
-  : (process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic');
+let baseURL: string;
+try {
+  baseURL = tokenPlan
+    ? xiaomiTokenPlanVisionBaseUrl()
+    : (process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic');
+  // YUK-1654 — the probe sends the lane credential: refuse a host the catalog
+  // does not declare instead of sending the key there.
+  assertModelEndpointHostAllowed(baseURL, 'MIMO_VISION_BASE_URL (vision preflight)');
+} catch (error) {
+  console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(2);
+}
 const cliArgModel = process.argv[2];
 // YUK-1559 — the default model is the resolved vision-judge task config (env
 // pin > lane.vision_judge override > DB task override > registry default), not
