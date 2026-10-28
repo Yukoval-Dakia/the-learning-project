@@ -10,11 +10,11 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ItemPriorCandidateFrozen } from '@/capabilities/practice/server/item-prior-durable-operation';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { item_calibration, knowledge, question } from '@/db/schema';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {
