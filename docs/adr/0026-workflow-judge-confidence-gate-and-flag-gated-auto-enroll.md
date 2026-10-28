@@ -9,8 +9,8 @@
 **Related**：ADR-0024（泛化捕获 — outcome 是 signal；本 ADR 复用其 `enrollCapturedBlock` 作为唯一入库 owner）/ ADR-0012（mastery as derived view）/ ADR-0014（generalized activity & capability registry）/ ADR-0002（VLM-owns-structure 方向，slice 2 已实装）
 
 > 起源：T-OC OCR/录入 pipeline 重建 design
-> （`docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，OC-4 / OC-5）+
-> slice-3 lane plan `docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md`。
+> （`docs/archive/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md`，OC-4 / OC-5）+
+> slice-3 lane plan `docs/archive/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md`。
 > 本 ADR 固化 slice 3 的两个决策：(1) Tagging/Judge 置信闸门的形态；(2)
 > flag-gated 保守自动入库 rollout。UI 复查面（OC-5）DEFERRED 到 slice 3b，不在此。
 

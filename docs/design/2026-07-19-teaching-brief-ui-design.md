@@ -8,7 +8,7 @@
   - `src/capabilities/shell/api/contracts.ts` → `TeachingBriefSchema` / `TeachingBriefResponseSchema` / `TeachingBriefEvidenceRefSchema` / `TeachingBriefFindingSectionSchema` / `TeachingBriefBasisSectionSchema` / `teachingBriefCommon`
   - `src/capabilities/shell/server/teaching-brief.ts` → `TeachingBrief` 判别联合 + `loadTeachingBrief`（分支选择器 `loadOutcomeBrief` / `loadProbeBrief` / `loadFindingBrief`；fail-closed 日志 `warnSkipped`；TTL 常量 `TEACHING_BRIEF_FINDING_TTL_MS` / `TEACHING_BRIEF_OUTCOME_TTL_MS`）。
 - **视觉基线复用**: `docs/design/2026-07-12-prep-desk-card-design.md`（备课台 felt 面 §3 inline 展开）+ 已 live 的 `PrepDeskConjectures` / `ProbeAnswers`（`ProbeAnswerCard`）卡样式（`web/src/globals.css` `.prep-desk-*` / `.pd-*` / `.pa-*` 族）。
-- **情感内核**: `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md` §2（「为你而备、你不在也在转」= pull not push）+ §8（红线：规划只出提案、engagement 是头号过滤器、pull not push）。
+- **情感内核**: `docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md` §2（「为你而备、你不在也在转」= pull not push）+ §8（红线：规划只出提案、engagement 是头号过滤器、pull not push）。
 
 > **锚点约定（[裁决 9b]）**：本稿一律用 **符号锚点**（函数名 / schema 名 / 组件名 / CSS selector / contract §节号）指代代码，不写会随实现漂移的行号。
 

@@ -536,7 +536,7 @@ LIGHT/FULL 在这里表示产品权限与能力范围的对比，不是阶段安
 
 - [ADR-0066](../adr/0066-typescript-adaptive-learning-architecture.md) 确认状态与安排共同演进。本稿具体化用户行为，不替代其技术决定，也不把框架迁移视作产品验收。
 - [CONTEXT.md](../../CONTEXT.md) 中学习状态、动态学习安排和实时自适应学习的已批准含义继续使用。本文局部解释“待跟进的问题”等产品语言，尚未将其作为新领域实体写入已批准术语表。
-- [私人教研团愿景](../superpowers/specs/2026-06-18-private-teaching-research-team-vision.md) 中主动备课、透明依据、可纠正与学习者方向控制继续保留。该文档的历史实施次序不用于组织本稿。
+- [私人教研团愿景](../archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md) 中主动备课、透明依据、可纠正与学习者方向控制继续保留。该文档的历史实施次序不用于组织本稿。
 - [题目契约决定](../planning/2026-09-24-question-assessment-decisions.md) 中原件、作答、反馈与完整题目支持的已定要求继续保留。本文没有提出退回只支持选择题或以教学话术代替正式评分契约。
 - 当前保存范围、长期记忆确认、自动安排权限与隐私删除行为如需改变，须在本稿获得相应确认后对齐现有决定。本稿不以改写术语的方式隐含批准这些变化。
 

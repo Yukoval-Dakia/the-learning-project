@@ -8,7 +8,7 @@ status: accepted
 **Amended by:** [ADR-0075](0075-agent-harness-contract.md)（Amendment 2026-10-18，YUK-1559：D2 L3 资格门、D7 日上限改报警水位、D3/D6+白板页实施时点提前）。
 **Decision source:** owner 2026-10-10「我们后台有一些定时的agent会进行分析和产出。但是我一直模糊的觉得他们的配合有限，并且定时这种办法不够『智能』，没能更快更准确的抓住信息」，按设计草案推进并转成本 ADR（[YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)）。
 **Tracking:** [YUK-1449](https://linear.app/yukoval-studios/issue/YUK-1449)。
-**Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
+**Related:** ADR-0066（实时自适应学习目标）；[ADR-0075](0075-agent-harness-contract.md)（agent harness 契约，含对本文 D2/D7 的修订与 D3/D6 时点提前）；ADR-0017（逐事件 memory ingest 先例）；owner 愿景语料 `docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md`、`2026-06-18-jiaoyantuan-deliberative-panel-design.md`、`2026-06-18-jiaoyantuan-integration-and-build-start.md`、`docs/design/2026-06-25-recommendation-engine-x-algorithm-mapping.md`；设计草案（细节真相源，绝对 artifact 路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/final/teaching-team-design-draft.md`。
 
 ## 背景与问题
 
@@ -94,7 +94,8 @@ panel 设计中仍然成立的思想，折进新例会作为主席裁决面的�
 3. **危机与隐私永不进白板**：危机识别与支持是独立协议（YUK-1398），例会不诊断、不排队、不降级它；finding 只引用证据 id 不复制私密正文，派生读取遵守用途边界（YUK-1408 方向）。
 4. **不出现第二事件总线或第二 proposal inbox**：白板=投影、触发=manifest 订阅、执行=现有队列/DAG——「不加平行总线」是验收项。
 5. **学习者可见面只有一个决定**：其余全部留板默认不推；维护类内部建议永不推给学习者；白板对 owner 默认只读可见。
-6. **`docs/superpowers/` 是 owner 的愿景语料，不是可归档的流程历史**：S13-A01（docs/superpowers 历史流程语料，DELETE/W0）执行时，其「将有效决定归并进现行 ADR」的路径对本 ADR 成立——但愿景与设计文档（vision §11–§13、panel design、integration capstone、X-algorithm mapping、phase0 plan）必须保留为**活跃参考**，不得随历史语料一起退出默认上下文或降级为仅归档索引；它们是本决策与后续 panel/教学法工作的语义来源。
+6. **superpowers 愿景语料是语义来源，不是可归档遗忘的流程历史**：S13-A01（superpowers 历史流程语料，DELETE/W0）执行时，其「将有效决定归并进现行 ADR」的路径对本 ADR 成立——但愿景与设计文档（vision §11–§13、panel design、integration capstone、X-algorithm mapping、phase0 plan）必须保留为**活跃参考**，不得随历史语料一起退出默认上下文或降级为仅归档索引；它们是本决策与后续 panel/教学法工作的语义来源。
+   > **YUK-1575 执行注（2026-10-28）**：owner 拍板整目录归档至 `docs/archive/superpowers/`（git mv 保留历史）。「活跃参考」按以下方式兑现：vision / panel design / integration capstone 三篇仍由本 ADR Related 与本条**点名直链**（不是仅归档索引），其中仍有效的 judge 校准铁律已并入 [ADR-0035](0035-mastery-diagnosis-three-dim-full-engine-instantiation.md) 推论节；X-algorithm mapping 与 phase0 plan 本就在 `docs/design/` 未随目录移动。后续 panel/教学法工作继续以三篇归档原文为语义来源。
 
 ## 分阶段交付（对齐 AGENTS.md 交付阶段）
 

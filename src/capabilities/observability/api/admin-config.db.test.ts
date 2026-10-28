@@ -114,19 +114,23 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       credential_env: 'ZAI_CODING_CN_API_KEY',
     });
     expect(byName.get('anthropic-sub')?.pi_provider).toBe('anthropic');
-    expect(byName.get('xiaomi')?.models).toContainEqual({
-      id: 'mimo-v2.5-pro',
-      api: 'openai-completions',
-      input: ['text'],
-    });
+    expect(byName.get('xiaomi')?.models).toContainEqual(
+      expect.objectContaining({
+        id: 'mimo-v2.5-pro',
+        api: 'openai-completions',
+        input: ['text'],
+        runnable: true,
+      }),
+    );
     expect(byName.get('openrouter')).toMatchObject({ implemented: false });
     expect(byName.get('gateway')).toMatchObject({ implemented: false });
-    // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。
+    // 布尔、env 名与认证状态投影之外不得有任何 credential 派生事实；值绝不进响应体。
     const text = JSON.stringify(body);
     expect(text.includes('sk-http-facts-canary-xiaomi-9f1a')).toBe(false);
     expect(text.includes('tp-http-facts-canary-token-plan-7c2e')).toBe(false);
     for (const row of body.providers) {
       expect(Object.keys(row).sort()).toEqual([
+        'auth',
         'auth_mode',
         'credential_env',
         'implemented',

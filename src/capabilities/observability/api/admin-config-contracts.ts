@@ -88,7 +88,47 @@ export const AdminConfigTaskRowSchema = z.object({
     .nullable(),
 });
 
-/** providers[] 行：唯一 credential 派生事实是 key_present 布尔（绝无 secret）。 */
+/** 三态能力事实：目录缺项为 'unknown'，不编造。 */
+export const AdminConfigCapabilityTriStateSchema = z.union([z.boolean(), z.literal('unknown')]);
+
+/** models[] 行（YUK-1563 AC1）：provider 目录桶全量模型 + 完整能力事实。 */
+export const AdminConfigCatalogModelRowSchema = z.object({
+  id: z.string(),
+  /** 线协议；目录与协议模板都没有时为 null（unknown）。 */
+  api: z.string().nullable(),
+  /** 输入模态；目录未声明时为 ['unknown']。 */
+  input: z.array(z.string()),
+  /** 保存期 registry 是否接受（必需可执行事实齐全）。 */
+  runnable: z.boolean(),
+  tool_call: AdminConfigCapabilityTriStateSchema,
+  reasoning: AdminConfigCapabilityTriStateSchema,
+  structured_output: AdminConfigCapabilityTriStateSchema,
+  vision: AdminConfigCapabilityTriStateSchema,
+  forced_tool_choice: AdminConfigCapabilityTriStateSchema,
+  context_window_tokens: z.number().int().nullable(),
+  max_input_tokens: z.number().int().nullable(),
+  max_output_tokens: z.number().int().nullable(),
+  /** 目录费率卡（USD/Mtok）；无卡为 null（unknown，不是免费）。 */
+  cost: z
+    .object({
+      input: z.number(),
+      output: z.number(),
+      cache_read: z.number(),
+      cache_write: z.number().optional(),
+    })
+    .nullable(),
+});
+
+/** providers[].auth（YUK-1563 AC3）：probe/结算事实的认证状态投影，绝无凭据值。 */
+export const AdminConfigProviderAuthSchema = z.object({
+  status: z.enum(['unconfigured', 'configured', 'auth_failed']),
+  /** 认证失败的 HTTP 状态（/models 读取或推理探针）；其余为 null。 */
+  http_status: z.number().int().nullable(),
+  /** 认证失败的错误类型（如 invalid_api_key）；其余为 null。 */
+  error_type: z.string().nullable(),
+});
+
+/** providers[] 行：credential 派生事实只有 key_present 与 auth 状态（绝无 secret）。 */
 export const AdminConfigProviderRowSchema = z.object({
   name: z.string(),
   auth_mode: z.enum(['key', 'oauth']),
@@ -99,9 +139,8 @@ export const AdminConfigProviderRowSchema = z.object({
   implemented: z.boolean(),
   implemented_for: z.object({ chat: z.boolean(), typed: z.boolean() }).optional(),
   pi_provider: z.string().nullable().optional(),
-  models: z
-    .array(z.object({ id: z.string(), api: z.string(), input: z.array(z.string()) }))
-    .optional(),
+  models: z.array(AdminConfigCatalogModelRowSchema).optional(),
+  auth: AdminConfigProviderAuthSchema.optional(),
 });
 
 /** schedules[] 行：cron 声明的静态只读投影（不触发任何 worker 行为）。 */

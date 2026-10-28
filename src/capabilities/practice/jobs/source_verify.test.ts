@@ -1,6 +1,6 @@
 // YUK-216 S2 slice 2 — source_verify (tier-2) handler DB test.
 //
-// docs/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3 (step 2.8).
+// docs/archive/superpowers/plans/2026-06-05-yuk216-question-source-s2.md §3 (step 2.8).
 //
 // Mocks the solver (SolutionGenerateTask via runTaskFn). Asserts the Option-B gate:
 //   - all checks pass → promote draft→active + FSRS enroll (enters the pool).

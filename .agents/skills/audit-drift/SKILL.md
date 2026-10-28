@@ -21,8 +21,9 @@ description: 检测 ADR / planning-doc ↔ 代码实现之间的漂移。支持�
 读：
 - `docs/adr/*.md`（所有 ADR）
 - `AGENTS.md`（Architecture / Layering / Design principles 三段）
-- `docs/superpowers/plans/*.md`（活跃 plan）
 - `docs/design/*.md`（最近 30 天）
+
+（历史归档 `docs/archive/superpowers/` 已退役，不是活跃决策源，不进扫描输入；溯源见该目录 README。）
 
 抽取每个**可验证的决策点**——能在代码里找到证据的那种。**忽略**纯设计语录、纯前置说明。
 

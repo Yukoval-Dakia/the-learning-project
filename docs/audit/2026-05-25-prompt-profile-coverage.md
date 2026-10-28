@@ -2,7 +2,7 @@
 
 Date: 2026-05-25
 Scope: YUK-5 / YUK-6 / YUK-77 Lane A
-Spec: `docs/superpowers/specs/2026-05-25-foundation-b-m1-closeout.md` rev 4
+Spec: `docs/archive/superpowers/specs/2026-05-25-foundation-b-m1-closeout.md` rev 4
 
 ## 1. TaskKind Coverage
 

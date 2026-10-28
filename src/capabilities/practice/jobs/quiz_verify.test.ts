@@ -1,5 +1,5 @@
 // Q5 + Q6 — search-grounded QuizGen verify handler DB test
-// (docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §5).
+// (docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §3 / §5).
 //
 // Mocks the AI (runTaskFn). Asserts the Option-B gate:
 //   - verify pass → draft_status 'draft'→'active' + material_fsrs_state row built

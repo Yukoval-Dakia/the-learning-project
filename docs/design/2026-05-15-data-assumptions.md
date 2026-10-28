@@ -211,7 +211,7 @@
 
 **`judgment` 表**——audit follow-up 验证：
 
-- grep `docs/superpowers/` 显示 `judgment` 在 sub-0a / sub-0b1 / phase1-pr1 / phase1a-sub5 plan 都引用；**sub-0d Step 6 JudgeMistakeTask 明确要写它**
+- grep `docs/archive/superpowers/` 显示 `judgment` 在 sub-0a / sub-0b1 / phase1-pr1 / phase1a-sub5 plan 都引用；**sub-0d Step 6 JudgeMistakeTask 明确要写它**
 - Sub 0c handoffs spec L51 / L79 / L96 列 JudgeTask 为 Sub 1 范围（pending）
 - 所以**不是死代码，是 ADR-0004 60% 任务空格之一**（pre-1c audit 2026-05-14 已 flagged）
 - 1c.1 后 ADR-0006 v2：判分会改成 `event(action='judge')`；**判分表本身在 1c.1 落地后应当被合并 / DROP**
@@ -397,7 +397,7 @@ audit 揭露的 stub 模式不止 mastery 一处——是**系统性**的："sch
     驱动测试断言" 是两条永久并存的轨道。
 
 > 落点依据：本文档已是项目数据假设的单一出处（§格式 / §目的），故合成-vs-真实 的分层
-> 定位写在此处而非散落 plan。详见 `docs/superpowers/plans/2026-06-05-strategy-d-s1-ingest-practice-bridge.md` §7 Step 7。
+> 定位写在此处而非散落 plan。详见 `docs/archive/superpowers/plans/2026-06-05-strategy-d-s1-ingest-practice-bridge.md` §7 Step 7。
 
 ## 附录 · `question.draft_status` 的 NULL≡active 三态契约（2026-06-16 · YUK-350）
 

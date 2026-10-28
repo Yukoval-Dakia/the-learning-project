@@ -1,6 +1,6 @@
 # AI 学习工具 (the-learning-project)
 
-自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md)（开头的运行时、capability、执行路径、Start 前门，以及「六、技术栈」已对齐当前代码；「七、八、九」及「五、AI 任务层」的细节尚待更新）为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
+自用 AI 学习系统。当前实现是 **Hono API + Vite SPA + pg-boss worker** 三进程的 self-hosted 单用户应用；规划与架构以当前代码、ADR 与 [docs/architecture.md](./docs/architecture.md) 为准；进程、发布、备份与访问约束见 [docs/operations.md](./docs/operations.md)；配置见 [docs/configuration.md](./docs/configuration.md)。
 
 > **2026-06-13 形态变更（YUK-321 M5）**：Next.js 全栈已退场。现形状 = Hono API（`server/index.ts`，:8787）+ Vite SPA（`web/`，:5173）+ pg-boss worker（`scripts/worker.ts`，dev 入口 `pnpm worker:dev`、prod 入口 `node dist/worker.cjs`）。后端真相源 = capability manifests（`src/capabilities/*/manifest.ts`）+ 组合根 `server/app.ts`。旧 Next/App Router/middleware.ts/Redis 描述出现在历史 docs/ 里，均不再适用。
 
@@ -166,9 +166,12 @@ pnpm smoke:local
 `src/server/ai/model-catalog-overrides.ts` 按 provider/model 写明原因后覆盖。
 配置保存、运行时配置解析（task opt-in、Memory LLM、provider `/models` 端点）与
 adapter 启动都过同一道可运行性门（`createLoomPiModels().getModel`，同步读面为
-`executablePiModel`）；task、global 和 pin 设置均先校验必需事实，再校验任务能力，
-不接受保存成功但无法启动的模型。
-目录缺失的四个旧模型以固定 main 快照补缺，Grok 另有已封存实测；这些依据不等同于新的付费准入。
+`executablePiModel`）；task、global 和 pin 设置先校验必需事实，再校验任务能力。
+该门只覆盖目录事实与任务能力——凭据缺失、工具挂载为空或 effort 双设仍会在启动期
+失败，保存通过不保证启动成功。
+目录缺失的四个旧模型以固定 main 快照补缺，三个 OpenCode Go 旧模型的端点钉在
+overrides 兜底；Grok 的封存实测仅覆盖单任务 text/reasoning，端点、限额与 image
+输入未实测。这些依据不等同于新的付费准入。
 压缩沿用 85% 触发、60% 裁剪目标，基数为目录 context 与显式 input 上限的较小值，
 取整后至少为 1；最新工具结果与其调用成组保留，即使该组超出裁剪目标。
 请求输出不得超过目录上限及估算的剩余上下文。估算不是 provider token 计量。
@@ -184,9 +187,15 @@ key 环境变量名与协议（openai-completions / anthropic-messages）即可�
 `.env.local` / 容器 env，不进库、不进日志）；变量名必须以 `_API_KEY` / `_TOKEN`
 结尾，`DATABASE_*`、`POSTGRES_*`、`INTERNAL_TOKEN`、云凭据等共享 env 名会被拒绝
 （值会被当作 Bearer 发到该 provider）。baseURL 的 host 还必须在 models.dev 目录
-声明的模型端点内（另含代码声明的 anthropic/openai 直连根与 Xiaomi Token Plan
-三区）；保存与执行解析时校验，registry 与目录 bucket 未同步时任务解析 fail closed，
-不向旧端点发 key。该约束只作用于模型端点，不影响 agent 的网页浏览 /
+声明的模型端点内（另含代码声明的 anthropic/openai 直连根、Xiaomi Token Plan
+三区与 DashScope embedding 双端点）；保存与执行解析时校验，registry 与目录 bucket
+未同步时任务解析 fail closed，不向旧端点发 key；非默认端口必须由目录端点自身声明，
+否则拒绝。`api_key_env` 还与 provider 绑定：内置 provider 的凭据 env
+（如 `ZHIPU_API_KEY`、`OPENROUTER_API_KEY`）只能配给自家端点，内置端点也只收
+自家凭据 env，跨 provider 配置被拒（YUK-1654）。运维 env 端点
+（`MEM0_LLM_BASE_URL`、`MEM0_EMBEDDING_BASE_URL`、`MIMO_VISION_BASE_URL`、
+`XIAOMI_TOKEN_PLAN_BASE_URL`）走同一套 host 校验，不在白名单即拒绝发送。该约束
+只作用于模型端点，不影响 agent 的网页浏览 /
 fetch 工具。模型列表来自该端点自己的 `GET /models`
 （自定义 provider 只做这类不计费读取，不发探针），能力字段按模型 id 复用 models.dev
 同 id 条目；目录里没有、或缺必需限额/端点事实的模型不出现在 `runnable_models`

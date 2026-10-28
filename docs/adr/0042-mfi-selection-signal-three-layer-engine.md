@@ -45,7 +45,7 @@ FSRS when 不并进 / 到期 hard constraint（H8）/ frontier 一等公民 + �
 
 ## 2026-06-15 Amendment — 编排档2（LLM 出权重 + sampler + π_i）+ Urnings-lite sequencing
 
-owner 2026-06-15 拍「让 LLM 强一些」（承 copilot 全能 + 成本无所谓立场）后，把 §1 的 L2/L3 分工**精化为「档2」**——LLM 当主脑、统计降为薄 sampler，同时不破 π_i positivity。承重设计 = `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）+ `docs/design/2026-06-15-question-supply-target-discovery-architecture.md`（供给引擎，Phase 8）。
+owner 2026-06-15 拍「让 LLM 强一些」（承 copilot 全能 + 成本无所谓立场）后，把 §1 的 L2/L3 分工**精化为「档2」**——LLM 当主脑、统计降为薄 sampler，同时不破 π_i positivity。承重设计 = `docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）+ `docs/design/2026-06-15-question-supply-target-discovery-architecture.md`（供给引擎，Phase 8）。
 
 **核心机制（让 LLM 强而不破 π_i）**：**LLM 对每个候选输出 weight/score（+ role + arrangement + reason），一个薄 tempered-softmax sampler 按权重抽样落具体题，π_i = 该抽样分布的 inclusion probability。** LLM 主导「选哪些题 + 怎么排 + 为什么」；只要 sampler 温度 T>0，每个 LLM 给正权重的候选 π_i>0（满足 ADR-0043 §7 要求的 positivity，**正是它指定的「真随机抽样、非确定性 top-item 事后归一化」**）。
 

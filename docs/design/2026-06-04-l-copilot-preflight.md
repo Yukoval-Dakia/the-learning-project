@@ -4,7 +4,7 @@ UI 改动（CopilotDock 组件移动/改名 + 文案 + replay 预填）触发 CL
 
 ## 设计源逐字引用
 
-AF spec `docs/superpowers/specs/2026-06-04-agent-framework-design.md`：
+AF spec `docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md`：
 
 - §7 Execution Order（L460-462）：
   > `S1 → (S0 ∥ S5) → S2a → S3a → S2b → S3b → S4`

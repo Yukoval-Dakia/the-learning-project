@@ -293,7 +293,7 @@ export const Event = z.union([KnownEvent, ExperimentalEvent]);
 
 ## §11 Erratum — P5.6 operationalizes the `suggestion_kind` discriminator (2026-05-31, YUK-178)
 
-§2.1（`:113`–`:121`）signed off 了 `suggestion_kind` discriminator + KPI 后果（"`corrective` 不计入接受率"），但 **没写 handler spec / write path / KPI choke point**，而它定义的 `AcceptSuggestionChip` event **从未被任何代码写过**（dead letterbox）。P5.6（设计 spec `docs/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`）是这条的 operationalizing erratum：
+§2.1（`:113`–`:121`）signed off 了 `suggestion_kind` discriminator + KPI 后果（"`corrective` 不计入接受率"），但 **没写 handler spec / write path / KPI choke point**，而它定义的 `AcceptSuggestionChip` event **从未被任何代码写过**（dead letterbox）。P5.6（设计 spec `docs/archive/superpowers/specs/2026-05-31-p5.6-copilot-suggestion-semantics-design.md`）是这条的 operationalizing erratum：
 
 1. **`suggestion_kind` 落成 `BaseProposal` 上的 OPTIONAL 字段**（`src/core/schema/proposal.ts`）+ 4 个 agent-callable propose 工具（`propose_knowledge_edge` / `propose_knowledge_mutation` / `propose_record_links` / `propose_record_promotion`）的 OPTIONAL 输入 arg，不再只挂在 `AcceptSuggestionChip` 上。discriminator 现在随 proposal payload（真正的 Coach/Copilot 输出）走。这是 Option B（显式可选字段），不是新 `accept_correction` action——§2.1 的单一 `accept_suggestion` action 决定保留。absence === `proactive`（reader `resolveSuggestionKind`）。
 2. **KPI 排除有了具体 choke point**：proposal-signal 的 `accept_count`/`dismiss_count` 在它**两个**写入点都被 gate——`recordProposalDecisionSignal`（incremental，`signals.ts`）与 `rebuildProposalDecisionSignal`（replay/reconcile）；corrective 在 accept 端不计 `accept_count`、dismiss 端不计 `dismiss_count`（全排除，分子分母都不污染），但 corrective dismiss **仍写 `cooldown_until`**（gate 跳过的是计数，不是 cooldown）。§2.1 的 "不计入接受率" 现在是 incremental + reconcile 端到端机制化，不再是 aspirational。
