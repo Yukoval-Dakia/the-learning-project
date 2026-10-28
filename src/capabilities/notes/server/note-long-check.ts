@@ -40,7 +40,7 @@ import type {
 } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { costUsdToMicroUsd } from '@/server/ai/provenance';
+import { costUsdToMicroUsd } from '@/kernel/cost';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 

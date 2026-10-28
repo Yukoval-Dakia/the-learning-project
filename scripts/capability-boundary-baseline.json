@@ -6473,6 +6473,16 @@
       "issue": "YUK-1522",
       "owns": "Canonical all-time provider attempt authority and linked ledger suppression; session cost reader filters only exact durable session-owned identities.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-long-check.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1642",
+      "date": "2026-10-28",
+      "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
     }
   ],
   "sourceSizeRecords": [
