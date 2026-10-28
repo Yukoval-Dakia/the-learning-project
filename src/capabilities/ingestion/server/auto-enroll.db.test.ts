@@ -4,7 +4,7 @@
  * DB-backed. Injected TaggingTask fn so no real LLM runs. The headline test is
  * the CRITICAL SAFETY one: with the flag OFF (default), NOTHING auto-enrolls and
  * every block stays 'draft' for the existing human review flow. See ADR-0026 +
- * docs/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md §4.
+ * docs/archive/superpowers/plans/2026-05-30-yuk145-toc-slice3-lane.md §4.
  */
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';

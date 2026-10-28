@@ -243,7 +243,15 @@ export async function runCoach(
         },
         ...(todayPlan
           ? { today_plan: todayPlan, daily_focus: todayPlan.daily_focus }
-          : { today_plan: null, plan_parse_error: true }),
+          : {
+              // Scan contract (agent-run.ts): execution completed but the domain artifact
+              // is invalid → the scan owner stamps the event outcome 'degraded'.
+              // degraded_reason is the generic digest-facing reason string.
+              outcome: 'degraded',
+              today_plan: null,
+              plan_parse_error: true,
+              degraded_reason: 'plan_parse_error',
+            }),
       };
     },
     prepareInput: async ({ now, beforeRows }) => {

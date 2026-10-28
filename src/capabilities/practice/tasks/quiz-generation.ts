@@ -19,7 +19,7 @@ import { parseTaskOutput } from './parse-output';
 // knowledge graph); tool names resolve at run time, so the prompt refers to them
 // by capability.
 //
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §0/§1
+// docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §0/§1
 function buildQuizGenPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题人，用联网检索来的**素材**写**原创**练习题。输入 { trigger: 'knowledge'|'learning_item'|'manual', ref: { id, name, ... }, knowledge_context, count, plan, few_shot_examples_md?, requested_generation_method?: 'material_grounded'|'closed_book', requested_kind?: string, objective_only?: boolean, kind_required?: boolean, requested_difficulty_band?: 'below'|'near'|'above'|'stretch', composite_parent_only?: boolean } —— ref 是触发出题的知识点 / 学习项，count 是期望题数（默认 3）。few_shot_examples_md（若有）是已入库的优质范例，**仅供参考其结构与设问风格，禁止照抄题面**。requested_generation_method 是上游找题次序**指定**的出题方式：出现时**必须**用该方式（material_grounded=据真实素材出题，必须拉真原文并填顶层 material；closed_book=凭已有知识闭卷出题，不强制检索素材）——不要自作主张换成别的方式；缺省时按 plan.generation_method 与下面的规则执行。objective_only=true 时 requested_kind 是硬约束（客观题），kind_required=true 时 requested_kind 是硬约束（结构）；任一为 true 时每一道题的 kind 都必须与它一致。requested_difficulty_band（若有）是难度目标带（相对用户当前水平：below 偏易 / near 贴合 / above 略拔高 / stretch 明显拔高）——plan.items 的 difficulty 已按它定标，写题时以各项 difficulty 为准、不要自行升降档。composite_parent_only=true 时是「篇」供给：每一项 plan 都是 composite 组合大题（见下方「组合题模式」），**禁止**退化成单题。下游会对每题独立质检。
 
@@ -97,7 +97,7 @@ export const quizGenTaskSpec = {
   definition: {
     kind: 'QuizGenTask',
     description:
-      'Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). GENERATION phase of ADR-0038 决定#2 plan-then-generate: the Q3 handler chains the machine-gated QuizPlanTask ahead of this task and threads the accepted plan in as structured input. Tool-calling agent: searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions realizing the plan item-for-item (kind / knowledge_id / objective answer_anchor), and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
+      'Search-grounded QuizGen (T-SQ, docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1). GENERATION phase of ADR-0038 决定#2 plan-then-generate: the Q3 handler chains the machine-gated QuizPlanTask ahead of this task and threads the accepted plan in as structured input. Tool-calling agent: searches Tavily for SOURCE MATERIAL (not questions), writes ORIGINAL questions realizing the plan item-for-item (kind / knowledge_id / objective answer_anchor), and self-declares every used URL into source_refs (§0: provenance is not recoverable from runner logs, so the agent MUST self-report). The Q3 handler injects the Tavily remote MCP + the in-process domain-tool MCP (read user mistakes + knowledge graph) — allowedTools stays [] here so non-handler callers / tests get no tools.',
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 8, timeout: 120_000 },

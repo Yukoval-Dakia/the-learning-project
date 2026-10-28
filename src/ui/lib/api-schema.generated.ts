@@ -2695,6 +2695,12 @@ export interface operations {
                             wired: boolean;
                         }[];
                         providers: {
+                            auth?: {
+                                error_type: string | null;
+                                http_status: number | null;
+                                /** @enum {string} */
+                                status: "unconfigured" | "configured" | "auth_failed";
+                            };
                             /** @enum {string} */
                             auth_mode: "key" | "oauth";
                             credential_env: string;
@@ -2705,9 +2711,24 @@ export interface operations {
                             };
                             key_present: boolean;
                             models?: {
-                                api: string;
+                                api: string | null;
+                                context_window_tokens: number | null;
+                                cost: {
+                                    cache_read: number;
+                                    cache_write?: number;
+                                    input: number;
+                                    output: number;
+                                } | null;
+                                forced_tool_choice: boolean | "unknown";
                                 id: string;
                                 input: string[];
+                                max_input_tokens: number | null;
+                                max_output_tokens: number | null;
+                                reasoning: boolean | "unknown";
+                                runnable: boolean;
+                                structured_output: boolean | "unknown";
+                                tool_call: boolean | "unknown";
+                                vision: boolean | "unknown";
                             }[];
                             name: string;
                             pi_provider?: string | null;
@@ -15186,6 +15207,50 @@ export interface operations {
                             } | null;
                             unresolved: boolean;
                         }[];
+                        cost_evidence?: {
+                            /** Format: date-time */
+                            as_of: string;
+                            by_currency: {
+                                currency: string;
+                                estimated: number | null;
+                                known_subtotal: number | null;
+                                legacy: number | null;
+                                reported: number | null;
+                            }[];
+                            /** @enum {string} */
+                            coverage: "partial";
+                            missing: ("outside_agent_scope" | "no_budget" | "no_durable_identities" | "historical_ocr_attribution_unproven")[];
+                            records: {
+                                amount: number | null;
+                                attempt_id: string | null;
+                                /** @enum {string|null} */
+                                cost_basis: "reported" | "estimated" | "unknown" | null;
+                                cost_ref: string | null;
+                                currency: string;
+                                /** @enum {string} */
+                                entry_kind: "legacy" | "attempt";
+                                /** @enum {string} */
+                                kind: "agent_task" | "ocr";
+                                model: string | null;
+                                operation_id: string | null;
+                                provider: string;
+                                /** @enum {string} */
+                                source: "cost_ledger" | "provider_attempt";
+                                task_run_id: string;
+                            }[];
+                            /** @enum {string} */
+                            scope: "ingestion_agent_observed";
+                            /** @enum {string|null} */
+                            total: null;
+                            unsettled: {
+                                attempt_id: string | null;
+                                /** @enum {string} */
+                                kind: "agent_task" | "ocr";
+                                operation_id: string | null;
+                                reasons: ("missing_task_run" | "task_in_progress" | "missing_attempt_binding" | "missing_canonical_cost" | "unknown_cost_basis" | "missing_amount" | "missing_cost_reference" | "unknown_currency")[];
+                                task_run_id: string;
+                            }[];
+                        };
                         evidence: {
                             live_events: boolean;
                             missing: string[];
@@ -15442,6 +15507,20 @@ export interface operations {
             };
             /** @description Internal error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        message?: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal error */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19133,6 +19212,8 @@ export interface operations {
                             mastery_lo: number | null;
                             name: string;
                             parent_id: string | null;
+                            /** @enum {string} */
+                            role: "kc" | "goal" | "container";
                         }[];
                     };
                 };
@@ -19370,6 +19451,8 @@ export interface operations {
                             reason: string;
                         }) | null;
                         retrievability: number | null;
+                        /** @enum {string} */
+                        role: "kc" | "goal" | "container";
                         subject_profile: {
                             displayName: string;
                             id: string;

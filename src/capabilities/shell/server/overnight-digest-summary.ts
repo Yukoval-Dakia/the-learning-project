@@ -98,6 +98,21 @@ export interface RunErrorRow {
   finished_at: string;
 }
 
+/**
+ * A scan event whose run executed but whose domain artifact is invalid (the
+ * `outcome = 'degraded'` scan contract, agent-run.ts). Different evidence class from
+ * RunErrorRow: no execution error, so `degraded_reason` is a short reason code.
+ */
+export interface DegradedScanRow {
+  task_kind: string;
+  degraded_reason: string | null;
+  /** ISO-8601 UTC event time, for newest-first sampling. */
+  occurred_at: string;
+}
+
+/** Placeholder keeps null reasons visible in samples. */
+export const DEGRADED_SCAN_NO_REASON_PLACEHOLDER = '(no degraded_reason)';
+
 /** Placeholder keeps null messages visible in samples. */
 export const DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER = '(no error_message)';
 
@@ -109,25 +124,49 @@ function truncateErrorMessage(msg: string): string {
 /**
  * Group failure rows by task_kind and flag kinds at the threshold, with the most recent
  * truncated messages. Deliberately just group-by + top-N: no cost, dedupe, or baseline.
+ *
+ * `scanRows` (degraded scan events) are folded in threshold-free: one silently degraded
+ * run already is the degradation this flag exists to surface, unlike a single transient
+ * execution error. Counts and the newest-first message sample merge across both sources.
  */
-export function computeDegradedKinds(rows: RunErrorRow[]): DegradedKind[] {
+export function computeDegradedKinds(
+  rows: RunErrorRow[],
+  scanRows: DegradedScanRow[] = [],
+): DegradedKind[] {
   const byKind = new Map<string, RunErrorRow[]>();
   for (const row of rows) {
     const list = byKind.get(row.task_kind) ?? [];
     list.push(row);
     byKind.set(row.task_kind, list);
   }
+  const scansByKind = new Map<string, DegradedScanRow[]>();
+  for (const row of scanRows) {
+    const list = scansByKind.get(row.task_kind) ?? [];
+    list.push(row);
+    scansByKind.set(row.task_kind, list);
+  }
   const out: DegradedKind[] = [];
-  for (const [task_kind, list] of byKind) {
-    if (list.length < DEGRADED_KIND_ERROR_THRESHOLD) continue;
+  for (const task_kind of new Set([...byKind.keys(), ...scansByKind.keys()])) {
+    const errors = byKind.get(task_kind) ?? [];
+    const scans = scansByKind.get(task_kind) ?? [];
+    if (errors.length < DEGRADED_KIND_ERROR_THRESHOLD && scans.length === 0) continue;
+    const samples = [
+      ...errors.map((r) => ({
+        at: r.finished_at,
+        message: truncateErrorMessage(r.error_message ?? DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER),
+      })),
+      ...scans.map((r) => ({
+        at: r.occurred_at,
+        message: truncateErrorMessage(r.degraded_reason ?? DEGRADED_SCAN_NO_REASON_PLACEHOLDER),
+      })),
+    ];
     // Return 0 on ties and rely on stable sort, so same-millisecond samples stay ordered.
-    const sorted = [...list].sort((a, b) =>
-      a.finished_at < b.finished_at ? 1 : a.finished_at > b.finished_at ? -1 : 0,
-    );
-    const recent_error_messages = sorted
-      .slice(0, DEGRADED_KIND_SAMPLE_SIZE)
-      .map((r) => truncateErrorMessage(r.error_message ?? DEGRADED_KIND_NO_MESSAGE_PLACEHOLDER));
-    out.push({ task_kind, error_count: list.length, recent_error_messages });
+    samples.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+    out.push({
+      task_kind,
+      error_count: errors.length + scans.length,
+      recent_error_messages: samples.slice(0, DEGRADED_KIND_SAMPLE_SIZE).map((s) => s.message),
+    });
   }
   return out.sort((a, b) => a.task_kind.localeCompare(b.task_kind));
 }

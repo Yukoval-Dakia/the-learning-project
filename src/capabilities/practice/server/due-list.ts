@@ -39,6 +39,7 @@ import {
 } from '@/kernel/read-models/active-goal-scope';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 // T-CS / — cross-subject scheduling v1 (, line 242). The due
 // pool is round-robin balanced across the learning-subjects that have due items
 // so one busy subject can't dominate the page. batchResolveSubjectIds walks
@@ -263,29 +264,38 @@ export async function queryReviewDue(
 
   const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
   const usedDueQuestionIds = new Set<string>();
-  const rawKnowledgeStateRows = (
-    await activeDb
-      .select({
-        knowledge_id: material_fsrs_state.subject_id,
-        state: material_fsrs_state.state,
-        due_at: material_fsrs_state.due_at,
-        last_review_event_id: material_fsrs_state.last_review_event_id,
-      })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-          selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
-        ),
-      )
-      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-  ).filter(
-    // defense in depth: a 'seed:<subj>:root' FSRS subject is a
-    // structural anchor, never probeable content. Enroll sites no longer mint
-    // it, but a pre-fix row may still exist until ops remediation retires it —
-    // skipping it here keeps a stale anchor card from serving as a due probe
-    // (its questions stay reachable via other paths, never via this KC axis).
-    (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
+  const dueStateRows = await activeDb
+    .select({
+      knowledge_id: material_fsrs_state.subject_id,
+      state: material_fsrs_state.state,
+      due_at: material_fsrs_state.due_at,
+      last_review_event_id: material_fsrs_state.last_review_event_id,
+    })
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'knowledge'),
+        selectedForgettingEngine() === 'fsrs' ? lte(material_fsrs_state.due_at, now) : undefined,
+      ),
+    )
+    .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id);
+  // defense in depth: a 'seed:<subj>:root' FSRS subject is a structural anchor, never
+  // probeable content. Enroll sites no longer mint it, but a pre-fix row may still exist
+  // until ops remediation retires it — skipping it here keeps a stale anchor card from
+  // serving as a due probe (its questions stay reachable via other paths, never via this
+  // KC axis). YUK-1600: the same defense now covers ANY non-kc role (goal/container
+  // roots); mastery writes are gated, so such a row here is pre-fix stock.
+  const nonKcDueIds = new Set([
+    ...dueStateRows
+      .filter((stateRow) => SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id))
+      .map((stateRow) => stateRow.knowledge_id),
+    ...(await getNonKcKnowledgeIds(
+      activeDb,
+      dueStateRows.map((stateRow) => stateRow.knowledge_id),
+    )),
+  ]);
+  const rawKnowledgeStateRows = dueStateRows.filter(
+    (stateRow) => !nonKcDueIds.has(stateRow.knowledge_id),
   );
 
   // bulk-prefetch every probe-selection DB input for the whole due page in THREE

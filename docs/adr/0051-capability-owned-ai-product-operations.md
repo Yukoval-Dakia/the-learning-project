@@ -2,7 +2,7 @@
 
 **Status**: Accepted（Phase 0 closed；Phase 1 F1 implemented, review pending）
 **Decision source**: owner 2026-08-02「直接启动 FULL」；YUK-840
-**Amends**: `docs/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
+**Amends**: `docs/archive/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
 **Related**: YUK-767 · YUK-840 · YUK-841 · YUK-842 · YUK-847 · YUK-848 · YUK-849 · ADR-0004 · ADR-0021 · ADR-0032
 
 **2026-10-06 target amendment**: [ADR-0066](0066-typescript-adaptive-learning-architecture.md)

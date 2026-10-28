@@ -187,7 +187,7 @@ count = COUNT(mistake_variant) regardless of status
 
 ## 实施计划
 
-仅 sketch，不属于 ADR 决议范围。详见 `docs/superpowers/plans/2026-05-24-yuk-17-variant-double-pass.md`。
+仅 sketch，不属于 ADR 决议范围。详见 `docs/archive/superpowers/plans/2026-05-24-yuk-17-variant-double-pass.md`。
 
 1. 创建 `mistake_variant` 表 + migration 0013
 2. 加 `VariantVerifyTask` TaskDef + prompt builder + `VariantVerificationResult` Zod schema

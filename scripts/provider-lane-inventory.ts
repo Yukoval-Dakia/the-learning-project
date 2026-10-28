@@ -1157,6 +1157,12 @@ export const PROVIDER_LANES = [
       // root) projects the stored check's auth label for the panel and reads
       // nothing else. Read-only: it sends nothing.
       { path: 'src/server/config/custom-providers-hydrate.ts', kind: 'runtime' },
+      // YUK-1563 QA AC3 — the admin config facts source reads the credential
+      // fingerprint (never the value) to bind stored receipts to the current
+      // key; the auth verdict projection lives in provider-auth-status.ts and
+      // type-imports the check shape only. Read-only: neither sends anything.
+      { path: 'src/server/config/admin-config-facts.ts', kind: 'runtime' },
+      { path: 'src/server/ai/provider-auth-status.ts', kind: 'type' },
     ],
     roles: ['api', 'worker'],
     provider:

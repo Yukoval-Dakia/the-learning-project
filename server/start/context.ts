@@ -9,6 +9,7 @@ import type {
   markCopilotNudgeOpened,
   readCopilotSessions,
   readCopilotTurns,
+  requestCopilotCheckpointRevert,
 } from '@/capabilities/copilot/public';
 import type {
   answerIngestionAsk,
@@ -67,6 +68,9 @@ import type { LearnerSubjectRow } from '@/capabilities/shell/public';
 
 export type FrontdoorContext = {
   api: Hono;
+  revertCopilotCheckpoint: (
+    checkpointEventId: string,
+  ) => Promise<Awaited<ReturnType<typeof requestCopilotCheckpointRevert>>>;
   cancelCopilotRun: (runId: string) => Promise<Awaited<ReturnType<typeof cancelCopilotRun>>>;
   readCopilotTurns: (query: string) => Promise<Awaited<ReturnType<typeof readCopilotTurns>>>;
   createCopilotSession: () => Promise<Awaited<ReturnType<typeof createCopilotSession>>>;

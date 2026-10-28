@@ -57,6 +57,15 @@ export interface AgencyProposalScanDeps {
   runAgentTaskFn?: AgencyScanRunFn;
 }
 
+/**
+ * Scan-event outcome for the execution-success branch. 'degraded' = the run completed
+ * (no throw, cost accounted) but the surface's domain artifact is invalid — e.g. Coach's
+ * TodayPlan failed to parse. Execution outcome and domain validity stay distinct:
+ * 'failure' stays reserved for execution errors, so watchdog/digest readers filtering
+ * `outcome` never count a silently degraded run as a plain success.
+ */
+export type AgencyScanSuccessOutcome = 'success' | 'degraded';
+
 export interface AgencyProposalScanSpec {
   /**
    * DomainTool surface — resolves the mount toolNames + MCP allowedTools, names the agent
@@ -87,12 +96,13 @@ export interface AgencyProposalScanSpec {
   /**
    * Scan-success payload extras computed from the task result and the built runner input —
    * the SAME object passed to runAgentTask, so facts computed in prepareInput reach the
-   * payload without a second read.
+   * payload without a second read. May stamp `outcome: 'degraded'` when the surface's
+   * domain artifact is invalid; the key is lifted onto the event envelope, not the payload.
    */
   buildScanSuccessPayloadExtras?: (
     taskResult: AgencyScanRunResult,
     input: unknown,
-  ) => Record<string, unknown>;
+  ) => Record<string, unknown> & { outcome?: AgencyScanSuccessOutcome };
   /** Extra scan-failure payload fields (Coach stamps `run_kind`). */
   extraScanFailurePayload?: Record<string, unknown>;
   /**
@@ -197,6 +207,9 @@ export async function runAgencyProposalScan(
     const proposalsCreated = newRows.length;
     await spec.onNewProposalRows?.({ db, newRows, triggerEventId });
 
+    const { outcome: scanOutcome, ...payloadExtras } =
+      spec.buildScanSuccessPayloadExtras?.(taskResult, input) ?? {};
+
     await write(db, {
       id: `${spec.surface}_scan_${createId()}`,
       actor_kind: 'agent',
@@ -204,12 +217,14 @@ export async function runAgencyProposalScan(
       action: `experimental:${spec.surface}_scan`,
       subject_kind: 'query',
       subject_id: triggerEventId,
-      outcome: 'success',
+      // 'degraded' = execution completed but the surface's domain artifact is invalid;
+      // the extras' `outcome` key is lifted here and never reaches the payload.
+      outcome: scanOutcome ?? 'success',
       payload: {
         proposals_created: proposalsCreated,
         pending_after: pendingAfter,
         tool_context_task_run_id: toolContextTaskRunId,
-        ...spec.buildScanSuccessPayloadExtras?.(taskResult, input),
+        ...payloadExtras,
       },
       caused_by_event_id: triggerEventId,
       task_run_id: taskResult.task_run_id,

@@ -4,6 +4,7 @@ import { SECURITY_HEADERS } from './app';
 import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { cancelStartCopilotRun } from './start/copilot-cancel-run-operation';
+import { revertStartCopilotCheckpoint } from './start/copilot-checkpoint-revert-operation';
 import {
   dismissStartCopilotNudge,
   markStartCopilotNudgeOpened,
@@ -102,6 +103,7 @@ export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorCon
   );
   const context: FrontdoorContext = {
     api,
+    revertCopilotCheckpoint: revertStartCopilotCheckpoint,
     cancelCopilotRun: cancelStartCopilotRun,
     readCopilotTurns: readStartCopilotTurns,
     createCopilotSession: createStartCopilotSession,
