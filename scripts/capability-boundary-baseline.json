@@ -4196,6 +4196,38 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "abandonOrphanReviewSession",
+      "targetModule": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "targetSymbol": "abandonOrphanReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 6
+        },
+        {
+          "file": "src/server/boss/handlers/prune_orphan_review_sessions.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Fixed b7fe0e3761b2b84d24625db7d2e08953475f8775: public export AST368, canonical function AST54; durable consumer import AST6/call249 and legacy job import AST7/call35. Both are real production calls with caller-owned Tx. Six mechanical test imports target the canonical namespace and are not counted as production evidence. The complete 361-line owner is byte-identical to the original.",
+      "rationale": "Expose the complete Review orphan state operation from its Practice owner for existing durable and legacy recovery consumers. Preserve row locking, incarnation/cutoff checks, skipped reasons and version result; caller-owned receipt/phase/fence and transaction lifetime stay with the recovery callers. The unchanged completion feedback release remains within the full lifecycle per the narrow B ruling; no wider B policy, runtime or paid permission is implied. Ownership depth gain is zero; initialization remains unverified.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a2d011fc-ebc7-45db-ac54-d8f72a928f35",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/notes/public.ts",
       "siteKind": "module",
       "symbol": "listNoteRefineChanges",
@@ -6562,6 +6594,46 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review completion transition and per-attempt feedback release in its original transaction, including incarnation filter, event identity and timestamps; no independent B policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review lifecycle missing-session and invalid-transition error contracts, including unchanged statuses, messages and strict versus idempotent behavior.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve original Review state job-event timing and payload inside the same transaction, including creation and reopen; caller recovery and queue policies remain unchanged.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/learning-session-guard.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/copilot/server/notes-integration.ts",
       "module": "src/kernel/read-models/live-artifact-reference.ts",
       "kind": "value",
@@ -7584,7 +7656,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 239,
+      "total": 237,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7637,7 +7709,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 4,
+        "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,

@@ -18,6 +18,7 @@ import { FsrsStateSchema } from '@/core/schema/event/blocks';
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import {
@@ -32,7 +33,6 @@ import {
 } from '@/db/schema';
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { Review } from '@/server/session';
 import {
   publishPaperModelFixture,
   reopenFrozenPaperFixture,
