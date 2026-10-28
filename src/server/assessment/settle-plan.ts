@@ -19,6 +19,7 @@ import {
 } from '@/core/schema/assessment';
 import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
+import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   CandidateFactSchema,
   candidateObservations,
@@ -133,6 +134,25 @@ export async function loadScope(tx: Tx, input: ActivationSettleInput): Promise<S
         .from(question)
         .where(inArray(question.id, [...wanted]));
   const byId = new Map<string, QuestionLite>(rows.map((r) => [r.id, r as QuestionLite]));
+  // YUK-1600 — goal/container nodes are not testable KCs: strip them from the question
+  // labels BEFORE the plan is derived, so θ anchors, FSRS subjects, KC observations and
+  // score shares all exclude non-kc ids in one place. A question labeled only with
+  // non-kc nodes degrades to the existing roots-only behavior (question-level FSRS
+  // fallback / theta abstain), never to a mastery write on a goal root.
+  const nonKcIds = await getNonKcKnowledgeIds(
+    tx,
+    [...byId.values()].flatMap((r) => r.knowledge_ids ?? []),
+  );
+  if (nonKcIds.size > 0) {
+    for (const [rowId, row] of byId) {
+      if (row.knowledge_ids.some((id) => nonKcIds.has(id))) {
+        byId.set(rowId, {
+          ...row,
+          knowledge_ids: row.knowledge_ids.filter((id) => !nonKcIds.has(id)),
+        });
+      }
+    }
+  }
   const partRows = new Map<string, QuestionLite>();
   for (const partId of partIds) {
     const row = byId.get(partId);

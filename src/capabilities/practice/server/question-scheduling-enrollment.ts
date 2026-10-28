@@ -1,4 +1,5 @@
 import type { Tx } from '@/db/client';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import {
   type FsrsSubjectKind,
   type UpsertFsrsStateInput,
@@ -14,8 +15,13 @@ interface SchedulingEnrollmentEvidence {
   now: Date;
 }
 
-function contentKnowledgeIds(knowledgeIds: readonly string[]): string[] {
-  return knowledgeIds.filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id));
+async function contentKnowledgeIds(tx: Tx, knowledgeIds: readonly string[]): Promise<string[]> {
+  // Seed roots (id pattern) and YUK-1600 goal/container roles are both non-content:
+  // neither may enroll a knowledge-level FSRS card.
+  return withoutNonKcKnowledgeIds(
+    tx,
+    knowledgeIds.filter((id) => !SYNTHETIC_SUBJECT_ROOT_RE.test(id)),
+  );
 }
 
 function initialEnrollment(
@@ -48,7 +54,9 @@ export async function enrollPromotedQuestionScheduling(
   // genuinely unlabeled questions receive a question-level fallback card.
   const subjectKind = rawKnowledgeIds.length > 0 ? 'knowledge' : 'question';
   const subjectIds =
-    rawKnowledgeIds.length > 0 ? contentKnowledgeIds(rawKnowledgeIds) : [input.questionId];
+    rawKnowledgeIds.length > 0
+      ? await contentKnowledgeIds(tx, rawKnowledgeIds)
+      : [input.questionId];
   for (const subjectId of subjectIds) {
     // Keep the existing read/parse contract: invalid stored state throws, while
     // a valid existing schedule is left untouched without initializing a card.
@@ -70,7 +78,7 @@ export async function enrollAddedKnowledgeScheduling(
   const enrolledKnowledgeIds: string[] = [];
   // Preserve input order and CAS insertion: do not read/parse existing cards or
   // turn a concurrent review's schedule into an enrollment upsert.
-  for (const knowledgeId of contentKnowledgeIds(input.knowledgeIds)) {
+  for (const knowledgeId of await contentKnowledgeIds(tx, input.knowledgeIds)) {
     const enrolled = await enrollFsrsStateIfAbsent(
       tx,
       initialEnrollment('knowledge', knowledgeId, input),

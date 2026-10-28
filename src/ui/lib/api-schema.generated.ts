@@ -19212,6 +19212,8 @@ export interface operations {
                             mastery_lo: number | null;
                             name: string;
                             parent_id: string | null;
+                            /** @enum {string} */
+                            role: "kc" | "goal" | "container";
                         }[];
                     };
                 };
@@ -19449,6 +19451,8 @@ export interface operations {
                             reason: string;
                         }) | null;
                         retrievability: number | null;
+                        /** @enum {string} */
+                        role: "kc" | "goal" | "container";
                         subject_profile: {
                             displayName: string;
                             id: string;
