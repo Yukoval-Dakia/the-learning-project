@@ -6513,6 +6513,16 @@
       "issue": "YUK-1600",
       "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-long-check.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1642",
+      "date": "2026-10-28",
+      "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
     }
   ],
   "sourceSizeRecords": [
