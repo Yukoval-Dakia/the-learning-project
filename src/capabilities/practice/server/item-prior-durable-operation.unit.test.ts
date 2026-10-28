@@ -57,7 +57,7 @@ vi.mock('@/db/schema', () => ({
   },
 }));
 vi.mock('@/server/mastery/item-calibration', () => ({ applyItemPrior: vi.fn() }));
-vi.mock('./knowledge-runtime', () => ({
+vi.mock('@/kernel/read-models/subject-profile', () => ({
   resolveSubjectProfileForKnowledgeIds: async () => defaultSubjectProfile,
 }));
 
