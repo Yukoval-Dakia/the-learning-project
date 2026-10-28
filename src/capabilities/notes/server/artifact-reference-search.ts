@@ -2,10 +2,10 @@
 // Both HTTP and Start share validation, visibility, literal matching and ordering.
 import { and, desc, ilike, inArray, ne } from 'drizzle-orm';
 import { ArtifactSearchQuerySchema } from '@/capabilities/notes/api/contracts';
-import { readyArtifactReferenceCondition } from '@/capabilities/notes/server/live-artifact-reference';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { readyArtifactReferenceCondition } from '@/kernel/read-models/live-artifact-reference';
 
 // Allowlist, not a denylist: an interactive artifact is opaque to the note mesh
 // and a link would write it into the backlink index, so new opaque types must

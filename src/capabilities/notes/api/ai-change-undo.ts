@@ -1,9 +1,7 @@
-import {
-  listNoteRefineChanges,
-  undoNoteRefineApplyEvent,
-} from '@/capabilities/notes/server/note-refine-apply';
+import { undoNoteRefineApplyEvent } from '@/capabilities/notes/server/note-refine-apply';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 
 export async function POST(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
