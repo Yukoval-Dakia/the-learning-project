@@ -2695,6 +2695,12 @@ export interface operations {
                             wired: boolean;
                         }[];
                         providers: {
+                            auth?: {
+                                error_type: string | null;
+                                http_status: number | null;
+                                /** @enum {string} */
+                                status: "unconfigured" | "configured" | "auth_failed";
+                            };
                             /** @enum {string} */
                             auth_mode: "key" | "oauth";
                             credential_env: string;
@@ -2705,9 +2711,24 @@ export interface operations {
                             };
                             key_present: boolean;
                             models?: {
-                                api: string;
+                                api: string | null;
+                                context_window_tokens: number | null;
+                                cost: {
+                                    cache_read: number;
+                                    cache_write?: number;
+                                    input: number;
+                                    output: number;
+                                } | null;
+                                forced_tool_choice: boolean | "unknown";
                                 id: string;
                                 input: string[];
+                                max_input_tokens: number | null;
+                                max_output_tokens: number | null;
+                                reasoning: boolean | "unknown";
+                                runnable: boolean;
+                                structured_output: boolean | "unknown";
+                                tool_call: boolean | "unknown";
+                                vision: boolean | "unknown";
                             }[];
                             name: string;
                             pi_provider?: string | null;
@@ -19191,6 +19212,8 @@ export interface operations {
                             mastery_lo: number | null;
                             name: string;
                             parent_id: string | null;
+                            /** @enum {string} */
+                            role: "kc" | "goal" | "container";
                         }[];
                     };
                 };
@@ -19428,6 +19451,8 @@ export interface operations {
                             reason: string;
                         }) | null;
                         retrievability: number | null;
+                        /** @enum {string} */
+                        role: "kc" | "goal" | "container";
                         subject_profile: {
                             displayName: string;
                             id: string;

@@ -142,6 +142,7 @@ export function knowledgeLiveRowToSnapshot(row: {
   archived_at: Date | null;
   proposed_by_ai: boolean;
   approval_status: 'pending' | 'approved' | 'rejected';
+  role?: 'kc' | 'goal' | 'container';
   created_at: Date;
   updated_at: Date;
   version: number;
@@ -155,6 +156,9 @@ export function knowledgeLiveRowToSnapshot(row: {
     archived_at: row.archived_at,
     proposed_by_ai: row.proposed_by_ai,
     approval_status: row.approval_status,
+    // YUK-1600 — identity role; optional so pre-column callers keep compiling, and the
+    // fold's always-defined default makes parity treat absent-as-'kc' on both sides.
+    role: row.role ?? 'kc',
     created_at: row.created_at,
     updated_at: row.updated_at,
     version: row.version,

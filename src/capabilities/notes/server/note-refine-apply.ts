@@ -7,12 +7,22 @@ import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
 import { syncBlockRefsForArtifact } from '@/capabilities/notes/server/block-refs';
-import { applyNotePatch, filterMissingNotePatchTargets } from '@/core/blocks/apply-note-patch';
-import { type NotePatchT, countNewBlocks, summarizeNotePatch } from '@/core/schema/note-patch';
+import {
+  NoteRefineApplyError,
+  applyNotePatch,
+  filterMissingNotePatchTargets,
+} from '@/core/blocks/apply-note-patch';
+import {
+  type NotePatchOpT,
+  type NotePatchT,
+  countNewBlocks,
+  summarizeNotePatch,
+} from '@/core/schema/note-patch';
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import { noteBlockSource } from '../shared/note-block-source';
 
 type DbLike = Db | Tx;
 
@@ -77,6 +87,43 @@ function noteRefineReversePatch(bodyBlocks: unknown, previousArtifactVersion: nu
   };
 }
 
+// Blocks that never read a source mirror. Pure reference blocks render from
+// their own attrs (title / prompt preview) — same exclusion as
+// materializeGeneratedBodyBlocks — and autoLinksContainer is the server-built
+// hub auto-zone container (hub-auto-zone.ts) whose readers walk its children;
+// the model is told never to emit either kind.
+const MIRROR_EXEMPT_BLOCK_TYPES = new Set([
+  'crossLinkBlock',
+  'artifactRefBlock',
+  'questionRefBlock',
+  'autoLinksContainer',
+]);
+
+/**
+ * The reader renders attrs.source_markdown, but the model never authors it: the
+ * mirror is derived from each op block's content before it can enter the tree,
+ * so an applied block can never read as empty.
+ */
+function withDerivedSourceMirror(patch: NotePatchT): NotePatchT {
+  const derive = (op: NotePatchOpT): NotePatchOpT => {
+    if (!('block' in op) || MIRROR_EXEMPT_BLOCK_TYPES.has(String(op.block.type))) return op;
+    try {
+      const block = op.block as Record<string, unknown>;
+      const attrs = { ...(block.attrs as Record<string, unknown> | undefined) };
+      attrs.source_markdown = noteBlockSource(block);
+      return { ...op, block: { ...block, attrs } };
+    } catch (err) {
+      throw new NoteRefineApplyError(
+        'invalid_body_blocks',
+        `applyNotePatch: ${op.kind} block has no derivable source mirror: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+  return { ops: patch.ops.map(derive) };
+}
+
 /**
  * Applies the patch and writes the apply event atomically. Empty patches and
  * missing artifacts write nothing. Automated callers skip ghost targets
@@ -90,6 +137,9 @@ export async function persistNoteRefineApply(
   if (patch.ops.length === 0) {
     return { status: 'skipped:empty_patch', artifact_id: artifactId };
   }
+  // Derived before any apply so the event payload records the exact ops that
+  // entered the tree — the projection replay stays identical.
+  const mirroredPatch = withDerivedSourceMirror(patch);
 
   const runInTx = async (tx: Tx): Promise<PersistNoteRefineApplyResult> => {
     const rows = await tx
@@ -121,13 +171,13 @@ export async function persistNoteRefineApply(
     const filtered =
       actorRef === NOTE_REFINE_ACCEPT_ACTOR
         ? {
-            patch,
-            body_blocks: applyNotePatch(row.body_blocks, patch, {
+            patch: mirroredPatch,
+            body_blocks: applyNotePatch(row.body_blocks, mirroredPatch, {
               enforceUserVerifiedGuard: false,
             }),
             skipped_ops: 0,
           }
-        : filterMissingNotePatchTargets(row.body_blocks, patch);
+        : filterMissingNotePatchTargets(row.body_blocks, mirroredPatch);
     if (filtered.patch.ops.length === 0) {
       return {
         status: 'skipped:target_not_found' as const,

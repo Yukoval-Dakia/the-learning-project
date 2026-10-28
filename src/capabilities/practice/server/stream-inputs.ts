@@ -28,6 +28,7 @@ import {
   question,
 } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { REVIEW_DUE_LIMIT_MAX, type ReviewDueRow, queryReviewDue } from './due-list';
 import { knowledgeLabels } from './knowledge-labels';
@@ -215,7 +216,12 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
     .where(inArray(learning_item.status, LearningItemOpenStatus.options));
-  const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids))];
+  // YUK-1600 — the hub learning item references its topic ROOT (a goal); a goal is not
+  // a testable KC and must never be picked as a new-check practice knowledge point.
+  const candidateKids = await withoutNonKcKnowledgeIds(
+    db,
+    items.flatMap((i) => i.knowledge_ids),
+  );
   let newCheckPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   if (candidateKids.length > 0) {
     const tracked = await db
