@@ -1,7 +1,7 @@
 // YUK-361 Phase 8 (Task 13) — 题目供给目标发现引擎（确定性缺口扫描器）。
 //
 // 权威 spec：
-//   - docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 13 Step 1-2
+//   - docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md Task 13 Step 1-2
 //   - docs/design/2026-06-15-question-supply-target-discovery-architecture.md（供给侧镜像）
 //
 // 选题 vs 供给的镜像分工（架构 doc §Executive Summary）：

@@ -1,6 +1,6 @@
 # 跨科 meta-错因 taxonomy 文献研究（grounding for 采集重想 spec §4.6）
 
-> 来源：workflow meta-cause-taxonomy-research（2026-06-16）。5 学派检索 → 来源权威性对抗核验（剔编造/降级）→ 综合。owner 2026-06-16 拍板：**6 类机制主轴 + 保留 representation_failure + Axis A 元认知做正交轴**。配套 spec：`docs/superpowers/specs/2026-06-16-acquisition-rethink-retrieval-substrate-design.md` §4.6。
+> 来源：workflow meta-cause-taxonomy-research（2026-06-16）。5 学派检索 → 来源权威性对抗核验（剔编造/降级）→ 综合。owner 2026-06-16 拍板：**6 类机制主轴 + 保留 representation_failure + Axis A 元认知做正交轴**。配套 spec：`docs/archive/superpowers/specs/2026-06-16-acquisition-rethink-retrieval-substrate-design.md` §4.6。
 
 ---
 

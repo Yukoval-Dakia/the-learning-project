@@ -12,7 +12,7 @@
 - **两条硬阻塞挡在所有迁移之前**：
   1. **mimo endpoint 兼容性未验证（YUK-218，硬 gate）**：运行时是 xiaomi/mimo Anthropic-compatible 代理，非真 Anthropic；`outputFormat:json_schema` 是否被端点 honor 从未实测。审计 `docs/audit/2026-06-05-agent-sdk-alignment.md` §5 R5 / 矩阵 #2 明令「必须先 spike，不可盲迁；通过才迁，失败则 `json-sanitize.ts` 保留作防御层」。
   2. **runner 通用 `outputFormat` seam 尚未建**：需在 `buildQueryOptions` 透传 `outputFormat`、在 `runTask` 读 `msg.structured_output`、在 `RunTaskResult`/`TaskTextResult`/seam 函数签名上加 `structured_output` 字段。这是跨全部 ~20 个 task 的共享路径改动。
-- **关键纠正（与本批 briefing 前提冲突，已核实）**：briefing 称「YUK-285 将给 teaching turn 首次接入 outputFormat，扩展 runner seam 后其它 task 可搭便车」。**核实 `docs/superpowers/plans/2026-06-08-yuk-285-plan.md` + Linear YUK-285：YUK-285 实际是把 teaching one-shot 重构成 free-form 工具调用 loop（引入 `set_teaching_state` DomainTool），并退役 `TeachingTurnTask`，根本不接 `outputFormat`，也不建 runner outputFormat seam。** 即：**当前没有任何已规划的工作会建出这条 seam。**「搭 YUK-285 便车」的假设不成立。
+- **关键纠正（与本批 briefing 前提冲突，已核实）**：briefing 称「YUK-285 将给 teaching turn 首次接入 outputFormat，扩展 runner seam 后其它 task 可搭便车」。**核实 `docs/archive/superpowers/plans/2026-06-08-yuk-285-plan.md` + Linear YUK-285：YUK-285 实际是把 teaching one-shot 重构成 free-form 工具调用 loop（引入 `set_teaching_state` DomainTool），并退役 `TeachingTurnTask`，根本不接 `outputFormat`，也不建 runner outputFormat seam。** 即：**当前没有任何已规划的工作会建出这条 seam。**「搭 YUK-285 便车」的假设不成立。
 - **结论**：值得做，但**必须先开一个独立的「runner outputFormat seam 基建」issue**（YUK-218 spike 绿灯后），把它作为 epic，所有 migrate/defer 候选作为该 epic 的批量 follow-on。**不要逐文件改 handler**（会让每个 task 各自趟一遍 runner，重复且易漂移）。
 
 ---
@@ -113,7 +113,7 @@
 
 **核实后结论（与前提冲突）**：
 
-1. **YUK-285 不接 outputFormat。** `docs/superpowers/plans/2026-06-08-yuk-285-plan.md` + Linear YUK-285 实际方案 = teaching one-shot → free-form **工具调用 loop**，模型经 `set_teaching_state({phase, question_id?})` DomainTool **显式写会话状态**（`teaching_idle/explaining/awaiting_answer/digression` 四态状态机），判分由系统触发。**末步（commit 7）退役 TeachingTurnTask**（schema + `parseTurnOutput` 保留作 loop 内解析 + eval 基线）。
+1. **YUK-285 不接 outputFormat。** `docs/archive/superpowers/plans/2026-06-08-yuk-285-plan.md` + Linear YUK-285 实际方案 = teaching one-shot → free-form **工具调用 loop**，模型经 `set_teaching_state({phase, question_id?})` DomainTool **显式写会话状态**（`teaching_idle/explaining/awaiting_answer/digression` 四态状态机），判分由系统触发。**末步（commit 7）退役 TeachingTurnTask**（schema + `parseTurnOutput` 保留作 loop 内解析 + eval 基线）。
 2. **YUK-285 不建 runner outputFormat seam**，也不碰 `streamTask`/`buildQueryOptions` 的 outputFormat。它走的是 tool-calling 路线（与 §3a 的 tool-calling task 同范式），**与 outputFormat 是两条正交的结构化通道**。
 3. **没有「搭便车」可言**——当前没有任何已规划工作会建出 runner outputFormat seam。本批所有 migrate/defer 候选若想迁，**得有人先建 seam**。
 4. **teaching 与 outputFormat 的真实关系**：YUK-285 落地后，teaching 的结构化需求由「显式状态工具 + loop 内出题片段解析」承载；TeachingTurnTask 作为独立单次 task 消失。**所以 teaching 不再是 outputFormat 的好首发场景**——它正在往 tool-loop 走。**更干净的 outputFormat 首发试点是 VariantVerifyTask 或 AttributionTask**（单次、非流式、非交互、纯结构化抽取）。
@@ -156,7 +156,7 @@ YUK-218 spike 绿灯（mimo 支持 json_schema？）
 - SDK 能力：`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts:861`（JsonSchemaOutputFormat）、`:1516`（outputFormat）、`:3336`（error_max_structured_output_retries）、`:3371`（structured_output）；版本 `package.json` `^0.3.143`
 - 全仓零用量：`grep -rn outputFormat src/` → 0
 - 审计裁决（硬阻塞）：`docs/audit/2026-06-05-agent-sdk-alignment.md` 矩阵 #2（裁决 B）、§5 R5（mimo endpoint 红线）、§下一步行动 #2（spike，:100-101）
-- YUK-285 实为 tool-loop（非 outputFormat）：`docs/superpowers/plans/2026-06-08-yuk-285-plan.md`（:34 现状 one-shot、:46-51 loop+set_teaching_state、:89 TeachingTurnTask 退役注释、:116 parseTurnOutput 保留）
+- YUK-285 实为 tool-loop（非 outputFormat）：`docs/archive/superpowers/plans/2026-06-08-yuk-285-plan.md`（:34 现状 one-shot、:46-51 loop+set_teaching_state、:89 TeachingTurnTask 退役注释、:116 parseTurnOutput 保留）
 - 最脆例外（无 sanitize 裸 JSON.parse）：`src/server/boss/handlers/embedded_check_generate.ts:87-109`（对比 teaching.ts:20 走 sanitizeJsonStringLiterals）
 - plain-text-ok 已核实：`src/server/session/summary.ts:180`、`src/server/orchestrator/review.ts:628-631`
 

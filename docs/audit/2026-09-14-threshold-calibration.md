@@ -110,7 +110,7 @@ pnpm audit:threshold-calibration -- --json   # 机器可读
   该计数若抬头，说明窗口先于阈值成为瓶颈，复测时应一并报告。
 - Axis C 的 query 代理（KC 标签向量）系统性高估真实 demand 文本距离；matcher() 接 live
   caller 后应改用真实 demand query embedding 重跑（当前语料里不存在该数据，未虚构）。
-- `docs/design/2026-06-22-unified-tagging-axis.md` 与 `docs/superpowers/plans/*` 里的
+- `docs/design/2026-06-22-unified-tagging-axis.md` 与 `docs/archive/superpowers/plans/*` 里的
   YUK-396 引用属历史快照（记录的是当时归属），未改动；src/ 内剩余 YUK-396 均为
   poolFetch/matcher 的 Phase-1 增量归属，非标定语义。
 - `auto_tag_kc_created` 事件为 0 → Axis B 的生产扫描总体为空；等统一标注轴真实产出

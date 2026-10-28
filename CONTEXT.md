@@ -3,6 +3,14 @@
 > 仅收录对**领域专家**有意义的术语；纯实现概念（pg-boss、SSE、jsonb 字段名）放在 docs/architecture.md。
 > 当对话中出现新术语或既有术语需要修订时，**就地**更新本文件，不要批量留到事后。
 
+## 产品形态：五个用户面（2026-06-10 REV 2）
+
+> 源：`docs/archive/superpowers/specs/2026-06-10-architecture-redesign-design.md` §1（YUK-1575 重立档）。AI 是唯一编排者；机制（FSRS、due 队列）永不直接暴露给用户。
+
+- **用户只做四件事**：录题、声明意图、做练习、审批提议。
+- **五个用户面**：中央工作台（shell）/ 练习面（practice）/ 知识图谱与笔记（knowledge + notes）/ 录入（ingestion）/ Copilot 抽屉（copilot）——其余一切一律幕后。
+- **AI 只有两条用户信道**：提议收件箱（proposal inbox）+ 工作台观察摘要。
+
 ## 学习状态与学习安排（已批准目标，2026-10-06）
 
 来源：[ADR-0066](docs/adr/0066-typescript-adaptive-learning-architecture.md)。以下是已批准的产品目标，尚不表示新实现已经上线。
@@ -36,6 +44,7 @@
 - **复习（review）**：`event WHERE action='review' AND subject_kind='question'`（用户回答的永远是具体题，event 保持 question-scoped）；FSRS 状态派生到 `material_fsrs_state` 表（每次 review event 同事务写入）。**调度单元是知识点**（ADR-0028，2026-06-04 经 U0 裁决确认）：有 knowledge 标签的题，FSRS 投影按 `(subject_kind='knowledge', subject_id=知识点)` 键；未标注的 legacy 题 fallback 到 question 级投影。
 - **探针（probe）**：复习一个到期知识点时被选中的那道具体题。**题是测量工具，知识点才是调度 / 记忆对象**——同一知识点可由原题、变体或新生成题轮换探测，避免"背答案"。选题 seam 当前为确定性轮换（ADR-0028 决定 #3），规划由 Coach→ReviewPlanTask 流水线接管（仅替换该 seam，不动记忆单元）。
 - **判分（judge）**：评判用户对一道题的答案是否正确，输出分数 + 评语 + 错误细节（写为 judge event）。2026-06-04 U0 裁决：judge event payload 钉 `profile_version` / `capability_ref` / `judge_route`（判时在内存、写时落 event），历史判分的版本上下文从此可重建；rejudge = 新 event，不改写旧结果。
+- **答案类别（answer class）**（owner 2026-06-17 PIVOT，源：`docs/archive/superpowers/plans/2026-06-17-kind-step3-answer-class-consolidation.md`，YUK-1575 重立档）：题目的答案形态轴（如选择题 / 填空 / 手写推导）落为**独立 `answer_class` 列**（+ 请求侧 `requested_answer_class`，分类器 `deriveAnswerClass` 纯结构推导、历史由 `answer_class_backfill` 夜作业回填），**不通过扩格 `judge_kind_override` 表达**——后者仍是只许 `exact | keyword | semantic` 的封闭小集合。判分方式（judge kind）与答案类别（answer class）是两条正交轴，不得互相搭桥。
 - **组卷 / 试卷（paper / tool_quiz）**（2026-06-04 U0 裁决 X2）：一组引用题池 question 的练习集，**唯一容器是 `tool_quiz` artifact**（长期存储、knowledge 标签、`metadata.question_ids` 引用题池）——Coach 排期的"今日试卷"、用户按需测验、daily/final/笔记嵌入小测都是它，靠 provenance（plan 引用 / source）区分，**不分裂成第二容器**。做卷中的 attempt 走 `learning_session(type='review')`（复用 pause/resume/abandon）；Coach 的 session 内自适应 = artifact 就地更新 + adaptation event 留痕（`caused_by` 链到触发判分）。今日/往日练习有一级页面可查。导出可打印作答卷（导出时逐题创建发放）见本节的**作答卷导出**。
 - **复习规划（review planning）**（2026-06-04 U0 裁决 X3）：两级流水线——**Coach 出战略 brief**（知识焦点 / intent tags / 文案，住在 TodayPlan 的 `review_session_proposal` 扩展里；题数 / 分钟 / 时间盒 / 科目配比由 `src/core/daily-review-plan.ts` 按到期队列与每日预算计算，YUK-1622），**ReviewPlanTask 按 brief 做战术出卷**（从候选池选题/探针、写 plan、session 内 checkpoint 自适应；池子不够时输出 `needs[]` 声明而非自己生成）。记忆（Mem0 / memory brief）只进 Coach、经 brief 下传，**永不直接参与选题**。
 - **梦境流（Dreaming lane）**：夜间 cron 跑的批量任务，挖新知识点 / 调整掌握度 / 提议关联；产出为 `event WHERE action='propose' AND actor_kind='agent' AND actor_ref='dreaming'`。
