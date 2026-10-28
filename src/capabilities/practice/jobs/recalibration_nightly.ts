@@ -12,6 +12,8 @@
 //
 // ── 红线 ────────────────────────────────────────────────────────────────────
 // G1：批函数在 job 顶层调（非 attempt tx 内）→ per-item try/catch 隔离，不加 SAVEPOINT。
+//     （YUK-1590：批内 per-item 的条件写入开短事务 + 证据行 FOR SHARE，属 job 顶层
+//     自有事务，不在 attempt tx 内、非 SAVEPOINT，try/catch 隔离不变。）
 // G3：只写 item_calibration 后验列族（+ 归一时的 θ̂/θ 快照/family delta 随动）——
 //     never item b / stream / due / 判分。
 // G5：候选 JOIN question 排 draft（notDraftPredicate）。
