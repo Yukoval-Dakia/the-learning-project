@@ -10,7 +10,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ItemPriorCandidateFrozen } from '@/capabilities/practice/server/item-prior-durable-operation';
-import { resolveSubjectProfileForKnowledgeIds } from '@/capabilities/practice/server/knowledge-runtime';
+import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
@@ -33,7 +33,7 @@ import {
 vi.mock('@/capabilities/practice/server/task-runtime', () => ({
   makePracticeTaskRunFn: vi.fn(),
 }));
-vi.mock('@/capabilities/practice/server/knowledge-runtime', () => ({
+vi.mock('@/kernel/read-models/subject-profile', () => ({
   resolveSubjectProfileForKnowledgeIds: vi.fn(),
 }));
 vi.mock('@/server/mastery/item-calibration', () => ({
