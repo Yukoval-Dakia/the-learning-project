@@ -10,7 +10,8 @@
 //
 // 写者契约（A3）：后验列族的批量写只由本模块承担；锚写者只在写锚时初始化后验；
 // 结算 revert 删掉最后一条证据后由 item-calibration.ts 在同一事务修回先验。在线
-// attempt 路径只读 effectiveB，从不写 b。
+// attempt 路径只读 effectiveB，从不写 b。批写入是条件写入：FOR SHARE 复核该题证据
+// 集未变才生效，与结算撤销（删证据 + 修回先验）的交错不会把旧估计写回（YUK-1590）。
 //
 // A5 尺度漂移审计：每批边界用先验主导的强锚题做 Kolen-Brennan mean/sigma linking；
 // 越界则整体归一回锚尺度并 flag 先验质量调查。G1：job 顶层 per-item try/catch；
@@ -87,6 +88,8 @@ export interface JointCalibrationBatchResult {
   skipped_no_anchor: number;
   /** 单题重算抛错被跳过（不阻断其余题）。 */
   skipped_failed: number;
+  /** 读取快照后该题证据集已变（结算撤销/新证据交错）：本次写入作废，留待下一批（YUK-1590）。 */
+  skipped_evidence_changed: number;
   /** 本批 Δb（相对上一批落点/锚）中位数/最大值（A2.3 收敛判据；logit）。 */
   delta_median: number | null;
   delta_max: number | null;
@@ -186,6 +189,7 @@ export async function runJointCalibrationBatch(
     recalibrated: 0,
     skipped_no_anchor: 0,
     skipped_failed: 0,
+    skipped_evidence_changed: 0,
     delta_median: null,
     delta_max: null,
     kb_reference_n: 0,
@@ -266,22 +270,44 @@ export async function runJointCalibrationBatch(
         previousBPost = posterior.bPost;
         posterior = updateDifficultyPosterior({ mu, tau }, points, { previousBPost });
       }
-      deltas.push(posterior.bPost - (cal.b_post ?? mu));
-      await db
-        .update(item_calibration)
-        .set({
-          b_post: posterior.bPost,
-          posterior_variance: posterior.variance,
-          calibration_n: rows.length,
-          calibration_weight: 1 / posterior.variance,
-          calibration_source: 'joint',
-          last_calibrated_at: now,
-          updated_at: now,
-        })
-        .where(
-          and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')),
-        );
-      result.recalibrated++;
+      // YUK-1590 交错防护：FOR SHARE 锁该题证据行并复核集合未变才写。结算撤销
+      // （删证据 + 同事务修回先验）与批写入由此串行：撤销先提交 ⇒ 集合已变，本次
+      // 写入作废（skipped_evidence_changed；calibration_n 与现存证据数不一致使该题
+      // 下一批重新入候选）；批先持锁 ⇒ 撤销的 DELETE 等待本事务提交，其「修回先验」
+      // 必然落在批写入之后，最终值仍正确。并发 INSERT 无行可锁、不被挡，但至多让
+      // calibration_n 落后真实计数，下一批自动补算（不会基于已删证据留下幽灵后验）。
+      const applied = await db.transaction(async (tx) => {
+        const currentRows = await tx
+          .select({ id: difficulty_calibration_evidence.id })
+          .from(difficulty_calibration_evidence)
+          .where(eq(difficulty_calibration_evidence.question_id, questionId))
+          .for('share');
+        const currentIds = new Set(currentRows.map((row) => row.id));
+        if (currentRows.length !== rows.length || !rows.every((row) => currentIds.has(row.id))) {
+          return false;
+        }
+        await tx
+          .update(item_calibration)
+          .set({
+            b_post: posterior.bPost,
+            posterior_variance: posterior.variance,
+            calibration_n: rows.length,
+            calibration_weight: 1 / posterior.variance,
+            calibration_source: 'joint',
+            last_calibrated_at: now,
+            updated_at: now,
+          })
+          .where(
+            and(eq(item_calibration.question_id, questionId), eq(item_calibration.track, 'hard')),
+          );
+        return true;
+      });
+      if (applied) {
+        deltas.push(posterior.bPost - (cal.b_post ?? mu));
+        result.recalibrated++;
+      } else {
+        result.skipped_evidence_changed++;
+      }
     } catch (err) {
       console.error('[joint_calibration] question posterior update failed', { questionId, err });
       result.skipped_failed++;
