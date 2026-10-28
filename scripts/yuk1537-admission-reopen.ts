@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 import { and, count, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import type { Provider } from '@/ai/task-spec';
+import { type Provider, canonicalProviderName } from '@/ai/task-spec';
 import {
   ADMISSION_FAMILY,
   admissionJobId,
@@ -54,15 +54,14 @@ function routing() {
   if (process.env.QUESTION_ADMISSION_POLICY_ID?.trim().endsWith('@1')) {
     throw new Error('Remove obsolete QUESTION_ADMISSION_POLICY_ID @1 pin before deploy');
   }
-  const solver2Provider = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+  const solver2ProviderRaw = process.env.QUESTION_ADMISSION_SOLVER2_PROVIDER;
+  const solver2Provider = solver2ProviderRaw
+    ? (canonicalProviderName(solver2ProviderRaw) as Provider)
+    : undefined;
   const solver2Model = process.env.QUESTION_ADMISSION_SOLVER2_MODEL;
   for (const [solver, provider, model] of [
     ['Solver A', 'xiaomi-token-plan', 'mimo-v2.6-pro'],
-    [
-      'Solver B',
-      (solver2Provider || 'xiaomi-token-plan') as Provider,
-      solver2Model || 'mimo-v2.6-pro',
-    ],
+    ['Solver B', solver2Provider || 'xiaomi-token-plan', solver2Model || 'mimo-v2.6-pro'],
   ] as const) {
     try {
       assertModelProfileCapabilityFit(questionAdmissionSolveTaskSpec.definition, provider, model);
