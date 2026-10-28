@@ -870,6 +870,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect(locks.has(Number(writeLock))).toBe(true);
   });
 
+  // @invariant grading: mixed per-KC bits settle honest per-KC observations with a one-bit θ̂ abstain while FSRS cards still land per KC
+  // @fails-if a mixed-bit batch fabricates a one-bit θ̂ update or drops either KC's FSRS card
   it('多 part 混合 KC 位 ⇒ θ̂ abstain(mixed)；各自 per-KC obs 如实记录', async () => {
     const db = testDb();
     // 复合组：root + 两个物理 part（各 1 KC、各 1 单元）。
@@ -982,6 +984,8 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
     expect((await fsrsRow('knowledge', 'kc_b'))?.state?.reps).toBe(1);
   });
 
+  // @invariant grading: an issued-part subset settles only in-scope KCs with scoped FSRS/θ̂ effects
+  // @fails-if unissued parts leak into the settlement scope or their KCs receive FSRS/θ̂ writes
   it.each([false, true])(
     'issued subset: full credit and scoped FSRS/theta even with root union tags=%s',
     async (rootUnion) => {
