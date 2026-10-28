@@ -102,6 +102,10 @@ export const knowledge = pgTable('knowledge', {
   //       events now declare `approval_status:'pending'` — an agent-minted KC is
   //       an unauthorised new knowledge point and is honestly marked so. The
   //       fold (core/projections/knowledge.ts) honors ONLY the 'pending' claim.
+  //       YUK-1604: tag births also carry `pending_reasons` (unresolved domain /
+  //       non-kc parent — the owner's await-confirmation bucket) and the input
+  //       classification audit block; pre-YUK-1405 births are stock-repaired to
+  //       'pending' via `experimental:knowledge_approval_update` control events.
   //   (b) There are still ZERO filtering readers: no query gates behaviour on
   //       this column, so a 'pending' node stays fully usable (tags, mastery,
   //       placement) — the marker is truthful metadata for the future review
@@ -119,6 +123,8 @@ export const knowledge = pgTable('knowledge', {
   // θ/PFA/FSRS、不进供给/选题候选（读写门见 knowledge-roles 读模型）。goal 与 kc
   // 可经 knowledge_edge 互相关联，互不替代。存量回填走
   // experimental:knowledge_role_update 控制面事件（ops 回填脚本），不重写 genesis。
+  // YUK-1604 — 拍卷 tag 检索（matchKnowledgeBySimilarity）只认 role='kc'：目标/容器
+  // 节点不再作为题目的匹配知识点（含起点锚 placement-starter:* 的存量修复）。
   role: text('role', { enum: ['kc', 'goal', 'container'] })
     .notNull()
     .default('kc'),

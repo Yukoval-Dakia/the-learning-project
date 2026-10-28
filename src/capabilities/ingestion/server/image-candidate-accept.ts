@@ -688,8 +688,13 @@ export async function acceptImageCandidateProposal(
               deadlineAt: new Date(Date.now() + 20_000),
               operationAnchor: proposalId,
             },
-            // Reuse the classified name; no second model call.
-            nameKcFn: async () => ({ kc_name: bridge.kc_name }),
+            // Reuse the classified name; no second model call. Run provenance rides
+            // along for the tag audit event (YUK-1604).
+            nameKcFn: async () => ({
+              kc_name: bridge.kc_name,
+              ...(bridge.task_run_id !== undefined ? { task_run_id: bridge.task_run_id } : {}),
+              ...(bridge.cost_usd !== undefined ? { cost_usd: bridge.cost_usd } : {}),
+            }),
           },
           {
             // Redact identifiers at the model boundary. This path owns no ingestion

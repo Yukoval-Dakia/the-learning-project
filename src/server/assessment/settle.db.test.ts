@@ -31,6 +31,7 @@ import {
   question,
   question_group_lifecycle,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
 import {
   type NormalizableQuestionRow,
@@ -121,6 +122,30 @@ interface SeedIds {
   submissionId: string;
 }
 
+/**
+ * YUK-1604 — independent-attempt receipt (mirrors submit.ts's assistance snapshot).
+ * Settlement gates θ̂/automatic rating on provable independence, so fixtures standing
+ * in for ordinary independent submissions must carry this receipt.
+ */
+async function writeIndependentReceipt(
+  db: ReturnType<typeof testDb>,
+  receiptId: string,
+  submissionId: string,
+  submittedAt: Date,
+): Promise<void> {
+  await writeEvent(db, {
+    id: receiptId,
+    action: 'experimental:assessment_submission',
+    subject_kind: 'submission',
+    subject_id: submissionId,
+    actor_kind: 'system',
+    actor_ref: 'fixture',
+    outcome: null,
+    payload: { assistance: { status: 'independent', event_ids: [] } },
+    created_at: submittedAt,
+  });
+}
+
 /** 单 submission group + head 同事务（§11 原子不变量）。 */
 async function seedChain(
   prefix: string,
@@ -167,6 +192,7 @@ async function seedChain(
       now: submittedAt,
     });
   });
+  await writeIndependentReceipt(db, `${prefix}_receipt`, submissionId, submittedAt);
   return { qid, revisionId, issuanceId, groupId, submissionId };
 }
 
@@ -912,6 +938,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
         now: NOW,
       });
     });
+    await writeIndependentReceipt(db, 'mp_receipt', submissionId, NOW);
     // p1 全对（kc_a=1）、p2 全错（kc_b=0）—— per-KC 位混合。
     await db.insert(evaluation).values({
       evaluation_id: 'mp_ev1',
@@ -1025,6 +1052,7 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
           now: NOW,
         });
       });
+      await writeIndependentReceipt(db, 'mp_receipt', submissionId, NOW);
       // 仅发 p1 且全对；p2 不产生结果，不参与分母或其独有 KC 的结算。
       await db.insert(evaluation).values({
         evaluation_id: 'mp_ev1',
