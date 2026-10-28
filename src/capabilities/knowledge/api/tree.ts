@@ -1,7 +1,7 @@
 import { KnowledgeTreeQuerySchema } from '@/capabilities/knowledge/api/contracts';
-import { loadTreeSnapshot } from '@/capabilities/knowledge/server/tree';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
+import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 
 export async function GET(
