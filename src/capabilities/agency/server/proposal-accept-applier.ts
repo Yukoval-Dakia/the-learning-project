@@ -1,13 +1,13 @@
 import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
 import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import type {
   ProposalAcceptApplier,
   ProposalAcceptInput,
   ProposalAcceptResult,
   ProposalDismissInput,
 } from '@/kernel/proposals';
-import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
