@@ -4299,12 +4299,7 @@
       "file": "src/capabilities/practice/server/question-supply/jyeoo-candidates.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "SourceAssetRow",
-        "lockImageStorageKey",
-        "persistImageAsset",
-        "sha256Hex"
-      ],
+      "symbols": ["SourceAssetRow", "lockImageStorageKey", "persistImageAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4314,9 +4309,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/assessment-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "resolveVerdictsForAttempts"
-      ],
+      "symbols": ["resolveVerdictsForAttempts"],
       "issue": "YUK-1570",
       "owns": "双轨裁决读模型：某次作答/评估最终判分的共享 resolver（legacy judge-event 与 assessment_verdict 两车道）",
       "date": "2026-10-20"
@@ -4326,9 +4319,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/cause-policy.ts",
       "kind": "value",
-      "symbols": [
-        "effectiveCauseForFailureAttempt"
-      ],
+      "symbols": ["effectiveCauseForFailureAttempt"],
       "issue": "YUK-1570",
       "owns": "mistake 投影的 effective cause 策略：active user_cause 权威，否则最新 active agent judge",
       "date": "2026-10-20"
@@ -4338,9 +4329,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/failure-attempts.ts",
       "kind": "value",
-      "symbols": [
-        "getFailureAttempts"
-      ],
+      "symbols": ["getFailureAttempts"],
       "issue": "YUK-1570",
       "owns": "failure-attempt 证据读模型：失败 attempt 投影 + chained judge/user_cause 归因 + correction active-row 解析",
       "date": "2026-10-20"
@@ -4350,9 +4339,7 @@
       "file": "src/capabilities/practice/server/session-summary.ts",
       "module": "src/kernel/read-models/misc-cause-labels.ts",
       "kind": "value",
-      "symbols": [
-        "resolveMiscCauseLabels"
-      ],
+      "symbols": ["resolveMiscCauseLabels"],
       "issue": "YUK-1570",
       "owns": "misc_ cause id → 已晋升 misconception 节点 title 的读模型层回填",
       "date": "2026-10-20"
@@ -4362,9 +4349,7 @@
       "file": "src/capabilities/ingestion/api/asset-delete.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "deleteImageAsset"
-      ],
+      "symbols": ["deleteImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4374,9 +4359,7 @@
       "file": "src/capabilities/ingestion/api/assets.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4386,9 +4369,7 @@
       "file": "src/capabilities/ingestion/api/pdf.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4398,11 +4379,7 @@
       "file": "src/capabilities/ingestion/server/crop.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "isUniqueViolation",
-        "lockImageStorageKey",
-        "sha256Hex"
-      ],
+      "symbols": ["isUniqueViolation", "lockImageStorageKey", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4412,10 +4389,7 @@
       "file": "src/capabilities/ingestion/server/docx/persist-page-evidence.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset",
-        "persistSourceAsset"
-      ],
+      "symbols": ["persistImageAsset", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4425,9 +4399,7 @@
       "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4437,10 +4409,7 @@
       "file": "src/capabilities/ingestion/server/source-package.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistSourceAsset",
-        "sha256Hex"
-      ],
+      "symbols": ["persistSourceAsset", "sha256Hex"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4450,10 +4419,7 @@
       "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "isUniqueViolation",
-        "persistSourceAsset"
-      ],
+      "symbols": ["isUniqueViolation", "persistSourceAsset"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4463,9 +4429,7 @@
       "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "lockImageStorageKey"
-      ],
+      "symbols": ["lockImageStorageKey"],
       "issue": "YUK-1571",
       "owns": "Content-addressed source_asset write protocol: byte-view sha256 storage keys, one advisory lock held across blob put and owner-row commit, put compensation on insert failure, last-owner object delete with fresh re-read under the key lock",
       "date": "2026-10-20"
@@ -4475,10 +4439,7 @@
       "file": "src/capabilities/agency/jobs/coach_daily.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -4488,10 +4449,7 @@
       "file": "src/capabilities/agency/jobs/dreaming_nightly.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -4501,9 +4459,7 @@
       "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "listActiveGoals"
-      ],
+      "symbols": ["listActiveGoals"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -4513,9 +4469,7 @@
       "file": "src/capabilities/copilot/server/learner-state.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -4525,10 +4479,7 @@
       "file": "src/capabilities/practice/server/due-list.ts",
       "module": "src/kernel/read-models/active-goal-scope.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveGoal",
-        "listActiveGoalsWithResolvedScope"
-      ],
+      "symbols": ["ActiveGoal", "listActiveGoalsWithResolvedScope"],
       "issue": "YUK-1571",
       "owns": "Shared active-goal effective-scope read model: status='active' goals ordered by sequence_hint then created_at; explicit scope returns the frozen column, subject_live re-derives the subject KC set via resolveSubjectKnowledgeIds once per distinct subject (Map-deduped); agency keeps goal writes and the scope vocabulary",
       "date": "2026-10-20"
@@ -4538,9 +4489,7 @@
       "file": "src/capabilities/agency/server/intervention/settlement-subscription.ts",
       "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "loadLatestTrustedInterventionDiagnosticVerdict"
-      ],
+      "symbols": ["loadLatestTrustedInterventionDiagnosticVerdict"],
       "issue": "YUK-1571",
       "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
       "date": "2026-10-20"
@@ -4550,9 +4499,7 @@
       "file": "src/capabilities/agency/server/intervention/store.ts",
       "module": "src/kernel/read-models/intervention-diagnostic-verdict.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1571",
       "owns": "Complete shared effective intervention-diagnostic reads: ordered bounded historical trusted judge selection and native frozen original learning_scope/current effective head/activation-generation-submission association; preserves active corrections, provenance, object references, trusted=false versus null and caller-owned transaction/lock order; practice retains materialize/retire/claim/recovery writes",
       "date": "2026-10-20"
@@ -4575,9 +4522,7 @@
       "file": "src/capabilities/ingestion/server/tools/compose-presentation.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "OpaqueJsonInput"
-      ],
+      "symbols": ["OpaqueJsonInput"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -4587,11 +4532,7 @@
       "file": "src/capabilities/ingestion/server/tools/proposal-tools.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "DomainTool",
-        "OpaqueJsonInput",
-        "ToolContext"
-      ],
+      "symbols": ["DomainTool", "OpaqueJsonInput", "ToolContext"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -4601,10 +4542,7 @@
       "file": "src/capabilities/knowledge/server/review.ts",
       "module": "src/kernel/tools/allowlists.ts",
       "kind": "value",
-      "symbols": [
-        "DOMAIN_TOOL_MCP_SERVER_NAME",
-        "resolveDomainToolNames"
-      ],
+      "symbols": ["DOMAIN_TOOL_MCP_SERVER_NAME", "resolveDomainToolNames"],
       "issue": "YUK-1553",
       "owns": "DomainTool surface 与 MCP wire 工具名的唯一授权清单/命名来源",
       "date": "2026-10-21"
@@ -4614,10 +4552,7 @@
       "file": "src/capabilities/knowledge/server/tools/proposal-tools.ts",
       "module": "src/kernel/proposals/signals.ts",
       "kind": "value",
-      "symbols": [
-        "findActiveProposalCooldown",
-        "withProposalGateLock"
-      ],
+      "symbols": ["findActiveProposalCooldown", "withProposalGateLock"],
       "issue": "YUK-1553",
       "owns": "proposal (kind, cooldown_key) 去重/cooldown 的 advisory-lock 事务与有效冷却读取",
       "date": "2026-10-21"
@@ -4627,9 +4562,7 @@
       "file": "src/capabilities/knowledge/tasks/knowledge-tasks.ts",
       "module": "src/kernel/tools/allowlists.ts",
       "kind": "value",
-      "symbols": [
-        "resolveMcpAllowedTools"
-      ],
+      "symbols": ["resolveMcpAllowedTools"],
       "issue": "YUK-1553",
       "owns": "DomainTool surface 与 MCP wire 工具名的唯一授权清单/命名来源",
       "date": "2026-10-21"
@@ -4639,11 +4572,7 @@
       "file": "src/capabilities/practice/server/tools/proposal-tools.ts",
       "module": "src/kernel/tools/types.ts",
       "kind": "value",
-      "symbols": [
-        "DomainTool",
-        "OpaqueJsonInput",
-        "ToolContext"
-      ],
+      "symbols": ["DomainTool", "OpaqueJsonInput", "ToolContext"],
       "issue": "YUK-1553",
       "owns": "DomainTool 契约与共享 opaque JSON 输入类型（OpaqueJsonInput）",
       "date": "2026-10-21"
@@ -4653,9 +4582,7 @@
       "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
       "module": "src/server/mastery/joint-calibration.ts",
       "kind": "value",
-      "symbols": [
-        "runJointCalibrationBatch"
-      ],
+      "symbols": ["runJointCalibrationBatch"],
       "issue": "YUK-439",
       "owns": "Joint calibration batch: recompute each question b posterior from the difficulty_calibration_evidence ledger under the agent prior, write item_calibration posterior columns, and run the A5 KB drift audit/renormalization. The practice job owns only nightly scheduling/yield; this edge replaces the prior same-responsibility trigger import of the retired AIPW firm-up (recalibration.ts), not a second business dependency.",
       "date": "2026-10-21"
@@ -4665,9 +4592,7 @@
       "file": "src/capabilities/observability/api/harness-scoreboard.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "errorResponse"
-      ],
+      "symbols": ["errorResponse"],
       "issue": "YUK-1557",
       "owns": "HTTP error envelope for the harness scoreboard read route",
       "date": "2026-10-21"
@@ -4677,9 +4602,7 @@
       "file": "src/capabilities/observability/server/harness-scoreboard.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1557",
       "owns": "Persist the deterministic daily harness scoreboard as a first-write-wins event projection",
       "date": "2026-10-21"
@@ -4689,9 +4612,7 @@
       "file": "src/capabilities/practice/jobs/source_verify.ts",
       "module": "src/kernel/records/assessment-publication.ts",
       "kind": "value",
-      "symbols": [
-        "promoteVerifiedGroupPartRows"
-      ],
+      "symbols": ["promoteVerifiedGroupPartRows"],
       "issue": "YUK-1568",
       "owns": "组生命周期 owner 模块：统一发布 seam、lifecycle 维度与组子行晋升的完整操作（本边 = 组根来源核验成功后同事务晋升当前 revision 声明的真实 part 行）",
       "date": "2026-10-21"
@@ -4701,10 +4622,7 @@
       "file": "src/capabilities/ingestion/api/session-history.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "errorResponse"
-      ],
+      "symbols": ["ApiError", "errorResponse"],
       "issue": "YUK-1522",
       "owns": "Canonical API errors for the ingestion session history read endpoint",
       "date": "2026-10-21"
@@ -4714,10 +4632,7 @@
       "file": "src/capabilities/ingestion/api/session-history.ts",
       "module": "src/kernel/read-models/question-serving.ts",
       "kind": "value",
-      "symbols": [
-        "UNKNOWN_SERVING",
-        "readQuestionServing"
-      ],
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
       "issue": "YUK-1522",
       "owns": "Authoritative current question serving projection kept separate from captured ingestion history; the API does not duplicate the serving gate",
       "date": "2026-10-21"
@@ -4727,9 +4642,7 @@
       "file": "src/capabilities/ingestion/server/tools/compose-presentation.ts",
       "module": "src/server/questions/draft-contract.ts",
       "kind": "value",
-      "symbols": [
-        "draftDocumentToContract"
-      ],
+      "symbols": ["draftDocumentToContract"],
       "issue": "YUK-1568",
       "owns": "Complete existing v2 draft-to-four-layer assessment conversion, including stable identities, material references, declared answer shapes, blank order and private scoring authority; the same implementation is used by submit.",
       "date": "2026-10-22"
@@ -4739,9 +4652,7 @@
       "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
       "module": "src/kernel/records/question-block-lifecycle-event.ts",
       "kind": "value",
-      "symbols": [
-        "writeQuestionBlockLifecycleEvent"
-      ],
+      "symbols": ["writeQuestionBlockLifecycleEvent"],
       "issue": "YUK-1568",
       "owns": "Complete existing question-block lifecycle AFTER-event writer, including actor, status/figure/version envelope and writeEvent validation. Consumer bypasses an old server re-export without changing merge/reassign bodies.",
       "date": "2026-10-22"
@@ -4751,9 +4662,7 @@
       "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
       "module": "src/kernel/canonical-json.ts",
       "kind": "value",
-      "symbols": [
-        "sha256CanonicalJson"
-      ],
+      "symbols": ["sha256CanonicalJson"],
       "issue": "YUK-1568",
       "owns": "Stable canonical JSON SHA-256 for the compose save operation fingerprint; binds tool, actor, draft block/version and presentation to the existing request receipt.",
       "date": "2026-10-22"
@@ -4763,10 +4672,7 @@
       "file": "src/capabilities/observability/api/custom-providers.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "errorResponse"
-      ],
+      "symbols": ["ApiError", "errorResponse"],
       "issue": "YUK-1563",
       "owns": "Kernel HTTP error envelope: ApiError (typed throw for 4xx config-input failures) + errorResponse (uniform JSON error serialization at the route boundary). Same envelope every other observability admin route handler uses.",
       "date": "2026-10-21"
@@ -4776,9 +4682,7 @@
       "file": "src/capabilities/observability/server/custom-provider-store.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1563",
       "owns": "Kernel HTTP error envelope: ApiError typed throw for 4xx custom-provider input failures (invalid slug/URL/env name/protocol, limit reached), serialized uniformly by the route boundary.",
       "date": "2026-10-21"
@@ -4788,9 +4692,7 @@
       "file": "src/capabilities/notes/server/artifact-reference-search.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the canonical API error envelope. Notes owns reference-search validation and selection rules.",
       "date": "2026-10-21"
@@ -4800,9 +4702,7 @@
       "file": "src/capabilities/shell/server/subjects-list.ts",
       "module": "src/server/subjects/resolution-cache.ts",
       "kind": "value",
-      "symbols": [
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["isGeneralFallbackFor"],
       "issue": "YUK-1358",
       "owns": "Resolution cache owns hydrated general-fallback facts. Shell owns the complete learner subject list projection. This existing dependency moves from the HTTP module with that operation.",
       "date": "2026-10-21"
@@ -4812,9 +4712,7 @@
       "file": "src/capabilities/practice/server/review-weekly.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the canonical API error envelope. Practice owns report query validation. ApiError moves into the operation while HTTP retains errorResponse, adding one physical reference rather than a net-zero move.",
       "date": "2026-10-21"
@@ -4824,9 +4722,7 @@
       "file": "src/capabilities/practice/server/review-weekly.ts",
       "module": "src/kernel/read-models/assessment-review-occurrences.ts",
       "kind": "value",
-      "symbols": [
-        "loadNativeReviewOccurrences"
-      ],
+      "symbols": ["loadNativeReviewOccurrences"],
       "issue": "YUK-1358",
       "owns": "Kernel owns native assessment review occurrences. Practice consumes those facts for the weekly report; this reference moves out of the HTTP adapter.",
       "date": "2026-10-21"
@@ -4836,9 +4732,7 @@
       "file": "src/capabilities/practice/server/review-weekly.ts",
       "module": "src/kernel/read-models/failure-attempts.ts",
       "kind": "value",
-      "symbols": [
-        "getCurrentFailureAttempts"
-      ],
+      "symbols": ["getCurrentFailureAttempts"],
       "issue": "YUK-1358",
       "owns": "Kernel owns current effective failure facts. Practice owns their weekly report aggregation; this reference moves out of the HTTP adapter.",
       "date": "2026-10-21"
@@ -4848,9 +4742,7 @@
       "file": "src/capabilities/practice/server/review-weekly.ts",
       "module": "src/kernel/read-models/misc-cause-labels.ts",
       "kind": "value",
-      "symbols": [
-        "resolveMiscCauseLabels"
-      ],
+      "symbols": ["resolveMiscCauseLabels"],
       "issue": "YUK-1358",
       "owns": "Kernel owns active misc cause label resolution. Practice owns the weekly cause ranking and display projection; this reference moves out of the HTTP adapter.",
       "date": "2026-10-21"
@@ -4860,9 +4752,7 @@
       "file": "src/capabilities/copilot/server/chat-acceptance.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1572",
       "owns": "Kernel owns the existing typed API error contract. Copilot owns acceptance recovery decisions and preserves their status, retry headers and causes; HTTP response serialization remains in the route.",
       "date": "2026-10-21"
@@ -4872,10 +4762,7 @@
       "file": "src/capabilities/copilot/server/chat-acceptance.ts",
       "module": "src/server/boss/client.ts",
       "kind": "value",
-      "symbols": [
-        "fromPgBossDrizzleTx",
-        "getStartedBoss"
-      ],
+      "symbols": ["fromPgBossDrizzleTx", "getStartedBoss"],
       "issue": "YUK-1572",
       "owns": "Boss owns queue startup and the transaction adapter. Copilot owns accepted-turn recovery and retains the existing per-branch bootstrap timing; this dependency moves from api/chat.ts without increasing the owner-pair total.",
       "date": "2026-10-21"
@@ -4885,9 +4772,7 @@
       "file": "src/capabilities/copilot/server/chat-acceptance.ts",
       "module": "src/server/events/writer.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1572",
       "owns": "Events owns job-event persistence on the supplied transaction. Copilot owns legacy enqueue-failure compensation under the existing dispatch lock; this dependency moves from api/chat.ts without increasing the owner-pair total.",
       "date": "2026-10-21"
@@ -4897,9 +4782,7 @@
       "file": "src/capabilities/practice/server/placement-profile.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the typed API error contract. Practice owns complete profile reading; HTTP retains errorResponse, so splitting ApiError adds a physical reference rather than being entirely net zero.",
       "date": "2026-10-21"
@@ -4909,9 +4792,7 @@
       "file": "src/capabilities/practice/server/placement-profile.ts",
       "module": "src/kernel/read-models/mastery-projection.ts",
       "kind": "value",
-      "symbols": [
-        "getMasteryProjection"
-      ],
+      "symbols": ["getMasteryProjection"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the mastery projection facts. Practice owns scope, profile assembly, counts and ordering; the same dependency moves from the HTTP adapter.",
       "date": "2026-10-21"
@@ -4921,9 +4802,7 @@
       "file": "src/capabilities/practice/server/placement-profile.ts",
       "module": "src/server/calibration/axis-writer.ts",
       "kind": "value",
-      "symbols": [
-        "readLearnerAxisStates"
-      ],
+      "symbols": ["readLearnerAxisStates"],
       "issue": "YUK-1358",
       "owns": "Calibration owns the existing read-only axis facts. Practice preserves their optional profile projection; the same dependency moves from the HTTP adapter without changing the axis owner.",
       "date": "2026-10-21"
@@ -4933,9 +4812,7 @@
       "file": "src/capabilities/practice/server/placement-profile.ts",
       "module": "src/server/coldstart/propagate-priors.ts",
       "kind": "value",
-      "symbols": [
-        "loadDayOnePriors"
-      ],
+      "symbols": ["loadDayOnePriors"],
       "issue": "YUK-1358",
       "owns": "Coldstart owns the existing flag, native loader and prior computation. Practice preserves optional prior fields in the complete profile read; the same dependency moves from the HTTP adapter.",
       "date": "2026-10-21"
@@ -4945,10 +4822,7 @@
       "file": "src/capabilities/notes/server/visible-artifact-backlinks.ts",
       "module": "src/kernel/read-models/artifact-backlinks.ts",
       "kind": "value",
-      "symbols": [
-        "listBacklinks",
-        "resolveOwningLearningItemIds"
-      ],
+      "symbols": ["listBacklinks", "resolveOwningLearningItemIds"],
       "issue": "YUK-1572",
       "owns": "Kernel owns inbound artifact reference facts and deterministic owning learning-item resolution; Notes owns visibility and surface projection.",
       "date": "2026-10-22"
@@ -4958,9 +4832,7 @@
       "file": "src/capabilities/notes/server/visible-artifact-backlinks.ts",
       "module": "src/kernel/read-models/artifact-corrections.ts",
       "kind": "value",
-      "symbols": [
-        "getArtifactCorrectionStates"
-      ],
+      "symbols": ["getArtifactCorrectionStates"],
       "issue": "YUK-1572",
       "owns": "Kernel projects whole-artifact and block correction state; Notes uses those facts to decide visible backlinks without duplicating correction history.",
       "date": "2026-10-22"
@@ -4970,10 +4842,7 @@
       "file": "src/capabilities/ingestion/server/custom-code-assets.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "ImmutableAssetError",
-        "persistImmutableCustomCodeAsset"
-      ],
+      "symbols": ["ImmutableAssetError", "persistImmutableCustomCodeAsset"],
       "issue": "YUK-1513",
       "owns": "Complete immutable custom-code persistence: derive SHA-256/id from bytes, authorize in the owner transaction, serialize by storage key, conditionally create and verify blob bytes, insert owner ON CONFLICT DO NOTHING and verify immutable row identity; retain uncertain/orphan objects without compensation deletion.",
       "date": "2026-10-22"
@@ -4983,10 +4852,7 @@
       "file": "src/capabilities/practice/server/papers-list.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "collectionPayload"
-      ],
+      "symbols": ["ApiError", "collectionPayload"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic API error and collection envelopes; Practice owns paper-list validation and response assembly. The original API retains ApiError for POST, so this adds a physical error-port reference while its collectionPayload import moves to the shared operation.",
       "date": "2026-10-22"
@@ -4996,9 +4862,7 @@
       "file": "src/capabilities/practice/server/session-operations/placement-held-release.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic API error envelope; Practice owns held-release validation and complete operation sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this is an additional physical reference, not a net-zero move.",
       "date": "2026-10-22"
@@ -5008,9 +4872,7 @@
       "file": "src/capabilities/practice/server/session-operations/placement-next.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic API error envelope; Practice owns next-question validation and complete advance/projection sequencing. The retained HTTP adapter still uses ApiError for malformed JSON, so this adds a physical reference rather than a net-zero move.",
       "date": "2026-10-22"
@@ -5037,9 +4899,7 @@
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/kernel/records/materialized-id-index.ts",
       "kind": "value",
-      "symbols": [
-        "upsertMaterializedIdIndex"
-      ],
+      "symbols": ["upsertMaterializedIdIndex"],
       "issue": "YUK-1570",
       "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
       "date": "2026-10-22"
@@ -5049,9 +4909,7 @@
       "file": "src/capabilities/agency/server/learning-intent.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "createPendingLearningItem"
-      ],
+      "symbols": ["createPendingLearningItem"],
       "issue": "YUK-1570",
       "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
       "date": "2026-10-22"
@@ -5061,10 +4919,7 @@
       "file": "src/capabilities/agency/server/proposal-appliers.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "hasLearningItemGenesisAnchor",
-        "projectLearningItemGuarded"
-      ],
+      "symbols": ["hasLearningItemGenesisAnchor", "projectLearningItemGuarded"],
       "issue": "YUK-1570",
       "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
       "date": "2026-10-22"
@@ -5074,9 +4929,7 @@
       "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
       "module": "src/server/projections/learning_item.ts",
       "kind": "value",
-      "symbols": [
-        "applyLearningItemRepair"
-      ],
+      "symbols": ["applyLearningItemRepair"],
       "issue": "YUK-1570",
       "owns": "The existing server repair owner retains its caller-held-lock precondition and causal event clock. Agency consumes that complete repair operation directly after retirement of its forwarding port.",
       "date": "2026-10-22"
@@ -5086,9 +4939,7 @@
       "file": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "createPendingLearningItem"
-      ],
+      "symbols": ["createPendingLearningItem"],
       "issue": "YUK-1570",
       "owns": "Kernel owns learning-item creation defaults, genesis/index/projection order and complete structural materialization. The capability retains proposal decisions, caller transaction, locks and artifact pairing.",
       "date": "2026-10-22"
@@ -5098,9 +4949,7 @@
       "file": "src/capabilities/knowledge/server/node-creation.ts",
       "module": "src/kernel/records/materialized-id-index.ts",
       "kind": "value",
-      "symbols": [
-        "upsertMaterializedIdIndex"
-      ],
+      "symbols": ["upsertMaterializedIdIndex"],
       "issue": "YUK-1570",
       "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
       "date": "2026-10-22"
@@ -5110,9 +4959,7 @@
       "file": "src/capabilities/knowledge/server/proposals.ts",
       "module": "src/kernel/records/materialized-id-index.ts",
       "kind": "value",
-      "symbols": [
-        "upsertMaterializedIdIndex"
-      ],
+      "symbols": ["upsertMaterializedIdIndex"],
       "issue": "YUK-1570",
       "owns": "Kernel owns immutable first-write-wins materialization provenance. The capability supplies the same event and entity identity inside its existing transaction.",
       "date": "2026-10-22"
@@ -5122,11 +4969,7 @@
       "file": "src/capabilities/practice/server/candidate-signals.ts",
       "module": "src/kernel/read-models/question-difficulty.ts",
       "kind": "value",
-      "symbols": [
-        "BSource",
-        "CandidateDifficultyRead",
-        "prepareCandidateDifficultyRead"
-      ],
+      "symbols": ["BSource", "CandidateDifficultyRead", "prepareCandidateDifficultyRead"],
       "issue": "YUK-1570",
       "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
       "date": "2026-10-22"
@@ -5136,9 +4979,7 @@
       "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
       "module": "src/kernel/read-models/question-difficulty.ts",
       "kind": "value",
-      "symbols": [
-        "readHardCalibrationBs"
-      ],
+      "symbols": ["readHardCalibrationBs"],
       "issue": "YUK-1570",
       "owns": "The kernel owns complete hard-anchor/family reads and source quality; Practice retains candidate eligibility, read timing, signals and supply decisions. Mixed type specifiers do not create additional edges.",
       "date": "2026-10-22"
@@ -5148,9 +4989,7 @@
       "file": "src/capabilities/agency/server/scout/evidence-mcp.ts",
       "module": "src/kernel/tools/call-evidence.ts",
       "kind": "value",
-      "symbols": [
-        "writeToolCallLog"
-      ],
+      "symbols": ["writeToolCallLog"],
       "issue": "YUK-1570",
       "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
       "date": "2026-10-22"
@@ -5160,9 +4999,7 @@
       "file": "src/capabilities/knowledge/server/tools/proposal-tools.ts",
       "module": "src/kernel/tools/call-evidence.ts",
       "kind": "value",
-      "symbols": [
-        "writeToolCallLog"
-      ],
+      "symbols": ["writeToolCallLog"],
       "issue": "YUK-1570",
       "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
       "date": "2026-10-22"
@@ -5172,9 +5009,7 @@
       "file": "src/capabilities/practice/server/admission/solve.ts",
       "module": "src/kernel/tools/call-evidence.ts",
       "kind": "value",
-      "symbols": [
-        "writeToolCallLog"
-      ],
+      "symbols": ["writeToolCallLog"],
       "issue": "YUK-1570",
       "owns": "Kernel owns the complete tool-call evidence insert and mirror linkage; the caller preserves its existing execution, transaction, failure and observation order.",
       "date": "2026-10-22"
@@ -5184,9 +5019,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "HTTP error identity and status semantics shared by existing administrative readers.",
       "date": "2026-10-22"
@@ -5196,11 +5029,7 @@
       "file": "src/capabilities/observability/server/subject-admin-read.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "TraitDegradation",
-        "getSubjectTraitResolutions",
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["TraitDegradation", "getSubjectTraitResolutions", "isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -5210,9 +5039,7 @@
       "file": "src/capabilities/observability/server/subject-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -5222,9 +5049,7 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -5234,9 +5059,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -5246,9 +5069,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/read-models/subject-trait-resolutions.ts",
       "kind": "value",
-      "symbols": [
-        "isGeneralFallbackFor"
-      ],
+      "symbols": ["isGeneralFallbackFor"],
       "issue": "YUK-1570",
       "owns": "Complete effective trait-resolution and fallback/degradation facts; administrative readers do not reassemble bindings.",
       "date": "2026-10-22"
@@ -5258,9 +5079,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -5270,9 +5089,7 @@
       "file": "src/capabilities/observability/server/trait-control-operations.ts",
       "module": "src/kernel/read-models/subject-hydration.ts",
       "kind": "value",
-      "symbols": [
-        "hydrateSubjectRegistryFromDb"
-      ],
+      "symbols": ["hydrateSubjectRegistryFromDb"],
       "issue": "YUK-1570",
       "owns": "Complete committed-subject hydration with last-good registry retention and the existing resolution report.",
       "date": "2026-10-22"
@@ -5282,9 +5099,7 @@
       "file": "src/capabilities/observability/server/trait-write.ts",
       "module": "src/kernel/records/subject-control-lock.ts",
       "kind": "value",
-      "symbols": [
-        "acquireControlPlaneLockSql"
-      ],
+      "symbols": ["acquireControlPlaneLockSql"],
       "issue": "YUK-1570",
       "owns": "The existing shared subject-control advisory lock SQL and unchanged key, used by control writers and bootstrap.",
       "date": "2026-10-22"
@@ -5294,9 +5109,7 @@
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "ensureSubjectRoot"
-      ],
+      "symbols": ["ensureSubjectRoot"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns complete idempotent subject-root event creation and materialization; Agency retains its goal transaction.",
       "date": "2026-10-22"
@@ -5306,10 +5119,7 @@
       "file": "src/capabilities/observability/server/subject-create.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "ensureSubjectRoot",
-        "subjectRootId"
-      ],
+      "symbols": ["ensureSubjectRoot", "subjectRootId"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns root identity and complete idempotent creation; Observability retains subject control, canonical claim, bindings and post-commit hydration.",
       "date": "2026-10-22"
@@ -5319,9 +5129,7 @@
       "file": "src/capabilities/observability/server/subject-control-write.ts",
       "module": "src/capabilities/knowledge/public.ts",
       "kind": "value",
-      "symbols": [
-        "updateSubjectRootNameFromControl"
-      ],
+      "symbols": ["updateSubjectRootNameFromControl"],
       "issue": "YUK-1570",
       "owns": "Knowledge owns locked root history validation, versioned name event and projection inside the caller control transaction.",
       "date": "2026-10-22"
@@ -5331,9 +5139,7 @@
       "file": "src/capabilities/knowledge/server/node-creation.ts",
       "module": "src/kernel/records/knowledge-node-history.ts",
       "kind": "value",
-      "symbols": [
-        "gatherAndFoldKnowledgeNode"
-      ],
+      "symbols": ["gatherAndFoldKnowledgeNode"],
       "issue": "YUK-1570",
       "owns": "Complete knowledge-node event history, anchor facts and folding with original query order.",
       "date": "2026-10-22"
@@ -5343,9 +5149,7 @@
       "file": "src/capabilities/knowledge/server/node-creation.ts",
       "module": "src/kernel/records/knowledge-node-materialization.ts",
       "kind": "value",
-      "symbols": [
-        "projectKnowledgeNodeGuarded"
-      ],
+      "symbols": ["projectKnowledgeNodeGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
       "date": "2026-10-22"
@@ -5355,9 +5159,7 @@
       "file": "src/capabilities/knowledge/server/proposal-appliers.ts",
       "module": "src/kernel/records/knowledge-node-materialization.ts",
       "kind": "value",
-      "symbols": [
-        "projectKnowledgeNodeGuarded"
-      ],
+      "symbols": ["projectKnowledgeNodeGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
       "date": "2026-10-22"
@@ -5367,9 +5169,7 @@
       "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
       "module": "src/kernel/records/knowledge-node-materialization.ts",
       "kind": "value",
-      "symbols": [
-        "projectKnowledgeNodeGuarded"
-      ],
+      "symbols": ["projectKnowledgeNodeGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete guarded knowledge-node structural materialization with original null-fold deletion protection and no embedding writes.",
       "date": "2026-10-22"
@@ -5379,9 +5179,7 @@
       "file": "src/capabilities/practice/jobs/quiz_verify.ts",
       "module": "src/server/r2.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1513",
       "owns": "Existing R2 client owns storage-key byte retrieval for the original kernel publisher asset barrier. Import and getR2 initialization occur only when that barrier invokes readAssetBytes; this same consumer exits the old publisher compatibility module.",
       "date": "2026-10-22"
@@ -5391,9 +5189,7 @@
       "file": "src/capabilities/practice/jobs/source_verify.ts",
       "module": "src/server/r2.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1513",
       "owns": "Existing R2 client owns storage-key byte retrieval for the original kernel publisher asset barrier. Import and getR2 initialization occur only when that barrier invokes readAssetBytes; this same consumer exits the old publisher compatibility module.",
       "date": "2026-10-22"
@@ -5403,9 +5199,7 @@
       "file": "src/capabilities/ingestion/server/auto-enroll.ts",
       "module": "src/kernel/records/question-block-transitions.ts",
       "kind": "value",
-      "symbols": [
-        "applyQuestionBlockTransition"
-      ],
+      "symbols": ["applyQuestionBlockTransition"],
       "issue": "YUK-1570",
       "owns": "Complete accepted question-block status/link/version and lifecycle-event persistence in the caller transaction; eligibility, locking and surrounding enrollment/revert orchestration remain with the caller.",
       "date": "2026-10-22"
@@ -5415,9 +5209,7 @@
       "file": "src/capabilities/ingestion/server/import-completion.ts",
       "module": "src/kernel/records/question-block-transitions.ts",
       "kind": "value",
-      "symbols": [
-        "applyQuestionBlockTransition"
-      ],
+      "symbols": ["applyQuestionBlockTransition"],
       "issue": "YUK-1570",
       "owns": "Complete accepted question-block status/link/version and lifecycle-event persistence in the caller transaction; eligibility, locking and surrounding enrollment/revert orchestration remain with the caller.",
       "date": "2026-10-22"
@@ -5427,9 +5219,7 @@
       "file": "src/capabilities/ingestion/server/revert-auto-enroll.ts",
       "module": "src/kernel/records/question-block-transitions.ts",
       "kind": "value",
-      "symbols": [
-        "applyQuestionBlockTransition"
-      ],
+      "symbols": ["applyQuestionBlockTransition"],
       "issue": "YUK-1570",
       "owns": "Complete accepted question-block status/link/version and lifecycle-event persistence in the caller transaction; eligibility, locking and surrounding enrollment/revert orchestration remain with the caller.",
       "date": "2026-10-22"
@@ -5439,9 +5229,7 @@
       "file": "src/capabilities/practice/server/assessment/issue-response.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns only the generic error/status/details envelope; Practice owns the complete issuance domain-result mapping. The original HTTP adapter still needs ApiError, so this is an additional physical reference, not a net-zero move.",
       "date": "2026-10-22"
@@ -5469,9 +5257,7 @@
       "file": "src/capabilities/knowledge/server/edge-topology-write.ts",
       "module": "src/kernel/records/knowledge-edge-facts.ts",
       "kind": "value",
-      "symbols": [
-        "runEdgeTopologyGate"
-      ],
+      "symbols": ["runEdgeTopologyGate"],
       "issue": "YUK-1570",
       "owns": "Complete knowledge-edge fact commands, event chronology and shared gather/materialization; endpoint locks/retry and proposal/B decisions remain with the existing callers.",
       "date": "2026-10-22"
@@ -5481,9 +5267,7 @@
       "file": "src/capabilities/agency/server/goals/create.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns only the generic error/status/details envelope; Agency owns complete scope and alias policy, the canonical creation call and DTO. The original HTTP adapter still uses ApiError, so this additional physical reference is not a net-zero move.",
       "date": "2026-10-22"
@@ -5493,9 +5277,7 @@
       "file": "src/capabilities/copilot/ui/companion/HeroBlock.tsx",
       "module": "src/capabilities/notes/ui-public.ts",
       "kind": "value",
-      "symbols": [
-        "getNotePage"
-      ],
+      "symbols": ["getNotePage"],
       "issue": "YUK-1473",
       "owns": "Notes owns the note page read. Copilot only renders an interactive artifact inline from it; this edge moves from the deleted copilot/ui/CopilotHeroCard.tsx with the companion rebuild, so the copilot -> notes pair total does not change.",
       "date": "2026-10-22"
@@ -5505,9 +5287,7 @@
       "file": "src/capabilities/copilot/server/learner-state.ts",
       "module": "src/kernel/read-models/learner-judgment.ts",
       "kind": "value",
-      "symbols": [
-        "readLearnerJudgments"
-      ],
+      "symbols": ["readLearnerJudgments"],
       "issue": "YUK-1431",
       "owns": "Approved first slice: batch v0-incumbent read-only adaptation owns the shared snapshot, incumbent mastery and retention reads, provenance and explicit unknowns. Copilot replaces its direct mastery value dependency with this complete read; no new capability-to-server or cross-capability edge, stable-contract ruling or compat shim.",
       "date": "2026-10-23"
@@ -5517,10 +5297,7 @@
       "file": "src/capabilities/notes/server/body-blocks-edit.ts",
       "module": "src/kernel/records/artifact-history.ts",
       "kind": "value",
-      "symbols": [
-        "hasArtifactGenesisAnchor",
-        "projectArtifactGuarded"
-      ],
+      "symbols": ["hasArtifactGenesisAnchor", "projectArtifactGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
       "date": "2026-10-22"
@@ -5530,10 +5307,7 @@
       "file": "src/capabilities/practice/jobs/variant_verify.ts",
       "module": "src/kernel/records/mistake-variant-facts.ts",
       "kind": "value",
-      "symbols": [
-        "hasMistakeVariantGenesisAnchor",
-        "projectMistakeVariantGuarded"
-      ],
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
       "date": "2026-10-22"
@@ -5543,10 +5317,7 @@
       "file": "src/capabilities/practice/server/proposal-appliers.ts",
       "module": "src/kernel/records/mistake-variant-facts.ts",
       "kind": "value",
-      "symbols": [
-        "hasMistakeVariantGenesisAnchor",
-        "projectMistakeVariantGuarded"
-      ],
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
       "date": "2026-10-22"
@@ -5556,9 +5327,7 @@
       "file": "src/capabilities/practice/server/failure-learning-variant.ts",
       "module": "src/kernel/records/mistake-variant-facts.ts",
       "kind": "value",
-      "symbols": [
-        "createMistakeVariantDraft"
-      ],
+      "symbols": ["createMistakeVariantDraft"],
       "issue": "YUK-1570",
       "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
       "date": "2026-10-22"
@@ -5568,10 +5337,7 @@
       "file": "src/capabilities/practice/server/proposal-accept-applier.ts",
       "module": "src/kernel/records/mistake-variant-facts.ts",
       "kind": "value",
-      "symbols": [
-        "hasMistakeVariantGenesisAnchor",
-        "projectMistakeVariantGuarded"
-      ],
+      "symbols": ["hasMistakeVariantGenesisAnchor", "projectMistakeVariantGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete MistakeVariant creation and history facts, anchor reads and guarded materialization belong to the canonical kernel owner. Caller eligibility, proposal decisions, paid checks, lifecycle injection, clocks, locks and transactions stay unchanged.",
       "date": "2026-10-22"
@@ -5581,11 +5347,7 @@
       "file": "src/capabilities/agency/server/goals/commands.ts",
       "module": "src/kernel/records/goal-history.ts",
       "kind": "value",
-      "symbols": [
-        "hasGoalGenesisAnchor",
-        "projectGoal",
-        "projectGoalGuarded"
-      ],
+      "symbols": ["hasGoalGenesisAnchor", "projectGoal", "projectGoalGuarded"],
       "issue": "YUK-1570",
       "owns": "Complete entity history facts, base-anchor reads and structural materialization share one explicit field selection. Caller eligibility, clocks, locks, transactions and mutation policy remain unchanged.",
       "date": "2026-10-22"
@@ -5595,10 +5357,7 @@
       "file": "src/capabilities/agency/server/conjecture/reconciliation-execution.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "WriteEventInput",
-        "writeEvent"
-      ],
+      "symbols": ["WriteEventInput", "writeEvent"],
       "issue": "YUK-1570",
       "owns": "Persist the deterministic research-meeting execution checkpoint after validating replay state and recovering prior probe-anchor counts; event writer retains the canonical event persistence protocol.",
       "date": "2026-10-22"
@@ -5623,10 +5382,7 @@
       "file": "src/capabilities/knowledge/server/edges-list.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "collectionPayload"
-      ],
+      "symbols": ["ApiError", "collectionPayload"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error and collection envelopes. Knowledge retains the complete list validation, post-pagination filtering and result assembly.",
       "date": "2026-10-23"
@@ -5636,9 +5392,7 @@
       "file": "src/capabilities/knowledge/server/edges-list.ts",
       "module": "src/kernel/read-models/learner-knowledge-visibility.ts",
       "kind": "value",
-      "symbols": [
-        "isLearnerVisibleKnowledgeId"
-      ],
+      "symbols": ["isLearnerVisibleKnowledgeId"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing learner knowledge visibility predicate. Knowledge retains its filtering order and aggregation within the complete list operation.",
       "date": "2026-10-23"
@@ -5648,9 +5402,7 @@
       "file": "src/capabilities/knowledge/server/edge-create.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error envelope. Knowledge retains validation and the complete manual edge creation sequence.",
       "date": "2026-10-23"
@@ -5660,9 +5412,7 @@
       "file": "src/capabilities/knowledge/server/edge-create.ts",
       "module": "src/server/boss/hub-sync-wake.ts",
       "kind": "value",
-      "symbols": [
-        "wakeHubSyncAfterCommit"
-      ],
+      "symbols": ["wakeHubSyncAfterCommit"],
       "issue": "YUK-1358",
       "owns": "Platform owns the existing best-effort send-capable boss and queue wake protocol, with durable trigger and minute recovery unchanged. Knowledge invokes it only after its creation transaction commits; this import moves out of the HTTP adapter.",
       "date": "2026-10-23"
@@ -5672,9 +5422,7 @@
       "file": "src/capabilities/copilot/server/copilot-run-cancellation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Retain the existing not-found error contract when a cancellation request cannot bind the accepted run to its canonical input and session; HTTP keeps the original error envelope.",
       "date": "2026-10-23"
@@ -5684,9 +5432,7 @@
       "file": "src/capabilities/copilot/server/copilot-run-cancellation.ts",
       "module": "src/server/events/writer.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1570",
       "owns": "Persist cancellation intent and applicable pre-fence terminal job events with commit-delayed notification in the same dispatch/settlement transaction as the original business operation.",
       "date": "2026-10-23"
@@ -5696,10 +5442,7 @@
       "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
       "module": "src/kernel/records/assessment-normalization.ts",
       "kind": "value",
-      "symbols": [
-        "NormalizableQuestionRow",
-        "normalizeQuestionRowToContract"
-      ],
+      "symbols": ["NormalizableQuestionRow", "normalizeQuestionRowToContract"],
       "issue": "YUK-1570",
       "owns": "The existing locked draft presentation owner now derives the legacy assessment contract and validates presentation before save; the same normalizer and figure-digest read move from compose without changing normalization failure or transaction semantics.",
       "date": "2026-10-23"
@@ -5709,9 +5452,7 @@
       "file": "src/capabilities/ingestion/server/block-structured-edit.ts",
       "module": "src/server/questions/draft-contract.ts",
       "kind": "value",
-      "symbols": [
-        "draftDocumentToContract"
-      ],
+      "symbols": ["draftDocumentToContract"],
       "issue": "YUK-1570",
       "owns": "Complete v2 draft conversion is consumed by the locked presentation validation/save owner instead of compose. This replaces the prior compose dependency; version, declared shape, ordered validation issues and no-legacy-fallback policy remain together.",
       "date": "2026-10-23"
@@ -5721,9 +5462,7 @@
       "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Preserve the existing empty-text-segmentation business error inside the complete DOCX upload operation; HTTP retains wire validation and original errorResponse.",
       "date": "2026-10-23"
@@ -5733,9 +5472,7 @@
       "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
       "module": "src/server/boss/client.ts",
       "kind": "value",
-      "symbols": [
-        "getStartedBoss"
-      ],
+      "symbols": ["getStartedBoss"],
       "issue": "YUK-1570",
       "owns": "Start the existing boss only after visual session creation and successful source-package attachment, immediately before the original extraction enqueue; the complete upload operation owns this order.",
       "date": "2026-10-23"
@@ -5745,9 +5482,7 @@
       "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
       "module": "src/server/r2.ts",
       "kind": "value",
-      "symbols": [
-        "getR2"
-      ],
+      "symbols": ["getR2"],
       "issue": "YUK-1570",
       "owns": "Acquire the existing blob client after converter selection and before either DOCX route, preserving asset/evidence/package writes and failures without new storage or compensation policy.",
       "date": "2026-10-23"
@@ -5757,9 +5492,7 @@
       "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
       "module": "src/server/session/docx-ingestion.ts",
       "kind": "value",
-      "symbols": [
-        "initiateDocxTextUpload"
-      ],
+      "symbols": ["initiateDocxTextUpload"],
       "issue": "YUK-1570",
       "owns": "Invoke the complete existing text session/block creation transaction and its post-commit hooks before source-package attachment, preserving kept_extracted compensation behavior.",
       "date": "2026-10-23"
@@ -5769,9 +5502,7 @@
       "file": "src/capabilities/ingestion/server/docx/upload-operation.ts",
       "module": "src/server/session/index.ts",
       "kind": "value",
-      "symbols": [
-        "Ingestion"
-      ],
+      "symbols": ["Ingestion"],
       "issue": "YUK-1570",
       "owns": "Use the existing visual initiateUpload and enqueueExtraction operations in their original order around package attachment; preserve the namespace initialization and queue/session semantics.",
       "date": "2026-10-23"
@@ -5781,9 +5512,7 @@
       "file": "src/capabilities/notes/server/note-refine-apply.ts",
       "module": "src/kernel/cost.ts",
       "kind": "value",
-      "symbols": [
-        "costUsdToMicroUsd"
-      ],
+      "symbols": ["costUsdToMicroUsd"],
       "issue": "YUK-1570",
       "owns": "Keep the existing USD-to-micro-USD conversion at the same refinement publication site while removing the empty Notes provenance re-export.",
       "date": "2026-10-23"
@@ -5793,9 +5522,7 @@
       "file": "src/capabilities/practice/jobs/quiz_gen.ts",
       "module": "src/kernel/cost.ts",
       "kind": "value",
-      "symbols": [
-        "costUsdToMicroUsd"
-      ],
+      "symbols": ["costUsdToMicroUsd"],
       "issue": "YUK-1570",
       "owns": "Keep the existing USD-to-micro-USD conversion at the same generation publication site while consuming result facts from the shared AI contract.",
       "date": "2026-10-23"
@@ -5805,9 +5532,7 @@
       "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Preserve the existing acceptance, conflict, admission and dispatch error codes/status/details; HTTP keeps presentation and errorResponse.",
       "date": "2026-10-23"
@@ -5817,9 +5542,7 @@
       "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
       "module": "src/kernel/read-models/usage-policy.ts",
       "kind": "value",
-      "symbols": [
-        "resolveSessionDerivationPolicy"
-      ],
+      "symbols": ["resolveSessionDerivationPolicy"],
       "issue": "YUK-1570",
       "owns": "Read the existing session derivation policy at the same agent dispatch point before authorization; no policy or paid permission changes.",
       "date": "2026-10-23"
@@ -5829,9 +5552,7 @@
       "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
       "module": "src/server/boss/client.ts",
       "kind": "value",
-      "symbols": [
-        "getStartedBoss"
-      ],
+      "symbols": ["getStartedBoss"],
       "issue": "YUK-1570",
       "owns": "Acquire the existing lazy-started boss at the original review/nonreview dispatch points, preserving singleton send, null deduplication and transaction lifetime behavior.",
       "date": "2026-10-23"
@@ -5841,9 +5562,7 @@
       "file": "src/capabilities/ingestion/server/operation-acceptance.ts",
       "module": "src/server/session/index.ts",
       "kind": "value",
-      "symbols": [
-        "Ingestion"
-      ],
+      "symbols": ["Ingestion"],
       "issue": "YUK-1570",
       "owns": "Consume existing importable statuses and extraction/agent enqueue operations with the original authorization callback, transaction, identity and recovery ordering.",
       "date": "2026-10-23"
@@ -5853,9 +5572,7 @@
       "file": "src/capabilities/ingestion/server/agent/history.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "The narrow frozen-item read recognizes the existing malformed-budget ApiError as missing run-identity evidence, permitting only an independent immutable block title fallback; other errors propagate. Kernel retains the generic error type; budget parsing and all writes remain unchanged.",
       "date": "2026-10-23"
@@ -5865,9 +5582,7 @@
       "file": "src/capabilities/practice/server/question-detail-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the common HTTP error envelope; Practice retains complete input, admission and safe response decisions. The HTTP adapter still needs ApiError for PATCH and DELETE, so this records the new physical reference.",
       "date": "2026-10-23"
@@ -5877,9 +5592,7 @@
       "file": "src/capabilities/practice/server/question-detail-read.ts",
       "module": "src/kernel/read-models/question-serving.ts",
       "kind": "value",
-      "symbols": [
-        "readQuestionServing"
-      ],
+      "symbols": ["readQuestionServing"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing serving facts and their projection. Practice composes these facts with complete question-detail admission and safe wire output; this reference moves from the original GET adapter.",
       "date": "2026-10-23"
@@ -5889,9 +5602,7 @@
       "file": "src/capabilities/practice/server/question-detail-read.ts",
       "module": "src/server/questions/detail.ts",
       "kind": "value",
-      "symbols": [
-        "loadQuestionDetail"
-      ],
+      "symbols": ["loadQuestionDetail"],
       "issue": "YUK-1358",
       "owns": "The existing server loader owns complete question data and timeline aggregation, not safe admission. Practice retains input validation, diagnostic recovery and learner-safe wire projection; this reference moves from the original GET adapter.",
       "date": "2026-10-23"
@@ -5901,9 +5612,7 @@
       "file": "src/capabilities/ingestion/server/import-completion.ts",
       "module": "src/kernel/records/question-block-creation.ts",
       "kind": "value",
-      "symbols": [
-        "persistCapturedQuestionBlock"
-      ],
+      "symbols": ["persistCapturedQuestionBlock"],
       "issue": "YUK-1570",
       "owns": "Kernel owns captured question-block row creation/overwrite and the complete RETURNING-to-policy-to-create-event operation; ingestion supplies validated source facts and retains qualification, transaction and import transitions.",
       "date": "2026-10-23"
@@ -5913,9 +5622,7 @@
       "file": "src/capabilities/practice/server/advice-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error status and envelope; Practice retains all business input, admission and orchestration decisions. The original HTTP adapter still references this module for errorResponse, so this records the new physical consumer rather than claiming all references are net zero.",
       "date": "2026-10-23"
@@ -5925,9 +5632,7 @@
       "file": "src/capabilities/practice/server/advice-operation.ts",
       "module": "src/kernel/read-models/subject-profile.ts",
       "kind": "value",
-      "symbols": [
-        "resolveSubjectProfileForKnowledgeIds"
-      ],
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing knowledge-to-subject profile resolution and default fallback protocol, preserving the first knowledge id and warning before default on strict resolution failure. Practice retains the diagnostic-gate-before-profile-before-preview ordering and advice projection; this reference moves from the HTTP adapter without introducing a subject policy.",
       "date": "2026-10-23"
@@ -5937,9 +5642,7 @@
       "file": "src/capabilities/practice/server/appeal-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "errorResponse"
-      ],
+      "symbols": ["errorResponse"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing generic native error envelope; Practice retains special JSON/schema and native/legacy rules. HTTP still consumes canonicalResourceResponse and deprecatedRouteResponse from this module, so the new physical consumer is recorded without claiming all references are net zero.",
       "date": "2026-10-23"
@@ -5949,9 +5652,7 @@
       "file": "src/capabilities/practice/server/appeal-operation.ts",
       "module": "src/server/runtime-env.ts",
       "kind": "value",
-      "symbols": [
-        "shouldEnqueueBackgroundJobs"
-      ],
+      "symbols": ["shouldEnqueueBackgroundJobs"],
       "issue": "YUK-1358",
       "owns": "The server platform owns the existing NODE_ENV/VITEST background-enqueue environment protocol. Practice retains the business ordering after the native creation transaction returns, followed by getPracticeBoss and send; this moved HTTP reference does not relocate queue implementation or add a paid policy.",
       "date": "2026-10-23"
@@ -5961,10 +5662,7 @@
       "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
       "module": "src/kernel/read-models/usage-policy.ts",
       "kind": "value",
-      "symbols": [
-        "USAGE_POLICY_PROVENANCE_KEY",
-        "resolveSessionDerivationPolicy"
-      ],
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY", "resolveSessionDerivationPolicy"],
       "issue": "YUK-1570",
       "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
       "date": "2026-10-23"
@@ -5974,9 +5672,7 @@
       "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
       "module": "src/kernel/records/question-block-creation.ts",
       "kind": "value",
-      "symbols": [
-        "persistCapturedQuestionBlock"
-      ],
+      "symbols": ["persistCapturedQuestionBlock"],
       "issue": "YUK-1570",
       "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
       "date": "2026-10-23"
@@ -5986,9 +5682,7 @@
       "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
       "module": "src/server/boss/client.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1570",
       "owns": "The existing server boss singleton owns boot and queue access; DOCX keeps both lazy post-commit imports and separate enqueue failure catches.",
       "date": "2026-10-23"
@@ -5998,9 +5692,7 @@
       "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
       "module": "src/server/boss/queue-names.ts",
       "kind": "value",
-      "symbols": [
-        "COPILOT_NUDGE_EVALUATE_QUEUE"
-      ],
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
       "issue": "YUK-1570",
       "owns": "The existing queue module owns the copilot nudge name; DOCX keeps its current observe-only notification payload and timing.",
       "date": "2026-10-23"
@@ -6010,9 +5702,7 @@
       "file": "src/capabilities/ingestion/server/docx/text-session-lifecycle.ts",
       "module": "src/server/events/writer.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1570",
       "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
       "date": "2026-10-23"
@@ -6022,9 +5712,7 @@
       "file": "src/capabilities/ingestion/server/events/session-extract.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1570",
       "owns": "Kernel owns canonical domain-event persistence; ingestion owns its existing extract envelope and session consent propagation.",
       "date": "2026-10-23"
@@ -6034,9 +5722,7 @@
       "file": "src/capabilities/ingestion/server/events/session-extract.ts",
       "module": "src/kernel/read-models/usage-policy.ts",
       "kind": "value",
-      "symbols": [
-        "resolveSessionDerivationPolicy"
-      ],
+      "symbols": ["resolveSessionDerivationPolicy"],
       "issue": "YUK-1570",
       "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
       "date": "2026-10-23"
@@ -6046,9 +5732,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Kernel owns the shared ApiError shape; ingestion preserves its existing lifecycle conflict/status semantics.",
       "date": "2026-10-23"
@@ -6058,9 +5742,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/kernel/read-models/usage-policy.ts",
       "kind": "value",
-      "symbols": [
-        "USAGE_POLICY_PROVENANCE_KEY"
-      ],
+      "symbols": ["USAGE_POLICY_PROVENANCE_KEY"],
       "issue": "YUK-1570",
       "owns": "Kernel owns live derivation-policy reads and provenance vocabulary; the ingestion lifecycle preserves its existing consent envelope and query timing.",
       "date": "2026-10-23"
@@ -6070,9 +5752,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/kernel/records/question-block-creation.ts",
       "kind": "value",
-      "symbols": [
-        "persistCapturedQuestionBlock"
-      ],
+      "symbols": ["persistCapturedQuestionBlock"],
       "issue": "YUK-1570",
       "owns": "Kernel owns complete captured-block creation/overwrite facts; ingestion owns existing session state transitions and caller transaction timing.",
       "date": "2026-10-23"
@@ -6082,9 +5762,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/server/boss/pg-boss-drizzle.ts",
       "kind": "value",
-      "symbols": [
-        "fromPgBossDrizzleTx"
-      ],
+      "symbols": ["fromPgBossDrizzleTx"],
       "issue": "YUK-1570",
       "owns": "The existing adapter owns PgBoss transaction binding; ingestion preserves the agent-only transactional send and budget-hook order.",
       "date": "2026-10-23"
@@ -6094,9 +5772,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/server/events/writer.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1570",
       "owns": "The existing writer owns job-event persistence and notification; ingestion keeps each current lifecycle call and clock.",
       "date": "2026-10-23"
@@ -6106,9 +5782,7 @@
       "file": "src/capabilities/ingestion/server/session-lifecycle.ts",
       "module": "src/server/session/guards.ts",
       "kind": "value",
-      "symbols": [
-        "assertFromState"
-      ],
+      "symbols": ["assertFromState"],
       "issue": "YUK-1570",
       "owns": "The existing shared guard owns allowed-state checks and conflict error shape; other session types still use this implementation.",
       "date": "2026-10-23"
@@ -6118,9 +5792,7 @@
       "file": "src/capabilities/practice/server/solve-operations.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the existing generic event persistence, index and notification protocol. Practice retains hint_request identity, actor, payload, outcome and the existing generation/exposure then request-event then DTO ordering. The original API writeEvent reference exits.",
       "date": "2026-10-23"
@@ -6130,9 +5802,7 @@
       "file": "src/capabilities/practice/server/solve-operations.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error status and envelope; Practice retains resource and legacy input contracts and SolveError domain mapping. Original HTTP adapters still reference deprecatedRouteResponse/errorResponse, and other resource handlers still reference ApiError, so this records the new physical consumer without claiming all references are net zero.",
       "date": "2026-10-23"
@@ -6142,9 +5812,7 @@
       "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
       "module": "src/server/boss/client.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1570",
       "owns": "The existing boss singleton owns boot and queue access; extraction follow-ups retain two lazy client imports and independent post-commit enqueue failure catches.",
       "date": "2026-10-23"
@@ -6154,9 +5822,7 @@
       "file": "src/capabilities/ingestion/server/extraction-follow-up.ts",
       "module": "src/server/boss/queue-names.ts",
       "kind": "value",
-      "symbols": [
-        "COPILOT_NUDGE_EVALUATE_QUEUE"
-      ],
+      "symbols": ["COPILOT_NUDGE_EVALUATE_QUEUE"],
       "issue": "YUK-1570",
       "owns": "The existing queue module owns the copilot nudge queue name; extraction follow-ups preserve the ingestion_complete payload and ordering after the auto-enroll attempt.",
       "date": "2026-10-23"
@@ -6166,9 +5832,7 @@
       "file": "src/capabilities/practice/server/paper-submission-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the generic error status/envelope; Practice owns the complete resource and legacy input contracts, paper submission invocation and learner-visible/buffered result projection. Original HTTP adapters retain errorResponse/canonical/deprecated references, so this is the new physical owner dependency rather than a claim that all references are net zero.",
       "date": "2026-10-23"
@@ -6178,11 +5842,7 @@
       "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "WriteEventInput",
-        "writeEvent",
-        "writeEvents"
-      ],
+      "symbols": ["WriteEventInput", "writeEvent", "writeEvents"],
       "issue": "YUK-1570",
       "owns": "The canonical event owner owns append-only intent/completion/failure facts; verification retains its existing transaction, identity and error rules.",
       "date": "2026-10-23"
@@ -6192,9 +5852,7 @@
       "file": "src/capabilities/practice/server/verify-dispatch-outbox.ts",
       "module": "src/server/boss/pg-boss-drizzle.ts",
       "kind": "value",
-      "symbols": [
-        "fromPgBossDrizzleTx"
-      ],
+      "symbols": ["fromPgBossDrizzleTx"],
       "issue": "YUK-1570",
       "owns": "The existing adapter binds pg-boss sends to the lock-owning Drizzle transaction; verification preserves same-Tx queue and completion atomicity.",
       "date": "2026-10-23"
@@ -6204,9 +5862,7 @@
       "file": "src/capabilities/ingestion/server/session-detail.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Kernel owns the unchanged error status and envelope. The complete ingestion reader now owns session lookup and the existing 404; the HTTP adapter retains errorResponse. This migrates ApiError from the old API read implementation without adding another error contract.",
       "date": "2026-10-23"
@@ -6216,9 +5872,7 @@
       "file": "src/capabilities/ingestion/server/session-detail.ts",
       "module": "src/kernel/read-models/usage-policy.ts",
       "kind": "value",
-      "symbols": [
-        "resolveDocumentDerivationPolicy"
-      ],
+      "symbols": ["resolveDocumentDerivationPolicy"],
       "issue": "YUK-1522",
       "owns": "Kernel retains live document policy resolution. The ingestion reader moves the existing policy read from the API into the same read-only repeatable-read transaction as session lookup and all attributable persisted usage receipts, without modifying historical policy or consent.",
       "date": "2026-10-23"
@@ -6228,9 +5882,7 @@
       "file": "src/capabilities/practice/server/question-detail.ts",
       "module": "src/kernel/read-models/mastery-projection.ts",
       "kind": "value",
-      "symbols": [
-        "getMasteryProjection"
-      ],
+      "symbols": ["getMasteryProjection"],
       "issue": "YUK-1570",
       "owns": "掌握证据完整投影读取，返回 evidence_count、last_evidence_at、mastery/theta 及 provenance；调用方保留原逐 KC 求值时点。",
       "date": "2026-10-23"
@@ -6240,10 +5892,7 @@
       "file": "src/capabilities/practice/server/question-detail.ts",
       "module": "src/kernel/read-models/question-activity.ts",
       "kind": "value",
-      "symbols": [
-        "QuestionTimelineEntry",
-        "getQuestionTimeline"
-      ],
+      "symbols": ["QuestionTimelineEntry", "getQuestionTimeline"],
       "issue": "YUK-1570",
       "owns": "题目活动时间线的完整事实读取，保留来源、分页与排序语义。",
       "date": "2026-10-23"
@@ -6253,9 +5902,7 @@
       "file": "src/capabilities/practice/server/question-detail.ts",
       "module": "src/kernel/read-models/questions.ts",
       "kind": "value",
-      "symbols": [
-        "loadFamilyMembers"
-      ],
+      "symbols": ["loadFamilyMembers"],
       "issue": "YUK-1570",
       "owns": "题目家族完整成员读取，保留 root/id membership、诊断题排除、draft 开关与 depth/created/id 排序；本次未新增读操作深度。",
       "date": "2026-10-23"
@@ -6265,10 +5912,7 @@
       "file": "src/capabilities/practice/server/question-detail.ts",
       "module": "src/kernel/read-models/subject-resolution.ts",
       "kind": "value",
-      "symbols": [
-        "batchResolveSubjectDisplayIds",
-        "resolveSubjectRenderNotation"
-      ],
+      "symbols": ["batchResolveSubjectDisplayIds", "resolveSubjectRenderNotation"],
       "issue": "YUK-1570",
       "owns": "知识节点到学科显示身份的完整解析及渲染 notation，canonical 与 Knowledge 公口原转出为同一函数。",
       "date": "2026-10-23"
@@ -6278,9 +5922,7 @@
       "file": "src/capabilities/notes/manifest.ts",
       "module": "src/kernel/nightly-eligibility.ts",
       "kind": "value",
-      "symbols": [
-        "nightlyEligibility"
-      ],
+      "symbols": ["nightlyEligibility"],
       "issue": "YUK-1560",
       "owns": "夜间任务资格判定的确定性阈值、四档活跃度分类与各类别决策（ADR-0075 D6）；调用方只声明 job 类别，不能改阈值",
       "date": "2026-10-21"
@@ -6290,10 +5932,7 @@
       "file": "src/capabilities/observability/server/harness-scoreboard.ts",
       "module": "src/kernel/proposals/inbox.ts",
       "kind": "value",
-      "symbols": [
-        "ProposalInboxRow",
-        "listProposalInboxRows"
-      ],
+      "symbols": ["ProposalInboxRow", "listProposalInboxRows"],
       "issue": "YUK-1647",
       "owns": "M4 inbox backlog reuses the kernel inbox projection (status derivation, visibility filtering, as-of replay) instead of re-deriving proposal state in observability",
       "date": "2026-10-21"
@@ -6303,9 +5942,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1522",
       "owns": "Append the original manual attempt and optional user-cause event envelopes in the creation transaction; replay never invokes this writer.",
       "date": "2026-10-23"
@@ -6315,9 +5952,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
       "date": "2026-10-23"
@@ -6327,9 +5962,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/read-models/cause-overlay.ts",
       "kind": "value",
-      "symbols": [
-        "withActiveCauseCategoryOverlays"
-      ],
+      "symbols": ["withActiveCauseCategoryOverlays"],
       "issue": "YUK-1522",
       "owns": "Resolve active owner-accepted cause overlays for the original manual capture validation on receipt miss in the actual Tx.",
       "date": "2026-10-23"
@@ -6339,9 +5972,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/read-models/question-evidence-snapshot.ts",
       "kind": "value",
-      "symbols": [
-        "loadAttemptQuestionSnapshot"
-      ],
+      "symbols": ["loadAttemptQuestionSnapshot"],
       "issue": "YUK-1522",
       "owns": "Read the frozen published question snapshot for the original attempt after publication in the same Tx.",
       "date": "2026-10-23"
@@ -6351,10 +5982,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/read-models/subject-profile.ts",
       "kind": "value",
-      "symbols": [
-        "assertCauseAllowedForSubjectProfile",
-        "resolveSubjectProfileForKnowledgeIds"
-      ],
+      "symbols": ["assertCauseAllowedForSubjectProfile", "resolveSubjectProfileForKnowledgeIds"],
       "issue": "YUK-1522",
       "owns": "Resolve the existing knowledge subject profile and enforce its allowed cause policy on receipt miss in the actual Tx.",
       "date": "2026-10-23"
@@ -6364,9 +5992,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/records/answer-class-write.ts",
       "kind": "value",
-      "symbols": [
-        "withAnswerClass"
-      ],
+      "symbols": ["withAnswerClass"],
       "issue": "YUK-1522",
       "owns": "Derive the original manual question answer_class at write time using the existing complete kernel operation, replacing the retired route-to-server re-export import.",
       "date": "2026-10-23"
@@ -6376,9 +6002,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/records/assessment-publication.ts",
       "kind": "value",
-      "symbols": [
-        "publishQuestionGroupFromRow"
-      ],
+      "symbols": ["publishQuestionGroupFromRow"],
       "issue": "YUK-1522",
       "owns": "Run the original same-transaction question-group publication through the existing kernel owner, preserving actorRef, revision, event and admission behavior; replaces the retired route-to-server publisher re-export import.",
       "date": "2026-10-23"
@@ -6388,9 +6012,7 @@
       "file": "src/capabilities/ingestion/server/create-manual-mistake.ts",
       "module": "src/kernel/records/queries.ts",
       "kind": "value",
-      "symbols": [
-        "createLearningRecord"
-      ],
+      "symbols": ["createLearningRecord"],
       "issue": "YUK-1522",
       "owns": "Create the original manual learning_record with the existing active-KC validation and insert owner in the creation transaction.",
       "date": "2026-10-23"
@@ -6400,9 +6022,7 @@
       "file": "src/capabilities/ingestion/server/create-session.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
       "date": "2026-10-23"
@@ -6412,9 +6032,7 @@
       "file": "src/capabilities/ingestion/server/creation-receipts.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Represent validation, key conflict, and unavailable receipt failures as the existing safe HTTP error type; no transaction policy is delegated to HTTP.",
       "date": "2026-10-23"
@@ -6424,9 +6042,7 @@
       "file": "src/capabilities/agency/server/proposal-retract-learning-state.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "applyLearningItemRepair"
-      ],
+      "symbols": ["applyLearningItemRepair"],
       "issue": "YUK-1570",
       "owns": "Append the complete learning-item prior-state repair and guarded materialization in the caller-held item lock and Tx; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned completion/relearn evidence handling.",
       "date": "2026-10-26"
@@ -6436,9 +6052,7 @@
       "file": "src/capabilities/practice/server/merge-attribution.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "applyLearningItemRepair"
-      ],
+      "symbols": ["applyLearningItemRepair"],
       "issue": "YUK-1570",
       "owns": "Append each complete learning-item knowledge-id repair and guarded materialization in the caller-held merge Tx and ordered item row locks; preserve anchor guard, causal created_at, requestedAt ingest time, ID timing, and caller-owned knowledge-id selection.",
       "date": "2026-10-26"
@@ -6448,9 +6062,7 @@
       "file": "src/capabilities/copilot/jobs/copilot_run.ts",
       "module": "src/kernel/job-events.ts",
       "kind": "value",
-      "symbols": [
-        "computeReplay"
-      ],
+      "symbols": ["computeReplay"],
       "issue": "YUK-1570",
       "owns": "Read the complete durable job-event cursor stream for existing pre-fence terminal/cancellation replay and overlapping-execution observation; preserve numeric cursor ordering, original business stream filters, recovery guards, execution fence, retry identity and paid decisions in the caller.",
       "date": "2026-10-26"
@@ -6460,9 +6072,7 @@
       "file": "src/capabilities/practice/server/question-restore-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the shared API error value contract; the complete Practice restore operation retains original input validation, state-to-error mapping and wire projection. HTTP and Start only adapt transport. The HTTP adapter still physically imports errorResponse from this module.",
       "date": "2026-10-26"
@@ -6472,9 +6082,7 @@
       "file": "src/capabilities/practice/server/question-restore-operation.ts",
       "module": "src/server/questions/write.ts",
       "kind": "value",
-      "symbols": [
-        "restoreQuestion"
-      ],
+      "symbols": ["restoreQuestion"],
       "issue": "YUK-1358",
       "owns": "The existing server state writer retains the restore transaction, root and part locks, version CAS, archived content claims, lifecycle/republish and event writes. Practice owns complete resource validation and the original state-to-error/DTO mapping without copying SQL or reordering the state operation. The old direct HTTP writer import is removed.",
       "date": "2026-10-26"
@@ -6484,10 +6092,7 @@
       "file": "src/capabilities/agency/jobs/coach_daily.ts",
       "module": "src/kernel/records/learning-items.ts",
       "kind": "value",
-      "symbols": [
-        "ActiveLearningItem",
-        "listActiveLearningItems"
-      ],
+      "symbols": ["ActiveLearningItem", "listActiveLearningItems"],
       "issue": "YUK-1570",
       "owns": "Read the complete active-learning-item attention-pressure projection: exclude archived rows, retain in-progress or user-pinned rows, order by created_at then id, and preserve the original four-field/null-knowledge mapping. Coach scheduling/review backbone, proposal generation and injected reader precedence remain caller-owned.",
       "date": "2026-10-26"
@@ -6497,9 +6102,7 @@
       "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "getCorrectionStatus"
-      ],
+      "symbols": ["getCorrectionStatus"],
       "issue": "YUK-1570",
       "owns": "Own checkpoint replay detection inside the current-conversation revert transaction, before terminal probes or the learning-state lock; preserve getCorrectionStatus timing and already_reverted outcome.",
       "date": "2026-10-26"
@@ -6509,9 +6112,7 @@
       "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Own the existing checkpoint-not-found and turn-not-terminal refusals within the revert operation; HTTP parsing, Zod error handling and response serialization remain in the route.",
       "date": "2026-10-26"
@@ -6521,11 +6122,7 @@
       "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
       "module": "src/server/revert/cascade-revert.ts",
       "kind": "value",
-      "symbols": [
-        "COPILOT_REPLY_ACTION",
-        "COPILOT_USER_ASK_ACTION",
-        "orchestrateCascadeRevert"
-      ],
+      "symbols": ["COPILOT_REPLY_ACTION", "COPILOT_USER_ASK_ACTION", "orchestrateCascadeRevert"],
       "issue": "YUK-1570",
       "owns": "Own the complete Copilot checkpoint request around the existing cascade: validate current-session root and durable terminal evidence, acquire G at the original point, invoke copilotAskOnly cascade in the same Tx and preserve in-transaction refusal mapping. The cascade policies and compensation implementation remain unchanged.",
       "date": "2026-10-26"
@@ -6535,10 +6132,7 @@
       "file": "src/capabilities/copilot/server/checkpoint-revert-operation.ts",
       "module": "src/server/session/conversation.ts",
       "kind": "value",
-      "symbols": [
-        "findReusableCopilotConversation",
-        "lockCopilotSessionSelection"
-      ],
+      "symbols": ["findReusableCopilotConversation", "lockCopilotSessionSelection"],
       "issue": "YUK-1570",
       "owns": "Own current-Copilot-conversation selection and selection-lock acquisition as the first steps of checkpoint reversion; preserve checkpoint-specific advisory lock order, query predicates and transaction lifetime.",
       "date": "2026-10-26"
@@ -6548,9 +6142,7 @@
       "file": "src/capabilities/practice/server/question-write-operations.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the shared API error type and wire-error vocabulary; Practice owns complete question update and restore input validation, original result-to-error mapping, and safe success DTOs.",
       "date": "2026-10-26"
@@ -6560,9 +6152,7 @@
       "file": "src/capabilities/practice/server/question-write-operations.ts",
       "module": "src/kernel/read-models/knowledge-validate.ts",
       "kind": "value",
-      "symbols": [
-        "assertKnowledgeIdsExist"
-      ],
+      "symbols": ["assertKnowledgeIdsExist"],
       "issue": "YUK-1358",
       "owns": "Kernel owns existence and non-archived knowledge-ID facts; Practice owns the original non-empty update preflight timing, while the unchanged question writer retains its in-transaction recheck.",
       "date": "2026-10-26"
@@ -6572,11 +6162,7 @@
       "file": "src/capabilities/practice/server/question-write-operations.ts",
       "module": "src/server/questions/write.ts",
       "kind": "value",
-      "symbols": [
-        "BLOODLINE_FIELDS",
-        "editQuestion",
-        "restoreQuestion"
-      ],
+      "symbols": ["BLOODLINE_FIELDS", "editQuestion", "restoreQuestion"],
       "issue": "YUK-1358",
       "owns": "The existing question writer owns lineage-field vocabulary and edit/restore transactions, lock order, version CAS, no-op checks, content claims, derived embedding state, publication and audit events; Practice owns the two complete resource operations, ordered transport-input validation, writer invocation and error/success projection.",
       "date": "2026-10-26"
@@ -6586,9 +6172,7 @@
       "file": "src/capabilities/practice/server/question-parts.ts",
       "module": "src/kernel/records/answer-class-write.ts",
       "kind": "value",
-      "symbols": [
-        "withAnswerClass"
-      ],
+      "symbols": ["withAnswerClass"],
       "issue": "YUK-1570",
       "owns": "Own generated question-part materialization in Practice, retaining the existing part INSERT answer-class derivation and parent/part identity. QuizGen retains normalization, parent dedup/admission and placement decisions; no new default or answer policy.",
       "date": "2026-10-26"
@@ -6598,9 +6182,7 @@
       "file": "src/capabilities/practice/server/question-parts.ts",
       "module": "src/kernel/records/assessment-publication.ts",
       "kind": "value",
-      "symbols": [
-        "publishQuestionGroupFromRow"
-      ],
+      "symbols": ["publishQuestionGroupFromRow"],
       "issue": "YUK-1570",
       "owns": "Own ordered generated-part projection and creation together: preserve root lock before each part INSERT and republish the parent group in the same caller Tx after every part, with the original actor, timestamp and failure propagation. Parent final publication, verify intent and paid boundaries remain with QuizGen.",
       "date": "2026-10-26"
@@ -6610,9 +6192,7 @@
       "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1570",
       "owns": "Own the teaching-chip accept_suggestion write after source-anchor validation and any completed proposal accept. Preserve the original event fields, event-ID timing, bare Db and non-atomic accept-first failure window; no new transaction or retry.",
       "date": "2026-10-26"
@@ -6622,9 +6202,7 @@
       "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Own original active-session and source-anchor business failures in the complete chip acceptance operation; HTTP route retains body/path parsing, validation_error presentation and errorResponse.",
       "date": "2026-10-26"
@@ -6634,9 +6212,7 @@
       "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
       "module": "src/server/boss/hub-sync-wake.ts",
       "kind": "value",
-      "symbols": [
-        "wakeHubSyncAfterCommit"
-      ],
+      "symbols": ["wakeHubSyncAfterCommit"],
       "issue": "YUK-1570",
       "owns": "Preserve the existing fire-and-forget topology wake immediately after a successful proposal accept and before writing the chip event. Do not await it, add dispatch, or change the shared best-effort failure policy.",
       "date": "2026-10-26"
@@ -6646,9 +6222,7 @@
       "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
       "module": "src/server/proposals/actions.ts",
       "kind": "value",
-      "symbols": [
-        "acceptAiProposal"
-      ],
+      "symbols": ["acceptAiProposal"],
       "issue": "YUK-1570",
       "owns": "Invoke the unchanged complete proposal accept owner with the same bare Db and proposal ID before chip-event persistence. Proposal kind/applier/idempotency/paid effects remain with that owner; do not claim atomic chip/proposal acceptance.",
       "date": "2026-10-26"
@@ -6658,9 +6232,7 @@
       "file": "src/capabilities/copilot/server/accept-teaching-chip.ts",
       "module": "src/server/session/index.ts",
       "kind": "value",
-      "symbols": [
-        "Conversation"
-      ],
+      "symbols": ["Conversation"],
       "issue": "YUK-1570",
       "owns": "Retain the existing Conversation.assertActive business precondition before anchor queries; never substitute assertAcceptingTurns or add idle resume, lifecycle writes, transaction or locks.",
       "date": "2026-10-26"
@@ -6685,9 +6257,7 @@
       "file": "src/capabilities/ingestion/server/pdf-upload-operation.ts",
       "module": "src/kernel/records/asset-store.ts",
       "kind": "value",
-      "symbols": [
-        "persistImageAsset"
-      ],
+      "symbols": ["persistImageAsset"],
       "issue": "YUK-1570",
       "owns": "Own sequential rendered-page persistence with the matching PDF source-package stamp after original PDF and text-layer assets are persisted. Preserve the original per-asset storage protocol and partial-write failure window without aggregate transaction or new compensation.",
       "date": "2026-10-27"
@@ -6697,9 +6267,7 @@
       "file": "src/capabilities/ingestion/server/pdf-upload-operation.ts",
       "module": "src/server/r2.ts",
       "kind": "value",
-      "symbols": [
-        "getR2"
-      ],
+      "symbols": ["getR2"],
       "issue": "YUK-1570",
       "owns": "Acquire the existing R2 client only after rendering succeeds and before text extraction, within the complete PDF expansion operation. Preserve original lazy acquisition, failure propagation and ordered source/text/page persistence; no provider or paid execution is added.",
       "date": "2026-10-27"
@@ -6709,9 +6277,7 @@
       "file": "src/capabilities/practice/server/serving-action-operation.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Kernel owns the shared API error type and error-wire vocabulary; Practice owns the complete serving-action request validation order, original params and idempotency-header errors, and invocation of the unchanged execution/recovery owner. HTTP and Start retain their transport error adaptation.",
       "date": "2026-10-27"
@@ -6723,9 +6289,7 @@
       "date": "2026-10-27",
       "debt": "capabilityToKernel",
       "module": "src/kernel/http.ts",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "owns": "Kernel owns the shared API error type and error-wire vocabulary; Practice owns the original draft promotion request validation order, normal and force-enable errors, gate invocation and complete result projection. HTTP and Start retain their transport error adaptation."
     },
     {
@@ -6735,9 +6299,7 @@
       "date": "2026-10-27",
       "debt": "capabilityToServer",
       "module": "src/server/ai/runner-fn.ts",
-      "symbols": [
-        "makeRunTaskFn"
-      ],
+      "symbols": ["makeRunTaskFn"],
       "owns": "Server AI owns binding the canonical task runner to the host Db and its existing execution context. Practice owns when the complete normal draft enable operation constructs that binding and invokes the unchanged verification gate. Force-enable retains its throwing noRunTask guard and does not receive an executable runner."
     },
     {
@@ -6745,10 +6307,7 @@
       "file": "src/capabilities/knowledge/server/node-history-guard.ts",
       "module": "src/kernel/records/knowledge-node-history.ts",
       "kind": "value",
-      "symbols": [
-        "gatherAndFoldKnowledgeNode",
-        "knowledgeLiveRowToSnapshot"
-      ],
+      "symbols": ["gatherAndFoldKnowledgeNode", "knowledgeLiveRowToSnapshot"],
       "issue": "YUK-1570",
       "owns": "Own the existing strict pre-mutation knowledge-history check: gather the full history, reject a null fold, then compare the live structural snapshot against the fold. Preserve caller-owned row locks, Db or Tx, error text, embedding exclusion and all B/control call ordering.",
       "date": "2026-10-27"
@@ -6758,9 +6317,7 @@
       "file": "src/capabilities/knowledge/server/proposals.ts",
       "module": "src/kernel/records/knowledge-node-materialization.ts",
       "kind": "value",
-      "symbols": [
-        "projectKnowledgeNodeGuarded"
-      ],
+      "symbols": ["projectKnowledgeNodeGuarded"],
       "issue": "YUK-1570",
       "owns": "Consume the same canonical guarded knowledge projector formerly re-exported by server/projections/knowledge. Only the import source changes; preserve B policy, caller transaction, lock timing, all mutation ordering and the old-row guarded projection behavior.",
       "date": "2026-10-27"
@@ -6769,10 +6326,7 @@
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "collectionPayload"
-      ],
+      "symbols": ["ApiError", "collectionPayload"],
       "owns": "Kernel owns the shared API error vocabulary and collection envelope. Practice owns the original list validation order and errors and supplies the complete list data, page and extension fields to that envelope.",
       "issue": "YUK-1358",
       "date": "2026-10-27",
@@ -6782,9 +6336,7 @@
       "file": "src/capabilities/practice/server/question-list-read.ts",
       "module": "src/kernel/read-models/knowledge-tree.ts",
       "kind": "value",
-      "symbols": [
-        "resolveSubjectKnowledgeIds"
-      ],
+      "symbols": ["resolveSubjectKnowledgeIds"],
       "owns": "Kernel owns the subject-to-knowledge read model. Practice owns invoking it before the question list and preserving the distinction between an absent subject filter and an empty resolved subject set.",
       "issue": "YUK-1358",
       "date": "2026-10-27",
@@ -6812,9 +6364,7 @@
       "file": "src/capabilities/agency/server/ai-runtime.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable legacy failure fact writer through the existing Agency AI port. Agency retains failure eligibility, caller Db or Tx, throwOnError selection and all orchestration; kernel owns the unchanged legacy insert and catch/rethrow policy.",
       "date": "2026-10-27"
@@ -6824,9 +6374,7 @@
       "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeCostLedger"
-      ],
+      "symbols": ["writeCostLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical legacy cost fact writer inside the original image-candidate acceptance transaction. Ingestion retains task identity, zero VisionExtract correlation, caller transaction, eligibility and invocation order; kernel preserves fields, defaults and insert timing.",
       "date": "2026-10-27"
@@ -6836,9 +6384,7 @@
       "file": "src/capabilities/knowledge/server/propose_edge.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable legacy failure fact writer from the unchanged proposal failure path. Knowledge retains proposal decisions, watermark and error ordering; kernel preserves legacy zero marker semantics and catch behavior without claiming measured free usage.",
       "date": "2026-10-27"
@@ -6848,10 +6394,7 @@
       "file": "src/capabilities/practice/server/failure-learning-ledger.ts",
       "module": "src/kernel/records/ai-attempt-facts.ts",
       "kind": "value",
-      "symbols": [
-        "writePermanentAiFailureLedger",
-        "writeRetryableAiFailureLedger"
-      ],
+      "symbols": ["writePermanentAiFailureLedger", "writeRetryableAiFailureLedger"],
       "issue": "YUK-1570",
       "owns": "Consume the complete canonical retryable and permanent legacy failure fact writers. Practice retains marker lookup, eligibility, stable job identity and throwOnError selection; kernel preserves legacy null correlation, zero marker, insert and error behavior.",
       "date": "2026-10-27"
@@ -6861,9 +6404,7 @@
       "file": "src/capabilities/copilot/server/copilot-summary.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "getEvents"
-      ],
+      "symbols": ["getEvents"],
       "issue": "YUK-1570",
       "owns": "Consume the existing event read owner for latest successful Coach and Dreaming scans; preserve caller Db or Tx, filters, limit, tie-breaking and the original six-way Promise.all evaluation order.",
       "date": "2026-10-27"
@@ -6887,10 +6428,7 @@
       "file": "src/capabilities/practice/server/draft-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "collectionPayload"
-      ],
+      "symbols": ["ApiError", "collectionPayload"],
       "debt": "capabilityToKernel",
       "issue": "YUK-1358",
       "date": "2026-10-27",
@@ -6900,10 +6438,7 @@
       "file": "src/capabilities/ingestion/server/session-list-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError",
-        "collectionPayload"
-      ],
+      "symbols": ["ApiError", "collectionPayload"],
       "debt": "capabilityToKernel",
       "issue": "YUK-1358",
       "date": "2026-10-27",
@@ -6913,9 +6448,7 @@
       "file": "src/capabilities/ingestion/server/session-blocks-read.ts",
       "module": "src/kernel/read-models/learner-knowledge-visibility.ts",
       "kind": "value",
-      "symbols": [
-        "learnerVisibleKnowledgeIds"
-      ],
+      "symbols": ["learnerVisibleKnowledgeIds"],
       "debt": "capabilityToKernel",
       "issue": "YUK-1358",
       "date": "2026-10-27",
@@ -6926,9 +6459,7 @@
       "file": "src/capabilities/practice/server/tutor-session.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Reuse the canonical ApiError for the unchanged Tutor not-found and solve-detail not-found results. Practice owns the complete ordered snapshot/binding/detail operation; preserve the two distinct 404 messages and failure priority, while HTTP retains its original errorResponse and JSON serialization.",
       "date": "2026-10-27"
@@ -6938,9 +6469,7 @@
       "file": "src/capabilities/practice/server/tutor-session.ts",
       "module": "src/kernel/job-events.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1570",
       "owns": "Reuse the existing job-event persistence and notification mechanism at the original Tutor start and transition call sites. Practice owns the complete Tutor lifecycle; preserve caller-supplied Tx variants, start-owned transactions, FOR UPDATE, ID and clock order, version updates, event payloads and same-transaction event writes.",
       "date": "2026-10-27"
@@ -6950,9 +6479,7 @@
       "file": "src/capabilities/practice/server/tutor-session.ts",
       "module": "src/server/session/guards.ts",
       "kind": "value",
-      "symbols": [
-        "assertFromState"
-      ],
+      "symbols": ["assertFromState"],
       "issue": "YUK-1570",
       "owns": "Reuse the existing shared allowed-state assertion and exact conflict error contract without copying or wrapping the guard. Practice owns Tutor from/to policy and transition timing; keep the assertion after the original locked read and before the original clock, UPDATE and same-transaction job event.",
       "date": "2026-10-27"
@@ -6962,11 +6489,7 @@
       "file": "src/capabilities/copilot/server/overnight-handoff.ts",
       "module": "src/server/today/overnight-digest.ts",
       "kind": "value",
-      "symbols": [
-        "LoadTodayOvernightDigest",
-        "OvernightDigest",
-        "loadTodayOvernightDigest"
-      ],
+      "symbols": ["LoadTodayOvernightDigest", "OvernightDigest", "loadTodayOvernightDigest"],
       "issue": "YUK-1570",
       "owns": "Consume the unchanged shared overnight digest facts and default dynamic Shell/Observability composition. Copilot owns its complete quiet/cost/degraded handoff sentence and original Promise rejection warning/unavailable policy; preserve the caller override snapshot and invocation order, synchronous throws, the shared default clock and cost-reader injection, and the distinct HTTP/Start error contracts.",
       "date": "2026-10-27"
@@ -6976,9 +6499,7 @@
       "file": "src/capabilities/copilot/server/nudge-actions.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1358",
       "owns": "Consume the canonical event writer for the complete Copilot nudge disposition request. Preserve the original user/self event fields, caused-by nudge identity, default timestamp and outbox intent, bare-Db insertion and per-action 23505 handling; do not add a transaction, action-level mutual exclusion or dispatch policy.",
       "date": "2026-10-27"
@@ -6988,9 +6509,7 @@
       "file": "src/capabilities/copilot/server/nudge-actions.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Own the original missing-nudge not_found/404 decision after params parsing and the existence query. Preserve the original Zod and other exception behavior for the retained HTTP and Start errorResponse adapters; do not add validation translation or new eligibility checks.",
       "date": "2026-10-27"
@@ -7000,10 +6519,7 @@
       "file": "src/capabilities/copilot/server/conversation-requests.ts",
       "module": "src/server/session/conversation.ts",
       "kind": "value",
-      "symbols": [
-        "createCopilotConversation",
-        "listCopilotConversations"
-      ],
+      "symbols": ["createCopilotConversation", "listCopilotConversations"],
       "issue": "YUK-1358",
       "owns": "Own the complete Copilot GET and POST session requests while reusing the canonical conversation list and creation operations with db and no options. Preserve list defaults, ordering and projection, sample server_time only after the list, and preserve the create transaction, timestamp, ID and job event. Keep the two requests independent, HTTP create status 201 and unknown duplicate-creation boundary; do not add Start create or a shared transaction or receipt.",
       "date": "2026-10-27"
@@ -7013,9 +6529,7 @@
       "file": "src/capabilities/copilot/server/run-cancel-request.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Own the original ZodError-to-validation_error/400 translation for the complete Copilot cancellation request, preserving issues.map(issue => issue.message).join('; ') across the original schema and cancellation call. Preserve every other exception for the HTTP and Start errorResponse adapters; do not add trimming, eligibility, retry or transaction policy.",
       "date": "2026-10-27"
@@ -7025,9 +6539,7 @@
       "file": "src/capabilities/ingestion/server/session-cost-evidence.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1522",
       "owns": "Shared safe HTTP error envelope and status; session cost reader emits fixed errors without raw persisted/provider data.",
       "date": "2026-10-27"
@@ -7037,9 +6549,7 @@
       "file": "src/capabilities/ingestion/server/session-cost-evidence.ts",
       "module": "src/kernel/read-models/provider-cost-projection.ts",
       "kind": "value",
-      "symbols": [
-        "providerCostProjectedCte"
-      ],
+      "symbols": ["providerCostProjectedCte"],
       "issue": "YUK-1522",
       "owns": "Canonical all-time provider attempt authority and linked ledger suppression; session cost reader filters only exact durable session-owned identities.",
       "date": "2026-10-27"
@@ -7049,9 +6559,7 @@
       "file": "src/capabilities/practice/server/due-list.ts",
       "module": "src/kernel/read-models/knowledge-roles.ts",
       "kind": "value",
-      "symbols": [
-        "getNonKcKnowledgeIds"
-      ],
+      "symbols": ["getNonKcKnowledgeIds"],
       "issue": "YUK-1600",
       "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
       "date": "2026-10-28"
@@ -7061,9 +6569,7 @@
       "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
       "module": "src/kernel/read-models/knowledge-roles.ts",
       "kind": "value",
-      "symbols": [
-        "withoutNonKcKnowledgeIds"
-      ],
+      "symbols": ["withoutNonKcKnowledgeIds"],
       "issue": "YUK-1600",
       "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
       "date": "2026-10-28"
@@ -7073,9 +6579,7 @@
       "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
       "module": "src/kernel/read-models/knowledge-roles.ts",
       "kind": "value",
-      "symbols": [
-        "withoutNonKcKnowledgeIds"
-      ],
+      "symbols": ["withoutNonKcKnowledgeIds"],
       "issue": "YUK-1600",
       "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
       "date": "2026-10-28"
@@ -7085,9 +6589,7 @@
       "file": "src/capabilities/practice/server/stream-inputs.ts",
       "module": "src/kernel/read-models/knowledge-roles.ts",
       "kind": "value",
-      "symbols": [
-        "withoutNonKcKnowledgeIds"
-      ],
+      "symbols": ["withoutNonKcKnowledgeIds"],
       "issue": "YUK-1600",
       "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
       "date": "2026-10-28"
@@ -7097,9 +6599,7 @@
       "file": "src/capabilities/notes/server/note-long-check.ts",
       "module": "src/kernel/cost.ts",
       "kind": "value",
-      "symbols": [
-        "costUsdToMicroUsd"
-      ],
+      "symbols": ["costUsdToMicroUsd"],
       "issue": "YUK-1642",
       "date": "2026-10-28",
       "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
@@ -7109,9 +6609,7 @@
       "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1570",
       "owns": "Preserve the complete Review completion transition and per-attempt feedback release in its original transaction, including incarnation filter, event identity and timestamps; no independent B policy moves.",
       "date": "2026-10-28"
@@ -7121,9 +6619,7 @@
       "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1570",
       "owns": "Preserve the complete Review lifecycle missing-session and invalid-transition error contracts, including unchanged statuses, messages and strict versus idempotent behavior.",
       "date": "2026-10-28"
@@ -7133,9 +6629,7 @@
       "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
       "module": "src/kernel/job-events.ts",
       "kind": "value",
-      "symbols": [
-        "writeJobEvent"
-      ],
+      "symbols": ["writeJobEvent"],
       "issue": "YUK-1570",
       "owns": "Preserve original Review state job-event timing and payload inside the same transaction, including creation and reopen; caller recovery and queue policies remain unchanged.",
       "date": "2026-10-28"
@@ -7145,9 +6639,7 @@
       "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
       "module": "src/kernel/learning-session-guard.ts",
       "kind": "value",
-      "symbols": [
-        "assertFromState"
-      ],
+      "symbols": ["assertFromState"],
       "issue": "YUK-1570",
       "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
       "date": "2026-10-28"
@@ -7157,9 +6649,7 @@
       "file": "src/capabilities/ingestion/server/session-history-read.ts",
       "module": "src/kernel/http.ts",
       "kind": "value",
-      "symbols": [
-        "ApiError"
-      ],
+      "symbols": ["ApiError"],
       "issue": "YUK-1358",
       "owns": "Own the original missing-session-id validation_error/400 and absent ingestion-session not_found/404 decisions inside the complete history reader. Preserve the original untrimmed id and error propagation to HTTP and Start adapters, including the unchanged cost owner's safe 503; do not add a schema, codec or swallowed-error fallback.",
       "date": "2026-10-28"
@@ -7169,10 +6659,7 @@
       "file": "src/capabilities/ingestion/server/session-history-read.ts",
       "module": "src/kernel/read-models/question-serving.ts",
       "kind": "value",
-      "symbols": [
-        "UNKNOWN_SERVING",
-        "readQuestionServing"
-      ],
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
       "issue": "YUK-1358",
       "owns": "Consume the canonical current-serving projection for all linked question ids after the original history, root-question and missing-metadata reads. Keep the original UNKNOWN_SERVING fallback and currentOf null boundary; distinguish current serving facts from frozen at-finish evidence without changing sorting, eligibility, snapshots or serving algorithms.",
       "date": "2026-10-28"
@@ -7182,9 +6669,7 @@
       "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7194,9 +6679,7 @@
       "file": "src/capabilities/agency/server/goals/scope.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7206,9 +6689,7 @@
       "file": "src/capabilities/knowledge/api/tree.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7218,9 +6699,7 @@
       "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7230,9 +6709,7 @@
       "file": "src/capabilities/knowledge/public.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7242,9 +6719,7 @@
       "file": "src/capabilities/knowledge/server/propose_edge.ts",
       "module": "src/kernel/read-models/knowledge-graph.ts",
       "kind": "value",
-      "symbols": [
-        "loadTreeSnapshot"
-      ],
+      "symbols": ["loadTreeSnapshot"],
       "issue": "YUK-1570",
       "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
       "date": "2026-10-28"
@@ -7254,9 +6729,7 @@
       "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
       "module": "src/kernel/cost.ts",
       "kind": "value",
-      "symbols": [
-        "costUsdToMicroUsd"
-      ],
+      "symbols": ["costUsdToMicroUsd"],
       "issue": "YUK-1604",
       "owns": "Consume the shared canonical USD->micro-USD conversion so tag audit events stamp the same cost unit every other cost-bearing writer uses. The naming cost truth stays with the task run; tagging only mirrors the runner-reported cost_usd into the event envelope.",
       "date": "2026-10-28"
@@ -8312,13 +7785,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [
-        [
-          "agency",
-          "knowledge",
-          "practice"
-        ]
-      ]
+      "nontrivialSccs": [["agency", "knowledge", "practice"]]
     }
   }
 }
