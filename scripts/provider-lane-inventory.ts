@@ -1157,6 +1157,10 @@ export const PROVIDER_LANES = [
       // root) projects the stored check's auth label for the panel and reads
       // nothing else. Read-only: it sends nothing.
       { path: 'src/server/config/custom-providers-hydrate.ts', kind: 'runtime' },
+      // YUK-1563 QA AC3 — the admin config facts source projects the stored
+      // check's auth status (fingerprint-bound) onto provider rows. Read-only:
+      // it sends nothing.
+      { path: 'src/server/config/admin-config-facts.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
     provider:

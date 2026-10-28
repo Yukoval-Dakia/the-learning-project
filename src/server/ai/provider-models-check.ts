@@ -908,6 +908,38 @@ function unsettledLabel(access: { httpStatus: number | null; errorType: string |
   return `inference:unsettled:${access.httpStatus ?? 'none'}:${access.errorType ?? 'unknown'}`;
 }
 
+/**
+ * YUK-1563 AC3 — read-face projection of the settled auth facts: a coarse
+ * unconfigured / configured / auth_failed view of the same state machine
+ * `providerAuthLabel` describes, for panels that only need the auth verdict.
+ * `configured` covers ok, unprobed, unsettled and unreachable alike. A receipt
+ * only counts for the credential fingerprint that produced it.
+ */
+export interface ProviderAuthStatus {
+  status: 'unconfigured' | 'configured' | 'auth_failed';
+  httpStatus: number | null;
+  errorType: string | null;
+}
+
+export function providerAuthStatus(
+  check: ProviderModelsCheck | undefined,
+  fingerprint: string | null,
+): ProviderAuthStatus {
+  if (fingerprint === null) return { status: 'unconfigured', httpStatus: null, errorType: null };
+  if (!check || check.credentialFingerprint !== fingerprint) {
+    return { status: 'configured', httpStatus: null, errorType: null };
+  }
+  const failed =
+    check.inference.status === 'auth_failed'
+      ? check.inference
+      : check.list.status === 'auth_failed'
+        ? check.list
+        : undefined;
+  return failed
+    ? { status: 'auth_failed', httpStatus: failed.httpStatus, errorType: failed.errorType }
+    : { status: 'configured', httpStatus: null, errorType: null };
+}
+
 export function claimDueProbes(input: {
   now: Date;
   previous: readonly ProviderModelsCheck[];

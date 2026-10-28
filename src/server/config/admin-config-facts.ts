@@ -1,7 +1,8 @@
 // Runtime facts for GET /api/admin/config. This module may import truth sources
 // directly and is re-invoked per request so env/hot-reload changes stay fresh.
 // Effective values come from the real readers (never copied rules); non-scalar
-// keys return a note, and provider rows carry only presence booleans and env names.
+// keys return a note, and provider rows carry presence booleans, env names and
+// the auth-status projection (never credential values).
 
 import { capabilities } from '@/capabilities';
 import { copilotConfigEffectiveFacts } from '@/capabilities/copilot/public';
@@ -9,6 +10,8 @@ import { ingestionConfigEffectiveFacts } from '@/capabilities/ingestion/public';
 import { knowledgeConfigEffectiveFacts } from '@/capabilities/knowledge/public';
 import { notesConfigEffectiveFacts } from '@/capabilities/notes/public';
 import type {
+  AdminConfigCatalogModelRow,
+  AdminConfigProviderAuth,
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
   AdminConfigScheduleRow,
@@ -20,14 +23,25 @@ import type { ConfigEffectiveFact } from '@/core/config/effective';
 import { DB_POOL_MAX } from '@/db/pool';
 import { projectDagMembers } from '@/kernel/manifest';
 import { resolveConfig as resolveAiRateLimitConfig } from '@/kernel/request-rate-limit';
-import { assertModelProfileCapabilityFit } from '@/server/ai/model-profiles';
+import { catalogModelCost, catalogModelIds, currentModelCatalog } from '@/server/ai/model-catalog';
+import {
+  assertModelProfileCapabilityFit,
+  catalogProviderFor,
+  resolveModelProfile,
+} from '@/server/ai/model-profiles';
 import { piMaxRetries } from '@/server/ai/pi-agent-adapter';
 import {
   executablePiModel,
   executablePiModels,
+  nativePiModelApi,
   piProviderId,
 } from '@/server/ai/pi-provider-catalog';
 import {
+  providerAuthStatus,
+  providerCredentialFingerprint,
+} from '@/server/ai/provider-models-check';
+import {
+  type ProviderAuthSurfaceRow,
   isProviderLaneReady,
   providerAuthSurface,
   readGlobalProviderSwitch,
@@ -193,6 +207,61 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
   };
 }
 
+/**
+ * YUK-1563 AC1 — the provider's full catalog listing: every model in its
+ * runtime catalog bucket plus anything the executable registry already accepts,
+ * so a catalog-only model is never filtered out by the runnable gate. Missing
+ * catalog facts surface as 'unknown'/'null', never inferred.
+ */
+function catalogModelRows(provider: ProviderAuthSurfaceRow['name']): AdminConfigCatalogModelRow[] {
+  const executable = new Set(executablePiModels(provider).map(({ id }) => id));
+  const catalogProvider = catalogProviderFor(provider);
+  const ids = [
+    ...new Set([...(catalogProvider ? catalogModelIds(catalogProvider) : []), ...executable]),
+  ].sort();
+  return ids.map((id) => {
+    const profile = resolveModelProfile(provider, id);
+    const rates = catalogProvider ? catalogModelCost(catalogProvider, id) : undefined;
+    return {
+      id,
+      api: profile.api ?? nativePiModelApi(provider, id) ?? null,
+      input: profile.inputModalities === 'unknown' ? ['unknown'] : [...profile.inputModalities],
+      runnable: executable.has(id),
+      tool_call: profile.capabilities.toolCalling,
+      reasoning: profile.capabilities.reasoning,
+      structured_output: profile.capabilities.structuredOutput,
+      vision: profile.capabilities.vision,
+      forced_tool_choice: profile.capabilities.forcedToolChoice,
+      context_window_tokens: profile.limits.contextWindowTokens ?? null,
+      max_input_tokens: profile.limits.maxInputTokens ?? null,
+      max_output_tokens: profile.limits.maxOutputTokens ?? null,
+      cost: rates
+        ? {
+            input: rates.input,
+            output: rates.output,
+            cache_read: rates.cache_read,
+            ...(rates.cache_write !== undefined ? { cache_write: rates.cache_write } : {}),
+          }
+        : null,
+    };
+  });
+}
+
+/**
+ * YUK-1563 AC3 — auth status from the probe/settlement facts (never the key):
+ * unconfigured / configured / auth_failed(+http, error type). A receipt only
+ * counts for the credential fingerprint that produced it.
+ */
+function providerAuthFacts(provider: ProviderAuthSurfaceRow['name']): AdminConfigProviderAuth {
+  const check = currentModelCatalog().providerChecks.find((row) => row.provider === provider);
+  const status = providerAuthStatus(check, providerCredentialFingerprint(provider, process.env));
+  return {
+    status: status.status,
+    http_status: status.httpStatus,
+    error_type: status.errorType,
+  };
+}
+
 export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
   const typedBindings = registeredTypedTaskBindings();
   const providers: AdminConfigProviderRow[] = providerAuthSurface().map((row) => ({
@@ -206,11 +275,8 @@ export function buildAdminConfigRuntimeFacts(): AdminConfigRuntimeFacts {
       typed: typedBindings.some((binding) => binding.provider === row.name),
     },
     pi_provider: row.implemented ? piProviderId(row.name) : null,
-    models: executablePiModels(row.name).map(({ id, api, input }) => ({
-      id,
-      api,
-      input,
-    })),
+    models: catalogModelRows(row.name),
+    auth: providerAuthFacts(row.name),
   }));
 
   const infraSchedules: AdminConfigScheduleRow[] = [
