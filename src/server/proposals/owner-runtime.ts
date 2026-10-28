@@ -16,15 +16,6 @@ export {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
-export {
-  acquireProposalDecisionLock,
-  asPlainRecord,
-  ensureAcceptOnly,
-  existingAcceptRate,
-  findExistingRateEvent,
-  requiredString,
-  writeProposalRateEvent,
-} from './applier-helpers';
 export { hasLearningItemGenesisAnchor, projectLearningItemGuarded };
 
 export async function assertCurrentKnowledgeNodeParity(tx: Tx, nodeId: string): Promise<void> {

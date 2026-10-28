@@ -7,12 +7,12 @@ import type { Db } from '@/db/client';
 import { event, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import { getProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
-import { findExistingRateEvent } from '@/server/proposals/applier-helpers';
 import {
   acquireEdgeEndpointLocks,
   assertEdgeEndpointsValid,

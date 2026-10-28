@@ -9,7 +9,7 @@
 // - judge_retraction → acceptJudgeRetractionProposal（本文件；evaluation 目标走
 // appeal/rejudge/CAS 激活，legacy judge-event 目标写 CorrectEvent）。
 // import 环 gate：本文件不得 import producers/writer/actions（含 type-only）；
-// 共享 helper 一律走 @/server/proposals/applier-helpers。
+// 共享 helper 一律走 @/kernel/proposals/applier-helpers。
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
@@ -42,6 +42,15 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  acquireProposalDecisionLock,
+  asPlainRecord,
+  ensureAcceptOnly,
+  existingAcceptRate,
+  findExistingRateEvent,
+  requiredString,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
@@ -52,15 +61,8 @@ import {
 } from '@/kernel/records/mistake-variant-facts';
 import {
   type ProposalInboxRow,
-  acquireProposalDecisionLock,
-  asPlainRecord,
-  ensureAcceptOnly,
   ensureProposalDecisionSignal,
-  existingAcceptRate,
-  findExistingRateEvent,
   recordProposalDecisionSignal,
-  requiredString,
-  writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 

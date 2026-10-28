@@ -5,6 +5,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { ensureAcceptOnly, existingAcceptRate } from '@/kernel/proposals/applier-helpers';
 import {
   assertBlockMergeAdmission,
   blockMergeAdmissionError,
@@ -16,7 +17,6 @@ import {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
-import { ensureAcceptOnly, existingAcceptRate } from '@/server/proposals/applier-helpers';
 // Accept reuses the mergeQuestions primitive; no auto-merge path exists.
 import { mergeQuestions } from './block-structured-edit';
 
