@@ -7,9 +7,9 @@ import type {
   ProposalAcceptResult,
   ProposalDismissInput,
 } from '@/kernel/proposals';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
 import {

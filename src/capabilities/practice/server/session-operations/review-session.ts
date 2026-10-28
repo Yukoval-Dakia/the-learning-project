@@ -11,9 +11,9 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { db } from '@/db/client';
 import { artifact, learning_session } from '@/db/schema';
+import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import {
   assertIssuedPaperSlotsRenderable,
   assertPaperOpenable,
