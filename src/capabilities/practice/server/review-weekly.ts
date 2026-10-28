@@ -9,12 +9,11 @@
 
 import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-
-import { effectiveCauseForFailureAttempt } from '@/capabilities/practice/server/attempt-events';
 import type { Db } from '@/db/client';
 import { event, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { loadNativeReviewOccurrences } from '@/kernel/read-models/assessment-review-occurrences';
+import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { ReviewWeeklyQuerySchema } from '../api/review-planning-contracts';
