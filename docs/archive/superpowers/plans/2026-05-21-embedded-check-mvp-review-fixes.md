@@ -21,7 +21,7 @@
 | [src/ai/task-prompts.test.ts](src/ai/task-prompts.test.ts) | Modify EmbeddedCheckGenerateTask test | P1 — invert subject-kind assertion, add canonical-kind assertion |
 | [src/server/boss/handlers/embedded_check_generate.ts](src/server/boss/handlers/embedded_check_generate.ts) | Modify `runEmbeddedCheckGenerate` (claim + final UPDATE) | P3 — optimistic lock |
 | [src/server/boss/handlers/embedded_check_generate.test.ts](src/server/boss/handlers/embedded_check_generate.test.ts) | Add subject-kind rejection regression test + orphan-prevention test | P1 + P3 |
-| [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md](docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md) | Delete one bullet | P2 |
+| [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md](../../../../docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md) | Delete one bullet | P2 |
 
 No DB migration. No schema change.
 
@@ -30,7 +30,7 @@ No DB migration. No schema change.
 ## Task 1: P2 — Align plan doc with implementation
 
 **Files:**
-- Modify: [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md:45](docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md:45)
+- Modify: [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md:45](../../../../docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md:45)
 
 - [ ] **Step 1: Read the offending line**
 
@@ -39,7 +39,7 @@ Expected: one match at line 45 containing `Default fallback: \`choice\` for weny
 
 - [ ] **Step 2: Remove the fallback claim**
 
-Edit [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md](docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md) — replace the line:
+Edit [docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md](../../../../docs/archive/superpowers/plans/2026-05-21-embedded-check-mvp.md) — replace the line:
 
 ```
 6. **Question kind selection** — driven by `SubjectProfile.promptFragments.checkQuestionPolicy` + `questionKinds` lists. Default fallback: `choice` for wenyan, `fill_blank` for math. Prompt asks AI to pick from `questionKinds` whitelist for the active profile.

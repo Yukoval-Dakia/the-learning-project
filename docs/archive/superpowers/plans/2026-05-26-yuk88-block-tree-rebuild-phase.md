@@ -7,10 +7,10 @@
 **日期**：2026-05-26
 **状态**：outline only —— per-phase lane plan docs to follow as phases start
 **Roadmap source**：
-- [`docs/planning/2026-05-26-note-rich-doc.md`](../../planning/2026-05-26-note-rich-doc.md) §0（post-grill 拍板 spec，权威）
-- [`docs/planning/v0.4-complete-form-roadmap.md`](../../planning/v0.4-complete-form-roadmap.md) §3 第 5 层 / §6 P0-P2
-- [ADR-0020](../../adr/0020-block-tree-note-rebuild.md)（核心契约）
-- [ADR-0019](../../adr/0019-correction-event-artifact-section-subject.md)（已 superseded by 0020，section_id → block_id）
+- [`docs/planning/2026-05-26-note-rich-doc.md`](../../../planning/2026-05-26-note-rich-doc.md)) §0（post-grill 拍板 spec，权威）
+- [`docs/planning/v0.4-complete-form-roadmap.md`](../../../planning/v0.4-complete-form-roadmap.md)) §3 第 5 层 / §6 P0-P2
+- [ADR-0020](../../../adr/0020-block-tree-note-rebuild.md))（核心契约）
+- [ADR-0019](../../../adr/0019-correction-event-artifact-section-subject.md))（已 superseded by 0020，section_id → block_id）
 
 **Linear**：[YUK-88](https://linear.app/yukoval-studios/issue/YUK-88) + sub-issues [YUK-90](https://linear.app/yukoval-studios/issue/YUK-90)~[YUK-97](https://linear.app/yukoval-studios/issue/YUK-97)
 
@@ -172,7 +172,7 @@ P7 (tests rework)
 ### P6 — YUK-89 read-view + knowledge node 节点页
 
 **Lane 切分骨架**：
-- Lane A: `<BlockTreeRenderer>` 按 semantic_kind 渲染 idiom + 7 readability defect fix（参 [`docs/design/2026-05-26-atomic-note-read-view.md`](../../design/2026-05-26-atomic-note-read-view.md)）
+- Lane A: `<BlockTreeRenderer>` 按 semantic_kind 渲染 idiom + 7 readability defect fix（参 [`docs/design/2026-05-26-atomic-note-read-view.md`](../../../design/2026-05-26-atomic-note-read-view.md))）
 - Lane B: Mark-wrong block 钻取 UI + hover/focus 稳态
 - Lane C: `/knowledge/[id]` 节点页（节点元数据 + mesh chips + 主 atomic inline + 反链 panel + timeline）
 - Lane D: 无主 atomic 占位卡 + 一键生成路径

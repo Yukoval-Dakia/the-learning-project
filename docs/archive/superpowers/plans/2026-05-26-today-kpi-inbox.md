@@ -8,7 +8,7 @@
 
 ## 背景
 
-[`docs/design/2026-05-15-design-brief-v2.1.md`](../../design/2026-05-15-design-brief-v2.1.md) §1.3 要求把 `/today` 的 vanity metric「知识点数」替换为 actionable 的 "AI 提议 pending"。
+[`docs/design/2026-05-15-design-brief-v2.1.md`](../../../design/2026-05-15-design-brief-v2.1.md)) §1.3 要求把 `/today` 的 vanity metric「知识点数」替换为 actionable 的 "AI 提议 pending"。
 
 **Pre-flight 实证（2026-05-26）**：
 

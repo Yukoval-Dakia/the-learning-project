@@ -8,7 +8,7 @@
 
 ## 背景
 
-[`docs/audit/2026-05-22-drift.md`](../../audit/2026-05-22-drift.md) §Phase-deferred 列：
+[`docs/audit/2026-05-22-drift.md`](../../../audit/2026-05-22-drift.md)) §Phase-deferred 列：
 
 > "ADR-0014 §Phase N+1 — 归因分类法 profile-driven（已落地 50% — math profile 已有完整 causeCategories；wenyan profile 部分迁移）— 仍在 incremental migration"
 

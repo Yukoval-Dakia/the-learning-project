@@ -2,7 +2,7 @@
 
 > Phase-level outline，仿 [`2026-05-23-track2-and-foundation-closeout-phases.md`](2026-05-23-track2-and-foundation-closeout-phases.md) 模式。每条 lane 启动前另写 detailed plan doc。
 
-**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5 "Product Track 1 — Review / Learning Item / Teaching Loop 收口"
+**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 "Product Track 1 — Review / Learning Item / Teaching Loop 收口"
 **Linear Project**: [Product Track 1 — Review / Learning Item / Teaching 收口](https://linear.app/yukoval-studios/project/product-track-1-review-learning-item-teaching-收口-87f2e3007a16)
 **Date**: 2026-05-24
 **Status**: outline only —— per-lane plan docs to follow as lanes start
@@ -211,7 +211,7 @@
 - [ ] NAS 容器跑新 build
 - [ ] 3 轮真聊全跑通，无 console error
 - [ ] embedded check inline 在 chat 入口正常显示
-- [ ] 截图 + 简短 report 在 [docs/agents/](../../agents/)
+- [ ] 截图 + 简短 report 在 [docs/agents/](../../../agents/))
 
 **Per-lane plan doc**：不写（部署 + 验证类，无代码 SoT）
 
@@ -400,7 +400,7 @@ Track 2 + Foundation 收口期间引入了若干 single-source-of-truth helper�
 
 ### CC-4 — Proposal lifecycle (Track 2 M5 [YUK-42](https://linear.app/yukoval-studios/issue/YUK-42)/[YUK-43](https://linear.app/yukoval-studios/issue/YUK-43)/[YUK-44](https://linear.app/yukoval-studios/issue/YUK-44))
 
-- **Helper**：[`src/server/proposals/{actions,inbox,producers,signals,writer}.ts`](../../../src/server/proposals/) + `/api/proposals/[id]/{accept,dismiss,retract}` 三个 route
+- **Helper**：[`src/server/proposals/{actions,inbox,producers,signals,writer}.ts`](../../../../src/server/proposals/)) + `/api/proposals/[id]/{accept,dismiss,retract}` 三个 route
 - **Invariant**：所有 AI 提议走统一 `AiProposalPayload` union；accept 路径走 owner-service 产 `rate` event；retract 走 L3 correction event；不绕过 union 直接写 propose event
 - **必须遵循的 lane**：
   - [YUK-17](https://linear.app/yukoval-studios/issue/YUK-17) Variant double-pass —— VariantVerifyTask 输出走 `variant_question` proposal kind，accept 路径已在 YUK-44 接通
@@ -429,7 +429,7 @@ Track 2 + Foundation 收口期间引入了若干 single-source-of-truth helper�
 
 ## Linear 项目结构
 
-按项目惯例（[docs/agents/issue-tracker.md](../../agents/issue-tracker.md) §"Layer mapping"）已 model 为 **Linear Project + Milestone + Issue**（**本 outline 不新建 Linear issue**，全部已存在）：
+按项目惯例（[docs/agents/issue-tracker.md](../../../agents/issue-tracker.md)) §"Layer mapping"）已 model 为 **Linear Project + Milestone + Issue**（**本 outline 不新建 Linear issue**，全部已存在）：
 
 - **Project**：[Product Track 1 — Review / Learning Item / Teaching 收口](https://linear.app/yukoval-studios/project/product-track-1-review-learning-item-teaching-收口-87f2e3007a16) (priority=No priority, start=2026-05-23, target=2026-07-31)
 - **2 Milestones / 17 issue**：

@@ -3,8 +3,8 @@
 **Date**: 2026-05-24
 **Linear**: [YUK-14](https://linear.app/yukoval-studios/issue/YUK-14)
 **Wave**: M1.2 (Product Track 1 closeout)
-**Design SoT**: [`docs/design/2026-05-24-teaching-idle-state-machine.md`](../../design/2026-05-24-teaching-idle-state-machine.md)
-**Pattern SoT**: [`docs/adr/0013-review-session-lifecycle.md`](../../adr/0013-review-session-lifecycle.md)
+**Design SoT**: [`docs/design/2026-05-24-teaching-idle-state-machine.md`](../../../design/2026-05-24-teaching-idle-state-machine.md))
+**Pattern SoT**: [`docs/adr/0013-review-session-lifecycle.md`](../../../adr/0013-review-session-lifecycle.md))
 **Author**: Wave 2 Lane 1 subagent
 
 ---
@@ -76,7 +76,7 @@ Mount drawer ──► POST /api/teaching-sessions       (T1: → active)
 
 ### 1. 逐字引用 design doc
 
-- [`docs/design/2026-05-24-teaching-idle-state-machine.md`](../../design/2026-05-24-teaching-idle-state-machine.md) §"Implementation sketch (留 YUK-14)" 第 5 项（line 311-315）：
+- [`docs/design/2026-05-24-teaching-idle-state-machine.md`](../../../design/2026-05-24-teaching-idle-state-machine.md)) §"Implementation sketch (留 YUK-14)" 第 5 项（line 311-315）：
   > **UI** (`TeachingDrawer.tsx`)：
   > - Mount 时加 `pagehide` listener → sendBeacon `/end` with `{status: drawer was idle ? 'abandoned' : 'ended'}`
   > - Unmount cleanup 跑 fetch `/end` `{status:'ended'}`（drawer 主动关 = ended）

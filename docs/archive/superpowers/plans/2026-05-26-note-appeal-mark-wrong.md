@@ -8,14 +8,14 @@
 
 ## 背景
 
-[`docs/planning/v0.4-complete-form-roadmap.md`](../../planning/v0.4-complete-form-roadmap.md) §6 P2.4 "Note appeal / mark-wrong UX" 列为 Track-1 follow-up。本 phase outline 把它放 W1.3 估 3 pts，scope 写作"atomic note section 加'申诉/标错'按钮 + `experimental:correction_event { kind='mark_wrong', target_kind='artifact', target_id, section_idx, note_md }`"。
+[`docs/planning/v0.4-complete-form-roadmap.md`](../../../planning/v0.4-complete-form-roadmap.md)) §6 P2.4 "Note appeal / mark-wrong UX" 列为 Track-1 follow-up。本 phase outline 把它放 W1.3 估 3 pts，scope 写作"atomic note section 加'申诉/标错'按钮 + `experimental:correction_event { kind='mark_wrong', target_kind='artifact', target_id, section_idx, note_md }`"。
 
 **Pre-flight 调研（2026-05-26）发现 outline 字面 scope 与现有 schema 不匹配**：
 
 | 维度 | outline 假设 | 现状 |
 |---|---|---|
-| Correction event target | `target_kind='artifact'` | [`src/core/schema/event/known.ts:181`](../../../src/core/schema/event/known.ts) `CorrectEvent.subject_kind: z.literal('event')` 硬约束 |
-| Section identifier | `section_idx`（数组下标） | [`src/core/schema/business.ts:221`](../../../src/core/schema/business.ts) `NoteSection.id: z.string()` 已存在 stable id |
+| Correction event target | `target_kind='artifact'` | [`src/core/schema/event/known.ts:181`](../../../../src/core/schema/event/known.ts)) `CorrectEvent.subject_kind: z.literal('event')` 硬约束 |
+| Section identifier | `section_idx`（数组下标） | [`src/core/schema/business.ts:221`](../../../../src/core/schema/business.ts)) `NoteSection.id: z.string()` 已存在 stable id |
 | `affected_refs` 约束 | （outline 未提） | `CorrectEvent.payload.affected_refs: z.array(ActivityRef).min(1)` —— artifact target 无自然 ActivityRef |
 | Existing correction API | （outline 暗示复用） | `/api/events/[id]/correct` 只接 event id；artifact 没有对应 route |
 | effective-truth projection | （outline 暗示复用） | [`src/server/review/effective-truth.ts`](../../../src/server/review/effective-truth.ts) 只投 event-state，不投 artifact section-state |
@@ -27,25 +27,25 @@
 
 ## UI Design Compliance pre-flight
 
-> 按 [`CLAUDE.md`](../../../CLAUDE.md) "UI Design Compliance" 规定，逐字引用 design doc 段落。
+> 按 [`CLAUDE.md`](../../../../CLAUDE.md)) "UI Design Compliance" 规定，逐字引用 design doc 段落。
 
 **没有专门 design doc 直接覆盖 atomic note section mark_wrong UX**。最近的同类 UX 先例：
 
-- [`docs/design/2026-05-25-yuk-54-note-section-edit-in-place.md`](../../design/2026-05-25-yuk-54-note-section-edit-in-place.md) line 5：
+- [`docs/design/2026-05-25-yuk-54-note-section-edit-in-place.md`](../../../design/2026-05-25-yuk-54-note-section-edit-in-place.md)) line 5：
   > "目标是在 atomic note 阅读页内直接编辑单个 section，同时保留现有 note markdown 渲染、embedded check 展示和 artifact 单写入口约束。"
 
   本 lane 沿用同一 "section-level user action on atomic note" UX 范式：YUK-54 已建立 "section 内 inline 用户动作"模式，本 lane 在同样 surface 上加"标错"动作。
 
 **架构层 invariant 引用**：
 
-- [`docs/architecture.md`](../../../docs/architecture.md) line 30：
+- [`docs/architecture.md`](../../../../docs/architecture.md)) line 30：
   > "判定（quiz answer 判分、申诉重判）"
-- [`docs/architecture.md`](../../../docs/architecture.md) line 45：
+- [`docs/architecture.md`](../../../../docs/architecture.md)) line 45：
   > "**Judgment 不可变**：申诉重判 = 新建 Judgment，不修改旧的"
 
   对应到 correction event 模型：**correct event 不可变；restore = 新 correct event with `kind='restore'`**，不修改先前 mark_wrong 事件。本 lane 沿用此 invariant。
 
-- [`docs/modules/notes.md`](../../modules/notes.md) line 141：
+- [`docs/modules/notes.md`](../../../modules/notes.md)) line 141：
   > "Living note 对 `user_verified` section **不主动覆盖**，只 propose"
 
   本 lane 的标错事件作为 user-side 信号，对应 user_verified 反向：用户主动标 "此 section 错"，下游 Living Note (W2.3 [YUK-87](https://linear.app/yukoval-studios/issue/YUK-87) `NoteRefineTask`) 应**优先**触发该 section 的 refine 提议。
@@ -157,7 +157,7 @@ UI（需 design-doc pre-flight 再起）：
 
 1. **Status**: accepted
 2. **Context**:
-   - Correction event ([ADR-0014 §6](../../adr/0014-generalized-activity-and-capability-registry.md) / [ADR-0011 v2](../../adr/0011-tool-use-and-edge-event-paths.md)) 当前 subject_kind 锁 `'event'`
+   - Correction event ([ADR-0014 §6](../../../adr/0014-generalized-activity-and-capability-registry.md)) / [ADR-0011 v2](../../../adr/0011-tool-use-and-edge-event-paths.md))) 当前 subject_kind 锁 `'event'`
    - Note artifact 用户标错需求（v0.4 §6 P2.4）出现，event-level 粒度不够（section 级才能驱动 Living Note `NoteRefineTask` 触发器）
 3. **Decision**:
    - 不改 `CorrectEvent` schema，新建并行 `CorrectArtifactEvent`，避免污染 event-target 路径

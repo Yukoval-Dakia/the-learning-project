@@ -8,7 +8,7 @@
 - math 引入 Foundation B 的 archeology audit（YUK-12 不可作 LOC threshold 验证，改 archeology）
 - 同步更新 architecture.md / status.md / src/ai/README.md 防止文档 stale（见 §0.3 finding 1 修正）
 
-**Anchor**: [ADR-0014 §3/§10](../../adr/0014-generalized-activity-and-capability-registry.md)、[v0.3 §1.5 Foundation B](../../planning/v0.3-generalized-ai-learning-framework.md)、[status.md §Foundation B](../status.md)。
+**Anchor**: [ADR-0014 §3/§10](../../../adr/0014-generalized-activity-and-capability-registry.md))、[v0.3 §1.5 Foundation B](../../../planning/v0.3-generalized-ai-learning-framework.md))、[status.md §Foundation B](../status.md)。
 **Predecessor**: Foundation B M3 (physics PR #91)、M4/M5 (unit_dimension@1, YUK-35/36)、Math MVP closeout。
 **Non-scope**: 引入 subject #4、prompt 重写改语义、SubjectProfile schema 升级（如 audit 强烈要求 → follow-up issue）、`defaultSubjectProfile` 选型重审。
 
@@ -112,7 +112,7 @@ launch-phase skill 默认本地 ff-merge 后**不自动 push**（[SKILL.md:108](
 
 ### 2.1 Reconciliation phase 性质
 
-15 个 SubjectProfile-driven prompt builder + 3 subject-neutral pass-through + test-suite 互不污染回归已落地（[task-prompts.ts](../../../src/ai/task-prompts.ts) + [task-prompts.test.ts](../../../src/ai/task-prompts.test.ts)，详细分类见 §0.2）。YUK-5/6/12 主要是 **doc/issue drift + 3 处 registry fallback wenyan 残余 + 1 处 generic route 漏点 + YUK-12 原 acceptance 不现实 + architecture/status/README 文档将随方案 A 一起 stale**。
+15 个 SubjectProfile-driven prompt builder + 3 subject-neutral pass-through + test-suite 互不污染回归已落地（[task-prompts.ts](../../../../src/ai/task-prompts.ts)) + [task-prompts.test.ts](../../../src/ai/task-prompts.test.ts)，详细分类见 §0.2）。YUK-5/6/12 主要是 **doc/issue drift + 3 处 registry fallback wenyan 残余 + 1 处 generic route 漏点 + YUK-12 原 acceptance 不现实 + architecture/status/README 文档将随方案 A 一起 stale**。
 
 ### 2.2 SubjectProfile-driven 不只是 promptFragments
 

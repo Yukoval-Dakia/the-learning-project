@@ -2,7 +2,7 @@
 
 > Phase-level outline，仿 [`2026-05-22-foundation-true-closeout-phases.md`](2026-05-22-foundation-true-closeout-phases.md) 模式。每条 lane 启动前另写 detailed plan doc（math MVP 级别）。
 
-**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5 Foundation A/B/C + Product Track 2
+**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 Foundation A/B/C + Product Track 2
 **Date**: 2026-05-23
 **Status**: outline only —— per-lane plan docs to follow as lanes start
 **Background**: ADR-0017（memory）刚 draft，physics P0/P1/P2 (Foundation B acid test) 已 ship 到 commit `b30d543`。本 outline 处理 **memory 之外**的剩余基础建设。
@@ -42,7 +42,7 @@
 
 ### L1 — Capability Registry 单 invoker
 
-**问题**：[src/ai/registry.ts](../../../src/ai/registry.ts) 注册了 capability，[src/core/capability/judges/index.ts](../../../src/core/capability/judges/index.ts) `createDefaultRegistry` 注册了 judges，但 judge 调用散在 review handler / correction applier / proposal flow 多个 callsite，没经过单一 invoker。每加一个 capability（rubric / multimodal_direct / ai_flexible）都要找所有 callsite。`steps@1` 仍有部分 `'unsupported'` 占位需要清理（physics P2 unit_dimension 已 ship，相关 stub 应回收）。
+**问题**：[src/ai/registry.ts](../../../../src/ai/registry.ts)) 注册了 capability，[src/core/capability/judges/index.ts](../../../../src/core/capability/judges/index.ts)) `createDefaultRegistry` 注册了 judges，但 judge 调用散在 review handler / correction applier / proposal flow 多个 callsite，没经过单一 invoker。每加一个 capability（rubric / multimodal_direct / ai_flexible）都要找所有 callsite。`steps@1` 仍有部分 `'unsupported'` 占位需要清理（physics P2 unit_dimension 已 ship，相关 stub 应回收）。
 
 **Scope**：
 
@@ -67,15 +67,15 @@
 
 **已有 Linear issue**：[YUK-7 — build-time profile validator](https://linear.app/yukoval-studios/issue/YUK-7) (Backlog, 3pts) + [YUK-8 — profile validator 接入 pnpm test pre-PR gate](https://linear.app/yukoval-studios/issue/YUK-8) (Backlog, 1pt)。本 lane **不新建 Linear issue**，把这两条挂到本 Project 的 M2 Milestone 即可。
 
-**问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../src/subjects/math/profile.ts) / [physics/profile.ts](../../../src/subjects/physics/profile.ts) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../src/subjects/profile.ts) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 至今未做。
+**问题**：[src/subjects/wenyan/profile.ts](../../../src/subjects/wenyan/profile.ts) / [math/profile.ts](../../../../src/subjects/math/profile.ts)) / [physics/profile.ts](../../../../src/subjects/physics/profile.ts)) 各自定义 `SlimSubjectProfile`，[src/subjects/profile.ts](../../../../src/subjects/profile.ts)) 的 `SubjectRegistry` 不在启动期验证 `judgeCapabilities` 是否都已注册、`causeCategories` id 是否唯一、`renderConfig` 字段是否齐。下一个 subject（english / programming）只能靠人肉对照。Foundation B v0.3 §1.5 明确写过的 "build-time profile validator" 至今未做。
 
-**注意**：[`SubjectProfileSchema`](../../../src/subjects/profile.ts) (line 41-77) + [`validateProfile()`](../../../src/core/capability/validate-profile.ts) (line 96-) **已存在**。本 lane **不新建** schema/validator，只补 missing 接入。
+**注意**：[`SubjectProfileSchema`](../../../../src/subjects/profile.ts)) (line 41-77) + [`validateProfile()`](../../../../src/core/capability/validate-profile.ts)) (line 96-) **已存在**。本 lane **不新建** schema/validator，只补 missing 接入。
 
 **Scope**（YUK-7 + YUK-8 + 接入 startup validator）：
 
 - YUK-7：`scripts/audit-profile.ts` build-time 脚本，调用现有 `validateProfile()` 遍历所有注册 profile（仿 `scripts/audit-schema-writes.ts` 风格）
 - YUK-8：`audit:profile` script 接入 `pnpm test` pre-PR gate
-- 本 outline 增量：在 [`SubjectRegistry.register()`](../../../src/subjects/profile.ts) (profile.ts:112) 或 `getDefaultSubjectRegistry()` (profile.ts:168) 调 `validateProfile()`，失败抛错；当前 register 只检查 id 非空/重复，**完全不调** validateProfile
+- 本 outline 增量：在 [`SubjectRegistry.register()`](../../../../src/subjects/profile.ts)) (profile.ts:112) 或 `getDefaultSubjectRegistry()` (profile.ts:168) 调 `validateProfile()`，失败抛错；当前 register 只检查 id 非空/重复，**完全不调** validateProfile
 - CI test：profile 改坏（漏字段 / 不存在的 capability id / 重复 cause id）时 audit + runtime startup 都失败
 
 **Exit criteria**：
@@ -113,7 +113,7 @@
 
 ### L4 — AI 运行可观测性 admin surface
 
-**问题**：[src/server/ai/log.ts](../../../src/server/ai/log.ts) 写满 `ai_task_runs` + `cost_ledger` + `tool_call_log`，但**没读路径** —— 用户没办法看 task health / cost trend / 失败聚类，只能 raw SQL。违反 ADR-0014 §6 "evidence-first 留痕"对称性。Memory（ADR-0017）落地后 LLM 调用频度上升，没有可视化盲飞。
+**问题**：[src/server/ai/log.ts](../../../../src/server/ai/log.ts)) 写满 `ai_task_runs` + `cost_ledger` + `tool_call_log`，但**没读路径** —— 用户没办法看 task health / cost trend / 失败聚类，只能 raw SQL。违反 ADR-0014 §6 "evidence-first 留痕"对称性。Memory（ADR-0017）落地后 LLM 调用频度上升，没有可视化盲飞。
 
 **Scope**：
 
@@ -185,7 +185,7 @@
 
 ### L6 — `audit:schema` allowlist 过期约束
 
-**问题**：[scripts/audit-schema-allowlist.json](../../../scripts/audit-schema-allowlist.json) 67 条业务 entry（共 69 keys，含 2 个 `_comment` marker）都带 `resolves_when`（指向某 PR / phase），但 CI 不校验过期，可无限累积。Top 簇（2026-05-23 基线）：artifact（18）/ memory_brief_note（10）/ event（8）/ learning_item（6）/ answer（5）/ knowledge_edge（5）/ learning_session（4）/ material_fsrs_state（4）/ question（4）/ 其他 3。
+**问题**：[scripts/audit-schema-allowlist.json](../../../../scripts/audit-schema-allowlist.json)) 67 条业务 entry（共 69 keys，含 2 个 `_comment` marker）都带 `resolves_when`（指向某 PR / phase），但 CI 不校验过期，可无限累积。Top 簇（2026-05-23 基线）：artifact（18）/ memory_brief_note（10）/ event（8）/ learning_item（6）/ answer（5）/ knowledge_edge（5）/ learning_session（4）/ material_fsrs_state（4）/ question（4）/ 其他 3。
 
 > 启动 L6 前重新跑 `jq '. | with_entries(select(.key | startswith("_") | not)) | length'` 复核基线 —— 数字会随其他 lane 落地变化。
 
@@ -237,7 +237,7 @@ L6 ─┘                   弱依赖 L3 (correction event for retract)
 
 ## Linear 项目结构
 
-按项目惯例（[docs/agents/issue-tracker.md](../../agents/issue-tracker.md) §"Layer mapping"）model 为 **Linear Project + Milestone**：
+按项目惯例（[docs/agents/issue-tracker.md](../../../agents/issue-tracker.md)) §"Layer mapping"）model 为 **Linear Project + Milestone**：
 
 - **Project**：[Track 2 起步 + Foundation 末尾收口](https://linear.app/yukoval-studios/project/track-2-起步-foundation-末尾收口-6ecf1ce05315) (priority=Medium, start=2026-05-23, target=2026-07-31)
 - **6 Milestones**（lane → Milestone → issue 映射）：

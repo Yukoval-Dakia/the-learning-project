@@ -383,9 +383,9 @@ grep -n "调度\|两条 lane 都走 dreaming batch" docs/modules/lanes.md
 ```markdown
 ## 调度
 
-两条 lane 的实施栈（Cron Triggers + Queues + Anthropic Batch API）详见 [`architecture.md § 5.6`](../architecture.md#56-dreaming--maintenance-实施栈)。Phase 2 落地。
+两条 lane 的实施栈（Cron Triggers + Queues + Anthropic Batch API）详见 [`architecture.md § 5.6`](../../../architecture.md#56-dreaming--maintenance-实施栈)。Phase 2 落地。
 
-成本控制详见 [`architecture.md § 5.3`](../architecture.md#53-成本控制)。
+成本控制详见 [`architecture.md § 5.3`](../../../architecture.md#53-成本控制)。
 ```
 
 - [ ] **Step 6: 验证**

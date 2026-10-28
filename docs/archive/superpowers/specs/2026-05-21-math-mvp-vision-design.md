@@ -3,7 +3,7 @@
 **Status**: design spec for v0.3 Subject #2 + Foundation 收尾。
 **Date**: 2026-05-21.
 **Scope**: 引入 math 作为第二 subject（验证 framework 通用化），同时按 math 路径驱动 Foundation A/B/C 的剩余收尾、数据层多模态承载补强、drift 清零。
-**Anchor decisions**: [ADR-0014 — Generalized Learning Activity + Capability Registry](../../adr/0014-generalized-activity-and-capability-registry.md), [v0.3 roadmap](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5（Foundation → Product Track → Later）。
+**Anchor decisions**: [ADR-0014 — Generalized Learning Activity + Capability Registry](../../../adr/0014-generalized-activity-and-capability-registry.md)), [v0.3 roadmap](../../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5（Foundation → Product Track → Later）。
 **Non-scope**: sympy 符号等价；自动 step extraction 独立 pipeline；外部 MCP / Plugin / Track F 完整多模态流；programming subject；其他 capability（`semantic@1` / `unit_dimension@1`）。
 
 ## 1. Goal
@@ -368,7 +368,7 @@ export async function stepsV1Judge(input: {
 
 ## 9. Drift 收尾
 
-来自 [2026-05-20 audit](../../audit/2026-05-20-drift.md) 的 2 条 finding 在 M3 处理：
+来自 [2026-05-20 audit](../../../audit/2026-05-20-drift.md)) 的 2 条 finding 在 M3 处理：
 
 1. ADR-0015 缺失：`learning_record` + `memory_brief_note` 无 ADR 追认
 2. `src/ai/registry.ts` 死代码 `systemPrompt`（wenyan 硬编码）

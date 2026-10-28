@@ -2,11 +2,11 @@
 
 > Phase-level outline，仿 [`2026-05-24-product-track-1-closeout.md`](2026-05-24-product-track-1-closeout.md) 模式。每条 lane 启动前另写 detailed plan doc。
 
-**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5 + [`docs/planning/v0.4-complete-form-roadmap.md`](../../planning/v0.4-complete-form-roadmap.md) §6
+**Roadmap source**: [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 + [`docs/planning/v0.4-complete-form-roadmap.md`](../../../planning/v0.4-complete-form-roadmap.md)) §6
 **Linear Project**: [Track-1 Follow-up — Note / Teaching / Review polish](https://linear.app/yukoval-studios/project/track-1-follow-up-note-teaching-review-polish-b2d5cdc828e6)
 **Date**: 2026-05-26
 **Status**: outline only —— per-lane plan docs to follow as lanes start
-**Background**: [Product Track 1 — Review / Learning Item / Teaching 收口](https://linear.app/yukoval-studios/project/product-track-1-review-learning-item-teaching-收口-87f2e3007a16) Wave 1-4 全部 ship to main（2026-05-25 PR #133），Wave 5 closeout 已写（[`docs/audit/2026-05-25-product-track-1-wave5-closeout.md`](../../audit/2026-05-25-product-track-1-wave5-closeout.md)）。[YUK-65](https://linear.app/yukoval-studios/issue/YUK-65) NAS compose auto-migrate 2026-05-26 已 Done（PR #146）。本 phase 是 Track-1 closeout 大纲 §"后续 follow-ups" + v0.4 §6 P1/P2 中跟 Note / Teaching / Review feedback 闭环相关项的打包。
+**Background**: [Product Track 1 — Review / Learning Item / Teaching 收口](https://linear.app/yukoval-studios/project/product-track-1-review-learning-item-teaching-收口-87f2e3007a16) Wave 1-4 全部 ship to main（2026-05-25 PR #133），Wave 5 closeout 已写（[`docs/audit/2026-05-25-product-track-1-wave5-closeout.md`](../../../audit/2026-05-25-product-track-1-wave5-closeout.md))）。[YUK-65](https://linear.app/yukoval-studios/issue/YUK-65) NAS compose auto-migrate 2026-05-26 已 Done（PR #146）。本 phase 是 Track-1 closeout 大纲 §"后续 follow-ups" + v0.4 §6 P1/P2 中跟 Note / Teaching / Review feedback 闭环相关项的打包。
 
 ## 范围与边界
 
@@ -15,10 +15,10 @@
 | Lane | 主题 | pts | 来源 |
 |---|---|---|---|
 | [YUK-66](https://linear.app/yukoval-studios/issue/YUK-66) | Teaching `ask_check` 落 question artifact | 5 | Track-1 closeout 大纲 line 459；v0.4 §5.3 |
-| Living Note `NoteRefineTask` + 5 触发器 | NoteRefineTask handler + dreaming 触发逻辑 | 8 | [`docs/modules/notes.md`](../../modules/notes.md) §9；v0.4 §6 P2.3；closeout 大纲 line 455 |
+| Living Note `NoteRefineTask` + 5 触发器 | NoteRefineTask handler + dreaming 触发逻辑 | 8 | [`docs/modules/notes.md`](../../../modules/notes.md)) §9；v0.4 §6 P2.3；closeout 大纲 line 455 |
 | Note 申诉 / 标错 UX | 用户标"这段有问题"→ retract 走 ADR-0014 §6 correction event | 3 | v0.4 §6 P2.4；closeout 大纲 line 456 |
 | Partial credit P3 rating advisory | `<RatingAdvisor>` 组件 + `rating-advisor.ts` server helper | 3 | v0.4 §6 P1.5；[`docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`](../specs/2026-05-22-foundation-true-closeout-design.md) §P3 |
-| `/today` KPI 第三格 → "AI 提议·待审" | 替换 vanity metric「知识点数」 | 2 | v0.4 §6 P2.10；[`docs/design/2026-05-15-design-brief-v2.1.md`](../../design/2026-05-15-design-brief-v2.1.md) §1.3 |
+| `/today` KPI 第三格 → "AI 提议·待审" | 替换 vanity metric「知识点数」 | 2 | v0.4 §6 P2.10；[`docs/design/2026-05-15-design-brief-v2.1.md`](../../../design/2026-05-15-design-brief-v2.1.md)) §1.3 |
 | wenyan `profile.causeCategories` 100% 迁移 | math 100%，wenyan partial 收尾 | 2 | v0.4 §6 P1.4；drift 2026-05-22 phase-deferred |
 
 **总估时**：2-3 周，~28 pts，单人节奏（YUK-85 W1.3 pre-flight 上修 3→8 pts，含 ADR-0019）。沿用 Track-1 closeout "独立 PR + 独立 reviewer 关卡 + 独立 audit + chain-merge" 模式。
@@ -110,7 +110,7 @@
 
 ### W1.2 — `/today` KPI 第三格 → "AI 提议·待审"
 
-**问题**：[`docs/design/2026-05-15-design-brief-v2.1.md`](../../design/2026-05-15-design-brief-v2.1.md) §1.3 明确"必须把『知识点数』vanity metric 换成 actionable 数字"。
+**问题**：[`docs/design/2026-05-15-design-brief-v2.1.md`](../../../design/2026-05-15-design-brief-v2.1.md)) §1.3 明确"必须把『知识点数』vanity metric 换成 actionable 数字"。
 
 **Scope**：
 - `app/(app)/today/page.tsx` 第三格替换为 inbox pending count
@@ -129,7 +129,7 @@
 
 ### W1.3 — Note 申诉 / 标错 UX (Path A: section_id 粒度)
 
-**问题**：ADR-0014 §6 correction event（retract / mark_wrong / supersede）已 ship 在数据层，但 [`CorrectEvent.subject_kind: z.literal('event')`](../../../src/core/schema/event/known.ts) 锁死 event-target；artifact / section 粒度入口缺位。UI 仅在 learning-item proposal 列表暴露（[YUK-19](https://linear.app/yukoval-studios/issue/YUK-19)）。
+**问题**：ADR-0014 §6 correction event（retract / mark_wrong / supersede）已 ship 在数据层，但 [`CorrectEvent.subject_kind: z.literal('event')`](../../../../src/core/schema/event/known.ts)) 锁死 event-target；artifact / section 粒度入口缺位。UI 仅在 learning-item proposal 列表暴露（[YUK-19](https://linear.app/yukoval-studios/issue/YUK-19)）。
 
 **Pre-flight 调研（2026-05-26）**：outline 原文 `section_idx` + 3 pts 估时与现有 schema 不匹配。**Path A 决议**：新建并行 `CorrectArtifactEvent` schema、用 `NoteSection.id`（stable string）作为 section identifier、独立 artifact-level effective-truth projection。详见 [`2026-05-26-note-appeal-mark-wrong.md`](2026-05-26-note-appeal-mark-wrong.md)。
 
@@ -196,7 +196,7 @@
 
 ### W2.3 — Living Note `NoteRefineTask` + 5 触发器
 
-**问题**：[`docs/modules/notes.md`](../../modules/notes.md) §9 锁定 5 触发器，但 `NoteRefineTask` 未实现（notes.md 表 §0 标 🟡）。dreaming queue 是 consumer，proposal inbox 已 ship，没接 Note 修订生产者。
+**问题**：[`docs/modules/notes.md`](../../../modules/notes.md)) §9 锁定 5 触发器，但 `NoteRefineTask` 未实现（notes.md 表 §0 标 🟡）。dreaming queue 是 consumer，proposal inbox 已 ship，没接 Note 修订生产者。
 
 **Scope**：
 - 新 pg-boss handler `src/server/boss/handlers/note_refine.ts`（仿 [`note_verify.ts`](../../../src/server/boss/handlers/note_verify.ts) 模式）
@@ -271,7 +271,7 @@ W2 ──┬─ W2.1 rating advisory ───────────→ (indep
 
 ### CC-4 — Proposal lifecycle (Track 2 M5 [YUK-42](https://linear.app/yukoval-studios/issue/YUK-42)/[YUK-43](https://linear.app/yukoval-studios/issue/YUK-43)/[YUK-44](https://linear.app/yukoval-studios/issue/YUK-44))
 
-- **Helper**：[`src/server/proposals/{actions,inbox,producers,signals,writer}.ts`](../../../src/server/proposals/) + `/api/proposals/[id]/{accept,dismiss,retract}` 三个 route
+- **Helper**：[`src/server/proposals/{actions,inbox,producers,signals,writer}.ts`](../../../../src/server/proposals/)) + `/api/proposals/[id]/{accept,dismiss,retract}` 三个 route
 - **必须遵循的 lane**：
   - W2.3 NoteRefineTask —— output 走 `AiProposalPayload kind='note_refine'`（**新 kind**，需在 `src/core/schema/proposal.ts` union 注册）；accept 路径需补 owner-service 处理
   - W1.3 Note 申诉 —— mark_wrong **不走 proposal**，走 correction event channel；只是 UI 展示 mark_wrong 后的 retract state 时引用现有 `/api/proposals/[id]/retract`

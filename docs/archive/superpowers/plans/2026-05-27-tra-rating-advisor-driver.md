@@ -5,7 +5,7 @@
 **Doc 日期**：2026-05-27
 **Track ID**：T-RA
 **Linear**：[YUK-98](https://linear.app/yukoval-studios/issue/YUK-98) — Backlog，Track-1 Follow-up project，M2 milestone，3pt Medium（created 2026-05-27）
-**Source spec**：[`docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`](../archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md) §P3 partial credit rating advisory
+**Source spec**：[`docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md`](../specs/2026-05-22-foundation-true-closeout-design.md) §P3 partial credit rating advisory
 **Estimate**：3 pt
 **Worktree**：B (Wave 1)
 **Owner**：lane subagent (model=opus)

@@ -57,7 +57,7 @@
 
 **In-flight / open**：
 - **Wave 3/4 ✅ shipped**（T-D4 propose tools PR #170；T-88 P3 AI pipeline + T-DR Dreaming `d99c3bb1`），Wave 5/6/7 ✅（见上）。
-- **scenario A v1 达成 → scenario B**：8 波全 ship（YUK-88 P0-P7 全栈 + Layer 8 critical path + Living Note + cross_link/hub/cytoscape graph）。下一步 **continue-to-scenario-B**（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。去向见 [`v0.5-maintenance-roadmap.md`](../../planning/v0.5-maintenance-roadmap.md)。
+- **scenario A v1 达成 → scenario B**：8 波全 ship（YUK-88 P0-P7 全栈 + Layer 8 critical path + Living Note + cross_link/hub/cytoscape graph）。下一步 **continue-to-scenario-B**（**north-star YUK-143 + T-OC YUK-145** 为 top track，按 feature 价值重切，待 grill 拍板）。去向见 [`v0.5-maintenance-roadmap.md`](../../../planning/v0.5-maintenance-roadmap.md))。
 - **本 session 新增 spec/issue（post-v1 / scenario B 种子）**：North-Star 学习意图设计（YUK-143，spec ✅）+ T-OC OCR/ingestion 重建设计（YUK-145，spec ✅）+ 多页 OCR bug（YUK-144）+ 跨进程 editing-guard（YUK-148，**High**，需设计）+ derived_from 注释（YUK-146）+ undo UX（YUK-147）+ Wave6 mediums（YUK-149）。
 
 - **scenario B 第一批 ✅ shipped（2026-05-30，main baseline `81856564` → `b143ecd9`）**：上面这批 scenario-B 种子的多数已落地。
@@ -556,7 +556,7 @@ T-FF fixtures ────→ blocks Eval / acceptance test 自动化
 - **Decision 调整（实测推翻 D1）**：T-KG 改用 **cytoscape**（非手写 SVG verlet）—— 用户实证「200 节点很容易达到」，手写力导布局不可维护
 - closeout：逐-commit review fix-pass（undo 版本冲突假成功 / 裸 NUL 源码 / backlinks 404 / hub overlap verify=非问题）+ `hub-dismiss` single-owner 抽取（修 step9 invariant）+ `--contrasts` token 收尾
 - Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration-smoke 11 / build 55 static pages）。**未 push origin**（push 前停，待用户确认）
-- 计划 + 审查：[`2026-05-29-wave7-ready-to-launch.md`](2026-05-29-wave7-ready-to-launch.md) + [`../../audit/2026-05-29-commit-review.md`](../../audit/2026-05-29-commit-review.md)
+- 计划 + 审查：[`2026-05-29-wave7-ready-to-launch.md`](2026-05-29-wave7-ready-to-launch.md) + [`../../audit/2026-05-29-commit-review.md`](../../../audit/2026-05-29-commit-review.md))
 
 #### Wave 8 ✅ ship 2026-05-29（`wave8` 分支 `6c308bcd`，PR 待 merge）— Read view + tests + polish + v1 closeout
 

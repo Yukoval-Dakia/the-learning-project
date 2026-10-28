@@ -3,7 +3,7 @@
 **Status**: design spec for v0.3 Foundation A/B/C 真 closeout（结构件之外的 generalization acid test）。
 **Date**: 2026-05-22.
 **Scope**: 把 physics 作为 subject #3 pressure subject，验证 Foundation 抽象在 N=3 下仍泛化；把 judge → FSRS 的 partial credit 链路真接通，让 `JudgeResultV2.score` 不止流到 UI。
-**Anchor decisions**: [ADR-0014 — Generalized Learning Activity + Capability Registry](../../adr/0014-generalized-activity-and-capability-registry.md)（特别是 §3 SubjectProfile / §4 JudgeResult v2 / §10 FSRS 是 scheduling policy 之一），[v0.3 roadmap](../../planning/v0.3-generalized-ai-learning-framework.md) §1.5 Foundation 段。
+**Anchor decisions**: [ADR-0014 — Generalized Learning Activity + Capability Registry](../../../adr/0014-generalized-activity-and-capability-registry.md))（特别是 §3 SubjectProfile / §4 JudgeResult v2 / §10 FSRS 是 scheduling policy 之一），[v0.3 roadmap](../../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 Foundation 段。
 **Predecessor**: math MVP（[2026-05-21-math-mvp-vision-design.md](2026-05-21-math-mvp-vision-design.md) 已 ship 全 phase）；本 spec 是其延续，专攻 math MVP closeout doc §"What math MVP 没证" 列出的两块（subject 泛化 N=3、partial credit 下游）。
 **Non-scope**: subject #4（programming / english）；physics 图像/示意图题（M2 复用 math figures 字段即可，本期不专攻多模态）；partial → mastery view / next-due 算法调优（ADR-0012 后续）；跨科目题；ts-fsrs 内核改动；correction event production 负载压测；Option B/C partial→FSRS 激进方案（Option A 真实使用后再决定）。
 

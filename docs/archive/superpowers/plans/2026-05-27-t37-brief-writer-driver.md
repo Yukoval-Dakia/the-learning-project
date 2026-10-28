@@ -5,7 +5,7 @@
 **Doc 日期**：2026-05-27
 **Track ID**：T-37
 **Linear**：[YUK-37](https://linear.app/yukoval-studios/issue/YUK-37) ⚠️ **status 错标 Done，实际未实施**（见 §0.2）
-**Source spec**：[ADR-0017](../adr/0017-memory-mem0-plus-brief-layer.md) + [ADR-0015 §2](../adr/0015-learning-record-memory-brief.md)
+**Source spec**：[ADR-0017](../../../adr/0017-memory-mem0-plus-brief-layer.md) + [ADR-0015 §2](../../../adr/0015-learning-record-memory-brief.md)
 **Estimate**：~13 pt（per YUK-37 acceptance 7 项实施项，**非 master roadmap §11 T-37 card 写的 5pt**）
 **Worktree**：A
 **Owner**：lane subagent (model=opus)

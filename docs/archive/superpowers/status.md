@@ -4,7 +4,7 @@
 > 这里记的是 **项目走到了哪、下一站去哪、为什么这么走**，不是 commit log。
 > 维护规则：每完成一个 Phase 就 update 一次；不维护周度进度。
 
-**🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../planning/v0.5-maintenance-roadmap.md)。
+**🎉 v1 closeout — scenario A 达成（2026-05-29）**：YUK-88 block-tree note 全栈 **P0-P7** + Layer 8 critical path（Drawer/Coach/tool_use promote）+ Living Note v0 + cross_link/反链/hub auto-sync + cytoscape 诊断图谱 全 ship。8 波 + Foundation A/B/C/D + Product Track 1/2 闭环。详见 [`audits/2026-05-29-v1-closeout.md`](audits/2026-05-29-v1-closeout.md)；v1 之后去向 [`../planning/v0.5-maintenance-roadmap.md`](../../planning/v0.5-maintenance-roadmap.md))。
 
 **最后更新**：2026-06-06（**OC-5 复查面 + VisionTab prefill ✅ shipped**：YUK-164 #2/#3 落 main——GET `/api/ingestion` session list + `mistake_draft` surfacing（slice 1）+ AutoEnrolledPanel 5th tab + `src/ui/lib/auto-enroll.ts`（slice 2）+ VisionTab AI 预填 + "AI 预填，可改" badge（slice 3）；PR 待开；flag #4（`WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED` flip）留 YUK-164 #4 未翻。详见下方「OC-5 ✅」）；同日（**Strategy D S3 ✅ 三片 shipped**：图片素材可达性 YUK-227/YUK-228 收官——Slice A VLM 图题空间匹配 + F4 spatial 消费、Slice B Note 族 skill 三科、Slice C image_candidate 提案 + accept 兑现 VLM 抽图（守 ADR-0002 付费授权语义），PR #323-#325，详见下方「Strategy D 章 · S3」）；2026-06-06 同日（**Strategy D S2 ✅ 全五片 shipped**：题源扩展 YUK-216 收官——provenance/tier 地基 + SourcingTask 检索线 + material 素材线 + **标准 Agent Skills 规范双轨（owner「代码只留任务描述」哲学第一例生产接线）** + 消费端 tier 偏好与四线找题次序，PR #312-#320，详见下方「Strategy D 章」）；2026-06-05 晚（**Strategy D S1 ✅**：ingest→practice 桥接 + judge 手写照片穿透落 main（PR #309 rebase-merge））；2026-06-05（**U 序列 drive ✅ DONE**：U0-U8 全部落 main（U7 末棒 PR #307），三份 codex 设计统一落地完成，详见下方「U 序列 drive ✅」；本条随 U7 post-merge 收官）；2026-06-01（**数据激活 drive ✅ DONE**：Station 1 合成数据 + 2A brief writer + 2B goal cron + 3 端到端验证（8 slice 全绿，零集成 bug）→ Layer-8 端到端可观测；详见上方「数据激活 drive ✅」+ closeout。下一站 Strategy D 真实 ingestion，开工前 surface 用户。）；2026-05-31（**P5 open-questions chain ✅ 全 7 阶段 merge → origin `82ba1df1`**；详见「P5 chain ✅」+ closeout。）；2026-05-30（**Wave 7 ✅ → origin `28dd48d6`**（P5 反链/cross_link/hub auto-sync YUK-95 + T-KG cytoscape 诊断图谱 YUK-142 + fix-pass + closeout）；**Wave 8 ✅ 实现完成**（末波 = P6 read-view+节点页 YUK-96 + P7 tests YUK-97 + P2-polish slash/drag-drop YUK-150 + 两轮用户 review-fix + T-PD 收尾 + v1 closeout，全 7 lane 各独立 opus reviewer + 完整 wave-gate 绿：145 test files / 1153 tests + 1 todo / migration 11 / build 55 pages），**Wave 8 已 merge 到 main**（2026-05-29，PR #193 rebase-merge，保留 per-commit Closes），其上叠了 scenario B 第一批。上一波 Wave 6 `a419b2e6`。）
 **当前 Phase**：**Strategy D 章（真实 ingestion + capture 飞轮，2026-06-05 开工）** —— kickoff 简报（6-agent Map）→ **S1 桥接 ✅** → **S2 题源扩展 ✅**（YUK-216）→ **S3 图片素材可达性 ✅**（YUK-227/228，2026-06-06 收官）。下一站候选：日常使用验证期（owner 真实 ingest + 做卷积累 observe trail 与真题库——S1-S3 机器齐备，真实数据是当前最大缺口）/ **OC-5 复查面 ✅ shipped**（YUK-164 #2/#3，PR 待开；flag #4 未翻）/ UI wave（YUK-229 inbox accept + tier badges 等积压）。
@@ -39,7 +39,7 @@
 - deferred backlog 维持：legacy chat cut-over（YUK-213）/ YUK-209/210/211/212。
 
 **U 序列 drive ✅ shipped（2026-06-04 → 2026-06-05）**：
-- **U0 裁决 ✅**（PR #292/#293）：审计报告 [`../audit/2026-06-04-design-feasibility-audit.md`](../audit/2026-06-04-design-feasibility-audit.md) + 决议 [`../design/2026-06-04-u0-decisions.md`](../design/2026-06-04-u0-decisions.md) + **ADR-0029**（复习引擎落在既有原语上：零必建新表）+ ADR-0028 上 main + 三 spec 修订 + CONTEXT.md 8 词条。
+- **U0 裁决 ✅**（PR #292/#293）：审计报告 [`../audit/2026-06-04-design-feasibility-audit.md`](../../audit/2026-06-04-design-feasibility-audit.md)) + 决议 [`../design/2026-06-04-u0-decisions.md`](../../design/2026-06-04-u0-decisions.md)) + **ADR-0029**（复习引擎落在既有原语上：零必建新表）+ ADR-0028 上 main + 三 spec 修订 + CONTEXT.md 8 词条。
 - **重绘 wave-2 ✅**（PR #294/#296，YUK-169）：copilot composer（AF S0 真 chat）+ mistakes/sessions+events/coach/items（D11 健康条）+ legacy CSS −524 行；7A/7B 同日先行（#290/#291）。
 - **U2 ✅**（PR #295）：P3 知识级 FSRS（ADR-0028 全五决定 + migration 0027 forward-only）从 codex checkpoint 提取 backend slice 落地；双 bot 9 发现全修（2 P1）。**调度单元自此 = 知识点**。
 - **U3 ✅**（本 PR）：Copilot 去 Today 化（CopilotDock）+ 会话持久化（learning_session conversation envelope + experimental:copilot_reply + GET /api/copilot/turns replay）· U8 leave_agent_note 带外 hint 通道（ExperimentalEvent，零 schema）+ Dreaming/Maintenance readers + quiz_verify producer · agent objective cards（docs/agents/objectives.md）+ ADR-0004 product-shape supersede 注记。
@@ -79,7 +79,7 @@
 - **scheduler / intelligence track 已 coherent**：goal core → Dreaming/Coach goal-aware → review soft-bias → question_part → cross-subject → acceptance signal 链路打通。
 - 下一步 continue-to-scenario-B 余下（按 feature 价值重切，待 grill 拍板）。
 **主分支**：`origin/main` = **数据激活 drive（Station 1/2A/2B/3）已 merge**，2026-06-01（Station 2B baseline `8ed672fa`；P5 chain baseline `82ba1df1`）。走 PR 不直推（2026-05-29 用户定）。
-**路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
+**路线图源**：[`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 是当前执行清单；root `PLANNING.md` v0.12 Phase 1-4 已标 historical
 
 ---
 
@@ -132,7 +132,7 @@
 
 **M1 closeout archeology（YUK-12）**：
 
-Lane A prompt/profile coverage audit: [`docs/audit/2026-05-25-prompt-profile-coverage.md`](../audit/2026-05-25-prompt-profile-coverage.md)。
+Lane A prompt/profile coverage audit: [`docs/audit/2026-05-25-prompt-profile-coverage.md`](../../audit/2026-05-25-prompt-profile-coverage.md))。
 
 Profile LOC snapshots checked with `git show ${sha}:src/subjects/math/profile.ts | wc -l`: `903009c` 94, `da906a4` 101, `b42c03a` 101, `77b969c` 103, `fda9785` 103, `a23694a` 103, `dff8f34` 103, `9191c160` 111, `main` 111. Per-PR numstat below counts text additions/deletions only; no binary or rename rows appeared in the selected output.
 
@@ -166,7 +166,7 @@ Conclusion: Foundation B schema extension and math profile were introduced in th
 ✅  experimental:tool_use → KnownEvent promote M6 — T-D7 / YUK-126, 2026-05-28 (ADR-0011 §1.1; stabilization 时序 gate user-waived 2026-05-28)
 ```
 
-M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audit/2026-05-26-copilot-tools-foundation.md).
+M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../../audit/2026-05-26-copilot-tools-foundation.md)).
 
 ### Wave 1 — Master roadmap scenario A 第一波（2026-05-27 同日 ship）
 
@@ -179,7 +179,7 @@ M1 closeout audit: [`docs/audit/2026-05-26-copilot-tools-foundation.md`](../audi
 ✅  W-B post-ship: RatingAdvisor cause SoT wiring    013a9ad (YUK-100) — advice + submit route 读 effectiveCauseCategoryForFailureAttempt 并 thread ctx + integration test (修 W-05)
 ```
 
-Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome。Post-ship audit-drift：[`docs/audit/2026-05-27-wave1-postship-drift.md`](../audit/2026-05-27-wave1-postship-drift.md)。
+Wave 1 closeout doc：[`plans/2026-05-27-wave1-ready-to-launch.md`](plans/2026-05-27-wave1-ready-to-launch.md) §8 ship outcome。Post-ship audit-drift：[`docs/audit/2026-05-27-wave1-postship-drift.md`](../../audit/2026-05-27-wave1-postship-drift.md))。
 
 ### Wave 2 — YUK-88 P1/P2-basic + Foundation D M2 readers（2026-05-27）
 
@@ -218,7 +218,7 @@ Implementation anchor：`src/server/boss/handlers/{note_generate,note_verify,emb
 
 Merge anchor：origin/main `d99c3bb1` ("feat(ai): launch Wave 4 AI lanes (YUK-93 YUK-114)").
 
-Validation anchor：post-merge full gate ✅. Drift audit [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../audit/2026-05-28-wave4-closeout-drift.md) — 0 contradicted, 2 undocumented (`NoteVerificationIssue.section_id` half-migration; legacy correction payload read shim), 2 phase-deferred (hub auto-sync nightly → Wave 7, P2-polish slash/drag/mention → Wave 6+). Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
+Validation anchor：post-merge full gate ✅. Drift audit [`docs/audit/2026-05-28-wave4-closeout-drift.md`](../../audit/2026-05-28-wave4-closeout-drift.md)) — 0 contradicted, 2 undocumented (`NoteVerificationIssue.section_id` half-migration; legacy correction payload read shim), 2 phase-deferred (hub auto-sync nightly → Wave 7, P2-polish slash/drag/mention → Wave 6+). Wave driver：[`plans/2026-05-28-wave4-ready-to-launch.md`](plans/2026-05-28-wave4-ready-to-launch.md)。
 
 ### Wave 5 — Copilot Drawer /today MVP // Global Coach（shipped 2026-05-28）
 
@@ -252,7 +252,7 @@ Layer 8 vision 兑现起点：`/today` 有真 Drawer + Coach 每日/每周 cron 
 ```
 
 实现锚点：`src/server/artifacts/{block-refs,hub-dismiss,note-refine-apply}.ts`、`src/ui/KnowledgeGraph.tsx`(cytoscape)、`src/ui/block-tree/{CrossLinkSuggestion,auto-link-chip,tiptap-extensions}`、`src/server/knowledge/hub-mesh.ts`、`src/server/boss/handlers/hub_auto_sync_nightly.ts`、`app/api/artifacts/[id]/backlinks` + `app/api/hubs/[id]/dismiss-link` + `app/api/knowledge/review-due-summary`。
-Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration 11 / build 55 pages）。Wave 计划：[`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)。逐-commit 审查报告：[`docs/audit/2026-05-29-commit-review.md`](../audit/2026-05-29-commit-review.md)。
+Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / migration 11 / build 55 pages）。Wave 计划：[`plans/2026-05-29-wave7-ready-to-launch.md`](plans/2026-05-29-wave7-ready-to-launch.md)。逐-commit 审查报告：[`docs/audit/2026-05-29-commit-review.md`](../../audit/2026-05-29-commit-review.md))。
 
 ### Foundation C — Judge Result Contract + Correction Event（ADR-0014 §4/§6）
 
@@ -347,7 +347,7 @@ Validation：本地全 wave-gate ✅（144 test files / 1137 tests + 1 todo / mi
 
 新 ADR 模板见 `docs/adr/`（文件名统一 bare `NNNN-kebab-title.md`）。改弦更张前先翻当时的 ADR 别重新论证。
 
-ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、[N+1 实施计划（2125 行）](plans/2026-05-18-capability-registry-foundation.md)。
+ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../../discussion/summary.md))、[N+1 实施计划（2125 行）](plans/2026-05-18-capability-registry-foundation.md)。
 
 ---
 
@@ -451,8 +451,8 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 
 | 看什么 | 去哪 |
 |---|---|
-| **当前路线图** | [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../planning/v0.3-generalized-ai-learning-framework.md) §1.5 — Foundation A/B/C → Product Track 1/2 → Later |
-| **Anchor 决议** | [ADR-0014 — Generalized Activity + Capability Registry](../adr/0014-generalized-activity-and-capability-registry.md) + [discussion/summary.md](../discussion/summary.md)（10 决议） |
+| **当前路线图** | [`docs/planning/v0.3-generalized-ai-learning-framework.md`](../../planning/v0.3-generalized-ai-learning-framework.md)) §1.5 — Foundation A/B/C → Product Track 1/2 → Later |
+| **Anchor 决议** | [ADR-0014 — Generalized Activity + Capability Registry](../../adr/0014-generalized-activity-and-capability-registry.md)) + [discussion/summary.md](../../discussion/summary.md))（10 决议） |
 | Phase N+1 详细实施 | [`plans/2026-05-18-capability-registry-foundation.md`](plans/2026-05-18-capability-registry-foundation.md) |
 | Historical roadmap（v0.12） | root `PLANNING.md`（保留作历史决策记录，**不要按此顺序认领新工作**） |
 | 项目能干什么 / 如何启动 | `CLAUDE.md` |
@@ -466,7 +466,7 @@ ADR-0014 配套：[7 轮讨论 + 10 决议 summary](../discussion/summary.md)、
 | Phase 计划 + 收尾记录 | `docs/archive/superpowers/plans/*.md` + `docs/archive/superpowers/brainstorms/*.md`（MVP 防漂移） |
 | 工具命令 | `pnpm` script 见 `package.json`；`pnpm audit:schema` 防 schema 漂移 |
 | 下次会话从哪接 | `RESUME.md`（一次性 scratch） |
-| Linear 文档迁移规则 | [`docs/agents/linear-doc-migration.md`](../agents/linear-doc-migration.md) + `pnpm docs:linear-manifest` |
+| Linear 文档迁移规则 | [`docs/agents/linear-doc-migration.md`](../../agents/linear-doc-migration.md)) + `pnpm docs:linear-manifest` |
 
 ---
 

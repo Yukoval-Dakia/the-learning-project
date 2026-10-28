@@ -9,9 +9,9 @@
 >
 > **U0 adjudication (2026-06-04 / YUK-205 / ADR-0029)**: the 2026-06-04 U0 grill
 > session locked the decision cluster captured in
-> [ADR-0029](../../adr/0029-review-engine-lands-on-existing-primitives.md)
+> [ADR-0029](../../../adr/0029-review-engine-lands-on-existing-primitives.md))
 > (review engine lands on existing primitives), informed by
-> [docs/audit/2026-06-04-design-feasibility-audit.md](../../audit/2026-06-04-design-feasibility-audit.md).
+> [docs/audit/2026-06-04-design-feasibility-audit.md](../../../audit/2026-06-04-design-feasibility-audit.md)).
 > This spec is amended inline to absorb the relevant rulings (D5/D7/D8/D10) and is
 > from now on the **home of agent-tool governance** — memory-access policy and the
 > AI-output blast-radius admission rule live in §3; sibling specs (coach-led review
@@ -69,8 +69,8 @@ its prompt, context, and behavior through skills, but it should not hide or
 remove powers because the user is on a different page.
 
 Safety still applies. The proposal-only invariant itself is owned by
-[ADR-0025 ND-5](../../adr/0025-north-star-goal-entity-and-coach-coexistence.md)
-(with [ADR-0004](../../adr/0004-pattern-c-two-type-agent-architecture.md)); this
+[ADR-0025 ND-5](../../../adr/0025-north-star-goal-entity-and-coach-coexistence.md))
+(with [ADR-0004](../../../adr/0004-pattern-c-two-type-agent-architecture.md))); this
 spec references it rather than redefining it, and keeps only the
 Copilot-specific increments:
 
@@ -215,7 +215,7 @@ review brief), not free-form chat history.
 > only, `ReviewPlanTask` owns tactical selection + adaptation. The pipeline and
 > the `ReviewPlanTask` tool surface are defined in the coach-led review-engine
 > spec (`2026-06-03-coach-led-review-engine-design.md`, "CO") and
-> [ADR-0029](../../adr/0029-review-engine-lands-on-existing-primitives.md); this
+> [ADR-0029](../../../adr/0029-review-engine-lands-on-existing-primitives.md)); this
 > spec cross-references them and does not redefine the pipeline.
 
 ### 2.3 Dreaming
@@ -300,7 +300,7 @@ respecting proposal-only safety for destructive changes.
 ### 3.1 Memory-Access Governance
 
 Memory is an attention prior, not a source of truth — per
-[ADR-0017](../../adr/0017-memory-mem0-plus-brief-layer.md), the SoT is the event
+[ADR-0017](../../../adr/0017-memory-mem0-plus-brief-layer.md)), the SoT is the event
 log plus the `knowledge_mastery` view; the Mem0 fact layer and the brief layer
 only provide direction.
 
@@ -342,8 +342,8 @@ CO §1.6 and PS §4 reference this rule rather than restating it.
 ### 3.3 Proposal-Only Invariant
 
 The proposal-only invariant for destructive domain changes is owned by
-[ADR-0025 ND-5](../../adr/0025-north-star-goal-entity-and-coach-coexistence.md)
-(with [ADR-0004](../../adr/0004-pattern-c-two-type-agent-architecture.md)). This
+[ADR-0025 ND-5](../../../adr/0025-north-star-goal-entity-and-coach-coexistence.md))
+(with [ADR-0004](../../../adr/0004-pattern-c-two-type-agent-architecture.md))). This
 spec's §1.2 references it; CO §11 and PS §4+§11 likewise reference it and keep
 only their own surface-specific increments.
 
@@ -559,7 +559,7 @@ to Copilot, subject to three protective constraints:
 
 See the coach-led review-engine spec
 (`2026-06-03-coach-led-review-engine-design.md`, "CO") and
-[ADR-0029](../../adr/0029-review-engine-lands-on-existing-primitives.md) for the
+[ADR-0029](../../../adr/0029-review-engine-lands-on-existing-primitives.md)) for the
 Coach → brief → `ReviewPlanTask` pipeline (§2.2 above summarizes it).
 
 > **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: this slice previously

@@ -1171,7 +1171,7 @@ Do not mirror every backend read into the event table. High-volume internal read
 ## Engineering Sequence
 
 1. **LearningRecord migration first**.
-   Complete the one-time migration in [`docs/modules/records.md`](../../modules/records.md):
+   Complete the one-time migration in [`docs/modules/records.md`](../../../modules/records.md)):
    add `learning_record`, remove `study_log`, and move `/record` creation to `/api/records`.
    Do not implement `query_records` against the retired StudyLog model.
 
@@ -1209,16 +1209,16 @@ Do not mirror every backend read into the event table. High-volume internal read
 These are adjacent docs/design topics that should be brainstormed before implementation:
 
 1. **Subject Graph Guide Contract**.
-   **Promoted to [`docs/modules/knowledge.md`](../../modules/knowledge.md)**. The guide is auto-seeded when a subject or large learning area appears, then enriched over time. It defines cluster names, relation hints, and proposal guardrails without requiring user confirmation.
+   **Promoted to [`docs/modules/knowledge.md`](../../../modules/knowledge.md))**. The guide is auto-seeded when a subject or large learning area appears, then enriched over time. It defines cluster names, relation hints, and proposal guardrails without requiring user confirmation.
 
 2. **Context Budget Policy**.
    Decide per surface how much context is allowed: overview size, max subgraph nodes, max recent failures, and when to require follow-up tool calls instead of larger payloads.
 
 3. **Proposal Quality Rubric**.
-   **Promoted to [`docs/modules/knowledge.md`](../../modules/knowledge.md)**. It defines evidence levels, relation-specific gates, and duplicate/redundant edge checks.
+   **Promoted to [`docs/modules/knowledge.md`](../../../modules/knowledge.md))**. It defines evidence levels, relation-specific gates, and duplicate/redundant edge checks.
 
 4. **Tool Eval Fixtures**.
-   Seed fixture list now lives in [`docs/modules/knowledge.md`](../../modules/knowledge.md). Implementation still needs actual test fixtures.
+   Seed fixture list now lives in [`docs/modules/knowledge.md`](../../../modules/knowledge.md)). Implementation still needs actual test fixtures.
 
 5. **ToolUse Event Promotion**.
    ADR-0011 keeps `experimental:tool_use`. After three real tools ship, revisit whether to promote to stable `tool_use`.

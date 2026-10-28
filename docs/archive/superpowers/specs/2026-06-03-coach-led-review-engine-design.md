@@ -9,12 +9,12 @@
 > 可追溯 evidence 和安全约束。
 >
 > **U0 adjudication note (2026-06-04 / YUK-205 / ADR-0029)**: 本 spec 的**数据模型已被
-> [ADR-0029](../../adr/0029-review-engine-lands-on-existing-primitives.md) 重定**——
+> [ADR-0029](../../../adr/0029-review-engine-lands-on-existing-primitives.md)) 重定**——
 > 引擎落回既有原语（`material_fsrs_state(subject_kind='knowledge')` / `tool_quiz` artifact /
 > event 流 / `learning_session(type='review')` / 复活的 `answer` 表），原案 7 张新表砍到 0 必建。
 > **产品 intent 不变**（知识点排期、paper UX、judge-now/show-later 缓冲反馈、Coach 主导编排）；
 > 仅存储与编排形态重定。裁决依据见可行性审计
-> [`docs/audit/2026-06-04-design-feasibility-audit.md`](../../audit/2026-06-04-design-feasibility-audit.md)（29-agent
+> [`docs/audit/2026-06-04-design-feasibility-audit.md`](../../../audit/2026-06-04-design-feasibility-audit.md))（29-agent
 > 审计 + 对抗验证，30 条高严重度发现全 upheld）。下文被重定的段落就地改写为裁决后形态，并以
 > `> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**` 行标注。
 
@@ -254,7 +254,7 @@ Knowledge-level scheduling pressure hangs from the knowledge node, carried by
 - subject id = existing column.
 
 `mastery_estimate` / `uncertainty` are **not** storage columns: mastery is a
-derived view (`knowledge_mastery`, [ADR-0012](../../adr/0012-mastery-as-derived-view.md)),
+derived view (`knowledge_mastery`, [ADR-0012](../../../adr/0012-mastery-as-derived-view.md))),
 computed from the event stream, never persisted on a scheduler row.
 
 Important: **scheduler state belongs to the knowledge review layer, not question
@@ -476,7 +476,7 @@ The old idea that a part naturally becomes an independently scheduled question
 should be retired for this engine. Parts may be answer/judge units, but the
 scheduling unit should remain knowledge plus question/profile selection.
 
-> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: 这条退役与 [ADR-0014](../../adr/0014-generalized-activity-and-capability-registry.md)
+> **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: 这条退役与 [ADR-0014](../../../adr/0014-generalized-activity-and-capability-registry.md))
 > 的 **2026-06-04 update note** 一致——ADR-0014 的 part-独立调度 facet 被本裁决簇 (D2) supersede；
 > part 作为独立 question 行的判分/血缘/figures 语义不变（仅退役其调度身份）。知识级调度落在
 > `material_fsrs_state(subject_kind='knowledge')`（ADR-0028）。
@@ -899,7 +899,7 @@ points specific to this engine:
 ## 11. Safety and Governance
 
 > **Amended 2026-06-04 (U0 / YUK-205 / ADR-0029)**: proposal-only 不变量的正主是
-> [ADR-0025 ND-5](../../adr/0025-north-star-goal-entity-and-coach-coexistence.md)（+ADR-0004）；
+> [ADR-0025 ND-5](../../../adr/0025-north-star-goal-entity-and-coach-coexistence.md))（+ADR-0004）；
 > 本节的"restructure knowledge without proposal/accept flow"即 ND-5 的本引擎应用，不再独立复述。下面的
 > may-not 清单是本 spec 特有的运行期约束，**保留**——其中"permanently suppress overdue/weak knowledge
 > nodes"是 ND-5 原文条款在复习编排上的直接落地。
