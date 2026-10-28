@@ -4,7 +4,7 @@
 **日期**：2026-05-30
 
 > 起源：YUK-143「学习意图 / 北极星」。Spec
-> `docs/superpowers/specs/2026-05-29-north-star-learning-intent-design.md`
+> `docs/archive/superpowers/specs/2026-05-29-north-star-learning-intent-design.md`
 > （design approved 2026-05-29）锁定 ND-1..ND-5。本 ADR 固化两件事：
 > (1) goal 作为**独立长期实体**而非 `learning_session.goal_id` stub 的激活；
 > (2) **Coach 共存契约**——把 ND-5（北极星不得覆盖/挤占复习等任务）写成一条

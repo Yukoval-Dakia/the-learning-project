@@ -30,7 +30,7 @@
 **当前可看进度的 UI**：
 - `/today` 主页 — Coach 摘要 + KPI strip + cost ribbon（`/api/today/copilot-summary` 接 cost_ledger + recent events）
 - `/coach` 页面 — Wave 5 落地的 coach 视图（PR #179）
-- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图）
+- `/inbox` — proposal inbox（AiProposal 13 kind 聚合视图；**单一 reader/writer 规则**：pending/accepted/dismissed 真相只在 `listProposalInboxPage` reader + `writeAiProposal` writer 一处，任何面——inbox UI、/today KPI、copilot summary——都消费同一 reader，**不得从 event 表重建 pending 判定**。源：`docs/archive/superpowers/plans/2026-05-23-l5-1-proposal-union-writer.md` + `2026-05-26-today-kpi-inbox.md`，YUK-1575 重立档）
 - `/knowledge/[id]` per-node mistake 列表
 - `/record` 统一录入入口 — 见 [`records.md`](records.md)
 - `/events/[id]` 单事件 chain 浏览 + `GET /api/questions/[id]?timeline_limit=` 单题事件链
@@ -90,6 +90,8 @@ AI 在以下场景 propose delta：
 - artifact 触达 + 时长
 
 **关键原则**：阅读时长、点击、停留等行为信号只用作 dreaming / 周复盘的输入，**不直接喂 mastery**——避免"刷时长"成为掌握度信号。确认作答不是普通行为信号；`attempt(success/failure/partial)` 是表现信号，可以参与 mastery / 复习 / 周复盘。
+
+**skip 是 UI-only（不写任何事件）**：练习流里跳过一题不产生 attempt/review 事件、不调 submit、不影响 FSRS/mastery（纯客户端状态；源：`docs/archive/superpowers/plans/2026-05-24-yuk-57-review-skip-pause-resume.md` D1，YUK-1575 重立档）。若未来 skip 要成为行为信号，必须先显式新增 `experimental:` 事件 kind，不得复用现有事件。
 
 ---
 

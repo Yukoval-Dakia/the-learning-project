@@ -1,4 +1,4 @@
-// YUK-79 / Foundation D M1 / spec `docs/superpowers/specs/2026-05-17-agent-context-tools-design.md`
+// YUK-79 / Foundation D M1 / spec `docs/archive/superpowers/specs/2026-05-17-agent-context-tools-design.md`
 //
 // DomainTool contract — the canonical type that every read / propose / write
 // tool exposed to LLM tool-call loops must implement. Tools are registered

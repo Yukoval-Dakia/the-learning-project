@@ -55,7 +55,7 @@ export const ScoreMeaning = z.enum([
   'external_verdict',
   // steps@1 capability score meaning.
   // score = step_weight × Σ verdict_weight / N + (1 − step_weight) × (final_answer_match ? 1 : 0)
-  // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.4.
+  // See docs/archive/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.4.
   'steps_v1_weighted',
   'unit_dimension_v1',
 ]);

@@ -8,7 +8,7 @@
 **Amendment 2026-10-21（YUK-1560 / ADR-0075 D7）**: `axis_state_nightly` 夜写与 batch writer 已删除；`learner_axis_state` 只保留历史行，merge 时 rename/freeze，`placement-profile` 继续只读。描述符-only 身份不变；恢复条件见 ADR-0067「A38 EZ 轴信号是否值得恢复」。
 **Part of**: YUK-445 · 学习者全面档案 — n=1 firm-up · P5 效率/描述符 · Wave2 axis2。
 **Decision source**: YUK-445 body + 「🛠 实施讨论 · grounded 2026-06-27」comment（对照 main 代码核对）。审计修正：A10（YUK-444 confidence 轴）已 HOLD，本 ADR 只覆盖 A11。
-**Related**: ADR-0035（mastery_state 三维 + 四引擎——θ̂/p(L)/difficulty 三正交轴；A11 是与 θ̂ **正交**的第四类描述符，非第三轴的替代）· `docs/design/2026-06-19-comprehensive-learner-profile.md` §1（`learner_axis_state` 表形状）/§7（P5 路线）/§8（诚实天花板）· `docs/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`（A11 在 Tier-3 preprint/by-analogy）。
+**Related**: ADR-0035（mastery_state 三维 + 四引擎——θ̂/p(L)/difficulty 三正交轴；A11 是与 θ̂ **正交**的第四类描述符，非第三轴的替代）· `docs/design/2026-06-19-comprehensive-learner-profile.md` §1（`learner_axis_state` 表形状）/§7（P5 路线）/§8（诚实天花板）· `docs/archive/superpowers/research/2026-06-20-axis2-calibration-math-dossier.md`（A11 在 Tier-3 preprint/by-analogy）。
 
 ---
 

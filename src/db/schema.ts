@@ -465,7 +465,7 @@ export const question = pgTable(
     // question, it gets FSRS state + flows through the existing fsrs_question
     // due/review path unchanged — independent scheduling falls out of independent
     // question rows. Parent-level aggregation scheduling is DEFERRED (ADR-0014 line
-    // 250). See docs/superpowers/plans/2026-05-30-yuk165-question-part-lane.md.
+    // 250). See docs/archive/superpowers/plans/2026-05-30-yuk165-question-part-lane.md.
     parent_question_id: text('parent_question_id'),
     part_index: integer('part_index'),
     created_by: jsonb('created_by').$type<AgentRefT>(),
@@ -473,7 +473,7 @@ export const question = pgTable(
     // M-1 (2026-05-21): first-class multimodal carriers.
     // `metadata.prompt_image_refs` is the legacy simple-image-ref path (still
     // written by ingestion for backwards-compatible readers; new code SHOULD
-    // read from `image_refs` instead). See docs/superpowers/specs/2026-05-21-
+    // read from `image_refs` instead). See docs/archive/superpowers/specs/2026-05-21-
     // math-mvp-vision-design.md §4 + docs/adr/0002 revision 2026-05-21.
     figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
     image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),

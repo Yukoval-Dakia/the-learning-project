@@ -88,7 +88,7 @@ owner 主线是非平稳（在学、θ 上升）。`1/√(evidence_count)` 单�
 
 ## 实施 sequencing amendment（2026-06-15）
 
-本 ADR 的 deferred 项（π_i 持久化 / b_anchor·b_calib 分离 / active-PPI / 家族 b）落地序由 `docs/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）统一编排，与选题引擎（ADR-0042 编排档2）+ 供给引擎（Phase 8）同栈：
+本 ADR 的 deferred 项（π_i 持久化 / b_anchor·b_calib 分离 / active-PPI / 家族 b）落地序由 `docs/archive/superpowers/plans/2026-06-15-personalized-calibration-roadmap.md`（YUK-361，8 阶段）统一编排，与选题引擎（ADR-0042 编排档2）+ 供给引擎（Phase 8）同栈：
 - **观测先行**（Phase 1）：`mastery_state.theta_precision` + `selection_observation`(含 π_i) + `practice_stream_item.signals` 先持久化，零行为变更。
 - **π_i 来源 = ADR-0042 编排档2 的 tempered-softmax sampler**（LLM 出权重 → 抽样），这**正是本 ADR §7 要求的「真随机抽样 inclusion probability、非确定性 top-item 事后归一化」**——选题与校准的接缝在此闭合。
 - **b_anchor/b_calib 分离 + AIPW**（Phase 6）：用 §7 的正确归一化 `(1/N)Σ_pool m̂ + (1/N)Σ_labeled ξ/π` + PPI++ power-tuning 自降级；Y = 锚定 θ 反推的难度标签（§6，非裸判分）。

@@ -1,7 +1,7 @@
 // T-RA — RatingAdvisor pure-function tests (YUK-98)
 //
-// Source spec: docs/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §6
-// Driver: docs/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md §1.1
+// Source spec: docs/archive/superpowers/specs/2026-05-22-foundation-true-closeout-design.md §6
+// Driver: docs/archive/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md §1.1
 //
 // Maps a JudgeResultV2 (+ optional effective cause category, sourced via
 // CC-1's effectiveCauseCategoryForFailureAttempt helper at the call site) to

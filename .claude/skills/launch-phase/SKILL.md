@@ -28,7 +28,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 ## 何时用 / 何时不用
 
 ✅ 用：
-- 有 phase spec 文档（如 `docs/superpowers/plans/<phase>.md`、`docs/phases/current.md`）
+- 有 phase spec 文档（如 `docs/planning/<phase>.md`；历史 phase spec 已归档至 `docs/archive/superpowers/plans/`，仅溯源用）
 - spec 能拆出 ≥ 2 条**独立** lane（文件不重叠、不共享 schema 改动）
 - 想最小化人工介入
 

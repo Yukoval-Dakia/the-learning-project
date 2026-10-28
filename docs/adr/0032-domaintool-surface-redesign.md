@@ -3,13 +3,13 @@
 **Status**: Accepted（2026-06-09）— owner 逐工具拍板（见各簇 RULED 行）。实现门禁：本审查为设计阶段，「拍前不实现」；落地走 ADR-0032 impl umbrella。
 **Part of**: YUK-203（领域模型重构）。与 ADR-0031（quiz C→A）并列：0031 管 copilot 出题这一条用户路径，本 ADR 管**整个 DomainTool 面**的重复/缺失/逻辑设计。
 **Decision source**: 2026-06-09 grill 会话（owner「审查所有 mcp/tool 的设计 → 找重复和缺失 → 逐工具拍逻辑设计」）。逐工具决策账：`docs/design/2026-06-09-mcp-tool-design-review.md`。
-**Related**: ADR-0031（copilot 内联出题，author_question 的上游用例）· `docs/superpowers/specs/2026-06-04-agent-framework-design.md`（**full safe capability** 原则）· ADR-0025 ND-5（proposal-only 只管破坏性改动）· ADR-0010（知识 mesh：树脊柱 + typed edge overlay）· ADR-0028（知识级 FSRS）· ADR-0029（tool_quiz 唯一容器）· YUK-270（上一轮 copilot 扩容）· YUK-280（`GET /api/questions` 目录读路由）· YUK-281（`PATCH /api/questions/[id]` 编辑路由）· YUK-302/YUK-212（composite 生成 + 判分收窄）。
+**Related**: ADR-0031（copilot 内联出题，author_question 的上游用例）· [ADR-0076](./0076-agent-framework-product-shape.md)（**full safe capability** 原则；原 AF spec，归档于 `docs/archive/superpowers/specs/2026-06-04-agent-framework-design.md`）· ADR-0025 ND-5（proposal-only 只管破坏性改动）· ADR-0010（知识 mesh：树脊柱 + typed edge overlay）· ADR-0028（知识级 FSRS）· ADR-0029（tool_quiz 唯一容器）· YUK-270（上一轮 copilot 扩容）· YUK-280（`GET /api/questions` 目录读路由）· YUK-281（`PATCH /api/questions/[id]` 编辑路由）· YUK-302/YUK-212（composite 生成 + 判分收窄）。
 
 > **实现后注（2026-06-13，YUK-203 领域/copilot 工具深化阶段对 M5 后代码重新核实）**：本 ADR 写于 M0-M5 架构重写前，部分决策已落地、一处被 owner 撤销——**孤立阅读会误导，以此注为准**：
 > - **已落地**：D8 author_question 统一（seed variant|record|knowledge|material）· D9 query_questions/query_mistakes 分轴 · RP-2 writeToolQuizArtifact core · RP-3 copilot write_quiz（draft 放行）· D4 分离 + **D4-E1 边归档判别式**（propose_create\|propose_archive，PR L7）· **D6 read≡write 坐标**（get_question_context include:['structure'] + get_question_block_structure，L5）· **D6-B propose_question_edit**（active 题，L6）。工具命名以代码为准（D8 收敛了 ADR-0031 的 `search`/`write_question_draft`）。
 > - **已弃（owner 2026-06-13）**：**D1**（attribute_mistake 进 base + CP⁺ 溶解 + actor='user' + force_reattribute）——现状**刻意**保留 CP⁺ chip 面、attribute_mistake 不上 copilot base、copilot 经 author_question(seed=variant) 出变式，是有意设计，与 D1 相反。**D5 的 G5/G6 + RP-4 的 copilot grant**（get_review_knowledge_snapshot / propose_record_links·promotion / 4 个 review_plan 工具上 copilot base）——已被 author_question(seed=record)+write_quiz 取代，不再 grant。故下方「copilot base 净增量」清单中这些项均**不成立**。
 > - **未做 / defer**：D2 软硬 guard 分层 · D3 learning_item 四件套收敛（=L9，高耦合低价值，本阶段 defer）。
-> 详见 `docs/superpowers/plans/2026-06-13-domain-tool-depth-regrounded-scope.md`。
+> 详见 `docs/archive/superpowers/plans/2026-06-13-domain-tool-depth-regrounded-scope.md`。
 
 ---
 

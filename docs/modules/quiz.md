@@ -506,6 +506,10 @@ User → POST /appeal { judgment_id, reason }
 
 ## 13. 反馈与 partial credit
 
+**卷反馈缓冲与重开规则（源：`docs/archive/superpowers/plans/2026-06-05-u5-paper-model.md` Cross-统合 裁定，YUK-1575 重立档）**：卷 section 的 `feedback_policy === 'judge_now_show_later'` 是唯一隐藏触发（judge 立即跑，反馈缓冲到交卷；其余值含缺省 = 即时可见）；可见性是**读时派生**（`visible_to_user !== false || session.status === 'completed'`），abandoned 不揭示；**completed 的卷不可 reopen**（状态机只有 `abandoned → started` 合法），重交写新 judge 事件。Coach 读侧永不看 `visible_to_user` 门。
+
+**评分面是三态、AI 建议仅是建议（源：`docs/archive/superpowers/plans/2026-05-10-phase1a-sub4a.md` + `2026-05-27-tra-rating-advisor-driver.md`，YUK-1575 重立档）**：FSRS rating 面只有 `again/hard/good`（`easy` 并入 `good`，`FsrsRating` 三值枚举即此）；AI judge/rating-advisor 的评级**只能建议**，提交的 rating 只走用户控制的 submit 路径，用户改写永远优先。
+
 ### 13.1 不同 judge_kind 的反馈格式
 
 | Judge | feedback_md 模板 |
