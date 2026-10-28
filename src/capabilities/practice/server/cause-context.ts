@@ -22,7 +22,7 @@
 
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/cause-policy';
-import { getFailureAttempts } from './attempt-events';
+import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 
 /**
  * The window we scan for a cause-bearing prior failure. Five attempts is

@@ -3,7 +3,7 @@ import { ArtifactType } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
 
-/** Notes owns which artifacts may be offered as usable references. */
+/** Shared ready/non-archived artifact reference facts; consumers retain picker and navigation policy. */
 export const readyArtifactReferenceCondition = and(
   isNull(artifact.archived_at),
   eq(artifact.generation_status, 'ready'),

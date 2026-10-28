@@ -38,8 +38,8 @@ import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
 import { fenceJudgeUnitClaim } from '../server/judge-operational';
 
-vi.mock('@/server/runtime-env', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/runtime-env')>();
+vi.mock('@/kernel/background-job-enqueue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/kernel/background-job-enqueue')>();
   return { ...actual, shouldEnqueueBackgroundJobs: () => true };
 });
 

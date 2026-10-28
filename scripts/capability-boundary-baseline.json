@@ -4273,6 +4273,82 @@
       "from": 5,
       "to": 3,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/notes/public.ts",
+      "siteKind": "module",
+      "symbol": "listNoteRefineChanges",
+      "targetModule": "src/kernel/read-models/note-refine-changes.ts",
+      "targetSymbol": "listNoteRefineChanges",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "server/start/note-page-reader.ts",
+          "line": 35
+        },
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 92
+        },
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 129
+        }
+      ],
+      "evidence": "Fixed 6666f938d88b3a3944d6352e6bc3600507660403: public export AST1, canonical function AST25. Real Start dynamic imports at note-page-reader AST35/path35 with call37, workbench-reader AST92/path92 with call93 and AST129/path130 with call133. The last import also binds undoNoteRefineApplyEvent; all auth/database override/lazy import/catch and caller limits remain unchanged. No test or unused export is claimed as a production consumer.",
+      "rationale": "Retain the existing Notes public reader contract for the three real Start call sites while the complete shared apply/undo history projection belongs to kernel. Preserve 50-item note history, 25-item recent history, and 200-item ownership validation before the unchanged Notes undo operation. This changes ownership and loading dependencies, not mutation, restore guarantees or paid policy; runtime initialization remains unverified.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-853a1ece-708c-4cb5-9617-eb5622ae176b",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> notes",
+      "date": "2026-10-28",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 3,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> runtime-env",
+      "date": "2026-10-28",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> runtime-env",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6726,6 +6802,236 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/notes-integration.ts",
+      "module": "src/kernel/read-models/live-artifact-reference.ts",
+      "kind": "value",
+      "symbols": ["getLiveArtifactType"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared ready/non-archived artifact reference predicate and type lookup from its canonical owner. Preserve the original product ArtifactType validation and Db/Tx lookup; Notes retains picker type permissions and literal search, Copilot retains navigation aliases and error handling, and neither gains correction-chain traversal.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-change-undo.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-changes-recent.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/api/ai-changes.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/public.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/artifact-reference-search.ts",
+      "module": "src/kernel/read-models/live-artifact-reference.ts",
+      "kind": "value",
+      "symbols": ["readyArtifactReferenceCondition"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared ready/non-archived artifact reference predicate and type lookup from its canonical owner. Preserve the original product ArtifactType validation and Db/Tx lookup; Notes retains picker type permissions and literal search, Copilot retains navigation aliases and error handling, and neither gains correction-chain traversal.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/overnight-digest.ts",
+      "module": "src/kernel/read-models/note-refine-changes.ts",
+      "kind": "value",
+      "symbols": ["listNoteRefineChanges"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete canonical refine apply/undo history projection. Preserve the two sequential queries, inclusive lower bound, original apply ordering and limit, undo linkage, finite-number fallback and nine output fields. Caller-specific 25/50/200 limits and Shell half-open day-window counting remain in their existing callers; all apply/undo mutation, CAS, presence, recovery and paid policy stays in Notes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly read effective user-cause precedence and prior failure facts for the existing cause-category tally from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "Directly read effective user-cause precedence and prior failure facts for the existing cause-category tally from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-context.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttempts"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the existing bounded cause-bearing prior failures for the same question from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-native.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById"],
+      "issue": "YUK-1570",
+      "owns": "Directly check the existing failure-attempt evidence before projecting frozen study context from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same effective cause and failure facts before the existing variant eligibility and locked recheck from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same effective cause and failure facts before the existing variant eligibility and locked recheck from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["getFailureAttemptById", "getFailureAttemptWithReasoningTraceById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same failure and reasoning-trace facts for the existing attribution and explanation operations from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-weekly.ts",
+      "module": "src/kernel/read-models/cause-policy.ts",
+      "kind": "value",
+      "symbols": ["effectiveCauseForFailureAttempt"],
+      "issue": "YUK-1570",
+      "owns": "Directly resolve effective causes for the unchanged weekly read projection from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/tools/attribute-mistake.ts",
+      "module": "src/kernel/read-models/failure-attempts.ts",
+      "kind": "value",
+      "symbols": ["FailureAttemptJudge", "getFailureAttemptWithReasoningTraceById"],
+      "issue": "YUK-1570",
+      "owns": "Directly read the same failure with reasoning trace and judge type for the unchanged attribution tool result mapping from the existing canonical owner after retiring the redundant Practice attempt-events re-export. Preserve all function identities, arguments, await/catch order, SQL, Db/Tx and lock boundaries, defaults and failure results; no scoring, provider, paid-effect or recovery policy changes.",
+      "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/api/chat.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-refine-triggers.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/appeal-operation.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/enqueue-wrong-streak-nudge.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-operation.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/session-operations/review-session.ts",
+      "module": "src/kernel/background-job-enqueue.ts",
+      "kind": "value",
+      "symbols": ["shouldEnqueueBackgroundJobs"],
+      "issue": "YUK-1570",
+      "owns": "Consume the complete shared background enqueue environment predicate from its canonical kernel owner. Preserve per-call NODE_ENV/VITEST reads, boolean result, caller short-circuit and injection overrides, enqueue timing, errors, transaction/lock boundaries and recovery policy; this predicate does not prove worker liveness or authorize provider/paid work.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
       "module": "src/kernel/cost.ts",
       "kind": "value",
@@ -7697,21 +8003,19 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 237,
+      "total": 230,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> conjectures": 2,
         "agency -> proposals": 4,
         "agency -> questions": 1,
-        "agency -> runtime-env": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> questions": 1,
         "copilot -> revert": 1,
-        "copilot -> runtime-env": 1,
         "copilot -> session": 5,
         "copilot -> today": 1,
         "ingestion -> ai": 12,
@@ -7734,7 +8038,6 @@
         "notes -> artifacts": 2,
         "notes -> boss": 1,
         "notes -> proposals": 1,
-        "notes -> runtime-env": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
         "observability -> r2": 2,
@@ -7749,7 +8052,6 @@
         "practice -> proposals": 5,
         "practice -> questions": 9,
         "practice -> r2": 6,
-        "practice -> runtime-env": 4,
         "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
@@ -7763,7 +8065,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 37,
+      "total": 35,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -7778,10 +8080,10 @@
         "observability -> practice": 1,
         "onboarding -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 4,
+        "practice -> knowledge": 3,
         "shell -> agency": 2,
         "shell -> knowledge": 1,
-        "shell -> notes": 2,
+        "shell -> notes": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
