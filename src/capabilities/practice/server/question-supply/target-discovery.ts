@@ -40,6 +40,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { learning_item, question } from '@/db/schema';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { getMasteryState, globalThetaForDomain } from '@/kernel/read-models/mastery-state';
 import { readHardCalibrationBs } from '@/kernel/read-models/question-difficulty';
@@ -618,7 +619,12 @@ async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInpu
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
     .where(inArray(learning_item.status, LearningItemOpenStatus.options));
-  const candidateKids = [...new Set(items.flatMap((i) => i.knowledge_ids ?? []))];
+  // YUK-1600 — a hub learning item references its topic ROOT (a goal), which is not a
+  // testable KC: the supply scan must never emit a target for it.
+  const candidateKids = await withoutNonKcKnowledgeIds(
+    db,
+    items.flatMap((i) => i.knowledge_ids ?? []),
+  );
   if (candidateKids.length === 0) return [];
 
   const out: FrontierKnowledgeInput[] = [];

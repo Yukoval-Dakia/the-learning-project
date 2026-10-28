@@ -175,6 +175,11 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // Load-bearing subject control-plane mirror onto the fold-owned knowledge root.
   // Dedicated schema prevents a malformed version/name transition from falling through generic.
   'experimental:subject_root_name_update',
+  // YUK-1600 — identity-role repair on fold-owned knowledge nodes
+  // (dedicated KnowledgeRoleUpdateExperimental schema, ./knowledge-node-events.ts). The
+  // fold trusts the payload to reproduce role/version; reserved so a malformed repair
+  // fails the parse barrier instead of falling through the loose generic.
+  'experimental:knowledge_role_update',
   // The RUNTIME creation BASE event
   // (./mistake-variant-events.ts) carries the full initial row INCLUDING the fold-blind
   // cause_category. It is the runtime analog of the backfill-only experimental:genesis —

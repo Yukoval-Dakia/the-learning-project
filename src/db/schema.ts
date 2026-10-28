@@ -113,6 +113,15 @@ export const knowledge = pgTable('knowledge', {
   })
     .notNull()
     .default('approved'),
+  // YUK-1600 — 身份标记：节点是「可测知识点」还是「目标/容器」。默认 'kc' 保留全部
+  // 既有行为；'goal' = LearningIntent topic 路径新建的根（学习目标），'container' =
+  // subject seed 根等结构性容器。唯一判定规则：role !== 'kc' ⇒ 不评掌握、不写
+  // θ/PFA/FSRS、不进供给/选题候选（读写门见 knowledge-roles 读模型）。goal 与 kc
+  // 可经 knowledge_edge 互相关联，互不替代。存量回填走
+  // experimental:knowledge_role_update 控制面事件（ops 回填脚本），不重写 genesis。
+  role: text('role', { enum: ['kc', 'goal', 'container'] })
+    .notNull()
+    .default('kc'),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),

@@ -43,6 +43,7 @@ import {
   withLearningStateLock,
 } from '@/db/learning-state-lock';
 import { mastery_state } from '@/db/schema';
+import { withoutNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import {
   ABILITY_GLOBAL_SUBJECT_KIND,
@@ -181,7 +182,8 @@ export async function retireMasteryStateOnMerge(
 }
 
 export interface UpdateThetaForAttemptInput {
-  /** q.knowledge_ids — every KC this question probes gets updated (PFA per-KC). */
+  /** q.knowledge_ids — every KC this question probes gets updated (PFA per-KC).
+   * YUK-1600: goal/container ids are dropped here — the θ writer itself is the gate. */
   knowledgeIds: string[];
   /** read item_calibration.b for the anchor. */
   questionId: string;
@@ -242,8 +244,9 @@ export async function updateThetaForAttempt(
   input: UpdateThetaForAttemptInput,
 ): Promise<UpdateThetaForAttemptResult> {
   await acquireLearningStateWriteLock(tx);
-  const knowledgeIds = Array.from(
-    new Set(input.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0)),
+  const knowledgeIds = await withoutNonKcKnowledgeIds(
+    tx,
+    Array.from(new Set(input.knowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0))),
   );
   if (knowledgeIds.length === 0) return { theta_snapshots: [] };
 

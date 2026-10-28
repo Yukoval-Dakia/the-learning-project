@@ -6473,6 +6473,46 @@
       "issue": "YUK-1522",
       "owns": "Canonical all-time provider attempt authority and linked ledger suppression; session cost reader filters only exact durable session-owned identities.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/due-list.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["getNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/stream-inputs.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -6826,6 +6866,15 @@
       "to": 1217,
       "issue": "YUK-1473",
       "responsibilityReason": "PracticeSolo remains the existing presentation owner. The 33-line increase adds one local M3E root marker and 22 static class bindings to its real Button, quote IconButton and rating ChipToggle consumers, including Biome expansion of existing JSX attributes. Removing only those 23 attributes restores the original business AST: hooks, props, callbacks, keys, labels, submission and recovery expressions are unchanged. The existing CSS remains an exact prefix and the new rules require the root marker plus control class. No new business responsibility, effect, data operation, public interface or framework; extracting a helper solely to hide these local class attributes would not create an independent live operation."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-28",
+      "baseBlob": "747eb80d37162cec68bd8ef4aba4c33da57af8f7",
+      "from": 5028,
+      "to": 5037,
+      "issue": "YUK-1600",
+      "responsibilityReason": "Additive knowledge.role identity column (kc/goal/container) plus its 6-line gate-rule comment: 9 lines on the fold-owned knowledge table definition, which drizzle requires inline in the single schema module. No existing column or ownership changes; the role value is written only through the canonical projection throat (materialization upsert) and the new experimental:knowledge_role_update control-plane event. The gates live in the small kernel read model src/kernel/read-models/knowledge-roles.ts, not here; splitting the central schema file would churn unrelated table ownership."
     }
   ],
   "compatShims": [
