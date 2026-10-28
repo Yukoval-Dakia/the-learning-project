@@ -33,6 +33,7 @@ export type { BlockMergeAcceptResult } from './server/proposal-appliers';
 export { revertIngestionBlock } from './server/revert-auto-enroll';
 export { readIngestionSessionBlocks } from './server/session-blocks-read';
 export { readIngestionSessionDetail } from './server/session-detail';
+export { readIngestionSessionHistory } from './server/session-history-read';
 export { readIngestionSessions } from './server/session-list-read';
 export {
   bodyBlockSummaries,
