@@ -9,6 +9,11 @@ import type {
   ProposalDismissInput,
 } from '@/kernel/proposals';
 import { toProposalLifecycleResult } from '@/kernel/proposals';
+import {
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
@@ -30,6 +35,9 @@ export const {
   relearnProposalRetractApplier,
 } = createAgencyProposalLifecycle({
   ...ownerRuntime,
+  acquireProposalDecisionLock,
+  findExistingRateEvent,
+  writeProposalRateEvent,
   recordDismissSignal: (db, input: ProposalDismissInput) =>
     ownerRuntime.recordProposalDecisionSignal(
       db,

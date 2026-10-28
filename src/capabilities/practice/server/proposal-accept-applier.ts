@@ -12,15 +12,17 @@ import type {
 } from '@/kernel/proposals';
 import { requireLaterProposalCorrection, toProposalLifecycleResult } from '@/kernel/proposals';
 import {
+  asPlainRecord,
+  findExistingRateEvent,
+  writeProposalRateEvent,
+} from '@/kernel/proposals/applier-helpers';
+import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
 import {
   type ProposalInboxRow,
-  asPlainRecord,
-  findExistingRateEvent,
   recordProposalDecisionSignal,
-  writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import {
   type PracticeApplierOpts,

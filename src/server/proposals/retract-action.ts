@@ -5,13 +5,13 @@ import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { StaleProposalCorrectionClock, getProposalLifecycleOperation } from '@/kernel/proposals';
+import { acquireProposalDecisionLock } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   extractRecordEvidenceIds,
   rollbackRecordsActioned,
 } from '@/kernel/records/record-processing';
 import type { RetractAiProposalOpts, RetractAiProposalResult } from './action-types';
-import { acquireProposalDecisionLock } from './applier-helpers';
 import { ownerInput, proposalLifecycleRegistry, requireProposal } from './lifecycle-context';
 
 function activityRefsForProposal(proposal: ProposalInboxRow): ActivityRefT[] {

@@ -14,12 +14,3 @@ export {
   ensureProposalDecisionSignal,
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
-export {
-  acquireProposalDecisionLock,
-  asPlainRecord,
-  ensureAcceptOnly,
-  existingAcceptRate,
-  findExistingRateEvent,
-  requiredString,
-} from './applier-helpers';
-export { writeProposalRateEvent } from './owner-runtime';
