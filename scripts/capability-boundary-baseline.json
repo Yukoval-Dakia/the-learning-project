@@ -6875,6 +6875,15 @@
       "to": 5037,
       "issue": "YUK-1600",
       "responsibilityReason": "Additive knowledge.role identity column (kc/goal/container) plus its 6-line gate-rule comment: 9 lines on the fold-owned knowledge table definition, which drizzle requires inline in the single schema module. No existing column or ownership changes; the role value is written only through the canonical projection throat (materialization upsert) and the new experimental:knowledge_role_update control-plane event. The gates live in the small kernel read model src/kernel/read-models/knowledge-roles.ts, not here; splitting the central schema file would churn unrelated table ownership."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-28",
+      "baseBlob": "11eec5421d96fcf842e3124a9bbca8d5e2ed89b0",
+      "from": 1306,
+      "to": 1328,
+      "issue": "YUK-1654",
+      "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
     }
   ],
   "compatShims": [

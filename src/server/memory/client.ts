@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { MemoryConfig, MemoryItem, SearchResult } from 'mem0ai/oss';
+import { assertModelEndpointHostAllowed } from '@/core/config/model-endpoint-allowlist';
 import { allowsDerivation } from '@/core/schema/derivation-policy';
 import {
   type Mem0OpaqueOperationContext,
@@ -173,6 +174,10 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
       `Mem0 MEM0_EMBEDDING_DIMS must be a positive integer (got ${JSON.stringify(env.MEM0_EMBEDDING_DIMS)})`,
     );
   }
+  const embeddingBaseUrl = optionalEnv(env, 'MEM0_EMBEDDING_BASE_URL', DEFAULT_EMBEDDING_BASE_URL);
+  // YUK-1654 — the embedding credential only travels to a catalog-declared
+  // embedding endpoint; a rogue MEM0_EMBEDDING_BASE_URL fails at client build.
+  assertModelEndpointHostAllowed(embeddingBaseUrl, 'MEM0_EMBEDDING_BASE_URL (memory embedder)');
 
   return {
     embedder: {
@@ -180,7 +185,7 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
       config: {
         apiKey: dashscopeApiKey,
         model: optionalEnv(env, 'MEM0_EMBEDDING_MODEL', DASHSCOPE_EMBED_MODEL_ID),
-        baseURL: optionalEnv(env, 'MEM0_EMBEDDING_BASE_URL', DEFAULT_EMBEDDING_BASE_URL),
+        baseURL: embeddingBaseUrl,
         embeddingDims: dims,
       },
     },
