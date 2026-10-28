@@ -55,9 +55,9 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   applyScoringEditPlan,
   draftCanonicalIdentity,

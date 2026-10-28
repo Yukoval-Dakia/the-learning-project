@@ -42,6 +42,7 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
@@ -61,7 +62,6 @@ import {
   requiredString,
   writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';

@@ -58,6 +58,7 @@ import {
 import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
 import { costUsdToMicroUsd } from '@/kernel/cost';
 import { writeEvent } from '@/kernel/events';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
   type DomainToolName,
@@ -70,7 +71,6 @@ import {
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { answerClassCompatible } from '@/subjects/question-kind';
