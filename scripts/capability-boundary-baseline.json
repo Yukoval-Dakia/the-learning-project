@@ -4228,6 +4228,26 @@
     },
     {
       "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessionHistory",
+      "targetModule": "src/capabilities/ingestion/server/session-history-read.ts",
+      "targetSymbol": "readIngestionSessionHistory",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-28",
+      "consumers": [
+        {
+          "file": "server/start/record-session-history-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start history host imports the complete reader at await-import AST and module path line 11 and invokes it at line 13 with db and the original id params. The retained history HTTP GET consumes the same owner. The existing record route Provider reaches useRecording's status-keyed history query through its typed getHistory method; context is type-only.",
+      "rationale": "Ingestion owns the complete history request: original id and session-type validation, title and agent evidence, ordered blocks and root questions, frozen history and current serving projections, asks and prior runs, missing evidence and the full body including cost evidence. HTTP and Start share this operation without reproducing query order, projection or error policy. Existing title, agent-history and cost readers retain their separate read-only snapshots; cost as_of does not become a whole-history timestamp.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f05a13d2-0505-4cf6-ab4c-7c543aaff84e"
+    },
+    {
+      "type": "stable_contract",
       "file": "src/capabilities/knowledge/public.ts",
       "siteKind": "module",
       "symbol": "loadTreeSnapshot",
@@ -6622,6 +6642,26 @@
       "symbols": ["assertFromState"],
       "issue": "YUK-1570",
       "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-history-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Own the original missing-session-id validation_error/400 and absent ingestion-session not_found/404 decisions inside the complete history reader. Preserve the original untrimmed id and error propagation to HTTP and Start adapters, including the unchanged cost owner's safe 503; do not add a schema, codec or swallowed-error fallback.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-history-read.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
+      "issue": "YUK-1358",
+      "owns": "Consume the canonical current-serving projection for all linked question ids after the original history, root-question and missing-metadata reads. Keep the original UNKNOWN_SERVING fallback and currentOf null boundary; distinguish current serving facts from frozen at-finish evidence without changing sorting, eligibility, snapshots or serving algorithms.",
       "date": "2026-10-28"
     },
     {

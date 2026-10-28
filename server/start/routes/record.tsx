@@ -11,11 +11,13 @@ import { startRecordManualMistakeClient } from '../record-manual-mistake-client'
 import { startRecordRevertClient } from '../record-revert-client';
 import { startRecordSessionCreateClient } from '../record-session-create-client';
 import { startRecordSessionDetailClient } from '../record-session-detail-client';
+import { startRecordSessionHistoryClient } from '../record-session-history-client';
 import { startRecordSessionsClient } from '../record-session-list-client';
 import { startWorkbenchClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
 
 const recordClient: RecordClient = {
+  getHistory: startRecordSessionHistoryClient,
   answerAsk: startRecordAskAnswerClient,
   listSessions: startRecordSessionsClient,
   listBlocks: startRecordBlocksClient,
