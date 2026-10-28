@@ -720,12 +720,7 @@ export function PracticeSolo({
     // submit button's title, not in a hint line on the bar.
     const actionBar = answering ? (
       // biome-ignore lint/a11y/useSemanticElements: a toolbar of buttons, not a form field set.
-      <div
-        className="un-ps-bar un-glass"
-        role="group"
-        aria-label="作答操作"
-        ref={refs.attachSubmitHotkey}
-      >
+      <div className="un-ps-bar" role="group" aria-label="作答操作" ref={refs.attachSubmitHotkey}>
         <div className="un-ps-bar-main">
           {ready.mode === 'manual' ? (
             <>
