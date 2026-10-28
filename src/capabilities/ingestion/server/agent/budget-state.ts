@@ -110,6 +110,7 @@ const executionOwnerSchema = z.object({
   stop_request_id: z.string().optional(),
   stop_confirmed: z.boolean().optional(),
   segment_state: z.enum(['running', 'idle']).optional(),
+  segment_claim: z.string().min(1).optional(),
 });
 export type AgentExecutionOwner = z.infer<typeof executionOwnerSchema>;
 

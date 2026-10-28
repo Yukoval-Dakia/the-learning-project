@@ -1203,7 +1203,7 @@ async function acceptUnifiedQuestionEditRequest(
     .where(
       and(
         eq(event.id, proposalId),
-        eq(event.action, 'propose'),
+        eq(event.action, 'experimental:proposal'),
         eq(event.actor_ref, proposal.actor_ref),
       ),
     );

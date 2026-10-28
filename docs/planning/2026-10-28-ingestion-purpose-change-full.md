@@ -222,3 +222,12 @@ Mem0 锁定 3.0.13 的真实 getAll 将 user_id 放顶层、event_id 留 metadat
 provider lanes/attempt truth 均 exit 0。实际债务230/0/35，15新kernel边，>1500文件9/base9。
 本修没有API wire/生成物变化，未重复跑生成器；旧生成门是原候选历史证据。
 原3a的11个CI失败与9项未实施fixture TEXT仍如实保留；新候选CI与R2未观测，不声称green。
+
+## 唯一 R2 后的父定向修复
+
+R2 固定599的 F1/F3 静态关闭、F2/F4 仍 OPEN 历史保留，不追加第三审。
+父将同一runRef内本次claim的唯一ID固定在execution_owner.segment_claim；领取含free cap在同一事务写running和该ID。
+executor所有停止确认都带原claim ID，在持预算锁及session行锁后匹配当前segment_claim（不复用段序号或TTL marker）；续段B领取后，旧段A的finally即使已drain自身工具也不能代B确认。
+minute sweep仍只凭持久idle证据确认，不凭时间/缺job关闭running，不释放paid unknown。该交错为源码推导，未执行并发或停止验收。
+原question_edit canonical writer的default action为experimental:proposal；接受入口按精确event ID/actor与此action取原来源，不再依赖DTO不存在的source_action，也不将knowledge_node/edge的propose误用于question_edit。
+测试六文件TEXT继续未实施，CI红与R2原报告保留；父修复不是新的独立APPROVE或真实运行通过。

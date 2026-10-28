@@ -6,6 +6,7 @@ import {
 } from '@/ai/agent-run-error';
 import { piDomainMount } from '@/ai/pi-tool-mount';
 import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
+import { newId } from '@/core/ids';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
@@ -200,6 +201,7 @@ export async function runIngestionAgentSegment(
 ): Promise<AgentRunOutcome> {
   const { sessionId, trigger } = params;
   const runTask = deps.runTaskFn ?? makeRunTaskFn(db);
+  const segmentClaim = newId();
 
   // One run lock and row lock cover ownership, the queued transition, and the
   // claim, so a stale job cannot consume a later operation's runRef.
@@ -208,10 +210,11 @@ export async function runIngestionAgentSegment(
     if (!entered) return null;
     if (entered.status === 'queued') await Ingestion.markExtractionStarted(tx, sessionId);
     const claim = await claimRunSegment(tx, sessionId, trigger, MAX_SEGMENTS);
-    if (claim.kind === 'ok')
+    if (claim.kind === 'ok' || claim.kind === 'over_cap')
       await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
         ...entered.owner,
         segment_state: 'running',
+        segment_claim: segmentClaim,
       });
     const sourceEventId = `ingestion-execution-source:${entered.owner.run_ref}`;
     await writeEvent(tx, {
@@ -541,7 +544,7 @@ export async function runIngestionAgentSegment(
       });
     } catch (err) {
       await drainTools();
-      if (await confirmAgentPurposeStop(db, sessionId, runRef))
+      if (await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim }))
         return { outcome: 'failed', status: 'purpose_stopped', segment };
       const { code, retryable } = classifyRunFailure(err);
       const message = err instanceof Error ? err.message : String(err);
@@ -772,7 +775,7 @@ export async function runIngestionAgentSegment(
       return { outcome: 'continue', segment };
     } catch (bookkeepingErr) {
       await drainTools();
-      if (await confirmAgentPurposeStop(db, sessionId, runRef))
+      if (await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim }))
         return { outcome: 'failed', status: 'purpose_stopped', segment };
       console.error('[ingestion-agent] post-model bookkeeping failed — segment left for sweep', {
         session_id: sessionId,
@@ -792,7 +795,7 @@ export async function runIngestionAgentSegment(
       // This process owns this claim, including free gates and entry failures.
       // Await every started tool's execute/log/mirror before acknowledging stop.
       await drainTools();
-      await confirmAgentPurposeStop(db, sessionId, runRef);
+      await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim });
     } finally {
       if (redactionAttached) detachAgentRedactionSink(sessionId);
     }

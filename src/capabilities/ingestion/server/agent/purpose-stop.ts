@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import * as Ingestion from '../session-lifecycle';
 import { settleAgentRunBudget } from './budget';
-import { readAgentBudget, writeAgentBudgetPath } from './budget-state';
+import { AGENT_BUDGET_LOCK_KEY, readAgentBudget, writeAgentBudgetPath } from './budget-state';
 import { persistAgentRunHistory } from './history';
 
 /** Only the executor whose awaited task/tools have ended may acknowledge stop.
@@ -12,13 +12,17 @@ export async function confirmAgentPurposeStop(
   db: Db,
   sessionId: string,
   runRef: string,
-  requireIdle = false,
+  proof: { claimId: string } | 'idle',
 ) {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${AGENT_BUDGET_LOCK_KEY}))`);
     const owner = (await readAgentBudget(tx, sessionId, true))?.execution_owner;
     if (!owner || owner.run_ref !== runRef || !owner.stop_request_id) return false;
+    // A continuation keeps runRef but claims a different segment. An old
+    // executor's drained barrier cannot acknowledge that successor's stop.
+    if (proof === 'idle' ? owner.segment_state !== 'idle' : owner.segment_claim !== proof.claimId)
+      return false;
     if (owner.stop_confirmed) return true;
-    if (requireIdle && owner.segment_state !== 'idle') return false;
     await Ingestion.markExtractionFailed(
       tx,
       sessionId,
@@ -51,5 +55,5 @@ export async function recoverAgentPurposeStops(db: Db) {
       AND agent_budget->'execution_owner'->>'segment_state' = 'idle'
     ORDER BY id LIMIT 25
   `);
-  for (const row of rows) await confirmAgentPurposeStop(db, row.id, row.run_ref, true);
+  for (const row of rows) await confirmAgentPurposeStop(db, row.id, row.run_ref, 'idle');
 }
