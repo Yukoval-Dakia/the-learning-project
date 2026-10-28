@@ -1,9 +1,9 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import * as Review from '@/capabilities/practice/server/review-session-lifecycle';
 import { artifact, learning_session, question } from '@/db/schema';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './review-sessions';
 

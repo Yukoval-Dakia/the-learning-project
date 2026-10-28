@@ -4193,6 +4193,86 @@
       "evidence": "The authenticated Start checkpoint-revert host imports this complete request at await-import AST and module path line 13 and invokes it at line 15 with db and the original eventId params. The context reference is type-only; the retained HTTP POST consumes the same request internally. The existing stable client reaches TurnActions.revert, preserving its separate request-error and refresh-error handling.",
       "rationale": "Copilot owns the complete checkpoint-revert request: original eventId schema parsing, message-only Zod validation_error/400 mapping over the original call, and the complete status/body outcome from the unchanged transactional checkpoint operation. HTTP and Start retain success and refusal envelopes; the Start function throws non-200 Response bodies outside the host errorResponse catch so apiFetch preserves refusal details without a second 500 or a success union. No UI, lock, cascade, savepoint, retry or replay policy moves into the caller.",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-4335bf29-750b-40ec-b7b1-0c4b70de3868"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "abandonOrphanReviewSession",
+      "targetModule": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "targetSymbol": "abandonOrphanReviewSession",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 6
+        },
+        {
+          "file": "src/server/boss/handlers/prune_orphan_review_sessions.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Fixed b7fe0e3761b2b84d24625db7d2e08953475f8775: public export AST368, canonical function AST54; durable consumer import AST6/call249 and legacy job import AST7/call35. Both are real production calls with caller-owned Tx. Six mechanical test imports target the canonical namespace and are not counted as production evidence. The complete 361-line owner is byte-identical to the original.",
+      "rationale": "Expose the complete Review orphan state operation from its Practice owner for existing durable and legacy recovery consumers. Preserve row locking, incarnation/cutoff checks, skipped reasons and version result; caller-owned receipt/phase/fence and transaction lifetime stay with the recovery callers. The unchanged completion feedback release remains within the full lifecycle per the narrow B ruling; no wider B policy, runtime or paid permission is implied. Ownership depth gain is zero; initialization remains unverified.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-a2d011fc-ebc7-45db-ac54-d8f72a928f35",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-28",
+      "from": 4,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/ingestion/public.ts",
+      "siteKind": "module",
+      "symbol": "readIngestionSessionHistory",
+      "targetModule": "src/capabilities/ingestion/server/session-history-read.ts",
+      "targetSymbol": "readIngestionSessionHistory",
+      "owner": "ingestion",
+      "issue": "YUK-1358",
+      "date": "2026-10-28",
+      "consumers": [
+        {
+          "file": "server/start/record-session-history-reader.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "The authenticated Start history host imports the complete reader at await-import AST and module path line 11 and invokes it at line 13 with db and the original id params. The retained history HTTP GET consumes the same owner. The existing record route Provider reaches useRecording's status-keyed history query through its typed getHistory method; context is type-only.",
+      "rationale": "Ingestion owns the complete history request: original id and session-type validation, title and agent evidence, ordered blocks and root questions, frozen history and current serving projections, asks and prior runs, missing evidence and the full body including cost evidence. HTTP and Start share this operation without reproducing query order, projection or error policy. Existing title, agent-history and cost readers retain their separate read-only snapshots; cost as_of does not become a whole-history timestamp.",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1358#comment-f05a13d2-0505-4cf6-ab4c-7c543aaff84e"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadTreeSnapshot",
+      "targetModule": "src/kernel/read-models/knowledge-graph.ts",
+      "targetSymbol": "loadTreeSnapshot",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "Fixed e802cd811d4803b20b6836f0e433dccf2f7ec041: public export AST19 resolves to the unchanged canonical function AST60. The authenticated Start tree reader dynamically imports KnowledgeTreeQuerySchema and loadTreeSnapshot at AST49/path50 and calls the reader at61 with the original Db and optional subject. Its validation, learner-visible filtering, timestamp handling and errorResponse remain unchanged. Agency callers now consume the canonical directly and are not claimed as public consumers.",
+      "rationale": "Preserve the existing Knowledge public business read contract for the real Start tree consumer while the complete knowledge-graph read mechanism already belongs to kernel. Retire the now-unused ten-line local tree re-export after all five remaining production callers move to the canonical. Preserve the original role/mastery overlay, stable row cap and truncation warning, domain walk and subject filter. No snapshot transaction, provider behavior or new interface depth is introduced.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2bb4a560-3361-4806-af6d-9a80b38cdf8f",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-28",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6473,6 +6553,176 @@
       "issue": "YUK-1522",
       "owns": "Canonical all-time provider attempt authority and linked ledger suppression; session cost reader filters only exact durable session-owned identities.",
       "date": "2026-10-27"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/due-list.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["getNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/target-discovery.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/stream-inputs.ts",
+      "module": "src/kernel/read-models/knowledge-roles.ts",
+      "kind": "value",
+      "symbols": ["withoutNonKcKnowledgeIds"],
+      "issue": "YUK-1600",
+      "owns": "Knowledge-node identity-role gate reads (YUK-1600): positively non-kc (goal/container) id lookup and the order-preserving mastery-evaluable subset filter. One rule behind every gate: role !== 'kc' means no theta/PFA/FSRS write, no supply/selection candidacy, no mastery reading.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-long-check.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1642",
+      "date": "2026-10-28",
+      "owns": "Kernel cost owns the canonical USD→micro-USD conversion for AI event cost evidence; the long-note revision round stamps costMicroUsd on its body_blocks_edit and lifecycle events with the same conversion note_generate/note_verify already use."
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review completion transition and per-attempt feedback release in its original transaction, including incarnation filter, event identity and timestamps; no independent B policy moves.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "Preserve the complete Review lifecycle missing-session and invalid-transition error contracts, including unchanged statuses, messages and strict versus idempotent behavior.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "Preserve original Review state job-event timing and payload inside the same transaction, including creation and reopen; caller recovery and queue policies remain unchanged.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/review-session-lifecycle.ts",
+      "module": "src/kernel/learning-session-guard.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-history-read.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1358",
+      "owns": "Own the original missing-session-id validation_error/400 and absent ingestion-session not_found/404 decisions inside the complete history reader. Preserve the original untrimmed id and error propagation to HTTP and Start adapters, including the unchanged cost owner's safe 503; do not add a schema, codec or swallowed-error fallback.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/session-history-read.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["UNKNOWN_SERVING", "readQuestionServing"],
+      "issue": "YUK-1358",
+      "owns": "Consume the canonical current-serving projection for all linked question ids after the original history, root-question and missing-metadata reads. Keep the original UNKNOWN_SERVING fallback and currentOf null boundary; distinguish current serving facts from frozen at-finish evidence without changing sorting, eligibility, snapshots or serving algorithms.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/scope.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/api/tree.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/public.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/propose_edge.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -6826,6 +7076,24 @@
       "to": 1217,
       "issue": "YUK-1473",
       "responsibilityReason": "PracticeSolo remains the existing presentation owner. The 33-line increase adds one local M3E root marker and 22 static class bindings to its real Button, quote IconButton and rating ChipToggle consumers, including Biome expansion of existing JSX attributes. Removing only those 23 attributes restores the original business AST: hooks, props, callbacks, keys, labels, submission and recovery expressions are unchanged. The existing CSS remains an exact prefix and the new rules require the root marker plus control class. No new business responsibility, effect, data operation, public interface or framework; extracting a helper solely to hide these local class attributes would not create an independent live operation."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-28",
+      "baseBlob": "747eb80d37162cec68bd8ef4aba4c33da57af8f7",
+      "from": 5028,
+      "to": 5037,
+      "issue": "YUK-1600",
+      "responsibilityReason": "Additive knowledge.role identity column (kc/goal/container) plus its 6-line gate-rule comment: 9 lines on the fold-owned knowledge table definition, which drizzle requires inline in the single schema module. No existing column or ownership changes; the role value is written only through the canonical projection throat (materialization upsert) and the new experimental:knowledge_role_update control-plane event. The gates live in the small kernel read model src/kernel/read-models/knowledge-roles.ts, not here; splitting the central schema file would churn unrelated table ownership."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-28",
+      "baseBlob": "11eec5421d96fcf842e3124a9bbca8d5e2ed89b0",
+      "from": 1306,
+      "to": 1328,
+      "issue": "YUK-1654",
+      "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
     }
   ],
   "compatShims": [
@@ -7410,7 +7678,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 239,
+      "total": 237,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -7463,7 +7731,7 @@
         "practice -> questions": 9,
         "practice -> r2": 6,
         "practice -> runtime-env": 4,
-        "practice -> session": 4,
+        "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
         "shell -> records": 1,
@@ -7476,10 +7744,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 39,
+      "total": 37,
       "byOwnerPair": {
         "observability -> knowledge": 2,
-        "agency -> knowledge": 5,
+        "agency -> knowledge": 3,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,

@@ -12,7 +12,10 @@
 // key value stays in the operator's env and never reaches the DB or logs.
 
 import { ApiError } from '@/kernel/http';
-import { assertModelEndpointHostAllowed } from './model-endpoint-allowlist';
+import {
+  assertModelEndpointHostAllowed,
+  assertProviderKeyEnvBound,
+} from './model-endpoint-allowlist';
 
 export type CustomProviderProtocol = 'openai-completions' | 'anthropic-messages';
 
@@ -170,9 +173,13 @@ export function validateCustomProviderInput(
       422,
     );
   }
+  const baseUrl = validateCustomProviderBaseUrl(input.baseUrl);
+  // YUK-1654 — the credential named by api_key_env is bound to its provider's
+  // endpoints: another provider's key never travels to this base_url.
+  assertProviderKeyEnvBound(input.apiKeyEnv, baseUrl, 'custom provider api_key_env');
   return {
     displayName: input.displayName.trim(),
-    baseUrl: validateCustomProviderBaseUrl(input.baseUrl),
+    baseUrl,
     apiKeyEnv: input.apiKeyEnv,
     protocol: input.protocol as CustomProviderProtocol,
   };

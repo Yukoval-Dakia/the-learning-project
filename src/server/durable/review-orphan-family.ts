@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
+import { abandonOrphanReviewSession } from '@/capabilities/practice/public';
 import type { Db, Tx } from '@/db/client';
 import {
   learning_session,
@@ -17,7 +18,6 @@ import {
   readContractEpoch,
   waitForRunnableEpoch,
 } from '@/server/contract-epoch';
-import { abandonOrphanReviewSession } from '@/server/session/review';
 import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const REVIEW_ORPHAN_FAMILY = 'prune_orphan_review_sessions';

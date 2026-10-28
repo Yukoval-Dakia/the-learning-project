@@ -113,6 +113,15 @@ export const knowledge = pgTable('knowledge', {
   })
     .notNull()
     .default('approved'),
+  // YUK-1600 — 身份标记：节点是「可测知识点」还是「目标/容器」。默认 'kc' 保留全部
+  // 既有行为；'goal' = LearningIntent topic 路径新建的根（学习目标），'container' =
+  // subject seed 根等结构性容器。唯一判定规则：role !== 'kc' ⇒ 不评掌握、不写
+  // θ/PFA/FSRS、不进供给/选题候选（读写门见 knowledge-roles 读模型）。goal 与 kc
+  // 可经 knowledge_edge 互相关联，互不替代。存量回填走
+  // experimental:knowledge_role_update 控制面事件（ops 回填脚本），不重写 genesis。
+  role: text('role', { enum: ['kc', 'goal', 'container'] })
+    .notNull()
+    .default('kc'),
   created_at: timestamp('created_at', { withTimezone: true }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
   version: integer('version').notNull().default(0),
@@ -465,7 +474,7 @@ export const question = pgTable(
     // question, it gets FSRS state + flows through the existing fsrs_question
     // due/review path unchanged — independent scheduling falls out of independent
     // question rows. Parent-level aggregation scheduling is DEFERRED (ADR-0014 line
-    // 250). See docs/superpowers/plans/2026-05-30-yuk165-question-part-lane.md.
+    // 250). See docs/archive/superpowers/plans/2026-05-30-yuk165-question-part-lane.md.
     parent_question_id: text('parent_question_id'),
     part_index: integer('part_index'),
     created_by: jsonb('created_by').$type<AgentRefT>(),
@@ -473,7 +482,7 @@ export const question = pgTable(
     // M-1 (2026-05-21): first-class multimodal carriers.
     // `metadata.prompt_image_refs` is the legacy simple-image-ref path (still
     // written by ingestion for backwards-compatible readers; new code SHOULD
-    // read from `image_refs` instead). See docs/superpowers/specs/2026-05-21-
+    // read from `image_refs` instead). See docs/archive/superpowers/specs/2026-05-21-
     // math-mvp-vision-design.md §4 + docs/adr/0002 revision 2026-05-21.
     figures: jsonb('figures').$type<FigureRefT[]>().notNull().default([]),
     image_refs: jsonb('image_refs').$type<string[]>().notNull().default([]),
@@ -2544,7 +2553,7 @@ export const event = pgTable(
     // 'event' | 'chip' | 'query' (locked Lane B contract)
     subject_kind: text('subject_kind').notNull(),
     subject_id: text('subject_id').notNull(),
-    // 'success' | 'failure' | 'partial' | NULL (depends on action)
+    // 'success' | 'failure' | 'partial' | 'degraded' | NULL (depends on action)
     outcome: text('outcome'),
     // Zod-guarded per (action × subject_kind) — see Lane B
     payload: jsonb('payload').$type<JsonObject>().notNull(),

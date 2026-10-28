@@ -52,7 +52,7 @@ export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 export const ConversationStatus = z.enum(['active', 'idle', 'ended', 'abandoned']);
 export type ConversationStatusT = z.infer<typeof ConversationStatus>;
 
-// tutor 状态机 (解题陪练 / docs/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
+// tutor 状态机 (解题陪练 / docs/archive/superpowers/specs/2026-06-01-solve-tutor-design.md §3.1)：
 //   active → submitted → judged → ended  (+ abandoned terminal)
 // active   : 会话已开，可请求 hint / 提交作答
 // submitted: 已收到一次作答提交，判分进行中（瞬态，submit 路由内同事务推进到 judged）

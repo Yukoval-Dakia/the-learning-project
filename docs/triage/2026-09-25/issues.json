@@ -37,7 +37,7 @@
       "labels": ["Improvement"],
       "parent": "YUK-350",
       "updatedAt": "2026-09-24",
-      "description": "## 来源\n\n产品对账 §A「真·未决」A3 + owner 2026-06-16 ratify。决策记录见 `docs/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md`。关联设计 §6.4 / §7.1。\n\n## 背景\n\n是否把答案证据切到**步骤级**（per-step 留痕 + 判分），让复盘能定位到「第几步错」。现成结构在 `StepsJudgeTask`（已对数学/推导型运作）。\n\n## 决策（owner ratify）\n\n* 保持 **future**。\n* 仅限**数学/推导型**（`StepsJudgeTask` 已运作那批），**不向全题型泛化**。\n* 理由：步骤级切分撞开放·主观题天花板（无法可靠切步）；全题型铺开收益不抵成本。数学/推导有现成 step-rubric 结构。\n\n## Scope（future）\n\n* 扩展 `StepsJudgeTask` 的 step-level 证据留痕，限数学/推导型。"
+      "description": "## 来源\n\n产品对账 §A「真·未决」A3 + owner 2026-06-16 ratify。决策记录见 `docs/archive/superpowers/plans/2026-06-16-A1-A5-ratified-decisions.md`。关联设计 §6.4 / §7.1。\n\n## 背景\n\n是否把答案证据切到**步骤级**（per-step 留痕 + 判分），让复盘能定位到「第几步错」。现成结构在 `StepsJudgeTask`（已对数学/推导型运作）。\n\n## 决策（owner ratify）\n\n* 保持 **future**。\n* 仅限**数学/推导型**（`StepsJudgeTask` 已运作那批），**不向全题型泛化**。\n* 理由：步骤级切分撞开放·主观题天花板（无法可靠切步）；全题型铺开收益不抵成本。数学/推导有现成 step-rubric 结构。\n\n## Scope（future）\n\n* 扩展 `StepsJudgeTask` 的 step-level 证据留痕，限数学/推导型。"
     },
     {
       "id": "YUK-405",
@@ -55,7 +55,7 @@
       "labels": [],
       "parent": "YUK-405",
       "updatedAt": "2026-09-18",
-      "description": "Parent YUK-405。愿景文档 docs/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md §11/§12。目标：最小「团队在为我工作」纵切：sleep-time 例会 job 建模+备料，备课台 ≤3 张带证据提案，采纳/改/不要。中心数据类型=一等 conjecture 对象。注意 parent epic desc 说 Phase 0 已 CODE-LIVE → 本票可能实质上只剩行为验收窗口 → drift/closeout 候选。TRUNCATED."
+      "description": "Parent YUK-405。愿景文档 docs/archive/superpowers/specs/2026-06-18-private-teaching-research-team-vision.md §11/§12。目标：最小「团队在为我工作」纵切：sleep-time 例会 job 建模+备料，备课台 ≤3 张带证据提案，采纳/改/不要。中心数据类型=一等 conjecture 对象。注意 parent epic desc 说 Phase 0 已 CODE-LIVE → 本票可能实质上只剩行为验收窗口 → drift/closeout 候选。TRUNCATED."
     },
     {
       "id": "YUK-416",

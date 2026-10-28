@@ -16,6 +16,7 @@ export {
   getFailureAttemptsWithReasoningTrace,
   getJudgeForAttempt,
 } from '@/kernel/read-models/failure-attempts';
+export { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
 export {
   batchResolveEffectiveDomains,
   getEffectiveDomain,
@@ -94,5 +95,4 @@ export type { RubricGate } from './server/rubric-validator';
 export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
-export { loadTreeSnapshot } from './server/tree';
 export { knowledgeTaskSpecs } from './task-public';

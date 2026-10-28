@@ -1,7 +1,7 @@
 /**
  * TaggingTask + WorkflowJudge schemas.
  *
- * See `docs/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` + ADR-0026.
+ * See `docs/archive/superpowers/specs/2026-05-29-t-oc-ocr-rebuild-design.md` + ADR-0026.
  *
  * TaggingTask is a single-shot structured-output AI task (NOT multimodal): it
  * looks at an extracted question's text + an optional knowledge_hint + a

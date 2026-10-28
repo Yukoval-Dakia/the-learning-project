@@ -143,9 +143,9 @@
 - `src/server/review/rating-advisor.ts:5-15,41-46,50-59,110-120`
 - `drizzle/0015_memory_brief_writer.sql`、`drizzle/0016_far_whirlwind.sql`
 - `docs/adr/0017-memory-mem0-plus-brief-layer.md` §决策 / Errata 2026-05-27
-- `docs/superpowers/plans/2026-05-27-t37-brief-writer-driver.md §1.1 #5 / §4`
-- `docs/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md §1.1`
-- `docs/superpowers/plans/2026-05-27-t66-teaching-ask-check-driver.md §3.1`
-- `docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md:236`
+- `docs/archive/superpowers/plans/2026-05-27-t37-brief-writer-driver.md §1.1 #5 / §4`
+- `docs/archive/superpowers/plans/2026-05-27-tra-rating-advisor-driver.md §1.1`
+- `docs/archive/superpowers/plans/2026-05-27-t66-teaching-ask-check-driver.md §3.1`
+- `docs/archive/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md:236`
 - `.env.example`（无 OPENAI_API_KEY / MEM0_*）
 - baseline `docs/audit/2026-05-27-pre-yuk88-baseline-drift.md` F-04 / F-RA 对照

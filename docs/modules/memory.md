@@ -10,6 +10,8 @@
 
 ## What it is
 
+**CORE 单写者不变量（源：`docs/archive/superpowers/plans/2026-06-18-phase0-relationship-brain.md` Task B，YUK-1575 重立档）**：mem0 CORE 只由 sleep job（例会/dreaming）写入；copilot 与请求路径对 CORE **只读**。owner 在备课台改写猜想不直写 CORE——写 `correct` 事件（`corrected_by_owner=true`），由下一次例会 job 经 rate-event outbox 异步 reconcile 进 CORE（`conjecture-accept.ts` 契约注释同款）。
+
 `memory_brief_note` is the pre-summarized "方向感" the Layer-8 orchestrator, Dreaming, and Coach read
 before consulting the SoT. Each row is a three-段 short text (recent week / recent months / long
 term) keyed by `scope_key`. The host partitions events into those windows by `created_at` and writes
