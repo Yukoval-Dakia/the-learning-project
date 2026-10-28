@@ -137,8 +137,8 @@ No DB migration required: `event.payload` is `jsonb`, `event.subject_kind` alrea
 - Schema: [`src/core/schema/event/known.ts`](../../src/core/schema/event/known.ts) — `CorrectArtifactEvent` and `KnownEvent` union
 - Projection: [`src/server/events/artifact-corrections.ts`](../../src/server/events/artifact-corrections.ts)
 - Tests: `tests/schema/event.test.ts` (zod), `src/server/events/artifact-corrections.test.ts` (projection)
-- Phase outline: [`docs/superpowers/plans/2026-05-26-track-1-followup-phase.md`](../superpowers/plans/2026-05-26-track-1-followup-phase.md) W1.3
-- Per-lane plan: [`docs/superpowers/plans/2026-05-26-note-appeal-mark-wrong.md`](../superpowers/plans/2026-05-26-note-appeal-mark-wrong.md)
+- Phase outline: [`docs/archive/superpowers/plans/2026-05-26-track-1-followup-phase.md`](../archive/superpowers/plans/2026-05-26-track-1-followup-phase.md) W1.3
+- Per-lane plan: [`docs/archive/superpowers/plans/2026-05-26-note-appeal-mark-wrong.md`](../archive/superpowers/plans/2026-05-26-note-appeal-mark-wrong.md)
 - API route (Sub 2): `app/api/artifacts/[id]/correct/route.ts` (not in Sub 1)
 - UI integration (Sub 3): `NoteRenderer` / `learning-items/[id]/page.tsx` (not in Sub 1; separate design-doc pre-flight)
 

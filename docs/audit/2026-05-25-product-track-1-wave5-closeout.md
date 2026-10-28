@@ -1,6 +1,6 @@
 # Product Track 1 Wave 5 Closeout — 2026-05-25
 
-**Scope**: `docs/superpowers/plans/2026-05-24-product-track-1-closeout.md` Wave 5: audit-drift, `status.md` update, v0.3 §1.5 status refresh, retrospective.
+**Scope**: `docs/archive/superpowers/plans/2026-05-24-product-track-1-closeout.md` Wave 5: audit-drift, `status.md` update, v0.3 §1.5 status refresh, retrospective.
 **Run by**: Codex `/launch-phase wave5`
 **Baseline**: `main` / `origin/main` at `0b27de4` (`[codex] YUK-54/YUK-62/YUK-63 wave4 review workflow updates`, PR #133).
 
@@ -16,8 +16,8 @@
 | Area | Evidence |
 |---|---|
 | Wave 4 merged | GitHub PR #133 merged 2026-05-25; `origin/main` points at `0b27de4` |
-| Track 2 W5 already done | GitHub PR #116 merged 2026-05-23; `docs/superpowers/plans/2026-05-23-l5-3-producers-and-signals.md` checkboxes are complete |
-| Track 1 lane set | `docs/superpowers/plans/2026-05-24-product-track-1-closeout.md` lists W1-W4 as 17/17 lanes, W5 as closeout only |
+| Track 2 W5 already done | GitHub PR #116 merged 2026-05-23; `docs/archive/superpowers/plans/2026-05-23-l5-3-producers-and-signals.md` checkboxes are complete |
+| Track 1 lane set | `docs/archive/superpowers/plans/2026-05-24-product-track-1-closeout.md` lists W1-W4 as 17/17 lanes, W5 as closeout only |
 | Remaining follow-up | YUK-66 teaching `ask_check` artifact remains explicitly out of scope in the Track 1 outline |
 
 ## Retrospective

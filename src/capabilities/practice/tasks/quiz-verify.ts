@@ -17,7 +17,7 @@ import { parseTaskOutput } from './parse-output';
 // The prompt is shared by the quiz_verify job and the learning-content validation
 // lane, so it states judgment criteria only; consequence routing lives in callers.
 //
-// docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1/§5
+// docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1/§5
 function buildQuizVerifyPrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}出题质检员，复核一道练习题草稿（检索出题、据材出题或闭卷生成，由输入决定）。输入 { question: { id, prompt_md, reference_md, choices_md, kind, difficulty, knowledge_ids }, knowledge_context: [{ id, name, ... }], source_pack: { query_plan, searched_at, tool }, source_refs: [{ url, title, snippet?, used_for, extracted }], self_copy_safety: { verdict, max_overlap?, checked_by }, material?: { title, body_md }, remote_tool_evidence?: [{ tool_name, tool_use_id, root_call, input, output?, failure?: { error, is_interrupt? } }] }。material 只在「据材出题」（material_grounded，tier 3）时出现：它是出题所据的**真实素材原文**全文。
 科目上下文：${profile.displayName}。${profile.languageStyle}
@@ -63,7 +63,7 @@ export const quizVerifyTaskSpec = {
   definition: {
     kind: 'QuizVerifyTask',
     description:
-      "Search-grounded QuizGen (T-SQ, docs/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
+      "Search-grounded QuizGen (T-SQ, docs/archive/superpowers/specs/2026-06-02-quizgen-search-grounded-design.md §1 / §5 Q5). Single-shot, CLOSED-BOOK verifier built on the VariantVerify skeleton: trusts the QuizGen agent's self-reported source_refs (no own Tavily loop this wave) and runs three checks — fact/grounding vs source_refs, plagiarism/copy_safety, knowledge-hit — rolling them into a two-axis QuizVerificationResult. The quiz_verify handler (Q5) gates Option B on the output: overall='pass' (and copy_safety not flagged by the deterministic n-gram gate; a model-only too_close routes to review) promotes draft→active + FSRS-enrolls; otherwise the draft stays out of the pool (needs_review / fail).",
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_TASK_BUDGET, maxIterations: 1, timeout: 60_000 },

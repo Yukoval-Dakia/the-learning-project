@@ -2,7 +2,7 @@
 
 > **Status**: Pre-flight（wave-2 lane 现场写，对 fresh main @ `40165001`）。
 > **Source**: loom-prototype `screen-items.jsx` + `screen-item-detail.jsx`（checkpoint f85aca6d，`/tmp/loom-proto/docs/design/loom-prototype/`）。
-> **设计依据**: wave-2 计划 `docs/superpowers/plans/2026-06-04-redraw-wave2-plan.md` §1 L-items 行 + `docs/design/2026-06-04-u0-decisions.md` D11③（健康条）+ CO spec §2.4 derived-consumer 注记。
+> **设计依据**: wave-2 计划 `docs/archive/superpowers/plans/2026-06-04-redraw-wave2-plan.md` §1 L-items 行 + `docs/design/2026-06-04-u0-decisions.md` D11③（健康条）+ CO spec §2.4 derived-consumer 注记。
 > **Branch**: `yuk-169-w2-items`（worktree `/tmp/wave2-items`）。
 
 ---

@@ -1,5 +1,6 @@
-// Read-only last-night digest over the five nightly sources. It never writes, never
-// emits calibration numbers, and keeps a quiet night as an explicit state. The window is
+// Read-only last-night digest over the five nightly sources (degraded scan events fold
+// into degraded_kinds, not a sixth activity source). It never writes, never emits
+// calibration numbers, and keeps a quiet night as an explicit state. The window is
 // the previous Asia/Shanghai calendar day (fixed UTC+8, no last-visited anchor).
 
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
@@ -9,6 +10,7 @@ import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
 import { listNoteRefineChanges } from '@/kernel/read-models/note-refine-changes';
 import {
+  type DegradedScanRow,
   type OvernightDigest,
   type RunErrorRow,
   type RunStatusCountRow,
@@ -100,6 +102,37 @@ async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunEr
 }
 
 /**
+ * Events whose run executed but whose domain artifact is invalid — currently the
+ * `outcome = 'degraded'` scan contract (runAgencyProposalScan, agency capability). The
+ * query is deliberately generic on `outcome='degraded'` (no action filter): any future
+ * writer adopting the same contract is marked here without a digest change. The run
+ * itself is already counted in `runs` via ai_task_runs (status='success'); this row is
+ * the domain-validity signal that status cannot carry. task_kind comes from
+ * the run join; actor_ref (the surface, e.g. 'coach') is the fallback when the run row
+ * is gone. payload.degraded_reason is the surface's generic reason code.
+ */
+async function loadDegradedScanRows(db: DbLike, from: Date, to: Date): Promise<DegradedScanRow[]> {
+  const rows = await db
+    .select({
+      task_kind: sql<string>`coalesce(${ai_task_runs.task_kind}, ${event.actor_ref})`,
+      degraded_reason: sql<string | null>`${event.payload}->>'degraded_reason'`,
+      occurred_at: event.created_at,
+    })
+    .from(event)
+    .leftJoin(ai_task_runs, eq(event.task_run_id, ai_task_runs.id))
+    .where(
+      and(eq(event.outcome, 'degraded'), gte(event.created_at, from), lt(event.created_at, to)),
+    )
+    .orderBy(desc(event.created_at));
+  return rows.map((r) => ({
+    task_kind: r.task_kind,
+    degraded_reason: r.degraded_reason,
+    occurred_at:
+      r.occurred_at instanceof Date ? r.occurred_at.toISOString() : String(r.occurred_at),
+  }));
+}
+
+/**
  * 昨夜 digest 读模型。聚五个夜间事实源到一个 payload，纯读零写（红线①③）。
  * has_overnight_activity 由五源 count 显式组合（红线②）；内部校准概率永不进 payload（红线④）。
  *
@@ -113,22 +146,30 @@ export async function loadOvernightDigest(
 ): Promise<OvernightDigest> {
   const { from, to } = overnightWindow(now);
 
-  const [runRows, noteChangesCount, agentNotesCount, proposalCounts, errorRunRows, cost] =
-    await Promise.all([
-      loadRunRows(db, from, to),
-      countNoteChangesInWindow(db, from, to),
-      countAgentNotesInWindow(db, from, to),
-      countProposalsInWindow(db, { from, to }),
-      loadErrorRunRows(db, from, to),
-      readCosts(db, from, to),
-    ]);
+  const [
+    runRows,
+    noteChangesCount,
+    agentNotesCount,
+    proposalCounts,
+    errorRunRows,
+    degradedScanRows,
+    cost,
+  ] = await Promise.all([
+    loadRunRows(db, from, to),
+    countNoteChangesInWindow(db, from, to),
+    countAgentNotesInWindow(db, from, to),
+    countProposalsInWindow(db, { from, to }),
+    loadErrorRunRows(db, from, to),
+    loadDegradedScanRows(db, from, to),
+    readCosts(db, from, to),
+  ]);
 
   const runs = groupRunsByKind(runRows);
   const runsTotal = runs.reduce((acc, g) => acc + g.count, 0);
   // proposals 与 conjectures 不重叠：new_proposals = 全部 proposals − conjectures 子集。
   const newProposalsCount = proposalCounts.total - proposalCounts.conjectures;
   const newConjecturesCount = proposalCounts.conjectures;
-  const degradedKinds = computeDegradedKinds(errorRunRows);
+  const degradedKinds = computeDegradedKinds(errorRunRows, degradedScanRows);
 
   return {
     window: { from: from.toISOString(), to: to.toISOString() },

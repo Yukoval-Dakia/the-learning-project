@@ -23,10 +23,10 @@ export interface OvernightRunGroup {
   status_breakdown: Record<string, number>;
 }
 
-/** A task_kind marked degraded: total errors plus recent samples. */
+/** A task_kind marked degraded: total errors plus degraded scans, plus recent samples. */
 export interface DegradedKind {
   task_kind: string;
-  /** Total errors in the window, not just the messages shown below. */
+  /** Total errors and degraded scans in the window, not just the messages shown below. */
   error_count: number;
   /** Most recent first; the aggregator truncates long strings. */
   recent_error_messages: string[];

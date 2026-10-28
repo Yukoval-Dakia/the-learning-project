@@ -9,7 +9,7 @@
 
 import { guardDailyFocusClaims } from '@/core/daily-focus-guard';
 import type { Db, Tx } from '@/db/client';
-import { getEvents } from '@/kernel/events';
+import { type EnvelopedEvent, getEvents } from '@/kernel/events';
 import {
   PENDING_PROPOSAL_COUNT_BATCH_SIZE,
   PENDING_PROPOSAL_COUNT_MAX_BATCHES,
@@ -21,6 +21,20 @@ import { executeGetReviewDue } from './practice-port';
 import { executeMemoryBrief } from './tools/memory-brief';
 
 type DbLike = Db | Tx;
+
+// Newest of the two coach outcome picks; getEvents already ordered each list by
+// (created_at, dispatch_seq) DESC, so a wall-clock tie falls to the higher dispatch_seq.
+function newerCoachEvent(
+  success: EnvelopedEvent | undefined,
+  degraded: EnvelopedEvent | undefined,
+): EnvelopedEvent | null {
+  if (!success) return degraded ?? null;
+  if (!degraded) return success;
+  const dt = success.created_at.getTime() - degraded.created_at.getTime();
+  if (dt > 0) return success;
+  if (dt < 0) return degraded;
+  return success.dispatch_seq >= degraded.dispatch_seq ? success : degraded;
+}
 
 export interface CopilotSummaryDreamingPreview {
   proposal_id: string;
@@ -42,7 +56,10 @@ export interface CopilotSummary {
   dreaming_preview: CopilotSummaryDreamingPreview[];
   /** Snapshot of the pending total; a lower bound only if the scan cap is hit. */
   pending_proposals_total: number;
-  /** When Coach last ran (ISO) or null when it hasn't. */
+  /**
+   * When Coach last ran (ISO) or null when it hasn't. Includes a degraded run (plan
+   * parse failure): Coach did run, and the placeholder focus below is the honest render.
+   */
   coach_last_run_at: string | null;
   /** When Dreaming last ran (ISO) or null when it hasn't. */
   dreaming_last_run_at: string | null;
@@ -106,34 +123,49 @@ export async function loadCopilotSummary(
     callerActor: { kind: 'system', ref: 'today-copilot-summary' },
   };
 
-  const [latestCoach, latestDreaming, pendingCounts, dreamingPage, dueOutput, briefOutput] =
-    await Promise.all([
-      getEvents(db, {
-        action: 'experimental:coach_scan',
-        outcome: 'success',
-        limit: 1,
-      }),
-      getEvents(db, {
-        action: 'experimental:dreaming_scan',
-        outcome: 'success',
-        limit: 1,
-      }),
-      // The by-kind counter skips the joins and sorting a full inbox projection pays on
-      // every /today load. `?? undefined` guards a caller passing null, which default
-      // parameters do not replace.
-      countPendingProposalInboxByKind(db, opts.pendingCountOptions ?? undefined),
-      // The actorRef filter plus limit stop the ranked pagination after previewLimit rows.
-      listProposalInboxPage(db, {
-        status: 'pending',
-        actorRef: 'dreaming',
-        limit: previewLimit,
-      }),
-      // Reuse the execute fn so the due predicate stays single-sourced.
-      executeGetReviewDue(toolCtx, { limit: reviewDueLimit }),
-      executeMemoryBrief(toolCtx, { scopeKey: 'global' }),
-    ]);
+  const [
+    latestCoachSuccess,
+    latestCoachDegraded,
+    latestDreaming,
+    pendingCounts,
+    dreamingPage,
+    dueOutput,
+    briefOutput,
+  ] = await Promise.all([
+    getEvents(db, {
+      action: 'experimental:coach_scan',
+      outcome: 'success',
+      limit: 1,
+    }),
+    // A degraded run (plan parse failure) must outrank an older success: the placeholder
+    // focus is the honest render for "ran but produced no plan", never a stale plan
+    // presented as current. Crashed runs (outcome 'failure') stay excluded below.
+    getEvents(db, {
+      action: 'experimental:coach_scan',
+      outcome: 'degraded',
+      limit: 1,
+    }),
+    getEvents(db, {
+      action: 'experimental:dreaming_scan',
+      outcome: 'success',
+      limit: 1,
+    }),
+    // The by-kind counter skips the joins and sorting a full inbox projection pays on
+    // every /today load. `?? undefined` guards a caller passing null, which default
+    // parameters do not replace.
+    countPendingProposalInboxByKind(db, opts.pendingCountOptions ?? undefined),
+    // The actorRef filter plus limit stop the ranked pagination after previewLimit rows.
+    listProposalInboxPage(db, {
+      status: 'pending',
+      actorRef: 'dreaming',
+      limit: previewLimit,
+    }),
+    // Reuse the execute fn so the due predicate stays single-sourced.
+    executeGetReviewDue(toolCtx, { limit: reviewDueLimit }),
+    executeMemoryBrief(toolCtx, { scopeKey: 'global' }),
+  ]);
 
-  const coachEvent = latestCoach[0] ?? null;
+  const coachEvent = newerCoachEvent(latestCoachSuccess[0], latestCoachDegraded[0]);
   const dreamingEvent = latestDreaming[0] ?? null;
   const coachPayload = (coachEvent?.payload as Record<string, unknown> | undefined) ?? null;
   // daily_focus sits at the payload top level or under payload.today_plan. The guard also

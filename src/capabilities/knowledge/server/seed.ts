@@ -23,6 +23,7 @@ export async function seedKnowledge(db: Db): Promise<SeedResult> {
           domain: subjectId,
           parent_id: null,
           proposed_by_ai: false,
+          role: 'container',
           created_at: new Date(),
         },
         { actorRef: 'knowledge-seed' },

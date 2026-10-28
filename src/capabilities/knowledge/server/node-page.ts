@@ -92,6 +92,8 @@ export interface KnowledgeNodePage {
   parent_id: string | null;
   parent_name: string | null;
   effective_domain: string | null;
+  /** YUK-1600 identity role: 'kc' is mastery-evaluable; goal/container faces read 不评掌握. */
+  role: 'kc' | 'goal' | 'container';
   mastery: number | null;
   // Mastery interval and low-confidence flag; cold start is null/null/false.
   mastery_lo: number | null;
@@ -151,6 +153,7 @@ export async function loadKnowledgeNodePage(
       domain: knowledge.domain,
       parent_id: knowledge.parent_id,
       archived_at: knowledge.archived_at,
+      role: knowledge.role,
     })
     .from(knowledge)
     .where(and(eq(knowledge.id, knowledgeId), isNull(knowledge.archived_at)))
@@ -201,7 +204,9 @@ export async function loadKnowledgeNodePage(
     }));
 
   const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
-    loadRetrievabilityMap(db, [node.id]),
+    // YUK-1600 — retention is a mastery-family reading: a goal/container root never
+    // reads FSRS R(t), even if pre-gate stock rows exist.
+    loadRetrievabilityMap(db, node.role === 'kc' ? [node.id] : []),
     listKnowledgeEdges(db, { from: knowledgeId }),
     listKnowledgeEdges(db, { to: knowledgeId }),
   ]);
@@ -375,6 +380,7 @@ export async function loadKnowledgeNodePage(
     parent_id: node.parent_id,
     parent_name: parentName,
     effective_domain: effectiveDomain,
+    role: node.role,
     mastery: nodeMastery?.mastery ?? null,
     // Cold start is null/false; the client maps null mastery to the unknown band.
     mastery_lo: nodeMastery?.mastery_lo ?? null,

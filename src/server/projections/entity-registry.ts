@@ -85,6 +85,7 @@ const KNOWLEDGE_STRUCTURAL_COLUMNS = {
   archived_at: knowledge.archived_at,
   proposed_by_ai: knowledge.proposed_by_ai,
   approval_status: knowledge.approval_status,
+  role: knowledge.role,
   created_at: knowledge.created_at,
   updated_at: knowledge.updated_at,
   version: knowledge.version,

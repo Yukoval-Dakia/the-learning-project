@@ -20,6 +20,7 @@
 - `note_generate` / `note_verify` 只经同事务 intent + 提交后 dispatcher 衔接；completion 表示 queue dispatch 已确认，不表示模型业务完成。
 - `note_generate` 失败显式落 `failed`，pg-boss redelivery 用 CAS 重开为 `pending`；已 `ready` 的成功重投跳过。
 - `note_verify` 远程调用不得持有 DB transaction；artifact version + fence/token claim 保护 reserve、raw-result stage 与短事务 finalize。provider attempt 只在 central runner durable start 后、真实 query 前原子计数；每个 artifact epoch 上限 3 次，触顶同事务投影 claim `attempts_exhausted` 与 artifact `verification_status='failed'`，只有新 epoch 重置。
+- note_long 首检 needs_review 且含 error 级问题时，`note_verify` handler 追加一轮修订 + 复检（YUK-1642）：修订走 `NoteGenerateTask`（`server/note-long-check.ts` 的 attrs.note_long_check 状态机，单轮不循环），复检走同一 claim machine（版本 bump 即新 epoch）。
 - `hub_sync_recovery` 是唯一 Notes 定时 recovery floor；hub reconcile 与 handoff/claim 分支隔离执行，claim batch 也会处理完其余项后聚合抛错，任一失败最终仍供 pg-boss 重试。
 - `NotePatch ≤3 ops AND ≤2 new blocks` 走 mutator，否则 propose。
 
