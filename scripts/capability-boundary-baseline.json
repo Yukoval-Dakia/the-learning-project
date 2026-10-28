@@ -6826,6 +6826,15 @@
       "to": 1217,
       "issue": "YUK-1473",
       "responsibilityReason": "PracticeSolo remains the existing presentation owner. The 33-line increase adds one local M3E root marker and 22 static class bindings to its real Button, quote IconButton and rating ChipToggle consumers, including Biome expansion of existing JSX attributes. Removing only those 23 attributes restores the original business AST: hooks, props, callbacks, keys, labels, submission and recovery expressions are unchanged. The existing CSS remains an exact prefix and the new rules require the root marker plus control class. No new business responsibility, effect, data operation, public interface or framework; extracting a helper solely to hide these local class attributes would not create an independent live operation."
+    },
+    {
+      "path": "src/server/ai/model-catalog.ts",
+      "date": "2026-10-28",
+      "baseBlob": "11eec5421d96fcf842e3124a9bbca8d5e2ed89b0",
+      "from": 1306,
+      "to": 1328,
+      "issue": "YUK-1654",
+      "responsibilityReason": "The catalog document stays the single owner of models.dev endpoint truth: the 22 added lines keep the port in the endpoint keys addEndpointHost installs (a non-default port must be declared by the catalog endpoint itself) and add catalogEndpointHostKeys, a bucket-scoped reader of those same keys for the provider credential/endpoint binding. Both reuse the existing catalogEndpoint parse and the active document; no new document source, write path, or subsystem."
     }
   ],
   "compatShims": [
