@@ -36,10 +36,8 @@ import {
   nativePiModelApi,
   piProviderId,
 } from '@/server/ai/pi-provider-catalog';
-import {
-  providerAuthStatus,
-  providerCredentialFingerprint,
-} from '@/server/ai/provider-models-check';
+import { providerAuthStatus } from '@/server/ai/provider-auth-status';
+import { providerCredentialFingerprint } from '@/server/ai/provider-models-check';
 import {
   type ProviderAuthSurfaceRow,
   isProviderLaneReady,
