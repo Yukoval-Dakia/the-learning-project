@@ -4225,6 +4225,34 @@
       "from": 4,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/knowledge/public.ts",
+      "siteKind": "module",
+      "symbol": "loadTreeSnapshot",
+      "targetModule": "src/kernel/read-models/knowledge-graph.ts",
+      "targetSymbol": "loadTreeSnapshot",
+      "owner": "kernel",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "Fixed e802cd811d4803b20b6836f0e433dccf2f7ec041: public export AST19 resolves to the unchanged canonical function AST60. The authenticated Start tree reader dynamically imports KnowledgeTreeQuerySchema and loadTreeSnapshot at AST49/path50 and calls the reader at61 with the original Db and optional subject. Its validation, learner-visible filtering, timestamp handling and errorResponse remain unchanged. Agency callers now consume the canonical directly and are not claimed as public consumers.",
+      "rationale": "Preserve the existing Knowledge public business read contract for the real Start tree consumer while the complete knowledge-graph read mechanism already belongs to kernel. Retire the now-unused ten-line local tree re-export after all five remaining production callers move to the canonical. Preserve the original role/mastery overlay, stable row cap and truncation warning, domain walk and subject filter. No snapshot transaction, provider behavior or new interface depth is introduced.",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-2bb4a560-3361-4806-af6d-9a80b38cdf8f",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-28",
+      "from": 5,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -6595,6 +6623,66 @@
       "issue": "YUK-1570",
       "owns": "Consume the existing canonical state precondition at the original transition point; preserve caller legal-from sets and all row locks, nested transaction and failure semantics.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/goal_scope_propose_nightly.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/scope.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/api/tree.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/public.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/propose_edge.ts",
+      "module": "src/kernel/read-models/knowledge-graph.ts",
+      "kind": "value",
+      "symbols": ["loadTreeSnapshot"],
+      "issue": "YUK-1570",
+      "owns": "Consume the existing complete canonical knowledge-tree snapshot read. Preserve original Db, optional subject, await/catch order, mastery and role projection, truncation and warning behavior; caller-specific candidate selection, proposal/paid execution and learner visibility policies stay with their existing owners.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -7616,10 +7704,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 39,
+      "total": 37,
       "byOwnerPair": {
         "observability -> knowledge": 2,
-        "agency -> knowledge": 5,
+        "agency -> knowledge": 3,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,
