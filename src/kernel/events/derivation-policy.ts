@@ -1,4 +1,4 @@
-import { type SQLWrapper, and, eq, sql } from 'drizzle-orm';
+import { type SQLWrapper, and, eq, inArray, sql } from 'drizzle-orm';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
@@ -95,7 +95,7 @@ export async function allowedEventIds(db: Db | Tx, ids: string[]): Promise<Set<s
   const rows = await db
     .select({ id: event.id })
     .from(event)
-    .where(and(sql`${event.id} = ANY(${ids}::text[])`, eventAllowsDerivationSql()));
+    .where(and(inArray(event.id, ids), eventAllowsDerivationSql()));
   return new Set(rows.map((row) => row.id));
 }
 
