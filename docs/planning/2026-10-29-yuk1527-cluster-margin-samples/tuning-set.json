@@ -1,0 +1,163 @@
+{
+  "set": "tuning",
+  "schema": "yuk1527-cluster-margin-samples/1 — extends CalibrationFileSchema (scripts/calibrate-bank-vector-threshold.ts) with stratum/cluster_member_ids/status/fill_from/stem_overlap",
+  "freeze_status": "pending_external_fill",
+  "fill_from_primary": "tlp-status/review/stage1-yuk1516-calibration (NOT in this repo; external volume, unreachable from this worktree 2026-10-29)",
+  "fill_from_secondary": "docs/planning/2026-10-17-yuk1516-bank-vector-retrieval-threshold.md (in-repo measured anchors, 105-question bank copy)",
+  "quotas_min": { "present_single": 6, "present_cluster": 6, "absent": 6, "adjacent_trap": 4 },
+  "readme": "Entry semantics: expected_question_ids [] means ABSENT-topic label ONLY when status=frozen; while status=pending_external_fill it means UNFILLED. A tuning run must refuse this set until every entry is frozen and MANIFEST records this file's SHA256 (plan §1.4). Queries below are the only in-repo verifiable anchors; all other rows are quota skeletons to be filled by the lead per the plan.",
+  "queries": [
+    {
+      "query": "文言断句 划分句子朗读停顿",
+      "stratum": null,
+      "stratum_preliminary": "present",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "docs/planning/2026-10-17-yuk1516-bank-vector-retrieval-threshold.md",
+      "fill_needed": "real expected question id(s) on the 105-question copy; resolve stratum to present_single or present_cluster and set cluster_member_ids if a same-topic companion exists",
+      "note": "in-repo measured anchor: nearest 0.422 (target) / second 0.675, margin 0.253 (decisive) — target must be counted"
+    },
+    {
+      "query": "离子方程式的书写与正误判断",
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "docs/planning/2026-10-17-yuk1516-bank-vector-retrieval-threshold.md",
+      "fill_needed": "confirm no chemistry topic in the copy at freeze time (labelled absent), keep expected ids empty",
+      "note": "in-repo measured anchor: nearest 0.436 (unrelated maths) / second 0.546, margin 0.110 — nothing must be counted"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "adjacent_trap",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "note": "target构型 e.g. 递推/递归数列 query vs 等差数列 same-KC cluster (plan §1.2)"
+    },
+    {
+      "stratum": "adjacent_trap",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "adjacent_trap",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    },
+    {
+      "stratum": "adjacent_trap",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration"
+    }
+  ]
+}

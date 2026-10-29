@@ -1,0 +1,98 @@
+{
+  "set": "paraphrase",
+  "schema": "yuk1527-cluster-margin-samples/1 — extends CalibrationFileSchema (scripts/calibrate-bank-vector-threshold.ts) with stratum/cluster_member_ids/status/fill_from/stem_overlap",
+  "freeze_status": "pending_external_fill",
+  "fill_from_primary": "tlp-status/review/stage1-yuk1516-calibration (NOT in this repo; external volume, unreachable from this worktree 2026-10-29)",
+  "quotas_min": { "present_single": 4, "present_cluster": 4, "absent": 4 },
+  "readme": "ONE-SHOT paraphrase set: queries must NOT contain original stem words of their expected questions (plan §1.3): CJK character-bigram Jaccard overlap between the query and EVERY expected question's prompt_md <= 0.2, recorded per entry in stem_overlap at freeze time. Absent entries must also respect the bound against their nearest-bank question. Paraphrase authoring happens at fill time (after expected ids are known, so disjointness is checkable) — this file intentionally ships no candidate queries. Never fed back into tuning.",
+  "queries": [
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_single",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "present_cluster",
+      "expected_question_ids": [],
+      "cluster_member_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    },
+    {
+      "stratum": "absent",
+      "expected_question_ids": [],
+      "status": "pending_external_fill",
+      "fill_from": "tlp-status/review/stage1-yuk1516-calibration",
+      "stem_overlap": null
+    }
+  ]
+}
