@@ -11,11 +11,15 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  archiveQuestion,
+  editQuestion,
+  restoreQuestion,
+} from '@/capabilities/practice/server/question-bank-write';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { archiveQuestion, editQuestion, restoreQuestion } from './write';
 
 const ADMITTED = {
   state: 'admitted' as const,

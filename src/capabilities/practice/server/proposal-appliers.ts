@@ -385,7 +385,7 @@ export async function acceptVariantQuestionProposal(
  * draft gate refuses it. A new draft_status value was deliberately NOT
  * introduced: the pool-visibility predicate is fail-open (`<> 'draft'`), so a
  * 'dismissed' literal would leak the row back into every pool read
- * (src/server/questions/write.ts header — same reason archive uses
+ * (src/capabilities/practice/server/question-bank-write.ts header — same reason archive uses
  * metadata.archived_at).
  */
 export async function acceptQuestionDraftProposal(
@@ -616,7 +616,7 @@ export interface QuestionDraftDismissResult {
  * pool read filters `draft_status IS NULL OR <> 'draft'` (fail-open,
  * 红线-4/NULL≡active), so a 'dismissed' value would be treated as pool-visible
  * and leak the rejected question into due/stream/placement reads
- * (src/server/questions/write.ts header — the archive path made the same
+ * (src/capabilities/practice/server/question-bank-write.ts header — the archive path made the same
  * call with metadata.archived_at). `draft_status='draft'` +
  * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
  * excluded, while the marker lets draft-aware surfaces (search_bank,
@@ -648,7 +648,7 @@ export async function dismissQuestionDraftProposal(
     await tx
       .update(question)
       .set({
-        // archived_at 同款秒级 epoch 惯例 (archiveQuestion, questions/write.ts).
+        // archived_at 同款秒级 epoch 惯例 (archiveQuestion, question-bank-write.ts).
         metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
           dismissed_at: Math.floor(now.getTime() / 1000),
           dismissed_reason: 'question_draft_dismissed',
@@ -680,9 +680,9 @@ export async function dismissQuestionDraftProposal(
 // ===========================================================================
 // D6-B — active-question structured node edit.
 // This is the FIRST writer that mutates an ACTIVE question's `structured` jsonb
-// tree. The flat-field active-question writer (src/server/questions/write.ts
-// editQuestion) edits prompt_md / choices_md / etc. but never touches the
-// recursive structured tree; the draft-layer structured editor
+// tree. The question-bank writer (question-bank-write.ts editQuestion) also
+// accepts structured replacements; its REST PATCH surface only exposes flat fields.
+// The draft-layer structured editor
 // (capabilities/ingestion block-structured-edit) only touches DRAFT
 // question_block rows. The active-question structured write is owned HERE
 // (practice domain owns the pooled question lifecycle), kept self-contained so

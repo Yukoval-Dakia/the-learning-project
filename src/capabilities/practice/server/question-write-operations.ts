@@ -2,18 +2,18 @@ import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 import {
+  QuestionParamsSchema,
+  RestoreQuestionBodySchema,
+  UpdateQuestionBodySchema,
+} from '../api/question-solve-contracts';
+import {
   BLOODLINE_FIELDS,
   archiveQuestion,
   countQuestionAssociations,
   editQuestion,
   hasAnyAssociation,
   restoreQuestion,
-} from '@/server/questions/write';
-import {
-  QuestionParamsSchema,
-  RestoreQuestionBodySchema,
-  UpdateQuestionBodySchema,
-} from '../api/question-solve-contracts';
+} from './question-bank-write';
 
 export async function restorePracticeQuestion(
   db: Db,

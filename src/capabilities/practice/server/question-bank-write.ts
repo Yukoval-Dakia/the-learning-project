@@ -14,8 +14,6 @@ import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-
-import { assertKnowledgeIdsExist } from '@/capabilities/knowledge/public';
 import { embedHash, questionEmbedText } from '@/core/embed-source';
 import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
@@ -31,6 +29,7 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { assertKnowledgeIdsExist } from '@/kernel/read-models/knowledge-validate';
 import { deriveAnswerClassForValues } from '@/kernel/records/answer-class-write';
 import {
   archiveGroupLifecycle,

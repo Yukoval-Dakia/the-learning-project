@@ -5,6 +5,7 @@ import { POST } from '@/capabilities/agency/api/probe-answer';
 import { serveProbeOnce } from '@/capabilities/agency/public';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { editQuestion } from '@/capabilities/practice/server/question-bank-write';
 import {
   assessment_issuance,
   event,
@@ -17,7 +18,6 @@ import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
 import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { editQuestion } from '@/server/questions/write';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';

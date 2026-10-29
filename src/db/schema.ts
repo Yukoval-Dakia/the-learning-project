@@ -519,7 +519,7 @@ export const question = pgTable(
     // NOT fold effective-domain — only the content-hash column is added here.
     // Nullable: existing non-NULL-embedding rows get a NULL hash at migration time
     // and recompute it on the next edit. Write paths: embed_backfill stamps it at
-    // fill time; editQuestion (src/server/questions/write.ts) recomputes it when
+    // fill time; editQuestion (src/capabilities/practice/server/question-bank-write.ts) recomputes it when
     // prompt_md/reference_md/choices_md change and NULLs `embedding` on mismatch
     // (next backfill re-embeds). Compared, never read for behaviour.
     embed_content_hash: text('embed_content_hash'),
