@@ -19,6 +19,7 @@ import { stableStringify } from '@/core/migration/canonical';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { notDraftPredicate } from '@/db/predicates';
 import {
   item_calibration,
@@ -231,6 +232,10 @@ export interface BankSearchMatchEvidence {
    * counted=true 的向量命中抬 coverage.verdict；false = 只在候选列表展示，语义同
    * fts weak（缺题科目照常 mint gap_request）。 */
   counted?: boolean;
+  /** vector 专有（YUK-1603）：该题存储向量所依据的行 revision（embed_source_
+   * revision）。检索谓词只放行当前 revision 的向量；NULL = 该列上线前的旧向量
+   * （来源未知，按可用处理），供调用方对账。 */
+  source_revision?: number | null;
 }
 
 export interface BankSearchHit {
@@ -875,7 +880,8 @@ async function runSearchBankInSnapshot(
     // 锚无向量（从未嵌入/被编辑失效等待回填）→ 通道不可用，FTS 照常——诚实降级，
     // 绝不退回查询文本向量冒充内容相似。锚题自身仍是合法候选（距离 0 最相似；
     // 调用方可用 exclude_refs 显式排除）。
-    // 锚向量须与当前 EMBED_VERSION 及锚题当前内容 hash 同版，否则同样视为不可用。
+    // 锚向量须与当前 EMBED_VERSION、锚题当前内容 hash 及当前行 revision 同版
+    // （questionVectorInvalidReason），否则同样视为不可用。
     let anchorVector: number[] | null = null;
     let anchorInvalidReason: string | null = null;
     if (resolved.similarToGroupId !== undefined) {
@@ -885,8 +891,10 @@ async function runSearchBankInSnapshot(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
           embed_version: question.embed_version,
           embed_content_hash: question.embed_content_hash,
+          embed_source_revision: question.embed_source_revision,
         })
         .from(question)
         .where(eq(question.id, resolved.similarToGroupId))
@@ -906,7 +914,7 @@ async function runSearchBankInSnapshot(
           ? Promise.resolve({ vector: anchorVector })
           : Promise.resolve({
               vector: null,
-              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, or invalidated by a content edit; awaiting embed_backfill`,
+              error: `similar_to anchor content vector unusable (${anchorInvalidReason}): never embedded, embedded under an older EMBED_VERSION, stamped from an older row revision, or invalidated by a content edit; awaiting embed_backfill`,
             })
         : deps
             .embedFn(effectiveQuery)
@@ -945,7 +953,12 @@ async function runSearchBankInSnapshot(
           .select({ id: question.id, distance: distanceExpr })
           .from(question)
           .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-          .where(and(where, sql`${question.embedding} IS NOT NULL`))
+          // YUK-1603 — scoped pool only over current-revision vectors; a stale vector
+          // is not a current candidate (baseline margin query uses the same rule via
+          // bankVectorBaselinePredicates).
+          .where(
+            and(where, sql`${question.embedding} IS NOT NULL`, embedCurrencyPredicate(question)),
+          )
           .orderBy(sql`${distanceExpr} ASC`)
           .limit(BANK_SEARCH_CHANNEL_CAP + 1),
         db
@@ -1006,6 +1019,9 @@ async function runSearchBankInSnapshot(
         knowledge_ids: question.knowledge_ids,
         draft_status: question.draft_status,
         created_at: question.created_at,
+        // YUK-1603 — 行属性读取（新检索与续页同快照/同规则）：向量命中证据回报
+        // 该题向量所依据的行 revision，供对账；NULL = 该列上线前的旧向量。
+        embed_source_revision: question.embed_source_revision,
         lc_state: question_group_lifecycle.scoring_admission_state,
         lc_withheld_reason: question_group_lifecycle.scoring_admission_withheld_reason,
         lc_availability: question_group_lifecycle.availability,
@@ -1073,6 +1089,9 @@ async function runSearchBankInSnapshot(
               // YUK-1516 — 距离与计入判定随证据器输出；counted=false 的向量命中
               // 只在候选列表展示（同 fts weak），不抬 verdict。不带 strength。
               ...(meta !== undefined ? { distance: meta.distance, counted: meta.counted } : {}),
+              // YUK-1603 — 该题存储向量所依据的行 revision（对账用；NULL = 该列
+              // 上线前的旧向量，检索谓词按「未知来源可用」放行）。
+              source_revision: row.embed_source_revision ?? null,
             };
           }
           return {
@@ -1290,7 +1309,7 @@ async function runSearchBankInSnapshot(
         '未被本通道召回的题不构成「库中没有」',
         ...(scope.similar_to !== undefined && unavailable.includes('vector')
           ? [
-              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
+              'similar_to 锚题暂无当前同版内容向量（未嵌入、旧 EMBED_VERSION、落后行 revision 或被内容编辑失效，待 embed_backfill 回填）——向量通道不可用，本页仅 FTS 召回',
             ]
           : []),
       ],

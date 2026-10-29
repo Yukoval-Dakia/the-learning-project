@@ -12,6 +12,7 @@
 
 import { type SQL, sql } from 'drizzle-orm';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question, question_group_lifecycle } from '@/db/schema';
 
 export const BANK_VECTOR_RETRIEVAL_RULE_VERSION = 1;
@@ -57,6 +58,8 @@ export function bankVectorCountedRank(
  * scope 过滤**（subject/kind/source/knowledge/difficulty/within/exclude/draft/admission
  * 一概不施）——margin 必须在全球库面上量，否则 scope 滤掉全局 rank-2 会伪造 decisive。
  * 调用方必须 LEFT JOIN question_group_lifecycle（withdrawn 谓词引用它）。
+ * YUK-1603 — 向量还须对行 revision 当前（embed-currency 谓词）：落后 revision 的
+ * 向量不参与 margin 判定。
  */
 export function bankVectorBaselinePredicates(): SQL[] {
   const lc = question_group_lifecycle;
@@ -67,5 +70,6 @@ export function bankVectorBaselinePredicates(): SQL[] {
     sql`((${question.metadata} -> 'archived_at') IS NULL)`,
     sql`(${lc.withdrawn} IS NULL OR ${lc.withdrawn} = false)`,
     sql`(${question.embedding} IS NOT NULL)`,
+    embedCurrencyPredicate(question),
   ];
 }

@@ -180,7 +180,7 @@ export async function generateReferenceSolution(
         reference_md: parsed.worked_solution_md,
         updated_at: new Date(),
         ...(nextEmbedHash !== locked.embed_content_hash
-          ? { embedding: null, embed_content_hash: nextEmbedHash }
+          ? { embedding: null, embed_content_hash: nextEmbedHash, embed_source_revision: null }
           : {}),
       })
       .where(updateWhere)

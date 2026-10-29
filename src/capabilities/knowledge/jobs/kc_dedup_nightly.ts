@@ -16,6 +16,7 @@ import {
   type WriteProposalEntry,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
+import { EMBED_VERSION } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -107,6 +108,14 @@ export async function runKcDedupNightly(
       AND b.archived_at IS NULL
       AND a.embedding IS NOT NULL
       AND b.embedding IS NOT NULL
+      -- YUK-1603 — both sides must be current-revision vectors (SQL twin of
+      -- src/db/embed-currency.ts embedCurrencyPredicate; aliases can't reuse the
+      -- drizzle-column helper). A revision-stale vector is not a current near-dup
+      -- witness.
+      AND a.embed_version = ${EMBED_VERSION}
+      AND (a.embed_source_revision IS NULL OR a.embed_source_revision = a.version)
+      AND b.embed_version = ${EMBED_VERSION}
+      AND (b.embed_source_revision IS NULL OR b.embed_source_revision = b.version)
       AND (a.id IN (SELECT id FROM recent_auto) OR b.id IN (SELECT id FROM recent_auto))
       AND (a.embedding <=> b.embedding) <= ${distanceMax}
     ORDER BY distance ASC

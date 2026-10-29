@@ -56,7 +56,13 @@ async function seedKc(
     updated_at: now,
     version: opts.version ?? 0,
   };
-  if (embedding) values.embedding = embedding;
+  if (embedding) {
+    // YUK-1603 — an embedded row carries its embed stamp; the dedup pair query only
+    // accepts current-revision vectors (embed_version = EMBED_VERSION, source
+    // revision NULL-or-current). Fixture sync only.
+    values.embedding = embedding;
+    values.embed_version = 2;
+  }
   await db.insert(knowledge).values(values as typeof knowledge.$inferInsert);
 }
 

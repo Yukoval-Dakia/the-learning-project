@@ -8433,6 +8433,33 @@
       "to": 1789,
       "issue": "YUK-1522",
       "responsibilityReason": "The existing unified question-edit acceptance producer carries the immutable proposal event session/task/cause into its existing save/submit service context. This is the owner-approved single-producer source-compatibility correction; no proposal decisions, lock ordering, paid identity, public parameters or new wrapper are introduced."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/bank-search.ts",
+      "date": "2026-10-29",
+      "baseBlob": "b0060e43abee6bc222639f1c785bbea9cdd61ea1",
+      "from": 1312,
+      "to": 1331,
+      "issue": "YUK-1603",
+      "responsibilityReason": "search_bank vector channel enforces vector currency: the scoped pool query gains the shared embed-currency predicate, the similar_to anchor read adds version/embed_source_revision for the shared validity check (new revision_mismatch reason), and each vector hit's match_evidence echoes its source_revision for reconciliation. Same retrieval responsibility, no new consumer surface."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-29",
+      "baseBlob": "15560cfdc3e14f1ab359323f6520ba8ab4058852",
+      "from": 1309,
+      "to": 1314,
+      "issue": "YUK-1603",
+      "responsibilityReason": "Both ingest embed-stamp sites read the row version and stamp embed_source_revision alongside the vector (questionEmbedStamp contract), so an ingest-stamped vector carries the revision it was computed from. No behavior or transaction change."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-29",
+      "baseBlob": "7beb3b2983a2c8e47e844650bb678ca2907eeafc",
+      "from": 5043,
+      "to": 5059,
+      "issue": "YUK-1603",
+      "responsibilityReason": "Additive nullable embed_source_revision column on question and knowledge (the row revision the stored vector was computed from) with its gate-rule comment, next to the existing embed stamps. No existing column changes; drizzle requires the definitions inline in the single schema module."
     }
   ],
   "compatShims": [
