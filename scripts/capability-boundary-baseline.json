@@ -4565,6 +4565,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-29",
+      "from": 6,
+      "to": 5,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8903,7 +8911,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 203,
+      "total": 202,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -8941,7 +8949,7 @@
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> proposals": 4,
-        "practice -> questions": 6,
+        "practice -> questions": 5,
         "practice -> r2": 6,
         "practice -> session": 2,
         "shell -> boss": 1,
