@@ -20,9 +20,9 @@
 // - dedup 身份只看内容（canonical hash + n-gram），不看 detail id / URL。
 // - 图片题：本地字节校验（magic + sharp decode）→ R2/source_asset → 内部 URL；
 // 任何外部/临时 URL 都不进候选输出，更不进 DB。
-// - Canary 单写在本核（E3 P1-3）：每次运行（含失败）写恰好一条
+// - Canary 单写在本核：每次运行（含失败）写恰好一条
 // action='experimental:jyeoo_fetch' 事件（预算账本 + 漏斗观测面）——agent 工具与
-// executor/脚本路径都经本核，无法绕过观测；工具层不再写。
+// executor/脚本路径都经本核，无法绕过观测；工具层不写。
 
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -469,11 +469,10 @@ const emptyCounts = (requested: number): JyeooFetchCandidatesCounts => ({
  * sessionMax 裁到日预算余额内；余额为 0 直接 budget_exhausted 短路（不 spawn）。
  * 失败分类与旧 handler 一致（auth/network/timeout/parse/args/spawn/vip/unknown）。
  *
- * Canary 单写（E3 P1-3）：本核 owns fetch canary——每次运行（含 failed /
+ * Canary 单写：本核 owns fetch canary——每次运行（含 failed /
  * budget_exhausted）写恰好一条 action='experimental:jyeoo_fetch' 事件（预算账本
- * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。旧位在
- * jyeoo_fetch_candidates 工具层——executor 直调核时绕过观测；移入核后 agent 工具与
- * executor/脚本路径都恰好一条。事件写失败不得翻转抓取结果（best-effort try/catch）。
+ * jyeoo-budget 按当日 success 事件 counts.fetched 求和 + 漏斗观测面）。agent 工具与
+ * executor/脚本路径都经本核，故恰好一条。事件写失败不得翻转抓取结果（best-effort try/catch）。
  */
 export async function runJyeooFetchCandidates(
   params: RunJyeooFetchCandidatesParams,

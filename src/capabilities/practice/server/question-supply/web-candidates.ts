@@ -2,7 +2,7 @@
 // 部分，candidate-only 形态（镜像 jyeoo-candidates.ts）。LLM 判断（SourcingTask：
 // 搜索 → 抽取 → 结构化）留在本模块内部；正确性路径（持久化/dedup/verify）全部在上游
 // store_sourced_question commit seam。本模块不写 question / verify intent / proposal；
-// db 写面只有 canary 事件（E3 P1-3 起核内单写，见 runWebFetchCandidates）。
+// db 写面只有 canary 事件（核内单写，见 runWebFetchCandidates）。
 // 纯模块纪律（ownership/boundary）：不 import '@/server/'。MCP 挂载 + runAgentTask
 // 整个压进单个依赖注入函数 RunWebSourcingAgentFn；真实实现住在
 // ../web-sourcing-operation.ts（自 tool 层下沉），tool 层与 executor
@@ -170,12 +170,11 @@ function profileSourceWhitelist(profile: SubjectProfile): string[] {
 /**
  * 跑一次 web 候选生产线（找 + 判），返回候选（不写 question）。
  *
- * Canary 单写（E3 P1-3）：本核 owns fetch canary——每次实际运行（含 failed，
+ * Canary 单写：本核 owns fetch canary——每次实际运行（含 failed，
  * 含 anchor_not_found 确定性短路）写恰好一条
  * action='experimental:web_fetch_candidates' 事件（漏斗观测面；与 jyeoo 面的"预算
- * 账本按 canary 求和、绝不双写"契约一致）。旧位在 web_fetch_candidates 工具层——
- * executor job 直调核时观测被绕过；移入核后 agent 工具与 executor 路径都恰好一条。
- * 检索后端不可用会在 LLM 前返回，不算一次运行、不写 canary。事件写失败不得翻转运行结果
+ * 账本按 canary 求和、绝不双写"契约一致）。agent 工具与 executor 路径都经本核，
+ * 故恰好一条。检索后端不可用会在 LLM 前返回，不算一次运行、不写 canary。事件写失败不得翻转运行结果
  * （best-effort try/catch）。
  */
 export async function runWebFetchCandidates(
