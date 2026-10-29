@@ -180,6 +180,10 @@ export const RESERVED_EXPERIMENTAL_ACTIONS = new Set<string>([
   // fold trusts the payload to reproduce role/version; reserved so a malformed repair
   // fails the parse barrier instead of falling through the loose generic.
   'experimental:knowledge_role_update',
+  // YUK-1604 — approval-status repair on fold-owned knowledge nodes (dedicated
+  // KnowledgeApprovalUpdateExperimental schema, ./knowledge-node-events.ts), same
+  // barrier discipline as the role repair above.
+  'experimental:knowledge_approval_update',
   // The RUNTIME creation BASE event
   // (./mistake-variant-events.ts) carries the full initial row INCLUDING the fold-blind
   // cause_category. It is the runtime analog of the backfill-only experimental:genesis —

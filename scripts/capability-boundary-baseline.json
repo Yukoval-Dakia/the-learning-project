@@ -4449,7 +4449,7 @@
     {
       "debt": "crossCapabilityValue",
       "pair": "practice -> knowledge",
-      "date": "2026-10-28",
+      "date": "2026-10-29",
       "from": 3,
       "to": 2,
       "direction": "decrease"
@@ -7379,6 +7379,16 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "module": "src/kernel/cost.ts",
+      "kind": "value",
+      "symbols": ["costUsdToMicroUsd"],
+      "issue": "YUK-1604",
+      "owns": "Consume the shared canonical USD->micro-USD conversion so tag audit events stamp the same cost unit every other cost-bearing writer uses. The naming cost truth stays with the task run; tagging only mirrors the runner-reported cost_usd into the event envelope.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
       "module": "src/kernel/read-models/learnable-frontier.ts",
       "kind": "value",
@@ -7795,6 +7805,15 @@
       "to": 1769,
       "issue": "YUK-1570",
       "responsibilityReason": "Split only the existing mixed proposal runtime import into canonical helper bindings and retained non-helper type/signal bindings. All proposal business functions, lock/transaction order, query/error/return behavior and non-import source remain unchanged except the necessary old helper-source comment path."
+    },
+    {
+      "path": "src/db/schema.ts",
+      "date": "2026-10-28",
+      "baseBlob": "b7c1b06ea6797c665ea9e7bbaf703426f64e767c",
+      "from": 5037,
+      "to": 5043,
+      "issue": "YUK-1604",
+      "responsibilityReason": "Comment-only growth on the fold-owned knowledge table: the role and approval_status docblocks gain the YUK-1604 facts (role='kc' tag-match gate, pending_reasons audit basis, stock repair via experimental:knowledge_approval_update). No columns, no new writer, no subsystem."
     }
   ],
   "compatShims": [

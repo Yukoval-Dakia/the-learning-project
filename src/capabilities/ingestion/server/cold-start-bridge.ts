@@ -1,3 +1,4 @@
+import type { TaskTextResult } from '@/ai/task-result';
 import {
   ColdStartBridgeError,
   parseColdStartBridgeOutput,
@@ -11,7 +12,6 @@ import {
 import {
   ColdStartBridgeInput,
   type ColdStartBridgeInputT,
-  ColdStartBridgeOutput,
   type ColdStartBridgeOutputT,
 } from '@/core/schema/cold-start-bridge';
 import type { Db } from '@/db/client';
@@ -25,7 +25,7 @@ export type ColdStartBridgeRunTaskFn = (
   kind: string,
   input: ColdStartBridgeInputT,
   ctx: unknown,
-) => Promise<{ text: string }>;
+) => Promise<TaskTextResult>;
 
 export interface RunColdStartBridgeParams {
   db: Db;
@@ -50,9 +50,18 @@ export interface RunColdStartBridgeParams {
  * subject mis-roots the child KC). On provider failure / unparseable output throws
  * `ColdStartBridgeError` so the accept path can decide whether to persist anyway.
  */
+export type ColdStartBridgeResult = ColdStartBridgeOutputT & {
+  /**
+   * YUK-1604 — the bridge run's provenance, forwarded so KC naming audit events stay
+   * provider/model/revision/cost auditable. Absent when the injected runner is a stub.
+   */
+  task_run_id?: string;
+  cost_usd?: number;
+};
+
 export async function runColdStartBridge(
   params: RunColdStartBridgeParams,
-): Promise<ColdStartBridgeOutputT> {
+): Promise<ColdStartBridgeResult> {
   const knownSubjects = Array.from(params.knownSubjects);
   // Redact text before the model sees it; the closed subject vocabulary is untouched.
   const input: ColdStartBridgeInputT = ColdStartBridgeInput.parse({
@@ -68,9 +77,13 @@ export async function runColdStartBridge(
 
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(params.db);
   let llmText: string;
+  let taskRunId: string | undefined;
+  let costUsd: number | undefined;
   try {
     const result = await runTaskFn('ColdStartPlacementBridgeTask', input, params.ctx ?? {});
     llmText = result.text;
+    taskRunId = result.task_run_id;
+    costUsd = result.cost_usd;
   } catch (err) {
     throw new ColdStartBridgeError('ColdStartPlacementBridgeTask LLM call failed', { cause: err });
   }
@@ -95,5 +108,9 @@ export async function runColdStartBridge(
     );
   }
 
-  return parsed;
+  return {
+    ...parsed,
+    ...(taskRunId !== undefined ? { task_run_id: taskRunId } : {}),
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
+  };
 }
