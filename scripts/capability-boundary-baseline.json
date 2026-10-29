@@ -8609,6 +8609,15 @@
       "to": 5059,
       "issue": "YUK-1603",
       "responsibilityReason": "Additive nullable embed_source_revision column on question and knowledge (the row revision the stored vector was computed from) with its gate-rule comment, next to the existing embed stamps. No existing column changes; drizzle requires the definitions inline in the single schema module."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-29",
+      "baseBlob": "80e8660140d931ca6725d3fbfe63225a104cef69",
+      "from": 1959,
+      "to": 1969,
+      "issue": "YUK-1559",
+      "responsibilityReason": "YUK-1559/YUK-1661 report-only live integration at the existing shared PreparedExecution allTools.execute boundary: import and instantiate one run monitor per execution, observe prepared arguments immediately before the unchanged delegate, and attach its safe comparison/count/wouldTrigger/group metadata to the existing executed tool trace. Root and nested loops reuse the same wrapper; no additional execution, enforcement, budget, paid, recovery or business policy is added. Monitor mechanism remains in run-monitor.ts; only the actual execution boundary wiring belongs in this adapter."
     }
   ],
   "compatShims": [
