@@ -36,13 +36,13 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { persistCapturedQuestionBlock } from '@/kernel/records/question-block-creation';
-import { OpaqueJsonInput } from '@/kernel/tools/types';
-import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import {
   applyScoringEditPlan,
   draftDocumentToContract,
   revisionToDraftDocument,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
+import { OpaqueJsonInput } from '@/kernel/tools/types';
+import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import {
   type AppliedChange,
   EditOp,

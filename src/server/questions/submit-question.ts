@@ -17,7 +17,6 @@ import {
 // its evidence only while the scoring layers are unchanged. Stored and new contracts are
 // normalized through the same draft encoding before comparison.
 
-export { draftCanonicalIdentity, revisionToDraftDocument } from './draft-contract';
 export type { EditQuestionInputT, EditQuestionResult } from './edit-question';
 export {
   EditQuestionInput,

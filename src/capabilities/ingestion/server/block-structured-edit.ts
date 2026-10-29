@@ -34,9 +34,9 @@ import { writeJobEvent } from '@/kernel/job-events';
 import type { NormalizableQuestionRow } from '@/kernel/records/assessment-normalization';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
+import { draftDocumentToContract } from '@/kernel/records/question-draft-contract';
 import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
-import { draftDocumentToContract } from '@/server/questions/draft-contract';
 import { capturedQuestionShape } from './captured-question-shape';
 
 // ---------------------------------------------------------------------------
