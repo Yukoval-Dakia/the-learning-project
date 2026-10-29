@@ -1,0 +1,113 @@
+import { eq } from 'drizzle-orm';
+import { newId } from '@/core/ids';
+import type { KnowledgeRowSnapshotT } from '@/core/schema/event/genesis';
+import type { Tx } from '@/db/client';
+import { acquireSortedAdvisoryLocks } from '@/db/learning-state-lock';
+import { knowledge } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { gatherAndFoldKnowledgeNode } from '@/kernel/records/knowledge-node-history';
+import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
+import { resolveKnownSubjectId } from '@/subjects/profile';
+
+type InitialKnowledge = Pick<
+  KnowledgeRowSnapshotT,
+  'id' | 'name' | 'domain' | 'parent_id' | 'proposed_by_ai' | 'created_at'
+> & {
+  /** YUK-1600 identity role. Absent means 'kc' — the default knowledge component. */
+  role?: Exclude<KnowledgeRowSnapshotT['role'], undefined>;
+};
+
+/** Create an approved node from birth history. Existing nodes are never rewritten or backfilled. */
+export async function createKnowledgeNodeFromEvents(
+  tx: Tx,
+  initial: InitialKnowledge,
+  provenance: { actorRef: string; eventId?: string; causedByEventId?: string },
+  onExisting: 'error' | 'skip' = 'error',
+): Promise<boolean> {
+  await acquireSortedAdvisoryLocks(tx, 'knowledge:create', [initial.id]);
+  const [existing] = await tx
+    .select({ id: knowledge.id })
+    .from(knowledge)
+    .where(eq(knowledge.id, initial.id));
+  if (existing) {
+    if (onExisting === 'error') throw new Error(`knowledge ${initial.id} already exists`);
+    return false;
+  }
+  if (await gatherAndFoldKnowledgeNode(tx, initial.id)) {
+    throw new Error(
+      `knowledge ${initial.id} has history without a live row; repair before creation`,
+    );
+  }
+  // `general` is the fallback identity, never a node domain. Aliases canonicalize;
+  // unknown domains pass through.
+  const canonicalDomain = resolveKnownSubjectId(initial.domain);
+  if (canonicalDomain === 'general') {
+    throw new Error(
+      `knowledge ${initial.id} rejected: 'general' is the fallback subject identity, not a node domain`,
+    );
+  }
+  // Callers own authorization: this seam creates approved nodes. Agent-invented
+  // KCs go through tagKnowledge, which declares pending. A future ad-hoc caller
+  // must carry explicit authorization rather than self-approving.
+  const row: KnowledgeRowSnapshotT = {
+    ...initial,
+    domain: canonicalDomain ?? initial.domain,
+    merged_from: [],
+    archived_at: null,
+    approval_status: 'approved',
+    role: initial.role ?? 'kc',
+    updated_at: initial.created_at,
+    version: 0,
+  };
+  const eventId = provenance.eventId ?? newId();
+  await writeEvent(tx, {
+    id: eventId,
+    actor_kind: 'system',
+    actor_ref: provenance.actorRef,
+    action: 'experimental:genesis',
+    subject_kind: 'knowledge',
+    subject_id: row.id,
+    outcome: 'success',
+    payload: { row },
+    caused_by_event_id: provenance.causedByEventId,
+    created_at: row.created_at,
+    ingest_at: row.created_at,
+  });
+  await upsertMaterializedIdIndex(tx, {
+    materialized_id: row.id,
+    anchor_event_id: eventId,
+    subject_kind: 'knowledge',
+  });
+  await projectKnowledgeNodeGuarded(tx, row.id);
+  return true;
+}
+
+export function subjectRootId(subjectId: string): string {
+  return `seed:${subjectId}:root`;
+}
+
+/** Idempotent subject root birth. Existing roots are never rewritten or given replacement history. */
+export async function ensureSubjectRoot(
+  tx: Tx,
+  subjectId: string,
+  displayName: string,
+): Promise<{ created: boolean; rootId: string }> {
+  const rootId = subjectRootId(subjectId);
+  const created = await createKnowledgeNodeFromEvents(
+    tx,
+    {
+      id: rootId,
+      name: displayName,
+      domain: subjectId,
+      parent_id: null,
+      proposed_by_ai: false,
+      // A subject root is structural scaffolding, never a testable knowledge point.
+      role: 'container',
+      created_at: new Date(),
+    },
+    { actorRef: 'subject-root-create' },
+    'skip',
+  );
+  return { created, rootId };
+}

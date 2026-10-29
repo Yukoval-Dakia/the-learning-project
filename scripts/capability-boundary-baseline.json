@@ -4453,6 +4453,118 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> records",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> records",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-29",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-29",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "notes -> artifacts",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> subjects",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "knowledge -> agency",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "knowledge -> practice",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> calibration",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> calibration",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> conjectures",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7419,6 +7531,176 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/api/contracts.ts",
+      "module": "src/kernel/records/mistake-projection-contract.ts",
+      "kind": "value",
+      "symbols": ["MistakeProjectionSchema"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete shared mistake-page projection and immutable native evidence read, with the existing shared output schema. Preserve cursor decoding/error mapping, record paging and next_cursor identity, legacy absence versus invalid evidence, historical edit guards, frozen issuance/submission validation, public material and attachment metadata checks, original query/order/Db boundaries and all empty/null/default results. Ingestion retains query validation and subject resolution; Shell retains its 200-record magnitude sample. No scoring, feedback visibility, settlement, retry, transaction, lock, provider or paid policy changes.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/learning-intent-knowledge.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/seed.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot", "subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify.ts",
+      "module": "src/kernel/records/question-draft-contract.ts",
+      "kind": "value",
+      "symbols": ["draftCanonicalIdentity", "revisionToDraftDocument"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing question-draft conversion, frozen-revision readback, scoring round-trip fidelity, scoring-edit preservation/refusal and canonical identity mechanism. Preserve all criterion/default/issue ordering, executor binding and escalation, judgeability and withheld reasons, legacy loss classification, untouched-unit and assignment copying, and original identity projection. Source verification consumes the same revision and identity rules directly; deriveKind remains in its existing owner. Callers retain admission, final sealing, publication, Tx/locks, retry, scoring execution and paid policies. No new scoring capability, authorization, transaction or recovery guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/subjects-list.ts",
+      "module": "src/kernel/read-models/subject-trait-resolutions.ts",
+      "kind": "value",
+      "symbols": ["isGeneralFallbackFor"],
+      "issue": "YUK-1570",
+      "owns": "The existing canonical trait-resolution cache owns whole-map replacement and fallback derivation. Shell consumes isGeneralFallbackFor directly while retaining the complete learner-subject projection, configured versus observed-domain distinction, aliases, presentation and null/default semantics. Preserve general -> null, absent or empty resolutions -> false, and the existing every-entry general-seed identity predicate. Hydration remains the sole writer; default DB, registry, refresh timing, failures and policy remain in their existing owners. No new cache, hydration, scoring, paid, transaction or recovery behavior.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/misconception-promote.ts",
+      "module": "src/kernel/records/misconception-edges.ts",
+      "kind": "value",
+      "symbols": ["archiveMisconceptionEdge", "createMisconceptionEdge"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing misconception-edge create, archive and knowledge-merge rewiring mechanism with its topology gate. Preserve symmetric identity normalization, default values and newId-before-parse timing, live-neighbor query and reject/warn behavior, original five-column conflict identity, weight refresh and explicit tombstone reactivation, 404 and archive pre-read result semantics, and sequential old-id archive/create receipts in the caller Tx. Agency retains promotion flags, confidence and soft/hard confirmation; Knowledge retains merge order, G/row locks and recovery. No new transaction, lock, concurrency-idempotency, scoring, paid or activation policy.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/misconception-edges.ts",
+      "kind": "value",
+      "symbols": ["rewireMisconceptionEdgesForKnowledgeMerge"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing misconception-edge create, archive and knowledge-merge rewiring mechanism with its topology gate. Preserve symmetric identity normalization, default values and newId-before-parse timing, live-neighbor query and reject/warn behavior, original five-column conflict identity, weight refresh and explicit tombstone reactivation, 404 and archive pre-read result semantics, and sequential old-id archive/create receipts in the caller Tx. Agency retains promotion flags, confidence and soft/hard confirmation; Knowledge retains merge order, G/row locks and recovery. No new transaction, lock, concurrency-idempotency, scoring, paid or activation policy.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/accept.ts",
+      "module": "src/kernel/records/goal-commands.ts",
+      "kind": "value",
+      "symbols": ["materializeAcceptedGoal"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/create.ts",
+      "module": "src/kernel/records/goal-commands.ts",
+      "kind": "value",
+      "symbols": ["createManualGoal"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-retract-goal.ts",
+      "module": "src/kernel/records/goal-commands.ts",
+      "kind": "value",
+      "symbols": ["mutateGoal"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/goal-commands.ts",
+      "kind": "value",
+      "symbols": ["rewriteGoalScopeOnMerge"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "module": "src/kernel/records/goal-commands.ts",
+      "kind": "value",
+      "symbols": ["updateGoalScope"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/knowledge-merge-attribution.ts",
+      "kind": "value",
+      "symbols": ["rewriteLearningItemKnowledgeIds", "rewriteQuestionKnowledgeIds"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing question and learning-item knowledge-merge attribution rewrites. Preserve sorted row selection and FOR UPDATE, stable first-occurrence ID replacement, serial awaited writes and ordered receipts. Question retains direct knowledge_ids UPDATE and its from-equals-into behavior; learning-item retains early same-ID return and canonical anchor check, causal event time, repair fact and guarded projection without version/time bump. Caller retains the transaction, G/knowledge lock order, cross-surface sequence, accept/sweep/backfill failure and recovery boundaries. No new B, eligibility, scoring, paid, lock, idempotency or undo guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/copilot/server/tools/memory-brief.ts",
       "module": "src/kernel/read-models/purpose-change.ts",
       "kind": "value",
@@ -7976,9 +8258,18 @@
       "responsibilityReason": "Comment-only growth on the fold-owned knowledge table: the role and approval_status docblocks gain the YUK-1604 facts (role='kc' tag-match gate, pending_reasons audit basis, stock repair via experimental:knowledge_approval_update). No columns, no new writer, no subsystem."
     },
     {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-28",
+      "baseBlob": "49be1d2e08ebcac5d81807f700ace0db7d241049",
+      "from": 1113,
+      "to": 1162,
+      "issue": "YUK-1601",
+      "responsibilityReason": "The accept flow stays the single structural writer: the added lines are the reparent cycle boundary (self-parent reject, one xact advisory lock serializing concurrent reparent accepts, and a visited-set subtree walk rejecting an ancestor moved under its own descendant). All checks run inside the existing accept transaction and throw before any write; no new writer, module, or responsibility."
+    },
+    {
       "path": "src/capabilities/ingestion/server/block-structured-edit.ts",
       "date": "2026-10-28",
-      "baseBlob": "819cc75c66752f963512afd455382884543b8702",
+      "baseBlob": "357325bb4214e2ceaf633dcaec66c8a81027b034",
       "from": 1034,
       "to": 1036,
       "issue": "YUK-1522",
@@ -7987,9 +8278,9 @@
     {
       "path": "src/capabilities/practice/server/tools/submit-question.ts",
       "date": "2026-10-28",
-      "baseBlob": "e8d45825bbaebe577603b8d62ce5cfbb4368982a",
-      "from": 1308,
-      "to": 1318,
+      "baseBlob": "dbef9b095995e64b6450d2b1a91d21cd8d066550",
+      "from": 1304,
+      "to": 1314,
       "issue": "YUK-1522",
       "responsibilityReason": "FULL purpose withdrawal live consumers: preserve original execution/paid identity while applying source authorization at real owner transactions and existing Memory recovery/brief processing boundaries. This is measured responsibility growth, not a size exemption or stable/compat ruling."
     },
@@ -8005,7 +8296,7 @@
     {
       "path": "src/server/questions/edit-question.ts",
       "date": "2026-10-28",
-      "baseBlob": "53823a6584a8f04e32b3b36855ac20282f65d291",
+      "baseBlob": "4a9f4a6688c0b15310db1a287c5cc054a0777ec1",
       "from": 1273,
       "to": 1275,
       "issue": "YUK-1522",
@@ -8014,7 +8305,7 @@
     {
       "path": "src/server/questions/shared-submit.ts",
       "date": "2026-10-28",
-      "baseBlob": "218502a395928c0e15cb74f0d1adeb956c127c12",
+      "baseBlob": "92e7a6c08f4675158e9079f148cfff01f1272d69",
       "from": 1161,
       "to": 1167,
       "issue": "YUK-1522",
@@ -8612,7 +8903,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 212,
+      "total": 203,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -8628,20 +8919,16 @@
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "ingestion -> questions": 5,
+        "ingestion -> questions": 4,
         "ingestion -> r2": 13,
-        "ingestion -> records": 1,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
-        "knowledge -> calibration": 1,
-        "knowledge -> conjectures": 1,
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 3,
         "knowledge -> proposals": 2,
         "notes -> ai": 6,
-        "notes -> artifacts": 2,
         "notes -> boss": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
@@ -8649,7 +8936,6 @@
         "practice -> ai": 41,
         "practice -> assessment": 1,
         "practice -> boss": 12,
-        "practice -> calibration": 1,
         "practice -> coldstart": 1,
         "practice -> fsrs": 2,
         "practice -> mastery": 3,
@@ -8660,8 +8946,6 @@
         "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
-        "shell -> records": 1,
-        "shell -> subjects": 1,
         "shell -> today": 2
       }
     },
@@ -8670,28 +8954,26 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 31,
+      "total": 25,
       "byOwnerPair": {
-        "observability -> knowledge": 2,
-        "agency -> knowledge": 3,
+        "observability -> knowledge": 1,
+        "agency -> knowledge": 1,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
-        "knowledge -> agency": 1,
-        "knowledge -> practice": 1,
         "observability -> agency": 1,
         "observability -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 2,
+        "practice -> knowledge": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "knowledge", "practice"]]
+      "nontrivialSccs": [["agency", "practice"]]
     }
   }
 }

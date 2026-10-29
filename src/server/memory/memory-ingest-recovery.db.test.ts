@@ -225,6 +225,8 @@ describe('explicit single-event memory ingest recovery', () => {
     );
   });
 
+  // @invariant concurrency: an existing attributed memory resolves recovery without another paid start
+  // @fails-if a proven event lookup still starts provider add or creates a provider attempt
   it('resolves by strict event lookup without using the authorized paid start', async () => {
     const request = await stalledSource();
     const grant = await authorizeMemoryIngestReplay(testDb(), request);

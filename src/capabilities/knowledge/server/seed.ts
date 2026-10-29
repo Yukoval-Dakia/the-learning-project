@@ -1,6 +1,6 @@
 import type { Db } from '@/db/client';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import { KNOWN_SUBJECT_IDS, subjectProfiles } from '@/subjects/profile';
-import { createKnowledgeNodeFromEvents } from './node-creation';
 
 export interface SeedResult {
   inserted: number;

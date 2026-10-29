@@ -1,13 +1,13 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { decideKnowledgeEdgeProposal } from '@/capabilities/knowledge/server/edge-proposal-accept';
-import { createKnowledgeNodeFromEvents } from '@/capabilities/knowledge/server/node-creation';
 import {
   acceptProposal,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
 import { event, knowledge, materialized_id_index } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 

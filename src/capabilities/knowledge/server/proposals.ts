@@ -4,11 +4,6 @@
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
-import {
-  rewriteLearningItemKnowledgeIds,
-  rewriteQuestionKnowledgeIds,
-} from '@/capabilities/practice/public';
 import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
@@ -25,10 +20,16 @@ import { ApiError } from '@/kernel/http';
 import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
+import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
+import {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from '@/kernel/records/knowledge-merge-attribution';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
-import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
-import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
+import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
@@ -39,7 +40,6 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import { rewireMisconceptionEdgesForKnowledgeMerge } from './misconception-edges';
 import { requireKnowledgeHistory } from './node-history-guard';
 
 type DbLike = Db | Tx;
@@ -396,8 +396,14 @@ export async function prepareProposedKnowledgeId(
 
 type ReparentEmbeddingSnapshot = { id: string; name: string; hash: string | null };
 
+// Single xact-scoped lock serializing reparent accepts. The subtree check below is
+// only sound against a quiescent tree: two concurrent accepts on disjoint node pairs
+// can each pass against the pre-write tree and commit a cycle together. Reparents are
+// approval-gated and rare, so one global key costs nothing.
+const REPARENT_TREE_LOCK_ID = 'reparent';
+
 async function prepareReparent(
-  db: DbLike,
+  tx: Tx,
   payload: ReparentPayload,
 ): Promise<ReparentEmbeddingSnapshot> {
   if (payload.new_parent_id === null) {
@@ -405,12 +411,16 @@ async function prepareReparent(
       'PR B: reparent to root (new_parent_id=null) not supported in Phase 1a single-domain',
     );
   }
-  await assertParentExists(db, payload.new_parent_id);
+  if (payload.new_parent_id === payload.node_id) {
+    throw new Error(`reparent rejected: node ${payload.node_id} cannot become its own parent`);
+  }
+  await assertParentExists(tx, payload.new_parent_id);
+  await rejectReparentCycle(tx, payload.node_id, payload.new_parent_id);
 
   // YUK-393 — snapshot name + hash before the move to detect a cross-domain shift.
   // A reparent can change the effective domain (resolved root-ward), which makes
   // the stored embedding stale; recompute after the parent_id commit.
-  const beforeRows = await db
+  const beforeRows = await tx
     .select()
     .from(knowledge)
     .where(eq(knowledge.id, payload.node_id))
@@ -420,8 +430,47 @@ async function prepareReparent(
   if (!moved || moved.version !== payload.expected_version || moved.archived_at !== null) {
     throw new Error(`stale: knowledge ${payload.node_id} version mismatch or archived`);
   }
-  await requireKnowledgeHistory(db, moved);
+  await requireKnowledgeHistory(tx, moved);
   return { id: moved.id, name: moved.name, hash: moved.embed_content_hash };
+}
+
+/**
+ * Reject a reparent whose new parent is inside the moved node's subtree (YUK-1601).
+ * Hanging an ancestor under its own descendant — the 2-node mutual hang included —
+ * closes a parent_id cycle. The walk is children-ward with a visited set, so an
+ * already-corrupt tree cannot hang the check; archived rows stay traversable because
+ * a stored cycle through them is still a cycle.
+ */
+async function rejectReparentCycle(tx: Tx, nodeId: string, newParentId: string): Promise<void> {
+  // Serialize against a concurrent reparent accept BEFORE reading parent links, so
+  // this check sees the tree as of the last serialized commit.
+  await acquireSortedAdvisoryLocks(tx, 'knowledge_tree', [REPARENT_TREE_LOCK_ID]);
+  const rows = await tx
+    .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+    .from(knowledge);
+  const childrenByParent = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.parent_id === null) continue;
+    const list = childrenByParent.get(row.parent_id);
+    if (list) list.push(row.id);
+    else childrenByParent.set(row.parent_id, [row.id]);
+  }
+  const visited = new Set<string>([nodeId]);
+  const queue = [...(childrenByParent.get(nodeId) ?? [])];
+  while (queue.length > 0) {
+    const current = queue.pop() as string;
+    if (visited.has(current)) continue; // pre-existing cycle in the subtree
+    if (current === newParentId) {
+      throw new Error(
+        `reparent rejected: new parent ${newParentId} is a descendant of node ${nodeId} — ` +
+          'hanging an ancestor under its own descendant closes a parent cycle',
+      );
+    }
+    visited.add(current);
+    for (const child of childrenByParent.get(current) ?? []) {
+      if (!visited.has(child)) queue.push(child);
+    }
+  }
 }
 
 async function refreshReparentEmbedding(

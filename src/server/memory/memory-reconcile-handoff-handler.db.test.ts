@@ -41,6 +41,8 @@ function deterministicSendId(options: object): string | null {
 describe('memory reconcile ingest handoff modes and crashes', () => {
   beforeEach(resetDb);
 
+  // @invariant concurrency: concurrent misses for one source commit one paid lifecycle and handoff
+  // @fails-if both handlers cross the provider fence or dispatch duplicate reconcile work
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();
     const sourceId = 'generic-concurrent';

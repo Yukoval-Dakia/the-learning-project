@@ -14,7 +14,7 @@ import {
   source_asset,
   source_document,
 } from '@/db/schema';
-import { listMistakeProjectionRows } from '@/server/records/mistakes';
+import { listMistakeProjectionRows } from '@/kernel/read-models/mistake-projection';
 import { type ColdStartState, buildColdStartState } from './cold-start-state';
 import { type TodayProposalKpi, loadTodayProposalKpi } from './proposal-kpi';
 

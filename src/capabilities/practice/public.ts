@@ -170,10 +170,6 @@ export {
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
-export {
-  rewriteLearningItemKnowledgeIds,
-  rewriteQuestionKnowledgeIds,
-} from './server/merge-attribution';
 export { submitPaperSlot } from './server/paper-submit';
 
 export type {

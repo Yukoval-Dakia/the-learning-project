@@ -24,8 +24,8 @@ hub-dismiss）、generate/verify durable handoff 与 Living Note refine 链（no
   `EmbeddedCheckGenerateTask` AI task + `artifact.embedded_check_status` 列 +
   note/node page 投影）已全部删除。`check` 段本身保留为 Phase-3 自解释锚点
   （ADR-0040 决定3），`NoteSection.embedded_check` 仍是合法 schema 槽（latent，无生产 writer）。
-- **不搬区**：`src/server/artifacts/{editing-session.ts,presence/}` 留旧位置——dwell 遥测
-  / 编辑心跳是 ⚖️ 争议行（spec §3.6），未裁前 `/api/editing-session/*` 继续旧栈服务。
+- **编辑 presence**：Notes 拥有 session 心跳、延迟 refine 队列与逐项应用/失败恢复；
+  heartbeat/blur 由 Notes manifest 注册。持久化队列格式由 core schema 单一类型定义，表结构与锁协议不变。
 - server/ — 模块本体（`note-handoff` 承载 append-only intent/completion 与 indexed recovery；
   `note-verification-claim` 承载 artifact-version/fence/token 状态机；`boss-port` 是唯一 Notes→boss
   接口）；tasks/ — NoteGenerateTask / NoteVerifyTask 完整定义；jobs/ — note_generate / note_verify /

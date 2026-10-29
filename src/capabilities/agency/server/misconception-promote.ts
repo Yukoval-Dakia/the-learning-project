@@ -17,11 +17,14 @@ import { createHash } from 'node:crypto';
 
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 
-import { archiveMisconceptionEdge, createMisconceptionEdge } from '@/capabilities/knowledge/public';
 import { getConfigFlag } from '@/core/config/store';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
+import {
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+} from '@/kernel/records/misconception-edges';
 
 /**
  * Recurrence threshold the accept must meet to promote.

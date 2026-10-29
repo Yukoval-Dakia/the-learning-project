@@ -1,5 +1,5 @@
 import type { Tx } from '@/db/client';
-import { createKnowledgeNodeFromEvents } from './node-creation';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 
 export interface CreateLearningIntentKnowledgeNodeInput {
   id: string;

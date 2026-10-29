@@ -18,6 +18,8 @@ const second = { id: 'memory-b', text: 'second', created_ms: 2, kind: 'preferenc
 describe('memory reconcile append-only handoff', () => {
   beforeEach(resetDb);
 
+  // @invariant data: completion retains the complete immutable memory intent set
+  // @fails-if persisting completion drops or mutates one of its input memories
   it('writes ingest completion plus all intents atomically and preserves exact inputs', async () => {
     const db = testDb();
     await writeEvent(db, {
@@ -42,6 +44,8 @@ describe('memory reconcile append-only handoff', () => {
     await expect(loadCompleteIntentSet(db, completion)).resolves.toEqual([first, second]);
   });
 
+  // @invariant concurrency: an intent conflict rolls back the entire completion transaction
+  // @fails-if a conflicting intent leaves an ingest completion committed
   it('rolls back completion when one of N deterministic intent rows conflicts', async () => {
     const db = testDb();
     const sourceId = 'source-rollback';
@@ -90,6 +94,8 @@ describe('memory reconcile append-only handoff', () => {
     expect(completionRows).toHaveLength(0);
   });
 
+  // @invariant concurrency: unknown dispatch readback remains an error without a completion claim
+  // @fails-if null-send readback failure is swallowed as a successful advisory skip
   it('does not turn a readback error after a null send into an advisory skip', async () => {
     const db = testDb();
     await writeEvent(db, {

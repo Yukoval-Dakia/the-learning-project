@@ -3,8 +3,9 @@
 //
 // Inclusion rules, evaluated against the hub's knowledge_ids:
 //   subtopic: every atomic id is a hub id or a tree descendant of one;
-//   prerequisite: incoming edge to the hub;
-//   derived_from: an edge whose `to` is in the hub (ADR-0010: from 派生自 to);
+//   prerequisite: incoming edge to the hub (hub topic depends on it);
+//   derived_from: outgoing edge from the hub (ADR-0010: from 派生自 to, so the
+//     hub topic is the derived node and the base `to` is what it builds on);
 //   contrasts_with: either endpoint in the hub.
 // related_to/applied_in and experimental:* are excluded.
 //
@@ -107,8 +108,12 @@ function meshRelatedKnowledgeIds(
         if (toInHub && !fromInHub) prerequisite.add(edge.from_knowledge_id);
         break;
       case 'derived_from':
-        // ADR-0010: `from 派生自 to`; `to` in hub → `from` is the derived node.
-        if (toInHub && !fromInHub) derived_from.add(edge.from_knowledge_id);
+        // ADR-0010 + ADR-0020 §9 "outgoing": `from 派生自 to`, so a hub topic at
+        // `from` is the derived node and the base `to` is what it builds on —
+        // the same dependency-incoming shape as the prerequisite rule above
+        // (YUK-1601: the previous incoming read included reversed-direction
+        // material in auto hubs).
+        if (fromInHub && !toInHub) derived_from.add(edge.to_knowledge_id);
         break;
       case 'contrasts_with':
         // Symmetric: either endpoint in the hub pulls in the other.

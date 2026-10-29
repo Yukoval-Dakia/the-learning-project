@@ -1,7 +1,6 @@
-import { eq } from 'drizzle-orm';
-import { ensureSubjectRoot } from '@/capabilities/knowledge/public';
-
+import { asc, eq, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { DeclaredStageT } from '@/core/schema/business';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
@@ -13,6 +12,7 @@ import {
   projectGoal,
   projectGoalGuarded,
 } from '@/kernel/records/goal-history';
+import { ensureSubjectRoot } from '@/kernel/records/knowledge-node-birth';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
@@ -200,4 +200,64 @@ export async function mutateGoal(db: GoalDb, goalId: string, input: GoalMutation
       });
     await projectGoalGuarded(tx, goalId);
   });
+}
+
+/**
+ * Transition a goal's status. Status is qualitative (active / dormant / done) — never a
+ * progress percentage.
+ */
+export async function updateGoalStatus(
+  db: GoalDb,
+  goalId: string,
+  status: GoalStatus,
+  now: Date = new Date(),
+): Promise<void> {
+  await mutateGoal(db, goalId, { kind: 'status', status, actorRef: 'goal-status-update', now });
+}
+
+/**
+ * Re-scope a goal (title / scope_knowledge_ids / sequence_hint / declared_stage). Used
+ * when the AI re-proposes scope after the user progresses — still routed through a
+ * confirmed proposal, never a silent change. `source` / `subject_id` are set-once
+ * provenance and not mutated here. `declared_stage` is a curriculum constraint, never a
+ * θ̂ input; explicit null clears the declaration.
+ */
+export async function updateGoalScope(
+  db: GoalDb,
+  goalId: string,
+  patch: {
+    title?: string;
+    scope_knowledge_ids?: string[];
+    sequence_hint?: number;
+    declared_stage?: DeclaredStageT | null;
+    placement_starter_augmentation?: boolean;
+  },
+  now: Date = new Date(),
+  actorRef = 'goal-scope-update',
+): Promise<void> {
+  // Lock/read/version capture must happen in the same transaction as the event and row write.
+  // Reading `existing` before this boundary permits a concurrent owner update to be overwritten
+  // by a stale replacement patch after the row lock is eventually acquired.
+  await mutateGoal(db, goalId, { kind: 'scope', ...patch, actorRef, now });
+}
+
+export async function rewriteGoalScopeOnMerge(
+  tx: Tx,
+  fromId: string,
+  intoId: string,
+  now: Date,
+): Promise<string[]> {
+  const rows = await tx
+    .select({ id: goal.id, scope_knowledge_ids: goal.scope_knowledge_ids })
+    .from(goal)
+    .where(sql`${goal.scope_knowledge_ids} @> ${JSON.stringify([fromId])}::jsonb`)
+    .orderBy(asc(goal.id))
+    .for('update');
+  const rewritten: string[] = [];
+  for (const row of rows) {
+    const next = applyKnowledgeMergeToIds(row.scope_knowledge_ids ?? [], new Set([fromId]), intoId);
+    await updateGoalScope(tx, row.id, { scope_knowledge_ids: next }, now);
+    rewritten.push(row.id);
+  }
+  return rewritten;
 }

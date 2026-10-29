@@ -4,7 +4,7 @@
 import type { Db } from '@/db/client';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { listProposalInboxRows } from '@/kernel/proposals/inbox';
+import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import { makeRunTaskFn } from '../server/ai-runtime';
 import { LearningIntentError, type RunTaskFn, planLearningIntent } from '../server/learning-intent';
@@ -13,6 +13,17 @@ import { CreateLearningIntentBodySchema, LearningIntentProposalResponseSchema } 
 export interface CreateLearningIntentHandlerDeps {
   database?: Db;
   runTaskFn?: RunTaskFn;
+}
+
+/**
+ * The stored topic of a pending learning-intent proposal — the learner's original
+ * words at propose time — is the ONLY sameness basis. A pending whose topic cannot
+ * be read yields null and counts as a different topic: fail open, never gate.
+ */
+function storedIntentTopic(payload: ProposalInboxRow['payload']): string | null {
+  if (payload.kind !== 'learning_item') return null;
+  const topic = payload.proposed_change.topic;
+  return typeof topic === 'string' && topic.length > 0 ? topic : null;
 }
 
 export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandlerDeps = {}) {
@@ -35,17 +46,15 @@ export function buildCreateLearningIntentHandler(deps: CreateLearningIntentHandl
 
       try {
         const database = deps.database ?? db;
-        // UI disables repeat submits, but the API also reuses an already-pending proposal
-        // for the same topic to avoid another paid outline run after a reload or retry.
-        // A malformed legacy row is skipped individually so one bad row cannot force a
-        // fresh paid run when a valid same-topic proposal exists.
         const pending = await listProposalInboxRows(database, {
           status: 'pending',
           kind: 'learning_item',
         });
-        const cooldownKey = `learning_item:intent:${parsed.data.topic}`;
         for (const candidate of pending) {
-          if (candidate.payload.cooldown_key !== cooldownKey) continue;
+          // Same-topic reuse only: an exact pending for the learner's original
+          // words replays free after reload/retry; every other pending (different
+          // or unreadable topic) falls through to a fresh proposal, untouched.
+          if (storedIntentTopic(candidate.payload) !== parsed.data.topic) continue;
           const restored = LearningIntentProposalResponseSchema.safeParse({
             proposal_id: candidate.id,
             ...candidate.payload.proposed_change,

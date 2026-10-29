@@ -62,7 +62,7 @@ import {
   applyScoringEditPlan,
   draftCanonicalIdentity,
   draftDocumentToContract,
-} from '@/server/questions/draft-contract';
+} from '@/kernel/records/question-draft-contract';
 import {
   type EditQuestionResult,
   TxAbort,

@@ -44,6 +44,8 @@ function deterministicSendId(options?: object): string | null {
 describe('durable verbatim memory projection claim', () => {
   beforeEach(resetDb);
 
+  // @invariant concurrency: one durable source permits only one concurrent provider add
+  // @fails-if both handlers pass the same source claim and each performs a provider add
   it('serializes two concurrent edited-conjecture handlers at the provider boundary', async () => {
     const db = testDb();
     await writeEvent(db, {

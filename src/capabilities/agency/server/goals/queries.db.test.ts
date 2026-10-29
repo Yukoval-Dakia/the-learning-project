@@ -9,9 +9,8 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { goal } from '@/db/schema';
+import { createManualGoal, updateGoalStatus } from '@/kernel/records/goal-commands';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { createManualGoal } from './commands';
-import { updateGoalStatus } from './queries';
 
 const db = testDb();
 

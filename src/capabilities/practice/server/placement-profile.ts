@@ -21,7 +21,7 @@ import type { Db } from '@/db/client';
 import { goal, knowledge } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
-import { readLearnerAxisStates } from '@/server/calibration/axis-writer';
+import { readLearnerAxisStates } from '@/kernel/records/learner-axis-state';
 import { loadDayOnePriors } from '@/server/coldstart/propagate-priors';
 import type {
   PlacementProfileKc,

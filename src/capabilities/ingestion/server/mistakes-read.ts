@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import type { Db } from '@/db/client';
 import { ApiError, collectionPayload } from '@/kernel/http';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
-import { listMistakeProjectionPage } from '@/server/records/mistakes';
+import { listMistakeProjectionPage } from '@/kernel/read-models/mistake-projection';
 import { MistakeListQuerySchema, type MistakeListResponse } from '../api/contracts';
 
 export type MistakeListQuery = z.input<typeof MistakeListQuerySchema>;

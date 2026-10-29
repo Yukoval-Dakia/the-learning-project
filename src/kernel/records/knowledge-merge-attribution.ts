@@ -1,14 +1,11 @@
-/** Practice-owned attribution rewrites used by the knowledge merge workflow.
- *
- * Knowledge owns the merge transaction and its receipt; it does not own the
- * shape or write rules of question/learning-item attribution. Keeping these
- * writes here gives both the live accept path and repair jobs one owner.
+/** Structural knowledge attribution repair for questions and learning items.
+ * The caller owns the transaction and cross-surface repair order.
  */
 import { asc, eq, sql } from 'drizzle-orm';
 import { applyKnowledgeMergeToIds } from '@/core/projections/learning_item';
 import type { Tx } from '@/db/client';
 import { learning_item, question } from '@/db/schema';
-import { applyLearningItemRepair } from '@/kernel/records/learning-items';
+import { applyLearningItemRepair } from './learning-items';
 
 export async function rewriteQuestionKnowledgeIds(
   tx: Tx,

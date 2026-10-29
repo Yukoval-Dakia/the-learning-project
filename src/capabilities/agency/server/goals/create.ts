@@ -1,8 +1,8 @@
 import type { Db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
+import { createManualGoal } from '@/kernel/records/goal-commands';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { CreateGoalBody } from '../../api/goal-contracts';
-import { createManualGoal } from './commands';
 
 // Own the complete at-entry goal creation contract; persistence stays atomic in commands.
 export async function createGoal(db: Db, raw: unknown) {

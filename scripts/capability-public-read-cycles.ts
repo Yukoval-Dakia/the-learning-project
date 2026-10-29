@@ -24,26 +24,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'knowledge',
     consumer: 'agency',
-    files: [
-      'src/capabilities/agency/server/goals/commands.ts',
-      'src/capabilities/agency/server/misconception-promote.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
-    symbols: [
-      'ensureSubjectRoot',
-      'archiveMisconceptionEdge',
-      'createLearningIntentKnowledgeNode',
-      'createMisconceptionEdge',
-    ],
-    dto: 'knowledge subject, misconception and intent commands',
+    files: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
+    symbols: ['createLearningIntentKnowledgeNode'],
+    dto: 'knowledge intent commands',
     justification:
-      'agency subject/misconception/intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
+      'agency intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
     reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/server/goals/commands.ts',
-      'src/capabilities/agency/server/misconception-promote.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
+    commandFiles: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
   },
   {
     owner: 'notes',
@@ -104,31 +91,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/ingestion/server/image-candidate-accept.ts',
     ],
   },
-  {
-    owner: 'agency',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/proposals.ts'],
-    symbols: ['rewriteGoalScopeOnMerge'],
-    dto: 'goal-scope update command',
-    justification:
-      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. The knowledge-review agent-note read moved to @/kernel/read-models/agent-note-hints (YUK-1571).',
-    reviewIssue: 'YUK-953',
-    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
-  },
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
-  {
-    owner: 'practice',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/proposals.ts'],
-    symbols: ['rewriteQuestionKnowledgeIds', 'rewriteLearningItemKnowledgeIds'],
-    dto: 'merge attribution receipts',
-    justification:
-      'the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. The learnable-frontier graph decision moved INTO knowledge (YUK-1571): frontier-read.ts and frontier_fill_nightly.ts now consume it same-package, so they no longer cross this port. Retention reads now belong to the FSRS state owner.',
-    reviewIssue: 'YUK-953',
-    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
-  },
 
   {
     owner: 'agency',
@@ -155,15 +120,12 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'knowledge',
     consumer: 'practice',
-    files: [
-      'src/capabilities/practice/server/knowledge-runtime.ts',
-      'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
-    ],
-    symbols: ['createKnowledgeNodeFromEvents', 'loadFailureLearningKnowledgeContext'],
-    dto: 'failure-learning reads and placement knowledge creation command',
+    files: ['src/capabilities/practice/server/knowledge-runtime.ts'],
+    symbols: ['loadFailureLearningKnowledgeContext'],
+    dto: 'failure-learning reads',
     justification:
-      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
+      'Existing failure-learning read seams remain. Placement node birth now consumes the complete shared kernel owner directly; learner authorization and the caller transaction remain in Practice.',
     reviewIssue: 'YUK-984',
-    commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
+    commandFiles: [],
   },
 ];

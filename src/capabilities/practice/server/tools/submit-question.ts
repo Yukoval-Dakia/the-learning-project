@@ -68,17 +68,13 @@ export type {
   EditQuestionResult,
   SubmitResult,
 } from '@/server/questions/submit-question';
-// YUK-1568 S3（R1 F2）—— source_verify 需要与写口同一套 revision→flat
-// 投影原语（冻结 revision → verify 输入）：复用本文件对 seam 模块已登记
-// 的 import 边做 capability 内再出口，不新增 capability→questions 债。
+// 冻结 revision 的题型投影与提交使用同一实现。
 export {
   EditQuestionInput,
   deriveKind,
-  draftCanonicalIdentity,
   insertSourcedDraft,
   probeDraftEdit,
   publishQuestionGroupFromRow,
-  revisionToDraftDocument,
   saveDraftEdit,
   submitDraftQuestion,
   validateDraftEdit,
