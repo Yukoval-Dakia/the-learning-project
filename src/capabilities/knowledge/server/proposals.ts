@@ -496,7 +496,7 @@ async function refreshReparentEmbedding(
     if (newHash !== moved.hash) {
       await db
         .update(knowledge)
-        .set({ embedding: null, embed_content_hash: newHash })
+        .set({ embedding: null, embed_content_hash: newHash, embed_source_revision: null })
         .where(eq(knowledge.id, moved.id));
     }
   }

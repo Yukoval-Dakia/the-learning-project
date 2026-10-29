@@ -5,6 +5,7 @@
 import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { settleOneQuestionPageHit } from '@/capabilities/practice/server/quiz/content-fingerprint';
 import type { Db, Tx } from '@/db/client';
+import { embedCurrencyPredicate } from '@/db/embed-currency';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 import { JYEOO_SOURCE_HOST } from './jyeoo-supply-config';
@@ -182,6 +183,9 @@ export async function findVectorNearDuplicate(
       and(
         visibleSourceRow(),
         sql`${question.embedding} IS NOT NULL`,
+        // YUK-1603 — a revision-stale vector is not a near-dup witness for the
+        // current content; the embed_backfill currency sweep re-stamps/re-embeds it.
+        embedCurrencyPredicate(question),
         ...(excludeQuestionId != null ? [ne(question.id, excludeQuestionId)] : []),
       ),
     )

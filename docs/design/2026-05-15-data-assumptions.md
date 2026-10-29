@@ -466,3 +466,28 @@ INSERT 时：要么显式 set `draft_status`，要么加 allowlist 并标注可�
 
 > 同 §6.5 R2 的 `knowledge.approval_status` 行（init-only / UPDATE path 缺失）是同一字段的简记；
 > 本附录是其 reserved-for-future 全文。schema 侧自文档见 `src/db/schema.ts` 的 `approval_status` 注释。
+
+## 附录 · `question/knowledge.embed_source_revision` 的向量版本来源契约（2026-10-29 · YUK-1603）
+
+`embed_source_revision` 记录该行存储向量计算时所依据的行 `version`（question.version /
+knowledge.version）。**NULL 被语义化为「来源未知、仍可用」**：该列上线（drizzle/0135）前写入的
+存量向量全部为 NULL，检索按可用放行，由 embed_backfill 的 provider-free currency sweep
+（内容 hash 核验）逐步补戳或重嵌——不触发全量付费重嵌。
+
+契约三条：
+
+1. **只有向量写入者写它**（embed_backfill 两路径、ingest `questionEmbedStamp`），随向量一起
+   落库并带 revision CAS——晚到的旧版本向量写不进新 revision 的行；置空 `embedding` 的三个
+   写点（editQuestion / solution-generate / applyReparent）同步清空它。
+2. **检索侧当前性谓词**（`src/db/embed-currency.ts`，SQL+JS 孪生单一真相）：
+   `embed_version = EMBED_VERSION AND (embed_source_revision IS NULL OR = version)`，
+   且调用方保留各自 `embedding IS NOT NULL`。消费面：match-similarity（KC 拍卷）、
+   kc_dedup_nightly、quiz pool-fetch、ingest near-dup、search_bank scoped 池与 baseline
+   margin 谓词、similar_to 锚校验（`questionVectorInvalidReason` 新增 `revision_mismatch`）。
+3. **对账**：search_bank 向量命中证据带 `source_revision`；tagKnowledge 审计事件的 matches
+   带 `version/embed_source_revision/embed_content_hash`——每条命中可回对生成它所依据的
+   题面/节点 revision 与内容 hash。
+
+> 与 `embed_content_hash`（内容新鲜度）互补：hash 回答「向量是否还对应这份内容」，
+> revision 回答「这份内容之后行有没有再动过」。metadata-only 编辑 / 同域 reparent 只落后
+> revision、不漂 hash——sweep 免费补戳；hash 漂移（真内容变化且漏失效）则置空重嵌。
