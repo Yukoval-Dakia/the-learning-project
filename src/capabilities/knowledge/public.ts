@@ -59,13 +59,7 @@ export {
   listActiveMisconceptionsForKcs,
   loadFailureLearningKnowledgeContext,
 } from './server/failure-learning-context';
-// Practice consumes the frontier decision through this narrow port.
-export type { FrontierResolution } from './server/frontier-read';
-export {
-  isMasteredForFrontier,
-  learnableFrontierResolved,
-  loadFrontierRail,
-} from './server/frontier-read';
+export { loadFrontierRail } from './server/frontier-read';
 export type {
   CreateLearningIntentKnowledgeNodeFn,
   CreateLearningIntentKnowledgeNodeInput,

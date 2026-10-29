@@ -4445,6 +4445,14 @@
       "from": 5,
       "to": 4,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-29",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7378,6 +7386,36 @@
       "issue": "YUK-1604",
       "owns": "Consume the shared canonical USD->micro-USD conversion so tag audit events stamp the same cost unit every other cost-bearing writer uses. The naming cost truth stays with the task run; tagging only mirrors the runner-reported cost_usd into the event envelope.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
+      "module": "src/kernel/read-models/learnable-frontier.ts",
+      "kind": "value",
+      "symbols": ["FrontierResolution", "learnableFrontierResolved"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing frontier eligibility decision: bounded prerequisite closure, canonical mastery/evidence gate, sparse/dense/overflow states, sorted ids, prerequisite map and overflow diagnostics. Preserve the same Db/Tx, SQL probes, 0.5 missing mastery, 0.7 and evidence>=4 predicate, original query/error order and return shapes. Knowledge retains rail display, pending proposals, visibility and nightly operations; Practice retains its existing ids adapter, capacity and question admission. This scope does not change B/model/assessment/FSRS/paid/runtime policies.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/frontier-read.ts",
+      "module": "src/kernel/read-models/learnable-frontier.ts",
+      "kind": "value",
+      "symbols": ["isMasteredForFrontier", "learnableFrontierResolved"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing frontier eligibility decision: bounded prerequisite closure, canonical mastery/evidence gate, sparse/dense/overflow states, sorted ids, prerequisite map and overflow diagnostics. Preserve the same Db/Tx, SQL probes, 0.5 missing mastery, 0.7 and evidence>=4 predicate, original query/error order and return shapes. Knowledge retains rail display, pending proposals, visibility and nightly operations; Practice retains its existing ids adapter, capacity and question admission. This scope does not change B/model/assessment/FSRS/paid/runtime policies.",
+      "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/learnable-frontier.ts",
+      "module": "src/kernel/read-models/learnable-frontier.ts",
+      "kind": "value",
+      "symbols": ["learnableFrontierResolved"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing frontier eligibility decision: bounded prerequisite closure, canonical mastery/evidence gate, sparse/dense/overflow states, sorted ids, prerequisite map and overflow diagnostics. Preserve the same Db/Tx, SQL probes, 0.5 missing mastery, 0.7 and evidence>=4 predicate, original query/error order and return shapes. Knowledge retains rail display, pending proposals, visibility and nightly operations; Practice retains its existing ids adapter, capacity and question admission. This scope does not change B/model/assessment/FSRS/paid/runtime policies.",
+      "date": "2026-10-28"
     }
   ],
   "sourceSizeRecords": [
@@ -8418,7 +8456,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 32,
+      "total": 31,
       "byOwnerPair": {
         "observability -> knowledge": 2,
         "agency -> knowledge": 3,
@@ -8432,7 +8470,7 @@
         "observability -> agency": 1,
         "observability -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 3,
+        "practice -> knowledge": 2,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,
