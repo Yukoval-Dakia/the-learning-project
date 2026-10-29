@@ -1,5 +1,5 @@
 import { db } from '@/db/client';
-import { PgPresenceStore } from '@/server/artifacts/presence/pg';
+import { PgPresenceStore } from './presence/pg';
 import type {
   EditingSessionSnapshot,
   EnqueueOrApplyInput,
@@ -8,16 +8,16 @@ import type {
   MarkIdleAndFlushResult,
   PresenceStore,
   RecordHeartbeatInput,
-} from '@/server/artifacts/presence/types';
+} from './presence/types';
 
 export {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
   EDITING_HEARTBEAT_TIMEOUT_MS,
   type EditingStatus,
-} from '@/server/artifacts/presence/types';
+} from './presence/types';
 
-// Presence is process-wide, so the store is a lazy singleton over the shared
-// PG pool; creating one per call would open connections needlessly.
+// Keep one store over the shared DB pool; persisted presence is shared across
+// processes even though this store instance is local to the process.
 let store: PresenceStore | undefined;
 
 function getPresenceStore(): PresenceStore {
