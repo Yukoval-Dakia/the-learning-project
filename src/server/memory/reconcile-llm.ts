@@ -259,6 +259,7 @@ export async function judgeReconciliation(
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
     providerAttempt?: DirectProviderOperationContext;
+    beforeRequest?: () => Promise<void>;
   } = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
@@ -304,6 +305,7 @@ export async function judgeReconciliation(
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), transportTimeoutMs);
       try {
+        await opts.beforeRequest?.();
         let resp: Response;
         try {
           resp = await fetchImpl(`${glmConfig.baseURL}/chat/completions`, {

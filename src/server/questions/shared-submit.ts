@@ -99,6 +99,7 @@ type BlockRow = typeof question_block.$inferSelect;
 
 /** 与 submit-question.ts 既有 SubmitContext 同形（facade 委托不窄化）。 */
 export interface SharedSubmitContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   sessionId?: string | null;
@@ -261,6 +262,9 @@ export async function writeSubmitReceiptEvent(
 ): Promise<void> {
   await writeEvent(tx, {
     id: newId(),
+    session_id: ctx.sessionId ?? null,
+    task_run_id: ctx.taskRunId ?? null,
+    caused_by_event_id: ctx.causedByEventId ?? null,
     actor_kind: ctx.actorKind === 'system' ? 'system' : ctx.actorKind,
     actor_ref: ctx.actorRef,
     action: DRAFT_SUBMIT_ACTION,
@@ -285,6 +289,7 @@ export async function submitDraftQuestionInTx(
   ctx: SharedSubmitContext,
   opts?: SharedSubmitOptions,
 ): Promise<SubmitResult> {
+  await ctx.beforeWrite?.(tx);
   const requestId = input.request_id;
   if (requestId == null || requestId.length === 0) {
     return {
@@ -995,6 +1000,7 @@ export async function persistDeclaredQuestionGroupInTx(
   tx: Tx,
   params: DeclaredGroupPersistParams,
 ): Promise<DeclaredGroupPersistResult> {
+  await params.ctx.beforeWrite?.(tx);
   const caller = params.caller;
   const now = params.ctx.now ?? new Date();
   const writeCallerReceipt = async (outcome: DeclaredGroupDomainOutcome) => {

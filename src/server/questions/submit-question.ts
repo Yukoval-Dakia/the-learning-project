@@ -1,4 +1,4 @@
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import type { question } from '@/db/schema';
 import type { PublishQuestionGroupResult } from '@/kernel/records/assessment-publication';
 import {
@@ -126,6 +126,7 @@ export type SubmitResult =
     };
 
 interface SubmitContext {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
   sessionId?: string | null;

@@ -6,6 +6,7 @@ import {
   collectionResponseSchema,
 } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
+import { PurposeChangeInput } from '@/kernel/read-models/purpose-change';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
   AssetContentResponseSchema,
@@ -43,6 +44,11 @@ import {
   RevertAutoEnrolledBlockResponseSchema,
 } from './api/contracts';
 import { IngestionOperationRequest, MakePaperBody, RescueBody } from './api/operation-schema';
+import {
+  PurposeChangeResponse,
+  PurposeImpactQuery,
+  PurposeImpactResponse,
+} from './api/purpose-contracts';
 
 export const ingestionCapability = defineCapability({
   name: 'ingestion',
@@ -52,6 +58,25 @@ export const ingestionCapability = defineCapability({
     // Every route lazy-loads through `load` so the manifest stays pure metadata.
     // [id] segments are converted to :id by the app and passed to the handler.
     routes: [
+      {
+        method: 'POST',
+        path: '/api/ingestion-sessions/[id]/purpose',
+        operationId: 'changeIngestionPurpose',
+        request: { params: ApiIdParamsSchema, body: PurposeChangeInput },
+        responses: { 200: PurposeChangeResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/purpose').then((m) => m.POST),
+      },
+      {
+        method: 'GET',
+        path: '/api/ingestion-sessions/[id]/purpose',
+        operationId: 'getIngestionPurposeImpact',
+        request: { params: ApiIdParamsSchema, query: PurposeImpactQuery },
+        responses: { 200: PurposeImpactResponse, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/purpose').then((m) => m.GET),
+      },
       {
         method: 'GET',
         path: '/api/ingestion',

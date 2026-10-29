@@ -6,9 +6,11 @@ import {
 } from '@/ai/agent-run-error';
 import { piDomainMount } from '@/ai/pi-tool-mount';
 import * as Ingestion from '@/capabilities/ingestion/server/session-lifecycle';
+import { newId } from '@/core/ids';
 import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { source_document } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -41,6 +43,7 @@ import {
   recordAgentOperationRunning,
   settleAgentRunBudget,
 } from './budget';
+import { writeAgentBudgetPath } from './budget-state';
 import type { IngestionAgentErrorCodeT, IngestionAgentStageCountsT } from './contract';
 import { enqueueAgentContinuation } from './dispatch';
 import { persistAgentRunHistory } from './history';
@@ -55,7 +58,9 @@ import {
   enterAgentExecution,
   recordAgentExecutionIntent,
   requireAgentExecutionOwner,
+  watchAgentPurpose,
 } from './ownership';
+import { confirmAgentPurposeStop } from './purpose-stop';
 import { agentInterceptInput, buildAgentSegmentInput } from './run-input';
 import { retainAgentTaskLiability } from './spend';
 
@@ -196,6 +201,7 @@ export async function runIngestionAgentSegment(
 ): Promise<AgentRunOutcome> {
   const { sessionId, trigger } = params;
   const runTask = deps.runTaskFn ?? makeRunTaskFn(db);
+  const segmentClaim = newId();
 
   // One run lock and row lock cover ownership, the queued transition, and the
   // claim, so a stale job cannot consume a later operation's runRef.
@@ -204,7 +210,26 @@ export async function runIngestionAgentSegment(
     if (!entered) return null;
     if (entered.status === 'queued') await Ingestion.markExtractionStarted(tx, sessionId);
     const claim = await claimRunSegment(tx, sessionId, trigger, MAX_SEGMENTS);
-    return { session: entered, claim };
+    if (claim.kind === 'ok' || claim.kind === 'over_cap')
+      await writeAgentBudgetPath(tx, sessionId, ['execution_owner'], {
+        ...entered.owner,
+        segment_state: 'running',
+        segment_claim: segmentClaim,
+      });
+    const sourceEventId = `ingestion-execution-source:${entered.owner.run_ref}`;
+    await writeEvent(tx, {
+      id: sourceEventId,
+      session_id: sessionId,
+      actor_kind: 'system',
+      actor_ref: 'ingestion-execution',
+      action: 'experimental:ingestion_execution_source',
+      subject_kind: 'source_document',
+      subject_id: entered.source_document_id ?? sessionId,
+      payload: { version: 1, run_ref: entered.owner.run_ref },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    });
+    return { session: entered, claim, sourceEventId };
   });
   if (!entry) return { outcome: 'skipped', status: 'execution_not_owned' };
   const { session, claim } = entry;
@@ -222,210 +247,246 @@ export async function runIngestionAgentSegment(
     });
     return { outcome: 'failed', status: 'terminal_settlement_recovered', segment: claim.segment };
   }
-  await sweepExpiredAsksForSession(db, sessionId);
-  if (claim.kind === 'over_cap') {
-    // Segment limit: fail non-terminal items so counts are honest, then complete and
-    // receipt the paid work that did run.
-    const ledger = claim.ledger;
-    const prior = terminalItemCounts(ledger.items);
-    const stranded = ledger.items.filter((item) => !isTerminalItemStatus(item.status));
-    await db.transaction(async (tx) => {
-      await requireAgentExecutionOwner(tx, sessionId, runRef);
-      for (const item of stranded) {
-        await writeAgentItemEvent(tx, sessionId, {
-          kind: 'ingestion_agent.item',
-          item_id: item.item_id,
-          question_no: item.question_no,
-          status: 'failed',
-          reason: 'worker_lost: segment cap reached',
-          ...(item.page !== undefined ? { page: item.page } : {}),
+  const purpose = watchAgentPurpose(db, sessionId, runRef);
+  let activeTools = 0;
+  let toolsSettled: (() => void) | undefined;
+  let redactionAttached = false;
+  const drainTools = () =>
+    activeTools === 0
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          toolsSettled = resolve;
         });
-      }
-      const done = await Ingestion.markAgentRunCompleted(tx, {
-        sessionId,
-        completion: {
-          items_terminal: ledger.items.length,
-          items_failed: prior.items_failed + stranded.length,
-        },
-      });
-      await settleAgentRunBudget(tx, {
-        sessionId,
-        operationId: params.operationId,
-        terminal: done.status === 'failed' ? 'failed' : 'completed',
-        ...(done.status === 'failed'
-          ? { error: { code: 'worker_lost', reason: 'segment_cap' } }
-          : { result: { session_status: done.status } }),
-      });
-      await writeRunReceipt(
-        tx,
-        sessionId,
-        session.source_document_id,
-        await resolveSessionDerivationPolicy(tx, sessionId),
-        EMPTY_SINK,
-      );
-      await writeAgentRunSegment(tx, sessionId, {
-        segment: claim.segment,
-        trigger,
-        outcome: 'done',
-      });
-      await writeAgentErrorEvent(tx, sessionId, {
-        kind: 'ingestion_agent.error',
-        scope: 'session',
-        code: 'worker_lost',
-        retryable: false,
-      });
-      await persistAgentRunHistory(tx, {
-        sessionId,
-        runState: 'done',
-        executionClosed: true,
-      });
-      return done;
-    });
-    return {
-      outcome: 'done',
-      status: 'failed',
-      terminal_items: ledger.items.length,
-      failed_items: prior.items_failed + stranded.length,
-    };
-  }
-
-  const segment = claim.segment;
-  const ledger = claim.ledger;
-  const openAskIds = ledger.openAsks.map((ask) => ask.ask_id);
-
-  // Free gates run before the paid call.
-  if (openAskIds.length > 0) {
-    await db.transaction(async (tx) => {
-      await requireAgentExecutionOwner(tx, sessionId, runRef);
-      await writeAgentRunSegment(tx, sessionId, {
-        segment,
-        trigger,
-        outcome: 'waiting',
-        open_asks: openAskIds,
-      });
-      await persistAgentRunHistory(tx, {
-        sessionId,
-        runState: 'waiting',
-        executionClosed: true,
-      });
-    });
-    return { outcome: 'waiting', open_asks: openAskIds, segment };
-  }
-  const allTerminal =
-    ledger.items.length > 0 && ledger.items.every((item) => isTerminalItemStatus(item.status));
-  if (ledger.doneEmitted || allTerminal) {
-    return finalizeRun(db, sessionId, session.source_document_id, ledger, segment, trigger, runRef);
-  }
-
-  // A pending terminal request owns the session error; fail before a new paid call.
-  if (ledger.terminalRequest != null) {
-    await db.transaction(async (tx) => {
-      await requireAgentExecutionOwner(tx, sessionId, runRef);
-      await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
-      await writeAgentErrorEvent(tx, sessionId, {
-        kind: 'ingestion_agent.error',
-        scope: 'session',
-        code: ledger.terminalRequest!.code as IngestionAgentErrorCodeT,
-        retryable: false,
-      });
-      await Ingestion.markExtractionFailed(
-        tx,
-        sessionId,
-        `agent reported the package terminal (${ledger.terminalRequest!.code})`,
-      );
-      await settleAgentRunBudget(tx, {
-        sessionId,
-        operationId: params.operationId,
-        terminal: 'failed',
-        error: { code: ledger.terminalRequest!.code },
-      });
-      await persistAgentRunHistory(tx, {
-        sessionId,
-        runState: 'failed',
-        executionClosed: true,
-      });
-    });
-    return { outcome: 'failed', error: `terminal_request ${ledger.terminalRequest.code}` };
-  }
-
-  const derivationPolicy = await resolveSessionDerivationPolicy(db, sessionId);
-
-  // Under answer_only/crisis the tool bridge denies every needed tool, so refuse
-  // at entry instead of burning a doomed segment. The contract error is emitted as
-  // a backstop behind the endpoint's 422.
-  if (derivationPolicy !== 'allow') {
-    await db.transaction(async (tx) => {
-      await requireAgentExecutionOwner(tx, sessionId, runRef);
-      await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
-      await writeAgentErrorEvent(tx, sessionId, {
-        kind: 'ingestion_agent.error',
-        scope: 'session',
-        code: 'policy_blocked',
-        retryable: false,
-      });
-      await writeRunReceipt(
-        tx,
-        sessionId,
-        session.source_document_id,
-        derivationPolicy,
-        EMPTY_SINK,
-        segment,
-      );
-      await Ingestion.markExtractionFailed(
-        tx,
-        sessionId,
-        `usage policy '${derivationPolicy}' does not permit bank ingestion`,
-      );
-      await settleAgentRunBudget(tx, {
-        sessionId,
-        operationId: params.operationId,
-        terminal: 'failed',
-        error: { code: 'policy_blocked', policy: derivationPolicy },
-      });
-      await persistAgentRunHistory(tx, {
-        sessionId,
-        runState: 'failed',
-        executionClosed: true,
-      });
-    });
-    return { outcome: 'failed', error: `derivation_policy ${derivationPolicy}` };
-  }
-
-  let packageSummary: { kind: string | null; page_count: number } = {
-    kind: null,
-    page_count: 0,
-  };
-  if (session.source_document_id != null) {
-    const [doc] = await db
-      .select({ provenance: source_document.provenance })
-      .from(source_document)
-      .where(eq(source_document.id, session.source_document_id))
-      .limit(1);
-    const pkg = readSourcePackage(doc?.provenance);
-    packageSummary = { kind: pkg?.kind ?? null, page_count: pkg?.pages.length ?? 0 };
-  }
-
-  const providerDeadline = Date.now() + SEGMENT_TIMEOUT_MS;
-  // The grant's operation_id is the stable identity (sessionId for legacy runs).
-  // Resume/continue reuse the same runRef; task/tool run ids derive from
-  // (runRef, segment) so the GLM OCR anchor belongs to this start.
-  const toolCtx = {
-    db,
-    taskRunId: agentToolRunId(runRef, segment),
-    providerAttemptCaller: 'worker' as const,
-    providerSessionDeadlineAt: providerDeadline,
-    callerActor: { kind: 'agent' as const, ref: `ingestion_agent:${sessionId}` },
-    scope: { kind: 'ingestion_session', id: sessionId },
-    derivationPolicy,
-  };
-  const redactionSink: AgentRedactionSink = attachAgentRedactionSink(sessionId);
   try {
+    await sweepExpiredAsksForSession(db, sessionId);
+    if (claim.kind === 'over_cap') {
+      // Segment limit: fail non-terminal items so counts are honest, then complete and
+      // receipt the paid work that did run.
+      const ledger = claim.ledger;
+      const prior = terminalItemCounts(ledger.items);
+      const stranded = ledger.items.filter((item) => !isTerminalItemStatus(item.status));
+      await db.transaction(async (tx) => {
+        await requireAgentExecutionOwner(tx, sessionId, runRef);
+        for (const item of stranded) {
+          await writeAgentItemEvent(tx, sessionId, {
+            kind: 'ingestion_agent.item',
+            item_id: item.item_id,
+            question_no: item.question_no,
+            status: 'failed',
+            reason: 'worker_lost: segment cap reached',
+            ...(item.page !== undefined ? { page: item.page } : {}),
+          });
+        }
+        const done = await Ingestion.markAgentRunCompleted(tx, {
+          sessionId,
+          completion: {
+            items_terminal: ledger.items.length,
+            items_failed: prior.items_failed + stranded.length,
+          },
+        });
+        await settleAgentRunBudget(tx, {
+          sessionId,
+          operationId: params.operationId,
+          terminal: done.status === 'failed' ? 'failed' : 'completed',
+          ...(done.status === 'failed'
+            ? { error: { code: 'worker_lost', reason: 'segment_cap' } }
+            : { result: { session_status: done.status } }),
+        });
+        await writeRunReceipt(
+          tx,
+          sessionId,
+          session.source_document_id,
+          await resolveSessionDerivationPolicy(tx, sessionId),
+          EMPTY_SINK,
+        );
+        await writeAgentRunSegment(tx, sessionId, {
+          segment: claim.segment,
+          trigger,
+          outcome: 'done',
+        });
+        await writeAgentErrorEvent(tx, sessionId, {
+          kind: 'ingestion_agent.error',
+          scope: 'session',
+          code: 'worker_lost',
+          retryable: false,
+        });
+        await persistAgentRunHistory(tx, {
+          sessionId,
+          runState: 'done',
+          executionClosed: true,
+        });
+        return done;
+      });
+      return {
+        outcome: 'done',
+        status: 'failed',
+        terminal_items: ledger.items.length,
+        failed_items: prior.items_failed + stranded.length,
+      };
+    }
+
+    const segment = claim.segment;
+    const ledger = claim.ledger;
+    const openAskIds = ledger.openAsks.map((ask) => ask.ask_id);
+
+    // Free gates run before the paid call.
+    if (openAskIds.length > 0) {
+      await db.transaction(async (tx) => {
+        await requireAgentExecutionOwner(tx, sessionId, runRef);
+        await writeAgentRunSegment(tx, sessionId, {
+          segment,
+          trigger,
+          outcome: 'waiting',
+          open_asks: openAskIds,
+        });
+        await persistAgentRunHistory(tx, {
+          sessionId,
+          runState: 'waiting',
+          executionClosed: true,
+        });
+      });
+      return { outcome: 'waiting', open_asks: openAskIds, segment };
+    }
+    const allTerminal =
+      ledger.items.length > 0 && ledger.items.every((item) => isTerminalItemStatus(item.status));
+    if (ledger.doneEmitted || allTerminal) {
+      return await finalizeRun(
+        db,
+        sessionId,
+        session.source_document_id,
+        ledger,
+        segment,
+        trigger,
+        runRef,
+      );
+    }
+
+    // A pending terminal request owns the session error; fail before a new paid call.
+    if (ledger.terminalRequest != null) {
+      await db.transaction(async (tx) => {
+        await requireAgentExecutionOwner(tx, sessionId, runRef);
+        await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
+        await writeAgentErrorEvent(tx, sessionId, {
+          kind: 'ingestion_agent.error',
+          scope: 'session',
+          code: ledger.terminalRequest!.code as IngestionAgentErrorCodeT,
+          retryable: false,
+        });
+        await Ingestion.markExtractionFailed(
+          tx,
+          sessionId,
+          `agent reported the package terminal (${ledger.terminalRequest!.code})`,
+        );
+        await settleAgentRunBudget(tx, {
+          sessionId,
+          operationId: params.operationId,
+          terminal: 'failed',
+          error: { code: ledger.terminalRequest!.code },
+        });
+        await persistAgentRunHistory(tx, {
+          sessionId,
+          runState: 'failed',
+          executionClosed: true,
+        });
+      });
+      return { outcome: 'failed', error: `terminal_request ${ledger.terminalRequest.code}` };
+    }
+
+    const derivationPolicy = await resolveSessionDerivationPolicy(db, sessionId);
+
+    // Under answer_only/crisis the tool bridge denies every needed tool, so refuse
+    // at entry instead of burning a doomed segment. The contract error is emitted as
+    // a backstop behind the endpoint's 422.
+    if (derivationPolicy !== 'allow') {
+      await db.transaction(async (tx) => {
+        await requireAgentExecutionOwner(tx, sessionId, runRef);
+        await writeAgentRunSegment(tx, sessionId, { segment, trigger, outcome: 'failed' });
+        await writeAgentErrorEvent(tx, sessionId, {
+          kind: 'ingestion_agent.error',
+          scope: 'session',
+          code: 'policy_blocked',
+          retryable: false,
+        });
+        await writeRunReceipt(
+          tx,
+          sessionId,
+          session.source_document_id,
+          derivationPolicy,
+          EMPTY_SINK,
+          segment,
+        );
+        await Ingestion.markExtractionFailed(
+          tx,
+          sessionId,
+          `usage policy '${derivationPolicy}' does not permit bank ingestion`,
+        );
+        await settleAgentRunBudget(tx, {
+          sessionId,
+          operationId: params.operationId,
+          terminal: 'failed',
+          error: { code: 'policy_blocked', policy: derivationPolicy },
+        });
+        await persistAgentRunHistory(tx, {
+          sessionId,
+          runState: 'failed',
+          executionClosed: true,
+        });
+      });
+      return { outcome: 'failed', error: `derivation_policy ${derivationPolicy}` };
+    }
+
+    let packageSummary: { kind: string | null; page_count: number } = {
+      kind: null,
+      page_count: 0,
+    };
+    if (session.source_document_id != null) {
+      const [doc] = await db
+        .select({ provenance: source_document.provenance })
+        .from(source_document)
+        .where(eq(source_document.id, session.source_document_id))
+        .limit(1);
+      const pkg = readSourcePackage(doc?.provenance);
+      packageSummary = { kind: pkg?.kind ?? null, page_count: pkg?.pages.length ?? 0 };
+    }
+
+    const providerDeadline = Date.now() + SEGMENT_TIMEOUT_MS;
+    // The grant's operation_id is the stable identity (sessionId for legacy runs).
+    // Resume/continue reuse the same runRef; task/tool run ids derive from
+    // (runRef, segment) so the GLM OCR anchor belongs to this start.
+    const toolCtx = {
+      sessionId,
+      causedByEventId: entry.sourceEventId,
+      signal: purpose.controller.signal,
+      beforeIngestionWrite: (tx: Tx) => requireAgentExecutionOwner(tx, sessionId, runRef),
+      db,
+      taskRunId: agentToolRunId(runRef, segment),
+      providerAttemptCaller: 'worker' as const,
+      providerSessionDeadlineAt: providerDeadline,
+      callerActor: { kind: 'agent' as const, ref: `ingestion_agent:${sessionId}` },
+      scope: { kind: 'ingestion_session', id: sessionId },
+      derivationPolicy,
+    };
+    const redactionSink: AgentRedactionSink = attachAgentRedactionSink(sessionId);
+    redactionAttached = true;
+    await purpose.check();
     const mount = piDomainMount({
       ctx: toolCtx,
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames: resolveDomainToolNames('ingestion'),
       taskKind: 'IngestionAgentTask',
       interceptInput: agentInterceptInput(sessionId),
+      beforeExecute: async () => {
+        await purpose.check();
+        return undefined;
+      },
+      onExecuteStart: async () => {
+        await purpose.check();
+        activeTools += 1;
+      },
+      onExecuteSettled: () => {
+        activeTools = Math.max(0, activeTools - 1);
+        if (activeTools === 0) toolsSettled?.();
+      },
     });
 
     const input = buildAgentSegmentInput({
@@ -462,6 +523,11 @@ export async function runIngestionAgentSegment(
         phase: 'sent',
       });
       const result = await runTask('IngestionAgentTask', input, {
+        beforeProviderQuery: async () => {
+          await purpose.check();
+        },
+        signal: purpose.controller.signal,
+        lifecycleAbortController: purpose.controller,
         piToolMounts: [mount],
         allowedTools: [...resolveMcpAllowedTools('ingestion')],
         budgetOverride: { maxIterations: SEGMENT_MAX_ITERATIONS, timeoutMs: SEGMENT_TIMEOUT_MS },
@@ -477,6 +543,9 @@ export async function runIngestionAgentSegment(
         ...(taskRunId != null ? { task_run_id: taskRunId } : {}),
       });
     } catch (err) {
+      await drainTools();
+      if (await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim }))
+        return { outcome: 'failed', status: 'purpose_stopped', segment };
       const { code, retryable } = classifyRunFailure(err);
       const message = err instanceof Error ? err.message : String(err);
       // Paid work happened — the receipt is written on failure paths too.
@@ -533,6 +602,7 @@ export async function runIngestionAgentSegment(
     // sweeper, and returns so pg-boss never retries the paid segment.
     try {
       deps.throwBeforeBookkeeping?.();
+      await purpose.check();
       const after = await readAgentRunLedger(db, sessionId);
 
       // A model-declared terminal request becomes the session error and stops the
@@ -704,6 +774,9 @@ export async function runIngestionAgentSegment(
       );
       return { outcome: 'continue', segment };
     } catch (bookkeepingErr) {
+      await drainTools();
+      if (await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim }))
+        return { outcome: 'failed', status: 'purpose_stopped', segment };
       console.error('[ingestion-agent] post-model bookkeeping failed — segment left for sweep', {
         session_id: sessionId,
         segment,
@@ -717,7 +790,15 @@ export async function runIngestionAgentSegment(
       };
     }
   } finally {
-    detachAgentRedactionSink(sessionId);
+    purpose.close();
+    try {
+      // This process owns this claim, including free gates and entry failures.
+      // Await every started tool's execute/log/mirror before acknowledging stop.
+      await drainTools();
+      await confirmAgentPurposeStop(db, sessionId, runRef, { claimId: segmentClaim });
+    } finally {
+      if (redactionAttached) detachAgentRedactionSink(sessionId);
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient } from './client';
@@ -43,8 +44,16 @@ function deterministicSendId(options?: object): string | null {
 describe('durable verbatim memory projection claim', () => {
   beforeEach(resetDb);
 
+  // @invariant concurrency: one durable source permits only one concurrent provider add
+  // @fails-if both handlers pass the same source claim and each performs a provider add
   it('serializes two concurrent edited-conjecture handlers at the provider boundary', async () => {
     const db = testDb();
+    await writeEvent(db, {
+      ...sourceEvent('rate-concurrent'),
+      actor_ref: 'self',
+      outcome: 'success',
+      ingest_at: new Date(),
+    });
     const rows = new Map<string, { id: string; memory: string }>();
     let arrivals = 0;
     let releaseBoundary = () => {};

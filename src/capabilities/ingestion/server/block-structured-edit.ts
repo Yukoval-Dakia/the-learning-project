@@ -451,6 +451,7 @@ export interface SetPresentationValidation {
 }
 
 interface SetPresentationOptions extends BaseEditParams {
+  beforeWrite?: (tx: Tx) => Promise<void>;
   blockId: string;
   expectedVersion?: number;
   requestId?: string;
@@ -676,6 +677,7 @@ export async function setPresentation(
   params: SetPresentationParams,
 ): Promise<SetPresentationResult> {
   return db.transaction(async (tx) => {
+    await params.beforeWrite?.(tx);
     const save = params.save !== false;
     const presentation = params.presentation ?? params.structured?.presentation;
     // Same request lock and receipt action as edit_question. The tool/actor-bound

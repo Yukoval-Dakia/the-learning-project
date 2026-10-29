@@ -8,6 +8,7 @@ import { and, eq, gt, inArray, like, sql } from 'drizzle-orm';
 import { batchResolveSubjectIds } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { event, learning_record, memory_brief_note } from '@/db/schema';
+import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
 import { BRIEF_REFRESH_BUDGET } from '@/kernel/tools/budgets';
 import type { BriefEvent } from './brief';
 
@@ -277,7 +278,13 @@ export async function loadSubjectBriefEvents(
       created_at: event.created_at,
     })
     .from(event)
-    .where(and(inArray(event.action, [...QUALIFYING_ACTIONS]), gt(event.created_at, floor)))
+    .where(
+      and(
+        inArray(event.action, [...QUALIFYING_ACTIONS]),
+        gt(event.created_at, floor),
+        eventAllowsDerivationSql(),
+      ),
+    )
     .orderBy(sql`${event.created_at} DESC`)) as QualifyingEventRow[];
 
   if (rows.length === 0) return [];

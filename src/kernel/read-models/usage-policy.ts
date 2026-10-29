@@ -12,6 +12,14 @@ import { learning_session, source_document } from '@/db/schema';
 /** `source_document.provenance` key holding the learner's consented usage. */
 export const USAGE_POLICY_PROVENANCE_KEY = 'usage_policy';
 
+/** Immutable source binding on newly written events. Legacy is a real generation. */
+export function documentUsageEpoch(provenance: unknown): string {
+  const value = (provenance as Record<string, unknown> | null)?.usage_epoch;
+  if (value === undefined) return 'legacy';
+  if (typeof value !== 'string' || !value) throw new Error('invalid document usage epoch');
+  return value;
+}
+
 /** Read the consented usage off a source_document provenance blob. */
 export function readDocumentDerivationPolicy(provenance: unknown): DerivationPolicyT {
   const record =

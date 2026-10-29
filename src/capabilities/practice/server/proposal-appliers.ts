@@ -1195,7 +1195,27 @@ async function acceptUnifiedQuestionEditRequest(
       400,
     );
   }
-  const serviceCtx = { actorRef, actorKind: 'user' as const };
+  const [source] = await db
+    .select({
+      id: event.id,
+      sessionId: event.session_id,
+      taskRunId: event.task_run_id,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.id, proposalId),
+        eq(event.action, 'experimental:proposal'),
+        eq(event.actor_ref, proposal.actor_ref),
+      ),
+    );
+  const serviceCtx = {
+    actorRef,
+    actorKind: 'user' as const,
+    sessionId: source?.sessionId ?? null,
+    taskRunId: source?.taskRunId ?? undefined,
+    causedByEventId: source?.id ?? null,
+  };
   const saved = await saveDraftEdit(db, { input: parsedSave.data, ctx: serviceCtx });
   if (saved.status === 'conflict') {
     throw new ApiError(
@@ -1227,7 +1247,7 @@ async function acceptUnifiedQuestionEditRequest(
         : {}),
       request_id: `proposal-submit:${proposalId}`,
     },
-    { ...serviceCtx, sessionId: null },
+    serviceCtx,
   );
   if (submitted.status === 'conflict') {
     throw new ApiError(
