@@ -26,9 +26,9 @@ import {
   rewriteQuestionKnowledgeIds,
 } from '@/kernel/records/knowledge-merge-attribution';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
+import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
-import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';

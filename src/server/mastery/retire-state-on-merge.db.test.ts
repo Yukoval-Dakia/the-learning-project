@@ -13,8 +13,8 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
+import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { resetDb } from '../../../tests/helpers/db';
-import { retireLearnerAxisStateOnMerge } from '../calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '../conjectures/typed-state';
 import { initialCandidateState } from '../fsrs/candidate';
 import { retireFsrsStateOnMerge } from '../fsrs/state';
