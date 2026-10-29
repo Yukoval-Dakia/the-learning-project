@@ -2,8 +2,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ApiError } from '@/kernel/http';
+import { archiveMisconceptionEdge, createMisconceptionEdge } from '@/kernel/records/misconception-edges';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { archiveMisconceptionEdge, createMisconceptionEdge } from './misconception-edges';
 
 const AI = { by: 'ai' as const };
 

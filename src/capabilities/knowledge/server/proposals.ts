@@ -27,6 +27,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
+import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
 import { retireLearnerAxisStateOnMerge } from '@/server/calibration/axis-writer';
 import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
@@ -39,7 +40,6 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import { rewireMisconceptionEdgesForKnowledgeMerge } from './misconception-edges';
 import { requireKnowledgeHistory } from './node-history-guard';
 
 type DbLike = Db | Tx;
