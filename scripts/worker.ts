@@ -17,8 +17,8 @@
 // src/server/boss/worker-boot.ts 的 bootWorker()，本文件只剩独立进程专属
 // 纪律：loadEnv / process-level last-resort handlers / 顶层 catch。
 
+import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { bootWorker } from '@/server/boss/worker-boot';
-import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { loadEnv } from '../server/env';
 
 // YUK-365 (Codex review P2, Finding 2): the standalone worker MUST load the same

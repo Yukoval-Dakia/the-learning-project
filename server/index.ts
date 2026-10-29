@@ -6,9 +6,9 @@
 
 import { serve } from '@hono/node-server';
 import { capabilities } from '@/capabilities';
+import { warnFlipOrder } from '@/kernel/projection-writer-policy';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/env';
-import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
 import { createFrontdoor } from './frontdoor';
