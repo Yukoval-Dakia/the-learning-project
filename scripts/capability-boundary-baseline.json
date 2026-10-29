@@ -4681,6 +4681,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> knowledge",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8149,6 +8157,56 @@
       "issue": "YUK-1570",
       "owns": "既有完整43行纯单探针评分canonical；accountability的streak符号与hard-confirm的crucial判定继续同一规则，clamp/默认/运算顺序不变，不扩Rust port/估计/paid用途。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/knowledge-node-history-guard.ts",
+      "kind": "value",
+      "symbols": ["requireKnowledgeHistory"],
+      "issue": "YUK-1570",
+      "owns": "完整严格写前历史authority：gather完整history、null fold原错误拒绝、live structural snapshot与fold比较后原drift错误拒绝；caller持原行锁/Db或Tx，排除derived embedding，不新增锁/Tx/snapshot/自动修复。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "既有唯一event envelope写入owner；完整subject-root控制操作保持原id/user actor/payload/version与锁后created_at=ingest_at，事件和投影继续caller同Tx，不新增Mem0/brief外发或重试。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "既有完整节点出生owner所拥有的稳定subjectRootId；本控制操作只消费原根身份函数，missing root仍立即return，不创建节点、不复制纯ID桶或改变birth策略。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/kernel/records/knowledge-node-history-guard.ts",
+      "kind": "value",
+      "symbols": ["requireKnowledgeHistory"],
+      "issue": "YUK-1570",
+      "owns": "完整严格写前历史authority：gather完整history、null fold原错误拒绝、live structural snapshot与fold比较后原drift错误拒绝；caller持原行锁/Db或Tx，排除derived embedding，不新增锁/Tx/snapshot/自动修复。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-control-write.ts",
+      "module": "src/kernel/records/knowledge-node-materialization.ts",
+      "kind": "value",
+      "symbols": ["projectKnowledgeNodeGuarded"],
+      "issue": "YUK-1570",
+      "owns": "既有完整knowledge guarded materialization owner；root名称event后按原caller Tx投影，fold/anchor/missing与embedding保护语义原文不变，不另写knowledge表或扩恢复入口。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -9279,9 +9337,8 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 25,
+      "total": 24,
       "byOwnerPair": {
-        "observability -> knowledge": 1,
         "agency -> knowledge": 1,
         "agency -> notes": 2,
         "agency -> practice": 4,
