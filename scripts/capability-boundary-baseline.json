@@ -4601,13 +4601,13 @@
       "consumers": [
         {
           "file": "src/server/durable/session-orphan-family.ts",
-          "line": 3
+          "line": 398
         }
       ],
-      "evidence": "Fixed 5d136b01545c0b30aa3d683591a5e838ca437203: public export AST17/path21, canonical declaration AST469; consumer import AST3. Actual call425 passes the existing callback Tx and saved cutoff; outcome parsing and receipt INSERT stay in that same caller transaction. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
+      "evidence": "Fixed 57411243ca7c16fb79044d33019e41a1ee8dc640: public export AST17/path21, canonical declaration AST469; consumer await-import AST398/path399 inside commitRow, before its transaction. Administrative command parsing and status reads no longer eagerly load this public barrel; scripts/session-orphan-backend.ts retains parse-before-loadEnv-before-dynamic-DB order. Actual call425 passes the existing callback Tx and saved cutoff; outcome parsing and receipt INSERT stay in that same caller transaction. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
       "rationale": "完整 Conversation orphan 状态操作归 Copilot；保留 selection/row 重复锁、missing/terminal/not-old 三态、原 started_at cutoff 文本、状态/version/event 更新与错误传播。durable caller 持原 phase/fence/header/receipt/unknown-COMMIT 恢复，未新增 incarnation/CAS 或事务保证。 本片新增深度为0；现有 public barrel 的初始化实际影响 UNKNOWN，未运行。",
       "issue": "YUK-1570",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-74a7d4fa-41da-4555-a252-ed406d9d567c",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-60c9c8c4-2e92-4b8a-93a9-82c8ce1ab91c",
       "date": "2026-10-29"
     },
     {
@@ -4621,13 +4621,13 @@
       "consumers": [
         {
           "file": "src/server/durable/session-orphan-family.ts",
-          "line": 3
+          "line": 398
         }
       ],
-      "evidence": "Fixed 5d136b01545c0b30aa3d683591a5e838ca437203: public export AST17/path21, canonical declaration AST464; consumer import AST3. Actual instanceof use437 distinguishes the same canonical error class before mapping to SessionOrphanContractError; this is a production error-contract consumer, not a test or synthetic call. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
+      "evidence": "Fixed 57411243ca7c16fb79044d33019e41a1ee8dc640: public export AST17/path21, canonical declaration AST464; consumer await-import AST398/path399 inside commitRow, before its transaction. Administrative command parsing and status reads no longer eagerly load this public barrel; scripts/session-orphan-backend.ts retains parse-before-loadEnv-before-dynamic-DB order. Actual instanceof use437 distinguishes the same canonical error class before mapping to SessionOrphanContractError; this is a production error-contract consumer, not a test or synthetic call. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
       "rationale": "保留完整 Conversation owner 的原 corrupt-state 错误身份，供 durable caller 按原分支转契约错误；只定义一个 class，不构造包装错误、不把错误降为 skipped，也不扩展普通错误捕获范围。 本片新增深度为0；现有 public barrel 的初始化实际影响 UNKNOWN，未运行。",
       "issue": "YUK-1570",
-      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-74a7d4fa-41da-4555-a252-ed406d9d567c",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-60c9c8c4-2e92-4b8a-93a9-82c8ce1ab91c",
       "date": "2026-10-29"
     },
     {
