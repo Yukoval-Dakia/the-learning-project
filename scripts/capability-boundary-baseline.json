@@ -4517,6 +4517,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7570,6 +7578,26 @@
       "issue": "YUK-1570",
       "owns": "The existing canonical trait-resolution cache owns whole-map replacement and fallback derivation. Shell consumes isGeneralFallbackFor directly while retaining the complete learner-subject projection, configured versus observed-domain distinction, aliases, presentation and null/default semantics. Preserve general -> null, absent or empty resolutions -> false, and the existing every-entry general-seed identity predicate. Hydration remains the sole writer; default DB, registry, refresh timing, failures and policy remain in their existing owners. No new cache, hydration, scoring, paid, transaction or recovery behavior.",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/misconception-promote.ts",
+      "module": "src/kernel/records/misconception-edges.ts",
+      "kind": "value",
+      "symbols": ["archiveMisconceptionEdge", "createMisconceptionEdge"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing misconception-edge create, archive and knowledge-merge rewiring mechanism with its topology gate. Preserve symmetric identity normalization, default values and newId-before-parse timing, live-neighbor query and reject/warn behavior, original five-column conflict identity, weight refresh and explicit tombstone reactivation, 404 and archive pre-read result semantics, and sequential old-id archive/create receipts in the caller Tx. Agency retains promotion flags, confidence and soft/hard confirmation; Knowledge retains merge order, G/row locks and recovery. No new transaction, lock, concurrency-idempotency, scoring, paid or activation policy.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/misconception-edges.ts",
+      "kind": "value",
+      "symbols": ["rewireMisconceptionEdgesForKnowledgeMerge"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing misconception-edge create, archive and knowledge-merge rewiring mechanism with its topology gate. Preserve symmetric identity normalization, default values and newId-before-parse timing, live-neighbor query and reject/warn behavior, original five-column conflict identity, weight refresh and explicit tombstone reactivation, 404 and archive pre-read result semantics, and sequential old-id archive/create receipts in the caller Tx. Agency retains promotion flags, confidence and soft/hard confirmation; Knowledge retains merge order, G/row locks and recovery. No new transaction, lock, concurrency-idempotency, scoring, paid or activation policy.",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8615,10 +8643,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 28,
+      "total": 27,
       "byOwnerPair": {
         "observability -> knowledge": 1,
-        "agency -> knowledge": 2,
+        "agency -> knowledge": 1,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,
