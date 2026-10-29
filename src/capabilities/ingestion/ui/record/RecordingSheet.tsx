@@ -5,6 +5,7 @@ import { AgentLines } from './AgentLines';
 import { BlockLines } from './BlockLines';
 import { PageStrip } from './PageStrip';
 import { PriorRuns } from './PriorRuns';
+import { PurposeSection } from './PurposeSection';
 import { GAP_WORDS, materialWords, receiptWords, warningWords, whenWords } from './record-copy';
 import { useStartState } from './record-start';
 import { useRecording } from './recording-read';
@@ -94,6 +95,8 @@ export function RecordingSheet({
         </div>
       )}
 
+      <PurposeSection key={sessionId} sessionId={sessionId} />
+
       <PageStrip assetIds={facts.source_asset_ids} litPage={litPage} />
 
       <StartTrouble
@@ -146,6 +149,7 @@ export function RecordingSheet({
       <footer className="rc-sheet-foot">
         {receipt && (
           <p className="rc-quiet">
+            上传时的使用记录：
             {receiptWords({
               counts: receipt.redaction_counts,
               pagesRaw: receipt.channels?.page_images === 'raw',
