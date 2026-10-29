@@ -1,9 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import {
-  ConversationOrphanStateError,
-  abandonOrphanConversationTx,
-} from '@/capabilities/copilot/public';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, session_orphan_receipt, session_orphan_tick } from '@/db/schema';
 import {
@@ -398,6 +394,10 @@ async function commitRow(
   sessionId: string,
   deferred?: string,
 ): Promise<SessionOrphanOutcome> {
+  // Administrative parsing and status reads must not initialize the application DB.
+  const { ConversationOrphanStateError, abandonOrphanConversationTx } = await import(
+    '@/capabilities/copilot/public'
+  );
   const key = sessionOrphanKey(request);
   return db.transaction(
     async (tx) => {
