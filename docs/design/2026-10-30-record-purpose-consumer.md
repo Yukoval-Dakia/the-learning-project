@@ -26,4 +26,6 @@
 
 本机 api-contracts、api-client、api-client-usage、capability-boundaries、architecture-deepening、learner-copy、typecheck、lint、build均exit0；最后的拒绝重试guard与文案修正后再次typecheck/lint/build通过。新增/修改6源码文件Biome无诊断；全仓lint有168 warnings，未增加allowlist或改baseline。tests零写零跑，未启动页面或用途请求，浏览器/实际stop/repair/delete/provider/部署NOT_RUN。
 
-证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/record-purpose-20261030/`，checks.json及final/记录实际门。独立首次R1待执行；源码不是运行验收。后续问题继续原1473/1522，不新建重复任务。
+证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/record-purpose-20261030/`，checks.json及final/记录首次门。首次独立审查发现卸载旧实例的迟到响应能覆盖新请求恢复记录（astra-r1.md）。修复将发送前保存、成功及拒绝写回统一为同步核对持久槽后写入：UUID与完整body、Location、resolution必须仍等于该次写入的预期记录；不匹配或无法读取时不覆盖，保留现有记录并停止当前实例的后续命令。旧实例完成时以其原attempt核对，不能用新记录取得写权。原槽为空才可从空状态写入；替换旧已完成请求仍核对原快照。只在持久写入成功后发布本实例的成功回执。
+
+修复后 capability-boundaries、architecture-deepening、learner-copy、typecheck、lint、build 全部 exit0（p1-fix/checks.json），单文件 Biome 与 diff check 通过；唯一修复验证审待完成。未新增或运行测试，未进行请求乱序运行复现，源码不是运行验收。后续问题继续原1473/1522，不新建重复任务。

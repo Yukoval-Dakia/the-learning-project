@@ -63,7 +63,29 @@ function restore(id: string): { journal: Journal | null; error: string | null } 
   }
 }
 
-function save(id: string, journal: Journal) {
+function sameInput(a: PurposeInput, b: PurposeInput) {
+  return (
+    a.request_id === b.request_id &&
+    a.source_document_id === b.source_document_id &&
+    a.expected_version === b.expected_version &&
+    a.target === b.target
+  );
+}
+
+function save(id: string, journal: Journal, expected: Journal | null) {
+  // A reopened detail can start another request before this instance's response arrives.
+  // Compare and write synchronously in this tab; stale completions must retain the newer journal.
+  const stored = restore(id);
+  if (stored.error) throw new Error('request not readable');
+  if (
+    expected
+      ? !stored.journal ||
+        !sameInput(stored.journal.body, expected.body) ||
+        stored.journal.location !== expected.location ||
+        stored.journal.resolution !== expected.resolution
+      : stored.journal !== null
+  )
+    throw new Error('request ownership changed');
   const raw = JSON.stringify(journal);
   sessionStorage.setItem(key(id), raw);
   if (sessionStorage.getItem(key(id)) !== raw) throw new Error('request not retained');
@@ -71,12 +93,7 @@ function save(id: string, journal: Journal) {
 
 function matches(receipt: Receipt, id: string, body: PurposeInput) {
   return (
-    receipt.session_id === id &&
-    receipt.policy_committed === true &&
-    receipt.input.request_id === body.request_id &&
-    receipt.input.source_document_id === body.source_document_id &&
-    receipt.input.expected_version === body.expected_version &&
-    receipt.input.target === body.target
+    receipt.session_id === id && receipt.policy_committed === true && sameInput(receipt.input, body)
   );
 }
 
@@ -156,8 +173,15 @@ export function usePurposeChange(sessionId: string) {
     !mismatch &&
     !storageError;
 
-  const publish = (next: Journal) => {
-    save(sessionId, next);
+  const publish = (next: Journal, expected: Journal | null) => {
+    try {
+      save(sessionId, next, expected);
+    } catch (error) {
+      setStorageError(
+        '恢复记录已变化或无法保存。请保留标签页，收起后重新打开详情读取；暂不发送新请求。',
+      );
+      throw error;
+    }
     journalRef.current = next;
     setJournal(next);
   };
@@ -169,17 +193,17 @@ export function usePurposeChange(sessionId: string) {
     try {
       // Persist before any request: a lost response must never leave an unrepeatable command.
       try {
-        publish(attempt);
+        publish(attempt, journalRef.current);
       } catch {
-        setStorageError('浏览器无法保留恢复信息，本次没有发送。请保留当前标签页。');
+        setProblem('本次没有发送用途请求。');
         return;
       }
       setSelection(null);
       const result = await changePurpose(sessionId, attempt.body);
       if (!matches(result.receipt, sessionId, attempt.body))
         throw new Error('receipt identity mismatch');
+      publish({ ...attempt, location: result.location }, attempt);
       setPosted(result.receipt);
-      publish({ ...attempt, location: result.location });
     } catch (error) {
       const conflict =
         error instanceof ApiError &&
@@ -188,9 +212,9 @@ export function usePurposeChange(sessionId: string) {
       const refused = error instanceof ApiError && (error.status === 400 || error.status === 422);
       if (conflict || refused) {
         try {
-          publish({ ...attempt, resolution: conflict ? 'conflict' : 'refused' });
+          publish({ ...attempt, resolution: conflict ? 'conflict' : 'refused' }, attempt);
         } catch {
-          setStorageError('无法保存这次拒绝结果，原请求仍保留；请先核对恢复记录。');
+          return;
         }
         setProblem(
           conflict
