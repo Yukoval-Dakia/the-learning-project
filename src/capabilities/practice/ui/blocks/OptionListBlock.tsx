@@ -162,8 +162,9 @@ export function OptionListBlock({
                 {mark}
               </span>
               <MathMarkdown className="un-blk-opt-text" notation={notation}>
-                {mark
-                  ? withoutLabelPrefix(withoutLabelPrefix(item.label_md, mark), mark)
+                {/* Numeric prefixes may be decimal or ratio content; preserve them verbatim. */}
+                {marker === 'letter' && mark
+                  ? withoutLabelPrefix(item.label_md, mark)
                   : item.label_md}
               </MathMarkdown>
             </button>
