@@ -149,6 +149,14 @@ export const knowledge = pgTable('knowledge', {
   // (next backfill re-embeds). Compared (not read for behaviour) — staleness is
   // detected by hash mismatch, never by reading the column value directly.
   embed_content_hash: text('embed_content_hash'),
+  // YUK-1603 — the row `version` the stored vector was computed from. Written only
+  // by the embed writers (embed_backfill / the ingest question stamp) alongside the
+  // vector; cleared whenever `embedding` is NULLed. NULL = vector written before
+  // this column existed (provenance unknown, still retrievable until re-stamped);
+  // non-NULL and ≠ the current `version` = revision-stale → excluded from current
+  // retrieval by the shared embed-currency predicate (src/db/embed-currency.ts) and
+  // repaired by the backfill's currency sweep.
+  embed_source_revision: integer('embed_source_revision'),
 });
 
 // YUK-454 increment-1 (ADR-0036 身份层) — misconception identity-table skeleton.
@@ -515,6 +523,14 @@ export const question = pgTable(
     // prompt_md/reference_md/choices_md change and NULLs `embedding` on mismatch
     // (next backfill re-embeds). Compared, never read for behaviour.
     embed_content_hash: text('embed_content_hash'),
+    // YUK-1603 — the row `version` the stored vector was computed from. Written only
+    // by the embed writers (embed_backfill / questionEmbedStamp at ingest) alongside
+    // the vector; cleared whenever `embedding` is NULLed. NULL = vector written
+    // before this column existed (provenance unknown, still retrievable until
+    // re-stamped); non-NULL and ≠ the current `version` = revision-stale → excluded
+    // from current retrieval by the shared embed-currency predicate
+    // (src/db/embed-currency.ts) and repaired by the backfill's currency sweep.
+    embed_source_revision: integer('embed_source_revision'),
     // YUK-704 — exact identity over canonical prompt/answer/choices/rubric. This is
     // deliberately distinct from embed_content_hash (embedding freshness). Existing
     // rows remain NULL; sourcing/quiz_gen stamp new rows before INSERT.

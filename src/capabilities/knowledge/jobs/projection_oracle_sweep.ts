@@ -19,6 +19,7 @@ import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { projectionIsWriter } from '@/kernel/projection-writer-policy';
 import {
   type ProjectionAllowlist,
   type SymmetricRecord,
@@ -29,7 +30,6 @@ import {
   PROJECTION_ENTITIES,
   type ProjectionKind,
 } from '@/server/projections/entity-registry';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 // No gather scans this subject kind, so the breadcrumb is structurally fold-inert.
 const ORACLE_FORENSIC_ACTION = 'experimental:projection_oracle_flagged';

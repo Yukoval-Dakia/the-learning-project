@@ -3,15 +3,15 @@
 // Only a repeated same-direction streak changes rank.
 // Population parameters, posteriors, and cross-learner estimates do not belong here.
 
-import { misconceptionHardConfirmEnabled } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
 import { scorePrediction } from '@/kernel/records/conjecture-prediction-scoring';
+import { misconceptionHardConfirmEnabled } from '../misconception-promote';
 import {
   type DissociationVerdict,
   decideDissociation,
   gatherDissociationRecordsByIdentity,
   summarizeDissociation,
-} from '@/server/conjectures/hard-confirm';
+} from './hard-confirm';
 
 export const ACCOUNTABILITY_STREAK_FLOOR = 2;
 export const ACCOUNTABILITY_DOWNWEIGHT_MULTIPLIER = 0.25;

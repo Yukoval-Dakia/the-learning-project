@@ -5,12 +5,15 @@ import {
   type EnrichedEvidenceCell,
   type EvidenceCell,
   type LoadedConjectureEvidenceImage,
+  type PredictionAccountability,
   applyConjectureHistoryGate,
   collectConjectureEvidenceAssetRefs,
   conjectureKey,
   enrichEvidenceCells,
   gatherConjectureEvidence,
   loadConjectureHistory,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
 } from '@/capabilities/agency/public';
 import {
   type FailureAttempt,
@@ -20,11 +23,6 @@ import {
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import {
-  type PredictionAccountability,
-  loadPredictionAccountabilityByKey,
-  rankEvidenceCellsByAccountability,
-} from '@/server/conjectures/accountability';
 import { getMasteryProjection } from '@/server/mastery/state';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;

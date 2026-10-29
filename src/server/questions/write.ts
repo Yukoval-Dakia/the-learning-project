@@ -311,6 +311,7 @@ export async function editQuestion(
       if (nextHash !== row.embed_content_hash) {
         setValues.embedding = null;
         setValues.embed_content_hash = nextHash;
+        setValues.embed_source_revision = null;
       }
     }
 

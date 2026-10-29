@@ -564,6 +564,7 @@ async function runCandidateSubmit(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
         })
         .from(question)
         .where(eq(question.id, questionId));
@@ -578,6 +579,7 @@ async function runCandidateSubmit(
                 prompt_md: storedText.prompt_md,
                 reference_md: storedText.reference_md,
                 choices_md: storedText.choices_md ?? null,
+                version: storedText.version,
               },
               ingestVector,
             )
@@ -1055,6 +1057,7 @@ async function runDeclaredCandidateSubmit(
           prompt_md: question.prompt_md,
           reference_md: question.reference_md,
           choices_md: question.choices_md,
+          version: question.version,
           contentHash: question.canonical_content_hash,
         })
         .from(question)
@@ -1071,6 +1074,7 @@ async function runDeclaredCandidateSubmit(
               prompt_md: stored.prompt_md,
               reference_md: stored.reference_md,
               choices_md: stored.choices_md ?? null,
+              version: stored.version,
             },
             ingestVector,
           )
@@ -1088,6 +1092,7 @@ async function runDeclaredCandidateSubmit(
               embed_model: stamp.embed_model,
               embed_version: stamp.embed_version,
               embed_content_hash: stamp.embed_content_hash,
+              embed_source_revision: stamp.embed_source_revision,
               updated_at: now,
             })
             .where(
