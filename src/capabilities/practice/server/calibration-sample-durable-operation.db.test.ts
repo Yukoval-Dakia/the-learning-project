@@ -1,6 +1,6 @@
-// Prepared integration tests. Not executed in this source-only lane.
-// The real core and event writes run against Postgres when the parent admits
-// this file. Provider execution is replaced with a local output stub.
+// Real-Postgres integration tests for the calibration-sample durable operation
+// (retained handler, staged core, shared store). Provider execution is replaced
+// with a local output stub; every store/event write hits the real database.
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +48,9 @@ import {
   type JudgeCalibrationSampleDeps,
   freezeCalibrationWorkSetFromCandidates,
   prepareCalibrationRejudgeFace,
+  runJudgeCalibrationSample,
   selectJudgeCalibrationCandidates,
+  writeJudgeCalibrationSampleEvent,
 } from './judge-calibration-sample-core';
 
 const CFG: JudgeCalibrationConfig = {
@@ -75,7 +77,9 @@ function semanticOutput(coarse: 'correct' | 'partial'): string {
   });
 }
 
-async function seedJudgedAttempt(missingAnswer = false): Promise<string> {
+async function seedJudgedAttempt(
+  missingAnswer = false,
+): Promise<{ questionId: string; attemptEventId: string; judgeEventId: string }> {
   const db = testDb();
   const createdAt = new Date('2026-10-11T21:10:00.000Z');
   const questionId = createId();
@@ -151,7 +155,7 @@ async function seedJudgedAttempt(missingAnswer = false): Promise<string> {
     cost_micro_usd: null,
     created_at: createdAt,
   });
-  return judgeEventId;
+  return { questionId, attemptEventId, judgeEventId };
 }
 
 function eventsByAction(action: string) {
@@ -194,8 +198,8 @@ describe('retained calibration operation integration', () => {
   // @invariant data: the extracted operation appends only observations and preserves original judgments
   // @fails-if overwrite original events or miscount missing inputs; history or batch counts differ
   it('real core preserves history across agreement, disagreement and missing input', async () => {
-    const first = await seedJudgedAttempt();
-    const second = await seedJudgedAttempt();
+    const first = (await seedJudgedAttempt()).judgeEventId;
+    const second = (await seedJudgedAttempt()).judgeEventId;
     await seedJudgedAttempt(true);
     const before = await allEvents();
     let calls = 0;
@@ -240,7 +244,7 @@ describe('retained calibration operation integration', () => {
   // @invariant data: the live retained consumer runs the real core with the same report-only writes
   // @fails-if disconnect the handler from the operation; no sample or summary is written
   it('enabled retained handler appends one sample and one summary through the real core', async () => {
-    const judgeId = await seedJudgedAttempt();
+    const judgeId = (await seedJudgedAttempt()).judgeEventId;
     const before = await allEvents();
     const runTaskInner = vi.fn(async () => ({
       task_run_id: 'retained-run',
@@ -261,6 +265,51 @@ describe('retained calibration operation integration', () => {
       before,
     );
     expect(after).toHaveLength(before.length + 2);
+  });
+
+  // @invariant data: a sampled judge event is never resampled by a repeated run in the same window
+  // @fails-if candidate selection ignores already-written sample events; the second run samples and pays again
+  it('candidate selection is idempotent across repeated runs in the same window', async () => {
+    await seedJudgedAttempt();
+    const runTaskInner = vi.fn(async () => ({
+      task_run_id: 'run-syn-4',
+      text: semanticOutput('correct'),
+    }));
+
+    const first = await runJudgeCalibrationSample(testDb(), CFG, sampleDeps(runTaskInner));
+    const second = await runJudgeCalibrationSample(testDb(), CFG, sampleDeps(runTaskInner));
+
+    expect(first.sampled).toBe(1);
+    expect(second.sampled).toBe(0);
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toHaveLength(1);
+  });
+
+  // @invariant data: the partial unique index rejects a second sample row for the same judge event
+  // @fails-if the MF8 index is dropped; a mid-batch redeliver double write inserts two sample rows
+  it('the partial unique index reports a duplicate sample write for the same judge event', async () => {
+    const { questionId, attemptEventId, judgeEventId } = await seedJudgedAttempt();
+    const base = {
+      originalJudgeEventId: judgeEventId,
+      questionId,
+      answerEventId: attemptEventId,
+      priorOutcome: 'correct' as const,
+      rejudgeOutcome: 'incorrect' as const,
+      rejudgeRoute: 'semantic',
+      rejudgeConfidence: 0.8,
+      rejudgeProvider: 'anthropic-sub',
+      rejudgeModel: 'claude-opus-4-8',
+      rejudgeTaskRunId: null,
+      rejudgeRawOutput: null,
+      visionJudgeProviderAtSample: null,
+      aiProviderOverrideAtSample: null,
+      sameLaneSuspected: false,
+      now: scheduledAt,
+    };
+    expect(await writeJudgeCalibrationSampleEvent(testDb(), base)).toBe('written');
+    // Same caused-by judge id again — the partial unique index must reject it
+    // even though the event PK differs (mid-batch redeliver double-write).
+    expect(await writeJudgeCalibrationSampleEvent(testDb(), base)).toBe('duplicate');
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toHaveLength(1);
   });
 });
 
@@ -305,7 +354,7 @@ describe('gate-only DBOS candidate integration', () => {
 });
 
 async function freezeOne() {
-  const judgeEventId = await seedJudgedAttempt();
+  const judgeEventId = (await seedJudgedAttempt()).judgeEventId;
   const candidates = await selectJudgeCalibrationCandidates(testDb(), CFG, scheduledAt);
   const frozen = await freezeCalibrationWorkSetFromCandidates(testDb(), candidates);
   expect(frozen.unprepared).toEqual([]);
@@ -1034,7 +1083,7 @@ async function prepareRecoveredPair() {
     application: null,
   });
   expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
-  const bId = await seedJudgedAttempt();
+  const bId = (await seedJudgedAttempt()).judgeEventId;
   const candidates = await selectJudgeCalibrationCandidates(testDb(), CFG, scheduledAt);
   const frozen = await freezeCalibrationWorkSetFromCandidates(testDb(), candidates);
   expect(frozen.unprepared).toEqual([]);
