@@ -4653,6 +4653,34 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/shell/public.ts",
+      "siteKind": "site",
+      "symbol": "getAutoAppliedDigest",
+      "targetModule": "src/capabilities/shell/server/auto-applied-read.ts",
+      "targetSymbol": "getAutoAppliedDigest",
+      "owner": "shell",
+      "consumers": [
+        {
+          "file": "server/start/workbench-reader.ts",
+          "line": 38
+        }
+      ],
+      "evidence": "Fixed 9447b7773771fafa89662317f7a4e9fb749c869c: public export AST14; canonical digest AST51 and full read/retract projection 51-150; complete 150/110/7-line owners are byte-identical R100 relocations. Existing Start dynamic import AST38/call39 remains after authorization and withStartDb DB loading; HTTP internal call9 body unchanged. Native classifies the sole new public surface site:2, with zero new dependency edges and no size/catalog additions. Public loading expands this request to the existing Shell static closure; model-catalog snapshotActive and endpoint-host allowlist initialization are retained, runtime/initialization UNKNOWN.",
+      "rationale": "Shell完整拥有历史completion-autoapply卡投影与既有全局rate显示，Start只消费完整getAutoAppliedDigest操作。保24h/200行、rows到retracted顺序、并行breaker、1h/12/30默认、错误与Db/Tx合同；人工审批、撤销写入、Notes breaker/B其它原位。长期真实公共读契约，非compat转发函数；新增depth0，不宣称新增snapshot或运行等价。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-fca03144-ae89-4597-b36f-526ad49076b1",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> proposals",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -9193,7 +9221,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 192,
+      "total": 191,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9233,7 +9261,7 @@
         "practice -> r2": 6,
         "practice -> session": 2,
         "shell -> boss": 1,
-        "shell -> proposals": 2,
+        "shell -> proposals": 1,
         "shell -> today": 2
       }
     },
