@@ -44,11 +44,8 @@ import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-// capability→questions 边数守恒：统一写口 facade（@/server/questions/submit-question）
-// 是本文件对 questions/* 的唯一 import 边；capability 内部消费方（edit-question
-// 工具、proposal-appliers、store-sourced-question shim）走本文件的下行
-// re-export，不经 facade 重复计数。
 import {
   type DeclaredGroupDomainOutcome,
   type SubmitResult,
@@ -56,7 +53,6 @@ import {
   claimSubmitRequestId,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
-  publishQuestionGroupFromRow,
   sanitizeSourcedMarkup,
   submitDraftQuestion,
   writeSubmitReceiptEvent,
@@ -74,7 +70,6 @@ export {
   deriveKind,
   insertSourcedDraft,
   probeDraftEdit,
-  publishQuestionGroupFromRow,
   saveDraftEdit,
   submitDraftQuestion,
   validateDraftEdit,

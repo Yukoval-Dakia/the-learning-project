@@ -32,6 +32,7 @@ import {
   type ServingHoldReason,
   readQuestionServing,
 } from '@/kernel/read-models/question-serving';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import {
   ADMISSION_FAMILY,
   type AdmissionJobData,
@@ -39,7 +40,6 @@ import {
   lockAdmissionGroup,
 } from './admission/enqueue';
 import { getPracticeBoss } from './queue-runtime';
-import { publishQuestionGroupFromRow } from './quiz/verify-and-promote';
 
 const ACTOR_REF = 'practice:serving_actions';
 

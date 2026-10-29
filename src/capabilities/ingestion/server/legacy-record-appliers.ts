@@ -29,9 +29,9 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import { updateLearningRecord } from '@/kernel/records/queries';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。

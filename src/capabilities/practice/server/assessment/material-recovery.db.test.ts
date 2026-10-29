@@ -2,12 +2,12 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { assessment_issuance, question, question_revision } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { issueAssessment } from './issue';
 import { getIssuanceState } from './submit';

@@ -47,9 +47,9 @@ import {
 } from '@/kernel/proposals/signals';
 import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';

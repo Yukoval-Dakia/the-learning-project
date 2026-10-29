@@ -60,8 +60,8 @@ import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-over
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
 import { capturedQuestionShape } from './captured-question-shape';

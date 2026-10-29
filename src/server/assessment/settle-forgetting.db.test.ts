@@ -26,6 +26,7 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   CandidateReplayInputSchema,
   SealedCandidateInputSchema,
@@ -43,7 +44,6 @@ import {
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import {

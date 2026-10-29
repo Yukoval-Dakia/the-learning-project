@@ -24,8 +24,8 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 
 export interface PostWriteHandle {
   question_id: string;

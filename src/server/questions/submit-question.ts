@@ -24,8 +24,7 @@ export {
   saveDraftEdit,
   validateDraftEdit,
 } from './edit-question';
-// Write facade: capabilities reach submit/edit/publish/draft-insert through this module.
-export { publishQuestionGroupFromRow } from './publisher';
+// Write facade: capabilities reach submit/edit/draft-insert through this module.
 export type { DeclaredGroupDomainOutcome } from './shared-submit';
 export {
   claimSubmitRequestId,

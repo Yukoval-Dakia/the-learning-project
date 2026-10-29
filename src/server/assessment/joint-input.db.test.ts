@@ -30,13 +30,13 @@ import {
   question_revision,
 } from '@/db/schema';
 import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   type PartRow,
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation } from './activate';

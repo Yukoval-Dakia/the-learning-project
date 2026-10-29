@@ -48,7 +48,10 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
-import { ASSESSMENT_PUBLISH_ACTION, publishQuestionGroup } from '@/server/questions/publisher';
+import {
+  ASSESSMENT_PUBLISH_ACTION,
+  publishQuestionGroup,
+} from '@/kernel/records/assessment-publication';
 
 // ─── Approved operation surface (frozen; extending means a new approval) ─────
 //
