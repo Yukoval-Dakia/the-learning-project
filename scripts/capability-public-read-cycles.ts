@@ -94,17 +94,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
-  {
-    owner: 'practice',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/proposals.ts'],
-    symbols: ['rewriteQuestionKnowledgeIds', 'rewriteLearningItemKnowledgeIds'],
-    dto: 'merge attribution receipts',
-    justification:
-      'the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. The learnable-frontier graph decision moved INTO knowledge (YUK-1571): frontier-read.ts and frontier_fill_nightly.ts now consume it same-package, so they no longer cross this port. Retention reads now belong to the FSRS state owner.',
-    reviewIssue: 'YUK-953',
-    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
-  },
 
   {
     owner: 'agency',
