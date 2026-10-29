@@ -5,11 +5,11 @@ import {
   type ProposalLifecycleResult,
   getProposalLifecycleOperation,
 } from '@/kernel/proposals';
+import { findExistingRateEvent } from '@/kernel/proposals/applier-helpers';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { ensureProposalDecisionSignal } from '@/kernel/proposals/signals';
 import { extractRecordEvidenceIds, markRecordsActioned } from '@/kernel/records/record-processing';
 import type { AcceptAiProposalOpts } from './action-types';
-import { findExistingRateEvent } from './applier-helpers';
 import {
   assertPending,
   ownerInput,

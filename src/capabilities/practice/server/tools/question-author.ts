@@ -24,9 +24,9 @@ import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import type { ToolContext } from '@/kernel/tools/types';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import {
   bindGeneratedQuestion,
   canonicalSourceContentHash,
