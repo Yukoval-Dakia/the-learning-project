@@ -66,3 +66,9 @@ Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**—�
 完整既有 `assertFromState` 机制从 `src/server/session/guards.ts` 原文迁入 `src/kernel/learning-session-guard.ts`，Ingestion、Tutor、Conversation、Placement、Review 五个现役 consumer 直接消费新 owner，旧文件退出。泛型 assertion、allowed membership 判断、同步 throw 和精确 409 冲突错误保持；值依赖仍只有 `@/kernel/http` 的原 `ApiError` class，无 wrapper、barrel、兼容出口或工厂。
 
 各 type 的 allowed/from/to 政策、调用位置、锁与事务仍归各自原业务 owner。统一冲突错误原本就是一个完整机制，本次只改变归属，新增深度为 0；维护 Tutor 或 Ingestion 的合法状态集合仍须修改各业务 owner，不能据此声称新增状态政策隐藏或全局并发安全证明。2026-10-23 修订保留为当时归属的历史记录。
+
+## 归属修订（2026-10-30，YUK-1570）：Placement 完整生命周期
+
+Placement 的既有完整状态操作及 runtime flag 归 `src/capabilities/practice/server/placement-session-lifecycle.ts`。原 `src/server/session/placement.ts` 与混合 namespace 的 Placement 出口退出；Practice 本域直接调用，外部 orphan caller 通过既有 `practice/public.ts` 绑定操作与同一错误类，既有 `kernel/placement.ts` 从该 public 取得 flag。
+
+迁址不改变 Db/Tx、嵌套事务、行锁、clock、job_events、strict 与 canonical 幂等差异、orphan cutoff/version 合同。共享 durable family 保留 selection、phase/epoch fence、receipt 与恢复；Placement public 在实际 mutation 的 transaction 开始前动态加载，不进入 CLI 的环境加载前依赖图。准入、选题、终止、judge、θ、付费和恢复政策保持原 owner；新增 depth 为 0。

@@ -359,6 +359,11 @@ export { readPracticeDraftList } from './server/draft-list-read';
 export { readDraftReviewDetail } from './server/draft-review';
 export { getPaperDetail } from './server/paper-detail';
 export { createPracticePaperSubmission } from './server/paper-submission-operation';
+export {
+  PlacementOrphanStateError,
+  abandonOrphanPlacementTx,
+  placementProbeEnabled,
+} from './server/placement-session-lifecycle';
 export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
 export {
   createReviewSession,

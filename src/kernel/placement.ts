@@ -6,7 +6,7 @@ export {
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
+  placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/capabilities/practice/public';
-export { placementProbeEnabled } from '@/server/session/placement';

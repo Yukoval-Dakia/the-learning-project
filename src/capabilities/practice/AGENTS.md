@@ -7,6 +7,7 @@
 |------|------|
 | `manifest.ts` | API、event subscription、job、proposal kind、copilot tool 的组合声明 |
 | `api/*.ts` | review/submit/due/advice/weekly/appeal/sessions、placement、drafts、practice/paper、questions/solve、calibration anchors |
+| `server/placement-session-lifecycle.ts` | Placement 完整状态操作与运行时 flag；跨域 orphan 操作经 `public.ts` |
 | `server/verify-dispatch-outbox.ts` | 验证 intent、同事务派发与 orphan 恢复；基础设施 adapter 在 `src/server/boss/verify-dispatch-recovery.ts` |
 | `server/failure-learning.ts` | 失败尝试 eligibility、归因、变式提议的 owner operation；durable subscriber 只调用该入口 |
 | `server/` | 判分路由、FSRS 投影、paper/流编排、stream-store、placement、mastery 交互 |

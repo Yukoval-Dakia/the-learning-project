@@ -1,5 +1,11 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import {
+  abandonOrphanPlacementTx,
+  abandonPlacementSession,
+  completePlacementSession,
+  transitionPlacementSession,
+} from '@/capabilities/practice/server/placement-session-lifecycle';
 import { learning_session } from '@/db/schema';
 import {
   families,
@@ -9,12 +15,6 @@ import {
 } from '../../../tests/dbos-session-orphan/support';
 import { testDb } from '../../../tests/helpers/db';
 import { runSessionOrphanTick } from '../durable/session-orphan-family';
-import {
-  abandonOrphanPlacementTx,
-  abandonPlacementSession,
-  completePlacementSession,
-  transitionPlacementSession,
-} from './placement';
 
 const family = families[1];
 beforeEach(() => resetOrphans());

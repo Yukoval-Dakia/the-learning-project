@@ -78,7 +78,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   HUB_SYNC_MODE: 'src/capabilities/notes/server/hub-sync-reconciliation.ts',
   MEMORY_RECONCILE_HANDOFF_MODE: 'src/server/memory/memory-reconcile-handoff.ts',
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: 'src/kernel/projection-writer-policy.ts',
-  PLACEMENT_PROBE_ENABLED: 'src/server/session/placement.ts',
+  PLACEMENT_PROBE_ENABLED: 'src/capabilities/practice/server/placement-session-lifecycle.ts',
   AI_RATE_LIMIT_MAX: 'src/kernel/request-rate-limit.ts',
   AI_RATE_LIMIT_WINDOW_MS: 'src/kernel/request-rate-limit.ts',
   CLAUDE_CODE_MAX_RETRIES: 'src/server/ai/pi-agent-adapter.ts',
