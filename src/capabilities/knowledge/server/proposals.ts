@@ -4,10 +4,6 @@
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import {
-  rewriteLearningItemKnowledgeIds,
-  rewriteQuestionKnowledgeIds,
-} from '@/capabilities/practice/public';
 import { embedHash, knowledgeEmbedText } from '@/core/embed-source';
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
@@ -25,6 +21,10 @@ import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/propo
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
+import {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from '@/kernel/records/knowledge-merge-attribution';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';

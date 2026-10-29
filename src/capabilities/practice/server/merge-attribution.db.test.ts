@@ -1,11 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, expect, it } from 'vitest';
 import { event, learning_item, question } from '@/db/schema';
+import {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from '@/kernel/records/knowledge-merge-attribution';
 import { gatherAndFoldLearningItem } from '@/server/projections/gather';
 import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { rewriteLearningItemKnowledgeIds, rewriteQuestionKnowledgeIds } from './merge-attribution';
 
 const T0 = new Date('2026-01-01T00:00:00Z');
 beforeEach(resetDb);
