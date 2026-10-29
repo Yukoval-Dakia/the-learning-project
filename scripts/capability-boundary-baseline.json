@@ -4697,6 +4697,54 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "abandonOrphanPlacementTx",
+      "targetModule": "src/capabilities/practice/server/placement-session-lifecycle.ts",
+      "targetSymbol": "abandonOrphanPlacementTx",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 403
+        }
+      ],
+      "evidence": "Fixed 5c28bbcd615ab5da7d1410e4f8156d60f1a5a1ca: public export AST362; canonical orphan declaration AST248 / error class AST243; consumer dynamic import AST403 occurs only for non-deferred Placement rows, before db.transaction405. Actual orphan call431 passes original caller Tx and saved cutoff; instanceof445 uses the same namespace class identity. Native classifies each of these two exports site:2. Owner non-import/non-comment AST is unchanged; known false flag-off orphan comment and obsolete review.ts mention removed without adding a gate. Practice recovery getter now consumes private owner directly at import32/call373, with original deps short-circuit; no public/kernel flag detour or dead stable. Conversation wiring/body remains original actualmain, not the pending2192 candidate. Runtime/initialization UNKNOWN.",
+      "rationale": "Practice完整拥有Placement状态与orphan年龄/终态/corrupt判定，外部只传原Tx/sessionId/cutoff并接原结果。保missing/terminal/not-old、严格小于cutoff、当前锁行version回执、重复行锁/clock/job_event；host保phase/epoch/receipt/恢复，不新增selection-incarnation CAS、快照或新政策。 public在原transaction及锁前按需加载，deferred receipt不加载；CLI loadEnv先后保持。depth0归属，不宣称runtime安全；不迁B其它/评分/paid/恢复政策。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-05fa24b1-3d45-4c94-b75c-67c5c3f1e2bf",
+      "date": "2026-10-29"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "PlacementOrphanStateError",
+      "targetModule": "src/capabilities/practice/server/placement-session-lifecycle.ts",
+      "targetSymbol": "PlacementOrphanStateError",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 403
+        }
+      ],
+      "evidence": "Fixed 5c28bbcd615ab5da7d1410e4f8156d60f1a5a1ca: public export AST362; canonical orphan declaration AST248 / error class AST243; consumer dynamic import AST403 occurs only for non-deferred Placement rows, before db.transaction405. Actual orphan call431 passes original caller Tx and saved cutoff; instanceof445 uses the same namespace class identity. Native classifies each of these two exports site:2. Owner non-import/non-comment AST is unchanged; known false flag-off orphan comment and obsolete review.ts mention removed without adding a gate. Practice recovery getter now consumes private owner directly at import32/call373, with original deps short-circuit; no public/kernel flag detour or dead stable. Conversation wiring/body remains original actualmain, not the pending2192 candidate. Runtime/initialization UNKNOWN.",
+      "rationale": "原Placement corrupt状态class作为真实跨域失败合同公开，host以同一class做instanceof并映射原SessionOrphanContractError；不包装成新错误、不降级为skip，不改变其它异常传播。 public在原transaction及锁前按需加载，deferred receipt不加载；CLI loadEnv先后保持。depth0归属，不宣称runtime安全；不迁B其它/评分/paid/恢复政策。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-05fa24b1-3d45-4c94-b75c-67c5c3f1e2bf",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> session",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8265,6 +8313,36 @@
       "issue": "YUK-1570",
       "owns": "既有完整题组publication/lifecycle owner；原同Tx root到part/lifecycle锁序、FromRow声明拒绝、claim、withdraw/restore/suspension及冻结revision合同保持，不迁评分/准入政策。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/placement-session-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "既有ApiError错误身份；Placement保缺失404、非法状态409和原消息/同步抛出，不新增catch或改失败结果。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/placement-session-lifecycle.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "既有job_event写入及通知owner；Placement start/transition保持原caller Tx、payload、writer独立clock和pg_notify提交时机，不改为domain event或拆receipt事务。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/placement-session-lifecycle.ts",
+      "module": "src/kernel/learning-session-guard.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "既有完整同步状态guard；保strict重复终态409与canonical同目标幂等分支的原调用位置、membership与精确错误，不迁各类状态政策。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -9346,7 +9424,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 190,
+      "total": 188,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9384,7 +9462,6 @@
         "practice -> proposals": 4,
         "practice -> questions": 1,
         "practice -> r2": 6,
-        "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 1,
         "shell -> today": 2
