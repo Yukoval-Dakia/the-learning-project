@@ -47,7 +47,7 @@ ${causeTaxonomyList(profile)}
 证据要求：${profile.grounding.requirement}
 不确定性策略：${profile.grounding.uncertaintyPolicy}
 每条返回 { from_knowledge_id, to_knowledge_id, relation_type, weight, reasoning }。
-relation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（B 由 A 推导）。新型关系用 experimental:* 命名空间。
+relation_type 5 选 1：prerequisite（A 是学 B 的先决）/ related_to（弱关联）/ contrasts_with（易混淆对比）/ applied_in（A 应用于 B）/ derived_from（A 派生自 B：A 是 B 的变式/拆分，方向必须 from=派生节点、to=基础节点）。新型关系用 experimental:* 命名空间。
 weight 0-1：模式有几次 attempt 支持就给多高（1 次→0.3 / 2-3 次→0.6 / 4+ 次→0.9）。
 reasoning 必须具体：引用 attempt event id 或指出 cause pattern。
 禁止：from === to；relation_type 不在合法集合；已存在于 existing_edges 的同向同型 (from, to, relation_type) 三元组。

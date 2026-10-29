@@ -3,7 +3,7 @@
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { newId as createId } from '@/core/ids';
-import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
+import { type EdgeTopologyMode, foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
 import { isDirectTreePair } from '@/core/topology-gate';
@@ -80,7 +80,9 @@ export async function reactivateKnowledgeEdge(
       },
       created_at: createdAt,
     });
-    await projectKnowledgeEdgeGuarded(tx, id);
+    // Reviving a tombstone births a NEW live edge, so the ADR-0034 gate applies here
+    // even though this is technically a re-fold of recorded history.
+    await projectKnowledgeEdgeGuarded(tx, id, { topology: 'enforce' });
   });
 }
 
@@ -304,26 +306,28 @@ export async function gatherAndFoldKnowledgeEdgeWithMesh(
   db: DbLike,
   edgeId: string,
   liveMesh: KnowledgeEdgeRowSnapshotT[],
+  opts?: { topology?: EdgeTopologyMode },
 ): Promise<KnowledgeEdgeRowSnapshotT | null> {
   const rows = await db
     .select()
     .from(event)
     .where(and(eq(event.subject_kind, 'knowledge_edge'), eq(event.subject_id, edgeId)));
   const foldEvents = rows.map(rowToFoldEvent);
-  return foldKnowledgeEdge(edgeId, foldEvents, liveMesh);
+  return foldKnowledgeEdge(edgeId, foldEvents, liveMesh, opts);
 }
 
 /**
- * Single-edge form: fetch the live mesh, then delegate. A topology reject propagates so
- * the caller decides whether to abort.
+ * Single-edge form: fetch the live mesh, then delegate. A topology reject in write
+ * mode propagates so the caller decides whether to abort.
  */
 export async function gatherAndFoldKnowledgeEdge(
   db: DbLike,
   edgeId: string,
+  opts?: { topology?: EdgeTopologyMode },
 ): Promise<KnowledgeEdgeRowSnapshotT | null> {
   const liveRows = await db.select().from(knowledge_edge).where(isNull(knowledge_edge.archived_at));
   const liveMesh = liveRows.map(edgeRowToSnapshot);
-  return gatherAndFoldKnowledgeEdgeWithMesh(db, edgeId, liveMesh);
+  return gatherAndFoldKnowledgeEdgeWithMesh(db, edgeId, liveMesh, opts);
 }
 
 // created_by type comes from the table's inferred shape, avoiding a cross-import of the alias.
@@ -331,10 +335,14 @@ type EdgeCreatedBy = EdgeRow['created_by'];
 
 /**
  * Re-project one `knowledge_edge`. A fold of null deletes the row; otherwise upsert.
- * A topology reject propagates so the caller's transaction aborts.
+ * A write-mode topology reject propagates so the caller's transaction aborts.
  */
-export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<void> {
-  const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
+export async function projectKnowledgeEdge(
+  db: DbLike,
+  edgeId: string,
+  opts?: { topology?: EdgeTopologyMode },
+): Promise<void> {
+  const projected = await gatherAndFoldKnowledgeEdge(db, edgeId, opts);
 
   if (projected === null) {
     await db.delete(knowledge_edge).where(eq(knowledge_edge.id, edgeId));
@@ -347,8 +355,12 @@ export async function projectKnowledgeEdge(db: DbLike, edgeId: string): Promise<
  * Guarded write-through: an edge folds to null only without a create event, which means
  * a legacy row the fold cannot see, so this variant never deletes.
  */
-export async function projectKnowledgeEdgeGuarded(db: DbLike, edgeId: string): Promise<void> {
-  const projected = await gatherAndFoldKnowledgeEdge(db, edgeId);
+export async function projectKnowledgeEdgeGuarded(
+  db: DbLike,
+  edgeId: string,
+  opts?: { topology?: EdgeTopologyMode },
+): Promise<void> {
+  const projected = await gatherAndFoldKnowledgeEdge(db, edgeId, opts);
   if (projected === null) {
     return;
   }
@@ -428,7 +440,8 @@ function foldRejectToApiError(err: unknown): ApiError | null {
 
 /**
  * Materialize the accepted event and enforce topology in the same transaction. A reject
- * always aborts; `translateReject` maps it to a clean ApiError for direct routes.
+ * always aborts; `translateReject` maps it to a clean ApiError for direct routes. This
+ * is the write throat — the only fold path that runs the gate in 'enforce' mode.
  */
 export async function runEdgeTopologyGate(
   tx: Tx,
@@ -436,7 +449,7 @@ export async function runEdgeTopologyGate(
   opts?: { translateReject?: boolean },
 ): Promise<void> {
   try {
-    await projectKnowledgeEdgeGuarded(tx, edgeId);
+    await projectKnowledgeEdgeGuarded(tx, edgeId, { topology: 'enforce' });
   } catch (err) {
     if (opts?.translateReject) {
       const apiErr = foldRejectToApiError(err);

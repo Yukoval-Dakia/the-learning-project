@@ -7924,6 +7924,15 @@
       "to": 5043,
       "issue": "YUK-1604",
       "responsibilityReason": "Comment-only growth on the fold-owned knowledge table: the role and approval_status docblocks gain the YUK-1604 facts (role='kc' tag-match gate, pending_reasons audit basis, stock repair via experimental:knowledge_approval_update). No columns, no new writer, no subsystem."
+    },
+    {
+      "path": "src/capabilities/knowledge/server/proposals.ts",
+      "date": "2026-10-28",
+      "baseBlob": "49be1d2e08ebcac5d81807f700ace0db7d241049",
+      "from": 1113,
+      "to": 1162,
+      "issue": "YUK-1601",
+      "responsibilityReason": "The accept flow stays the single structural writer: the added lines are the reparent cycle boundary (self-parent reject, one xact advisory lock serializing concurrent reparent accepts, and a visited-set subtree walk rejecting an ancestor moved under its own descendant). All checks run inside the existing accept transaction and throw before any write; no new writer, module, or responsibility."
     }
   ],
   "compatShims": [
