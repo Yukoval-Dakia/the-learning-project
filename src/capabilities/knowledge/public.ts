@@ -70,12 +70,7 @@ export {
   createMisconceptionEdge,
 } from './server/misconception-edges';
 export { loadMisconceptionsForKc } from './server/misconception-read';
-export {
-  createKnowledgeNodeFromEvents,
-  ensureSubjectRoot,
-  subjectRootId,
-  updateSubjectRootNameFromControl,
-} from './server/node-creation';
+export { updateSubjectRootNameFromControl } from './server/node-creation';
 export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
