@@ -1,4 +1,3 @@
-// Prepared for the parent's DB partition; not run by this offline lane.
 // Real Postgres admission checks, one-step double, no DBOS runtime or provider.
 import { randomUUID } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
@@ -187,10 +186,9 @@ describe('item prior blocked candidate (DB)', () => {
   });
 });
 
-// Prepared real-PG float4 check for the application seam (R1 P1); NOT run by
-// this offline lane — the parent executes the DB partition. Real `real`
-// columns, real applyItemPrior write, no provider, no DBOS runtime.
-describe('item prior application float4 verification (DB, prepared)', () => {
+// Real-PG float4 check for the application seam (R1 P1). Real `real` columns,
+// real applyItemPrior write, no provider, no DBOS runtime.
+describe('item prior application float4 verification (DB)', () => {
   function stagedFor(questionId: string, bLogit: number, confidence: number): ItemPriorStagedItem {
     const draft = { b_logit: bLogit, confidence, reasoning: '真实 float4 存储往返断言' };
     return {
@@ -237,7 +235,7 @@ describe('item prior application float4 verification (DB, prepared)', () => {
 });
 
 // Every case below uses the concrete adapter + fixed B store + real Postgres.
-// The task runner is an offline output fixture. These cases are PREPARED, NOT RUN by this lane.
+// The task runner is an offline output fixture.
 const originalDispatch = {
   version: 1,
   backend: 'pg-boss',
@@ -399,7 +397,7 @@ async function expectJobLockWait(blockerPid: number) {
   throw new Error('Expected actual PostgreSQL job-row lock wait');
 }
 
-describe('item prior concrete shared-store consumer (DB, prepared)', () => {
+describe('item prior concrete shared-store consumer (DB)', () => {
   // @invariant concurrency: exactly one reservation wins and only its exact fence/delivery can persist output
   // @fails-if two reserve calls win, a stale fence completes, or a completed result is physically sent again
   it('reserves once under a real store race and completes only with the exact winning fence', async () => {
@@ -725,7 +723,7 @@ describe('item prior concrete shared-store consumer (DB, prepared)', () => {
   });
 });
 
-describe('item prior noncausal application dispositions (DB, prepared)', () => {
+describe('item prior noncausal application dispositions (DB)', () => {
   // @invariant data: equality with an existing row never invents causal authorship and differing rows survive
   // @fails-if a foreign row is overwritten, bare readback marks paid effects applied, or receipt equality is skipped
   it('records matched and superseded dispositions atomically while preserving foreign rows', async () => {
@@ -789,7 +787,7 @@ describe('item prior noncausal application dispositions (DB, prepared)', () => {
   });
 });
 
-describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRUN)', () => {
+describe('adapter R1 recovery and owning delivery regressions (DB)', () => {
   // @invariant data: committed terminal application survives lost workflow acknowledgment and supported anchor changes
   // @fails-if replay recomputes superseded, conflicts forever, changes receipts, rewrites the fixed anchor, or sends again
   it('replays an applied historical matched receipt after lost acknowledgment and setFixedAnchor change', async () => {
@@ -1029,9 +1027,9 @@ describe('adapter R1 recovery and owning delivery regressions (DB, prepared UNRU
   });
 });
 
-// R2 finding retained: a300 allowed a terminal owning job to claim pending/absent effects
-// until the orchestrator polled. These regressions remain PREPARED UNRUN, not DB proof.
-describe('adapter terminal-job reservation regressions (DB, prepared UNRUN)', () => {
+// R2 finding retained: a300 allowed a terminal owning job to claim pending/absent
+// effects until the orchestrator polled.
+describe('adapter terminal-job reservation regressions (DB)', () => {
   // @invariant data: terminal original jobs only recover real receipts while the DAG node lags
   // @fails-if any terminal job creates an intent, claims pending, calls the runner or completes the node
   it.each(
@@ -1221,120 +1219,117 @@ describe('adapter terminal-job reservation regressions (DB, prepared UNRUN)', ()
     },
   );
 
-  // @invariant concurrency: cancellation holding the original job lock wins before paid intent/claim
-  // @fails-if the reservation reads pre-cancel state or creates a pending/sending row after cancellation commits
-  it('serializes cancellation before reservation on the actual PostgreSQL job row', async () => {
-    await seedDagRun();
-    await seedQuestion('q_cancel_before_claim');
-    const dispatched = await seedDispatchedNode({
-      ...request,
-      reps: 1,
-      dispatch: originalDispatch,
-    });
-    const work = await realWork('q_cancel_before_claim', 1);
-    const effects = new ItemPriorPaidEffectAdapter(db, dispatched);
-    const client = new Client({ connectionString: z.url().parse(process.env.TEST_DATABASE_URL) });
-    await client.connect();
-    let reservation: ReturnType<typeof effects.reserveRep> | undefined;
-    try {
-      await client.query('begin');
-      const { rows } = await client.query('select pg_backend_pid() as pid');
-      const pid = z.object({ pid: z.number() }).parse(rows[0]).pid;
-      if (!fixtureBoss) throw new Error('Missing broker fixture');
-      await fixtureBoss.cancel(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId, {
-        db: { executeSql: (text, values) => client.query(text, values) },
+  // One proof body for both orderings of the same race: whoever holds the
+  // actual PostgreSQL job-row lock first wins; the loser must observe the
+  // committed truth without manufacturing a second claim.
+  // @invariant concurrency: the job-row lock decides between a cancelling owner and a claiming reservation — whichever commits first wins and the loser observes the committed state
+  // @fails-if the reservation reads pre-commit job state or its claim bypasses the locked job row; a cancelled job is re-claimed or the committed sending obligation is overwritten
+  it.each(['cancellation', 'reservation'] as const)(
+    'serializes cancellation against reservation with the %s committing first',
+    async (winner) => {
+      const questionId = `q_${winner}_commits_first`;
+      await seedDagRun();
+      await seedQuestion(questionId);
+      const dispatched = await seedDispatchedNode({
+        ...request,
+        reps: 1,
+        dispatch: originalDispatch,
       });
-      reservation = effects.reserveRep(work, 0);
-      await expectJobLockWait(pid);
-      await client.query('commit');
-      expect(await reservation).toMatchObject({
-        kind: 'recovery-only',
-        jobState: 'cancelled',
-        effectState: null,
-      });
+      const work = await realWork(questionId, 1);
+      const effects = new ItemPriorPaidEffectAdapter(db, dispatched);
       const runner = vi.fn(noProvider);
-      expect((await runItemPriorItemRepStages(work, { effects, runTaskFn: runner })).status).toBe(
-        'incomplete',
-      );
-      expect(runner).not.toHaveBeenCalled();
-      expect(await db.select().from(paid_effect)).toEqual([]);
-      expect(await db.select().from(paid_effect_control)).toEqual([]);
-      expect(await db.select().from(item_calibration)).toEqual([]);
-      expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
-    } finally {
-      await client.query('rollback');
-      await reservation?.catch(() => {});
-      await client.end();
-    }
-  });
-
-  // @invariant concurrency: a claim committed first is an existing obligation, never another terminal-job claim
-  // @fails-if cancellation bypasses the held job row or terminal recovery changes the committed fence/lease
-  it('serializes reservation before cancellation and preserves the existing sending obligation', async () => {
-    await seedDagRun();
-    await seedQuestion('q_claim_before_cancel');
-    const dispatched = await seedDispatchedNode({
-      ...request,
-      reps: 1,
-      dispatch: originalDispatch,
-    });
-    const work = await realWork('q_claim_before_cancel', 1);
-    const effects = new ItemPriorPaidEffectAdapter(db, dispatched);
-    const ready = deferred();
-    const release = deferred();
-    let claimPid = 0;
-    const transaction = db.transaction.bind(db);
-    // This pause wraps the real transaction/claim, never substitutes a successful store result.
-    const pause = vi.spyOn(db, 'transaction').mockImplementationOnce(
-      async <T>(
-        fn: (tx: Tx) => Promise<T>,
-        config?: Parameters<Db['transaction']>[1],
-      ): Promise<T> =>
-        transaction(async (tx) => {
-          const result = await fn(tx);
-          const [raw] = await tx.execute(sql`select pg_backend_pid() as pid`);
-          claimPid = z.object({ pid: z.number() }).parse(raw).pid;
-          expect(await readPaidEffect(tx, effectIdentity(work))).toMatchObject({
-            state: 'sending',
-            fence: 1,
+      if (winner === 'cancellation') {
+        const client = new Client({
+          connectionString: z.url().parse(process.env.TEST_DATABASE_URL),
+        });
+        await client.connect();
+        let reservation: ReturnType<typeof effects.reserveRep> | undefined;
+        try {
+          await client.query('begin');
+          const { rows } = await client.query('select pg_backend_pid() as pid');
+          const pid = z.object({ pid: z.number() }).parse(rows[0]).pid;
+          if (!fixtureBoss) throw new Error('Missing broker fixture');
+          await fixtureBoss.cancel(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId, {
+            db: { executeSql: (text, values) => client.query(text, values) },
           });
-          ready.resolve();
-          await release.promise;
-          return result;
-        }, config),
-    );
-    const reservation = effects.reserveRep(work, 0);
-    let cancellation: ReturnType<PgBoss['cancel']> | undefined;
-    try {
-      await Promise.race([
-        ready.promise,
-        reservation.then(() => {
-          throw new Error('Reservation committed before pause');
-        }),
-      ]);
-      if (!fixtureBoss) throw new Error('Missing broker fixture');
-      cancellation = fixtureBoss.cancel(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId);
-      await expectJobLockWait(claimPid);
-      release.resolve();
-      expect(await reservation).toMatchObject({ kind: 'winner', fence: 1 });
-      await cancellation;
-      const before = await db.select().from(paid_effect);
-      const runner = vi.fn(noProvider);
-      expect((await runItemPriorItemRepStages(work, { effects, runTaskFn: runner })).status).toBe(
-        'held',
+          reservation = effects.reserveRep(work, 0);
+          await expectJobLockWait(pid);
+          await client.query('commit');
+          expect(await reservation).toMatchObject({
+            kind: 'recovery-only',
+            jobState: 'cancelled',
+            effectState: null,
+          });
+          expect(
+            (await runItemPriorItemRepStages(work, { effects, runTaskFn: runner })).status,
+          ).toBe('incomplete');
+          expect(runner).not.toHaveBeenCalled();
+          expect(await db.select().from(paid_effect)).toEqual([]);
+          expect(await db.select().from(paid_effect_control)).toEqual([]);
+          expect(await db.select().from(item_calibration)).toEqual([]);
+          expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
+        } finally {
+          await client.query('rollback');
+          await reservation?.catch(() => {});
+          await client.end();
+        }
+        return;
+      }
+      const ready = deferred();
+      const release = deferred();
+      let claimPid = 0;
+      const transaction = db.transaction.bind(db);
+      // This pause wraps the real transaction/claim, never substitutes a successful store result.
+      const pause = vi.spyOn(db, 'transaction').mockImplementationOnce(
+        async <T>(
+          fn: (tx: Tx) => Promise<T>,
+          config?: Parameters<Db['transaction']>[1],
+        ): Promise<T> =>
+          transaction(async (tx) => {
+            const result = await fn(tx);
+            const [raw] = await tx.execute(sql`select pg_backend_pid() as pid`);
+            claimPid = z.object({ pid: z.number() }).parse(raw).pid;
+            expect(await readPaidEffect(tx, effectIdentity(work))).toMatchObject({
+              state: 'sending',
+              fence: 1,
+            });
+            ready.resolve();
+            await release.promise;
+            return result;
+          }, config),
       );
-      expect(runner).not.toHaveBeenCalled();
-      expect(await db.select().from(paid_effect)).toEqual(before);
-      expect(before).toMatchObject([{ state: 'sending', fence: 1, result_json: null }]);
-      expect(
-        await fixtureBoss.getJobById(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId),
-      ).toMatchObject({ state: 'cancelled' });
-      expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
-    } finally {
-      release.resolve();
-      await reservation.catch(() => {});
-      await cancellation?.catch(() => {});
-      pause.mockRestore();
-    }
-  });
+      const reservation = effects.reserveRep(work, 0);
+      let cancellation: ReturnType<PgBoss['cancel']> | undefined;
+      try {
+        await Promise.race([
+          ready.promise,
+          reservation.then(() => {
+            throw new Error('Reservation committed before pause');
+          }),
+        ]);
+        if (!fixtureBoss) throw new Error('Missing broker fixture');
+        cancellation = fixtureBoss.cancel(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId);
+        await expectJobLockWait(claimPid);
+        release.resolve();
+        expect(await reservation).toMatchObject({ kind: 'winner', fence: 1 });
+        await cancellation;
+        const before = await db.select().from(paid_effect);
+        expect((await runItemPriorItemRepStages(work, { effects, runTaskFn: runner })).status).toBe(
+          'held',
+        );
+        expect(runner).not.toHaveBeenCalled();
+        expect(await db.select().from(paid_effect)).toEqual(before);
+        expect(before).toMatchObject([{ state: 'sending', fence: 1, result_json: null }]);
+        expect(
+          await fixtureBoss.getJobById(ITEM_PRIOR_MEMBER, dispatched.dispatch.deliveryId),
+        ).toMatchObject({ state: 'cancelled' });
+        expect((await db.select().from(dag_orchestration_node))[0]?.status).toBe('enqueued');
+      } finally {
+        release.resolve();
+        await reservation.catch(() => {});
+        await cancellation?.catch(() => {});
+        pause.mockRestore();
+      }
+    },
+  );
 });

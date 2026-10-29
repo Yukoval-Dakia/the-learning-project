@@ -1,12 +1,5 @@
-// YUK-361 Phase 6 (Task 11) — active-PPI 重标定 db 测。
-//
-// 验证：
-//   (A) recordDifficultyCalibrationLabel —— π_i join（只 softmax_mfi selected 观测）/
-//       非客观判分 skip / partial skip / θ-before 入 theta_snapshot / 无真 π_i skip /
-//       去重（同 attempt 不重复）。
-//   (B) recalibrateQuestion —— 标签 < 阈值 → no-op（b_calib 保持 NULL，数据闸）；
-//       ≥ 阈值 → b_calib firm-up（PPI++ AIPW）；无锚 → no_anchor no-op。
-//   (C) effectiveB end-to-end —— b_calib NULL → 退回 b_anchor；set → 用 b_calib。
+// active-PPI 重标定 db 测：同一 attempt_event_id 重复入队时
+// recordDifficultyCalibrationLabel 恰好落一条 label（onConflictDoNothing）。
 
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
