@@ -37,7 +37,7 @@ export interface QuestionContentWriterEntry {
 
 export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWriterEntry> = {
   // ─── 已收敛（YUK-1043：同事务 publishQuestionGroup*，per-site 验证） ───
-  'src/server/questions/write.ts': {
+  'src/capabilities/practice/server/question-bank-write.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'editQuestion：判分输入字段（题面/答案/选项/题型）变更 ⇒ 先锁组根再改子行、同事务统一发布（part 编辑锁序 question 根→子行）；archiveQuestion ⇒ 组根 archive 落 withdrawn，单 part archive ⇒ 重发组 revision（tombstone part 退出组契约）。',

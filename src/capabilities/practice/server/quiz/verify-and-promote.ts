@@ -177,8 +177,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       return { promoted: false, status: 'skipped:not_draft' };
     }
     // B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
-    // carries metadata.archived_at (set by archiveQuestion, src/server/questions/
-    // write.ts). owner force-enable must NEVER resurrect such a draft back to active;
+    // carries metadata.archived_at (set by archiveQuestion in ../question-bank-write.ts).
+    // owner force-enable must NEVER resurrect such a draft back to active;
     // reject WITHOUT promoting or writing any verify event (don't update it back to active).
     // same for metadata.dismissed_at (question_draft proposal dismiss): an
     // owner-rejected draft must NEVER be force-enabled back into the pool.
