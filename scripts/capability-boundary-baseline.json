@@ -4597,6 +4597,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> projections",
+      "date": "2026-10-29",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -9097,7 +9105,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 194,
+      "total": 193,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9119,7 +9127,7 @@
         "knowledge -> fsrs": 2,
         "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
-        "knowledge -> projections": 3,
+        "knowledge -> projections": 2,
         "knowledge -> proposals": 2,
         "notes -> ai": 6,
         "notes -> boss": 1,
