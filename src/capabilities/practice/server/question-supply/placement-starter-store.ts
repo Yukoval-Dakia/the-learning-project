@@ -11,7 +11,8 @@ import {
   placement_starter_cost_component,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { getEffectiveDomain, updateGoalScope } from '@/kernel/placement-persistence';
+import { getEffectiveDomain } from '@/kernel/placement-persistence';
+import { updateGoalScope } from '@/kernel/records/goal-commands';
 import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import type { PlacementStarterIdentity } from './placement-starter-identity';

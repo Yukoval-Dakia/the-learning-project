@@ -4,7 +4,6 @@
 
 import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { rewriteGoalScopeOnMerge } from '@/capabilities/agency/public';
 import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
@@ -25,6 +24,7 @@ import { ApiError } from '@/kernel/http';
 import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
+import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
