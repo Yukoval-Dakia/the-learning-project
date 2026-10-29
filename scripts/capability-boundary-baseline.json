@@ -8221,9 +8221,7 @@
       "file": "src/capabilities/practice/server/question-bank-write.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
-      "symbols": [
-        "writeEvent"
-      ],
+      "symbols": ["writeEvent"],
       "issue": "YUK-1570",
       "owns": "既有唯一event envelope写入owner；edit/archive/restore保原id、clock、payload及caller Tx，未改outbox/异常/提交边界。",
       "date": "2026-10-29"
@@ -8233,9 +8231,7 @@
       "file": "src/capabilities/practice/server/question-bank-write.ts",
       "module": "src/kernel/read-models/failure-attempts.ts",
       "kind": "value",
-      "symbols": [
-        "getCurrentFailureAttempts"
-      ],
+      "symbols": ["getCurrentFailureAttempts"],
       "issue": "YUK-1570",
       "owns": "既有完整当前有效失败事实owner；原关联计数使用无limit的当前失败集合，五路并行/空值默认保持，不读旧mistake表或增加snapshot保证。",
       "date": "2026-10-29"
@@ -8245,9 +8241,7 @@
       "file": "src/capabilities/practice/server/question-bank-write.ts",
       "module": "src/kernel/read-models/knowledge-validate.ts",
       "kind": "value",
-      "symbols": [
-        "assertKnowledgeIdsExist"
-      ],
+      "symbols": ["assertKnowledgeIdsExist"],
       "issue": "YUK-1570",
       "owns": "既有完整live Knowledge ID校验canonical；仅退出Knowledge public转出口，原事务内复核/缺失顺序与重复/空数组/错误保持，不复制validator或扩授权。",
       "date": "2026-10-29"
@@ -8257,9 +8251,7 @@
       "file": "src/capabilities/practice/server/question-bank-write.ts",
       "module": "src/kernel/records/answer-class-write.ts",
       "kind": "value",
-      "symbols": [
-        "deriveAnswerClassForValues"
-      ],
+      "symbols": ["deriveAnswerClassForValues"],
       "issue": "YUK-1570",
       "owns": "既有完整answer_class派生规则；保merged kind/choices与原rubric输入、null不写和不进入before/after的既有合同。",
       "date": "2026-10-29"
@@ -8269,11 +8261,7 @@
       "file": "src/capabilities/practice/server/question-bank-write.ts",
       "module": "src/kernel/records/assessment-publication.ts",
       "kind": "value",
-      "symbols": [
-        "archiveGroupLifecycle",
-        "publishQuestionGroupFromRow",
-        "restoreGroupLifecycle"
-      ],
+      "symbols": ["archiveGroupLifecycle", "publishQuestionGroupFromRow", "restoreGroupLifecycle"],
       "issue": "YUK-1570",
       "owns": "既有完整题组publication/lifecycle owner；原同Tx root到part/lifecycle锁序、FromRow声明拒绝、claim、withdraw/restore/suspension及冻结revision合同保持，不迁评分/准入政策。",
       "date": "2026-10-29"
@@ -9425,12 +9413,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [
-        [
-          "agency",
-          "practice"
-        ]
-      ]
+      "nontrivialSccs": [["agency", "practice"]]
     }
   }
 }
