@@ -4493,6 +4493,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-29",
+      "from": 5,
+      "to": 4,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7526,6 +7534,16 @@
       "issue": "YUK-1570",
       "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify.ts",
+      "module": "src/kernel/records/question-draft-contract.ts",
+      "kind": "value",
+      "symbols": ["draftCanonicalIdentity", "revisionToDraftDocument"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing question-draft conversion, frozen-revision readback, scoring round-trip fidelity, scoring-edit preservation/refusal and canonical identity mechanism. Preserve all criterion/default/issue ordering, executor binding and escalation, judgeability and withheld reasons, legacy loss classification, untouched-unit and assignment copying, and original identity projection. Source verification consumes the same revision and identity rules directly; deriveKind remains in its existing owner. Callers retain admission, final sealing, publication, Tx/locks, retry, scoring execution and paid policies. No new scoring capability, authorization, transaction or recovery guarantee.",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8517,7 +8535,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 210,
+      "total": 209,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -8533,7 +8551,7 @@
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "ingestion -> questions": 5,
+        "ingestion -> questions": 4,
         "ingestion -> r2": 13,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,

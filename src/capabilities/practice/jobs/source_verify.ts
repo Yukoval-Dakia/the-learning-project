@@ -77,6 +77,10 @@ import {
   publishQuestionGroup,
   publishQuestionGroupFromRow,
 } from '@/kernel/records/assessment-publication';
+import {
+  draftCanonicalIdentity,
+  revisionToDraftDocument,
+} from '@/kernel/records/question-draft-contract';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -92,14 +96,7 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
-// revision→flat 投影原语经同 capability 工具文件
-// 再出口（它对 questions seam 的 import 边已登记），本文件不新增
-// capability→server 债。
-import {
-  deriveKind,
-  draftCanonicalIdentity,
-  revisionToDraftDocument,
-} from '../server/tools/submit-question';
+import { deriveKind } from '../server/tools/submit-question';
 import { checkDedup } from './source_verify_dedup';
 import {
   type CheckOutcome,
