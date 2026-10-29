@@ -10,10 +10,7 @@ import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 // 存在性检查：
 //   - durable 冻结输入：镜像生产契约 FrozenQuestionSnapshotSchema
 //     （src/capabilities/practice/server/judge-run-payload.ts:103–119）。
-//     core 不得 import capability，故在此逐字段镜像；镜像与生产 schema 的
-//     一致性由 src/capabilities/practice/server/frozen-snapshot-parity.db.test.ts
-//     （同语料双方 safeParse 必须同判）钉死 —— 那个测试住在 capability 侧
-//     （可 import 生产 schema），漂移即红。
+//     core 不得 import capability，故在此逐字段镜像。
 //   - attempt/review 事件快照：直接用 core 的 AttemptQuestionSnapshot。
 //   - 判词：直接用 core 的 JudgeResultV2 判别式域（coarse_outcome × score
 //     必须成对落在真实分支上 —— {score:false, coarse_outcome:'bogus'} 这类

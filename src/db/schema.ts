@@ -4658,7 +4658,7 @@ export const session_orphan_disposition = pgTable(
 );
 
 // YUK-1355 Lane B — shared durable paid-effect protocol (fixed interface in
-// src/server/durable/paid-effect-protocol.ts; semantics + parent-owned SQL
+// src/core/migration/paid-effect-protocol.ts; semantics + parent-owned SQL
 // draft in docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md).
 // paid_effect_control: family-scoped backend ownership. ABSENCE of a row is
 // meaningful — it is the bootstrap default owner (pg-boss, generation 0), so
