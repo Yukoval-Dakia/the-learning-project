@@ -91,17 +91,6 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/ingestion/server/image-candidate-accept.ts',
     ],
   },
-  {
-    owner: 'agency',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/proposals.ts'],
-    symbols: ['rewriteGoalScopeOnMerge'],
-    dto: 'goal-scope update command',
-    justification:
-      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. The knowledge-review agent-note read moved to @/kernel/read-models/agent-note-hints (YUK-1571).',
-    reviewIssue: 'YUK-953',
-    commandFiles: ['src/capabilities/knowledge/server/proposals.ts'],
-  },
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
