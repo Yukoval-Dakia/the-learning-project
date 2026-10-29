@@ -46,9 +46,9 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
+import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';

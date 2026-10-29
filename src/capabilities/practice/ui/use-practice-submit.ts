@@ -23,6 +23,7 @@ import { type JudgeRunPollingState, useJudgeRunPolling } from '@/ui/hooks/useJud
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { useResponseDraftAutosave } from '@/ui/hooks/useResponseDraftAutosave';
 import { ApiError } from '@/ui/lib/api';
+import { computeLatencyMs } from '@/ui/lib/response-latency';
 import { toAttemptTimelineEvents } from './attempt-timeline-adapter';
 import { useCustomBlocksReady } from './blocks/CustomBlock';
 import { customBlocksOf, summarizeAnswers } from './blocks/custom-sandbox';
@@ -35,7 +36,6 @@ import {
   type StreamItem,
   type SubmitResult,
   type SubmitReviewInput,
-  computeLatencyMs,
   isSubmitPending,
 } from './practice-api';
 import { type PracticeClient, usePracticeClient } from './practice-client';

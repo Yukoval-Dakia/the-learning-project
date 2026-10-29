@@ -1,9 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { type EvidenceCell, conjectureKey } from '@/capabilities/agency/server/conjecture/evidence';
-import {
-  type EffectiveProbeResultStatus,
-  getEffectiveProbeResultStatuses,
-} from '@/capabilities/agency/server/conjecture/probe-evidence';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import {
   PROBE_NON_EVIDENCE_RESOLUTION,
@@ -15,6 +11,10 @@ import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { type CorrectionStatus, getCorrectionStatuses } from '@/kernel/events';
+import {
+  type EffectiveProbeResultStatus,
+  getEffectiveProbeResultStatuses,
+} from '@/kernel/read-models/probe-evidence';
 
 export const CONJECTURE_DISMISS_COOLDOWN_DAYS = 30;
 export const CONJECTURE_REOPEN_FAILURE_FLOOR = 2;

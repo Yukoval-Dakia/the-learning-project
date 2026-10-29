@@ -2,14 +2,6 @@
 // question → probe-result event chain.
 
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
-import {
-  type CompletedProbeProposal,
-  type EffectiveProbeResultStatus,
-  getEffectiveProbeResultStatuses,
-  loadCompletedProbeAssessmentAnchors,
-  validateCompletedProbeProvenance,
-  validateIssuedProbeProvenance,
-} from '@/capabilities/agency/public';
 import { ConjectureProbeSpec } from '@/core/schema/business';
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
@@ -36,6 +28,16 @@ import {
 import { getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 import { proposalReasonPlainText } from '@/kernel/proposals/reason-text';
+import {
+  type CompletedProbeProposal,
+  loadCompletedProbeAssessmentAnchors,
+  validateCompletedProbeProvenance,
+  validateIssuedProbeProvenance,
+} from '@/kernel/read-models/completed-probe-provenance';
+import {
+  type EffectiveProbeResultStatus,
+  getEffectiveProbeResultStatuses,
+} from '@/kernel/read-models/probe-evidence';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
