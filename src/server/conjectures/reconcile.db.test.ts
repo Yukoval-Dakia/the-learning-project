@@ -11,13 +11,15 @@ import {
   answerProbe,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import {
+  PREDICTION_SCORE_ACTION,
+  reconcileConjecturePredictions,
+} from '@/capabilities/agency/server/conjecture/reconcile';
 import { db } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
-
 import { resetDb } from '../../../tests/helpers/db';
-import { PREDICTION_SCORE_ACTION, reconcileConjecturePredictions } from './reconcile';
 
 interface SeedOpts {
   knowledgeId?: string;

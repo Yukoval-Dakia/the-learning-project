@@ -36,13 +36,13 @@ export {
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { scorePrediction } from '@/kernel/records/conjecture-prediction-scoring';
 import {
   type ReplaceKcTypedStateInput,
   type UpsertKcTypedStateInput,
   replaceKcTypedState,
   upsertKcTypedState,
 } from '@/kernel/records/kc-typed-state';
-import { scorePrediction } from '@/server/conjectures/scoring';
 
 /** The producer event this loop consumes. */
 const PROBE_RESULT_ACTION = 'experimental:probe_result' as const;

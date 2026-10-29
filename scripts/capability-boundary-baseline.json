@@ -4589,6 +4589,14 @@
       "from": 5,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> conjectures",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7972,6 +7980,51 @@
       "issue": "YUK-1570",
       "owns": "完整题组发布 owner；本边保留 enrichment 原 Tx 内从行发布，原提交/编辑/draft-insert 其它出口保持；submit policy、receipt、失败及 paid 边界仍在原 caller。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/reconcile.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["WriteEventInput", "getEventById", "writeEvent"],
+      "issue": "YUK-1570",
+      "owns": "既有 canonical event 读写 owner；原 getEventById 仅 ZodError 计 skipped，其它读错上抛；原 typed ledger 写完后才写确定性 anchor，保 caused_by、probe created_at、单轮 ingest_at、execution stamp 与冲突去重，不扩大整轮原子性。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/reconcile.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "既有有效 probe 事实 owner；原 list 与纠错 replay 两处消费 active 状态、原默认 options 与关联身份校验不动，不新增 direct-chain 校验或 snapshot 承诺。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/reconcile.ts",
+      "module": "src/kernel/records/conjecture-prediction-scoring.ts",
+      "kind": "value",
+      "symbols": ["scorePrediction"],
+      "issue": "YUK-1570",
+      "owns": "完整43行单探针纯规则唯一 owner；PredictionScore、EPS、clamp01 与 scorePrediction 全文同源，保 Brier/log-loss/skillScorePoint、有限值夹限与零baseline默认；三个真实consumer直连，ADR0046 R1占位/PORT TRIGGER与历史score解释不变，无新评分用途或Rust port。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/reconcile.ts",
+      "module": "src/kernel/records/kc-typed-state.ts",
+      "kind": "value",
+      "symbols": [
+        "ReplaceKcTypedStateInput",
+        "UpsertKcTypedStateInput",
+        "replaceKcTypedState",
+        "upsertKcTypedState"
+      ],
+      "issue": "YUK-1570",
+      "owns": "既有完整 typed-state 事实写入与replace owner；原纠错先读后锁窗口、无有效证据replace null、confused_with_kc_id=null、upsert先于anchor、KC锁及各自事务边界保持；混合类型符号按native value记录，不以Db类型证明活Tx或新增并发幂等。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -9017,11 +9070,11 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 195,
+      "total": 194,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
-        "agency -> conjectures": 2,
+        "agency -> conjectures": 1,
         "agency -> proposals": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,
