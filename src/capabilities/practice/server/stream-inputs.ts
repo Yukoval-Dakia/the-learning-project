@@ -281,7 +281,7 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
   // 5. B3 learnable_frontier（#3）——前置全掌握、自身未掌握的「可学前沿」KC，各取
   // 一道**非 draft** active 题（谓词与 new_check 同形，均 notDraftPredicate——红线 4）。frontier KC 无题 →
   // SKIP（不触发供给）。NO-OP：稀疏先决图上 learnableFrontier 返 [] → frontierPairs=[]（
-  // defer-flip，无 flag——见 learnable-frontier.ts 不变量块）。
+  // defer-flip，无 flag；sparse/overflow 均保持空候选）。
   const frontierKcs = await learnableFrontier(db);
   const frontierPairs: Array<{ questionId: string; knowledgeId: string }> = [];
   for (const kc of frontierKcs) {

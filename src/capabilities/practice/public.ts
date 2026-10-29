@@ -52,8 +52,6 @@ export {
   itemPriorMemberRequestSchema,
   readItemPriorPgBossDelivery,
 } from './server/item-prior-paid-effect-adapter';
-export type { FrontierResolution } from './server/learnable-frontier';
-export { isMasteredForFrontier } from './server/learnable-frontier';
 export { validateLearningContent } from './server/learning-content-validation';
 export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
