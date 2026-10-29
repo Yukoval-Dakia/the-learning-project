@@ -6,8 +6,13 @@
 // 延续），出题前先搜库防重复。工具只读，不碰 learner state，不做教学决策。
 
 import { z } from 'zod';
-
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
+import {
+  BankSearchV2Error,
+  BankSearchV2ErrorSchema,
+  BankSearchV2NewSchema,
+  BankSearchV2OutputSchema,
+} from './bank-requirements';
 import {
   BankDifficultyFilterSchema,
   BankGapRequestSchema,
@@ -15,6 +20,8 @@ import {
   BankUnsatisfiedConstraintsSchema,
   runSearchBank,
 } from './bank-search';
+import { resumeBankSearchSnapshot } from './bank-search-snapshot';
+import { runBankSemanticSearch } from './bank-semantic-search';
 
 const SearchBankNewFormSchema = z
   .object({
@@ -55,14 +62,44 @@ export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   admission_state: z.enum(['any', 'admitted', 'withheld']).optional(),
   limit: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).optional(),
+  contract_version: z.union([z.literal(1), z.literal(2)]).optional(),
+  requirements: BankSearchV2NewSchema.shape.requirements,
+  scope: BankSearchV2NewSchema.shape.scope,
+  use: BankSearchV2NewSchema.shape.use.optional(),
+  need: BankSearchV2NewSchema.shape.need,
+  anchors: BankSearchV2NewSchema.shape.anchors,
+  supersedes_search_id: BankSearchV2NewSchema.shape.supersedes_search_id,
+  page_size: z.number().int().min(1).max(50).optional(),
 }).superRefine((input, ctx) => {
   if (input.cursor !== undefined) {
-    if (Object.keys(input).some((key) => key !== 'cursor')) {
+    if (Object.keys(input).some((key) => key !== 'cursor' && key !== 'contract_version')) {
       ctx.addIssue({
         code: 'custom',
         message: 'cursor must be supplied alone; changed conditions require a new search',
       });
     }
+  } else if (input.contract_version === 2) {
+    const parsed = BankSearchV2NewSchema.safeParse(input);
+    if (!parsed.success)
+      for (const issue of parsed.error.issues)
+        ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+  } else if (
+    Object.keys(input).some((key) =>
+      [
+        'requirements',
+        'scope',
+        'use',
+        'need',
+        'anchors',
+        'supersedes_search_id',
+        'page_size',
+      ].includes(key),
+    )
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'v2 fields require explicit contract_version=2; refusing legacy downgrade',
+    });
   } else if (input.query === undefined) {
     ctx.addIssue({
       code: 'custom',
@@ -72,7 +109,9 @@ export const SearchBankInputSchema = SearchBankNewFormSchema.extend({
   }
 });
 
-export const SearchBankOutputSchema = z.object({
+const SearchBankLegacyOutputSchema = z.object({
+  contract_version: z.literal(1),
+  semantic_status: z.literal('legacy_candidate_only'),
   scope_applied: z.object({
     subject: z.object({ profile: z.string(), knowledge_id_count: z.number().int() }).optional(),
     kind: z.object({ canonical: z.string(), persisted_forms: z.array(z.string()) }).optional(),
@@ -156,19 +195,39 @@ export const SearchBankOutputSchema = z.object({
     next_cursor: z.string().nullable(),
     unavailable_channels: z.array(z.enum(['fts', 'vector'])),
     complete: z.boolean(),
+    recall_scan: z
+      .array(z.object({ channel: z.string(), scanned: z.number().int(), stop: z.string() }))
+      .optional(),
   }),
 });
 
+export const SearchBankOutputSchema = z.union([
+  SearchBankLegacyOutputSchema,
+  BankSearchV2OutputSchema,
+  BankSearchV2ErrorSchema,
+]);
+
 type SearchBankInput = z.infer<typeof SearchBankInputSchema>;
 type SearchBankOutput = z.infer<typeof SearchBankOutputSchema>;
-
 async function executeSearchBank(
   ctx: ToolContext,
   rawInput: SearchBankInput,
 ): Promise<SearchBankOutput> {
   const form = SearchBankInputSchema.parse(rawInput);
+  if (form.contract_version === 2) {
+    try {
+      return form.cursor
+        ? await resumeBankSearchSnapshot(ctx, form.cursor)
+        : await runBankSemanticSearch(ctx, BankSearchV2NewSchema.parse(form));
+    } catch (error) {
+      if (error instanceof BankSearchV2Error)
+        return { contract_version: 2, status: 'error', code: error.code, detail: error.message };
+      throw error;
+    }
+  }
+  const { contract_version: _version, ...legacyForm } = form;
   const input =
-    form.cursor !== undefined ? { cursor: form.cursor } : SearchBankNewFormSchema.parse(form);
+    form.cursor !== undefined ? { cursor: form.cursor } : SearchBankNewFormSchema.parse(legacyForm);
   const request =
     'cursor' in input
       ? { form: 'cursor' as const, cursor: input.cursor }
@@ -191,20 +250,28 @@ async function executeSearchBank(
           },
         };
   const output = await runSearchBank(ctx.db, request);
-  return SearchBankOutputSchema.parse(output);
+  return SearchBankLegacyOutputSchema.parse({
+    ...output,
+    contract_version: 1,
+    semantic_status: 'legacy_candidate_only',
+  });
 }
 
 export const searchBankTool: DomainTool<SearchBankInput, SearchBankOutput> = {
   name: 'search_bank',
   description:
-    'Search the question bank for CANDIDATES by natural-language query (Chinese works directly) with deterministic hard filters: subject / kind / source / knowledge_ids+knowledge_mode (any|all, live subject KCs only — unknown ids error) / difficulty {basis: authored(1-5 integer) | calibrated(logit b; unknown calibration excluded, never mixed with authored)} with range [lo,hi] / exclude_refs (learner-side seen list; excluded by question identity across all revisions — the tool never reads learner state) / similar_to {question_ref, aspect:content} (reuses the anchor current-revision content vector as the vector query; an anchor whose vector is missing or not current for its content/EMBED_VERSION degrades honestly to FTS) / draft_state (default all — drafts are visible for duplicate-avoidance before authoring) / admission_state (admitted = contains an automatically servable part; automatically_servable_part_ids names the exact eligible parts, not permission to issue the whole group). Full-text + vector recall are fused; results are candidates, NOT a guarantee every semantic condition holds (see requirements.not_verified), and no hits ≠ bank is empty. Each hit carries a versioned ref (read_bank input), a mutable question_id pointer (write_quiz input), and honest missing flags (e.g. no_published_revision on unpublished drafts). within_refs restricts to exact current versions; an empty list is an empty scope, and superseded/unresolvable refs error explicitly. The effective scope (resolved KC counts, difficulty basis+scale, exclusion count, similar_to vector availability) is echoed in scope_applied. Pagination retains the original bounded candidate snapshot for 15 minutes without repeating retrieval; changed or withdrawn candidates expire the cursor explicitly. Paginate ONLY with the returned cursor — it continues this exact search; a new query or changed filters must start a new search. coverage.verdict (enough/sparse/none) is retrieved candidate quantity, not semantic certification — and it counts only strong fts matches plus vector hits that pass the retrieval rule (an absolute distance ceiling AND a decisive top-1 margin over rank 2, YUK-1516; parameters provisional pending real-bank calibration): fts matches carry match_evidence.strength, vector matches carry match_evidence.distance and match_evidence.counted, and weak lexical hits / counted=false vector hits (a lone shared term, or a top-1 without a decisive margin) stay listed as candidates but never lift the verdict, so a topic the bank lacks still yields none and a mintable gap_request. coverage.counted_pool_size is the verdict-counted number; candidate_pool_size includes weak hits. Sparse/none echoes the whole unsatisfied query+scope combination and a content_coverage EvidenceDemand seed; filing still needs agent context and file_bank_gap, which holds the gap when the search was incomplete (gap_request.complete=false). Results are never padded or hard filters relaxed. coverage.complete tells whether this page exhausts the candidate pool with no channel truncation/unavailability.',
+    'The only question-bank search entrance. Prefer contract_version=2 with original query, explicit requirements[{id,statement,importance:required|preferred}], use:inspect|practice, optional deterministic scope, optional need:{count}, and independent page_size (1–50). Query-only v2 uses a configured interpretation task and returns original spans/ambiguities. V2 checks each authorized immutable revision against every condition and same-task joint requirements; exact source citations are validated. Only all-required supported + joint supported + selected parts available can count as matched. Missing media, incomplete reads, task/parse failures remain unknown. Inspect preserves unpublished drafts as unverified; practice reuses the real issuance gate before each channel cap. Restricted roles use public-text FTS only: existing answer-bearing vectors are unavailable until visibility projections ship. Private/owner use FTS + vector/RRF; recall thresholds do not decide semantic matches. No need means fulfillment=not_assessed. Results disclose scan/verification budgets, before/after rank, task/cost evidence and incomplete recall; no hits never proves bank absence. V2 cursor is server-signed and actor/role/request/result-bound, continues the stored 15-minute snapshot without embedding/model calls; changed/withdrawn versions explicitly stale. Use only {contract_version:2,cursor} to continue. Anchors accept exact question_ref plus preserve/change statements. This slice cannot redeem search evidence for file_bank_gap or versioned quiz/issuance; registered demand and predecessor bindings explicitly reject until their authority is connected. No gap writes, generation, learner-state reads, goal changes or issuance. V1 flat query/limit/scope fields remain legacy_candidate_only; old enough/sparse/none and limit are candidate recall quantities, never v2 fulfillment. New v2 fields never silently downgrade to v1.',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: SearchBankOutputSchema,
   costClass: 'cheap_llm',
   execute: executeSearchBank,
   summarize(_input, output) {
-    return `search_bank · ${output.hits.length}/${output.coverage.candidate_pool_size} · ${output.coverage.complete ? 'complete' : 'incomplete'}`;
+    if (output.contract_version === 2)
+      return output.status === 'error'
+        ? `search_bank · ${output.code}`
+        : `search_bank · ${output.matched_count} confirmed · ${output.fulfillment}`;
+    return `search_bank · ${output.hits.length}/${output.coverage.candidate_pool_size} · legacy candidates`;
   },
   mirrorEvent: 'never',
 };

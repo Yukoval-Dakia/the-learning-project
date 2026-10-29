@@ -13,27 +13,19 @@
 // 教学决策、批改、learner state 一概不碰（硬边界 1/2）。
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { type SQL, and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { stableStringify } from '@/core/migration/canonical';
-import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
-import {
-  item_calibration,
-  knowledge,
-  question,
-  question_group_lifecycle,
-  question_revision,
-} from '@/db/schema';
+import { question, question_group_lifecycle, question_revision } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
-import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { embedText } from '@/server/ai/embed';
-import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 import { questionVectorInvalidReason } from '../../jobs/embed_backfill';
 import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
-import { encodeBankRef, readBankServableParts, resolveBankRefs } from './bank-ref';
+import { encodeBankRef, readBankServableParts } from './bank-ref';
+import { collectBankSearchChannel } from './bank-search-channel';
+import { buildBankSearchFilters, resolveBankSearchScope } from './bank-search-scope';
 import {
   BANK_VECTOR_RETRIEVAL_MAX_DISTANCE,
   bankVectorBaselinePredicates,
@@ -216,6 +208,14 @@ export type BankSearchRequest =
 export interface BankSearchDeps {
   /** 查询向量 seam；缺省走 embedText + provider attempt 记账（与本夜 backfill 同源）。 */
   embedFn?: (text: string) => Promise<number[]>;
+  /** Internal v2 consumer freezes the entire bounded pool before verification. */
+  fullPool?: boolean;
+  /** Existing vectors include private answers; restricted v2 recall cannot use them. */
+  publicOnly?: boolean;
+  deadlineAt?: number;
+  providerAttemptCaller?: 'api' | 'worker';
+  onSnapshotOpened?: (tx: Db | Tx) => Promise<void>;
+  onPoolFrozen?: (tx: Db | Tx, output: BankSearchOutput) => Promise<void>;
 }
 
 export interface BankSearchMatchEvidence {
@@ -236,6 +236,8 @@ export interface BankSearchMatchEvidence {
 export interface BankSearchHit {
   /** 版本化内容引用（当前 revision）；未发布 draft 为 null + missing 说明。 */
   ref: string | null;
+  revision_id?: string | null;
+  integrity_digest?: string | null;
   kind: 'question' | 'group';
   /** 可变工作副本指针（write_quiz 等既有消费方用；不是版本身份）。 */
   question_id: string;
@@ -272,6 +274,7 @@ export interface BankSearchCoverage {
   unavailable_channels: Array<'fts' | 'vector'>;
   /** true ⇔ 本页穷尽候选池且无通道截断/不可用。 */
   complete: boolean;
+  recall_scan?: Array<{ channel: string; scanned: number; stop: string }>;
 }
 
 export interface BankSearchOutput {
@@ -446,8 +449,10 @@ export const CJK_FTS_SPLIT = '([一-鿿])';
 const CJK_FTS_REPLACEMENT = '\\1 ';
 
 /** FTS 文档表达式：prompt + reference + choices 的 JSON 文本，统一逐字切分。 */
-function ftsDocumentExpr(): SQL {
-  const doc = sql`concat_ws(' ', ${question.prompt_md}, ${question.reference_md}, ${question.choices_md}::text)`;
+function ftsDocumentExpr(publicOnly = false): SQL {
+  const doc = publicOnly
+    ? sql`concat_ws(' ', ${question.prompt_md}, ${question.choices_md}::text)`
+    : sql`concat_ws(' ', ${question.prompt_md}, ${question.reference_md}, ${question.choices_md}::text)`;
   return sql`regexp_replace(${doc}, ${CJK_FTS_SPLIT}, ${CJK_FTS_REPLACEMENT}, 'g')`;
 }
 
@@ -557,198 +562,6 @@ function ftsChannelExprs(queryText: string, tsvec: SQL): FtsChannelExprs {
 
 // ── 硬过滤（SQL 谓词；全部确定性）─────────────────────────────────────────
 
-interface ResolvedScope {
-  scope: BankSearchScope;
-  subjectKnowledgeIds?: string[];
-  kindForms?: string[];
-  withinRevisionIds?: string[];
-  /** 去重后的 KC 硬过滤集（已验证全部为 live KC）。 */
-  knowledgeFilterIds?: string[];
-  /** KC 过滤语义：缺省 'any'。仅在 knowledgeFilterIds 存在时读。 */
-  knowledgeFilterMode: 'any' | 'all';
-  /** exclude_refs 解析出的 question 身份（group root id）集合。 */
-  excludedQuestionIds?: string[];
-  /** similar_to 锚的 question 身份（group root id）。 */
-  similarToGroupId?: string;
-}
-
-async function resolveScope(db: Db | Tx, scope: BankSearchScope): Promise<ResolvedScope> {
-  const resolved: ResolvedScope = { scope, knowledgeFilterMode: scope.knowledge_mode ?? 'any' };
-  if (scope.subject !== undefined) {
-    resolved.subjectKnowledgeIds = await resolveSubjectKnowledgeIds(db, scope.subject);
-  }
-  if (scope.kind !== undefined) {
-    resolved.kindForms = canonicalKindToPersistedForms(scope.kind);
-  }
-  if (scope.within_refs !== undefined) {
-    const refs = await resolveBankRefs(db, scope.within_refs);
-    resolved.withinRevisionIds = refs.map((ref) => {
-      if (ref.status !== 'ok') throw new Error(`within_refs: ${ref.raw}: ${ref.status}`);
-      if (ref.lifecycle?.current_revision_id !== ref.revision.revision_id) {
-        throw new Error(
-          `within_refs: ${ref.raw}: superseded; search indexes only current revisions, read_bank can read this exact version`,
-        );
-      }
-      return ref.revision.revision_id;
-    });
-  }
-  if (scope.knowledge_ids !== undefined) {
-    // 解析为真实科目 KC：去重后逐 id 校验 live（未归档）。未知/已归档 id 显式报错，
-    // 绝不静默丢弃（静默丢弃 = 有效范围被窄化而调用方不知情）。
-    const requested = [...new Set(scope.knowledge_ids)];
-    const liveRows = await db
-      .select({ id: knowledge.id })
-      .from(knowledge)
-      .where(and(inArray(knowledge.id, requested), isNull(knowledge.archived_at)));
-    const live = new Set(liveRows.map((row) => row.id));
-    const unknown = requested.filter((id) => !live.has(id));
-    if (unknown.length > 0) {
-      throw new Error(
-        `knowledge_ids: not live knowledge components (unknown or archived): ${unknown.join(', ')}`,
-      );
-    }
-    resolved.knowledgeFilterIds = requested;
-  }
-  if (scope.exclude_refs !== undefined) {
-    // 跨所有 revision 按 question 身份（revision.group_id = group root）排除。任意
-    // revision 的 ref 都接受（superseded 也指向同一身份）；解不动/摘要不符显式报错
-    // ——排除名单自身必须可信，否则「排除」变成静默放行。已撤回的组本就被
-    // buildFilters 的 withdrawn 谓词挡在每种 admission_state 之外，跳过即等价排除，
-    // 不让学习者已见列表里的一道撤回题拖垮整次检索。
-    const refs = await resolveBankRefs(db, scope.exclude_refs);
-    const ids = new Set<string>();
-    for (const ref of refs) {
-      if (ref.status === 'withdrawn') continue;
-      if (ref.status !== 'ok') {
-        throw new Error(`exclude_refs: ${ref.raw}: ${ref.status} (${ref.detail})`);
-      }
-      ids.add(ref.revision.group_id);
-    }
-    resolved.excludedQuestionIds = [...ids];
-  }
-  if (scope.similar_to !== undefined) {
-    const [ref] = await resolveBankRefs(db, [scope.similar_to.question_ref]);
-    if (ref == null) {
-      throw new Error(`similar_to: ${scope.similar_to.question_ref}: unresolvable`);
-    }
-    if (ref.status !== 'ok') {
-      throw new Error(
-        `similar_to: ${scope.similar_to.question_ref}: ${ref.status} (${ref.detail})`,
-      );
-    }
-    if (ref.lifecycle?.current_revision_id !== ref.revision.revision_id) {
-      throw new Error(
-        `similar_to: ${scope.similar_to.question_ref}: superseded; the stored content vector reflects the current revision — pass the current ref or read_bank the exact version`,
-      );
-    }
-    resolved.similarToGroupId = ref.revision.group_id;
-  }
-  return resolved;
-}
-
-function buildFilters(resolved: ResolvedScope): SQL[] {
-  const { scope } = resolved;
-  const filters: SQL[] = [
-    // 顶层行（组根本身）；part 行经组读取，不单独成候选。
-    sql`(${question.parent_question_id} IS NULL)`,
-    // 固定窗口诊断题不经题库面外泄。
-    sql`(${question.source} <> ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE})`,
-    // 死行与软删墓碑（listQuestions 同款标记族）。
-    sql`((${question.metadata} -> 'dismissed_at') IS NULL)`,
-    sql`((${question.metadata} -> 'archived_at') IS NULL)`,
-  ];
-  if (scope.draft_state === 'active') {
-    filters.push(notDraftPredicate(question.draft_status));
-  } else if (scope.draft_state === 'draft') {
-    filters.push(eq(question.draft_status, 'draft'));
-  }
-  const lc = question_group_lifecycle;
-  if (scope.admission_state === 'admitted') {
-    filters.push(
-      sql`(${lc.group_id} IS NOT NULL AND ${lc.scoring_admission_state} = 'admitted' AND ${lc.withdrawn} = false AND ${lc.suspended} = false)`,
-    );
-  } else if (scope.admission_state === 'withheld') {
-    filters.push(
-      sql`(${lc.group_id} IS NOT NULL AND ${lc.scoring_admission_state} = 'withheld' AND ${lc.withdrawn} = false)`,
-    );
-  } else {
-    // 'any'：只排除已撤回（archive 已由 metadata 墓碑排除，此处兜底）。
-    filters.push(sql`(${lc.withdrawn} IS NULL OR ${lc.withdrawn} = false)`);
-  }
-  if (resolved.subjectKnowledgeIds !== undefined) {
-    if (resolved.subjectKnowledgeIds.length === 0) {
-      filters.push(sql`false`);
-    } else {
-      const containers = resolved.subjectKnowledgeIds.map(
-        (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
-      );
-      filters.push(sql`(${sql.join(containers, sql` OR `)})`);
-    }
-  }
-  if (resolved.kindForms !== undefined) {
-    if (resolved.kindForms.length === 0) {
-      filters.push(sql`false`);
-    } else {
-      filters.push(
-        sql`(${question.kind} IN (${sql.join(
-          resolved.kindForms.map((f) => sql`${f}`),
-          sql`, `,
-        )}))`,
-      );
-    }
-  }
-  if (resolved.withinRevisionIds !== undefined) {
-    filters.push(
-      resolved.withinRevisionIds.length === 0
-        ? sql`false`
-        : inArray(lc.current_revision_id, resolved.withinRevisionIds),
-    );
-  }
-  if (scope.source !== undefined) {
-    filters.push(sql`(${question.source} = ${scope.source})`);
-  }
-  if (resolved.knowledgeFilterIds !== undefined) {
-    // any = 题含任一 KC（逐 id 容器 OR）；all = 题含全部 KC（单容器包含检查）。
-    if (resolved.knowledgeFilterIds.length === 0) {
-      filters.push(sql`false`);
-    } else if (resolved.knowledgeFilterMode === 'all') {
-      filters.push(
-        sql`(${question.knowledge_ids} @> ${JSON.stringify(resolved.knowledgeFilterIds)}::jsonb)`,
-      );
-    } else {
-      const containers = resolved.knowledgeFilterIds.map(
-        (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
-      );
-      filters.push(sql`(${sql.join(containers, sql` OR `)})`);
-    }
-  }
-  if (scope.difficulty !== undefined) {
-    const [lo, hi] = scope.difficulty.range;
-    if (scope.difficulty.basis === 'authored') {
-      // 作者难度 1–5 整数（NOT NULL）；闭区间。
-      filters.push(sql`(${question.difficulty} BETWEEN ${lo} AND ${hi})`);
-    } else {
-      // 校准难度：item_calibration(track='hard') 的 effectiveB（logit 尺度）。
-      // 无 row / effectiveB NULL（校准未知）的题被 EXISTS 天然排除——绝不退回作者难度。
-      filters.push(
-        sql`EXISTS (SELECT 1 FROM ${item_calibration} ic WHERE ic.question_id = ${question.id} AND ic.track = 'hard' AND COALESCE(ic.b_post, ic.b_anchor, ic.b) BETWEEN ${lo} AND ${hi})`,
-      );
-    }
-  }
-  if (resolved.excludedQuestionIds !== undefined) {
-    // 排除在通道层生效（不占召回配额）：被排除身份根本不进候选池。
-    filters.push(
-      resolved.excludedQuestionIds.length === 0
-        ? sql`true`
-        : sql`(${question.id} NOT IN (${sql.join(
-            resolved.excludedQuestionIds.map((id) => sql`${id}`),
-            sql`, `,
-          )}))`,
-    );
-  }
-  return filters;
-}
-
 // ── 主入口 ────────────────────────────────────────────────────────────────
 
 function preview(text: string, max: number): string {
@@ -769,14 +582,16 @@ export async function runSearchBank(
   // search reuses the anchor question's stored content vector instead of
   // embedding the query text, so no provider call is made either way.
   let embedded: { vector: number[] } | { error: unknown } | undefined;
-  if (request.form === 'new' && request.scope.similar_to === undefined) {
+  if (request.form === 'new' && request.scope.similar_to === undefined && !deps.publicOnly) {
     const embedFn =
       deps.embedFn ??
       ((text: string) =>
         embedText(text, {
           db,
-          caller: 'api',
-          deadlineAt: new Date(Date.now() + 20_000),
+          caller: deps.providerAttemptCaller ?? 'api',
+          deadlineAt: new Date(
+            Math.min(Date.now() + 20_000, deps.deadlineAt ?? Number.POSITIVE_INFINITY),
+          ),
         }));
     try {
       embedded = { vector: await embedFn(request.query.trim()) };
@@ -785,14 +600,20 @@ export async function runSearchBank(
     }
   }
   return db.transaction(
-    (tx) =>
-      runSearchBankInSnapshot(tx, request, {
+    async (tx) => {
+      await deps.onSnapshotOpened?.(tx);
+      const output = await runSearchBankInSnapshot(tx, request, {
+        fullPool: deps.fullPool,
+        publicOnly: deps.publicOnly,
         embedFn: async () => {
           if (embedded === undefined) throw new Error('cursor continuation must not embed');
           if ('error' in embedded) throw embedded.error;
           return embedded.vector;
         },
-      }),
+      });
+      await deps.onPoolFrozen?.(tx, output);
+      return output;
+    },
     { isolationLevel: 'repeatable read', accessMode: 'read only' },
   );
 }
@@ -800,7 +621,7 @@ export async function runSearchBank(
 async function runSearchBankInSnapshot(
   db: Db | Tx,
   request: BankSearchRequest,
-  deps: Required<BankSearchDeps>,
+  deps: BankSearchDeps & Required<Pick<BankSearchDeps, 'embedFn'>>,
 ): Promise<BankSearchOutput> {
   let offset = 0;
   let cursor: BankSearchCursor | undefined;
@@ -820,13 +641,13 @@ async function runSearchBankInSnapshot(
     limit = request.limit;
   }
 
-  const resolved = await resolveScope(db, scope);
-  const filters = buildFilters(resolved);
+  const resolved = await resolveBankSearchScope(db, scope);
+  const filters = buildBankSearchFilters(resolved);
   const where = and(...filters);
 
   // FTS 词法表达式对新检索与 cursor 续页都可用（续页按 cursor.q 重算 strength；
   // 内容若被改过，snapshot_hash 校验会显式让 cursor 过期）。
-  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr()})`;
+  const tsvec = sql`to_tsvector('simple', ${ftsDocumentExpr(deps.publicOnly)})`;
   const fts = ftsChannelExprs(effectiveQuery, tsvec);
 
   let fused: RrfFused[];
@@ -836,6 +657,7 @@ async function runSearchBankInSnapshot(
   // match_evidence / counted_pool_size / 续页游标还原使用（新检索由通道 B 填，
   // 续页由 cursor.pool 还原——续页不 embed，无查询向量可重算）。
   let vectorMeta = new Map<string, { distance: number; counted: boolean }>();
+  const recallScan: NonNullable<BankSearchCoverage['recall_scan']> = [];
   if (cursor) {
     // Resume the original bounded pool. New rows/ranks never replace earlier results,
     // and pagination makes no additional embedding/provider call.
@@ -852,23 +674,29 @@ async function runSearchBankInSnapshot(
   } else {
     // ── 通道 A：Postgres FTS（simple + CJK 逐字切分；宽召回 OR + 命中强度）──
     // 弱命中排通道尾部：RRF 位置靠后 → 融合序也落在强命中之下（向量救回的除外）。
-    const ftsRowsPromise = db
-      .select({
-        id: question.id,
-        prompt_md: question.prompt_md,
-        created_at: question.created_at,
-        rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
-      })
-      .from(question)
-      .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-      .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
-      .orderBy(
-        desc(fts.strong),
-        desc(sql`ts_rank_cd(${tsvec}, ${fts.tsq})`),
-        desc(question.created_at),
-        desc(question.id),
-      )
-      .limit(BANK_SEARCH_CHANNEL_CAP + 1);
+    const ftsRowsPromise = collectBankSearchChannel(
+      db,
+      (offset, count) =>
+        db
+          .select({
+            id: question.id,
+            prompt_md: question.prompt_md,
+            created_at: question.created_at,
+            rank: sql<number>`ts_rank_cd(${tsvec}, ${fts.tsq})`,
+          })
+          .from(question)
+          .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+          .where(and(where, sql`${tsvec} @@ ${fts.tsq}`))
+          .orderBy(
+            desc(fts.strong),
+            desc(sql`ts_rank_cd(${tsvec}, ${fts.tsq})`),
+            desc(question.created_at),
+            desc(question.id),
+          )
+          .limit(count)
+          .offset(offset),
+      { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+    );
 
     // ── 通道 B：暴力 pgvector cosine（embed 失败 → 通道不可用，不阻塞 FTS）──
     // similar_to（YUK-1448）：不嵌查询文本，改用锚题的同版内容向量（快照内读回）。
@@ -878,7 +706,7 @@ async function runSearchBankInSnapshot(
     // 锚向量须与当前 EMBED_VERSION 及锚题当前内容 hash 同版，否则同样视为不可用。
     let anchorVector: number[] | null = null;
     let anchorInvalidReason: string | null = null;
-    if (resolved.similarToGroupId !== undefined) {
+    if (resolved.similarToGroupId !== undefined && !deps.publicOnly) {
       const [anchorRow] = await db
         .select({
           embedding: question.embedding,
@@ -900,8 +728,12 @@ async function runSearchBankInSnapshot(
             });
       anchorVector = anchorInvalidReason === null ? (anchorRow?.embedding ?? null) : null;
     }
-    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> =
-      resolved.similarToGroupId !== undefined
+    const vectorPromise: Promise<{ vector: number[] | null; error?: string }> = deps.publicOnly
+      ? Promise.resolve({
+          vector: null,
+          error: 'private_answer_vector_projection_unavailable_for_role',
+        })
+      : resolved.similarToGroupId !== undefined
         ? anchorVector != null
           ? Promise.resolve({ vector: anchorVector })
           : Promise.resolve({
@@ -918,8 +750,9 @@ async function runSearchBankInSnapshot(
 
     const [ftsAll, vectorResult] = await Promise.all([ftsRowsPromise, vectorPromise]);
 
-    const ftsTruncated = ftsAll.length > BANK_SEARCH_CHANNEL_CAP;
-    const ftsRows = ftsAll.slice(0, BANK_SEARCH_CHANNEL_CAP);
+    const ftsTruncated = ftsAll.truncated;
+    const ftsRows = ftsAll.rows;
+    recallScan.push({ channel: 'fts', scanned: ftsAll.scanned, stop: ftsAll.stop });
     unavailable = [];
 
     const channels: Array<{ name: string; hits: RrfChannelHit[] }> = [
@@ -941,13 +774,28 @@ async function runSearchBankInSnapshot(
         // 召回取最近 CAP+1 行、不在 SQL 里加距离天花板：逐题距离与天花板筛选在应用层
         // 执行（bank-vector-retrieval.ts）。截断只影响池尾；rank-1/rank-2 判定走
         // baseline 查询，不受影响。
-        db
-          .select({ id: question.id, distance: distanceExpr })
-          .from(question)
-          .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-          .where(and(where, sql`${question.embedding} IS NOT NULL`))
-          .orderBy(sql`${distanceExpr} ASC`)
-          .limit(BANK_SEARCH_CHANNEL_CAP + 1),
+        collectBankSearchChannel(
+          db,
+          (offset, count) =>
+            db
+              .select({ id: question.id, distance: distanceExpr })
+              .from(question)
+              .leftJoin(
+                question_group_lifecycle,
+                eq(question_group_lifecycle.group_id, question.id),
+              )
+              .where(
+                and(
+                  where,
+                  sql`${question.embedding} IS NOT NULL`,
+                  sql`${distanceExpr} <= ${BANK_VECTOR_RETRIEVAL_MAX_DISTANCE}`,
+                ),
+              )
+              .orderBy(sql`${distanceExpr} ASC`, desc(question.id))
+              .limit(count)
+              .offset(offset),
+          { admitted: scope.admission_state === 'admitted', cap: BANK_SEARCH_CHANNEL_CAP },
+        ),
         db
           .select({ id: question.id, distance: distanceExpr })
           .from(question)
@@ -959,9 +807,10 @@ async function runSearchBankInSnapshot(
       const countedRank = bankVectorCountedRank(baselineTop.map((row) => row.distance));
       const countedId =
         countedRank === 0 && baselineTop.length > 0 ? (baselineTop[0]?.id ?? null) : null;
-      const qualified = vecAll.filter((row) => row.distance <= BANK_VECTOR_RETRIEVAL_MAX_DISTANCE);
+      const qualified = vecAll.rows;
+      recallScan.push({ channel: 'vector', scanned: vecAll.scanned, stop: vecAll.stop });
       // ⇔ 第 CAP+1 近的题仍在天花板内：天花板内候选 ≥ CAP+1，池被截断。
-      vectorTruncated = qualified.length > BANK_SEARCH_CHANNEL_CAP;
+      vectorTruncated = vecAll.truncated;
       vectorRows = qualified.slice(0, BANK_SEARCH_CHANNEL_CAP);
       vectorMeta = new Map(
         vectorRows.map((row) => [
@@ -1084,6 +933,8 @@ async function runSearchBankInSnapshot(
       );
       const { tier, name } = deriveSourceTier({ source: row.source, metadata: row.metadata });
       hits.push({
+        revision_id: currentRevision?.revision_id ?? null,
+        integrity_digest: currentRevision?.digest ?? null,
         ref:
           currentRevision != null
             ? encodeBankRef(currentRevision.revision_id, currentRevision.digest)
@@ -1118,7 +969,7 @@ async function runSearchBankInSnapshot(
     throw new Error('bank-search cursor expired: candidate snapshot changed; start a new search');
   }
   const confirmedPoolSize = hits.length;
-  const pageHits = hits.slice(offset, offset + limit);
+  const pageHits = deps.fullPool ? hits : hits.slice(offset, offset + limit);
   const hasMore = offset + pageHits.length < confirmedPoolSize;
   const hitIds = new Set(hits.map((hit) => hit.question_id));
   const nextCursor = hasMore
@@ -1301,6 +1152,7 @@ async function runSearchBankInSnapshot(
       unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
       gap_request: gapRequest,
       candidate_pool_size: confirmedPoolSize,
+      recall_scan: recallScan,
       counted_pool_size: countedPoolSize,
       retrieval_truncated: retrievalTruncated,
       page_has_more: hasMore,
