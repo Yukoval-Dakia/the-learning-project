@@ -13,7 +13,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import { event, question, question_group_lifecycle, question_revision } from '@/db/schema';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { archiveQuestion, editQuestion, restoreQuestion } from './write';
 

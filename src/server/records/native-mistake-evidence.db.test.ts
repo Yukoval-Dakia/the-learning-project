@@ -26,11 +26,11 @@ import {
   source_asset,
 } from '@/db/schema';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { buildHonoApp } from '../../../server/app';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { handwritingFixture } from '../../../tests/fixtures/native-solo-http';

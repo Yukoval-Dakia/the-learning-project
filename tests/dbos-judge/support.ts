@@ -6,12 +6,12 @@ import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/server/judge-r
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { inspectJudgePendingImport } from '@/server/durable/judge-family';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { seedHistoricalAssessmentIssuance } from '../fixtures/historical-assessment-issuance';
 export async function resetJudgeControl(database: Db, phase = 'pg-boss') {
   await database.execute(

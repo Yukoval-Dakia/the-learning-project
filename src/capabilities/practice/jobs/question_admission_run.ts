@@ -35,6 +35,7 @@ import {
   publishedContractSeal,
   publishedSealAccepts,
 } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type Provider, definitionFromContract } from '../server/admission';
 import { runQuestionAdmissionChecks } from '../server/admission/checks';
@@ -67,7 +68,6 @@ import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
 } from '../server/custom-block-preview/admission-preview';
-import { publishQuestionGroup } from '../server/quiz/verify-and-promote';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
 export type QuestionAdmissionRunData = AdmissionJobData;

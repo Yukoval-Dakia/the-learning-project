@@ -28,13 +28,13 @@ import {
   contractIntegrityDigest,
   publishedContractSeal,
 } from '@/kernel/records/assessment-normalization';
-import type { QuestionGroupContractSnapshot } from '@/kernel/records/assessment-publication';
-import { getFsrsState } from '@/server/fsrs/state';
 import {
+  type QuestionGroupContractSnapshot,
   loadQuestionGroupContractSnapshot,
   publishQuestionGroup,
   publishQuestionGroupFromRow,
-} from '@/server/questions/publisher';
+} from '@/kernel/records/assessment-publication';
+import { getFsrsState } from '@/server/fsrs/state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import {
   QUESTION_ADMISSION_POLICY_ID,

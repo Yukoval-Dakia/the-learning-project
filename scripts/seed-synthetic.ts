@@ -36,10 +36,10 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { upsertFsrsState } from '@/server/fsrs/state';
 import { listActiveSubjectsSinceRefresh } from '@/server/memory/active-subjects';
-import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { loadYuwenFixtures } from '@/subjects/yuwen/fixtures';
 
 type DbLike = Db | Tx;

@@ -22,11 +22,11 @@ import * as runtimeEnv from '@/kernel/background-job-enqueue';
 import * as domainEvents from '@/kernel/events';
 import * as jobEvents from '@/kernel/job-events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';

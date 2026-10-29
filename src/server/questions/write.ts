@@ -36,7 +36,7 @@ import {
   archiveGroupLifecycle,
   publishQuestionGroupFromRow,
   restoreGroupLifecycle,
-} from '@/server/questions/publisher';
+} from '@/kernel/records/assessment-publication';
 
 /** Display label stamped on part rows; part-ness is read from `parent_question_id`. */
 export const QUESTION_PART_KIND = 'question_part' as const;

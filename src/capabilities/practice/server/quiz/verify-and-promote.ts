@@ -25,11 +25,6 @@ import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { event, knowledge, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { publishQuestionGroup, publishQuestionGroupFromRow } from '@/server/questions/publisher';
-
-// question_admission_run 经本既有 publish seam 取 publisher API，
-// 不新增 capability→server/questions 依赖边。
-export { publishQuestionGroup, publishQuestionGroupFromRow };
 
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { publishVerifyLifecycleUpdate, runSourceVerify } from '../../jobs/source_verify';

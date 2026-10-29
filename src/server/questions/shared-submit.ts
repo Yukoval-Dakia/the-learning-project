@@ -57,6 +57,7 @@ import { question, question_block, question_group_lifecycle, question_revision }
 import { writeEvent } from '@/kernel/events';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import {
   applyScoringEditPlan,
@@ -69,7 +70,6 @@ import {
   findDraftSaveReceipt,
   saveDraftEditInTx,
 } from '@/server/questions/edit-question';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import {
   SOURCE_KIND_TO_QUESTION_SOURCE,
   admissionForContentEdit,

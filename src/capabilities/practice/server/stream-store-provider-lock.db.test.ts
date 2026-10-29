@@ -11,13 +11,13 @@ import {
   provider_attempt,
   question,
 } from '@/db/schema';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type Mem0OpaqueOperationContext,
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
 import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { composeNightly, recomposeStream } from './stream-store';
 

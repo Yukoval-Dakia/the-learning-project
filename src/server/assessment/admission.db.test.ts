@@ -29,12 +29,12 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { readAutomaticIssuanceServingDecisions } from '@/kernel/records/assessment-issuance';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
   type NormalizableQuestionRow,
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
-import { publishQuestionGroup } from '@/server/questions/publisher';
 import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation } from './activate';
