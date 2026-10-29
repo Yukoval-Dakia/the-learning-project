@@ -91,7 +91,7 @@ export interface QuestionSupplyTarget {
   minSourceTier: 1 | 2 | 3;
   routePreference: SupplyRoute[];
   /**
-   * review FINDING #3：当 routePreference 把 `quiz_gen` 列入时，区分它来自 `material` token
+   * 当 routePreference 把 `quiz_gen` 列入时，区分它来自 `material` token
    * （material_grounded：拉真原文 grounding）还是 `closed_book` token（闭卷生成）。dispatcher 把
    * quiz_gen job 的 generation_method 设成本值（缺省时退回 minSourceTier 推导，见 dispatcher
    * generationMethodFor）。`material` 与 `closed_book` 都映射成 quiz_gen 队列，但生成方法不同——
@@ -154,7 +154,7 @@ export interface PoolQuestion {
   /** 1-5 难度档（difficulty band 归类的兜底来源）。 */
   difficulty: number;
   /**
-   * effectiveB = b_calib ?? b_anchor ?? b（review FINDING #4）。有 item_calibration 行（任一
+   * effectiveB = b_post ?? b_anchor ?? b。有 item_calibration 行（任一
    * b 列非空）→ 一个**可靠锚**（mastery/selection 用的同一 b 解析，src/server/mastery/recalibration
    * effectiveB），band 归类优先用它。null = 无 item_calibration 行（纯 difficulty proxy，非可靠锚）。
    * 关键：b_anchor/b 是 ItemPriorTask 写的冷启锚（real anchor），**不是** difficultyToLogitB
@@ -168,8 +168,7 @@ export interface PoolQuestion {
 }
 
 /**
- * 一个 open-goal KC 的扫描输入（review FINDING #6：不再限「前沿/未入册」，覆盖全部 open-goal
- * KC，含已入册但 thin 者）。命名保留 `Frontier` 是历史包袱（最初只扫前沿）；frontier/coverage
+ * 一个 open-goal KC 的扫描输入（覆盖全部 open-goal KC，含已入册但 thin 者）。frontier/coverage
  * 缺口由扫描器据可用题数 < 阈值判定，不靠 FSRS 入册态。
  */
 export interface FrontierKnowledgeInput {
@@ -186,7 +185,7 @@ export interface FrontierKnowledgeInput {
 export interface ScanInput {
   frontier: FrontierKnowledgeInput[];
   /**
-   * 现有**可用**题池（review FINDING #1：已在 loadQuestionPool 过滤掉 draft_status='draft'）。
+   * 现有**可用**题池（loadQuestionPool 已过滤掉 draft_status='draft'）。
    * 只有 non-draft / 已晋升题算真覆盖——一个 KC 唯一的题若是被拒/未验证草稿，不该被当作已覆盖
    * 而压制 R1/R2（草稿不是可用 item）。本扫描器再据 source tier 区分高可信 vs 低可信生成档。
    */
@@ -194,7 +193,7 @@ export interface ScanInput {
   /** subject profile 的 sourcingRoutePreference → 播种 routePreference。key=subjectId。 */
   routePreferenceBySubject: Record<string, SupplyRoute[]>;
   /**
-   * review FINDING #3：per-subject 的 quiz_gen 生成方法偏好（material_grounded vs closed_book），
+   * per-subject 的 quiz_gen 生成方法偏好（material_grounded vs closed_book），
    * 据 sourcingRoutePreference token 推导。key=subjectId。无 quiz_gen 偏好 → 该 subject 缺省不设。
    */
   generationMethodBySubject?: Record<string, 'material_grounded' | 'closed_book'>;
@@ -228,7 +227,7 @@ export interface ScanInput {
  *   - web_sourced 已通过 source_verify 的 active 题 → provenance 2 → 获取 2 ✓
  *   - llm-only / 草稿（quiz_gen / variant / 未 verify）→ provenance 3|4 → 获取 3 ✓
  *
- * **`'embedded'` 刻意不在此集合**（review FINDING #3 修正）：source='embedded' 行历史上是
+ * **`'embedded'` 刻意不在此集合**：source='embedded' 行历史上是
  * AI 生成练习检测题（provenance.ts §MIX-LAYER DEFENCE：无 ingestion_session_id →
  * deriveSourceTier 正确落 tier 4 'generated'）。若把 embedded 当获取档 1，「只被 embedded
  * AI 检测题覆盖」的 KC 会误判 hasHighTier=true → R2 永不请求真正的高可信题。embedded 是
@@ -265,10 +264,6 @@ export function difficultyBandFor(b: number, thetaHat: number): DifficultyBand {
   if (delta <= STRETCH_WINDOW) return 'above';
   return 'stretch';
 }
-
-// review FINDING #4：`bAnchorFor`（calibrationB ?? difficultyToLogitB 弱锚兜底）已删除。
-// 唯一 caller 是 R3，但 R3 现在只信真实 item_calibration.b（不拿 difficulty_proxy 当 band
-// 真值），故弱锚兜底无处可用。`difficulty` 字段仍保留在 PoolQuestion 上（其它规则/未来用途）。
 
 // ── 优先级 + 指纹 ─────────────────────────────────────────────────────────────
 
@@ -339,13 +334,13 @@ function isRecallKind(kind: QuestionKindT): boolean {
 const OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
   OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
-// review FINDING #2：R3 诊断/校准目标必须请求**客观** kind。active-PPI 校准（Phase 6）只在
+// R3 诊断/校准目标必须请求**客观** kind。active-PPI 校准（Phase 6）只在
 // OBJECTIVE_JUDGE_ROUTES（exact/keyword）判分的题上产标签——一个请求 kind='any' 的 R3 目标可能
 // 拿回非客观题（semantic 判分），它永远产不出校准标签，缺口永远填不上。choice 的判分路由恒为
 // exact（defaultJudgeKindForQuestion：choice/true_false → exact，无 rubric 依赖），是最稳的客观题型。
 const R3_CALIBRATION_KIND: QuestionKindT = 'choice';
 
-// review FINDING #1/#6：覆盖深度阈值——一个 open-goal KC 的**可用（non-draft）**题数 < 此值
+// 覆盖深度阈值——一个 open-goal KC 的**可用（non-draft）**题数 < 此值
 // 即「前沿/覆盖不足」，R1 发一个 frontier/coverage 目标（架构 doc §Scanner Rules 1「fewer than
 // 2 active questions」）。draft 已在 loadQuestionPool 过滤掉，故这里数的就是可用题。
 // YUK-579: exported so the coverage-lattice read model discloses the threshold to the UI
@@ -366,7 +361,7 @@ export const COVERAGE_DEPTH_THRESHOLD = 2;
  *   R3 diagnostic       : 某 KC **没有近-θ̂ 题**（无题 effectiveB 落 'near' band）→ 一个 calibrationCandidate 目标（band=near）。
  *   R4 format_diversity : 某 KC **只有 recall 题** → 一个 application/transfer 目标。
  *
- * review FINDING #6：触发面 = **全部 open-goal KC**（不再因「首次 FSRS 入册」而停扫）。零题 KC 只产
+ * 触发面 = **全部 open-goal KC**（FSRS 入册态不停止扫描）。零题 KC 只产
  * R1（无池可分析 tier/band/kind）；有题但仍 thin（< 阈值）的 KC 既产 R1（补深度）也走 R2-R4（补质量/
  * 诊断/题型）；题数 ≥ 阈值的 KC 跳过 R1，仍走 R2-R4（这些规则是结构性缺口，自限不洪泛）。
  */
@@ -428,7 +423,7 @@ export function scanCoverageGaps(
       desiredCount: fields.desiredCount,
       minSourceTier: fields.minSourceTier,
       routePreference,
-      // review FINDING #3：当 quiz_gen 在路由偏好里时，带上 subject 的生成方法偏好
+      // 当 quiz_gen 在路由偏好里时，带上 subject 的生成方法偏好
       // （material_grounded vs closed_book），dispatcher 据此设 quiz_gen job 的 generation_method。
       ...(routePreference.includes('quiz_gen') && input.generationMethodBySubject?.[f.subjectId]
         ? { preferredGenerationMethod: input.generationMethodBySubject[f.subjectId] }
@@ -444,9 +439,9 @@ export function scanCoverageGaps(
     const pool = questionsByKid.get(f.knowledgeId) ?? [];
 
     // ── R1: 可用题数 < 覆盖深度阈值 → coverage 目标（补齐到阈值）─────────────
-    // review FINDING #1/#6：pool 已是 non-draft 可用题（draft 在 loadQuestionPool 过滤）。
-    // 阈值化（< COVERAGE_DEPTH_THRESHOLD）替代旧的「pool.length === 0」单点判定，让一个只有
-    // 1 道可用题（已入册但 thin）的 KC 仍能补到目标深度（架构 doc §Scanner Rules 1）。
+    // pool 已是 non-draft 可用题（draft 在 loadQuestionPool 过滤）。
+    // 阈值化（< COVERAGE_DEPTH_THRESHOLD）让只有 1 道可用题（已入册但 thin）的 KC
+    // 仍能补到目标深度（架构 doc §Scanner Rules 1）。
     if (pool.length < COVERAGE_DEPTH_THRESHOLD) {
       push(f, 'frontier_zero', {
         kind: 'any',
@@ -483,26 +478,24 @@ export function scanCoverageGaps(
     // ── R3: 没有近-θ̂ 题 → calibrationCandidate（诊断/MFI 缺口）──────────────
     // 「MFI/诊断选题反复缺近-θ̂ 题」的结构性根因 = 池里根本没有 b 落 'near' band 的**可靠锚**题。
     //
-    // review FINDING #4 修正——**band 归类用 effectiveB（= b_calib ?? b_anchor ?? b），与
+    // **band 归类用 effectiveB（= b_post ?? b_anchor ?? b），与
     //   mastery/selection 同一 b 解析**（src/server/mastery/recalibration effectiveB，state.ts
-    //   updateThetaForAttempt 也读它）。PoolQuestion.calibrationB 现在装的就是 effectiveB（在
-    //   loadQuestionPool 算好；无 item_calibration 行 → null）。一道**已重标定**的题（b_calib 已
-    //   firm-up）不会再因供给扫描器只看陈旧 b 列而被误判 mis-banded。
+    //   updateThetaForAttempt 也读它）。PoolQuestion.calibrationB 装的就是 effectiveB（在
+    //   loadQuestionPool 算好；无 item_calibration 行 → null）。一道**已重标定**的题（b_post 已
+    //   写入）不会再因供给扫描器只看陈旧 b 列而被误判 mis-banded。
     //   与 R3「只信真实标定」**不冲突**：effectiveB 退回 b_anchor ?? b 时这两列是 ItemPriorTask 写的
     //   冷启**真锚**（real anchor，logit 尺度），不是 difficultyToLogitB(difficulty) 弱 proxy。
     //   effectiveB===null 恰好等价于「无 item_calibration 行 = 纯 difficulty proxy」→ 跳过不算可靠锚。
     //
-    // review FINDING #5 修正——**删除恒真的 `&& mfiScore > 0` 死子句**：Rasch Fisher info
-    //   p(1−p) 对任何有限 θ̂/b 恒 > 0（p∈(0,1)），该子句永不为假，从不构成信息量门槛；保留它
-    //   只会让人误以为这里有个 MFI 阈值闸（其实没有）。诊断缺口由「band='near' 的可靠锚是否存在」
-    //   单独判定即可。
+    // 不设 MFI 阈值闸：Rasch Fisher info p(1−p) 对任何有限 θ̂/b 恒 > 0（p∈(0,1)），
+    //   诊断缺口只由「band='near' 的可靠锚是否存在」判定。
     const hasNearTheta = pool.some((q) => {
       if (q.calibrationB === null) return false; // 无可靠锚（无 item_calibration 行）不算近-θ̂ 锚。
       return difficultyBandFor(q.calibrationB, f.thetaHat) === 'near';
     });
     if (!hasNearTheta) {
       push(f, 'diagnostic', {
-        // review FINDING #2：校准目标必须是**客观题**（exact/keyword 判分），否则拿回的非客观题
+        // 校准目标必须是**客观题**（exact/keyword 判分），否则拿回的非客观题
         // 永远产不出 active-PPI 校准标签。choice 判分恒 exact（OBJECTIVE_KINDS / R3_CALIBRATION_KIND）。
         kind: R3_CALIBRATION_KIND,
         difficultyBand: 'near',
@@ -580,7 +573,7 @@ export function seedRoutePreference(profile: SubjectProfile): SupplyRoute[] {
 }
 
 /**
- * review FINDING #3：从 subject profile 的 sourcingRoutePreference token 推导 quiz_gen 的
+ * 从 subject profile 的 sourcingRoutePreference token 推导 quiz_gen 的
  * **生成方法偏好**（material→material_grounded，closed_book→closed_book）。`material` 与
  * `closed_book` 都映射成 quiz_gen 队列（ROUTE_TOKEN_MAP），但生成方法不同——quiz_gen handler
  * honor 这层区分（material_grounded 拉真原文 grounding vs closed_book 闭卷生成）。
@@ -605,11 +598,10 @@ export function seedGenerationMethod(
 /**
  * 加载待扫的 open-goal KC：pending/in_progress learning item 的全部 KC。
  *
- * review FINDING #6 修正——**删除「无 material_fsrs_state 行才算前沿」的闸**。旧实现把一个 KC 在
- * **首次** source_verify/quiz_verify 晋升题（写入第一条 material_fsrs_state 行）后立刻踢出扫描面，
- * 于是一个只入册了 1 道题的 thin KC 再也不被扫——即使它仍需补深度/补客观锚/补题型。现在扫**全部**
- * open-goal KC，让覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）与 R2/R3/R4 的结构性缺口
- * 判定来决定发不发目标（这些规则自限：题数够 + 质量够 + 有近-θ̂ 锚 + 题型多样 → 零目标，不洪泛）。
+ * 扫**全部** open-goal KC（无 material_fsrs_state 行不是必要条件）：一个只入册了 1 道题的 thin KC
+ * 仍需被扫（它仍需补深度/补客观锚/补题型）。覆盖深度阈值（R1 < COVERAGE_DEPTH_THRESHOLD 可用题）
+ * 与 R2/R3/R4 的结构性缺口判定决定发不发目标（这些规则自限：题数够 + 质量够 + 有近-θ̂ 锚 +
+ * 题型多样 → 零目标，不洪泛）。
  *
  * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 getEffectiveDomain 派生的
  * subjectId（科目是视角，派生轴，不给 KC 加 subject 列）。
@@ -663,13 +655,13 @@ async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInpu
  * 加载现有**可用**题池里挂了任一 open-goal KC 的题 + 它们的 hard 列层锚（b_post ?? b_anchor ?? b）。
  * 只取与 open-goal KC 相关的题（按 KC 过滤，非全库扫描）。
  *
- * review FINDING #1——**过滤掉 draft_status='draft'**：草稿（未验证/被拒）不是可用 item，不该被当作
+ * 过滤掉 draft_status='draft'：草稿（未验证/被拒）不是可用 item，不该被当作
  * 已覆盖而压制 R1/R2。复用共享 draft-exclusion 三值逻辑安全谓词 notDraftPredicate（@/db/predicates：
  * `draft_status IS NULL OR draft_status != 'draft'`——NULL/已晋升留池，仅字面 'draft' 排除）。一个唯一
  * 题是被拒 draft 的 KC 于是正确留着缺口（R1/R2 复发），fingerprint
  * cooldown（dispatcher）节流重复派发。
  *
- * review FINDING #4——PoolQuestion.calibrationB 只装 hard 列层锚（与
+ * PoolQuestion.calibrationB 只装 hard 列层锚（与
  * mastery/selection 同一列优先链）。无 item_calibration 行/全 NULL → null；
  * 不引入 family/proxy，R3 只信可靠锚。
  */
@@ -747,7 +739,7 @@ export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
       // 统一走活 registry resolve（miss → 中性 general，原兜底语义不变）。
       const profile = resolveSubjectProfile(f.subjectId);
       routePreferenceBySubject[f.subjectId] = seedRoutePreference(profile);
-      // review FINDING #3：保留 material vs closed_book 生成方法区分。
+      // 保留 material vs closed_book 生成方法区分。
       const gm = seedGenerationMethod(profile);
       if (gm) generationMethodBySubject[f.subjectId] = gm;
     }
