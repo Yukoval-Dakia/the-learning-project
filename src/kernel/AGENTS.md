@@ -9,7 +9,7 @@
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
 | `read-models/` | 跨 capability 只读投影（failure attempts、question activity、cause policy、knowledge tree/subject 解析、questions 列表） |
-| `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types） |
+| `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |

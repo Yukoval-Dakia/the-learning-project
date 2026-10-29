@@ -121,3 +121,11 @@ napi 约定——**反转后从 dev/CI 惯例升为生产正确性契约**，本
 ### 定位说明（extended scope 尽调）
 
 YUK-679 extended scope 要求定位的「src/server/** 中的 srtOutcome 数值路径与 continuous-credit/Fisher helpers」：**定义面实际在 `src/core/theta.ts`**（server 侧是消费面，见 R3/R4 所列）。extended scope 全部条目均已定位、无一缺席；`resolveSrtTimeLimit`（theta.ts:380）为平凡 difficulty→秒查表（非 kernel），仅在此记录、不单独豁免、不改其头注释。
+
+
+## proper-scoring 路径导航
+
+YUK-1570 的原样归属迁移后，原 `src/server/conjectures/scoring.ts` 对应
+`src/kernel/records/conjecture-prediction-scoring.ts`，仍为同一完整三标量到四标量 TS 占位规则。
+真实消费者为 Agency 私有 reconcile、server conjectures accountability 和 hard-confirm；
+不改变本 ADR R1 的描述符边界、历史 score 解释或任何 PORT TRIGGER，不构成 Rust port。

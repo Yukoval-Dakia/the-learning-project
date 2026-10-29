@@ -9,7 +9,7 @@ import {
   PROBE_RESULT_PROJECTED_ACTION,
   type ReconcileResult,
   reconcileConjecturePredictions,
-} from '@/server/conjectures/reconcile';
+} from './reconcile';
 
 /** actor_ref stamped on the trigger / scan events + each conjecture proposal. */
 export const RESEARCH_MEETING_ACTOR = 'research_meeting';

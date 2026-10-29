@@ -5,13 +5,13 @@
 
 import { misconceptionHardConfirmEnabled } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
+import { scorePrediction } from '@/kernel/records/conjecture-prediction-scoring';
 import {
   type DissociationVerdict,
   decideDissociation,
   gatherDissociationRecordsByIdentity,
   summarizeDissociation,
 } from '@/server/conjectures/hard-confirm';
-import { scorePrediction } from '@/server/conjectures/scoring';
 
 export const ACCOUNTABILITY_STREAK_FLOOR = 2;
 export const ACCOUNTABILITY_DOWNWEIGHT_MULTIPLIER = 0.25;

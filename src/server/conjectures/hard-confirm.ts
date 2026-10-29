@@ -18,7 +18,7 @@ import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
-import { scorePrediction } from '@/server/conjectures/scoring';
+import { scorePrediction } from '@/kernel/records/conjecture-prediction-scoring';
 
 /**
  * A probe is crucial evidence only when prediction and baseline differ by at least this much.
