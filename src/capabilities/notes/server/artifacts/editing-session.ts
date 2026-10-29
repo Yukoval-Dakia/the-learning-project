@@ -10,12 +10,6 @@ import type {
   RecordHeartbeatInput,
 } from './presence/types';
 
-export {
-  EDITING_FORCE_APPLY_TIMEOUT_MS,
-  EDITING_HEARTBEAT_TIMEOUT_MS,
-  type EditingStatus,
-} from './presence/types';
-
 // Keep one store over the shared DB pool; persisted presence is shared across
 // processes even though this store instance is local to the process.
 let store: PresenceStore | undefined;
