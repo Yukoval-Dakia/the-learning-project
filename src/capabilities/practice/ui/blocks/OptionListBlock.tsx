@@ -3,7 +3,9 @@
 // `marker` only changes what is printed beside each option, never which item_id is sent.
 // Keyboard: one tab stop, arrows move (single pick follows focus, the ARIA radio pattern), Space or
 // Enter toggles, digits 1–9 pick the option at that display position while focus is in the list.
+
 import { type KeyboardEvent, useRef, useState } from 'react';
+import { withoutLabelPrefix } from '@/ui/components/response/response-types';
 
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 
@@ -160,7 +162,9 @@ export function OptionListBlock({
                 {mark}
               </span>
               <MathMarkdown className="un-blk-opt-text" notation={notation}>
-                {item.label_md}
+                {mark
+                  ? withoutLabelPrefix(withoutLabelPrefix(item.label_md, mark), mark)
+                  : item.label_md}
               </MathMarkdown>
             </button>
           );

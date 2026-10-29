@@ -108,6 +108,7 @@ export default function PracticeFacePage({
   writeItemParam,
   historyBack,
 }: PracticeFacePageProps) {
+  const soloTitle = useRef<HTMLHeadingElement>(null);
   const { advanceStreamItem, getStream, getQuestionDetail } = usePracticeClient();
   const qc = useQueryClient();
   const [scopeKnowledgeId, setScopeKnowledgeId] = useState<string | null>(() => {
@@ -216,7 +217,7 @@ export default function PracticeFacePage({
         focusTitleOnLand.current = false;
         const active = document.activeElement;
         if (!active || active === document.body) {
-          node.querySelector<HTMLElement>('.un-ps-title')?.focus({ preventScroll: true });
+          soloTitle.current?.focus({ preventScroll: true });
         }
       }
       const landed = morph.land(node);
@@ -670,12 +671,12 @@ export default function PracticeFacePage({
   if (mode.kind === 'solo') {
     const pos = items.findIndex((it) => it.id === mode.item.id) + 1;
     body = (
-      // YUK-1473 — the single-question page (layout 纸面) is the only solo view (owner
-      // 2026-10-16: 「纸面 默认新不用开关」); no flag, no layout picker.
+      // YUK-1473 — cleanroom presentation, with the same question-level engine identity.
       <PracticeSolo
         // key=item.id：换题（含原地换下一题）时强制重挂：作答引擎每题一份，旧题照常卸载（草稿
         // unmount flush），判分/作答/草稿冲突/计时/吉祥物 state 不跨题残留。
         key={mode.item.id}
+        titleRef={soloTitle}
         item={mode.item}
         sessionId={visibleStream?.scope?.session_id ?? null}
         pos={pos || mode.item.position}
@@ -828,13 +829,15 @@ export default function PracticeFacePage({
         </p>
       </div>
       {createPortal(
-        <div className="pf-toasts" aria-live="polite">
-          {toasts.map((t) => (
-            <div key={t.id} className={`pf-toast${t.tone === 'info' ? ' t-info' : ''}`}>
-              <LoomIcon name={(t.icon as never) ?? 'sparkle'} size={15} className="ico" />
-              <span>{t.text}</span>
-            </div>
-          ))}
+        <div data-ui-next="" className="un-cr un-cr-portal">
+          <div className="pf-toasts" aria-live="polite">
+            {toasts.map((t) => (
+              <div key={t.id} className={`pf-toast${t.tone === 'info' ? ' t-info' : ''}`}>
+                <LoomIcon name={(t.icon as never) ?? 'sparkle'} size={15} className="ico" />
+                <span>{t.text}</span>
+              </div>
+            ))}
+          </div>
         </div>,
         document.body,
       )}

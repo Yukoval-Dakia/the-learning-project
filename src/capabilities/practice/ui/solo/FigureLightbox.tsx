@@ -10,16 +10,29 @@ import { Button, UiNextRoot } from '@/ui-next/public';
 
 export interface FigureLightboxProps {
   open: boolean;
+  presentation?: 'cleanroom';
   onClose: () => void;
   assetId: string;
   label: string;
 }
 
-export function FigureLightbox({ open, onClose, assetId, label }: FigureLightboxProps) {
+export function FigureLightbox({
+  open,
+  onClose,
+  assetId,
+  label,
+  presentation,
+}: FigureLightboxProps) {
   const trapRef = useFocusTrap(open, onClose);
   if (!open) return null;
   return createPortal(
-    <UiNextRoot className="un-ps-lightbox-root">
+    <UiNextRoot
+      className={
+        presentation === 'cleanroom'
+          ? 'un-cr un-cr-portal un-ps-lightbox-root'
+          : 'un-ps-lightbox-root'
+      }
+    >
       <div className="un-ps-lightbox-layer">
         <button
           type="button"

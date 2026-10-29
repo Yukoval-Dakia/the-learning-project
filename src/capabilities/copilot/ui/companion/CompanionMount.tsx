@@ -10,6 +10,7 @@ import { useCompanionController, useTurnPolling } from './use-companion';
 
 export interface CompanionMountProps {
   open: boolean;
+  presentation?: 'cleanroom';
   onOpenChange: (open: boolean) => void;
   layout: CompanionLayout;
   /**
@@ -26,6 +27,7 @@ export function CompanionMount({
   layout,
   sessionId,
   navigate,
+  presentation,
 }: CompanionMountProps) {
   const controller = useCompanionController();
   const nudges = useCopilotNudges();
@@ -57,6 +59,7 @@ export function CompanionMount({
       {open ? (
         <CompanionPanel
           controller={controller}
+          presentation={presentation}
           layout={layout}
           onClose={close}
           navigate={navigate}

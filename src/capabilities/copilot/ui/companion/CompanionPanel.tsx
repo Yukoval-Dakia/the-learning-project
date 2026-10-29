@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useId, useState } from 'react';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
+import { CompanionSurface } from '@/ui-next/cleanroom-practice/CompanionSurface';
 import { IconButton, UiNextRoot } from '@/ui-next/public';
 import type { UseCopilotNudgesResult } from '../useCopilotNudges';
 import { Composer } from './Composer';
@@ -34,6 +35,7 @@ export type CompanionLayout = 'side' | 'float' | 'sheet';
 
 export interface CompanionPanelProps {
   controller: CompanionController;
+  presentation?: 'cleanroom';
   layout: CompanionLayout;
   onClose: () => void;
   navigate: (to: string) => void;
@@ -61,6 +63,7 @@ export function CompanionPanel({
   navigate,
   nudges,
   sessionId,
+  presentation,
 }: CompanionPanelProps) {
   const [wide, setWide] = useState(false);
   const listId = useId();
@@ -96,6 +99,79 @@ export function CompanionPanel({
     },
     [layout],
   );
+
+  if (presentation === 'cleanroom')
+    return (
+      <UiNextRoot ref={attachVisit} className="un-cr-companion-root" data-layout={layout}>
+        {layout === 'sheet' && (
+          <button
+            type="button"
+            ref={lockBodyScroll}
+            tabIndex={-1}
+            aria-label="收起学习伙伴"
+            className="un-cr-companion-scrim"
+            onClick={onClose}
+          />
+        )}
+        <CompanionSurface
+          layout={layout}
+          wide={wide}
+          titleId={`${listId}-title`}
+          surfaceRef={layout === 'sheet' ? trapRef : focusOnOpen}
+          thinking={thinking}
+          onEscape={() => {
+            if (!listOpen) onClose();
+          }}
+          requestedSession={sessionId ? <span hidden key={sessionId} ref={showRequested} /> : null}
+          actions={[
+            {
+              id: 'history',
+              label: listOpen ? '收起记录' : '对话记录',
+              expanded: listOpen,
+              controls: listOpen ? listId : undefined,
+              run: () => actions.setListOpen(!listOpen),
+            },
+            {
+              id: 'new',
+              label: '新对话',
+              run: () => {
+                void sessions.createConversation();
+              },
+            },
+            {
+              id: 'teach',
+              label: '一步步带我学',
+              enabled: ready,
+              run: () => {
+                stick.stick();
+                void sender.send(TEACH_PROMPT);
+              },
+            },
+            ...(layout === 'sheet'
+              ? []
+              : [
+                  {
+                    id: 'width',
+                    label: wide ? '恢复宽度' : '加宽',
+                    pressed: wide,
+                    run: () => setWide((value) => !value),
+                  },
+                ]),
+            { id: 'close', label: '收起', run: onClose },
+          ]}
+          context={
+            <>
+              <ContextBar />
+              <NudgeBar nudges={nudges} />
+            </>
+          }
+          messages={<MessageStream controller={controller} stick={stick} navigate={navigate} />}
+          history={listOpen ? <ConversationList controller={controller} id={listId} /> : null}
+          runStatus={<RunFooter controller={controller} />}
+          composer={<Composer controller={controller} stick={stick} />}
+        />
+      </UiNextRoot>
+    );
 
   const CloseIcon = layout === 'side' ? PanelRightClose : X;
   return (
