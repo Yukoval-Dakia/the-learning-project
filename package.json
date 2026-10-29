@@ -93,6 +93,7 @@
     "normalize:qb-bbox": "tsx scripts/sweep-question-block-bbox.ts",
     "ops:yuk1547-repair-resolved-contracts": "tsx scripts/yuk1547-repair-resolved-contracts.ts",
     "ops:yuk1600-backfill-knowledge-roles": "tsx scripts/yuk1600-backfill-knowledge-roles.ts",
+    "ops:yuk1604-repair-knowledge-classification": "tsx scripts/yuk1604-repair-knowledge-classification.ts",
     "compile:profile": "tsx scripts/compile-profile.ts",
     "docs:linear-manifest": "tsx scripts/linear-doc-manifest.ts",
     "preflight:vision": "tsx scripts/preflight-vision.ts",

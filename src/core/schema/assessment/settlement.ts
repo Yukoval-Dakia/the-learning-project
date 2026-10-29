@@ -399,7 +399,9 @@ export type ThetaDecision =
       reason:
         | 'no_kc_evidence' // 无 KC / 全 abstain
         | 'mixed_kc_bits' // 非 abstain KC 位不一致（one-bit updater 表达不了）
-        | 'provenance_excluded'; // D15/D16：manual/self_report/assisted 排除
+        | 'provenance_excluded' // D15/D16：manual/self_report/assisted 排除
+        // YUK-1604 — 学习者非独立作答（看过讲解 / 带提示）：过程证据，不更新掌握度。
+        | 'learner_assisted';
     };
 
 /**
