@@ -1,6 +1,4 @@
 import { eq, inArray } from 'drizzle-orm';
-import type { MistakeProjection } from '@/capabilities/ingestion/public';
-import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import {
   AssessmentIssuance,
   EvaluationContractError,
@@ -32,7 +30,9 @@ import {
   question_revision,
   source_asset,
 } from '@/db/schema';
+import type { FailureAttempt } from '@/kernel/read-models/failure-attempts';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import type { MistakeProjection } from '@/kernel/records/mistake-projection-contract';
 
 type NativeMistakeEvidence = Pick<
   MistakeProjection,
