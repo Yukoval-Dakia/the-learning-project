@@ -13,9 +13,9 @@ import {
   mastery_state,
   material_fsrs_state,
 } from '@/db/schema';
+import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { resetDb } from '../../../tests/helpers/db';
-import { retireKcTypedStateOnMerge } from '../conjectures/typed-state';
 import { initialCandidateState } from '../fsrs/candidate';
 import { retireFsrsStateOnMerge } from '../fsrs/state';
 import { retireMasteryStateOnMerge } from './state';
