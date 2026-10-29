@@ -73,7 +73,7 @@ function providerBoundary() {
       },
     ],
   }));
-  const getAll = vi.fn(async () => ({ results: [] as { id: string; memory: string }[] }));
+  const getAll = vi.fn<Mem0Like['getAll']>(async () => ({ results: [] }));
   const sdk: Mem0Like = {
     add,
     getAll,
@@ -231,7 +231,12 @@ describe('explicit single-event memory ingest recovery', () => {
     const boundary = providerBoundary();
     boundary.getAll.mockResolvedValue({
       results: [
-        { id: 'already-present', memory: 'A provider response was lost, but the fact is present.' },
+        {
+          id: 'already-present',
+          memory: 'A provider response was lost, but the fact is present.',
+          user_id: 'self',
+          metadata: { event_id: request.sourceEventId },
+        },
       ],
     });
     await buildMemoryEventIngestHandler(testDb(), boundary.boss, {

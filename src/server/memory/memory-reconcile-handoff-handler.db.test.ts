@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
 import type { MemoryClient, MemoryEventInput } from './client';
@@ -26,7 +27,7 @@ function sourceEvent(id: string): MemoryEventInput {
     action: 'attempt',
     subject_kind: 'question',
     subject_id: 'question-1',
-    payload: {},
+    payload: { answer_md: 'A', answer_image_refs: [] },
     affected_scopes: [],
     created_at: new Date(1),
     kind: 'event',
@@ -43,6 +44,12 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();
     const sourceId = 'generic-concurrent';
+    await writeEvent(db, {
+      ...sourceEvent(sourceId),
+      actor_ref: 'self',
+      outcome: 'success',
+      ingest_at: new Date(),
+    });
     const externalMemories = new Map<string, { id: string; memory: string }>();
     const findByEventId = vi.fn(async (eventId: string) => {
       const memory = externalMemories.get(eventId);

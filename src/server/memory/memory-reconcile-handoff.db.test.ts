@@ -20,6 +20,18 @@ describe('memory reconcile append-only handoff', () => {
 
   it('writes ingest completion plus all intents atomically and preserves exact inputs', async () => {
     const db = testDb();
+    await writeEvent(db, {
+      id: 'source-complete',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:memory_handoff_source',
+      subject_kind: 'query',
+      subject_id: 'handoff-query',
+      outcome: 'success',
+      payload: { derivation_policy: 'allow' },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    });
     await claimMemoryIngest(db, 'source-complete');
     const completion = await persistIngestCompleted(db, {
       sourceEventId: 'source-complete',
@@ -33,6 +45,18 @@ describe('memory reconcile append-only handoff', () => {
   it('rolls back completion when one of N deterministic intent rows conflicts', async () => {
     const db = testDb();
     const sourceId = 'source-rollback';
+    await writeEvent(db, {
+      id: 'source-rollback',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:memory_handoff_source',
+      subject_kind: 'query',
+      subject_id: 'handoff-query',
+      outcome: 'success',
+      payload: { derivation_policy: 'allow' },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    });
     await claimMemoryIngest(db, sourceId);
     await writeEvent(db, {
       id: memoryReconcileHandoffEventId('reconcile_intent', sourceId, second.id),
@@ -67,6 +91,19 @@ describe('memory reconcile append-only handoff', () => {
   });
 
   it('does not turn a readback error after a null send into an advisory skip', async () => {
+    const db = testDb();
+    await writeEvent(db, {
+      id: 'observe-error',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:memory_handoff_source',
+      subject_kind: 'query',
+      subject_id: 'handoff-query',
+      outcome: 'success',
+      payload: { derivation_policy: 'allow' },
+      affected_scopes: [],
+      ingest_at: new Date(),
+    });
     const boss = {
       send: vi.fn(async () => null),
       getJobById: vi.fn(async () => {
