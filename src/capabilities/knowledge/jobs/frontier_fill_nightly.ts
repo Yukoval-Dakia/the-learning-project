@@ -8,12 +8,6 @@
 
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-// Same package: knowledge owns both the frontier graph decision and this job. The
-// frontier is only a gate signal; this job writes proposals, never live edges.
-import {
-  type FrontierResolution,
-  learnableFrontierResolved,
-} from '@/capabilities/knowledge/server/frontier-read';
 import { loadPendingEdgeProposalKeys } from '@/capabilities/knowledge/server/propose_edge';
 import { parseFrontierProposals } from '@/capabilities/knowledge/tasks/knowledge-tasks';
 import { isDirectTreePair } from '@/core/topology-gate';
@@ -22,6 +16,12 @@ import { knowledge, knowledge_edge } from '@/db/schema';
 import { FRONTIER_PENDING_CAP } from '@/kernel/nightly-eligibility';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { loadTreeSnapshot } from '@/kernel/read-models/knowledge-graph';
+// The shared frontier decision is a gate signal for this Knowledge-owned job;
+// the job writes proposals, never live edges.
+import {
+  type FrontierResolution,
+  learnableFrontierResolved,
+} from '@/kernel/read-models/learnable-frontier';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';

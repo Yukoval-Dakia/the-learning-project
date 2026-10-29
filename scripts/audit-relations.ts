@@ -119,7 +119,7 @@ const CONSUMER_REGISTRY: ConsumerEntry[] = [
     // 原 PR 遗漏登记；inc-E 顺手补上（否则该 type-specific 消费路径不在反查覆盖内）。
     relation: 'prerequisite',
     tier: 'specialized',
-    file: 'src/capabilities/knowledge/server/frontier-read.ts',
+    file: 'src/kernel/read-models/learnable-frontier.ts',
     marker: "e.relation_type = 'prerequisite'",
     surface: 'recommendation',
     evidence:

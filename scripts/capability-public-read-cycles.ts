@@ -157,18 +157,12 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     consumer: 'practice',
     files: [
       'src/capabilities/practice/server/knowledge-runtime.ts',
-      'src/capabilities/practice/server/learnable-frontier.ts',
       'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
     ],
-    symbols: [
-      'createKnowledgeNodeFromEvents',
-      'isMasteredForFrontier',
-      'learnableFrontierResolved',
-      'loadFailureLearningKnowledgeContext',
-    ],
-    dto: 'failure-learning reads, FrontierResolution, and placement knowledge creation command',
+    symbols: ['createKnowledgeNodeFromEvents', 'loadFailureLearningKnowledgeContext'],
+    dto: 'failure-learning reads and placement knowledge creation command',
     justification:
-      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain. YUK-1571: the learnable-frontier graph decision is knowledge-owned; practice keeps the per-day capacity and id-list policy, with compatibility exports for its unchanged public contract.',
+      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
     reviewIssue: 'YUK-984',
     commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
   },

@@ -1,12 +1,9 @@
-// Practice consumes the knowledge-owned frontier decision. This wrapper preserves the
+// Practice consumes the shared frontier decision. This wrapper preserves the
 // historical id-list contract: [] on a sparse graph or overflow. Callers that must
 // distinguish overflow from cold start call learnableFrontierResolved directly.
 
-import { learnableFrontierResolved } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
-
-export type { FrontierResolution } from '@/capabilities/knowledge/public';
-export { isMasteredForFrontier } from '@/capabilities/knowledge/public';
+import { learnableFrontierResolved } from '@/kernel/read-models/learnable-frontier';
 
 /** Cap on how many frontier questions the composer pulls in per day (applied by the caller). */
 export const FRONTIER_MAX_ITEMS = 5;
