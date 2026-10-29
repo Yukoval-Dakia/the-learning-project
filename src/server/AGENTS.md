@@ -11,7 +11,7 @@
 | `knowledge/` | 知识树 + mesh edge + propose/attribute/review（见 AGENTS.md）|
 | `events/` | event 写入 + 查询（事件驱动核的 IO 层）|
 | `../capabilities/agency/server/conjecture/` | 预测问责排序、硬确认事实读取与判定、probe 记账及纠错回放；typed ledger 与共享单探针评分归 `@/kernel/records/` |
-| `session/` | review / placement / conversation / tutor 状态操作及共享状态守卫；录入操作归 ingestion capability |
+| `session/` | 剩余会话状态操作；Placement 归 `../capabilities/practice/server/placement-session-lifecycle.ts`，录入归 ingestion capability，共享守卫归 `../kernel/learning-session-guard.ts` |
 | `proposals/` | propose event 的 accept/dismiss/retract actions（破坏性动作落地点）|
 | `artifacts/` | Living Note body-blocks / sections / editing-session / hub-dismiss |
 | `review/` + `fsrs/` | FSRS 调度（ts-fsrs）+ review event → `material_fsrs_state` 投影 |

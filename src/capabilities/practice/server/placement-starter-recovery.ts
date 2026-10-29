@@ -24,12 +24,12 @@ import {
   isPlacementStarterJobLive,
   lockPlacementSupplyScopes,
   markPlacementStarterClaimTerminal,
-  placementProbeEnabled,
   resolvePlacementStarterGoalAuthority,
   terminalizeLostPlacementDelivery,
 } from '@/kernel/placement';
 import { resolveGoalPlacementScope } from './placement-scope';
 import { selectNextPlacementItem } from './placement-select';
+import { placementProbeEnabled } from './placement-session-lifecycle';
 
 /**
  * How far forward the sweeper pushes `next_reconcile_at` when it acquires a claim. This is the

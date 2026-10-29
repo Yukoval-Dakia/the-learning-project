@@ -50,7 +50,7 @@
     "case_insensitive": false,
     "polarity": "opt-in",
     "reader_marker": "getConfigFlag('PLACEMENT_PROBE_ENABLED')",
-    "file": "src/server/session/placement.ts",
+    "file": "src/capabilities/practice/server/placement-session-lifecycle.ts",
     "notes": "Placement probe gate, default OFF. Registry preserves only exact env 'true' (not '1', case variants or whitespace); compose-pinned and DB override ignored. Metadata correction only; reader unchanged."
   },
   "QUESTION_SUPPLY_REFILL_ENABLED": {

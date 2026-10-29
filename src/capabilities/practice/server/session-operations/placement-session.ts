@@ -14,7 +14,6 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { goal, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
-import { Placement } from '@/server/session';
 import {
   noItemField,
   placementNoItem,
@@ -29,6 +28,7 @@ import {
 } from '../placement-assessment';
 import { resolveGoalPlacementScope, resolveNearbyPlacementScope } from '../placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../placement-select';
+import * as Placement from '../placement-session-lifecycle';
 import { dispatchPlacementStarterClaim } from '../question-supply/placement-starter';
 import { readPlacementStarterOutcomes } from '../question-supply/placement-starter-outcome-reader';
 import { materializePlacementStartersForGoal } from '../question-supply/placement-starter-store';

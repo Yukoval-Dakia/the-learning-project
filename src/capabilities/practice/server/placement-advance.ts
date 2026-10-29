@@ -17,7 +17,6 @@ import { goal } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { getMasteryState } from '@/kernel/read-models/mastery-state';
-import { loadPlacementSessionForUpdate } from '@/server/session/placement';
 import type { PlacementNoItemSchema, PlacementUnresolvedItem } from '../api/placement-contracts';
 import {
   ensurePlacementAssessment,
@@ -27,6 +26,7 @@ import {
 } from './placement-assessment';
 import { resolveNearbyPlacementScope } from './placement-scope';
 import { resolveLeaningPreferenceKcs } from './placement-select';
+import { loadPlacementSessionForUpdate } from './placement-session-lifecycle';
 import {
   PLACEMENT_DEFAULT_CAP,
   capForPace,

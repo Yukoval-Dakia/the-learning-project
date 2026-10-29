@@ -17,7 +17,7 @@ import { assertFromState } from '@/kernel/learning-session-guard';
 //
 // These transitions are state envelopes only; per-question judge/θ̂ writes belong
 // to the placement submit route (judge outside the θ̂ tx, θ̂ write inside it).
-// No domain events are written here — job_events only, mirroring review.ts.
+// No domain events are written here — job_events only.
 //
 // PLACEMENT_PROBE_ENABLED gates the whole entrypoint. When false no probe is
 // created, so the daily-stream and review paths are unchanged; the flag never
@@ -160,7 +160,7 @@ export async function completePlacementSession(db: Db, sessionId: string): Promi
  * "walked away" from "finished"; per-question events stay chained by session_id.
  *
  * Stale probes (>6h) are swept by `prune_orphan_placement_sessions`, a sibling of
- * the review/conversation sweeps. It is a no-op while the probe flag is off.
+ * the review/conversation sweeps.
  */
 export async function abandonPlacementSession(db: Db, sessionId: string): Promise<void> {
   await applyPlacementSessionTransition(db, sessionId, 'abandoned', false);
