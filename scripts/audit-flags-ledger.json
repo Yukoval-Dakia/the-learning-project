@@ -319,7 +319,7 @@
     "case_insensitive": false,
     "polarity": "opt-in",
     "reader_marker": "getConfigFlag(PER_ENTITY_FLAG_ENV[entity])",
-    "file": "src/server/projections/sot-flag.ts",
+    "file": "src/kernel/projection-writer-policy.ts",
     "notes": "Default OFF write-ownership switch. Shared config reader preserves registry's exact env literal '1'; other env strings fall back to false. DB boolean override remains supported. No production flip."
   }
 }
