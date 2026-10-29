@@ -83,3 +83,43 @@ export const KnowledgeRoleUpdateExperimental = z.object({
   cost_micro_usd: z.number().int().optional(),
 });
 export type KnowledgeRoleUpdateExperimentalT = z.infer<typeof KnowledgeRoleUpdateExperimental>;
+
+// YUK-1604 — one-time approval repair for knowledge nodes born before agent-minted KCs
+// were marked await-confirmation (pre-YUK-1405 auto-tag births project as 'approved').
+// Same discipline as the role repair above: the ops backfill stamps the transition
+// through this reserved control-plane event so the fold owns the write and any later
+// re-projection reproduces it. Ids, names and evidence rows are never touched.
+const KnowledgeApprovalUpdatePayload = z
+  .object({
+    approval_status: z.enum(['pending', 'approved', 'rejected']),
+    previous_approval_status: z.enum(['pending', 'approved', 'rejected']),
+    reason: z.string().min(1),
+    previous_version: z.number().int().nonnegative(),
+    next_version: z.number().int().positive(),
+  })
+  .strict()
+  .superRefine((payload, ctx) => {
+    if (payload.next_version !== payload.previous_version + 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'next_version must equal previous_version + 1',
+        path: ['next_version'],
+      });
+    }
+  });
+
+export const KnowledgeApprovalUpdateExperimental = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.string().min(1),
+  action: z.literal('experimental:knowledge_approval_update'),
+  subject_kind: z.literal('knowledge'),
+  subject_id: z.string().min(1),
+  outcome: z.literal('success'),
+  payload: KnowledgeApprovalUpdatePayload,
+  caused_by_event_id: z.string().optional(),
+  task_run_id: z.string().optional(),
+  cost_micro_usd: z.number().int().optional(),
+});
+export type KnowledgeApprovalUpdateExperimentalT = z.infer<
+  typeof KnowledgeApprovalUpdateExperimental
+>;
