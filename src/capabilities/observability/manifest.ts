@@ -178,7 +178,7 @@ export const observabilityCapability = defineCapability({
         load: () => import('./api/admin-subjects').then((m) => m.getSubject),
       },
       // YUK-601 (v3.2 §3.5) — trait 管理读面三端点（编辑器/换绑选择器/rollback UI
-      // 的数据源；业务在 src/server/subjects/admin-read.ts）。
+      // 的数据源；业务在 src/capabilities/observability/server/subject-admin-read.ts）。
       {
         method: 'GET',
         path: '/api/admin/subjects/[id]/traits',

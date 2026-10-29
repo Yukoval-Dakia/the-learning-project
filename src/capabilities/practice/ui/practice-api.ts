@@ -384,7 +384,7 @@ export const solveHint = (
   });
 
 // ── 题库面 /questions（YUK-409, loom screen-questions）─────────────────────────
-// GET /api/questions?enrich=true 的投影（src/server/questions/list.ts QuestionListItem）。
+// GET /api/questions?enrich=true 的投影（src/kernel/read-models/questions.ts QuestionListItem）。
 // enrich 路径补了 subject（派生学科 profile id）/ knowledge_labels（kchip 中文名）/
 // is_composite + children（大题展开小题）——基础投影没有的派生量，YUK-409 additive 补。
 type QBankWireResult = ApiOperationJsonResponse<'listQuestions'>;

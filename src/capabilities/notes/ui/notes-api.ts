@@ -91,7 +91,7 @@ type QuestionListWire = ApiOperationJsonResponse<'listQuestions'>;
 export type QuestionPickRow = Pick<QuestionListWire['items'][number], 'id' | 'kind' | 'prompt_md'>;
 
 // 题库无文本搜索参数——按笔记 labels 的知识点过滤（贴本笔记语境）。
-// 响应形 = ListQuestionsResult（items 轴，src/server/questions/list.ts）。
+// 响应形 = ListQuestionsResult（items 轴，src/kernel/read-models/questions.ts）。
 export function buildNoteQuestionsQuery(knowledgeIds: string[], limit = 20): string {
   const sp = new URLSearchParams();
   for (const kid of knowledgeIds) sp.append('knowledge_id', kid);

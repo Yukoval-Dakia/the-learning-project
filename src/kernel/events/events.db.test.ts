@@ -1,9 +1,5 @@
-// Phase 1c.1 Step 4 — events queries module (ADR-0005 single-owner read API).
-//
-// Per spec §"New module: src/server/events/queries.ts" — all event reads/writes
-// must funnel through this module. Tests seed `event` table directly with
-// hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
-
+// All event reads/writes funnel through src/kernel/events/events.ts. Tests seed
+// the `event` table directly with hand-built KnownEvent-shaped rows.
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { deterministicId } from '@/core/ids';
