@@ -37,5 +37,11 @@ motion：已将AndroidX固定9b2acdf2e的fast spatial (mass1,stiffness800,dampin
 
 首次独立R1（6b3fc8616）发现1项P1：数字标记会把1.5显示为5；已将number/none恢复为原文，并取消第二次剥离，修复验证审与exactCI待完成。另2项P2（按钮spring未接线、旧式材料引用入口缺失）不在本轮P1修复中扩写，留原1473完整页面验收继续跟进，不称已修或整页完成。真实判分/流式/unknown/错误恢复、读屏/IME/全部布局及外部iframe内部主题仍NOT_RUN；生成内容iframe安全边界保留，不注入主题脚本。原1473继续InProgress。
 
+## CI规模审计修复
+
+唯一修复验证审已在76e530525确认原P1源码闭合，新增可达P0/P1 NONE。随后PR2196首次CI在固定base46b680bbe的capability-boundaries失败：新增PracticePage.tsx为1033行，缺sourceSizeRecords规模增长记录。原本地成功日志不能替代这次固定CI事实；原始失败日志保留。
+
+删除没有产品consumer的候选PracticePage组合出口、其私有CompanionPanel及专用常量/import，文件降至634行；真实PracticeContent及共享题面/作答/结果函数保持原文，现役PracticeNavigation、CompanionSurface及原伙伴owner不变。不是拆文件绕阈值，不增加allowlist或放宽审计。候选完整能力清单只保留为历史需求输入，不能冒充live实现。修复后以相同CAPABILITY_BASE_SHA执行CI architecture lane六项audit及typecheck/lint/build；结果见ci-fix/checks.json。两项既有P2仍未修；不启动第三审。
+
 证据：/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/cleanroom-integration-20261029/（checks.json、五项log、browser-evidence.json与实际PNG）。
 只读接缝及动效来源：/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/yuk1473-cleanroom-m3e-20261029/{integration-seams.md,web-motion-mapping.md,motion-samples.json}。
