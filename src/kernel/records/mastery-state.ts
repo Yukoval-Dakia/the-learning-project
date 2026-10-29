@@ -1,15 +1,6 @@
-// Single owner of `mastery_state` (ADR-0035 决定#2，对称 fsrs/state.ts)。
-//
-// `mastery_state` is the p(L) diagnostic projection (θ̂ + PFA counts) per knowledge
-// node: the second review axis, orthogonal to the FSRS R-axis (ADR-0035). This is the
-// only allowed writer in src/server/ and app/.
-//
-// 写路径：submit.ts / paper-submit.ts 的 attempt tx 内调 updateThetaForAttempt
-// （同 tx，不新开事务，守 hermetic）。
-//
-// YUK-1570 moved the read/query engine to kernel read models
-// (@/kernel/read-models/mastery-state and mastery-projection). The explicit compat
-// re-exports at the bottom keep the old import surface; the writer path is unchanged.
+// Online mastery_state diagnostic writes: attempt updates, explicit upserts and KC retirement.
+// Callers own settlement, revert and cross-surface merge transactions and recovery.
+// Canonical reads stay in kernel/read-models/mastery-state and mastery-projection.
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 
@@ -515,33 +506,3 @@ export async function updateThetaForAttempt(
   // Snapshot every row this fn wrote, including A2 global rows, for revert/replay.
   return { theta_snapshots: thetaSnapshots };
 }
-export type {
-  MasteryProjection,
-  MasteryProvenance,
-  ProjectionEdgeRow,
-} from '@/kernel/read-models/mastery-projection';
-export {
-  BORROW_EPS,
-  PROJECTION_EDGE_RELATION_TYPES,
-  getMasteryProjection,
-  getRepresentativeKcBeta,
-  isObserved,
-  splitProjectionEdgeRows,
-} from '@/kernel/read-models/mastery-projection';
-// ── YUK-1570 compat re-exports ──────────────────────────────────────────────
-// The read engine now lives in the kernel read models. This block keeps the historical
-// import surface; new readers should import the kernel modules directly.
-export type {
-  AbilityGlobalByKnowledgeId,
-  MasteryStateRow,
-} from '@/kernel/read-models/mastery-state';
-export {
-  ABILITY_GLOBAL_SUBJECT_KIND,
-  effectiveThetaForKc,
-  effectiveThetaForKcBatch,
-  getMasteryState,
-  getMasteryStates,
-  globalThetaForDomain,
-  resolveAbilityGlobalByKnowledgeId,
-  resolveAbilityGlobalSubjectIds,
-} from '@/kernel/read-models/mastery-state';

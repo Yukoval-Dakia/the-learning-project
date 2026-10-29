@@ -15,7 +15,7 @@ import {
   emitMasteryProgressSignal,
 } from '@/capabilities/practice/server/mastery-progress-signal';
 import { event } from '@/db/schema';
-import { upsertMasteryState } from '@/server/mastery/state';
+import { upsertMasteryState } from '@/kernel/records/mastery-state';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 describe('note refine rolling debounce', () => {

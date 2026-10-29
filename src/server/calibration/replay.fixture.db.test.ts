@@ -60,10 +60,10 @@ import {
   mastery_state,
   question,
 } from '@/db/schema';
+import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import { type ReplayAttempt, replayTheta } from '@/server/calibration/replay';
 import { effectiveFamilyB, getFamilyCalibration } from '@/server/mastery/personalized-difficulty';
 import { effectiveB } from '@/server/mastery/recalibration';
-import { updateThetaForAttempt } from '@/server/mastery/state';
 import { resetDb } from '../../../tests/helpers/db';
 
 const ABILITY_GLOBAL_KIND = 'ability_global'; // module-private in state.ts — hardcode the literal.

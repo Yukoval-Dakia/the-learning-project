@@ -22,6 +22,7 @@ import {
   event,
   question_revision,
 } from '@/db/schema';
+import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import {
   type CandidateReplayInput,
   type SealedCandidateInput,
@@ -33,7 +34,6 @@ import {
   validateCandidateInput,
 } from '@/server/fsrs/candidate';
 import type { FamilyFoldRecord } from '@/server/mastery/personalized-difficulty';
-import type { AbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 import type { ActivationSettleInput } from './activate';
 
 // The settlement event action this ledger reads. Mirrors

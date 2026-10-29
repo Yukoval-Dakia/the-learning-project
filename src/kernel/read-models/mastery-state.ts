@@ -1,5 +1,5 @@
 // Canonical mastery_state reads and hierarchical-Elo global-ability resolution.
-// The server mastery module remains the sole writer (ADR-0035).
+// Online diagnostic writes belong to kernel/records/mastery-state (ADR-0035).
 
 import { and, eq, inArray } from 'drizzle-orm';
 

@@ -36,8 +36,8 @@ import {
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import { resolveAbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
 import { type ApplyOutcome, type SettlementObservers, executePlan } from './settle-apply';
 import {
