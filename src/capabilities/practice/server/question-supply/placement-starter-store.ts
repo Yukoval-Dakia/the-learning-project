@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { createKnowledgeNodeFromEvents } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
@@ -13,6 +12,7 @@ import {
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { getEffectiveDomain, updateGoalScope } from '@/kernel/placement-persistence';
+import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
 import { placementStarterIdentity } from './placement-starter-identity';

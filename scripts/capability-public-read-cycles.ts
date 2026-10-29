@@ -25,22 +25,19 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'knowledge',
     consumer: 'agency',
     files: [
-      'src/capabilities/agency/server/goals/commands.ts',
       'src/capabilities/agency/server/misconception-promote.ts',
       'src/capabilities/agency/server/proposal-accept-applier.ts',
     ],
     symbols: [
-      'ensureSubjectRoot',
       'archiveMisconceptionEdge',
       'createLearningIntentKnowledgeNode',
       'createMisconceptionEdge',
     ],
-    dto: 'knowledge subject, misconception and intent commands',
+    dto: 'knowledge misconception and intent commands',
     justification:
-      'agency subject/misconception/intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
+      'agency misconception/intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
     reviewIssue: 'YUK-885',
     commandFiles: [
-      'src/capabilities/agency/server/goals/commands.ts',
       'src/capabilities/agency/server/misconception-promote.ts',
       'src/capabilities/agency/server/proposal-accept-applier.ts',
     ],
@@ -155,15 +152,12 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'knowledge',
     consumer: 'practice',
-    files: [
-      'src/capabilities/practice/server/knowledge-runtime.ts',
-      'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
-    ],
-    symbols: ['createKnowledgeNodeFromEvents', 'loadFailureLearningKnowledgeContext'],
-    dto: 'failure-learning reads and placement knowledge creation command',
+    files: ['src/capabilities/practice/server/knowledge-runtime.ts'],
+    symbols: ['loadFailureLearningKnowledgeContext'],
+    dto: 'failure-learning reads',
     justification:
-      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
+      'Existing failure-learning read seams remain. Placement node birth now consumes the complete shared kernel owner directly; learner authorization and the caller transaction remain in Practice.',
     reviewIssue: 'YUK-984',
-    commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
+    commandFiles: [],
   },
 ];

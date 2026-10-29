@@ -10,7 +10,6 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
-import { ensureSubjectRoot, subjectRootId } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 import {
   subject,
@@ -20,6 +19,7 @@ import {
 } from '@/db/schema';
 import { hydrateSubjectRegistryFromDb } from '@/kernel/read-models/subject-hydration';
 import { isGeneralFallbackFor } from '@/kernel/read-models/subject-trait-resolutions';
+import { ensureSubjectRoot, subjectRootId } from '@/kernel/records/knowledge-node-birth';
 import { acquireControlPlaneLockSql } from '@/kernel/records/subject-control-lock';
 import { seedTraitId } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey } from '@/subjects/profile';

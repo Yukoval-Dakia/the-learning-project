@@ -1,6 +1,4 @@
 import { eq } from 'drizzle-orm';
-import { ensureSubjectRoot } from '@/capabilities/knowledge/public';
-
 import { newId } from '@/core/ids';
 import type { DeclaredStageT } from '@/core/schema/business';
 import type { GoalRowSnapshotT } from '@/core/schema/event/genesis';
@@ -13,6 +11,7 @@ import {
   projectGoal,
   projectGoalGuarded,
 } from '@/kernel/records/goal-history';
+import { ensureSubjectRoot } from '@/kernel/records/knowledge-node-birth';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 

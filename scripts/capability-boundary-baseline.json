@@ -4469,6 +4469,30 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> knowledge",
+      "date": "2026-10-29",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-29",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7442,6 +7466,66 @@
       "issue": "YUK-1570",
       "owns": "Own the complete shared mistake-page projection and immutable native evidence read, with the existing shared output schema. Preserve cursor decoding/error mapping, record paging and next_cursor identity, legacy absence versus invalid evidence, historical edit guards, frozen issuance/submission validation, public material and attachment metadata checks, original query/order/Db boundaries and all empty/null/default results. Ingestion retains query validation and subject resolution; Shell retains its 200-record magnitude sample. No scoring, feedback visibility, settlement, retry, transaction, lock, provider or paid policy changes.",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/goals/commands.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/learning-intent-knowledge.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-creation.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/seed.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/server/subject-create.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["ensureSubjectRoot", "subjectRootId"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+      "module": "src/kernel/records/knowledge-node-birth.ts",
+      "kind": "value",
+      "symbols": ["createKnowledgeNodeFromEvents"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing authorized knowledge-node birth and subject-root creation mechanism. Preserve caller Tx and authorization; knowledge:create sorted advisory lock, live-row error/skip before history-only rejection, subject alias/general handling, approved row defaults and role, event id/provenance/timestamps, genesis write, materialized-id anchor and guarded projection in the same order. Preserve exact subject-root identity, per-call creation time and created/rootId result. Knowledge retains root-name control and private history guard; callers retain scope, control locks, claim/supply, B/scoring/visibility/paid/recovery policies. No new authorization, transaction or idempotency guarantee.",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8480,10 +8564,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 31,
+      "total": 28,
       "byOwnerPair": {
-        "observability -> knowledge": 2,
-        "agency -> knowledge": 3,
+        "observability -> knowledge": 1,
+        "agency -> knowledge": 2,
         "agency -> notes": 2,
         "agency -> practice": 4,
         "copilot -> notes": 2,
@@ -8494,7 +8578,7 @@
         "observability -> agency": 1,
         "observability -> practice": 1,
         "practice -> agency": 2,
-        "practice -> knowledge": 2,
+        "practice -> knowledge": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,
