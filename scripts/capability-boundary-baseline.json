@@ -4509,6 +4509,14 @@
       "from": 2,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "shell -> subjects",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7552,6 +7560,16 @@
       "issue": "YUK-1570",
       "owns": "Own the complete existing question-draft conversion, frozen-revision readback, scoring round-trip fidelity, scoring-edit preservation/refusal and canonical identity mechanism. Preserve all criterion/default/issue ordering, executor binding and escalation, judgeability and withheld reasons, legacy loss classification, untouched-unit and assignment copying, and original identity projection. Source verification consumes the same revision and identity rules directly; deriveKind remains in its existing owner. Callers retain admission, final sealing, publication, Tx/locks, retry, scoring execution and paid policies. No new scoring capability, authorization, transaction or recovery guarantee.",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/shell/server/subjects-list.ts",
+      "module": "src/kernel/read-models/subject-trait-resolutions.ts",
+      "kind": "value",
+      "symbols": ["isGeneralFallbackFor"],
+      "issue": "YUK-1570",
+      "owns": "The existing canonical trait-resolution cache owns whole-map replacement and fallback derivation. Shell consumes isGeneralFallbackFor directly while retaining the complete learner-subject projection, configured versus observed-domain distinction, aliases, presentation and null/default semantics. Preserve general -> null, absent or empty resolutions -> false, and the existing every-entry general-seed identity predicate. Hydration remains the sole writer; default DB, registry, refresh timing, failures and policy remain in their existing owners. No new cache, hydration, scoring, paid, transaction or recovery behavior.",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8543,7 +8561,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 207,
+      "total": 206,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -8589,7 +8607,6 @@
         "practice -> session": 2,
         "shell -> boss": 1,
         "shell -> proposals": 2,
-        "shell -> subjects": 1,
         "shell -> today": 2
       }
     },
