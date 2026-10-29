@@ -4589,6 +4589,74 @@
       "from": 5,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "abandonOrphanConversationTx",
+      "targetModule": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "targetSymbol": "abandonOrphanConversationTx",
+      "owner": "copilot",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Fixed 5d136b01545c0b30aa3d683591a5e838ca437203: public export AST17/path21, canonical declaration AST469; consumer import AST3. Actual call425 passes the existing callback Tx and saved cutoff; outcome parsing and receipt INSERT stay in that same caller transaction. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
+      "rationale": "完整 Conversation orphan 状态操作归 Copilot；保留 selection/row 重复锁、missing/terminal/not-old 三态、原 started_at cutoff 文本、状态/version/event 更新与错误传播。durable caller 持原 phase/fence/header/receipt/unknown-COMMIT 恢复，未新增 incarnation/CAS 或事务保证。 本片新增深度为0；现有 public barrel 的初始化实际影响 UNKNOWN，未运行。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-74a7d4fa-41da-4555-a252-ed406d9d567c",
+      "date": "2026-10-29"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "ConversationOrphanStateError",
+      "targetModule": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "targetSymbol": "ConversationOrphanStateError",
+      "owner": "copilot",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Fixed 5d136b01545c0b30aa3d683591a5e838ca437203: public export AST17/path21, canonical declaration AST464; consumer import AST3. Actual instanceof use437 distinguishes the same canonical error class before mapping to SessionOrphanContractError; this is a production error-contract consumer, not a test or synthetic call. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
+      "rationale": "保留完整 Conversation owner 的原 corrupt-state 错误身份，供 durable caller 按原分支转契约错误；只定义一个 class，不构造包装错误、不把错误降为 skipped，也不扩展普通错误捕获范围。 本片新增深度为0；现有 public barrel 的初始化实际影响 UNKNOWN，未运行。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-74a7d4fa-41da-4555-a252-ed406d9d567c",
+      "date": "2026-10-29"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/public.ts",
+      "siteKind": "module",
+      "symbol": "idleConversation",
+      "targetModule": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "targetSymbol": "idleConversation",
+      "owner": "copilot",
+      "consumers": [
+        {
+          "file": "src/server/boss/handlers/promote_conversation_idle.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Fixed 5d136b01545c0b30aa3d683591a5e838ca437203: public export AST17/path21, canonical declaration AST325; consumer import AST6. Actual call42 performs the original per-session transition; selector, five-minute user-event cutoff, iteration and catch-as-skipped stay in the shared handler. Native classifies this export module:2. Complete owner implementation tokens and bindings are unchanged apart from the existing kernel limits import; four mechanical test imports are not production evidence.",
+      "rationale": "完整 Conversation idle 操作归 Copilot，保留 selection→row 锁、active-only guard、锁后时间、version 与同事务事件；共享 handler 仍拥有原调度/候选读取与失败跳过，不补选择到写入窗口，不迁入新 idle 政策。 本片新增深度为0；现有 public barrel 的初始化实际影响 UNKNOWN，未运行。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-74a7d4fa-41da-4555-a252-ed406d9d567c",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> session",
+      "date": "2026-10-29",
+      "from": 5,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7972,6 +8040,46 @@
       "issue": "YUK-1570",
       "owns": "完整题组发布 owner；本边保留 enrichment 原 Tx 内从行发布，原提交/编辑/draft-insert 其它出口保持；submit policy、receipt、失败及 paid 边界仍在原 caller。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1570",
+      "owns": "既有 ApiError 错误 owner；Conversation 保留原 missing404/conflict409、消息和抛出位置，不新增 catch 或改变状态 guard。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "module": "src/kernel/job-events.ts",
+      "kind": "value",
+      "symbols": ["writeJobEvent"],
+      "issue": "YUK-1570",
+      "owns": "既有 job-event 写入 owner；Conversation 原事务内记录 started/resumed/idle/ended/abandoned 事件及通知，保留时间采样、payload、失败传播与原 caller receipt 关系。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "module": "src/kernel/learning-session-guard.ts",
+      "kind": "value",
+      "symbols": ["assertFromState"],
+      "issue": "YUK-1570",
+      "owns": "既有完整 allowed-state 同步 guard；Conversation 原 allowed 集合和调用位置不变，状态政策仍归 Conversation owner。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/conversation-lifecycle.ts",
+      "module": "src/kernel/limits.ts",
+      "kind": "value",
+      "symbols": ["COPILOT_REUSE_WINDOW_MS"],
+      "issue": "YUK-1570",
+      "owns": "既有纯叶 limits 端口复导出同一 core COPILOT_REUSE_WINDOW_MS；仅依合法 capability 路径消费原复用窗口，不复制常量或改变 UI/服务端年龄语义。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -9017,7 +9125,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 195,
+      "total": 190,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9028,7 +9136,6 @@
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
         "copilot -> revert": 1,
-        "copilot -> session": 5,
         "copilot -> today": 1,
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
