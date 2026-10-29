@@ -4745,6 +4745,22 @@
       "from": 2,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "knowledge -> mastery",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-10-29",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -9424,7 +9440,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 188,
+      "total": 186,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9443,7 +9459,6 @@
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
         "knowledge -> fsrs": 2,
-        "knowledge -> mastery": 1,
         "knowledge -> memory": 2,
         "knowledge -> projections": 2,
         "knowledge -> proposals": 2,
@@ -9457,7 +9472,7 @@
         "practice -> boss": 12,
         "practice -> coldstart": 1,
         "practice -> fsrs": 2,
-        "practice -> mastery": 3,
+        "practice -> mastery": 2,
         "practice -> memory": 1,
         "practice -> proposals": 4,
         "practice -> questions": 1,
