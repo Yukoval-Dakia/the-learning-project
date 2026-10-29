@@ -7,8 +7,8 @@
  * looks at an extracted question's text + an optional knowledge_hint + a
  * knowledge-grid snapshot, and suggests which knowledge_ids the question covers,
  * each with a confidence. These are pure I/O contracts; the runtime invoker
- * lives in `src/server/ingestion/tagging.ts` and the route decision in
- * `src/server/ingestion/workflow-judge.ts`.
+ * lives in `src/capabilities/ingestion/server/tagging.ts` and the route decision in
+ * `src/capabilities/ingestion/server/workflow-judge.ts`.
  */
 import { z } from 'zod';
 
@@ -70,7 +70,7 @@ export type TaggingOutputT = z.infer<typeof TaggingOutput>;
 // WorkflowJudge is NOT a second LLM (spec §7 Q1 — single-user). It is a
 // deterministic aggregator over extraction_confidence (from extraction) +
 // TaggingTask confidence, producing a route decision + prefilled fields the
-// auto-enroll path consumes. See src/server/ingestion/workflow-judge.ts.
+// auto-enroll path consumes. See src/capabilities/ingestion/server/workflow-judge.ts.
 
 export const WorkflowJudgeRoute = z.enum(['auto', 'review']);
 export type WorkflowJudgeRouteT = z.infer<typeof WorkflowJudgeRoute>;

@@ -1,5 +1,5 @@
 // YUK-497 — two-connection regressions for the GLOBAL learning-state write lock
-// ('learning-state:write', src/server/advisory-locks.ts).
+// ('learning-state:write', src/db/learning-state-lock.ts).
 //
 // Review findings closed here (REQUEST CHANGES round on yuk-497-copilot-checkpoint-revert):
 //   1. Absent-row / check-then-insert races: every production material_fsrs_state /

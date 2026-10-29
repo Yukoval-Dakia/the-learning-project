@@ -1,6 +1,6 @@
 // Pure block-tree apply pipeline (no IO). Ops run left-to-right against doc-root
 // children only; anchors are stable `attrs.id` strings. Persistence and the
-// note_refine_apply event live in src/server/artifacts/note-refine-apply.ts.
+// note_refine_apply event live in src/capabilities/notes/server/note-refine-apply.ts.
 
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '../schema/business';
 import type { NotePatchOpT, NotePatchT } from '../schema/note-patch';

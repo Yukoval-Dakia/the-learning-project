@@ -35,10 +35,11 @@ export type IngestionStatusT = z.infer<typeof IngestionStatus>;
 
 // review 状态机：started ⇄ paused → completed | abandoned (↳ reopened → started)
 //
-// 'paused' 由 src/server/session/review.ts 写入/读出（pauseReviewSession /
-// resumeReviewSession）；缺了它 LearningSessionStatusByType.parse({type:'review',
-// status:'paused'}) 会抛错（paper attempt session 走 review 状态机，practice
-// 列表读时过 Zod 校验，paused 卷会爆）。
+// 'paused' 由 src/capabilities/practice/server/review-session-lifecycle.ts
+// 写入/读出（pauseReviewSession / resumeReviewSession）；缺了它
+// LearningSessionStatusByType.parse({type:'review', status:'paused'}) 会抛错
+// （paper attempt session 走 review 状态机，practice 列表读时过 Zod 校验，
+// paused 卷会爆）。
 export const ReviewStatus = z.enum(['started', 'paused', 'completed', 'abandoned']);
 export type ReviewStatusT = z.infer<typeof ReviewStatus>;
 
