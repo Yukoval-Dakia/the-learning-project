@@ -1,6 +1,6 @@
 import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
-import { createCopilotConversation, listCopilotConversations } from '@/server/session/conversation';
+import { createCopilotConversation, listCopilotConversations } from './conversation-lifecycle';
 
 export async function readCopilotSessions(db: Db) {
   const sessions = await listCopilotConversations(db);

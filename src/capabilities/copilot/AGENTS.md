@@ -13,6 +13,7 @@
 | `api/accept-chip.ts` | `/api/teaching-sessions/[id]/accept-chip` 教学 chip 接受 |
 | `api/nudges.ts` | 主动 nudge 列表与 dismiss/opened 幂等处置 |
 | `server/` | 持久接纳/执行、turns 读取、summary、stream helpers 与 teaching 编排 |
+| `server/conversation-lifecycle.ts` | Copilot 与 teaching 的完整 Conversation 生命周期；共享 idle / orphan 经 `public.ts` 调用，durable caller 保留原事务和 receipt |
 | `tasks/index.ts` | Copilot 自有 TaskSpec 目录；原生子 agent 定义在 `server/subagents.ts` |
 | `ui/companion/` | 学习伙伴：`CompanionMount`（壳层根挂，side / float / sheet 三种形态）、组件与非视觉 controller（visit/会话、run 订阅、发送与恢复）；公共出口 `ui-public.ts` |
 

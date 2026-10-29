@@ -1,5 +1,9 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  ConversationOrphanStateError,
+  abandonOrphanConversationTx,
+} from '@/capabilities/copilot/public';
 import type { Db, Tx } from '@/db/client';
 import { learning_session, session_orphan_receipt, session_orphan_tick } from '@/db/schema';
 import {
@@ -8,10 +12,6 @@ import {
   readContractEpoch,
   waitForRunnableEpoch,
 } from '@/server/contract-epoch';
-import {
-  ConversationOrphanStateError,
-  abandonOrphanConversationTx,
-} from '@/server/session/conversation';
 import { PlacementOrphanStateError, abandonOrphanPlacementTx } from '@/server/session/placement';
 
 export const sessionOrphanFamilySchema = z.enum([

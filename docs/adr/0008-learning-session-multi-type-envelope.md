@@ -66,3 +66,12 @@ Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**—�
 完整既有 `assertFromState` 机制从 `src/server/session/guards.ts` 原文迁入 `src/kernel/learning-session-guard.ts`，Ingestion、Tutor、Conversation、Placement、Review 五个现役 consumer 直接消费新 owner，旧文件退出。泛型 assertion、allowed membership 判断、同步 throw 和精确 409 冲突错误保持；值依赖仍只有 `@/kernel/http` 的原 `ApiError` class，无 wrapper、barrel、兼容出口或工厂。
 
 各 type 的 allowed/from/to 政策、调用位置、锁与事务仍归各自原业务 owner。统一冲突错误原本就是一个完整机制，本次只改变归属，新增深度为 0；维护 Tutor 或 Ingestion 的合法状态集合仍须修改各业务 owner，不能据此声称新增状态政策隐藏或全局并发安全证明。2026-10-23 修订保留为当时归属的历史记录。
+
+
+## 归属修订（2026-10-29，YUK-1570）：Conversation 生命周期
+
+Conversation 完整生命周期归 `src/capabilities/copilot/server/conversation-lifecycle.ts`。创建、列表、显式/自动复用、teaching start、idle/end/abandon、orphan Tx 操作与两种 turn guard 同属一个 owner；旧 `src/server/session/conversation.ts` 删除，旧入口只退出 Conversation，Placement 与 LearningSessionTypeT 保留。已有机制的新增深度为 0，收益是 Copilot 的现役消费者与状态决策同归属。
+
+共享 idle handler 只消费 Copilot public 的既有 idle 操作；durable orphan family 消费既有 Tx 操作与同一错误 class。选择锁 key、锁序、重复取锁、时间采样、查询、版本、事件、异常与返回保持。durable caller 的原事务、receipt、fence、unknown-COMMIT 与 incarnation 边界不迁入 capability；checkpoint、chat 接纳及 turns 快照仍保留各自原事务与调用时序。没有实际消费者的 lifecycle 类型、常量和操作不因测试而扩大 public。
+
+本修订只记录源码归属；不证明初始化无副作用、并发安全、运行时恢复或部署验收，也不改变共享复用窗口、状态机、队列、Stop、判分、provider 或付费合同。

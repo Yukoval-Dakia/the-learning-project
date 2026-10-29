@@ -1,13 +1,13 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
-import { COPILOT_REUSE_WINDOW_MS } from '@/core/limits';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
 import { assertFromState } from '@/kernel/learning-session-guard';
+import { COPILOT_REUSE_WINDOW_MS } from '@/kernel/limits';
 
-// LearningSession.Conversation.* — Phase 2C Active Teaching Session.
+// Conversation session lifecycle for Copilot and teaching.
 //
 // State machine (ADR-0008 + docs/design/2026-05-24-teaching-idle-state-machine.md):
 //   active → idle             T4: 5min without a user message (promote_conversation_idle)
@@ -88,8 +88,7 @@ export async function startConversation(
  * active here so the row never stays stale.
  */
 // The reuse window lives in @/core/limits so the UI bootstrap auto-selection and
-// this server predicate cannot drift; deep-importing the copilot capability from
-// server would be an architecture regression (YUK-1340 P1).
+// this lifecycle predicate use the same constant.
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {

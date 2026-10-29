@@ -21,7 +21,7 @@ import { db } from '@/db/client';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
-import { Conversation } from '@/server/session';
+import * as Conversation from '../server/conversation-lifecycle';
 import { classifyCopilotTurn } from '../server/crisis-guard';
 
 // Closes the count-then-enqueue race inside the single Hono API process. A slot

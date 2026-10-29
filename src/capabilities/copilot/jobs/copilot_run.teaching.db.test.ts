@@ -8,8 +8,8 @@ import {
 import type { TeachingSkillResult } from '@/capabilities/copilot/server/skills/teaching-skill';
 import { event, learning_item, question } from '@/db/schema';
 import { computeReplay } from '@/kernel/job-events';
-import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import * as Conversation from '../server/conversation-lifecycle';
 import { runCopilotRun, writeSuccessfulTerminalProjection } from './copilot_run';
 
 const db = testDb();
