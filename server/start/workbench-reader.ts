@@ -35,7 +35,7 @@ export const readStartProposalInbox = (input: unknown) =>
   });
 export const readStartAutoApplied = () =>
   withStartDb(async (db) => {
-    const { getAutoAppliedDigest } = await import('@/server/proposals/auto-applied-read');
+    const { getAutoAppliedDigest } = await import('@/capabilities/shell/public');
     return getAutoAppliedDigest(db);
   });
 
