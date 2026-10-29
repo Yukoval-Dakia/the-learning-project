@@ -67,6 +67,7 @@ import {
   providerHttpTimeoutMs,
 } from './provider-http-timeout';
 import { createBudgetedProviderFetch } from './provider-transport';
+import { createRunMonitor } from './run-monitor';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import {
   STRUCTURED_OUTPUT_SUBMIT_TOOL,
@@ -773,6 +774,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
   private readonly executedToolCalls = new Map<string, number>();
+  private readonly runMonitor = createRunMonitor();
   /**
    * YUK-1547/YUK-1559 (C1/C6) — `pendingCoercions` queues adopted string→JSON
    * repairs per tool (prepareArguments runs before validation, so a call that
@@ -876,6 +878,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       },
       execute: (...args: Parameters<AgentTool['execute']>) => {
         this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
+        // Root and nested loops share these wrappers. Observe only actual
+        // execute crossings, with the prepared arguments passed to the delegate.
+        const observation = this.runMonitor.observeExecutedTool({
+          toolName: tool.name,
+          callId: args[0],
+          args: args[1],
+        });
         return traceOperation(
           'tool.execute',
           {
@@ -883,6 +892,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             tool_name: tool.name,
             tool_call_id: args[0],
             executed: true,
+            ...observation,
           },
           () => tool.execute(...args),
           {
