@@ -1,6 +1,5 @@
 // Stable server contract for consumers outside the ingestion capability.
 
-export type { MistakeProjection } from './api/contracts';
 export { CreateIngestionSessionBody, CreateMistakeBodySchema } from './api/contracts';
 export { answerIngestionAsk } from './server/agent/asks';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';

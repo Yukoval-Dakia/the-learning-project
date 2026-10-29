@@ -1,18 +1,17 @@
 import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
-
-import type { MistakeProjection } from '@/capabilities/ingestion/public';
-import {
-  type FailureAttempt,
-  getFailureAttemptById,
-  getFailureAttempts,
-} from '@/capabilities/knowledge/public';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import {
+  type FailureAttempt,
+  getFailureAttemptById,
+  getFailureAttempts,
+} from '@/kernel/read-models/failure-attempts';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
+import type { MistakeProjection } from '@/kernel/records/mistake-projection-contract';
 import { listLearningRecords } from '@/kernel/records/queries';
 import { readNativeMistakeEvidence } from './native-mistake-evidence';
 
