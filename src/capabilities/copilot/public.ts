@@ -14,6 +14,11 @@ export { requestCopilotCheckpointRevert } from './server/checkpoint-revert-opera
 // copilot 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { copilotConfigEffectiveFacts } from './server/config-effective-facts';
+export {
+  ConversationOrphanStateError,
+  abandonOrphanConversationTx,
+  idleConversation,
+} from './server/conversation-lifecycle';
 export { createCopilotSession, readCopilotSessions } from './server/conversation-requests';
 export { loadCopilotSummary } from './server/copilot-summary';
 export { dispatchSessionHead } from './server/durable-dispatch';

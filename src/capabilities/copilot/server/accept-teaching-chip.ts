@@ -9,8 +9,8 @@ import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { wakeHubSyncAfterCommit } from '@/server/boss/hub-sync-wake';
 import { acceptAiProposal } from '@/server/proposals/actions';
-import { Conversation } from '@/server/session';
 import type { AcceptTeachingChipBodySchema } from '../api/contracts';
+import * as Conversation from './conversation-lifecycle';
 
 // ADR-0011 §2.1 — a chip's source_event_id may only anchor to an agent
 // message in the same session, so a counted accept_suggestion can never anchor

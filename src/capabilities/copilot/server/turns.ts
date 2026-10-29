@@ -16,12 +16,9 @@ import type { Db, Tx } from '@/db/client';
 import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { eventAllowsDerivationSql } from '@/kernel/events/derivation-policy';
-import {
-  findReusableCopilotConversation,
-  getCopilotConversation,
-} from '@/server/session/conversation';
 import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
 import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
+import { findReusableCopilotConversation, getCopilotConversation } from './conversation-lifecycle';
 import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,

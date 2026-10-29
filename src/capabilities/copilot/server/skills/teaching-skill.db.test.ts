@@ -11,8 +11,8 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { event, learning_item, question } from '@/db/schema';
-import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import * as Conversation from '../conversation-lifecycle';
 import { writeCopilotInputEvent, writeTeachingCopilotReply } from '../conversation-writes';
 
 const db = testDb();

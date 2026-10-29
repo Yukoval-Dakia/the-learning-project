@@ -11,13 +11,13 @@ import {
   orchestrateCascadeRevert,
 } from '@/server/revert/cascade-revert';
 import {
-  findReusableCopilotConversation,
-  lockCopilotSessionSelection,
-} from '@/server/session/conversation';
-import {
   CopilotCheckpointParamsSchema,
   type CopilotCheckpointRevertRefusalT,
 } from '../api/contracts';
+import {
+  findReusableCopilotConversation,
+  lockCopilotSessionSelection,
+} from './conversation-lifecycle';
 import { COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 

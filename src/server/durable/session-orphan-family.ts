@@ -8,10 +8,6 @@ import {
   readContractEpoch,
   waitForRunnableEpoch,
 } from '@/server/contract-epoch';
-import {
-  ConversationOrphanStateError,
-  abandonOrphanConversationTx,
-} from '@/server/session/conversation';
 import { PlacementOrphanStateError, abandonOrphanPlacementTx } from '@/server/session/placement';
 
 export const sessionOrphanFamilySchema = z.enum([
@@ -398,6 +394,10 @@ async function commitRow(
   sessionId: string,
   deferred?: string,
 ): Promise<SessionOrphanOutcome> {
+  // Administrative parsing and status reads must not initialize the application DB.
+  const { ConversationOrphanStateError, abandonOrphanConversationTx } = await import(
+    '@/capabilities/copilot/public'
+  );
   const key = sessionOrphanKey(request);
   return db.transaction(
     async (tx) => {

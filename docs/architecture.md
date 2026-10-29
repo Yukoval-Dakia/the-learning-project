@@ -472,7 +472,7 @@ digest、cursor 与 receipt 语义。
 
 `learning_session` 承载 7 种 type：`ingestion | review | tutor | conversation | placement` 有实装状态机，`explore | create` 仍是 `placeholder` 单值占位。per-type status enum 与判别联合在 `src/core/schema/learning_session.ts`（`LearningSessionStatusByType`）；状态图与合法取值以该文件与各 lifecycle owner 为准，本文不复制。
 
-**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner——conversation / placement / review / tutor 在 `src/server/session/`（`index.ts` 命名空间导出），ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`。route / handler 不允许直接 `db.update(learning_session)`。
+**Single owner invariant** (ADR-0005 / ADR-0008)：每个 type 只有一个 lifecycle owner。Conversation 的完整生命周期归 `src/capabilities/copilot/server/conversation-lifecycle.ts`，共享 idle / orphan caller 经 Copilot `public.ts` 消费现有操作；旧 session 入口不再导出 Conversation。Ingestion 在 `src/capabilities/ingestion/server/session-lifecycle.ts`，其它 type 保留各自现役 owner。route / handler 不允许直接 `db.update(learning_session)`。
 
 **OCR 抽取层** (ADR-0002 修订)：用 Tencent QuestionMarkAgent (async submit+poll)，**不再 cascade**。Vision Tier 2/3 (haiku / sonnet) 仅作为**用户触发的救援**，走 `/api/ingestion/[id]/rescue`，永不参与自动 fallback。
 
