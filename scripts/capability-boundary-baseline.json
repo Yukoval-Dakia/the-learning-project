@@ -4605,6 +4605,54 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/agency/public.ts",
+      "siteKind": "module",
+      "symbol": "loadPredictionAccountabilityByKey",
+      "targetModule": "src/capabilities/agency/server/conjecture/accountability.ts",
+      "targetSymbol": "loadPredictionAccountabilityByKey",
+      "owner": "agency",
+      "consumers": [
+        {
+          "file": "src/server/grounding-gate/candidates.ts",
+          "line": 2
+        }
+      ],
+      "evidence": "Fixed 9966e72da193add8928bcff01fdb1cb6eb28c184: public export AST4/path8, canonical function AST155; existing Agency public consumer import AST2 now binds this operation and calls it at 186. The collector already imported Agency public before this patch and remains in server. Complete two owners and both caller non-import AST are unchanged; private flag reference resolves the same existing function. Native classifies this export module:2. No fake consumer or server-to-capability private edge.",
+      "rationale": "完整纠错有效事实聚合、单点评分符号、streak与flag裁定归Agency；grounding collector只交Db与cells取得profile，原阈值/默认/错误传播及ownerFreshlyConfirmed=false保持。 新增depth0，仅归属收益；type PredictionAccountability不冒value consumer，实际初始化/运行UNKNOWN。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-46f05da4-c011-4ee4-872f-0262709a43de",
+      "date": "2026-10-29"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/agency/public.ts",
+      "siteKind": "module",
+      "symbol": "rankEvidenceCellsByAccountability",
+      "targetModule": "src/capabilities/agency/server/conjecture/accountability.ts",
+      "targetSymbol": "rankEvidenceCellsByAccountability",
+      "owner": "agency",
+      "consumers": [
+        {
+          "file": "src/server/grounding-gate/candidates.ts",
+          "line": 2
+        }
+      ],
+      "evidence": "Fixed 9966e72da193add8928bcff01fdb1cb6eb28c184: public export AST4/path8, canonical function AST130; existing Agency public consumer import AST2 now binds this operation and calls it at 188与260. The collector already imported Agency public before this patch and remains in server. Complete two owners and both caller non-import AST are unchanged; private flag reference resolves the same existing function. Native classifies this export module:2. No fake consumer or server-to-capability private edge.",
+      "rationale": "完整rank multiplier及recurrence/probe_here/key稳定tie规则归同一Agency owner；nightly与grounding共用原规则，不在caller复制排序，不改变其各自人口/窗口/top-K政策。 新增depth0，仅归属收益；type PredictionAccountability不冒value consumer，实际初始化/运行UNKNOWN。",
+      "issue": "YUK-1570",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1570#comment-46f05da4-c011-4ee4-872f-0262709a43de",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "agency -> conjectures",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8033,6 +8081,46 @@
       "issue": "YUK-1570",
       "owns": "既有完整 typed-state 事实写入与replace owner；原纠错先读后锁窗口、无有效证据replace null、confused_with_kc_id=null、upsert先于anchor、KC锁及各自事务边界保持；混合类型符号按native value记录，不以Db类型证明活Tx或新增并发幂等。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/accountability.ts",
+      "module": "src/kernel/records/conjecture-prediction-scoring.ts",
+      "kind": "value",
+      "symbols": ["scorePrediction"],
+      "issue": "YUK-1570",
+      "owns": "既有完整43行纯单探针评分canonical；accountability的streak符号与hard-confirm的crucial判定继续同一规则，clamp/默认/运算顺序不变，不扩Rust port/估计/paid用途。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/hard-confirm.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["getCorrectionStatuses"],
+      "issue": "YUK-1570",
+      "owns": "既有correction事实owner；完整hard-confirm reader按原anchor/source身份与纠错状态读取，原查询/并行分组/异常传播不改，不新增snapshot/Tx保证。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/hard-confirm.ts",
+      "module": "src/kernel/read-models/probe-evidence.ts",
+      "kind": "value",
+      "symbols": ["getEffectiveProbeResultStatuses"],
+      "issue": "YUK-1570",
+      "owns": "既有probe有效事实owner；原validateDirectChain=true、sequence关联/依赖纠错与identity校验保持，source读取和默认空bucket/Map、warn及失败原位。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/hard-confirm.ts",
+      "module": "src/kernel/records/conjecture-prediction-scoring.ts",
+      "kind": "value",
+      "symbols": ["scorePrediction"],
+      "issue": "YUK-1570",
+      "owns": "既有完整43行纯单探针评分canonical；accountability的streak符号与hard-confirm的crucial判定继续同一规则，clamp/默认/运算顺序不变，不扩Rust port/估计/paid用途。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -9105,11 +9193,10 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 193,
+      "total": 192,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
-        "agency -> conjectures": 1,
         "agency -> proposals": 1,
         "copilot -> ai": 11,
         "copilot -> boss": 6,

@@ -127,5 +127,5 @@ YUK-679 extended scope 要求定位的「src/server/** 中的 srtOutcome 数值�
 
 YUK-1570 的原样归属迁移后，原 `src/server/conjectures/scoring.ts` 对应
 `src/kernel/records/conjecture-prediction-scoring.ts`，仍为同一完整三标量到四标量 TS 占位规则。
-真实消费者为 Agency 私有 reconcile、server conjectures accountability 和 hard-confirm；
+真实消费者为 Agency 私有 reconcile、accountability 和 hard-confirm；
 不改变本 ADR R1 的描述符边界、历史 score 解释或任何 PORT TRIGGER，不构成 Rust port。

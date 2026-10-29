@@ -2,6 +2,11 @@
 
 export { AgentNotesQuerySchema } from './api/contracts';
 export {
+  type PredictionAccountability,
+  loadPredictionAccountabilityByKey,
+  rankEvidenceCellsByAccountability,
+} from './server/conjecture/accountability';
+export {
   type ConjectureEvidenceAssetRef,
   type ConjectureEvidenceImageSource,
   type EnrichedEvidenceCell,
