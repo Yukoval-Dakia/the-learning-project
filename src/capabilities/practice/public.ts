@@ -362,7 +362,6 @@ export { createPracticePaperSubmission } from './server/paper-submission-operati
 export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
-  placementProbeEnabled,
 } from './server/placement-session-lifecycle';
 export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
 export {

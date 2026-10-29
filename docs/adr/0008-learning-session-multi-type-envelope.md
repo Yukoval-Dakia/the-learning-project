@@ -69,6 +69,6 @@ Sub 0d plan 之前规划的 agent_sessions / agent_messages 表已**作废**—�
 
 ## 归属修订（2026-10-30，YUK-1570）：Placement 完整生命周期
 
-Placement 的既有完整状态操作及 runtime flag 归 `src/capabilities/practice/server/placement-session-lifecycle.ts`。原 `src/server/session/placement.ts` 与混合 namespace 的 Placement 出口退出；Practice 本域直接调用，外部 orphan caller 通过既有 `practice/public.ts` 绑定操作与同一错误类，既有 `kernel/placement.ts` 从该 public 取得 flag。
+Placement 的既有完整状态操作及 runtime flag 归 `src/capabilities/practice/server/placement-session-lifecycle.ts`。原 `src/server/session/placement.ts` 与混合 namespace 的 Placement 出口退出；Practice 本域直接调用，外部 orphan caller 通过既有 `practice/public.ts` 绑定操作与同一错误类，Practice recovery 直接从同一私有 owner 取得 flag，旧 kernel flag 转出口退出。
 
 迁址不改变 Db/Tx、嵌套事务、行锁、clock、job_events、strict 与 canonical 幂等差异、orphan cutoff/version 合同。共享 durable family 保留 selection、phase/epoch fence、receipt 与恢复；Placement public 在实际 mutation 的 transaction 开始前动态加载，不进入 CLI 的环境加载前依赖图。准入、选题、终止、judge、θ、付费和恢复政策保持原 owner；新增 depth 为 0。
