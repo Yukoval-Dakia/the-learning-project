@@ -4573,6 +4573,22 @@
       "from": 6,
       "to": 5,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> questions",
+      "date": "2026-10-29",
+      "from": 4,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> questions",
+      "date": "2026-10-29",
+      "from": 5,
+      "to": 2,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7866,6 +7882,96 @@
       "issue": "YUK-1522",
       "owns": "Exact immutable source policy and generation checks under source document SHARE locks at enqueue, actual paid send and receipt application boundaries.",
       "date": "2026-10-28"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/auto-enroll.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留无作答自动登记分支原逐 block Tx 的首发。已作答分支、KC/tagging、先前 block 已提交与失败恢复仍由原 caller 承担。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留图像候选接受最终 Tx 内首发。下载/R2/VLM 的先前费用与外部副作用、receipt、提交后 best-effort enqueue 仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/import-completion.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留新导入题原 Tx 内首发与异常传播，复用 capture 不重复首发；导入 operation receipt、capture 复用及失败结果仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/legacy-record-appliers.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边只承接 record promotion 的 question 分支原 Tx 内首发与手动证据参数；其它记录分支、proposal 接受/receipt 与恢复仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/question_admission_run.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroup"],
+      "issue": "YUK-1570",
+      "owns": "完整题组冻结契约与生命周期发布 owner；本边保留原 receipt 对应 resolved contract 的 Tx 内发布，admission claim、paid 调用、回执核对及恢复仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留新草稿持久化 Tx 内的发布与原 withheld 默认；草稿 INSERT/race、生成费用、后续核验 intent 和提交后失败处理仍在 QuizGen。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/proposal-appliers.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留人工接受、草稿接受和结构编辑中的原 Tx 内发布；外层锁、proposal/rate、FSRS 与 receipt/recovery 仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/serving-actions.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留 reverify/release hold 原 Tx 内重新发布；动作资格、hold/claim、版本冲突、回滚与 readback 仍在原 caller。",
+      "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/submit-question.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "完整题组发布 owner；本边保留 enrichment 原 Tx 内从行发布，原提交/编辑/draft-insert 其它出口保持；submit policy、receipt、失败及 paid 边界仍在原 caller。",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8911,7 +9017,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 202,
+      "total": 195,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -8927,7 +9033,6 @@
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "ingestion -> questions": 4,
         "ingestion -> r2": 13,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
@@ -8949,7 +9054,7 @@
         "practice -> mastery": 3,
         "practice -> memory": 1,
         "practice -> proposals": 4,
-        "practice -> questions": 5,
+        "practice -> questions": 2,
         "practice -> r2": 6,
         "practice -> session": 2,
         "shell -> boss": 1,
