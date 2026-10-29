@@ -4,8 +4,12 @@
 // `<=>` is pgvector cosine distance (0 nearest, 2 farthest). Archived and unembedded
 // rows are excluded. This is a pure global top-K read: effective domain is derived in
 // the app, so the caller applies both the threshold and the subject filter.
+//
+// YUK-1604 — only role='kc' nodes are match candidates: a goal/container node must
+// never be attributed to a question as its knowledge point (拍卷不把目标节点当知识点).
+// Legacy rows carry the column default 'kc', so nothing that matches today is lost.
 
-import { and, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
@@ -56,7 +60,13 @@ export async function matchKnowledgeBySimilarity(
       // approval_status is intentionally not filtered: a pending KC stays matchable so a
       // similar question reuses it instead of minting a duplicate. Gating on approved
       // would be a semantics change for the review flow to decide.
-      .where(and(isNull(knowledge.archived_at), sql`${knowledge.embedding} IS NOT NULL`))
+      .where(
+        and(
+          isNull(knowledge.archived_at),
+          eq(knowledge.role, 'kc'),
+          sql`${knowledge.embedding} IS NOT NULL`,
+        ),
+      )
       .orderBy(distanceExpr)
       .limit(limit)
   );

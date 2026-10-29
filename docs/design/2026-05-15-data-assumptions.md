@@ -431,6 +431,13 @@ INSERT 时：要么显式 set `draft_status`，要么加 allowlist 并标注可�
 
 ## 附录 · `knowledge.approval_status` 的 reserved-for-future 枚举（2026-06-19 · YUK-422）
 
+> **2026-10-28 更新（YUK-1405/YUK-1604）**：`'pending'` 已有写路径——`tagKnowledge` 的
+> `experimental:auto_tag_kc_created` 事件声明 pending（agent 铸 KC 不自批准），fold 只认该
+> claim；存量 pre-pending 出生由 ops 脚本经 `experimental:knowledge_approval_update` 控制面
+> 事件修复为 pending（UPDATE path 由此落地，fold-visible，`scripts/yuk1604-repair-knowledge-
+> classification.ts`，保留 ID 与原证据、JSON 回执）。列仍零过滤读者（inert marker）。下方
+> 原始快照保留作历史。`'rejected'` 仍无写路径。
+
 `knowledge.approval_status` 是三值枚举 `['pending', 'approved', 'rejected']`，但**今天完全 INERT**：
 所有行都被自动 approve，且**零读者**。owner 决策是**记录、不删**（document-not-drop）。
 

@@ -249,20 +249,39 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   const provenance = EvaluationProvenance.catch({ source: 'automatic', assisted: false }).parse(
     input.evaluation.provenance ?? {},
   );
+
+  // YUK-1604 — 讲解 vs 独立作答的去向分界：只有可证明独立的作答才更新掌握度。Submission
+  // receipts always snapshot the issuance assistance (single writer submit.ts), so a
+  // non-'independent' status means answer-help exposure or an unclassifiable one; the
+  // graduated-hint counters are the same process evidence the forgetting engine reads.
+  // Assisted attempts stay FULL evidence (assistance events, attempt, records, candidate
+  // excluded observations) — they just never move θ̂/PFA or scheduling here.
+  const independentAttempt =
+    scope.assistance === 'independent' &&
+    (scope.capture.hints_used ?? 0) === 0 &&
+    (scope.capture.final_hint_level ?? 0) === 0;
+  const learnerAssisted = !independentAttempt;
   const unitPartIds = unitPartIdsOf(scope.basis, scope.spec);
   const observations = localizeKcObservations(scope.basis, input.evaluation.unit_results, {
     unitPartIds,
     partKcIds,
     groupKcIds: scopeKcIds,
   });
-  const thetaDecision = resolveThetaDecision(observations, provenance);
+  // YUK-1604 — the judge-side decision stays the calibration anchor input (unchanged);
+  // the learner-assist gate below only withholds the θ̂/PFA update itself.
+  const judgeThetaDecision = resolveThetaDecision(observations, provenance);
+  const thetaDecision =
+    judgeThetaDecision.kind === 'update' && learnerAssisted
+      ? ({ kind: 'abstain', reason: 'learner_assisted' } as const)
+      : judgeThetaDecision;
 
+  // YUK-1604 — 独立作答才产生自动调度评级：看过讲解/带提示的作答是过程证据（与
+  // candidate 引擎的 forgettingSuppressed 同型）；用户显式自评（userRating）不受影响。
+  const autoRatingSuppressed =
+    provenance.source === 'automatic' && (provenance.assisted || learnerAssisted);
   const rating = scope.preserveScheduling
     ? null
-    : (input.userRating ??
-      (provenance.assisted && provenance.source === 'automatic'
-        ? null
-        : ratingForVerdict(verdict.verdict)));
+    : (input.userRating ?? (autoRatingSuppressed ? null : ratingForVerdict(verdict.verdict)));
   const ratingSource: SettlementPlan['ratingSource'] =
     rating === null
       ? 'none'
@@ -293,7 +312,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
   const calibrationEligible =
     provenance.source === 'automatic' && !provenance.assisted && verdict.normalized != null;
   const calibrationUpdateSet = new Set(
-    thetaDecision.kind === 'update' ? thetaDecision.knowledgeIds : [],
+    judgeThetaDecision.kind === 'update' ? judgeThetaDecision.knowledgeIds : [],
   );
   const calibrationPartsCovering = new Set<string>();
   for (const [partId, kcs] of partKcIds) {
