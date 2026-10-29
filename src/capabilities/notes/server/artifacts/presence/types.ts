@@ -1,6 +1,5 @@
 import type { TaskTextResult } from '@/ai/task-result';
-import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/public';
-import type { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
+import type { PersistNoteRefineApplyResult } from '@/capabilities/notes/server/note-refine-apply';
 import type { NotePatchT } from '@/core/schema/note-patch';
 import type { Db } from '@/db/client';
 
@@ -32,33 +31,7 @@ export interface QueuedPatch {
   queuedAt: Date;
 }
 
-interface QueuedPatchData {
-  patch: unknown;
-  taskResult?: unknown;
-  triggerEventId: string | null;
-  queuedAtMs: number;
-  // Provenance actor of the deferred patch (`event.actor_ref` semantics). Absent
-  // for the default note-refine mutator. A mutation-triggered hub sync opts out of
-  // the generic force-apply ceiling, so its deferred patch must survive stale-pending
-  // pruning instead of being dropped at the TTL like an abandoned note-refine patch.
-  actorRef?: string;
-}
-
-export type NoteRefineQueueEntry = QueuedPatchData &
-  (
-    | { state: 'pending' }
-    | { state: 'draining' }
-    | {
-        state: 'dead';
-        failure: { code: NoteRefineApplyError['code']; message: string; failedAtMs: number };
-      }
-  );
-
-// Historical JSON may predate queue state; reading it must not lose an already
-// admitted drain obligation.
-export type SerializedQueuedPatch =
-  | NoteRefineQueueEntry
-  | (QueuedPatchData & { state?: undefined; drainStarted?: true });
+export type { NoteRefineQueueEntry, SerializedQueuedPatch } from '@/core/schema/note-refine-queue';
 
 export interface EditingSessionSnapshot {
   artifact_id: string;
@@ -102,7 +75,7 @@ export interface MarkIdleAndFlushResult {
 }
 
 // Cross-process editing presence. Two concrete impls:
-//   - InMemoryPresenceStore — process-local Map; default for fast unit tests.
+//   - InMemoryPresenceStore — process-local Map, without durable drain recovery.
 //   - PgPresenceStore       — shared via `editing_presence` across web + worker.
 // All reads/writes are async to accommodate PG I/O; the in-memory impl resolves
 // synchronously.

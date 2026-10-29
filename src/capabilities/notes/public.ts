@@ -44,11 +44,7 @@ export {
 export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';
-export {
-  type PersistNoteRefineApplyResult,
-  persistNoteRefineApply,
-  undoNoteRefineApplyEvent,
-} from './server/note-refine-apply';
+export { undoNoteRefineApplyEvent } from './server/note-refine-apply';
 export {
   enqueueDreamingNoteRefine,
   enqueueMasteryNoteRefine,

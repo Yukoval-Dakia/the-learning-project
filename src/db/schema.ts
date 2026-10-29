@@ -49,6 +49,7 @@ import type {
   Rubric,
   ToolState,
 } from '../core/schema/business';
+import type { SerializedQueuedPatch } from '../core/schema/note-refine-queue';
 import type { ProviderAttemptUsageTruth } from '../core/schema/provider-attempt';
 import type {
   QuestionAnswerAnchorT,
@@ -61,7 +62,6 @@ import type { RtCorrectBuffer as RtCorrectBufferJson } from '../core/theta';
 // A4 (YUK-436) — persisted shadow shape for mastery_state.theta_grid_json (type-only,
 // erased at compile; the actual grid math lives in src/core/theta-grid.ts).
 import type { ThetaGridPosterior as ThetaGridPosteriorJson } from '../core/theta-grid';
-import type { SerializedQueuedPatch } from '../server/artifacts/presence/types';
 // YUK-599 — trait kind 枚举的单一来源（browser-safe 模块；防 db/subjects 两处漂移）。
 import { SUBJECT_TRAIT_KINDS } from '../subjects/trait-schemas';
 import { vector } from './vector';

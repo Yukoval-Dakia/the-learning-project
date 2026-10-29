@@ -1,7 +1,7 @@
 import {
   type PersistNoteRefineApplyResult,
   persistNoteRefineApply,
-} from '@/capabilities/notes/public';
+} from '@/capabilities/notes/server/note-refine-apply';
 
 import {
   EDITING_FORCE_APPLY_TIMEOUT_MS,
@@ -16,7 +16,7 @@ import {
   type RecordHeartbeatInput,
 } from './types';
 
-// Process-local presence store — the default for dev and the fast unit suite.
+// Process-local presence store; it does not provide durable drain recovery.
 // Observably equivalent to PgPresenceStore for session rows: keyed by
 // (artifactId, sessionId), active while the last heartbeat is within
 // EDITING_HEARTBEAT_TIMEOUT_MS, with a per-artifact defer queue.

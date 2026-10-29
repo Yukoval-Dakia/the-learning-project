@@ -24,10 +24,10 @@ vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
   persistNoteRefineApply: (args: { artifactId: string }) => persistNoteRefineApply(args),
 }));
 
+import { PgPresenceStore } from '@/capabilities/notes/server/artifacts/presence/pg';
+import { HUB_AUTO_SYNC_ACTOR_REF } from '@/capabilities/notes/server/artifacts/presence/types';
 // pg.ts 必须在 mock 之后导入。
 import { artifact, editing_presence } from '@/db/schema';
-import { PgPresenceStore } from './pg';
-import { HUB_AUTO_SYNC_ACTOR_REF } from './types';
 
 function createDeferred() {
   let resolve!: () => void;

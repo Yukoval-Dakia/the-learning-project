@@ -5,8 +5,8 @@
 //      driving the isArtifactIdle decision. Heartbeat/blur upsert/delete under the
 //      shared per-artifact advisory lock, serializing with hub-sync finalize.
 //      Active = last heartbeat ≤ 30s (exactly 30s still active). There is no
-//      10-minute forced apply: an abandoned session expires after 30s and its
-//      queued work flushes then.
+//      10-minute forced apply: an abandoned session expires after 30s, making its
+//      queued work eligible for a later flush.
 //   2. `editing_presence.pending` — note-refine defer queue. Patches queue while
 //      editing and flush FIFO once no session remains; whether to defer is driven
 //      by session presence above. Stale entries (> 10min) are dropped at load with
@@ -21,7 +21,7 @@ import { eq, sql } from 'drizzle-orm';
 import {
   type PersistNoteRefineApplyResult,
   persistNoteRefineApply,
-} from '@/capabilities/notes/public';
+} from '@/capabilities/notes/server/note-refine-apply';
 import { NoteRefineApplyError } from '@/core/blocks/apply-note-patch';
 import type { Db } from '@/db/client';
 import { artifact_edit_session, editing_presence } from '@/db/schema';
