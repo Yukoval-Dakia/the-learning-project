@@ -94,6 +94,10 @@ export interface Recording {
   /** Whether the recording's blocks are read: none to read, still reading, read, or failed. */
   blocksRead: BlocksRead;
   createdAt: number | null;
+  cost: {
+    evidence: NonNullable<SessionHistory['cost_evidence']> | null;
+    state: 'loading' | 'unavailable' | 'failed' | 'ready' | 'stale';
+  };
 }
 
 const WORKING = new Set(['queued', 'extracting']);
@@ -249,6 +253,7 @@ export function deriveRecording(input: {
       : (h?.session.path ?? (live?.agent ? 'agent' : live ? 'extract' : 'unknown'));
   const read: Recording['read'] =
     live && !settled ? 'live' : h ? 'history' : input.historyFailed ? 'unreadable' : 'loading';
+  const costEvidence = h?.cost_evidence ?? null;
 
   return {
     id: input.id,
@@ -273,5 +278,17 @@ export function deriveRecording(input: {
     blocks,
     blocksRead: input.blocksRead,
     createdAt,
+    cost: {
+      evidence: costEvidence,
+      state: input.historyFailed
+        ? costEvidence
+          ? 'stale'
+          : 'failed'
+        : !h
+          ? 'loading'
+          : costEvidence
+            ? 'ready'
+            : 'unavailable',
+    },
   };
 }

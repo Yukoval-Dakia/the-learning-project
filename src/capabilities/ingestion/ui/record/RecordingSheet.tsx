@@ -3,6 +3,7 @@ import { RetryLine } from '@/ui-next/primitives/RetryLine';
 import { SkeletonLines } from '@/ui-next/primitives/SkeletonLines';
 import { AgentLines } from './AgentLines';
 import { BlockLines } from './BlockLines';
+import { CostSection } from './CostSection';
 import { PageStrip } from './PageStrip';
 import { PriorRuns } from './PriorRuns';
 import { PurposeSection } from './PurposeSection';
@@ -33,6 +34,7 @@ export function RecordingSheet({
     detail,
     title: serverTitle,
     failedToLoad,
+    historyReading,
     retry,
   } = useRecording(sessionId);
   const start = useStartState(sessionId);
@@ -145,6 +147,8 @@ export function RecordingSheet({
       )}
 
       <PriorRuns sessionId={rec.id} runs={rec.priorRuns} onHoverPage={setLitPage} />
+
+      <CostSection cost={rec.cost} refreshing={historyReading} onRefresh={retry} />
 
       <footer className="rc-sheet-foot">
         {receipt && (
