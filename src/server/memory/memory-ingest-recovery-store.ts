@@ -73,7 +73,9 @@ async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIng
 
 async function assertUserSource(db: Db | Tx, sourceId: string): Promise<void> {
   if ((await readEventDerivationPolicy(db, sourceId)) !== 'allow')
-    throw new MemoryReconcileHandoffError('restricted operator source');
+    throw new MemoryReconcileHandoffError(
+      `operator replay requires an existing user event ${sourceId}`,
+    );
   const rows = await db
     .select({ actor: event.actor_kind, payload: event.payload })
     .from(event)
