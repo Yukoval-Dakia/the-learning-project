@@ -65,10 +65,6 @@ export type {
   CreateLearningIntentKnowledgeNodeInput,
 } from './server/learning-intent-knowledge';
 export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
-export {
-  archiveMisconceptionEdge,
-  createMisconceptionEdge,
-} from './server/misconception-edges';
 export { loadMisconceptionsForKc } from './server/misconception-read';
 export { updateSubjectRootNameFromControl } from './server/node-creation';
 export { loadKnowledgeNodePage } from './server/node-page';

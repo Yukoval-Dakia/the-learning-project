@@ -24,23 +24,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'knowledge',
     consumer: 'agency',
-    files: [
-      'src/capabilities/agency/server/misconception-promote.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
-    symbols: [
-      'archiveMisconceptionEdge',
-      'createLearningIntentKnowledgeNode',
-      'createMisconceptionEdge',
-    ],
-    dto: 'knowledge misconception and intent commands',
+    files: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
+    symbols: ['createLearningIntentKnowledgeNode'],
+    dto: 'knowledge intent commands',
     justification:
-      'agency misconception/intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
+      'agency intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
     reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/server/misconception-promote.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
+    commandFiles: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
   },
   {
     owner: 'notes',
