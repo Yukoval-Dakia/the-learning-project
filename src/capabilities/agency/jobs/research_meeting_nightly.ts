@@ -68,13 +68,13 @@ import { getMasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { type TaskTextRunFn, costUsdToMicroUsd, sumAllKnownCostUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
+import { resolveSubjectProfile } from '@/subjects/profile';
+import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
 import {
   type PredictionAccountability,
   loadPredictionAccountabilityByKey,
   rankEvidenceCellsByAccountability,
-} from '@/server/conjectures/accountability';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import { writeRetryableAiFailureLedger } from '../server/ai-runtime';
+} from '../server/conjecture/accountability';
 
 /** Structural per-run propose cap (top-K salient cells → at most K conjectures). */
 export const RESEARCH_MEETING_MAX_CONJECTURES = 3;
