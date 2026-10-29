@@ -21,6 +21,7 @@ import { archiveProposalCooldownKey, writeArchiveProposal } from '@/kernel/propo
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { rewriteGoalScopeOnMerge } from '@/kernel/records/goal-commands';
+import { retireKcTypedStateOnMerge } from '@/kernel/records/kc-typed-state';
 import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
@@ -29,7 +30,6 @@ import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-mat
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from '@/kernel/records/misconception-edges';
-import { retireKcTypedStateOnMerge } from '@/server/conjectures/typed-state';
 import { retireFsrsStateOnMerge } from '@/server/fsrs/state';
 import { retireMasteryStateOnMerge } from '@/server/mastery/state';
 import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
