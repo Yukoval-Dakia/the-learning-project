@@ -1,6 +1,6 @@
 import type { Tx } from '@/db/client';
 import type { ProposalRetractInput } from '@/kernel/proposals';
-import { mutateGoal } from './goals/commands';
+import { mutateGoal } from '@/kernel/records/goal-commands';
 
 /** The surrounding proposal transaction owns the correction event; the goal owner settles it. */
 export async function retractGoalScopeProposal(tx: Tx, input: ProposalRetractInput): Promise<void> {
