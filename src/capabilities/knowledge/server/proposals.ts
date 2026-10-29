@@ -26,6 +26,7 @@ import {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from '@/kernel/records/knowledge-merge-attribution';
+import { requireKnowledgeHistory } from '@/kernel/records/knowledge-node-history-guard';
 import { projectKnowledgeNodeGuarded } from '@/kernel/records/knowledge-node-materialization';
 import { retireLearnerAxisStateOnMerge } from '@/kernel/records/learner-axis-state';
 import { upsertMaterializedIdIndex } from '@/kernel/records/materialized-id-index';
@@ -40,7 +41,6 @@ import {
   listLiveEdgesTouchingNode,
   reactivateKnowledgeEdge,
 } from './edges';
-import { requireKnowledgeHistory } from './node-history-guard';
 
 type DbLike = Db | Tx;
 

@@ -66,7 +66,6 @@ export type {
 } from './server/learning-intent-knowledge';
 export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
 export { loadMisconceptionsForKc } from './server/misconception-read';
-export { updateSubjectRootNameFromControl } from './server/node-creation';
 export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
