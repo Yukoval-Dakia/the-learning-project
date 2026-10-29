@@ -21,7 +21,10 @@ import { getConfigFlag } from '@/core/config/store';
 import { MisconceptionInsert } from '@/core/schema/misconception';
 import type { Tx } from '@/db/client';
 import { misconception, misconception_edge } from '@/db/schema';
-import { archiveMisconceptionEdge, createMisconceptionEdge } from '@/kernel/records/misconception-edges';
+import {
+  archiveMisconceptionEdge,
+  createMisconceptionEdge,
+} from '@/kernel/records/misconception-edges';
 
 /**
  * Recurrence threshold the accept must meet to promote.
