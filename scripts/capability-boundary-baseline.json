@@ -4533,6 +4533,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "knowledge -> practice",
+      "date": "2026-10-29",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -7656,6 +7664,16 @@
       "issue": "YUK-1570",
       "owns": "Own the complete existing goal creation, accepted materialization, status/scope mutation and knowledge-merge scope rewrite. Preserve caller Db/Tx and nested transaction boundaries, sorted goal row locks, missing-row no-op and legacy-anchor failure, locked-row/event-watermark clocks and distinct retract correction clock, defaults and explicit-null semantics, event/index/projection order, stable scope deduplication and ordered goal-id receipts. Agency retains proposal acceptance and correction retries; Practice retains placement admission and augmentation decisions; Knowledge retains merge eligibility, G/knowledge locks and outer repair receipts. No new concurrency-idempotency, B policy, paid, runtime or lock guarantee.",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/proposals.ts",
+      "module": "src/kernel/records/knowledge-merge-attribution.ts",
+      "kind": "value",
+      "symbols": ["rewriteLearningItemKnowledgeIds", "rewriteQuestionKnowledgeIds"],
+      "issue": "YUK-1570",
+      "owns": "Own the complete existing question and learning-item knowledge-merge attribution rewrites. Preserve sorted row selection and FOR UPDATE, stable first-occurrence ID replacement, serial awaited writes and ordered receipts. Question retains direct knowledge_ids UPDATE and its from-equals-into behavior; learning-item retains early same-ID return and canonical anchor check, causal event time, repair fact and guarded projection without version/time bump. Caller retains the transaction, G/knowledge lock order, cross-surface sequence, accept/sweep/backfill failure and recovery boundaries. No new B, eligibility, scoring, paid, lock, idempotency or undo guarantee.",
+      "date": "2026-10-29"
     }
   ],
   "sourceSizeRecords": [
@@ -8701,7 +8719,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 26,
+      "total": 25,
       "byOwnerPair": {
         "observability -> knowledge": 1,
         "agency -> knowledge": 1,
@@ -8710,7 +8728,6 @@
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
-        "knowledge -> practice": 1,
         "observability -> agency": 1,
         "observability -> practice": 1,
         "practice -> agency": 2,
@@ -8721,7 +8738,7 @@
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },
-      "nontrivialSccs": [["agency", "knowledge", "practice"]]
+      "nontrivialSccs": [["agency", "practice"]]
     }
   }
 }
