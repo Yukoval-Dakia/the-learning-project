@@ -69,28 +69,31 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       {m.primary_view ? <HeroBlock view={m.primary_view} navigate={props.navigate} /> : null}
       {settled ? <ProposalNotice pending={pending} navigate={props.navigate} /> : null}
       {canCorrect || checkpoint ? (
-        <div className="un-cp-row-actions">
-          {canCorrect && turnId ? (
-            <button
-              type="button"
-              className="un-cp-text-btn un-hit"
-              aria-pressed={props.correctionSelected}
-              onClick={() => props.onSelectCorrection(turnId, props.turnNumber ?? 0)}
-            >
-              更正这轮
-            </button>
-          ) : null}
-          {checkpoint ? (
-            <button
-              type="button"
-              className="un-cp-text-btn un-hit"
-              disabled={props.revertPending}
-              onClick={() => props.onRevert(checkpoint)}
-            >
-              {props.revertPending ? '撤回中…' : '撤回本轮更改'}
-            </button>
-          ) : null}
-        </div>
+        <details className="un-st-message-operations">
+          <summary>本轮操作</summary>
+          <div className="un-cp-row-actions">
+            {canCorrect && turnId ? (
+              <button
+                type="button"
+                className="un-cp-text-btn un-hit"
+                aria-pressed={props.correctionSelected}
+                onClick={() => props.onSelectCorrection(turnId, props.turnNumber ?? 0)}
+              >
+                更正这轮
+              </button>
+            ) : null}
+            {checkpoint ? (
+              <button
+                type="button"
+                className="un-cp-text-btn un-hit"
+                disabled={props.revertPending}
+                onClick={() => props.onRevert(checkpoint)}
+              >
+                {props.revertPending ? '撤回中…' : '撤回本轮更改'}
+              </button>
+            ) : null}
+          </div>
+        </details>
       ) : null}
     </div>
   );
