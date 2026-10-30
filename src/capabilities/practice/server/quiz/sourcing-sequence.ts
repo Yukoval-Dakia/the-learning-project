@@ -9,11 +9,10 @@
 // pool and enqueues production; it never touches mistakes or review state.
 
 import { and, eq, isNull } from 'drizzle-orm';
-
+import { buildExaMcpServer } from '@/ai/exa-mcp';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible, questionKindToSkillKind } from '@/subjects/question-kind';

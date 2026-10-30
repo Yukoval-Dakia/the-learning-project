@@ -1,3 +1,4 @@
+import { EXA_MCP_ALLOWED_TOOLS } from '@/ai/exa-mcp';
 import { getConfigFlag } from '@/core/config/store';
 import {
   type AgentDefinition,
@@ -9,7 +10,6 @@ import {
   isSpawnToolName,
 } from '@/core/subagent-contract';
 import { READ_TOOLS, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
-import { EXA_MCP_ALLOWED_TOOLS } from '@/server/ai/mcp/exa';
 import type {
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,

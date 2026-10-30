@@ -1,4 +1,10 @@
 import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/ai/exa-mcp';
+import {
   type BuildMcpServerOptions,
   type RemoteMcpHttpConfig,
   piDomainMount,
@@ -19,12 +25,6 @@ import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/derivation-policy';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
-import {
-  EXA_MCP_ALLOWED_TOOLS,
-  EXA_MCP_SERVER_NAME,
-  EXA_SCOPED_TOOL_NAMES,
-  buildExaMcpServer,
-} from '@/server/ai/mcp/exa';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
 import { shouldEmitToolUseForCaller } from '@/server/ai/tools/mcp-bridge';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';

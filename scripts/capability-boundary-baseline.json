@@ -4787,6 +4787,22 @@
       "direction": "decrease"
     },
     {
+      "debt": "capabilityToServer",
+      "pair": "copilot -> ai",
+      "date": "2026-10-30",
+      "from": 11,
+      "to": 9,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> ai",
+      "date": "2026-10-30",
+      "from": 41,
+      "to": 38,
+      "direction": "decrease"
+    },
+    {
       "type": "stable_contract",
       "file": "src/db/schema.ts",
       "siteKind": "module",
@@ -11694,12 +11710,12 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 165,
+      "total": 160,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
         "agency -> proposals": 1,
-        "copilot -> ai": 11,
+        "copilot -> ai": 9,
         "copilot -> boss": 6,
         "copilot -> memory": 1,
         "copilot -> proposals": 1,
@@ -11719,7 +11735,7 @@
         "notes -> boss": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
-        "practice -> ai": 41,
+        "practice -> ai": 38,
         "practice -> assessment": 1,
         "practice -> boss": 12,
         "practice -> coldstart": 1,
