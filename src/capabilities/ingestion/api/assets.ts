@@ -1,8 +1,8 @@
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { db } from '@/db/client';
 import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
+import { getR2 } from '@/kernel/object-storage';
 import { persistImageAsset } from '@/kernel/records/asset-store';
-import { getR2 } from '@/server/r2';
 
 // Single-sourced so the DOCX embedded-media path enforces the same cap.
 const MAX_UPLOAD_BYTES = MAX_IMAGE_UPLOAD_BYTES;

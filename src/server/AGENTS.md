@@ -24,7 +24,8 @@
 | `agents/` | `leave_agent_note` 软提示 channel（→ Dreaming / Maintenance）|
 | `learning-items/` | active learning-item reader（Coach brief 的 attention pressure）|
 | `goals/` · `today/` · `records/` · `admin/` | learning intent / today plan / learning record / 管理面 |
-| `export/` · `http/` · `redis/` · `r2.ts` | 导入导出 / HTTP helper / redis / R2 blob client |
+| `export/` · `http/` · `redis/` | 导入导出 / HTTP helper / redis |
+| `../kernel/object-storage.ts` | 共享 R2/S3 对象 I/O 与首次调用时构造的 client；资产引用、锁、恢复及付费策略归业务 owner |
 
 ## CONVENTIONS
 - 每个 service owns 自己的 write path（schema audit 要求）。AI tool 只能包装已有 owner service，不能传任意 mutation payload。

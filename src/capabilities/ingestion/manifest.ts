@@ -372,7 +372,7 @@ export const ingestionCapability = defineCapability({
         load: async () => {
           const [{ buildTencentOcrHandler }, { getR2 }] = await Promise.all([
             import('./jobs/tencent_ocr_extract'),
-            import('@/server/r2'),
+            import('@/kernel/object-storage'),
           ]);
           return (db: Parameters<typeof buildTencentOcrHandler>[0]['db']) =>
             buildTencentOcrHandler({

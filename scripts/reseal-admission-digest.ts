@@ -32,7 +32,7 @@ async function reportDatabase(): Promise<number> {
     ...(APPLY
       ? {
           readAssetBytes: async (storageKey: string) => {
-            const { getR2 } = await import('@/server/r2');
+            const { getR2 } = await import('@/kernel/object-storage');
             return getR2().get(storageKey);
           },
         }

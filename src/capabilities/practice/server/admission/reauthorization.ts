@@ -388,7 +388,7 @@ export async function releaseAdmissionVoidSuccessor(
     '@/db/paid-effect-control'
   );
   const { publishQuestionGroup } = await import('@/kernel/records/assessment-publication');
-  const { getR2 } = await import('@/server/r2');
+  const { getR2 } = await import('@/kernel/object-storage');
   await lockPaidEffectControlFamily(tx, ADMISSION_FAMILY);
   // Re-verify EVERYTHING under the locks the write will take — the frozen
   // plan's fences/identity digests must still hold or the release aborts.

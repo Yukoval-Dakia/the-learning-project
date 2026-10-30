@@ -55,6 +55,7 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { question, question_block, question_group_lifecycle, question_revision } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { getR2 } from '@/kernel/object-storage';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishedContractSeal } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
@@ -91,7 +92,6 @@ import {
   bindDeclaredGroupIds,
   typedChildChoicesMd,
 } from '@/server/questions/typed-group';
-import { getR2 } from '@/server/r2';
 
 export const DRAFT_SUBMIT_ACTION = 'experimental:question_draft_submit';
 

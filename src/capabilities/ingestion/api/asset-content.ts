@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getR2 } from '@/server/r2';
+import { getR2 } from '@/kernel/object-storage';
 
 /** 可在本站按原 mime 直接渲染的位图类型（不含 svg：svg 可携带脚本）。 */
 const DISPLAYABLE_IMAGE_MIMES: ReadonlySet<string> = new Set([

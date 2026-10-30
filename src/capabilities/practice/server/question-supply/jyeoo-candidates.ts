@@ -35,18 +35,13 @@ import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_q
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 import {
   type SourceAssetRow,
   lockImageStorageKey,
   persistImageAsset,
   sha256Hex,
 } from '@/kernel/records/asset-store';
-import { type R2Client, getR2 } from '@/server/r2';
-
-// r2 访问单主：practice 内只有本模块直接触达 '@/server/r2'（边界 audit 的
-// distinct-file 计数保持基线）。reaper / tools 一律经本模块的转发出口。
-export type { R2Client as JyeooR2Client } from '@/server/r2';
-export { getR2 as resolveJyeooR2 } from '@/server/r2';
 
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { canonicalQuestionContentHash } from '../quiz/content-fingerprint';
@@ -208,7 +203,7 @@ export interface RunJyeooFetchCandidatesParams {
   ctx?: { taskRunId?: string; sessionId?: string; causedByEventId?: string };
   /**
    * r2 惰性解析器：仅当存活候选带图时调用一次。测试注入 memR2；生产 caller 可省略，
-   * 缺省走本模块的 getR2（practice 内 r2 访问单主，见模块头注释）。
+   * 缺省走共享对象存储 owner 的 getR2。
    */
   resolveR2?: () => R2Client;
   now?: Date;

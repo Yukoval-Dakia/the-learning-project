@@ -24,7 +24,7 @@ else has a working default.
 | **OCR (GLM-OCR, DEFAULT)** | `ZHIPU_API_KEY` (+ optional `EXTRACT_OCR_ENGINE`, default `glm`) | Default character-level text + layout extraction — `layout_parsing` (`src/capabilities/ingestion/server/glm_ocr.ts`). Lives in `.env`. Billable: 0.2 元/M tokens, logged to `cost_ledger` (provider `glm`). **Required on the default path** — a missing key fails every extraction `failed_permanent` (YUK-253). | open.bigmodel.cn console |
 | **OCR (Tencent, ROLLBACK)** | `TENCENT_SECRET_ID`, `TENCENT_SECRET_KEY` (+ optional `TENCENT_OCR_REGION`, default `ap-shanghai`) | Retained rollback engine behind `EXTRACT_OCR_ENGINE='tencent'` (YUK-253). `SubmitQuestionMarkAgentJob` / `DescribeQuestionMarkAgentJob` (`src/capabilities/ingestion/server/tencent_mark.ts`). Extraction is a deterministic API, **not** an LLM (ADR-0002). Keep set during the GLM bake-in window. | Tencent Cloud console |
 | **VLM (xiaomi/mimo)** | `XIAOMI_API_KEY` (+ optional `MIMO_VISION_BASE_URL`, `MIMO_VISION_MODEL`) | Vision **rescue** (explicit, paid, user-authorized — `src/capabilities/ingestion/server/vision.ts`) + every AI task (tagging, judge, brief, dreaming, coach). | xiaomi/mimo console |
-| **Blob (Cloudflare R2)** | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Original uploads + auto-cropped figures (`src/server/r2.ts:50`). | Cloudflare R2 |
+| **Blob (Cloudflare R2)** | `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Original uploads + auto-cropped figures (`src/kernel/object-storage.ts:74`). | Cloudflare R2 |
 
 Also relevant but **not** blocking the manual ingestion flow:
 

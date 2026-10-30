@@ -285,7 +285,7 @@ export async function publishVerifyLifecycleUpdate(
   const result = await publishQuestionGroup(tx, {
     group_id: groupRootId,
     readAssetBytes: async (storageKey) => {
-      const { getR2 } = await import('@/server/r2');
+      const { getR2 } = await import('@/kernel/object-storage');
       return getR2().get(storageKey);
     },
     contract: {
@@ -1179,7 +1179,7 @@ export async function runSourceVerify(
                   const cleared = await publishQuestionGroup(tx, {
                     group_id: groupRootId,
                     readAssetBytes: async (storageKey) => {
-                      const { getR2 } = await import('@/server/r2');
+                      const { getR2 } = await import('@/kernel/object-storage');
                       return getR2().get(storageKey);
                     },
                     contract: {

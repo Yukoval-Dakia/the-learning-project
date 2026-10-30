@@ -16,8 +16,8 @@ import {
 } from '@/capabilities/ingestion/server/source-package';
 import { db } from '@/db/client';
 import { ApiError } from '@/kernel/http';
+import { getR2 } from '@/kernel/object-storage';
 import { getStartedBoss } from '@/server/boss/client';
-import { getR2 } from '@/server/r2';
 import { initiateDocxTextUpload } from './text-session-lifecycle';
 
 // Complete DOCX upload operation, private to the ingestion capability.

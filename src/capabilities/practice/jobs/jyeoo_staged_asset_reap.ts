@@ -14,8 +14,8 @@ import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { question, source_asset } from '@/db/schema';
+import { type R2Client as JyeooR2Client, getR2 as resolveJyeooR2 } from '@/kernel/object-storage';
 import { lockImageStorageKey } from '@/kernel/records/asset-store';
-import { type JyeooR2Client, resolveJyeooR2 } from '../server/question-supply/jyeoo-candidates';
 
 export const JYEOO_STAGED_ASSET_GRACE_HOURS = 24;
 

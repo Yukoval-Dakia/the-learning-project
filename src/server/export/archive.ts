@@ -10,8 +10,8 @@ import { getConfigSnapshot } from '@/core/config/store';
 import { readCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
 import { hydrateConfigFromDb } from '@/server/config/hydrate';
-import type { R2Client } from '@/server/r2';
 import {
   BACKUP_EXCLUDED_TABLES,
   FK_ORDER,
