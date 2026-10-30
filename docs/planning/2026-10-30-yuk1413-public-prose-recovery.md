@@ -47,7 +47,7 @@ completed 始终显示原 sealed `reply_md`（实时 REPLY）或 turns 的原 `t
 
 可信 400 只沿原 `StreamCollectResult.failure={kind:'provider_request_rejected',httpStatus:400}` 传播。无正文文案为：**模型服务拒绝了请求(400)，具体参数原因尚未定位，本次未完成回答**。不从 error string、HTTP 文案或 trace 数猜 400，不输出原错误、参数、key。新 FAILED 的 error 使用安全固定说明，原 durable_failure / paid / trace / receipt 继续独立保留。
 
-失败/中断时，原 reply commit owner 从持久 delta 重建正文，忽略内存 partial、terminal candidate 和工具 summary 对正文的替代。最终 receipt 仍只在其原 digest 与实际正文匹配时保存；不为 public_prose 改签。primary_view 继续需要原有效 finalization 权威，不能由公开正文授予。turns 的 tool_calls / tool_operations / subagent 状态仍来自原权威投影，不因 partial 缺 receipt 隐藏真实工具回执。新 public_prose metadata 和在途合成行不加入 forModel reader。
+失败/中断时，原 reply commit owner 从持久 delta 重建正文，忽略内存 partial、terminal candidate 和工具 summary 对正文的替代。 无已公开正文且已有可信 finalizer prepared/receipt 配对时，保留原 prepared 字节和原 receipt；配对必须同时满足 prepared.text=replyText 及 receipt.reply_sha256 与该正文一致。安全分类独立保存在 public_prose.failure，不为新通用提示替换或重签正文；没有该配对的无正文400仍用明确400说明。最终 receipt 仍只在其原 digest 与实际正文匹配时保存；不为 public_prose 改签。primary_view 继续需要原有效 finalization 权威，不能由公开正文授予。turns 的 tool_calls / tool_operations / subagent 状态仍来自原权威投影，不因 partial 缺 receipt 隐藏真实工具回执。新 public_prose metadata 和在途合成行不加入 forModel reader。
 
 ## 原 owner、事务与恢复
 

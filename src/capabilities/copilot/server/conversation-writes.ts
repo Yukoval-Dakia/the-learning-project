@@ -190,7 +190,14 @@ export async function writeCopilotReply(
               }),
         }
       : undefined;
-  const preservePublic = publicProse && params.outcome !== 'success';
+  // With no published text, retain the finalizer's original failure disclosure
+  // and matching receipt. There is no public prose to replace or re-sign.
+  const retainEmptyFinalizedReply =
+    publicProse?.text.length === 0 &&
+    params.preparedReply?.text === params.replyText &&
+    params.replyFinalization?.reply_sha256 ===
+      createHash('sha256').update(params.replyText, 'utf8').digest('hex');
+  const preservePublic = publicProse && params.outcome !== 'success' && !retainEmptyFinalizedReply;
   const replyText = preservePublic
     ? publicProse.text || publicProseFailureMessage(publicProse.failure)
     : params.replyText;
