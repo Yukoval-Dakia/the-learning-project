@@ -26,6 +26,12 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobWithMetadata, SendOptions } from 'pg-boss';
 import {
+  EXA_MCP_ALLOWED_TOOLS,
+  EXA_MCP_SERVER_NAME,
+  EXA_SCOPED_TOOL_NAMES,
+  buildExaMcpServer,
+} from '@/ai/exa-mcp';
+import {
   type BuildMcpServerOptions,
   type PiToolMount,
   type RemoteMcpHttpConfig,
@@ -40,7 +46,6 @@ import {
   explainDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
 import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
-
 import {
   type NormalizedAuthorStructured,
   normalizeAuthorStructured,
@@ -65,12 +70,6 @@ import {
   type DomainToolName,
   toMcpAllowedToolName,
 } from '@/kernel/tools/allowlists';
-import {
-  EXA_MCP_ALLOWED_TOOLS,
-  EXA_MCP_SERVER_NAME,
-  EXA_SCOPED_TOOL_NAMES,
-  buildExaMcpServer,
-} from '@/server/ai/mcp/exa';
 import { runAgentTask } from '@/server/ai/runner';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import { answerClassCompatible } from '@/subjects/question-kind';
