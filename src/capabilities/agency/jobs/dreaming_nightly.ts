@@ -270,6 +270,8 @@ export async function runDreamingNightly(
     deps.readAgentNotesFn ??
     ((db: Db, now: Date) => readAgentNotes(db, { for_agent: 'dreaming', now }));
 
+  let noteRefineDispatch = { requested: 0, enqueued: 0, skipped: 0, failed: 0 };
+
   return runAgencyProposalScan(db, {
     surface: 'dreaming',
     taskKind: 'DreamingTask',
@@ -295,6 +297,7 @@ export async function runDreamingNightly(
       const agentNotes = await readNotes(db, now);
       return () => buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes);
     },
+    buildScanSuccessPayloadExtras: () => ({ note_refine_dispatch: noteRefineDispatch }),
     onNewProposalRows: async ({ db, newRows, triggerEventId }) => {
       const newDreamingNoteTargets = [
         ...new Set(
@@ -309,11 +312,17 @@ export async function runDreamingNightly(
             .filter((artifactId): artifactId is string => Boolean(artifactId)),
         ),
       ];
-      await Promise.all(
+      const results = await Promise.all(
         newDreamingNoteTargets.map((artifactId) =>
           enqueueDreamingNoteRefine({ db, artifactId, triggerEventId }),
         ),
       );
+      noteRefineDispatch = {
+        requested: results.length,
+        enqueued: results.filter((result) => result.status === 'enqueued').length,
+        skipped: results.filter((result) => result.status.startsWith('skipped:')).length,
+        failed: results.filter((result) => result.status === 'failed').length,
+      };
     },
   });
 }
