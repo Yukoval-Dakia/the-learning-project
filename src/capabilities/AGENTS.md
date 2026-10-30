@@ -37,6 +37,7 @@ src/capabilities/
 - pg-boss 与 Drizzle 的事务执行结果适配唯一 canonical 是 `@/db/pg-boss-drizzle`，capability 仅可直接消费 `fromPgBossDrizzleTx`；真实事务/保存点、接入时点及 send/cancel/readback、锁序、幂等、恢复和付费策略仍归各既有 owner。此例外不扩展为任意 db 内部模块的消费许可。
 - 工具挂载契约与构造的唯一 canonical 是 `@/ai/pi-tool-mount`，capability 仅可直接消费其既有 API：`RemoteMcpHttpConfig`、`PiToolMount`、`BuildMcpServerOptions`、`ToolInputInterceptResult`、`piToolWireName`、`piDomainMount`、`piRemoteMcpMount`、`piCustomTool`；domain 执行、registry、remote MCP 连接/关闭、日志/成本、取消与业务 gate 仍归既有 owner。此例外不扩展为任意 `@/ai/*` 消费许可。
 - Exa 远程 MCP 配置唯一 canonical 是 server-only `@/ai/exa-mcp`；Copilot 的 `server/copilot-execution.ts`、`server/subagents.ts` 与 Practice 的 `jobs/quiz_gen.ts`、`server/web-sourcing-operation.ts`、`server/quiz/sourcing-sequence.ts` 仅可消费其既有 `EXA_MCP_SERVER_NAME`、`EXA_SCOPED_TOOL_NAMES`、`EXA_MCP_ALLOWED_TOOLS`、`buildExaMcpServer`。该模块只拥有配置、精确工具名与缺凭据降级；连接/关闭、执行授权、取消、预算与付费策略仍归原 owner。禁止浏览器消费，不扩展为其它 `@/ai/*` 许可。
+- 工具镜像可见性策略的唯一 canonical 是 server-only `@/server/ai/tools/tool-mirror-policy`；仅 `src/capabilities/copilot/server/copilot-execution.ts` 可直接消费其 `shouldEmitToolUseForCaller`，用于现有实时 `onToolUse` 可见性判断。该模块拥有完整 actor/effect/mirrorPolicy 规则、wire 前缀判断和现有 registry 的按调用查询；registry Map、注册校验与启动注册时点仍归 `src/server/ai/tools/registry.ts` 及既有组合根，工具执行、取消、日志/event 写入、锁、恢复与付费策略仍归原 owner。禁止浏览器消费、兼容转发、复制规则或缓存查询；此许可仅限该文件和该符号，不扩展为任意 `@/server/*` 或 `@/ai/*` 消费许可。
 - 测试命名：`src/kernel/**` 与 `src/capabilities/**` 的 `*.unit.test.ts` 自动进无 DB 车道，`*.db.test.ts` 自动进 testcontainer 车道。
 
 ## ANTI-PATTERNS

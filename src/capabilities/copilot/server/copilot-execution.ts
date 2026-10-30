@@ -26,7 +26,7 @@ import { ANSWER_ONLY_TOOL_NAMES, derivationToolDenial } from '@/kernel/tools/der
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
 import { type StreamCollectResult, runAgentTask, streamTaskCollecting } from '@/server/ai/runner';
-import { shouldEmitToolUseForCaller } from '@/server/ai/tools/mcp-bridge';
+import { shouldEmitToolUseForCaller } from '@/server/ai/tools/tool-mirror-policy';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
