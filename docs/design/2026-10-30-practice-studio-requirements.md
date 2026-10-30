@@ -77,3 +77,25 @@ Owner在5173旧界面批注MessageRow的“可验证的收口/未封存”文案
 新presentation模块已贯通原业务链：StudioShell全局rail/底栏/导航sheet；PracticeStudio按读题/作答/提交/辅助/反馈顺序布局，PracticeFields调用原安全输入renderer，PracticeFeedback分开信心、自评与判分事实；CompanionStudio/StudioComposer用原owner提供slots和actions。新增代码不依赖旧practice-workspace目录，也未复制其DOM/CSS。UI接缝复用了fb1948的业务投影与lifecycle绑定，随后将extras独立后置、全局导航重建、选项纯显示修正。
 
 本地四audit（api-client-usage/capability-boundaries/architecture-deepening/learner-copy）与typecheck/lint/build已全部exit0。初次格式/类型失败日志保留，修正后再次通过；不是测试或真实作答证明。protected owner文件逐字未改。当前候选尚未独立R1/合并，不称视觉达标。截图/交互仍受独立Chrome缺登录态限制；旧before目录只含登录页，禁止作为做题证据。
+
+
+## 公开正文接入 preflight（原功能父2026-10-30窄wire授权）
+
+本次原UI唯一writer消费仓库外`yuk1413-public-prose-20261030/ui-wire.md`：
+> failed/interrupted保public_prose.text并独立状态；无字段旧行沿原合同。
+协调明确：completed继续显示sealed reply_md，不拿累计delta覆盖成功终态披露，不重签receipt。此为新授权接缝，替代上文禁止改projection的本片边界；后台仍由原功能writer独占。
+组件类型：other（消息正文、状态、流式与回放投影）。新增`copilot/ui/public-prose.ts`；修改`subtask-events.ts`、`message-projection.ts`、`replay.ts`及`companion/MessageRow.tsx`。不改controller/sender/Stop/transport/后台/paid。parser只接白名单，按真实event id折叠快照覆盖段；失败保公开正文和独立安全状态，工具/提案披露仍来自原实际记录。
+真实截图发现原native textarea在深色仍吃旧棕色，历史列表仍用旧玻璃卡；只在本片renderers.css重建字段与历史列表表面/尺寸，不改输入/历史选择业务。
+
+
+## 真实候选核验（2026-10-30补充）
+
+已通过design-taste-frontend的独立Chrome/CDP读取真实5174页面。认证使用现有本机app配置中的原访问令牌，只在进程内送入本机登录输入框；未输出、保存到源码或更改认证。所有非GET/HEAD/OPTIONS请求均拦截，检查记录为0次尝试，不发送聊天/作答/模型请求。原指定vn3efyi5hqbduj3mfmkk54yd已由真实数据标成done，原路由按既有合同回列表；随后只读打开现有in_progress的qdp4zs6gs3811gqyyf0bhjkn，无新start/新会话。
+
+真实截图覆盖1440×1000、768×1024、390×844；明暗题面、伙伴side/sheet、历史列表、手机全局导航。实核三宽document无横向溢出，768作答底478/提交顶531，390作答底511/提交顶560，辅助工具在提交之后。side加宽实测480px，父grid为88/872/480，无横向溢出。Escape先只关闭历史、第二次关闭伙伴；从已聚焦入口打开手机伙伴后，Escape返回同入口。没有输入答案；最终textarea为空。未运行读屏、IME输入/软键盘、提交/判分/工具回执/实际流式provider验收，其余稀有状态仍仅源码覆盖。
+
+真实观察修正：native文本框暗色旧棕色改为作用域M3角色；历史列表改为panel内滚动列表并约束min-height，避免遮住composer；加宽按钮同步调整父grid。旧copilot/nudges缺queryFn控制台报错仍存在，非本片新增，不伪称无运行错误。
+
+新public_prose消费只完成源码与静态门：completed保sealed正文，failed/interrupted独立公开正文和状态；后端新wire尚未部署，截图中旧失败行保持旧协议原文。两份成功正文不要求字节一致。不能以此次真实布局截图宣称新流式行为已运行。
+
+证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1473/practice-studio-20261030/visual/`。本轮checks-streaming内四audit/typecheck/lint/build全部exit0，lint有167条仓库warning；随后仅历史CSSmin-height修正，scoped Biome及build-final-css再次exit0。无测试。全新diff独立R1待回，不复用旧2196报告。

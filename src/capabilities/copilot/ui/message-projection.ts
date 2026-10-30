@@ -1,5 +1,6 @@
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
+import { parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type { CopilotRunView, CopilotSubtaskView, CopilotToolCallRecord } from './subtask-events';
@@ -43,11 +44,15 @@ export function projectCopilotReply(
   failed = false,
 ): ChatMessage | null {
   const reply = record(payload);
-  if (!reply || typeof reply.reply !== 'string' || !reply.reply.trim()) return null;
-  const incomplete = failed || Boolean(text(reply.error));
+  if (!reply || typeof reply.reply !== 'string') return null;
+  const publicProse = parsePublicProse(reply.public_prose);
+  const interrupted = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
+  if (!reply.reply.trim() && !interrupted) return null;
+  const incomplete = failed || interrupted || Boolean(text(reply.error));
   return {
     ...previous,
     text: reply.reply,
+    public_prose: publicProse,
     derivation_policy:
       DerivationPolicy.safeParse(reply.derivation_policy).data ?? previous.derivation_policy,
     streaming: false,
@@ -73,6 +78,7 @@ export function projectDurableCopilotMessage(
   const base = {
     ...previous,
     subtasks: view.subtasks,
+    public_prose: view.publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
   };
   if (!terminal)
@@ -81,6 +87,7 @@ export function projectDurableCopilotMessage(
     base,
     {
       ...view.replyPayload,
+      public_prose: view.publicProse,
       reply: view.phase === 'completed' ? terminalText : view.replyText || fallbackText,
       checkpoint_event_id:
         view.failureReason === 'ambiguous_execution'
@@ -311,7 +318,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
       text: turn.text || '本轮更改已撤回',
       checkpoint_event_id: turn.checkpoint_event_id ?? turn.event_id,
     };
-  if (typeof turn.text !== 'string' || !turn.text.trim()) return null;
+  if (typeof turn.text !== 'string') return null;
   const message = projectCopilotReply(previous, { ...turn, reply: turn.text });
   if (!message) return null;
   const { streaming: _streaming, subtasks: _subtasks, tool_calls: _toolCalls, ...rest } = message;

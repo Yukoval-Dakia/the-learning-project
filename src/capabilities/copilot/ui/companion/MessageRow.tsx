@@ -8,6 +8,7 @@ import { memo } from 'react';
 import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Chip } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
+import { publicProseStatusText } from '../public-prose';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
@@ -45,7 +46,13 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   if (m.role === 'tombstone') {
     return <p className="un-cp-row un-cp-row-tombstone">{m.text}</p>;
   }
-  const { text, pending } = splitProposalDisclosure(m.text);
+  const canonical = splitProposalDisclosure(m.text);
+  const publicProse = m.public_prose;
+  const incomplete = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
+  // Successful terminal text retains its sealed corrections and disclosures.
+  const body =
+    incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
+  const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
   const settled = !m.streaming;
   const turnId = m.reply_event_id;
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
@@ -53,8 +60,12 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={m.streaming ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
-      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{text}</DeferredMarkdownRenderer>
-      {m.streaming ? (
+      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{body}</DeferredMarkdownRenderer>
+      {incomplete ? (
+        <p className="un-cp-reply-status" role="status">
+          {generationStatus}
+        </p>
+      ) : m.streaming ? (
         <p className="un-cp-reply-meta" aria-live="off">
           <span className="un-cp-caret" aria-hidden="true" />
           正在回复
@@ -67,7 +78,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
         onAcceptCorrective={props.onAcceptCorrective}
       />
       {m.primary_view ? <HeroBlock view={m.primary_view} navigate={props.navigate} /> : null}
-      {settled ? <ProposalNotice pending={pending} navigate={props.navigate} /> : null}
+      {settled ? <ProposalNotice pending={canonical.pending} navigate={props.navigate} /> : null}
       {canCorrect || checkpoint ? (
         <details className="un-st-message-operations">
           <summary>本轮操作</summary>

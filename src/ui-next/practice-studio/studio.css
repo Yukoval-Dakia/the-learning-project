@@ -587,8 +587,8 @@
   top: 64px;
   overflow: hidden;
 }
-[data-ui-next] .un-st-support[data-wide] {
-  width: min(480px, 40vw);
+[data-ui-next].un-st-shell[data-companion-side]:has(.un-st-support[data-wide]) {
+  grid-template-columns: 88px minmax(0, 1fr) min(480px, 40vw);
 }
 [data-ui-next] .un-st-support-heading {
   padding: 24px 20px 12px;
