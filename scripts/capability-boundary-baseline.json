@@ -4761,6 +4761,30 @@
       "from": 3,
       "to": 2,
       "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "ingestion -> r2",
+      "date": "2026-10-30",
+      "from": 13,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "observability -> r2",
+      "date": "2026-10-30",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> r2",
+      "date": "2026-10-30",
+      "from": 6,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -8359,6 +8383,36 @@
       "issue": "YUK-1570",
       "owns": "既有完整同步状态guard；保strict重复终态409与canonical同目标幂等分支的原调用位置、membership与精确错误，不迁各类状态政策。",
       "date": "2026-10-29"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/custom-code-assets.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["getR2"],
+      "issue": "YUK-1570",
+      "owns": "完整共享对象I/O客户端及惰性getR2；custom-code资产的immutable readback、引用、DB事务与失败补偿仍归原asset-store/业务owner，保持原调用时点。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/tools/media-tools.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["getR2"],
+      "issue": "YUK-1570",
+      "owns": "完整共享对象I/O客户端及惰性getR2；media工具原授权、asset scope、验证读取、错误分类与provider付费策略原位，不经source-tool-support纯转出。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/jyeoo_staged_asset_reap.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["R2Client", "getR2"],
+      "issue": "YUK-1570",
+      "owns": "完整共享对象I/O接口与惰性getR2；reaper仅局部alias使用原R2Client/getR2，原grace/引用重查/锁/delete失败与恢复政策原位，不再加载Jyeoo抓取owner取得客户端。",
+      "date": "2026-10-30"
     }
   ],
   "sourceSizeRecords": [
@@ -9440,7 +9494,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 186,
+      "total": 165,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -9455,7 +9509,6 @@
         "ingestion -> ai": 12,
         "ingestion -> boss": 6,
         "ingestion -> projections": 2,
-        "ingestion -> r2": 13,
         "knowledge -> ai": 7,
         "knowledge -> boss": 3,
         "knowledge -> fsrs": 2,
@@ -9466,7 +9519,6 @@
         "notes -> boss": 1,
         "observability -> boss": 1,
         "observability -> export": 2,
-        "observability -> r2": 2,
         "practice -> ai": 41,
         "practice -> assessment": 1,
         "practice -> boss": 12,
@@ -9476,7 +9528,6 @@
         "practice -> memory": 1,
         "practice -> proposals": 4,
         "practice -> questions": 1,
-        "practice -> r2": 6,
         "shell -> boss": 1,
         "shell -> proposals": 1,
         "shell -> today": 2
