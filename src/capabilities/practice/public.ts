@@ -363,6 +363,9 @@ export {
   PlacementOrphanStateError,
   abandonOrphanPlacementTx,
 } from './server/placement-session-lifecycle';
+export const recoverWebSupplies: typeof import('./server/question-supply/web-supply').recoverWebSupplies =
+  async (...args) =>
+    (await import('./server/question-supply/web-supply')).recoverWebSupplies(...args);
 export { abandonOrphanReviewSession } from './server/review-session-lifecycle';
 export {
   createReviewSession,

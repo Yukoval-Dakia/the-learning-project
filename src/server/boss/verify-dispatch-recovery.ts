@@ -2,6 +2,7 @@ import type { Job, PgBoss } from 'pg-boss';
 import {
   type EnqueueVerifyFn,
   recoverOrphanVerifyDispatches,
+  recoverWebSupplies,
 } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 
@@ -13,6 +14,7 @@ export function buildVerifyDispatchRecoveryHandler(
 ): (jobs: Job<object>[]) => Promise<void> {
   return async () => {
     await recoverOrphanVerifyDispatches(db, { enqueue });
+    await recoverWebSupplies(db, { enqueue });
   };
 }
 

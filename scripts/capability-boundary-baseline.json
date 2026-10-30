@@ -7001,6 +7001,26 @@
       "issue": "YUK-1663",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
       "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/server/questions/submit-question.ts",
+      "siteKind": "site",
+      "symbol": "findSubmitReceipt",
+      "targetModule": "src/server/questions/shared-submit.ts",
+      "targetSymbol": "findSubmitReceipt",
+      "owner": "questions submission owner",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/tools/submit-question.ts",
+          "line": 49
+        }
+      ],
+      "evidence": "Existing shared-submit findSubmitReceipt owns the durable receipt envelope read. Practice imports it in the statement beginning at line 49 (binding at line 54) and invokes it from readCandidateSubmitReceipt after the original parsedInputSchema, then compares the original candidateSubmitFingerprint and parses the original outputSchema; web-supply resumes with its frozen original request.",
+      "rationale": "Coordinator explicitly permitted this single-symbol read exit through the existing submission facade for the live web recovery consumer. No copied receipt codec, alternate writer, new barrel layer or registry; request locking remains with the original submit owner.",
+      "issue": "YUK-1468",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1468",
+      "date": "2026-10-30"
     }
   ],
   "edgeRecords": [
@@ -10639,6 +10659,26 @@
       "issue": "YUK-1570",
       "owns": "完整工具镜像可见性规则、wire名判定与原registry按调用读取；Copilot实时开始卡与bridge完成及持久镜像共享同一策略，执行/日志/取消/恢复/paid仍归原bridge与宿主。",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1468",
+      "owns": "Demand-owned web acquisition and submission phase facts use the existing insert-only event spine; no alternate bus or event writer.",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
+      "module": "src/kernel/read-models/question-serving.ts",
+      "kind": "value",
+      "symbols": ["readQuestionServing"],
+      "issue": "YUK-1468",
+      "owns": "Reconcile submitted web candidates against the canonical serving read model in one repeatable-read snapshot; source verification or insertion alone never fulfills the demand.",
+      "date": "2026-10-30"
     }
   ],
   "sourceSizeRecords": [
@@ -11136,6 +11176,15 @@
       "to": 1969,
       "issue": "YUK-1559",
       "responsibilityReason": "YUK-1559/YUK-1661 report-only live integration at the existing shared PreparedExecution allTools.execute boundary: import and instantiate one run monitor per execution, observe prepared arguments immediately before the unchanged delegate, and attach its safe comparison/count/wouldTrigger/group metadata to the existing executed tool trace. Root and nested loops reuse the same wrapper; no additional execution, enforcement, budget, paid, recovery or business policy is added. Monitor mechanism remains in run-monitor.ts; only the actual execution boundary wiring belongs in this adapter."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-10-30",
+      "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
+      "from": 1314,
+      "to": 1382,
+      "issue": "YUK-1468",
+      "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption."
     }
   ],
   "compatShims": [
