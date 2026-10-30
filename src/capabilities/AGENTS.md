@@ -30,6 +30,7 @@ src/capabilities/
 ## CONVENTIONS
 - 包只依赖 `@/kernel/*` + 自身 + 共享 UI 件（`@/ui/primitives`、`@/ui/lib`）。
 - 包间走 manifest 公共接口；禁深层 import。
+- 共享对象 I/O 直达 server-only `@/kernel/object-storage` 的 `R2Client`、`createR2Client`、`getR2`；该模块仅拥有 SDK 适配与 lazy client。资产 ref、授权、锁、readback、补偿/恢复与 provider/付费策略仍归原 owner，不经 capability 转出。
 - 任务声明由各包 `task-public.ts` 公开且由 `public.ts` 复导出；仅 `task-catalog.ts` 静态组合根消费窄入口，`task-registry.ts` 向共享 ai/ 工厂注入冻结目录。不要通过应用 public barrel 装配任务而触发 DB 初始化/循环。
 - 迁移期豁免：kernel facade 可包装遗留 `src/server/**`；capability 暂可 import `@/db/client`/`@/db/schema`。
 - 共享学习写入事务锁的唯一 canonical 是 `@/db/learning-state-lock`，capability 可直接消费其既有四项 API：`LEARNING_STATE_WRITE_LOCK`、`acquireLearningStateWriteLock`、`withLearningStateLock`、`acquireSortedAdvisoryLocks`；各业务 owner 仍负责原取锁时机、顺序与事务范围。此例外仅限该锁机制，不扩展为任意 db 内部模块的消费许可。

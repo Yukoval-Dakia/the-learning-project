@@ -57,8 +57,8 @@ import type { FigureRefT } from '@/core/schema/structured_question';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { learning_session, source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
-import type { R2Client } from '@/server/r2';
 
 // ---------- helpers ----------
 

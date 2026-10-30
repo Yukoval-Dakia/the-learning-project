@@ -224,7 +224,7 @@ async function reopen(receiptPath: string, manifestPath: string) {
   const { publishedContractSeal, publishedSealAccepts } = await import(
     '@/kernel/records/assessment-normalization'
   );
-  const { getR2 } = await import('@/server/r2');
+  const { getR2 } = await import('@/kernel/object-storage');
   const boss = await getPracticeBoss();
   try {
     const jobs = await db.transaction(async (tx) => {

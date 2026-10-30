@@ -26,9 +26,9 @@ import {
 import { type PiSubagentSpec, isSpawnToolName } from '@/core/subagent-contract';
 import type { PiHookBridge } from '@/core/tool-call-contract';
 import type { Db } from '@/db/client';
+import type { R2Client } from '@/kernel/object-storage';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
-import type { R2Client } from '../r2';
 import { bindAgentRunError, isApiErrorSuccessResult } from './agent-run-error';
 import {
   type ModelBinding,

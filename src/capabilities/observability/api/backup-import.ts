@@ -3,8 +3,8 @@
 import { retireInterventionPreparationJobs } from '@/capabilities/agency/public';
 import { getConfig } from '@/core/config/store';
 import { db } from '@/db/client';
+import { getR2 } from '@/kernel/object-storage';
 import { restoreFromArchive } from '@/server/export/archive';
-import { getR2 } from '@/server/r2';
 import { BackupImportQuerySchema } from './backup-contracts';
 
 // OOM tripwire, not a backup-validity limit: exports have no byte bound, so only a

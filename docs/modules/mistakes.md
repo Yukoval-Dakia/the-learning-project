@@ -171,7 +171,7 @@ N × AttributionTask 走 batch（夜间）
 - 所有题（含对的）都进 Question 题库（题库丰富）
 - 用户可勾选「保留为模拟卷」→ 整套 Question 包成 standalone `tool_quiz` Artifact，未来可重刷
 
-**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/server/r2.ts`，bucket 配置走 `R2_*` env vars，NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（见 `src/capabilities/ingestion/api/assets.ts`）。
+**图片存储**：vision_paper 单次上传 1~N 张图片（每张 2-5MB），用户审核完批量录入时图片必须可重复读取。卷子图片走 R2 / S3-compat 持久化（`@aws-sdk/client-s3` via `src/kernel/object-storage.ts`，bucket 配置走 `R2_*` env vars，NAS Docker 容器内运行，**不是** Cloudflare Worker 也没有 wrangler.toml）；DB 中 `source_asset.storage_key` 持的是 object key（旧 `Mistake.wrong_answer_image_refs[]` 已 collapse 到 `payload.wrong_answer_image_refs` per learning_record schema）。client 上传走 `POST /api/assets` → 写 R2 → 返 asset id（见 `src/capabilities/ingestion/api/assets.ts`）。
 
 ### 2.4 手动粘贴（manual）
 

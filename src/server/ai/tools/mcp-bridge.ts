@@ -268,7 +268,7 @@ async function resolveOutputImages(
 
   const loader = createAssessmentAssetLoader(call.ctx.db, async (key) => {
     // Lazy: R2 env is only required when a media-producing tool actually runs.
-    const { getR2 } = await import('@/server/r2');
+    const { getR2 } = await import('@/kernel/object-storage');
     return getR2().get(key);
   });
   const signal = call.ctx.signal ?? new AbortController().signal;

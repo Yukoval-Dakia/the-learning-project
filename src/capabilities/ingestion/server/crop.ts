@@ -4,11 +4,10 @@ import sharp from 'sharp';
 import type { BBoxT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
+import type { SourceAssetRow } from '@/kernel/records/asset-store';
 import { isUniqueViolation, lockImageStorageKey, sha256Hex } from '@/kernel/records/asset-store';
-import type { R2Client } from '@/server/r2';
-
 import { clampPixelBBox, normalizedToPixel, probeImage } from './image-ops';
-import type { SourceAssetRow } from './persist-image-asset';
 
 /**
  * 单张题目图（"figure"）裁剪后的元信息——未挂归属。 attach_confidence /

@@ -98,10 +98,10 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `TENCENT_SECRET_KEY` | worker（OCR） | 仅 `EXTRACT_OCR_ENGINE=tencent` 时必需；默认 `glm` 路径不读 | `src/capabilities/ingestion/server/tencent_mark.ts` |
 | `TENCENT_OCR_REGION` | worker（OCR） | 仅 tencent 路径读取；默认 `ap-shanghai` | `src/capabilities/ingestion/server/tencent_mark.ts` |
 | `DOCX_CONVERT_ENGINE` | worker（DOCX 转换） | 仅字面 `docker` 生效，其余按自动解析 | `registry`；`src/capabilities/ingestion/server/docx/convert.ts` |
-| `R2_ENDPOINT` | app、worker | 四项任一缺失时 `getR2()` 抛错 | `src/server/r2.ts` |
-| `R2_ACCESS_KEY_ID` | app、worker | 同上 | `src/server/r2.ts` |
-| `R2_SECRET_ACCESS_KEY` | app、worker | 同上 | `src/server/r2.ts` |
-| `R2_BUCKET` | app、worker | 同上 | `src/server/r2.ts` |
+| `R2_ENDPOINT` | app、worker | 四项任一缺失时 `getR2()` 抛错 | `src/kernel/object-storage.ts` |
+| `R2_ACCESS_KEY_ID` | app、worker | 同上 | `src/kernel/object-storage.ts` |
+| `R2_SECRET_ACCESS_KEY` | app、worker | 同上 | `src/kernel/object-storage.ts` |
+| `R2_BUCKET` | app、worker | 同上 | `src/kernel/object-storage.ts` |
 | `EXA_API_KEY` | app、worker | 空或未设时 Exa MCP 返回 `null`，不注册 | `src/server/ai/mcp/exa.ts` |
 | `JYEOO_RS_BINARY` | app、worker | `~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs` | `src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts` |
 | `JYEOO_SPAWN_TIMEOUT_MS` | app、worker | `120000` | `registry` |
