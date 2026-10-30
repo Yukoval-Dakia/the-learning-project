@@ -194,7 +194,7 @@ async function liveR2Probe(): Promise<{ ok: boolean; detail: string }> {
   if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
     return { ok: false, detail: 'R2 vars incomplete — cannot probe' };
   }
-  // Mirror src/server/r2.ts getR2() client construction exactly.
+  // Mirror src/kernel/object-storage.ts getR2() client construction exactly.
   const client = new S3Client({
     region: 'auto',
     endpoint,

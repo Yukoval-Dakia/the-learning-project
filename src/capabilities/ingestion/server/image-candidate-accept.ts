@@ -40,6 +40,7 @@ import type { Db } from '@/db/client';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
@@ -50,7 +51,6 @@ import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { redactIngestionText } from './privacy-guard';

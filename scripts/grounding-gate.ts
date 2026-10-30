@@ -22,6 +22,7 @@ import { induceConjecture } from '@/capabilities/agency/public';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
+import type { R2Client } from '@/kernel/object-storage';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { restoreFromArchive } from '@/server/export/archive';
 import {
@@ -46,7 +47,6 @@ import {
   validateInterventionReviewEvalProviderEnv,
   validateShadowProviderEnv,
 } from '@/server/grounding-gate/preflight';
-import type { R2Client } from '@/server/r2';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const BackupManifestSchema = z.object({

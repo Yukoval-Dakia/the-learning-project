@@ -5,7 +5,7 @@ import { createAssessmentAssetLoader as createAssetLoader } from '@/kernel/recor
 
 export function createAssessmentAssetLoader(db: Db) {
   return createAssetLoader(db, async (key) => {
-    const { getR2 } = await import('@/server/r2');
+    const { getR2 } = await import('@/kernel/object-storage');
     return getR2().get(key);
   });
 }
@@ -21,7 +21,7 @@ export async function defaultImageFetch(
   db: Db,
 ): Promise<Array<{ data: string; mediaType: string }>> {
   if (assetIds.length === 0) return [];
-  const { getR2 } = await import('@/server/r2');
+  const { getR2 } = await import('@/kernel/object-storage');
   const r2 = getR2();
   const out: Array<{ data: string; mediaType: string }> = [];
   for (const id of assetIds) {

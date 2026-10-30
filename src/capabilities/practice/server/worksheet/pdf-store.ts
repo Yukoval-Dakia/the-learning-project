@@ -9,7 +9,7 @@ import { eq } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { worksheet_export } from '@/db/schema';
-import { type R2Client, getR2 } from '@/server/r2';
+import { type R2Client, getR2 } from '@/kernel/object-storage';
 
 const PDF_DIGEST_PREFIX = 'sha256:';
 
