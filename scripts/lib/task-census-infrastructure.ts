@@ -358,7 +358,7 @@ function isCallTo(node: ts.Node | undefined, name: string): node is ts.CallExpre
 }
 
 function hasSchemaTaskKindColumn(sourceRoot: string): boolean {
-  const sourceFile = sourceFileFor(sourceRoot, 'src/db/schema.ts');
+  const sourceFile = sourceFileFor(sourceRoot, 'src/db/schema/ai.ts');
   if (!sourceFile) return false;
   return findNode(sourceFile, (node) => {
     if (

@@ -4801,6 +4801,2206 @@
       "from": 41,
       "to": 38,
       "direction": "decrease"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "ai_task_runs",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "ai_task_runs",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/ai-attempt-facts.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of ai_task_runs from @/db/schema at src/kernel/records/ai-attempt-facts.ts:5; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "copilot_continuation",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "copilot_continuation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/legacy-drain-readiness.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of copilot_continuation from @/db/schema at src/capabilities/copilot/server/legacy-drain-readiness.ts:3; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "copilot_evidence_checkpoint",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "copilot_evidence_checkpoint",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of copilot_evidence_checkpoint from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "cost_ledger",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "cost_ledger",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/tools/call-evidence.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of cost_ledger from @/db/schema at src/kernel/tools/call-evidence.ts:4; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "custom_provider",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "custom_provider",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/config/custom-providers-hydrate.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "Real value import of custom_provider from @/db/schema at src/server/config/custom-providers-hydrate.ts:19; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "model_catalog_cache",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "model_catalog_cache",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/ai/model-catalog.ts",
+          "line": 32
+        }
+      ],
+      "evidence": "Real value import of model_catalog_cache from @/db/schema at src/server/ai/model-catalog.ts:32; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "provider_attempt",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "provider_attempt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/memory/memory-ingest-recovery-store.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of provider_attempt from @/db/schema at src/server/memory/memory-ingest-recovery-store.ts:4; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "provider_attempt_admission",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "provider_attempt_admission",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/memory/memory-ingest-recovery-store.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of provider_attempt_admission from @/db/schema at src/server/memory/memory-ingest-recovery-store.ts:4; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "provider_session_admission",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "provider_session_admission",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/ai/provider-session-admission.ts",
+          "line": 18
+        }
+      ],
+      "evidence": "Real value import of provider_session_admission from @/db/schema at src/server/ai/provider-session-admission.ts:18; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subagent_run",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "subagent_run",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/legacy-drain-readiness.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of subagent_run from @/db/schema at src/capabilities/copilot/server/legacy-drain-readiness.ts:3; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "tool_call_log",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "tool_call_log",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/tools/call-evidence.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of tool_call_log from @/db/schema at src/kernel/tools/call-evidence.ts:4; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "tool_operation",
+      "targetModule": "src/db/schema/ai.ts",
+      "targetSymbol": "tool_operation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/tools/tool-operations.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of tool_operation from @/db/schema at src/kernel/tools/tool-operations.ts:5; the drizzle table definition is owned verbatim by src/db/schema/ai.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "artifact",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "artifact",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/live-artifact-reference.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of artifact from @/db/schema at src/kernel/read-models/live-artifact-reference.ts:4; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "artifact_block_ref",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "artifact_block_ref",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/artifact-backlinks.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of artifact_block_ref from @/db/schema at src/kernel/read-models/artifact-backlinks.ts:11; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "artifact_edit_session",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "artifact_edit_session",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/notes/server/artifacts/presence/pg.ts",
+          "line": 27
+        }
+      ],
+      "evidence": "Real value import of artifact_edit_session from @/db/schema at src/capabilities/notes/server/artifacts/presence/pg.ts:27; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "edge_reconciliation_log",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "edge_reconciliation_log",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/proposals/actions.test.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of edge_reconciliation_log from @/db/schema at src/server/proposals/actions.test.ts:5; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "editing_presence",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "editing_presence",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/artifacts/presence/pg.db.test.ts",
+          "line": 30
+        }
+      ],
+      "evidence": "Real value import of editing_presence from @/db/schema at src/server/artifacts/presence/pg.db.test.ts:30; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "hub_sync_reconciliation",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "hub_sync_reconciliation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of hub_sync_reconciliation from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "memory_brief_note",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "memory_brief_note",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/memory/brief-purpose.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of memory_brief_note from @/db/schema at src/server/memory/brief-purpose.ts:4; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "memory_reconciliation_log",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "memory_reconciliation_log",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/memory/reconcile-store.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of memory_reconciliation_log from @/db/schema at src/server/memory/reconcile-store.ts:5; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "misconception_reconciliation_log",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "misconception_reconciliation_log",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of misconception_reconciliation_log from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "note_verification_claim",
+      "targetModule": "src/db/schema/artifacts.ts",
+      "targetSymbol": "note_verification_claim",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/paid-effect-store.db.test.ts",
+          "line": 53
+        }
+      ],
+      "evidence": "Real value import of note_verification_claim from @/db/schema at src/server/durable/paid-effect-store.db.test.ts:53; the drizzle table definition is owned verbatim by src/db/schema/artifacts.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "assessment_identity_mapping",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "assessment_identity_mapping",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/migration/apply.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of assessment_identity_mapping from @/db/schema at src/server/migration/apply.ts:11; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "assessment_issuance",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "assessment_issuance",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/queries.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of assessment_issuance from @/db/schema at src/kernel/records/queries.ts:5; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "assessment_response_draft",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "assessment_response_draft",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/post-write.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of assessment_response_draft from @/db/schema at src/server/rehearsal/post-write.ts:13; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "assessment_submission",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "assessment_submission",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/queries.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of assessment_submission from @/db/schema at src/kernel/records/queries.ts:5; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "evaluation",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "evaluation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/completed-probe-provenance.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of evaluation from @/db/schema at src/kernel/read-models/completed-probe-provenance.ts:8; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "evaluation_effective_head",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "evaluation_effective_head",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/evaluation-head.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of evaluation_effective_head from @/db/schema at src/db/evaluation-head.ts:8; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "evaluation_group",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "evaluation_group",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/migration/apply.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of evaluation_group from @/db/schema at src/server/migration/apply.ts:11; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "model_admission_slice",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "model_admission_slice",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/assessment/model-slice-registry.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "Real value import of model_admission_slice from @/db/schema at src/server/assessment/model-slice-registry.ts:16; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_admission_verification",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "question_admission_verification",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/question-serving.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of question_admission_verification from @/db/schema at src/kernel/read-models/question-serving.ts:20; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_group_lifecycle",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "question_group_lifecycle",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/predicates.ts",
+          "line": 15
+        }
+      ],
+      "evidence": "Real value import of question_group_lifecycle from @/db/schema at src/db/predicates.ts:15; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_revision",
+      "targetModule": "src/db/schema/assessment.ts",
+      "targetSymbol": "question_revision",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/queries.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of question_revision from @/db/schema at src/kernel/records/queries.ts:5; the drizzle table definition is owned verbatim by src/db/schema/assessment.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "difficulty_calibration_evidence",
+      "targetModule": "src/db/schema/calibration.ts",
+      "targetSymbol": "difficulty_calibration_evidence",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/assessment/settle-replay.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of difficulty_calibration_evidence from @/db/schema at src/server/assessment/settle-replay.ts:9; the drizzle table definition is owned verbatim by src/db/schema/calibration.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "difficulty_calibration_label",
+      "targetModule": "src/db/schema/calibration.ts",
+      "targetSymbol": "difficulty_calibration_label",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/assessment/settle-replay.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of difficulty_calibration_label from @/db/schema at src/server/assessment/settle-replay.ts:9; the drizzle table definition is owned verbatim by src/db/schema/calibration.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "item_calibration",
+      "targetModule": "src/db/schema/calibration.ts",
+      "targetSymbol": "item_calibration",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/question-difficulty.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of item_calibration from @/db/schema at src/kernel/read-models/question-difficulty.ts:8; the drizzle table definition is owned verbatim by src/db/schema/calibration.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "item_family_calibration",
+      "targetModule": "src/db/schema/calibration.ts",
+      "targetSymbol": "item_family_calibration",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/question-difficulty.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of item_family_calibration from @/db/schema at src/kernel/read-models/question-difficulty.ts:8; the drizzle table definition is owned verbatim by src/db/schema/calibration.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "selection_observation",
+      "targetModule": "src/db/schema/calibration.ts",
+      "targetSymbol": "selection_observation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/corpus.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of selection_observation from @/db/schema at src/server/rehearsal/corpus.ts:13; the drizzle table definition is owned verbatim by src/db/schema/calibration.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "dag_orchestration_node",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "dag_orchestration_node",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/orchestration/nightly-signals.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Real value import of dag_orchestration_node from @/db/schema at src/server/orchestration/nightly-signals.ts:7; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "dag_orchestration_run",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "dag_orchestration_run",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/orchestration/store.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of dag_orchestration_run from @/db/schema at src/server/orchestration/store.ts:9; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "echo_jobs",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "echo_jobs",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/boss/handlers/echo.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of echo_jobs from @/db/schema at src/server/boss/handlers/echo.ts:5; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "event",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "event",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-store.ts",
+          "line": 44
+        }
+      ],
+      "evidence": "Real value import of event from @/db/schema at src/db/paid-effect-store.ts:44; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "event_subscription_checkpoint",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "event_subscription_checkpoint",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/corpus.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of event_subscription_checkpoint from @/db/schema at src/server/rehearsal/corpus.ts:13; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "event_subscription_delivery",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "event_subscription_delivery",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-store.ts",
+          "line": 44
+        }
+      ],
+      "evidence": "Real value import of event_subscription_delivery from @/db/schema at src/db/paid-effect-store.ts:44; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "event_subscription_effect",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "event_subscription_effect",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/export/subscription-backup.db.test.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of event_subscription_effect from @/db/schema at src/server/export/subscription-backup.db.test.ts:9; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "job_events",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "job_events",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/job-events.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of job_events from @/db/schema at src/kernel/job-events.ts:3; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "materialized_id_index",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "materialized_id_index",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/materialized-id-index.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of materialized_id_index from @/db/schema at src/kernel/records/materialized-id-index.ts:3; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "proposal_signals",
+      "targetModule": "src/db/schema/events.ts",
+      "targetSymbol": "proposal_signals",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/proposals/signals.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of proposal_signals from @/db/schema at src/kernel/proposals/signals.ts:5; the drizzle table definition is owned verbatim by src/db/schema/events.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "cause_category_overlay",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "cause_category_overlay",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/cause-overlay.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of cause_category_overlay from @/db/schema at src/kernel/read-models/cause-overlay.ts:8; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "knowledge",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "knowledge",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/knowledge-tree.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of knowledge from @/db/schema at src/kernel/read-models/knowledge-tree.ts:3; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "knowledge_edge",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "knowledge_edge",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/extraction-summary.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of knowledge_edge from @/db/schema at src/kernel/read-models/extraction-summary.ts:3; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "misconception",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "misconception",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/misc-cause-labels.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of misconception from @/db/schema at src/kernel/read-models/misc-cause-labels.ts:8; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "misconception_edge",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "misconception_edge",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/confusables.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "Real value import of misconception_edge from @/db/schema at src/kernel/read-models/confusables.ts:14; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "mistake_variant",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "mistake_variant",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/mistake-variant-facts.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of mistake_variant from @/db/schema at src/kernel/records/mistake-variant-facts.ts:11; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "source_asset",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "source_asset",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/assessment-assets.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of source_asset from @/db/schema at src/kernel/records/assessment-assets.ts:4; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "source_document",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "source_document",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/events/event-usage.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of source_document from @/db/schema at src/kernel/events/event-usage.ts:4; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/subject-hydration.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of subject from @/db/schema at src/kernel/read-models/subject-hydration.ts:20; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject_control_journal",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject_control_journal",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/subjects/reconcile-builtin-traits.ts",
+          "line": 16
+        }
+      ],
+      "evidence": "Real value import of subject_control_journal from @/db/schema at src/server/subjects/reconcile-builtin-traits.ts:16; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject_name_claim",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject_name_claim",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/subject-hydration.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of subject_name_claim from @/db/schema at src/kernel/read-models/subject-hydration.ts:20; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject_trait",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject_trait",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/subject-hydration.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of subject_trait from @/db/schema at src/kernel/read-models/subject-hydration.ts:20; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject_trait_binding",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject_trait_binding",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/subject-hydration.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of subject_trait_binding from @/db/schema at src/kernel/read-models/subject-hydration.ts:20; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "subject_trait_journal",
+      "targetModule": "src/db/schema/knowledge.ts",
+      "targetSymbol": "subject_trait_journal",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/subject-hydration.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Real value import of subject_trait_journal from @/db/schema at src/kernel/read-models/subject-hydration.ts:20; the drizzle table definition is owned verbatim by src/db/schema/knowledge.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "goal",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "goal",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/active-goal-scope.ts",
+          "line": 6
+        }
+      ],
+      "evidence": "Real value import of goal from @/db/schema at src/kernel/read-models/active-goal-scope.ts:6; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "intervention",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "intervention",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/export/intervention-backup.db.test.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of intervention from @/db/schema at src/server/export/intervention-backup.db.test.ts:3; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "kc_typed_state",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "kc_typed_state",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/kc-typed-state.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "Real value import of kc_typed_state from @/db/schema at src/kernel/records/kc-typed-state.ts:19; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "knowledge_mastery",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "knowledge_mastery",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/knowledge-graph.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of knowledge_mastery from @/db/schema at src/kernel/read-models/knowledge-graph.ts:9; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "learner_axis_state",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "learner_axis_state",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/learner-axis-state.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of learner_axis_state from @/db/schema at src/kernel/records/learner-axis-state.ts:8; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "mastery_state",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "mastery_state",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/mastery-state.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of mastery_state from @/db/schema at src/kernel/read-models/mastery-state.ts:9; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "material_fsrs_state",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "material_fsrs_state",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/assessment/settle-replay.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of material_fsrs_state from @/db/schema at src/server/assessment/settle-replay.ts:9; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "placement_starter_attempt",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "placement_starter_attempt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of placement_starter_attempt from @/db/schema at src/capabilities/practice/server/question-supply/placement-starter-store.ts:4; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "placement_starter_attempt_question",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "placement_starter_attempt_question",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of placement_starter_attempt_question from @/db/schema at src/capabilities/practice/server/question-supply/placement-starter-store.ts:4; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "placement_starter_claim",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "placement_starter_claim",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-supply/placement-starter-outcome-reader.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of placement_starter_claim from @/db/schema at src/capabilities/practice/server/question-supply/placement-starter-outcome-reader.ts:3; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "placement_starter_cost_component",
+      "targetModule": "src/db/schema/learner-state.ts",
+      "targetSymbol": "placement_starter_cost_component",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-supply/placement-starter-store.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of placement_starter_cost_component from @/db/schema at src/capabilities/practice/server/question-supply/placement-starter-store.ts:4; the drizzle table definition is owned verbatim by src/db/schema/learner-state.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "answer",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "answer",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/corpus.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of answer from @/db/schema at src/server/rehearsal/corpus.ts:13; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "completion_evidence",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "completion_evidence",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/corpus.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of completion_evidence from @/db/schema at src/server/rehearsal/corpus.ts:13; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "ingestion_creation_receipt",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "ingestion_creation_receipt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/ingestion/server/creation-receipts.ts",
+          "line": 5
+        }
+      ],
+      "evidence": "Real value import of ingestion_creation_receipt from @/db/schema at src/capabilities/ingestion/server/creation-receipts.ts:5; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "learning_item",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "learning_item",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/knowledge-merge-attribution.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Real value import of learning_item from @/db/schema at src/kernel/records/knowledge-merge-attribution.ts:7; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "learning_record",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "learning_record",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/extraction-summary.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of learning_record from @/db/schema at src/kernel/read-models/extraction-summary.ts:3; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "learning_session",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "learning_session",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/events/event-usage.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of learning_session from @/db/schema at src/kernel/events/event-usage.ts:4; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "practice_stream_item",
+      "targetModule": "src/db/schema/learning.ts",
+      "targetSymbol": "practice_stream_item",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/rehearsal/corpus.ts",
+          "line": 13
+        }
+      ],
+      "evidence": "Real value import of practice_stream_item from @/db/schema at src/server/rehearsal/corpus.ts:13; the drizzle table definition is owned verbatim by src/db/schema/learning.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "paid_effect",
+      "targetModule": "src/db/schema/paid-effects.ts",
+      "targetSymbol": "paid_effect",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-store.ts",
+          "line": 44
+        }
+      ],
+      "evidence": "Real value import of paid_effect from @/db/schema at src/db/paid-effect-store.ts:44; the drizzle table definition is owned verbatim by src/db/schema/paid-effects.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "paid_effect_authorization",
+      "targetModule": "src/db/schema/paid-effects.ts",
+      "targetSymbol": "paid_effect_authorization",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-store.ts",
+          "line": 44
+        }
+      ],
+      "evidence": "Real value import of paid_effect_authorization from @/db/schema at src/db/paid-effect-store.ts:44; the drizzle table definition is owned verbatim by src/db/schema/paid-effects.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "paid_effect_cancellation",
+      "targetModule": "src/db/schema/paid-effects.ts",
+      "targetSymbol": "paid_effect_cancellation",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-store.ts",
+          "line": 44
+        }
+      ],
+      "evidence": "Real value import of paid_effect_cancellation from @/db/schema at src/db/paid-effect-store.ts:44; the drizzle table definition is owned verbatim by src/db/schema/paid-effects.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "paid_effect_control",
+      "targetModule": "src/db/schema/paid-effects.ts",
+      "targetSymbol": "paid_effect_control",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/paid-effect-control.ts",
+          "line": 15
+        }
+      ],
+      "evidence": "Real value import of paid_effect_control from @/db/schema at src/db/paid-effect-control.ts:15; the drizzle table definition is owned verbatim by src/db/schema/paid-effects.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "contract_epoch",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "contract_epoch",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/contract-epoch/epoch.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "Real value import of contract_epoch from @/db/schema at src/server/contract-epoch/epoch.ts:19; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "judge_run_control",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "judge_run_control",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/judge-family.ts",
+          "line": 23
+        }
+      ],
+      "evidence": "Real value import of judge_run_control from @/db/schema at src/server/durable/judge-family.ts:23; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "migration_apply_phase",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "migration_apply_phase",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/migration/apply.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of migration_apply_phase from @/db/schema at src/server/migration/apply.ts:11; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "migration_apply_run",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "migration_apply_run",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/migration/apply.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of migration_apply_run from @/db/schema at src/server/migration/apply.ts:11; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "prune_job_events_control",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "prune_job_events_control",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of prune_job_events_control from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "prune_job_events_disposition",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "prune_job_events_disposition",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of prune_job_events_disposition from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "prune_job_events_receipt",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "prune_job_events_receipt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/db/session-advisory-lock.ts",
+          "line": 3
+        }
+      ],
+      "evidence": "Real value import of prune_job_events_receipt from @/db/schema at src/db/session-advisory-lock.ts:3; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "review_orphan_control",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "review_orphan_control",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of review_orphan_control from @/db/schema at src/server/durable/review-orphan-family.ts:8; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "review_orphan_disposition",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "review_orphan_disposition",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of review_orphan_disposition from @/db/schema at src/server/durable/review-orphan-family.ts:8; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "review_orphan_receipt",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "review_orphan_receipt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of review_orphan_receipt from @/db/schema at src/server/durable/review-orphan-family.ts:8; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "review_orphan_tick",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "review_orphan_tick",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/review-orphan-family.ts",
+          "line": 8
+        }
+      ],
+      "evidence": "Real value import of review_orphan_tick from @/db/schema at src/server/durable/review-orphan-family.ts:8; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "session_orphan_control",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "session_orphan_control",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-backend.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Real value import of session_orphan_control from @/db/schema at src/server/durable/session-orphan-backend.ts:7; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "session_orphan_disposition",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "session_orphan_disposition",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-backend.ts",
+          "line": 7
+        }
+      ],
+      "evidence": "Real value import of session_orphan_disposition from @/db/schema at src/server/durable/session-orphan-backend.ts:7; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "session_orphan_receipt",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "session_orphan_receipt",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of session_orphan_receipt from @/db/schema at src/server/durable/session-orphan-family.ts:4; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "session_orphan_tick",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "session_orphan_tick",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/durable/session-orphan-family.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of session_orphan_tick from @/db/schema at src/server/durable/session-orphan-family.ts:4; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "system_config",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "system_config",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/config/hydrate.ts",
+          "line": 31
+        }
+      ],
+      "evidence": "Real value import of system_config from @/db/schema at src/server/config/hydrate.ts:31; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "system_config_epoch",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "system_config_epoch",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/config/hydrate.ts",
+          "line": 31
+        }
+      ],
+      "evidence": "Real value import of system_config_epoch from @/db/schema at src/server/config/hydrate.ts:31; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "system_config_journal",
+      "targetModule": "src/db/schema/platform.ts",
+      "targetSymbol": "system_config_journal",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/config/write.ts",
+          "line": 32
+        }
+      ],
+      "evidence": "Real value import of system_config_journal from @/db/schema at src/server/config/write.ts:32; the drizzle table definition is owned verbatim by src/db/schema/platform.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question",
+      "targetModule": "src/db/schema/question.ts",
+      "targetSymbol": "question",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/read-models/mistake-projection.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of question from @/db/schema at src/kernel/read-models/mistake-projection.ts:4; the drizzle table definition is owned verbatim by src/db/schema/question.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_answer_anchor",
+      "targetModule": "src/db/schema/question.ts",
+      "targetSymbol": "question_answer_anchor",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/question-generation-grounding.ts",
+          "line": 14
+        }
+      ],
+      "evidence": "Real value import of question_answer_anchor from @/db/schema at src/capabilities/practice/server/question-generation-grounding.ts:14; the drizzle table definition is owned verbatim by src/db/schema/question.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_block",
+      "targetModule": "src/db/schema/question.ts",
+      "targetSymbol": "question_block",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/kernel/records/question-block-transitions.ts",
+          "line": 4
+        }
+      ],
+      "evidence": "Real value import of question_block from @/db/schema at src/kernel/records/question-block-transitions.ts:4; the drizzle table definition is owned verbatim by src/db/schema/question.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_generation_binding",
+      "targetModule": "src/db/schema/question.ts",
+      "targetSymbol": "question_generation_binding",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/questions/question-generation-grounding.db.test.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of question_generation_binding from @/db/schema at src/server/questions/question-generation-grounding.db.test.ts:9; the drizzle table definition is owned verbatim by src/db/schema/question.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "question_generation_plan",
+      "targetModule": "src/db/schema/question.ts",
+      "targetSymbol": "question_generation_plan",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/server/questions/question-generation-grounding.db.test.ts",
+          "line": 9
+        }
+      ],
+      "evidence": "Real value import of question_generation_plan from @/db/schema at src/server/questions/question-generation-grounding.db.test.ts:9; the drizzle table definition is owned verbatim by src/db/schema/question.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "worksheet_export",
+      "targetModule": "src/db/schema/worksheet.ts",
+      "targetSymbol": "worksheet_export",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/worksheet/pdf-store.ts",
+          "line": 11
+        }
+      ],
+      "evidence": "Real value import of worksheet_export from @/db/schema at src/capabilities/practice/server/worksheet/pdf-store.ts:11; the drizzle table definition is owned verbatim by src/db/schema/worksheet.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "worksheet_export_item",
+      "targetModule": "src/db/schema/worksheet.ts",
+      "targetSymbol": "worksheet_export_item",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/worksheet/export-store.ts",
+          "line": 38
+        }
+      ],
+      "evidence": "Real value import of worksheet_export_item from @/db/schema at src/capabilities/practice/server/worksheet/export-store.ts:38; the drizzle table definition is owned verbatim by src/db/schema/worksheet.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/db/schema.ts",
+      "siteKind": "module",
+      "symbol": "worksheet_region_map_page",
+      "targetModule": "src/db/schema/worksheet.ts",
+      "targetSymbol": "worksheet_region_map_page",
+      "owner": "db",
+      "consumers": [
+        {
+          "file": "src/capabilities/practice/server/worksheet/export-store.ts",
+          "line": 38
+        }
+      ],
+      "evidence": "Real value import of worksheet_region_map_page from @/db/schema at src/capabilities/practice/server/worksheet/export-store.ts:38; the drizzle table definition is owned verbatim by src/db/schema/worksheet.ts and the entry re-exports the same binding.",
+      "rationale": "Single formal drizzle schema entry (one named re-export layer) for drizzle-kit and the existing @/db/schema consumers; implementation stays in the domain module. No second layer below the domain files.",
+      "issue": "YUK-1663",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1663",
+      "date": "2026-10-30"
     }
   ],
   "edgeRecords": [
