@@ -10,6 +10,7 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { listKnowledgeEdges } from '@/capabilities/knowledge/server/edges';
 import { type MasteryDecayBucket, masteryDecayBucket } from '@/core/mastery-freshness';
 import type { ArtifactBodyBlocksT } from '@/core/schema/business';
+import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db } from '@/db/client';
 import { artifact, event, knowledge } from '@/db/schema';
 import {
@@ -19,18 +20,15 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
+import { abilityReadingsById, readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
-import {
-  getMasteryProjection,
-  getRepresentativeKcBeta,
-} from '@/kernel/read-models/mastery-projection';
+import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
 import {
   type NoteSummary,
   interactiveForKnowledge,
   notesForKnowledge,
 } from '@/kernel/read-models/notes-read';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { type RetentionReading, getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
 import { type SlimSubjectProfile, toSlimSubjectProfile } from '@/subjects/profile';
 
 const CROSS_LINK_REF_KIND = 'cross_link';
@@ -124,18 +122,6 @@ export interface KnowledgeNodePage {
 }
 
 /**
- * Batched FSRS retrievability for knowledge ids. A missing map entry means no state
- * row, i.e. unknown retention, not zero. `now` is injectable for deterministic tests.
- */
-export async function loadRetrievabilityMap(
-  db: Db,
-  knowledgeIds: string[],
-  now: Date = new Date(),
-): Promise<Map<string, RetentionReading>> {
-  return getFsrsRetrievabilityByIds(db, 'knowledge', knowledgeIds, now);
-}
-
-/**
  * Every read the node page needs, in one call. Null for a missing or archived node
  * so the route can 404 instead of rendering an empty shell.
  */
@@ -188,10 +174,17 @@ export async function loadKnowledgeNodePage(
 
   // Independent reads: mastery may not exist before an attempt, while a difficulty
   // anchor can. Map presence is the has-anchor bit beta=0 alone cannot express.
-  const [masteryProjection, focalBetaMap] = await Promise.all([
-    getMasteryProjection(db, [node.id, ...childRows.map((c) => c.id)]),
+  // One judgment-contract read carries both mastery-family readings (mastery +
+  // retention) under one snapshot, and owns the YUK-1600 non-kc role gate.
+  const [judgmentBatch, focalBetaMap] = await Promise.all([
+    readLearnerJudgments(db, {
+      knowledge_ids: [node.id, ...childRows.map((c) => c.id)],
+      context: 'any',
+      as_of: new Date(),
+    }),
     getRepresentativeKcBeta(db, [node.id]),
   ]);
+  const masteryProjection = abilityReadingsById(judgmentBatch);
   const nodeMastery = masteryProjection.get(node.id);
   const difficultyAnchored = focalBetaMap.has(node.id);
   const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;
@@ -203,14 +196,19 @@ export async function loadKnowledgeNodePage(
       mastery: masteryProjection.get(row.id)?.mastery ?? null,
     }));
 
-  const [focalRetrievabilityMap, outEdges, inEdges] = await Promise.all([
-    // YUK-1600 — retention is a mastery-family reading: a goal/container root never
-    // reads FSRS R(t), even if pre-gate stock rows exist.
-    loadRetrievabilityMap(db, node.role === 'kc' ? [node.id] : []),
+  const [outEdges, inEdges] = await Promise.all([
     listKnowledgeEdges(db, { from: knowledgeId }),
     listKnowledgeEdges(db, { to: knowledgeId }),
   ]);
-  const focalRetrievability = focalRetrievabilityMap.get(node.id);
+  // The contract returns an honest unknown retention for a goal/container focal
+  // node; only a number or candidate score reaches the wire below, so the
+  // payload keeps its cold-start null semantics for unreadable retention.
+  const focalRetention = judgmentBatch.items.find(
+    (item) => item.knowledge_id === node.id,
+  )?.retention;
+  const focalReading = focalRetention?.kind === 'available' ? focalRetention.reading : undefined;
+  const focalRetrievability =
+    typeof focalReading === 'number' || focalReading?.kind === 'score' ? focalReading : undefined;
   const neighborIds = Array.from(
     new Set([
       ...outEdges.map((e) => e.to_knowledge_id),

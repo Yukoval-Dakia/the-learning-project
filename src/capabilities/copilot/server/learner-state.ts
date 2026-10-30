@@ -240,6 +240,7 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
   const observed = new Map<string, MasteryProjection>();
   let unknownAbility = false;
   let unknownRetention = false;
+  let divergentCount = 0;
   const readingEngines = new Set<string>();
   for (const item of batch.items) {
     if (item.ability.kind === 'available' && item.p_correct_now.kind === 'incumbent_pfa') {
@@ -254,6 +255,7 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
       unknownRetention = true;
     }
     if (item.retention.kind === 'available') readingEngines.add(item.retention.engine);
+    if (item.uncertainty.component_disagreement.kind === 'divergence_observed') divergentCount += 1;
   }
   const engineName =
     readingEngines.size !== 1 || readingEngines.has('unknown')
@@ -269,6 +271,7 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
       unknownRetention
         ? `保持：同范围存在未知项（${engineName}），不能据此断言记得或忘了。`
         : `保持：同范围现役读数可用（${engineName}），尚不能据此声称已校准或保持良好。`,
+      divergentCount > 0 ? `读数分歧：${divergentCount} 项会做与保持两读数背离。` : '',
       '只作文字解读，不向学习者新增预测数字。',
     ].join(''),
   };
