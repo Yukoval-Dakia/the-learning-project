@@ -53,19 +53,20 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   const body =
     incomplete || publicProse?.status === 'streaming' ? publicProse.text : canonical.text;
   const generationStatus = publicProse ? publicProseStatusText(publicProse) : undefined;
-  const settled = !m.streaming;
+  const generating = m.streaming || publicProse?.status === 'streaming';
+  const settled = !generating;
   const turnId = m.reply_event_id;
   const canCorrect = settled && turnId !== undefined && props.turnNumber !== undefined;
   const checkpoint = settled ? m.checkpoint_event_id : undefined;
   return (
-    <div className="un-cp-row un-cp-row-ai" data-streaming={m.streaming ? '' : undefined}>
+    <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
       <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{body}</DeferredMarkdownRenderer>
       {incomplete ? (
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
         </p>
-      ) : m.streaming ? (
+      ) : generating ? (
         <p className="un-cp-reply-meta" aria-live="off">
           <span className="un-cp-caret" aria-hidden="true" />
           正在回复

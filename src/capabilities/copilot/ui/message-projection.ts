@@ -1,6 +1,6 @@
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
-import { parsePublicProse } from './public-prose';
+import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
 import type { CopilotRunView, CopilotSubtaskView, CopilotToolCallRecord } from './subtask-events';
@@ -47,8 +47,9 @@ export function projectCopilotReply(
   if (!reply || typeof reply.reply !== 'string') return null;
   const publicProse = parsePublicProse(reply.public_prose);
   const interrupted = publicProse?.status === 'failed' || publicProse?.status === 'interrupted';
-  if (!reply.reply.trim() && !interrupted) return null;
-  const incomplete = failed || interrupted || Boolean(text(reply.error));
+  if (!reply.reply.trim() && !interrupted && publicProse?.status !== 'streaming') return null;
+  const incomplete =
+    failed || interrupted || publicProse?.status === 'streaming' || Boolean(text(reply.error));
   return {
     ...previous,
     text: reply.reply,
@@ -75,10 +76,29 @@ export function projectDurableCopilotMessage(
   const terminalText = text(view.replyPayload?.reply_md);
   if (view.phase === 'completed' && !terminalText?.trim()) return null;
   const terminal = view.phase === 'completed' || view.phase === 'failed';
+  // A turns snapshot can precede its SSE backlog. Preserve its covered prefix and
+  // append only later durable deltas from this run's already-deduplicated view.
+  const snapshot = previous.public_prose;
+  const publicProse =
+    view.publicProse ??
+    (!terminal && snapshot?.status === 'streaming'
+      ? mergePublicProse(
+          snapshot,
+          new Map(
+            view.frames
+              .filter(
+                (frame) =>
+                  frame.event_type === 'copilot_run.delta' &&
+                  typeof frame.payload.text === 'string',
+              )
+              .map((frame) => [frame.event_id, frame.payload.text as string]),
+          ),
+        )
+      : undefined);
   const base = {
     ...previous,
     subtasks: view.subtasks,
-    public_prose: view.publicProse,
+    public_prose: publicProse,
     ...(view.toolCalls && view.toolCalls.length > 0 ? { tool_calls: view.toolCalls } : {}),
   };
   if (!terminal)
@@ -87,7 +107,7 @@ export function projectDurableCopilotMessage(
     base,
     {
       ...view.replyPayload,
-      public_prose: view.publicProse,
+      public_prose: publicProse,
       reply: view.phase === 'completed' ? terminalText : view.replyText || fallbackText,
       checkpoint_event_id:
         view.failureReason === 'ambiguous_execution'
@@ -215,7 +235,8 @@ export function projectCopilotRunUpdate(
   }
   const aiMessageId = copilotRunReplyMessageId(run.runId);
   const existingReply = next.find(
-    (message) => message.role === 'ai' && message.run_id === run.runId,
+    (message) =>
+      message.role === 'ai' && message.run_id === run.runId && message.session_id === run.sessionId,
   );
   const previous = existingReply ?? {
     id: aiMessageId,
@@ -225,10 +246,29 @@ export function projectCopilotRunUpdate(
     run_id: run.runId,
     derivation_policy: run.derivationPolicy ?? 'allow',
   };
+  const publicSnapshot =
+    existingReply &&
+    existingReply.id === `copilot_public_prose_${run.runId}` &&
+    existingReply.public_prose !== undefined &&
+    existingReply.reply_event_id === undefined &&
+    existingReply.checkpoint_event_id === undefined;
+  // A terminal snapshot must not regress while its SSE backlog reconnects.
+  if (
+    publicSnapshot &&
+    existingReply.public_prose?.status !== 'streaming' &&
+    run.view.phase !== 'completed' &&
+    run.view.phase !== 'failed'
+  )
+    return next;
   // A replayed non-synthetic reply is already authoritative. A same-key 202
   // recovered after refresh may initially report QUEUED before its event replay;
   // do not replace the persisted answer with that provisional stage.
-  if (existingReply && existingReply.id !== aiMessageId && run.view.phase !== 'completed') {
+  if (
+    existingReply &&
+    !publicSnapshot &&
+    existingReply.id !== aiMessageId &&
+    run.view.phase !== 'completed'
+  ) {
     return next;
   }
   const projected = projectDurableCopilotMessage(previous, run.view, run.fallbackText);
@@ -237,6 +277,7 @@ export function projectCopilotRunUpdate(
   return upsertCopilotMessage(next, {
     ...previous,
     text: '这次请求已结束，但回复暂时不可用。',
+    public_prose: undefined,
     streaming: false,
     subtasks: run.view.subtasks,
     ...(run.view.toolCalls
@@ -319,6 +360,20 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
       checkpoint_event_id: turn.checkpoint_event_id ?? turn.event_id,
     };
   if (typeof turn.text !== 'string') return null;
+  const publicProse = parsePublicProse(turn.public_prose);
+  if (turn.role === 'ai' && publicProse?.status === 'completed' && !turn.text.trim()) {
+    return {
+      id: turn.event_id,
+      role: 'ai',
+      run_id: turn.run_id,
+      session_id: turn.session_id,
+      derivation_policy: turn.derivation_policy,
+      text: '成功回复正文缺失，暂时无法恢复完整回答。',
+      tool_calls: turn.tool_calls,
+      tool_operations: turn.tool_operations,
+      subagent_runs: turn.subagent_runs,
+    };
+  }
   const message = projectCopilotReply(previous, { ...turn, reply: turn.text });
   if (!message) return null;
   const { streaming: _streaming, subtasks: _subtasks, tool_calls: _toolCalls, ...rest } = message;
