@@ -68,6 +68,12 @@ Owner在5173旧界面批注MessageRow的“可验证的收口/未封存”文案
 
 ## 首个集成候选
 
+### Owner再次明确：像ChatGPT一样的流式聊天
+
+逐段正文是聊天的基本交互，不是等待最终校验后的结果卡。正文、生成状态、工具操作结果分别呈现；中断应保留已经公开显示的正文并标注中断，不能整段替换为“未封存”等内部提示。停止和重连仍由原run owner负责，不能为了显示正文放宽工具回执/隐私/恢复边界。
+
+源码已核：copilot-execution.ts的prose_delta经过内部注释过滤，subtask-events.ts累积copilot_run.delta；MessageRow已实时消费增长正文。但reply/failed帧用reply_md覆盖正文，finalizer对partial缺少terminalText时failClosed。完整修复需要原stream/replay owner分别提供可恢复的公开部分正文、终态原因与工具结果，不能由UI比较提示字符串或缓存旧正文绕过。该事项已集中记入1473，尚未运行provider验收；本片只将不实的“还未生效”删除，显示“正在回复”。这不是宣称完整流式问题已修复。
+
 新presentation模块已贯通原业务链：StudioShell全局rail/底栏/导航sheet；PracticeStudio按读题/作答/提交/辅助/反馈顺序布局，PracticeFields调用原安全输入renderer，PracticeFeedback分开信心、自评与判分事实；CompanionStudio/StudioComposer用原owner提供slots和actions。新增代码不依赖旧practice-workspace目录，也未复制其DOM/CSS。UI接缝复用了fb1948的业务投影与lifecycle绑定，随后将extras独立后置、全局导航重建、选项纯显示修正。
 
 本地四audit（api-client-usage/capability-boundaries/architecture-deepening/learner-copy）与typecheck/lint/build已全部exit0。初次格式/类型失败日志保留，修正后再次通过；不是测试或真实作答证明。protected owner文件逐字未改。当前候选尚未独立R1/合并，不称视觉达标。截图/交互仍受独立Chrome缺登录态限制；旧before目录只含登录页，禁止作为做题证据。

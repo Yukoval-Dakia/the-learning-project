@@ -1,7 +1,7 @@
 // One turn in the conversation. The learner's line sits right in a quiet bubble; the companion's
 // reply is plain prose with its steps above it and what it produced below it. A reply is one
-// element from the first word to settled: while it streams it is lighter, with a caret and
-// 「生成中 · 还未生效」; the terminal Markdown then replaces the draft in place (C3).
+// element from the first word to settled. The caret describes reply generation only;
+// it cannot establish whether any tool operation has already taken effect.
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
 import { memo } from 'react';
@@ -57,7 +57,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
       {m.streaming ? (
         <p className="un-cp-reply-meta" aria-live="off">
           <span className="un-cp-caret" aria-hidden="true" />
-          生成中 · 还未生效
+          正在回复
         </p>
       ) : null}
       <SkillTurnBlock
