@@ -624,7 +624,7 @@ export const PROVIDER_LANES = [
       },
     },
     evidence: {
-      path: 'src/db/schema.ts',
+      path: 'src/db/schema/artifacts.ts',
       contains: ['misconception_reconciliation_log'],
     },
     attemptSemantics: {
@@ -643,7 +643,7 @@ export const PROVIDER_LANES = [
       fanOut: 'zero live attempts',
       evidence: [
         {
-          path: 'src/db/schema.ts',
+          path: 'src/db/schema/artifacts.ts',
           calls: ['pgTable'],
           contains: ['misconception_reconciliation_log'],
         },
