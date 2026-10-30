@@ -137,6 +137,7 @@ export interface CopilotExecutionResult {
   finalization: CopilotReplyFinalizationResult;
   partial: boolean;
   error?: string;
+  failure?: { kind: 'provider_request_rejected'; httpStatus: 400 };
   sdkSessionId?: string;
   contextDigest: string;
 }
@@ -550,8 +551,8 @@ export function createCopilotExecutionOwner(
       prose.finish();
       // `terminalText` doubles as the seal marker: it is set only on a clean
       // success frame. A partial stream carries text but no terminalText —
-      // passing '' lets the finalizer fail closed so an unsealed draft never
-      // reaches the durable reply.
+      // passing '' keeps finalization authority separate from committed public
+      // prose, which the durable settlement owner recovers from job_events.
       const terminalText = result.terminalText ?? '';
       const nativeChildrenComplete = await drainNativeTasks();
       const partial = result.partial === true;
@@ -574,6 +575,7 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
+        ...(result.failure ? { failure: result.failure } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

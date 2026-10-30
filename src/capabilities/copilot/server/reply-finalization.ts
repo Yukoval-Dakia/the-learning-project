@@ -11,6 +11,7 @@ import type {
   ToolExecutionGateInput,
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
+import { COPILOT_PROVIDER_REJECTION_REPLY } from '../public-prose-contract';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
 import { stripCopilotInternalComments } from './prose-stream';
@@ -29,7 +30,6 @@ export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
-const PROVIDER_REJECTION_REPLY = '模型服务拒绝了请求(400)，具体参数原因尚未定位，本次未完成回答';
 
 export const EPHEMERAL_PRESENTATION_STORAGE_NOTICE =
   '\n\n> 保存说明（系统，以此为准）：这张卡片会随对话保存，重新打开仍可恢复；关闭面板不会删除。它不会另存为独立资料。当前不支持仅临时查看且完全不保存；正文中的其他保存描述不代表实际状态。';
@@ -465,7 +465,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   }): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
     const replyText = applyProposalDisclosure(
-      failure ? PROVIDER_REJECTION_REPLY : FINALIZATION_FAILURE_REPLY,
+      failure ? COPILOT_PROVIDER_REJECTION_REPLY : FINALIZATION_FAILURE_REPLY,
       disclosure,
     );
     const traceSha = digestTrace(trace);
