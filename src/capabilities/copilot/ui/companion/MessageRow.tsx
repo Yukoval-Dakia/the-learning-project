@@ -5,10 +5,10 @@
 // Memoized: a streaming delta rebuilds only the growing message, so settled rows skip re-rendering.
 
 import { memo } from 'react';
-import { DeferredMarkdownRenderer } from '@/ui/lib/deferred-markdown-renderer';
 import { Chip } from '@/ui-next/public';
 import type { ChatMessage } from '../message-projection';
 import { publicProseStatusText } from '../public-prose';
+import { ConversationMarkdown } from './ConversationMarkdown';
 import { HeroBlock } from './HeroBlock';
 import { ProposalNotice } from './ProposalNotice';
 import { splitProposalDisclosure } from './proposal-disclosure';
@@ -61,7 +61,7 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
   return (
     <div className="un-cp-row un-cp-row-ai" data-streaming={generating ? '' : undefined}>
       <StepList steps={stepsOf(m)} />
-      <DeferredMarkdownRenderer className="un-cp-md un-cp-reply">{body}</DeferredMarkdownRenderer>
+      <ConversationMarkdown className="un-cp-md un-cp-reply">{body}</ConversationMarkdown>
       {incomplete ? (
         <p className="un-cp-reply-status" role="status">
           {generationStatus}
