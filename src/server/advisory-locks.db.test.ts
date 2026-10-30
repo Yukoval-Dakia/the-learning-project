@@ -40,13 +40,13 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
-import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import {
   retireMasteryStateOnMerge,
   updateThetaForAttempt,
   upsertMasteryState,
-} from '@/server/mastery/state';
+} from '@/kernel/records/mastery-state';
+import { __resetRateLimitForTests } from '@/kernel/request-rate-limit';
+import { retireFsrsStateOnMerge, upsertFsrsState } from '@/server/fsrs/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
 import { issueSoloFixture } from '../../tests/fixtures/assessment-solo';
 import { nativeSoloHttpFixture } from '../../tests/fixtures/native-solo-http';

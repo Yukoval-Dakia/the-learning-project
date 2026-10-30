@@ -9,6 +9,8 @@ import { writeAttemptSnapshotBrackets } from '@/capabilities/practice/public';
 import { scheduleReview } from '@/core/fsrs';
 import { type SchedulingState, isCandidateState } from '@/core/schema/scheduling-state';
 import type { Tx } from '@/db/client';
+import { getMasteryState } from '@/kernel/read-models/mastery-state';
+import { updateThetaForAttempt } from '@/kernel/records/mastery-state';
 import {
   candidateObservations,
   candidateRetention,
@@ -22,7 +24,6 @@ import {
   recordFamilyObservationForAttempt,
 } from '@/server/mastery/personalized-difficulty';
 import { recordDifficultyCalibrationLabel } from '@/server/mastery/recalibration';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import {
   hasSchedulingEffect,
   planSubjects,

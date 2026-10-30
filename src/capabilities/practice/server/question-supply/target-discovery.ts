@@ -20,7 +20,7 @@
 //   - 开放目标 + learning_item.knowledge_ids：pending/in_progress learning item（mirror stream-store）
 //   - 前沿/新检知识点：open learning item 的 KC 里**没有 material_fsrs_state 行**者
 //     （= 从未被调度 = 新知/前沿，mirror stream-store.ts:144-156「新学待检」语义）。
-//   - mastery_state.theta_hat/theta_precision：getMasteryState（src/server/mastery/state.ts）。
+//   - mastery_state.theta_hat/theta_precision：getMasteryState（src/kernel/read-models/mastery-state.ts）。
 //   - 现有题按 knowledge_id + kind + difficulty band + source tier 分组：本模块的 loadQuestionPool。
 //   - source tier：deriveSourceTier（src/core/schema/provenance.ts，4 档 provenance）→
 //     映射成本引擎的 3 档获取尺度（见 acquisitionTierForQuestion 文档）。
@@ -479,8 +479,8 @@ export function scanCoverageGaps(
     // 「MFI/诊断选题反复缺近-θ̂ 题」的结构性根因 = 池里根本没有 b 落 'near' band 的**可靠锚**题。
     //
     // **band 归类用 effectiveB（= b_post ?? b_anchor ?? b），与
-    //   mastery/selection 同一 b 解析**（src/server/mastery/recalibration effectiveB，state.ts
-    //   updateThetaForAttempt 也读它）。PoolQuestion.calibrationB 装的就是 effectiveB（在
+    //   mastery/selection 同一 b 解析**（kernel/read-models/question-difficulty，
+    //   updateThetaForAttempt 也消费同一 reader）。PoolQuestion.calibrationB 装的就是 effectiveB（在
     //   loadQuestionPool 算好；无 item_calibration 行 → null）。一道**已重标定**的题（b_post 已
     //   写入）不会再因供给扫描器只看陈旧 b 列而被误判 mis-banded。
     //   与 R3「只信真实标定」**不冲突**：effectiveB 退回 b_anchor ?? b 时这两列是 ItemPriorTask 写的

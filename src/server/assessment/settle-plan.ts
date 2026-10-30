@@ -20,13 +20,13 @@ import {
 import type { Tx } from '@/db/client';
 import { event, question, question_revision } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
+import type { AbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import {
   CandidateFactSchema,
   candidateObservations,
   sealCandidateFact,
 } from '@/server/fsrs/candidate';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import type { AbilityGlobalByKnowledgeId } from '@/server/mastery/state';
 import type { ActivationSettleInput } from './activate';
 import { loadAssessmentLearningScope } from './learning-scope';
 import {

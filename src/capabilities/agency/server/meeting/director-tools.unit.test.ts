@@ -10,7 +10,7 @@ import type { WriteAgentNoteInput } from '@/capabilities/agency/server/notes';
 import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import { activeEffectiveTruth } from '@/kernel/events';
 import type { WriteAiProposalInput } from '@/kernel/proposals/writer';
-import type { MasteryProjection } from '@/server/mastery/state';
+import type { MasteryProjection } from '@/kernel/read-models/mastery-projection';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
