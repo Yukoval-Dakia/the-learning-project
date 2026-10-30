@@ -16,14 +16,12 @@ import {
   findExistingRateEvent,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import { recordProposalDecisionSignal } from '@/kernel/proposals/signals';
 import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import {
-  type ProposalInboxRow,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/practice-runtime';
 import {
   type PracticeApplierOpts,
   acceptCauseCategoryProposal,
