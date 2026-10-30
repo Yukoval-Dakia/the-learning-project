@@ -10629,6 +10629,16 @@
       "issue": "YUK-1570",
       "owns": "完整共享对象I/O接口与惰性getR2；reaper仅局部alias使用原R2Client/getR2，原grace/引用重查/锁/delete失败与恢复政策原位，不再加载Jyeoo抓取owner取得客户端。",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/copilot/server/copilot-execution.ts",
+      "module": "src/server/ai/tools/tool-mirror-policy.ts",
+      "kind": "value",
+      "symbols": ["shouldEmitToolUseForCaller"],
+      "issue": "YUK-1570",
+      "owns": "完整工具镜像可见性规则、wire名判定与原registry按调用读取；Copilot实时开始卡与bridge完成及持久镜像共享同一策略，执行/日志/取消/恢复/paid仍归原bridge与宿主。",
+      "date": "2026-10-30"
     }
   ],
   "sourceSizeRecords": [
