@@ -51,6 +51,7 @@ import {
   type SubmitResult,
   canonicalJson,
   claimSubmitRequestId,
+  findSubmitReceipt,
   insertSourcedDraft,
   persistDeclaredQuestionGroup,
   sanitizeSourcedMarkup,
@@ -280,6 +281,20 @@ function candidateSubmitFingerprint(input: ParsedInput): string {
     .digest('hex')}`;
 }
 
+/** Restore only a receipt matching the original parsed candidate fingerprint.
+ * Parsing, fingerprint fields and receipt codec remain owned by this submit gate. */
+export async function readCandidateSubmitReceipt(
+  db: Db,
+  raw: ExecInput,
+): Promise<{ status: 'missing' } | { status: 'reused' } | { status: 'replay'; receipt: Output }> {
+  const input = parsedInputSchema.parse(raw);
+  if (input.candidate == null || input.draft != null) throw new Error('candidate request required');
+  const prior = await findSubmitReceipt(db, input.request_id);
+  if (prior == null) return { status: 'missing' };
+  if (prior.fingerprint !== candidateSubmitFingerprint(input)) return { status: 'reused' };
+  return { status: 'replay', receipt: outputSchema.parse(prior.receipt) };
+}
+
 /** B) 供给候选路径（原 store_sourced_question 语义逐字保留）。
  * request_id 幂等同 draft 路径：锁内 claim；同 id 同内容重放回执，不同内容冲突。 */
 async function executeCandidateSubmit(
@@ -312,7 +327,12 @@ async function executeCandidateSubmit(
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${requestId}))`);
     const settled = await claimSubmitRequestId(tx, requestId, fingerprint);
-    if (settled.status === 'replay') return settled.receipt as Output;
+    if (settled.status === 'replay') {
+      const receipt = settled.receipt as Output;
+      return receipt.question_id === result.question_id && result.verify_enqueued !== undefined
+        ? { ...receipt, verify_enqueued: result.verify_enqueued }
+        : receipt;
+    }
     if (settled.status === 'reused') {
       return {
         status: 'conflict',
@@ -526,9 +546,22 @@ async function runCandidateSubmit(
 
   let persisted:
     | Awaited<ReturnType<typeof insertSourcedDraft>>
-    | { status: 'source_duplicate'; existingId: string };
+    | { status: 'source_duplicate'; existingId: string }
+    | { status: 'request_replay'; receipt: Output }
+    | { status: 'request_reused' };
   try {
     persisted = await db.transaction(async (tx) => {
+      // Request first, before ingestion/source/canonical/root locks: same order
+      // as the typed submit owner. The short preflight claim is not this fence.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.request_id}))`);
+      const claim = await claimSubmitRequestId(
+        tx,
+        input.request_id,
+        candidateSubmitFingerprint(input),
+      );
+      if (claim.status === 'replay')
+        return { status: 'request_replay' as const, receipt: outputSchema.parse(claim.receipt) };
+      if (claim.status === 'reused') return { status: 'request_reused' as const };
       await ctx.beforeIngestionWrite?.(tx);
       const racedSource = await claimHttpSourceDuplicate(tx, {
         ...sourceClaim,
@@ -622,12 +655,47 @@ async function runCandidateSubmit(
         supplyTrace: inserted.supplyTrace,
         createdAt: now,
       });
+      // The flat candidate's receipt belongs to the same commit as its question,
+      // publication and verify intent. Recovery must not lose the original id
+      // and treat an already committed submission as a new duplicate candidate.
+      const receipt: Output = {
+        status: 'pending',
+        question_id: questionId,
+        request_id: input.request_id,
+        difficulty_evidence: inserted.difficultyEvidence,
+      };
+      await writeSubmitReceiptEvent(
+        tx,
+        { kind: 'question', id: questionId },
+        input.request_id,
+        candidateSubmitFingerprint(input),
+        receipt as SubmitResult,
+        {
+          actorRef: ctx.callerActor?.ref ?? 'agent:submit_question',
+          actorKind: 'agent',
+          sessionId: ctx.sessionId ?? null,
+          taskRunId: ctx.taskRunId,
+          causedByEventId: ctx.causedByEventId ?? null,
+        },
+        now,
+      );
       return inserted;
     });
   } catch (err) {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);
     throw err;
   }
+
+  // Neither branch inserted a question, owns staged cleanup, or dispatches a
+  // new verifier. The durable original intent is drained by its existing owner.
+  if (persisted.status === 'request_replay') return { ...persisted.receipt, replayed: true };
+  if (persisted.status === 'request_reused')
+    return {
+      status: 'conflict',
+      reason: 'request_id_reused',
+      detail: `request_id '${input.request_id}' was used with different content`,
+      request_id: input.request_id,
+    };
 
   if (persisted.status === 'source_duplicate') {
     await cleanupStagedForRejected(db, candidate.staged_asset_ids);

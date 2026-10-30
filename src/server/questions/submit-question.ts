@@ -28,6 +28,7 @@ export {
 export type { DeclaredGroupDomainOutcome } from './shared-submit';
 export {
   claimSubmitRequestId,
+  findSubmitReceipt,
   persistDeclaredQuestionGroup,
   writeSubmitReceiptEvent,
 } from './shared-submit';
