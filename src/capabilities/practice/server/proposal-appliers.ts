@@ -51,6 +51,11 @@ import {
   requiredString,
   writeProposalRateEvent,
 } from '@/kernel/proposals/applier-helpers';
+import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
+import {
+  ensureProposalDecisionSignal,
+  recordProposalDecisionSignal,
+} from '@/kernel/proposals/signals';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 // W2 — mistake_variant accept (E2) write-through. accept already writes the rate(accept)
@@ -60,11 +65,6 @@ import {
   hasMistakeVariantGenesisAnchor,
   projectMistakeVariantGuarded,
 } from '@/kernel/records/mistake-variant-facts';
-import {
-  type ProposalInboxRow,
-  ensureProposalDecisionSignal,
-  recordProposalDecisionSignal,
-} from '@/server/proposals/practice-runtime';
 
 import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { enrollPromotedQuestionScheduling } from './question-scheduling-enrollment';
