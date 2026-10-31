@@ -11249,6 +11249,15 @@
       "to": 1360,
       "issue": "YUK-1668",
       "responsibilityReason": "The existing search_bank baseline count now calls countedRankV2 and passes the authoritative identity columns compileSameTopic already reads. The cluster branch stays closed, so the qualified-surface limit remains the shared two-row window and cursor v3 still restores the issuing search's counted bit. Same retrieval owner; this records the measured 1331 to 1360 growth, not a new path or a ceiling exemption."
+    },
+    {
+      "path": "src/core/schema/assessment/evaluation.ts",
+      "date": "2026-10-31",
+      "baseBlob": "7320885c538ac2b36af17580a236a379dea42ad5",
+      "from": 1399,
+      "to": 1405,
+      "issue": "YUK-1583",
+      "responsibilityReason": "Optional kc_mastery_evidence is threaded from the model outcome onto the scored unit result. Points and aggregate do not read it; the attribution rules live in kc-mastery-evidence.ts and settlement.ts. The six lines are the import, the schema field, and the passthrough. This records measured 1399 to 1405 growth, not a new scoring responsibility or a ceiling exemption."
     }
   ],
   "compatShims": [

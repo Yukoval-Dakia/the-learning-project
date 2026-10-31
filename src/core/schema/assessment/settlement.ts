@@ -315,8 +315,6 @@ export interface UnitLocalizationInput {
 
 interface KcVote {
   kind: 'full' | 'zero' | 'partial';
-  /** This KC is the only primary on a unit that also names other KCs. */
-  solePrimary: boolean;
   shared: boolean;
   grader: KcMasteryUpdateT | null;
 }
@@ -346,11 +344,41 @@ function unitKcs(unit: ScoringUnitT, loc: UnitLocalizationInput): Set<string> | 
   return kcs.size === 0 ? null : kcs;
 }
 
+/** 组根加上每个 part 的第一个知识点。结算计划与单测用同一集合。 */
+export function declaredPrimaryKcIds(
+  groupKcIds: readonly string[],
+  partKcIds: Iterable<readonly string[]>,
+): Set<string> {
+  const primary = new Set<string>();
+  const root = groupKcIds[0];
+  if (root) primary.add(root);
+  for (const ids of partKcIds) {
+    const first = ids[0];
+    if (first) primary.add(first);
+  }
+  return primary;
+}
+
 function roleOf(kc: string, loc: UnitLocalizationInput): 'primary' | 'dependency' {
   if (loc.primaryKcIds !== undefined && loc.primaryKcIds.size > 0) {
     return loc.primaryKcIds.has(kc) ? 'primary' : 'dependency';
   }
   return kc === loc.groupKcIds[0] ? 'primary' : 'dependency';
+}
+
+/** 共享单元分不出依赖考点是否单独失败。已声明的主考点仍记全步。 */
+function sharedUnitStep(
+  role: 'primary' | 'dependency',
+  direction: 'up' | 'down',
+): Pick<KcObservation, 'role' | 'direction' | 'weight' | 'uncertain' | 'learner_line'> {
+  const dependency = role === 'dependency';
+  return {
+    role,
+    direction,
+    weight: dependency ? DEPENDENCY_EVIDENCE_WEIGHT : 1,
+    uncertain: dependency,
+    learner_line: learnerLine(role, dependency),
+  };
 }
 
 function classifyVotes(votes: readonly KcVote[]): Pick<KcObservation, 'bit' | 'basis'> {
@@ -416,22 +444,7 @@ function attributeKc(
       learner_line: grader.learner_line,
     };
   }
-  if (votes.every((vote) => vote.solePrimary)) {
-    return {
-      role: 'primary',
-      direction,
-      weight: 1,
-      uncertain: false,
-      learner_line: learnerLine('primary', false),
-    };
-  }
-  return {
-    role,
-    direction,
-    weight: DEPENDENCY_EVIDENCE_WEIGHT,
-    uncertain: true,
-    learner_line: learnerLine(role, true),
-  };
+  return sharedUnitStep(role, direction);
 }
 
 function observationFor(
@@ -452,8 +465,8 @@ function observationFor(
  *     局部化 ⇒ abstain」的原位执行，partial→1 / worst-wins 均已 REJECTED。
  *
  * 步骤只落到一个 KC 时，该 KC 的掌握更新是确定的全权重。一个单元同时盖住
- * 多个 KC 时，唯一主考点照常记；其余只记低权重并标归属不确定。判分器附带的
- * 掌握证据可以改这一层，但不能把全对单元改成向下、或把全错单元改成向上。
+ * 多个 KC 时，每个已声明主考点仍记全权重；依赖考点只记低权重并标归属不确定。
+ * 判分器附带的掌握证据可以改这一层，但不能把全对改成向下、或把全错改成向上。
  * uninformative / unmapped 单元不产生票（未决/空白/矛盾形状不惩罚学习者）。
  */
 export function localizeKcObservations(
@@ -473,14 +486,12 @@ export function localizeKcObservations(
     const kcs = unitKcs(unit, loc);
     if (kcs === null) continue;
     const shared = kcs.size > 1;
-    const primaryCount = [...kcs].filter((kc) => roleOf(kc, loc) === 'primary').length;
     const block = result.status === 'scored' ? result.kc_mastery_evidence : undefined;
     for (const kc of kcs) {
       const list = votes.get(kc) ?? [];
       list.push({
         kind: evidence.kind,
         shared,
-        solePrimary: shared && primaryCount === 1 && roleOf(kc, loc) === 'primary',
         grader: block?.updates.find((update) => update.kc_id === kc) ?? null,
       });
       votes.set(kc, list);

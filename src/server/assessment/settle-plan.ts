@@ -11,6 +11,7 @@ import type { ExecutionPlanT, ResponseSpecT, ScoringBasisT } from '@/core/schema
 import {
   EvaluationProvenance,
   SETTLEMENT_SCOPE_VERSION,
+  declaredPrimaryKcIds,
   deriveCoarseVerdict,
   deriveKcWrongCause,
   localizeKcObservations,
@@ -263,12 +264,10 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     (scope.capture.final_hint_level ?? 0) === 0;
   const learnerAssisted = !independentAttempt;
   const unitPartIds = unitPartIdsOf(scope.basis, scope.spec);
-  const primaryKcIds = new Set<string>();
-  if (groupKcs[0]) primaryKcIds.add(groupKcs[0]);
-  for (const partId of localizedParts) {
-    const ordered = contentKcs(scope.partRows.get(partId)?.knowledge_ids ?? []);
-    if (ordered[0]) primaryKcIds.add(ordered[0]);
-  }
+  const primaryKcIds = declaredPrimaryKcIds(
+    groupKcs,
+    localizedParts.map((partId) => contentKcs(scope.partRows.get(partId)?.knowledge_ids ?? [])),
+  );
   const observations = localizeKcObservations(scope.basis, input.evaluation.unit_results, {
     unitPartIds,
     partKcIds,
