@@ -107,12 +107,27 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   }
 }
 
+const COACH_JOBS = new Set(['coach_daily', 'coach_weekly']);
+
+// Coach reads the kernel plan projection. Practice owns the due/budget/pace
+// facts and binds them here, before any coach handler is mounted. Kernel
+// read-models cannot import that capability.
+async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): Promise<void> {
+  const coaches = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => COACH_JOBS.has(handler.name)),
+  );
+  if (!coaches) return;
+  const { installDailyReviewPlanFacts } = await import('@/capabilities/practice/public');
+  await installDailyReviewPlanFacts();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
+  await installCoachDailyReviewPlan(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');

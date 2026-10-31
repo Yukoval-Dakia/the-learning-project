@@ -7018,6 +7018,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 4,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -10706,6 +10714,26 @@
       "issue": "YUK-1586",
       "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. Question detail copies that reading onto each scheduling row and does not invent an interval or a second decay path.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["DailyReviewPlanInputs", "resolveDailyReviewPlanInputs"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection: deduped due questions bucketed by subject, plus the practice-supplied minute budget and measured question pace. Coach reads this projection; it does not import the practice due queue.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection. installDailyReviewPlanFacts binds the practice-owned due/budget/pace reader into that projection before coach jobs mount; the due queue, budget and pace algorithms stay in practice.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -11840,11 +11868,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 23,
+      "total": 22,
       "byOwnerPair": {
         "agency -> knowledge": 1,
         "agency -> notes": 2,
-        "agency -> practice": 4,
+        "agency -> practice": 3,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
