@@ -97,14 +97,13 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
 }
 
-// Binds practice's package author into the kernel port. prepare_intervention
-// calls that port; it does not import this module for the author.
-export async function installInterventionPackageAuthor(): Promise<void> {
-  const [{ bindInterventionPackageAuthor }, { authorInterventionPackage }] = await Promise.all([
-    import('@/kernel/records/intervention-package-author'),
-    import('./server/intervention-author'),
-  ]);
-  bindInterventionPackageAuthor(authorInterventionPackage);
+export async function installInterventionAuthorStages(): Promise<void> {
+  const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-package-author'),
+      import('./server/intervention-author'),
+    ]);
+  install(interventionAuthorStages);
 }
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
