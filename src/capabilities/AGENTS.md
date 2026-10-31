@@ -25,7 +25,7 @@ src/capabilities/
 | 路由 handler | 该包 `api/*.ts` |
 | pg-boss job handler | 该包 `jobs/*.ts`（部分仍过渡在 `src/server/boss/handlers/`） |
 | UI 页面 | 该包 `ui/*.tsx` |
-| proposal accept applier | 该包 `server/proposal-appliers.ts`（或等效文件） |
+| proposal accept applier | 该包 `server/proposal-appliers.ts`；`judge_retraction` 在 `server/judge-retraction-applier.ts` |
 
 ## CONVENTIONS
 - 包只依赖 `@/kernel/*` + 自身 + 共享 UI 件（`@/ui/primitives`、`@/ui/lib`）。

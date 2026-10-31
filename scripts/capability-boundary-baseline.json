@@ -10803,6 +10803,42 @@
       "issue": "YUK-1572",
       "owns": "Question-group publication. The draft transaction publishes each newly inserted question in that same transaction and keeps the withheld default; composite parts already publish through their writer, so this call stays idempotent for them.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1572",
+      "owns": "Event envelope insert. Judge-retraction accept writes the appeal resolution and the legacy judge-event retract here, and does not rewrite the original evaluation.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1572",
+      "owns": "Shared API error. Judge-retraction accept throws the same validation and conflict codes the proposal path already used.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge-retraction-applier.ts",
+      "module": "src/kernel/proposals/applier-helpers.ts",
+      "kind": "value",
+      "symbols": [
+        "asPlainRecord",
+        "ensureAcceptOnly",
+        "existingAcceptRate",
+        "requiredString",
+        "writeProposalRateEvent"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Shared proposal accept gate, payload read, existing accept rate, required-string check, and rate-event write. Judge-retraction accept keeps the same idempotent replay; the correction policy stays in the applier.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [

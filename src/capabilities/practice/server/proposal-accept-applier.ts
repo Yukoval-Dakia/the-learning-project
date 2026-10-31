@@ -24,10 +24,10 @@ import {
   type ProposalInboxRow,
   recordProposalDecisionSignal,
 } from '@/server/proposals/practice-runtime';
+import { acceptJudgeRetractionProposal } from './judge-retraction-applier';
 import {
   type PracticeApplierOpts,
   acceptCauseCategoryProposal,
-  acceptJudgeRetractionProposal,
   acceptQuestionDraftProposal,
   acceptQuestionEditProposal,
   acceptVariantQuestionProposal,
@@ -143,7 +143,7 @@ export const questionEditProposalAcceptApplier: ProposalAcceptApplier = async (
 
 // judge_retraction accept：判分纠错提案（evaluation 目标走
 // appeal/rejudge/CAS 激活 + settlement replay；legacy judge-event 目标写
-// CorrectEvent）。真身在 proposal-appliers.ts。
+// CorrectEvent）。真身在 judge-retraction-applier.ts。
 export const judgeRetractionProposalAcceptApplier: ProposalAcceptApplier = async (
   db,
   input,
