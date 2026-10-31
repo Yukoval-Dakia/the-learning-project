@@ -854,6 +854,35 @@ export function compareDependencySnapshot(
   ];
 }
 
+/** Generated operation types own browser wire contracts. Domain projections may
+ *  stay in `*-api.ts`, but the untyped `apiJson` escape hatch may not. */
+function collectApiClientUsageViolations(projectRoot: string): Violation[] {
+  const root = resolve(projectRoot, 'src/capabilities');
+  const violations: Violation[] = [];
+  for (const file of capabilityApiModules(root)) {
+    const source = readFileSync(file, 'utf8');
+    if (/\bapiJson\s*(?:<|\()/.test(source) || /\bapiJson\s*,/.test(source)) {
+      violations.push({
+        file: relative(projectRoot, file).split(sep).join('/'),
+        source: 'apiJson',
+        reason: 'handwritten apiJson wire type; capability *-api.ts must use generated operations',
+      });
+    }
+  }
+  return violations;
+}
+
+function capabilityApiModules(dir: string): string[] {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return [];
+  const files: string[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    const path = resolve(dir, name);
+    if (statSync(path).isDirectory()) files.push(...capabilityApiModules(path));
+    else if (name.endsWith('-api.ts')) files.push(path);
+  }
+  return files;
+}
+
 function collectSeamViolations(projectRoot: string): Violation[] {
   const capabilityRoot = resolve(projectRoot, 'src/capabilities');
   const aiRoot = resolve(projectRoot, 'src/ai');
@@ -953,6 +982,7 @@ export function auditCapabilityBoundaries(
   const { snapshot, report, dependencies } = collectDependencySnapshot(projectRoot);
   const violations = [
     ...collectSeamViolations(projectRoot),
+    ...collectApiClientUsageViolations(projectRoot),
     ...(baseline ? compareDependencySnapshot(snapshot, baseline) : []),
   ];
   return {
@@ -1356,7 +1386,8 @@ export function main(argv = process.argv.slice(2), projectRoot = process.cwd()):
     console.log(
       `Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets exact (capability->server=${debts.capabilityToServer.total}, server->capability-deep=${debts.serverToCapabilityDeep.total}, cross-capability-value=${debts.crossCapabilityValue.total}); ` +
         `new dependency edges=${regressions?.newDependencyEdges ?? 0}; server-entry new edges=${regressions?.serverEntryNew.public ?? 0} approved/${regressions?.serverEntryNew.blocked ?? 0} blocked/${regressions?.serverEntryNew.type ?? 0} type-only; nontrivial SCCs=${regressions?.sccs.head ?? 0} (base ${regressions?.sccs.base ?? 0}); ` +
-        `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}).`,
+        `>${SIZE_METRIC.hardCeiling}-line files=${regressions?.overCeilingFiles.head ?? 0} (base ${regressions?.overCeilingFiles.base ?? 0}); ` +
+        'capability *-api.ts apiJson escape hatch=0.',
     );
   }
 }
