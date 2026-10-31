@@ -2,6 +2,11 @@
 
 日期：2026-10-29 · 阶段：规划交付（本轮只交方案与冻结清单，不实施）· 状态：方案稿，待调参集补齐后执行
 
+骨架状态：`countedRankV2` / `sameTopic` 在 `bank-vector-retrieval.ts`，规则版本为 2。
+样本仍是 `pending_external_fill`，没有选定 A1/A2/A3，也没有写入 `clusterMargin`、窗口 K、
+q↔q 否证上界。新检索只走 decisive 条款（0.55 / 0.15，仍是 provisional）。游标保持 schema v3，
+15 分钟 TTL 内按签发时的 `vd`/`vc` 还原，续页不重算。网格未跑。
+
 ## 问题
 
 v1 规则（YUK-1516，`src/capabilities/practice/server/tools/bank-vector-retrieval.ts`）要求
@@ -177,8 +182,8 @@ countedRankV2(baselineTopK 升序, sameTopic, params):
    延续「与引擎同源谓词/同源规则函数」的单一真相模式。
 2. **不恢复第二套 matcher**：查重证据只读既有产物（变式家族、canonical hash、同组、
    0.35 查重轴常量），不新建 question↔question matcher，不改 `MATCHER_COSINE_MAX_DISTANCE`。
-3. **不用旧 v1 领先量规则冒充新链路**：v1（0.55/0.15）保持现状；v2 只在后续实施 PR 以
-   `RULE_VERSION=2` 落地；本文伪代码不是已交付行为。
+3. **不用旧 v1 领先量规则冒充新链路**：decisive 条款仍是 0.55 / 0.15。规则版本已是 2，
+   但簇分支关闭，伪代码里的题簇计入还不是线上行为。
 4. **与 #1969 恢复线（YUK-1448，OPEN）对齐**：#1969 明文「原距离 0.55、top-1 margin 及
    校准文件未改；旧 counted 标记不决定 v2 semantic matched」。共享 search/schema 面
    （search_bank 输出 schema、通道结构、coverage 口径）以 #1969 落地版为准；本票 v2
