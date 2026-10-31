@@ -10650,6 +10650,16 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/weak-points.ts",
+      "kind": "value",
+      "symbols": ["deriveActionableWeakPoints"],
+      "issue": "YUK-1582",
+      "owns": "完整可行动薄弱点只读派生：失败作答×归因×meta-cause先验折叠、KC元数据/科目label解析、live misconception身份匹配与强度升级、unknown显式化；coach_daily 只取派生结果作 Coach brief 注意力压力（additive only），窗口/上限/unknown语义与证据红线归端口，消费方不重定义。",
+      "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/knowledge/server/node-page.ts",
       "module": "src/kernel/read-models/learner-judgment.ts",
       "kind": "value",
