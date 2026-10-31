@@ -25,7 +25,10 @@ import {
 } from '@/ai/help-provider-fault';
 import { type SealedHelpExplanationReplay, replayHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
-import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
+import {
+  type MaterializeAskCheckParams,
+  alignAskCheck,
+} from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
 import { loadHelpExplanationEvidence, persistHelpExplanationReplay } from '../practice-port';
@@ -171,10 +174,11 @@ export async function runTeachingSkill(
   let pendingQuestion: PendingAskCheckParams | undefined;
   if (turn.kind === 'ask_check' && turn.structured_question) {
     pendingQuestion = {
-      structured_question: {
-        ...turn.structured_question,
-        prompt_md: replayed.text_md,
-      },
+      structured_question: alignAskCheck(
+        turn.structured_question,
+        replayed.text_md,
+        replayed.replay?.published_source === 'sealed_gloss',
+      ),
       learningItemId,
       // Stamp the Copilot session id as question provenance; accept-chip lineage
       // resolves against that same session.
