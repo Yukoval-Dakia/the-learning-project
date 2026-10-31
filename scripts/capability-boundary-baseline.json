@@ -10873,6 +10873,16 @@
       "issue": "YUK-1572",
       "owns": "Question-group publication and append-only admission verification records. Promote, hold, and kept-admission writes stay in the same caller transaction; the verify job still chooses the branch.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/agent/run.ts",
+      "module": "src/server/ai/provider-session-admission-policy.ts",
+      "kind": "value",
+      "symbols": ["ProviderSessionAdmissionError"],
+      "issue": "YUK-1572",
+      "owns": "Provider-session admission failure identity (reason, lane, task run). The ingestion agent classifies that error when a run stops. The class moved with lane-policy parsing; acquire and the tick loop stay in provider-session-admission.ts, so this replaces that file's edge and the ingestion -> ai count does not grow.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [

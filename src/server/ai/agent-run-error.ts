@@ -2,7 +2,7 @@
 // Admission retains its runtime class identity; SDK result shapes stay here.
 
 import { AgentRunError } from '@/ai/agent-run-error';
-import { ProviderSessionAdmissionError } from './provider-session-admission';
+import { ProviderSessionAdmissionError } from './provider-session-admission-policy';
 import type { SDKMessage } from './sdk-types';
 
 /**

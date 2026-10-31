@@ -46,7 +46,7 @@ import {
 import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { logMissingToolMountsWarning } from './log';
 import { providerHttpTimeoutMs } from './provider-http-timeout';
-import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
+import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission-policy';
 import type { ProviderTransportCollector } from './provider-transport';
 import type { ResolvedProvider } from './providers';
 import {
