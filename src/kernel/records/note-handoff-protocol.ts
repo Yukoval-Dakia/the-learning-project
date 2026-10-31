@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { Db, Tx } from '@/db/client';
 import { artifact, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockNoteHandoffComplete } from '@/kernel/locks/note-handoff-complete-lock';
 
 export const NOTE_HANDOFF_ACTION = 'experimental:note_handoff';
 
@@ -222,9 +223,7 @@ export async function dispatchNoteHandoff(
   if (!confirmed) return false;
 
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`notes:handoff-complete:${completionId}`}, 0))`,
-    );
+    await lockNoteHandoffComplete(tx, completionId);
     const existing = await tx
       .select({ id: event.id })
       .from(event)

@@ -106,10 +106,6 @@
       "count": 2
     },
     {
-      "path": "src/capabilities/notes/server/note-handoff.ts",
-      "count": 1
-    },
-    {
       "path": "src/capabilities/notes/server/note-refine-triggers.ts",
       "count": 1
     },

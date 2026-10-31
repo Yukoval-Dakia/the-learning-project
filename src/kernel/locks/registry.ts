@@ -85,6 +85,13 @@ export const advisoryLockRegistry = {
     salt: 1,
     identity: true,
   },
+  noteHandoffComplete: {
+    family: 'note-handoff-complete',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'notes:handoff-complete:',
+    suffixFields: ['completionId'],
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {
