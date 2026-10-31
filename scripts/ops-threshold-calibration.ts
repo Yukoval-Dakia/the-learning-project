@@ -1,4 +1,4 @@
-// audit:threshold-calibration — read-only distance-distribution replay for three embedding
+// ops:threshold-calibration — read-only distance-distribution replay for three embedding
 // thresholds that shipped untuned.
 //
 //   Axis A — MATCH_THRESHOLD: question→KC match-or-propose ceiling. Replays production order:
@@ -631,7 +631,7 @@ export async function runCli(args: string[] = process.argv.slice(2)): Promise<nu
     ssl: isLocal ? false : 'require',
     max: 2,
     connection: {
-      application_name: 'audit:threshold-calibration',
+      application_name: 'ops:threshold-calibration',
       options: '-c default_transaction_read_only=on -c statement_timeout=120000',
     },
   });
@@ -736,7 +736,7 @@ export async function main(): Promise<void> {
     process.exitCode = await runCli();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`audit:threshold-calibration failed (operational error, NOT a verdict): ${msg}`);
+    console.error(`ops:threshold-calibration failed (operational error, NOT a verdict): ${msg}`);
     if (err instanceof Error && err.stack) console.error(err.stack);
     process.exitCode = 2;
   }
