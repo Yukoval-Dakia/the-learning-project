@@ -10734,6 +10734,26 @@
       "issue": "YUK-1571",
       "owns": "Shared daily-review-plan input projection. installDailyReviewPlanFacts binds the practice-owned due/budget/pace reader into that projection before coach jobs mount; the due queue, budget and pace algorithms stay in practice.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/proposals/producers.ts",
+      "kind": "value",
+      "symbols": ["writeEvaluationCorrectionProposal"],
+      "issue": "YUK-1413",
+      "owns": "Reversible grading-correction proposal for one completed evaluation. Accept rejudges the frozen submission and does not rewrite the original evaluation.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/read-models/question-activity.ts",
+      "kind": "value",
+      "symbols": ["getQuestionTimeline"],
+      "issue": "YUK-1413",
+      "owns": "Question timeline of attempts and reviews, including the original and effective evaluation ids needed to file a correction proposal.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [

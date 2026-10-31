@@ -42,6 +42,12 @@ import {
   compileCopilotModelInput,
   compileCopilotSessionContext,
 } from './live-turn-context';
+import {
+  NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+  chooseVerifiedFallback,
+  createNoProgressLoop,
+  renderNoProgressClosure,
+} from './no-progress-loop';
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
@@ -426,17 +432,31 @@ export function createCopilotExecutionOwner(
       return undefined;
     };
 
-    // The hook stack: finalizer entries first, then cancellation, spawn gate
-    // last — the spawn gate's `{block:false}` allow short-circuit requires it
-    // to run after every deny-capable entry. The loop's native toolCall.id
-    // reaches the pipeline verbatim (no correlation hook needed).
-    const piHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
+    // Assembled stack: finalizer, then cancellation, spawn gate last — the spawn
+    // gate's `{block:false}` allow short-circuit requires it to run after every
+    // other deny. No-progress is prepended so a repeat is blocked before the
+    // finalizer records it and before the spawn gate can allow it.
+    const noProgress = createNoProgressLoop();
+    const budgetLandingTimer = setTimeout(
+      () => noProgress.landBeforeBudget(),
+      Math.max(
+        0,
+        DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs - NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+      ),
+    );
+    budgetLandingTimer.unref?.();
+    const assembledHooks = prependCopilotPiFinalizationHooks(finalizer.piHooks, {
       beforeToolCall: [
         policy.cancellation.piBeforeToolCall,
         ...(piSpawnContract ? [piSpawnContract.gate] : []),
       ],
       afterToolCall: [remoteMcpToolFinished],
     });
+    // No-progress runs before the finalizer so a blocked repeat never enters the trace.
+    const piHooks = {
+      beforeToolCall: [noProgress.beforeToolCall, ...(assembledHooks.beforeToolCall ?? [])],
+      afterToolCall: [...(assembledHooks.afterToolCall ?? []), noProgress.afterToolCall],
+    };
     const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
     const resumeSessionId = answerOnly ? undefined : policy.resumeSessionId;
@@ -554,14 +574,37 @@ export function createCopilotExecutionOwner(
       // reaches the durable reply.
       const terminalText = result.terminalText ?? '';
       const nativeChildrenComplete = await drainNativeTasks();
-      const partial = result.partial === true;
-      const executionError = result.error;
+      const closure = noProgress.closure();
+      const cancelled =
+        policy.cancellation.signal.aborted || policy.cancellation.hasConfirmedCancellation;
+      const providerRejected = result.failure?.kind === 'provider_request_rejected';
+      const sealedClosure =
+        closure !== undefined && !cancelled && !providerRejected ? closure : undefined;
+      const closureText = sealedClosure
+        ? renderNoProgressClosure(
+            sealedClosure,
+            await chooseVerifiedFallback({
+              db,
+              sessionId: turn.sessionId,
+              taskRunId: result.task_run_id,
+              actorRef,
+              ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+              allowProposal: !answerOnly,
+              evidence: sealedClosure.evidence,
+            }),
+          )
+        : undefined;
+      const partial = closureText !== undefined ? false : result.partial === true;
+      const executionError = closureText !== undefined ? undefined : result.error;
+      const finishReason = sealedClosure
+        ? sealedClosure.reason
+        : (result.finishReason ?? 'unknown');
       const finalization = await observeTaskOperation(
         { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
         async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(
-            partial ? '' : terminalText,
-            partial ? result.failure : undefined,
+            closureText ?? (partial ? '' : terminalText),
+            closureText === undefined && partial ? result.failure : undefined,
           );
           reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
@@ -570,7 +613,7 @@ export function createCopilotExecutionOwner(
       retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
-        finishReason: result.finishReason ?? 'unknown',
+        finishReason,
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
@@ -578,6 +621,7 @@ export function createCopilotExecutionOwner(
         contextDigest,
       };
     } finally {
+      clearTimeout(budgetLandingTimer);
       await drainNativeTasks();
       if (!retainSdkSession) {
         if (observedSdkSessionId) clearCopilotWorkerSession(turn.sessionId, observedSdkSessionId);
