@@ -23,6 +23,7 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 
 其余专项审计：
 
+- `audit:provider-lanes`：lane 接线，并包含 attempt-truth（wrapper、legacy cost、zero-cost）。`pnpm test` 前缀与 CI policy audit lane 都跑它。
 - `audit:dependencies`：`pnpm audit --prod --audit-level=high`，CI standalone hard gate。
 - `audit:fold-writes`：fold-owned projection 表写者 registry ↔ 源码反查；默认 report-only，`--strict` 对未授权写点/陈旧 registry fail。
 - `audit:flags`：`*_ENABLED` 加 `SCOPED_CONTROL_NAMES` 有界控制项 ↔ `audit-flags-ledger.json` 对账（布尔 env/const 与 enum/CSV/JSON 分别声明真实值域和 reader marker）；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。

@@ -223,7 +223,7 @@ jobs:
           pnpm audit:draft-status
           pnpm audit:flags --strict
           pnpm audit:hub-sync-writers
-          pnpm audit:provider-attempt-truth
+          pnpm audit:provider-lanes
           pnpm audit:model-source
           pnpm audit:advisory-locks
 
