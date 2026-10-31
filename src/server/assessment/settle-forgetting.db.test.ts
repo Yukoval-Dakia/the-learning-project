@@ -28,18 +28,17 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import {
+  enrollFsrsStateIfAbsent,
+  initialSchedulingState,
+} from '@/kernel/records/material-fsrs-state-write';
+import {
   CandidateReplayInputSchema,
   SealedCandidateInputSchema,
   initialCandidateState,
   projectCandidateDue,
   sealCandidateFact,
 } from '@/server/fsrs/candidate';
-import {
-  enrollFsrsStateIfAbsent,
-  getFsrsRetrievabilityByIds,
-  initialSchedulingState,
-  upsertFsrsState,
-} from '@/server/fsrs/state';
+import { getFsrsRetrievabilityByIds, upsertFsrsState } from '@/server/fsrs/state';
 import {
   normalizeQuestionGroupToContract,
   normalizeQuestionRowToContract,

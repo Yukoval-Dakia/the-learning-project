@@ -12,13 +12,6 @@ import {
   loadNativeInterventionDiagnosticState,
 } from '@/kernel/read-models/intervention-diagnostic-verdict';
 
-export {
-  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
-  learnerFacingInterventionDiagnosticPrompt,
-  materializeInterventionDiagnostics,
-  retireInterventionDiagnosticQuestion,
-} from '@/kernel/records/intervention-diagnostic-materialize';
-
 export function questionKnowledgeIdsForJudge(input: {
   source: string | null;
   metadata: Record<string, unknown> | null;

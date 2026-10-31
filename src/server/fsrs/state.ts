@@ -5,7 +5,6 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 
-import { initialFsrsState } from '@/core/fsrs';
 import { newId } from '@/core/ids';
 import {
   CandidateStateSchema,
@@ -112,14 +111,6 @@ export async function getFsrsRetrievabilityByIds(
   }
   return values;
 }
-
-/** Every enrollment uses the same server-side selection and its existing subject identity. */
-export {
-  type UpsertFsrsStateInput,
-  enrollFsrsStateIfAbsent,
-  initialSchedulingState,
-  retireQuestionFsrsState,
-} from '@/kernel/records/material-fsrs-state-write';
 
 import type { UpsertFsrsStateInput } from '@/kernel/records/material-fsrs-state-write';
 
