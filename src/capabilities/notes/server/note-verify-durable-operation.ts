@@ -8,7 +8,6 @@ import { aiAgentRef } from '@/ai/task-result';
 import {
   bodyBlocksHaveSemanticKinds,
   bodyBlocksToBlockSummaries,
-  bodyBlocksToNoteSections,
 } from '@/capabilities/notes/server/body-blocks';
 import { enqueueVerifyNoteRefine } from '@/capabilities/notes/server/note-refine-triggers';
 import {
@@ -32,6 +31,7 @@ import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import { type TaskTextRunFn, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
