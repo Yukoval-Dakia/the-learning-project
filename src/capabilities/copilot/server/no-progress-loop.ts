@@ -232,9 +232,10 @@ function disputeReasonOf(record: Record<string, unknown>): string | undefined {
 }
 
 /**
- * One copilot turn's tool loop. Identical settled calls are not run again.
- * A later call whose ids are already known is the same stop. A mutation bumps
- * the generation so one following read of the same args may observe the write.
+ * One copilot turn's tool loop. The same args are not executed again. A read
+ * that adds no ids only stalls: the model can still answer. Another tool call
+ * after that stall is the stop. A mutation bumps the generation so one
+ * following read of the same args may observe the write.
  */
 export function createNoProgressLoop(): {
   beforeToolCall: PiBeforeToolCall;
@@ -243,6 +244,7 @@ export function createNoProgressLoop(): {
   closure(): NoProgressClosure | undefined;
 } {
   let phase: Phase = { status: 'collecting' };
+  let stalled = false;
   let generation = 0;
   let budgetLanding = false;
   let settledReads = 0;
@@ -273,6 +275,14 @@ export function createNoProgressLoop(): {
     const signature = signatureOf(call.name, args);
     const slot = slots.get(signature);
     if (slot && slot.generation === generation) {
+      if (stalled) {
+        close('no_progress');
+        return { block: true, terminate: true, reason: BLOCK_REASON };
+      }
+      stalled = true;
+      return { block: true, reason: BLOCK_REASON };
+    }
+    if (stalled) {
       close('no_progress');
       return { block: true, terminate: true, reason: BLOCK_REASON };
     }
@@ -312,10 +322,7 @@ export function createNoProgressLoop(): {
         },
       ]);
     }
-    if (repeatedFingerprint || noNewEvidence) {
-      close('no_progress');
-      return { terminate: true };
-    }
+    if (repeatedFingerprint || noNewEvidence) stalled = true;
     return undefined;
   };
 
