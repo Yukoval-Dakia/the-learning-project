@@ -14,10 +14,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/agency/server/intervention/probe-result-subscription.ts",
-      "count": 2
-    },
-    {
       "path": "src/capabilities/agency/server/misconception-promote.ts",
       "count": 2
     },
