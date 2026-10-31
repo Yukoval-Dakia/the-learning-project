@@ -54,7 +54,7 @@ flowchart TB
     subgraph AI["AI Task Layer"]
         direction TB
         Runner[Pi Agent Runner<br/>runner.ts → execution-adapter.ts<br/>→ pi-agent-adapter.ts]
-        Registry[Task Registry<br/>task-catalog.ts<br/>51 TaskSpecs]
+        Registry[Task Registry<br/>task-catalog.ts<br/>58 TaskSpecs]
         ToolBridge[Tool Bridge<br/>piToolMounts: DomainTool→AgentTool<br/>+ remote MCP client]
         
         subgraph Providers["Provider Lanes (implemented)"]
@@ -120,19 +120,19 @@ flowchart TB
 
 ## Key Components
 
-### 1. Task Registry (51 TaskSpecs)
+### 1. Task Registry (58 TaskSpecs)
 
-The central `task-catalog.ts` composes TaskSpecs from 6 capability owner maps
-(`composeTaskCatalog` enforces `expectedCount = 51` at module load):
+The central `src/capabilities/task-catalog.ts` composes TaskSpecs from 6 capability owner maps
+via `composeTaskCatalog` from `src/ai/task-catalog.ts` (which enforces `expectedCount = 58` at module load):
 
 | Capability | Task Count | Examples |
 |------------|------------|----------|
-| Practice | 22 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask, SupplyPlanTask |
-| Ingestion | 8 | VisionExtractTask, StructureTask, TaggingTask |
+| Practice | 27 | AttributionTask, VariantGenTask, JudgeTasks, QuizGenTask, SourcingTask, SupplyPlanTask |
+| Ingestion | 9 | VisionExtractTask, StructureTask, TaggingTask |
 | Knowledge | 3 | KnowledgeEdgeProposeTask, FrontierPrerequisiteTask, KnowledgeReviewTask |
 | Notes | 3 | NoteGenerateTask, NoteVerifyTask, NoteRefineTask |
 | Agency | 13 | DreamingTask, CoachTask, MindModelInductionTask, ResearchMeetingDirectorTask |
-| Copilot | 2 | CopilotTask, TeachingTurnTask |
+| Copilot | 3 | CopilotTask, TeachingTurnTask |
 
 ### 2. Execution Flow
 
@@ -200,10 +200,12 @@ Resolution order (`resolveTaskProvider` in `providers.ts`):
 
 ## Evidence
 
-- `src/ai/task-catalog.ts` - Task composition root (expectedCount 51)
+- `src/capabilities/task-catalog.ts` - Task composition root (expectedCount 58)
+- `src/ai/task-catalog.ts` - `composeTaskCatalog` definition
 - `src/server/ai/runner.ts` - Runner entry points (`runTask`/`runAgentTask`/`streamTask`/`streamTaskCollecting`)
 - `src/server/ai/execution-adapter.ts` - ExecutionAdapter seam; `'pi'` is the only legal engine id
-- `src/server/ai/pi-agent-adapter.ts` - PiAgentAdapter (in-process agentLoop, frame normalization)
+- `src/server/ai/pi-agent-adapter.ts` - PiAgentAdapter (in-process agentLoop)
+- `src/server/ai/pi-runner-frames.ts` - Pi ↔ runner frame codec (replay/prompts → AgentMessages, pi events → SDK-shaped frames)
 - `src/server/ai/providers.ts` - Provider registry + resolution order
 - `src/server/ai/tools/pi-tools.ts` - piToolMounts (DomainTool→AgentTool + remote MCP bridge)
 - `src/ai/exa-mcp.ts` - Exa remote MCP wiring
