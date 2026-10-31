@@ -12,6 +12,7 @@ import {
   EvaluationProvenance,
   SETTLEMENT_SCOPE_VERSION,
   deriveCoarseVerdict,
+  deriveKcWrongCause,
   localizeKcObservations,
   projectIssuedScoringBasis,
   ratingForVerdict,
@@ -262,11 +263,24 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     (scope.capture.final_hint_level ?? 0) === 0;
   const learnerAssisted = !independentAttempt;
   const unitPartIds = unitPartIdsOf(scope.basis, scope.spec);
+  const primaryKcIds = new Set<string>();
+  if (groupKcs[0]) primaryKcIds.add(groupKcs[0]);
+  for (const partId of localizedParts) {
+    const ordered = contentKcs(scope.partRows.get(partId)?.knowledge_ids ?? []);
+    if (ordered[0]) primaryKcIds.add(ordered[0]);
+  }
   const observations = localizeKcObservations(scope.basis, input.evaluation.unit_results, {
     unitPartIds,
     partKcIds,
     groupKcIds: scopeKcIds,
+    primaryKcIds,
   });
+  const graderCauses = input.evaluation.unit_results.flatMap((result) =>
+    result.status === 'scored' && result.kc_mastery_evidence
+      ? [result.kc_mastery_evidence.wrong_cause]
+      : [],
+  );
+  const kcWrongCause = deriveKcWrongCause(observations, graderCauses);
   // YUK-1604 — the judge-side decision stays the calibration anchor input (unchanged);
   // the learner-assist gate below only withholds the θ̂/PFA update itself.
   const judgeThetaDecision = resolveThetaDecision(observations, provenance);
@@ -348,6 +362,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
         applied: true,
         outcome: thetaDecision.outcome,
         knowledgeIds: thetaDecision.knowledgeIds,
+        ...(thetaDecision.kcEvidence ? { kcEvidence: thetaDecision.kcEvidence } : {}),
         anchorQuestionId: anchor.id,
         anchorDifficulty: anchor.difficulty,
         anchorKind: anchor.kind,
@@ -481,6 +496,7 @@ export function derivePlan(input: ActivationSettleInput, scope: SettlementScope)
     scopeKcIds,
     fsrsSubjects,
     kcObservations: observations,
+    kcWrongCause,
     theta,
     judgeRoute,
     difficultyLabelStreamItemId: scope.difficultyLabelStreamItemId,

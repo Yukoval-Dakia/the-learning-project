@@ -1,4 +1,11 @@
 import type { EvaluationRecordT, ScoringUnitResultT } from './judgment';
+import {
+  DEPENDENCY_EVIDENCE_WEIGHT,
+  type KcEvidenceApply,
+  type KcMasteryUpdateT,
+  type KcWrongCauseT,
+  learnerLine,
+} from './kc-mastery-evidence';
 import type { ScoringBasisT, ScoringUnitT } from './scoring';
 
 // ====================================================================
@@ -20,13 +27,11 @@ import type { ScoringBasisT, ScoringUnitT } from './scoring';
 //     总分只聚合一次：本模块只【读】evaluation.aggregate / unit_results，
 //     绝不二次聚合。
 //
-//   D13 工程约束 — bounded evidence adapter：现存 θ̂ updater
-//     （updateThetaForAttempt）是 one-bit conjunctive updater：一次调用携带
-//     单一 outcome 位、作用于整组 knowledgeIds。它【不能】表达 mixed per-KC
-//     证据，也【不能】按 KC 集合多次调用（每 KC ≤1 obs）。因此本适配器：
-//     仅当「所有非 abstain 的 KC 共享同一个位」时才发起【恰好一次】共享
-//     global update；混合位/全 abstain/无 KC ⇒ 不更新，如实记 abstain 原因。
-//     无 fractional θ、无新 IRT、无 self-report θ̂（D15）。
+//   D13 工程约束 — 掌握证据与作答分分开。全权重、同一方向、且归属确定的 KC
+//     仍走一次共享 conjunctive update（单 KC 与它逐位相同）。方向或权重
+//     不一致时，同一次 update 按 KC 带上各自的 outcome 与 evidence weight，
+//     不另建 IRT，也不把权重写回作答分。共享单元里对不上步骤的依赖考点只带
+//     低权重并标不确定。partial / 无证据仍 abstain。无 self-report θ̂（D15）。
 //
 //   D14 — 三等级建议（group 级 verdict → FSRS 评级）：correct→good、
 //     partial→hard、incorrect→again；invalid/unmapped/unsupported ⇒ none
@@ -281,10 +286,21 @@ export function classifyScoredUnit(unit: ScoringUnitT, result: ScoringUnitResult
   return { kind: 'partial' };
 }
 
-/** per-KC observation（每 KC 每 occurrence 最多一条）。 */
-export type KcObservation =
-  | { kc_id: string; bit: 0 | 1; basis: 'all_full' | 'all_zero' }
-  | { kc_id: string; bit: 'abstain'; basis: 'no_supported_evidence' | 'mixed_or_partial' };
+/**
+ * per-KC observation（每 KC 每 occurrence 最多一条）。
+ * bit/basis 是单元证据。direction/weight/uncertain 是掌握更新，不是作答分。
+ * 后四个字段在旧回放载荷里可以缺省。
+ */
+export type KcObservation = {
+  kc_id: string;
+  bit: 0 | 1 | 'abstain';
+  basis: 'all_full' | 'all_zero' | 'no_supported_evidence' | 'mixed_or_partial';
+  role?: 'primary' | 'dependency';
+  direction?: 'up' | 'down' | 'none';
+  weight?: number;
+  uncertain?: boolean;
+  learner_line?: string;
+};
 
 export interface UnitLocalizationInput {
   /** unit.scoring_unit_id → 其作答面所在的 part 集（无槽引用 = 全组）。 */
@@ -293,6 +309,16 @@ export interface UnitLocalizationInput {
   partKcIds: Map<string, string[]>;
   /** 组级 KC 集（question.knowledge_ids 规范化后）。 */
   groupKcIds: string[];
+  /** 题或 part 声明的主考点。缺省时 groupKcIds[0] 是主考点。 */
+  primaryKcIds?: ReadonlySet<string>;
+}
+
+interface KcVote {
+  kind: 'full' | 'zero' | 'partial';
+  /** This KC is the only primary on a unit that also names other KCs. */
+  solePrimary: boolean;
+  shared: boolean;
+  grader: KcMasteryUpdateT | null;
 }
 
 /**
@@ -320,6 +346,103 @@ function unitKcs(unit: ScoringUnitT, loc: UnitLocalizationInput): Set<string> | 
   return kcs.size === 0 ? null : kcs;
 }
 
+function roleOf(kc: string, loc: UnitLocalizationInput): 'primary' | 'dependency' {
+  if (loc.primaryKcIds !== undefined && loc.primaryKcIds.size > 0) {
+    return loc.primaryKcIds.has(kc) ? 'primary' : 'dependency';
+  }
+  return kc === loc.groupKcIds[0] ? 'primary' : 'dependency';
+}
+
+function classifyVotes(votes: readonly KcVote[]): Pick<KcObservation, 'bit' | 'basis'> {
+  if (votes.length === 0) return { bit: 'abstain', basis: 'no_supported_evidence' };
+  const kinds = new Set(votes.map((vote) => vote.kind));
+  if (kinds.size === 1 && kinds.has('full')) return { bit: 1, basis: 'all_full' };
+  if (kinds.size === 1 && kinds.has('zero')) return { bit: 0, basis: 'all_zero' };
+  return { bit: 'abstain', basis: 'mixed_or_partial' };
+}
+
+function agreedGrader(votes: readonly KcVote[], bit: 0 | 1): KcMasteryUpdateT | null {
+  const graders = votes.flatMap((vote) => (vote.grader === null ? [] : [vote.grader]));
+  if (graders.length !== votes.length) return null;
+  const [first] = graders;
+  if (first === undefined) return null;
+  const same = graders.every(
+    (grader) =>
+      grader.direction === first.direction &&
+      grader.weight === first.weight &&
+      grader.uncertain === first.uncertain &&
+      grader.role === first.role,
+  );
+  if (!same) return null;
+  if (bit === 1 && first.direction === 'down') return null;
+  if (bit === 0 && first.direction === 'up') return null;
+  return first;
+}
+
+function attributeKc(
+  kc: string,
+  bit: KcObservation['bit'],
+  votes: readonly KcVote[],
+  loc: UnitLocalizationInput,
+): Pick<KcObservation, 'role' | 'direction' | 'weight' | 'uncertain' | 'learner_line'> {
+  const role = roleOf(kc, loc);
+  if (bit === 'abstain') {
+    return {
+      role,
+      direction: 'none',
+      weight: 1,
+      uncertain: true,
+      learner_line: learnerLine(role, true),
+    };
+  }
+  const direction = bit === 1 ? 'up' : 'down';
+  const sharedOnly = votes.length > 0 && votes.every((vote) => vote.shared);
+  if (!sharedOnly) {
+    return {
+      role,
+      direction,
+      weight: 1,
+      uncertain: false,
+      learner_line: learnerLine(role, false),
+    };
+  }
+  const grader = agreedGrader(votes, bit);
+  if (grader) {
+    return {
+      role: grader.role,
+      direction: grader.direction,
+      weight: grader.weight,
+      uncertain: grader.uncertain,
+      learner_line: grader.learner_line,
+    };
+  }
+  if (votes.every((vote) => vote.solePrimary)) {
+    return {
+      role: 'primary',
+      direction,
+      weight: 1,
+      uncertain: false,
+      learner_line: learnerLine('primary', false),
+    };
+  }
+  return {
+    role,
+    direction,
+    weight: DEPENDENCY_EVIDENCE_WEIGHT,
+    uncertain: true,
+    learner_line: learnerLine(role, true),
+  };
+}
+
+function observationFor(
+  kc: string,
+  votes: readonly KcVote[],
+  loc: UnitLocalizationInput,
+): KcObservation {
+  const classified = classifyVotes(votes);
+  return { kc_id: kc, ...classified, ...attributeKc(kc, classified.bit, votes, loc) };
+}
+
 /**
  * D13 局部证据：单元判分按作答面归因到 KC，每 KC 至多一条 obs：
  *   - KC 无任何 informative 单元证据 ⇒ abstain(no_supported_evidence)；
@@ -328,6 +451,9 @@ function unitKcs(unit: ScoringUnitT, loc: UnitLocalizationInput): Set<string> | 
  *   - 混合或含 partial ⇒ abstain(mixed_or_partial) ——「ambiguous/partial 未
  *     局部化 ⇒ abstain」的原位执行，partial→1 / worst-wins 均已 REJECTED。
  *
+ * 步骤只落到一个 KC 时，该 KC 的掌握更新是确定的全权重。一个单元同时盖住
+ * 多个 KC 时，唯一主考点照常记；其余只记低权重并标归属不确定。判分器附带的
+ * 掌握证据可以改这一层，但不能把全对单元改成向下、或把全错单元改成向上。
  * uninformative / unmapped 单元不产生票（未决/空白/矛盾形状不惩罚学习者）。
  */
 export function localizeKcObservations(
@@ -335,9 +461,10 @@ export function localizeKcObservations(
   unitResults: readonly ScoringUnitResultT[],
   loc: UnitLocalizationInput,
 ): KcObservation[] {
-  const resultByUnit = new Map(unitResults.map((r) => [r.scoring_unit_id, r] as const));
-  /** kc → informative 单元证据列表。 */
-  const votes = new Map<string, UnitEvidence[]>();
+  const resultByUnit = new Map(
+    unitResults.map((result) => [result.scoring_unit_id, result] as const),
+  );
+  const votes = new Map<string, KcVote[]>();
   for (const unit of basis.units) {
     const result = resultByUnit.get(unit.scoring_unit_id);
     if (result === undefined) continue;
@@ -345,72 +472,113 @@ export function localizeKcObservations(
     if (evidence.kind === 'uninformative' || evidence.kind === 'unmapped') continue;
     const kcs = unitKcs(unit, loc);
     if (kcs === null) continue;
+    const shared = kcs.size > 1;
+    const primaryCount = [...kcs].filter((kc) => roleOf(kc, loc) === 'primary').length;
+    const block = result.status === 'scored' ? result.kc_mastery_evidence : undefined;
     for (const kc of kcs) {
       const list = votes.get(kc) ?? [];
-      list.push(evidence);
+      list.push({
+        kind: evidence.kind,
+        shared,
+        solePrimary: shared && primaryCount === 1 && roleOf(kc, loc) === 'primary',
+        grader: block?.updates.find((update) => update.kc_id === kc) ?? null,
+      });
       votes.set(kc, list);
     }
   }
   const observations: KcObservation[] = [];
-  for (const kc of loc.groupKcIds) {
-    const kcVotes = votes.get(kc) ?? [];
-    if (kcVotes.length === 0) {
-      observations.push({ kc_id: kc, bit: 'abstain', basis: 'no_supported_evidence' });
-      continue;
-    }
-    const kinds = new Set(kcVotes.map((v) => v.kind));
-    if (kinds.size === 1 && kinds.has('full')) {
-      observations.push({ kc_id: kc, bit: 1, basis: 'all_full' });
-    } else if (kinds.size === 1 && kinds.has('zero')) {
-      observations.push({ kc_id: kc, bit: 0, basis: 'all_zero' });
-    } else {
-      observations.push({ kc_id: kc, bit: 'abstain', basis: 'mixed_or_partial' });
-    }
-  }
-  // 范围外 KC（不在 groupKcIds 但被单元归因到）也如实观测 —— 票是有依据的。
-  for (const kc of votes.keys()) {
-    if (loc.groupKcIds.includes(kc)) continue;
-    const kcVotes = votes.get(kc) ?? [];
-    const kinds = new Set(kcVotes.map((v) => v.kind));
-    if (kinds.size === 1 && kinds.has('full')) {
-      observations.push({ kc_id: kc, bit: 1, basis: 'all_full' });
-    } else if (kinds.size === 1 && kinds.has('zero')) {
-      observations.push({ kc_id: kc, bit: 0, basis: 'all_zero' });
-    } else {
-      observations.push({ kc_id: kc, bit: 'abstain', basis: 'mixed_or_partial' });
-    }
-  }
+  const seen = new Set<string>();
+  const emit = (kc: string) => {
+    if (seen.has(kc)) return;
+    seen.add(kc);
+    observations.push(observationFor(kc, votes.get(kc) ?? [], loc));
+  };
+  for (const kc of loc.groupKcIds) emit(kc);
+  for (const kc of votes.keys()) emit(kc);
   return observations;
+}
+
+/**
+ * Which KC dragged the attempt down. A grader cause is used only when every
+ * supplied cause names the same in-scope KC that this attempt marked down,
+ * or all of them explicitly say the cause is unknown.
+ */
+export function deriveKcWrongCause(
+  observations: readonly KcObservation[],
+  graderCauses: readonly KcWrongCauseT[] = [],
+): KcWrongCauseT {
+  const byId = new Map(observations.map((obs) => [obs.kc_id, obs] as const));
+  const usable = graderCauses.filter((cause) => {
+    if (cause.kc_id === null) return true;
+    return byId.get(cause.kc_id)?.direction === 'down';
+  });
+  if (usable.length > 0) {
+    const ids = new Set(usable.map((cause) => cause.kc_id));
+    if (ids.size === 1) {
+      return {
+        kc_id: usable[0]?.kc_id ?? null,
+        uncertain: usable.some((cause) => cause.uncertain),
+      };
+    }
+    return { kc_id: null, uncertain: true };
+  }
+  const downs = observations.filter((obs) => obs.direction === 'down');
+  if (downs.length === 0) return { kc_id: null, uncertain: false };
+  const certain = downs.filter((obs) => obs.uncertain !== true && obs.weight === 1);
+  if (certain.length === 1 && downs.length === 1) {
+    return { kc_id: certain[0]?.kc_id ?? null, uncertain: false };
+  }
+  if (certain.length === 1) return { kc_id: certain[0]?.kc_id ?? null, uncertain: true };
+  return { kc_id: null, uncertain: true };
 }
 
 // ---------- bounded evidence adapter（D13 工程约束） ----------
 
-/** θ̂ 更新决策（共享 global update 只做一次；否则 abstain）。 */
+/** θ̂ 更新决策。全权重且方向一致时仍是一次共享 update；否则同一次调用带 per-KC evidence。 */
 export type ThetaDecision =
   | {
       kind: 'update';
-      /** 本次恰好一次的共享 update 携带的单一位。 */
+      /**
+       * 全员向上才是 1。方向不一致时这是领域层的卷叠位，真正的掌握更新在 kcEvidence。
+       */
       outcome: 0 | 1;
-      /** 参与 update 的非 abstain KC（按 id 排序）。 */
+      /** 参与 update 的 KC（按 id 排序）。 */
       knowledgeIds: string[];
+      /** 缺省 = 这些 KC 共享 outcome，走 conjunctive。 */
+      kcEvidence?: KcEvidenceApply[];
     }
   | {
       kind: 'abstain';
       reason:
         | 'no_kc_evidence' // 无 KC / 全 abstain
-        | 'mixed_kc_bits' // 非 abstain KC 位不一致（one-bit updater 表达不了）
+        | 'mixed_kc_bits' // 历史回放收据。新结算不再用它挡更新。
         | 'provenance_excluded' // D15/D16：manual/self_report/assisted 排除
         // YUK-1604 — 学习者非独立作答（看过讲解 / 带提示）：过程证据，不更新掌握度。
         | 'learner_assisted';
     };
 
+function movementOf(obs: KcObservation): {
+  direction: 'up' | 'down' | 'none';
+  weight: number;
+  uncertain: boolean;
+} {
+  if (obs.direction !== undefined) {
+    return {
+      direction: obs.direction,
+      weight: obs.weight ?? 1,
+      uncertain: obs.uncertain ?? false,
+    };
+  }
+  if (obs.bit === 'abstain') return { direction: 'none', weight: 1, uncertain: true };
+  return { direction: obs.bit === 1 ? 'up' : 'down', weight: 1, uncertain: false };
+}
+
 /**
- * bounded evidence adapter：per-KC obs → 至多一次共享 θ̂ update。
+ * per-KC obs → 一次 θ̂ update。
  *   - provenance 排除（D15/D16）优先：self/manual/assisted 不产生 θ̂ 更新；
- *   - 非 abstain KC 为空 ⇒ abstain（无证据，不是 failure）；
- *   - 非 abstain KC 共享同一位 ⇒ update(outcome=该位, knowledgeIds=该子集)；
- *   - 位不一致 ⇒ abstain —— one-bit conjunctive updater 无法表达 mixed
- *     证据，按 KC 多次调用又违反「每 KC ≤1 obs」，故 fail-closed 不更新。
+ *   - 没有向上或向下的 KC ⇒ abstain（无证据，不是 failure）；
+ *   - 每个要动的 KC 都是全权重、归属确定、且方向相同 ⇒ 共享 conjunctive update；
+ *   - 否则同一次 update 带上各自的 outcome 与 weight。不作答分从这里相加。
  */
 export function resolveThetaDecision(
   observations: readonly KcObservation[],
@@ -419,16 +587,37 @@ export function resolveThetaDecision(
   if (provenance.source !== 'automatic' || provenance.assisted) {
     return { kind: 'abstain', reason: 'provenance_excluded' };
   }
-  const decided = observations.filter(
-    (obs): obs is Extract<KcObservation, { bit: 0 | 1 }> => obs.bit !== 'abstain',
-  );
-  if (decided.length === 0) return { kind: 'abstain', reason: 'no_kc_evidence' };
-  const bits = new Set(decided.map((obs) => obs.bit));
-  if (bits.size !== 1) return { kind: 'abstain', reason: 'mixed_kc_bits' };
-  const outcome = decided[0].bit;
+  const moving = observations.flatMap((obs) => {
+    const move = movementOf(obs);
+    return move.direction === 'none' ? [] : [{ obs, move }];
+  });
+  if (moving.length === 0) return { kind: 'abstain', reason: 'no_kc_evidence' };
+  const knowledgeIds = moving.map((row) => row.obs.kc_id).sort();
+  const first = moving[0];
+  const uniform =
+    first !== undefined &&
+    moving.every(
+      (row) =>
+        row.move.weight === 1 && !row.move.uncertain && row.move.direction === first.move.direction,
+    );
+  if (uniform && first !== undefined) {
+    return {
+      kind: 'update',
+      outcome: first.move.direction === 'up' ? 1 : 0,
+      knowledgeIds,
+    };
+  }
+  const kcEvidence = moving
+    .map((row) => ({
+      kc_id: row.obs.kc_id,
+      outcome: (row.move.direction === 'up' ? 1 : 0) as 0 | 1,
+      weight: row.move.weight,
+    }))
+    .sort((a, b) => a.kc_id.localeCompare(b.kc_id));
   return {
     kind: 'update',
-    outcome,
-    knowledgeIds: [...decided.map((obs) => obs.kc_id)].sort(),
+    outcome: kcEvidence.every((row) => row.outcome === 1) ? 1 : 0,
+    knowledgeIds,
+    kcEvidence,
   };
 }

@@ -6,10 +6,10 @@
 //   - ratingForVerdict：D14 三等级 + unsupported ⇒ none；
 //   - classifyScoredUnit：blank_marked_zero/pending ⇒ uninformative（空白不
 //     当作全部 KC failure）；additive/holistic 分档；
-//   - localizeKcObservations：ambiguous/partial 未局部化 ⇒ abstain；混合位
-//     ⇒ abstain；uniform ⇒ 1/0；每 KC ≤1 obs；
-//   - resolveThetaDecision（bounded evidence adapter）：uniform ⇒ 一次共享
-//     update；mixed ⇒ abstain；manual/self_report/assisted ⇒ 排除 θ̂。
+//   - localizeKcObservations：ambiguous/partial 未局部化 ⇒ abstain；步骤分开的
+//     KC 各自全权重；共享单元的依赖考点低权重并标不确定；每 KC ≤1 obs；
+//   - resolveThetaDecision：方向一致且全权重 ⇒ 一次共享 update；方向或权重
+//     不一致 ⇒ 各 KC 自己的 evidence；manual/self_report/assisted ⇒ 排除 θ̂。
 
 import { describe, expect, it } from 'vitest';
 import type { ScoringUnitResultT } from './judgment';
@@ -18,6 +18,7 @@ import {
   aggregateMaxPoints,
   classifyScoredUnit,
   deriveCoarseVerdict,
+  deriveKcWrongCause,
   localizeKcObservations,
   ratingForVerdict,
   resolveThetaDecision,
@@ -230,11 +231,44 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     const b = basis([additiveUnit('u1', 4)]);
     const loc = locOf({ u1: ['p1'] }, { p1: ['kc_a'] }, ['kc_a']);
     const full = localizeKcObservations(b, [scored('u1', 4)], loc);
-    expect(full).toEqual([{ kc_id: 'kc_a', bit: 1, basis: 'all_full' }]);
+    expect(full).toEqual([
+      {
+        kc_id: 'kc_a',
+        bit: 1,
+        basis: 'all_full',
+        role: 'primary',
+        direction: 'up',
+        weight: 1,
+        uncertain: false,
+        learner_line: '这题主要考这个知识点',
+      },
+    ]);
     const zero = localizeKcObservations(b, [scored('u1', 0)], loc);
-    expect(zero).toEqual([{ kc_id: 'kc_a', bit: 0, basis: 'all_zero' }]);
+    expect(zero).toEqual([
+      {
+        kc_id: 'kc_a',
+        bit: 0,
+        basis: 'all_zero',
+        role: 'primary',
+        direction: 'down',
+        weight: 1,
+        uncertain: false,
+        learner_line: '这题主要考这个知识点',
+      },
+    ]);
     const partial = localizeKcObservations(b, [scored('u1', 2)], loc);
-    expect(partial).toEqual([{ kc_id: 'kc_a', bit: 'abstain', basis: 'mixed_or_partial' }]);
+    expect(partial).toEqual([
+      {
+        kc_id: 'kc_a',
+        bit: 'abstain',
+        basis: 'mixed_or_partial',
+        role: 'primary',
+        direction: 'none',
+        weight: 1,
+        uncertain: true,
+        learner_line: '这题主要考这个知识点，归属不确定',
+      },
+    ]);
   });
 
   it('两 KC 各自独立判定；跨单元混合 ⇒ 各自 abstain', () => {
@@ -242,12 +276,37 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     const loc = locOf({ u1: ['p1'], u2: ['p2'] }, { p1: ['kc_a'], p2: ['kc_b'] }, ['kc_a', 'kc_b']);
     const obs = localizeKcObservations(b, [scored('u1', 4), scored('u2', 0)], loc);
     expect(obs).toEqual([
-      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
-      { kc_id: 'kc_a'.replace('a', 'b'), bit: 0, basis: 'all_zero' },
+      {
+        kc_id: 'kc_a',
+        bit: 1,
+        basis: 'all_full',
+        role: 'primary',
+        direction: 'up',
+        weight: 1,
+        uncertain: false,
+        learner_line: '这题主要考这个知识点',
+      },
+      {
+        kc_id: 'kc_b',
+        bit: 0,
+        basis: 'all_zero',
+        role: 'dependency',
+        direction: 'down',
+        weight: 1,
+        uncertain: false,
+        learner_line: '还需要这个知识点',
+      },
     ]);
+    expect(deriveKcWrongCause(obs)).toEqual({ kc_id: 'kc_b', uncertain: false });
     const mixed = localizeKcObservations(b, [scored('u1', 4), scored('u2', 2)], loc);
-    expect(mixed[0]).toEqual({ kc_id: 'kc_a', bit: 1, basis: 'all_full' });
-    expect(mixed[1]).toEqual({ kc_id: 'kc_b', bit: 'abstain', basis: 'mixed_or_partial' });
+    expect(mixed[0]).toMatchObject({ kc_id: 'kc_a', bit: 1, basis: 'all_full', direction: 'up' });
+    expect(mixed[1]).toMatchObject({
+      kc_id: 'kc_b',
+      bit: 'abstain',
+      basis: 'mixed_or_partial',
+      direction: 'none',
+      uncertain: true,
+    });
   });
 
   it('共享单元（无槽引用）证据归组级 KC：一单元混合两 KC ⇒ 两 KC 同票', () => {
@@ -255,9 +314,41 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     const loc = locOf({ u1: [] }, {}, ['kc_a', 'kc_b']);
     const obs = localizeKcObservations(b, [scored('u1', 4)], loc);
     expect(obs).toEqual([
-      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
-      { kc_id: 'kc_b', bit: 1, basis: 'all_full' },
+      {
+        kc_id: 'kc_a',
+        bit: 1,
+        basis: 'all_full',
+        role: 'primary',
+        direction: 'up',
+        weight: 1,
+        uncertain: false,
+        learner_line: '这题主要考这个知识点',
+      },
+      {
+        kc_id: 'kc_b',
+        bit: 1,
+        basis: 'all_full',
+        role: 'dependency',
+        direction: 'up',
+        weight: 0.25,
+        uncertain: true,
+        learner_line: '还需要这个知识点，归属不确定',
+      },
     ]);
+    const wrong = localizeKcObservations(b, [scored('u1', 0)], loc);
+    expect(wrong[0]).toMatchObject({
+      kc_id: 'kc_a',
+      direction: 'down',
+      weight: 1,
+      uncertain: false,
+    });
+    expect(wrong[1]).toMatchObject({
+      kc_id: 'kc_b',
+      direction: 'down',
+      weight: 0.25,
+      uncertain: true,
+    });
+    expect(deriveKcWrongCause(wrong)).toEqual({ kc_id: 'kc_a', uncertain: true });
   });
 
   it('blank_marked_zero 不产生票 ⇒ no_supported_evidence（不是 all-KC failure）', () => {
@@ -268,7 +359,18 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
       [scored('u1', 0, { scored_because: 'blank_marked_zero' })],
       loc,
     );
-    expect(obs).toEqual([{ kc_id: 'kc_a', bit: 'abstain', basis: 'no_supported_evidence' }]);
+    expect(obs).toEqual([
+      {
+        kc_id: 'kc_a',
+        bit: 'abstain',
+        basis: 'no_supported_evidence',
+        role: 'primary',
+        direction: 'none',
+        weight: 1,
+        uncertain: true,
+        learner_line: '这题主要考这个知识点，归属不确定',
+      },
+    ]);
   });
 
   it('YUK-1093 P1-4：evidence_slot_refs-only 单元按证据槽所属 part 的 KC 计，不落组级', () => {
@@ -283,8 +385,26 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     const loc = locOf({ u_ev: ['p1'] }, { p1: ['kc_a'] }, ['kc_a', 'kc_b']);
     const obs = localizeKcObservations(b, [scored('u_ev', 4)], loc);
     expect(obs).toEqual([
-      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
-      { kc_id: 'kc_b', bit: 'abstain', basis: 'no_supported_evidence' },
+      {
+        kc_id: 'kc_a',
+        bit: 1,
+        basis: 'all_full',
+        role: 'primary',
+        direction: 'up',
+        weight: 1,
+        uncertain: false,
+        learner_line: '这题主要考这个知识点',
+      },
+      {
+        kc_id: 'kc_b',
+        bit: 'abstain',
+        basis: 'no_supported_evidence',
+        role: 'dependency',
+        direction: 'none',
+        weight: 1,
+        uncertain: true,
+        learner_line: '还需要这个知识点，归属不确定',
+      },
     ]);
   });
 
@@ -297,10 +417,20 @@ describe('localizeKcObservations（D13 per-KC 局部证据）', () => {
     const b = basis([unit]);
     const loc = locOf({ u_grp: [] }, {}, ['kc_a', 'kc_b']);
     const obs = localizeKcObservations(b, [scored('u_grp', 4)], loc);
-    expect(obs).toEqual([
-      { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
-      { kc_id: 'kc_b', bit: 1, basis: 'all_full' },
-    ]);
+    expect(obs[0]).toMatchObject({
+      kc_id: 'kc_a',
+      bit: 1,
+      role: 'primary',
+      weight: 1,
+      uncertain: false,
+    });
+    expect(obs[1]).toMatchObject({
+      kc_id: 'kc_b',
+      bit: 1,
+      role: 'dependency',
+      weight: 0.25,
+      uncertain: true,
+    });
   });
 
   it('每 KC ≤1 obs：同一 KC 的多单元证据聚合成一条', () => {
@@ -327,7 +457,7 @@ describe('resolveThetaDecision（bounded evidence adapter）', () => {
     expect(d).toEqual({ kind: 'update', outcome: 1, knowledgeIds: ['kc_a', 'kc_b'] });
   });
 
-  it('mixed 位 ⇒ abstain(mixed_kc_bits)：one-bit updater 表达不了，也不能按 KC 重调', () => {
+  it('mixed 位 ⇒ 各 KC 自己的 evidence，不再整组 abstain', () => {
     const d = resolveThetaDecision(
       [
         { kc_id: 'kc_a', bit: 1, basis: 'all_full' },
@@ -335,7 +465,15 @@ describe('resolveThetaDecision（bounded evidence adapter）', () => {
       ],
       auto,
     );
-    expect(d).toEqual({ kind: 'abstain', reason: 'mixed_kc_bits' });
+    expect(d).toEqual({
+      kind: 'update',
+      outcome: 0,
+      knowledgeIds: ['kc_a', 'kc_b'],
+      kcEvidence: [
+        { kc_id: 'kc_a', outcome: 1, weight: 1 },
+        { kc_id: 'kc_b', outcome: 0, weight: 1 },
+      ],
+    });
   });
 
   it('全 abstain / 无 KC ⇒ abstain(no_kc_evidence)', () => {

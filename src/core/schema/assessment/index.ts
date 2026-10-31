@@ -13,6 +13,7 @@ export * from './grade';
 export * from './group-input';
 export * from './ids';
 export * from './judgment';
+export * from './kc-mastery-evidence';
 export * from './lifecycle';
 export * from './materials';
 export * from './pending';
