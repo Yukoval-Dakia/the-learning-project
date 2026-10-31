@@ -28,8 +28,13 @@ import {
 import type { Db, Tx } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
 import { event, intervention } from '@/db/schema';
-import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
+import { writeEvent } from '@/kernel/events';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
+import {
+  lockInterventionCorrectionsAll,
+  lockInterventionInstance,
+  lockInterventionSource,
+} from './intervention-lock';
 
 type DbLike = Db | Tx;
 type InterventionRow = typeof intervention.$inferSelect;
@@ -277,9 +282,7 @@ export async function activateIntervention(
   const packageValue = InterventionPackage.parse(input.package);
 
   return withLearningStateLock(db, async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
-    );
+    await lockInterventionInstance(tx, input.interventionId, input.version);
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
     if (!current) {
       throw new Error(`intervention ${input.interventionId}@${input.version} was not found`);
@@ -297,12 +300,8 @@ export async function activateIntervention(
     // Correction writers take this same transaction-level lock before INSERT.
     // The evidence read and activation write therefore observe one serialized
     // source truth, closing the READ COMMITTED read→update race.
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-    );
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(current.source_probe_result_event_id)}, 0))`,
-    );
+    await lockInterventionCorrectionsAll(tx);
+    await lockInterventionSource(tx, current.source_probe_result_event_id);
     const [source] = await tx
       .select({ question_id: event.subject_id })
       .from(event)
@@ -481,9 +480,7 @@ export type RecordInterventionDiagnosticReviewResult =
  */
 export async function recordNativeInterventionDiagnosticReview(db: Db, attemptId: string) {
   return withLearningStateLock(db, async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-    );
+    await lockInterventionCorrectionsAll(tx);
     const { loadNativeInterventionDiagnosticState } = await import(
       '@/kernel/read-models/intervention-diagnostic-verdict'
     );
@@ -521,9 +518,7 @@ export async function recordInterventionDiagnosticReview(
 ): Promise<RecordInterventionDiagnosticReviewResult> {
   const now = input.now ?? new Date();
   return withLearningStateLock(db, async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
-    );
+    await lockInterventionInstance(tx, input.interventionId, input.version);
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
     if (!current) return { status: 'skipped', reason: 'intervention_not_found' };
     if (current.status !== 'active' && current.status !== 'settled') {
@@ -681,9 +676,7 @@ export async function failInterventionPreparation(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${input.interventionId}:${input.version}`}, 0))`,
-    );
+    await lockInterventionInstance(tx, input.interventionId, input.version);
     const current = await loadInterventionVersion(tx, input.interventionId, input.version);
     if (!current) {
       throw new Error(`intervention ${input.interventionId}@${input.version} was not found`);
