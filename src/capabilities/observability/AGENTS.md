@@ -16,7 +16,7 @@
 | `api/custom-providers.ts` / `api/custom-providers-contracts.ts` / `server/custom-provider-store.ts` | YUK-1563 ④ 自定义 provider CRUD：GET/PUT/DELETE `/api/admin/custom-providers/:id`。store 直写 `custom_provider` 表（@/db 迁移期豁免），定义/校验/注册表在 `@/core/config/custom-providers`，目录联动（/models 刷新与删除 prune）由组合根经 core 端口接线。凭据只收 env 变量名；`base_url` host 另受 models.dev 端点 allowlist 约束（YUK-1646） |
 | `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`）：`prediction_score` LOG 事件**已通电**；`kc_typed_state` confused-with-X 半边**待通电**——当前无写者产出该态（reconcile 硬编码 `confused_with_kc_id=null`），owner 已裁定通电、执行见 YUK-794，落地前该栏暂空，详见 ADR-0050 §(a) |
 | `api/calibration-maturity.ts` / `effectiveness-trend.ts` | 成效趋势只读面 |
-| `api/backup-export.ts` / `backup-import.ts` | 备份/恢复（破坏性，需 confirm） |
+| `api/backup-export.ts` / `backup-import.ts` | 备份/恢复（破坏性，需 confirm）。导入路由不引用 agency；归档事务自己退役干预准备任务 |
 | `api/event-correct.ts` | 统一事件流撤回 |
 | `api/job-events.ts` | 通用异步 job SSE tracker |
 | `server/` | AI observability 读模型、cost 汇总、failure 聚类、覆盖细目、备份/恢复、event correction |
