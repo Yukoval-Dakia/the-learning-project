@@ -10753,6 +10753,26 @@
       "issue": "YUK-1571",
       "owns": "Read-only intervention preparation fence: latest version, preparation job id, concrete recommendation, snapshot, and active source-probe evidence. Practice reads this before each paid authoring stage; agency keeps the intervention writes.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/proposals/producers.ts",
+      "kind": "value",
+      "symbols": ["writeEvaluationCorrectionProposal"],
+      "issue": "YUK-1413",
+      "owns": "Reversible grading-correction proposal for one completed evaluation. Accept rejudges the frozen submission and does not rewrite the original evaluation.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/no-progress-loop.ts",
+      "module": "src/kernel/read-models/question-activity.ts",
+      "kind": "value",
+      "symbols": ["getQuestionTimeline"],
+      "issue": "YUK-1413",
+      "owns": "Question timeline of attempts and reviews, including the original and effective evaluation ids needed to file a correction proposal.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
