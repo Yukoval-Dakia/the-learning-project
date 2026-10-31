@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Suspense, lazy } from 'react';
+import { renderCalibrationMaturityBadge } from '@/capabilities/onboarding/ui-public';
 import { loadCoachHub } from '@/capabilities/shell/ui-public';
 import {
   startCoachCalibrationClient,
@@ -18,6 +19,7 @@ export const Route = createFileRoute('/coach')({
           navigate={startNavigate}
           readWeekly={startCoachWeeklyClient}
           readCalibration={startCoachCalibrationClient}
+          maturityBadge={renderCalibrationMaturityBadge}
           readEffectiveness={startCoachEffectivenessClient}
         />
       </Suspense>
