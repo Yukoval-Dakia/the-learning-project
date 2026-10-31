@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { type SQL, and, asc, eq, gt, or, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, gt, or } from 'drizzle-orm';
 import type { Job, JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { intervention } from '@/db/schema';
-import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { materializeInterventionDiagnostics } from '@/kernel/records/intervention-diagnostic-materialize';
 import { getRunningBoss } from '@/server/boss/client';
+import {
+  lockInterventionCorrectionsAll,
+  lockInterventionInstance,
+  lockInterventionSource,
+} from './intervention-lock';
 import {
   PREPARE_INTERVENTION_JOB,
   type PrepareInterventionJobData,
@@ -99,9 +103,7 @@ export async function recoverEligibleInterventionDiagnostics(
     for (const row of rows) {
       try {
         const outcome = await withLearningStateLock(db, async (tx) => {
-          await tx.execute(
-            sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${row.id}:${row.version}`}, 0))`,
-          );
+          await lockInterventionInstance(tx, row.id, row.version);
           const current = await loadInterventionVersion(tx, row.id, row.version);
           if (
             !current ||
@@ -202,12 +204,8 @@ export async function recoverPreparingInterventions(
 
       const replacementJobId = randomUUID();
       const outcome = await db.transaction(async (tx) => {
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-        );
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(row.source_probe_result_event_id)}, 0))`,
-        );
+        await lockInterventionCorrectionsAll(tx);
+        await lockInterventionSource(tx, row.source_probe_result_event_id);
         const current = await loadInterventionVersion(tx, row.id, row.version);
         if (
           !current ||
