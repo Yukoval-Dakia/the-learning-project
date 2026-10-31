@@ -44,8 +44,11 @@ import {
 } from './live-turn-context';
 import {
   NO_PROGRESS_BUDGET_LANDING_MARGIN_MS,
+  type SealedCorrectionFiling,
+  assistantProse,
   chooseVerifiedFallback,
   createNoProgressLoop,
+  mergeNoProgressReply,
   renderNoProgressClosure,
 } from './no-progress-loop';
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
@@ -53,6 +56,7 @@ import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import { createCopilotProseStream } from './prose-stream';
 import {
+  COPILOT_REPLY_CHAR_LIMIT,
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   piToolErrorText,
@@ -145,6 +149,7 @@ export interface CopilotExecutionResult {
   error?: string;
   sdkSessionId?: string;
   contextDigest: string;
+  correctionFiling?: SealedCorrectionFiling;
 }
 
 export type ExecuteCopilotTurn = (
@@ -580,20 +585,26 @@ export function createCopilotExecutionOwner(
       const providerRejected = result.failure?.kind === 'provider_request_rejected';
       const sealedClosure =
         closure !== undefined && !cancelled && !providerRejected ? closure : undefined;
-      const closureText = sealedClosure
-        ? renderNoProgressClosure(
-            sealedClosure,
-            await chooseVerifiedFallback({
-              db,
-              sessionId: turn.sessionId,
-              taskRunId: result.task_run_id,
-              actorRef,
-              ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
-              allowProposal: !answerOnly,
-              evidence: sealedClosure.evidence,
-            }),
-          )
+      const planned = sealedClosure
+        ? await chooseVerifiedFallback({
+            db,
+            sessionId: turn.sessionId,
+            taskRunId: result.task_run_id,
+            actorRef,
+            ...(turn.sourceEventId ? { causedByEventId: turn.sourceEventId } : {}),
+            allowProposal: !answerOnly,
+            evidence: sealedClosure.evidence,
+          })
         : undefined;
+      // Keep the assistant prose; the closure is appended, not a replacement.
+      const closureText =
+        sealedClosure && planned
+          ? mergeNoProgressReply(
+              assistantProse(result.text, terminalText),
+              renderNoProgressClosure(sealedClosure, planned.fallback),
+              COPILOT_REPLY_CHAR_LIMIT,
+            )
+          : undefined;
       const partial = closureText !== undefined ? false : result.partial === true;
       const executionError = closureText !== undefined ? undefined : result.error;
       const finishReason = sealedClosure
@@ -617,6 +628,7 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
+        ...(finalization.accepted && planned?.filing ? { correctionFiling: planned.filing } : {}),
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

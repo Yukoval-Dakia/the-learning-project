@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto';
 import type { PiAfterToolCall, PiBeforeToolCall } from '@/core/tool-call-contract';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { writeEvaluationCorrectionProposal } from '@/kernel/proposals/producers';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 
@@ -26,6 +26,7 @@ export type EvidenceKind =
   | 'judge_event'
   | 'knowledge'
   | 'outcome'
+  | 'dispute'
   | 'tool_summary';
 
 export interface EvidenceFact {
@@ -46,8 +47,8 @@ export type VerifiedFallback =
       readonly operation: 'writeEvaluationCorrectionProposal';
       readonly evaluationId: string;
       readonly attemptEventId: string | null;
-      readonly status: 'filed' | 'duplicate';
-      readonly proposalEventId: string | null;
+      /** explicit: the same object stated a dispute reason. none: ids only. */
+      readonly dispute: 'explicit' | 'none';
     }
   | {
       readonly kind: 'continue_session';
@@ -55,8 +56,18 @@ export type VerifiedFallback =
       readonly sessionId: string;
       readonly questionId: string | null;
       readonly attemptEventIds: readonly string[];
-      readonly unavailableReason?: string;
     };
+
+/** Written only after the reply marker is accepted in the settlement transaction. */
+export interface SealedCorrectionFiling {
+  readonly evaluationId: string;
+  readonly attemptEventId: string | null;
+  readonly reasonMd: string;
+  readonly evidenceEventIds: readonly string[];
+  readonly actorRef: string;
+  readonly taskRunId: string;
+  readonly causedByEventId?: string;
+}
 
 type Phase =
   | { readonly status: 'collecting' }
@@ -141,6 +152,12 @@ function collectFacts(payload: unknown, tool: string): EvidenceFact[] {
 }
 
 const STRING_LIST_KEYS = new Set(['node_ids', 'knowledge_ids', 'referenced_knowledge_ids']);
+const DISPUTE_REASON_KEYS = ['dispute_reason', 'appeal_reason_md', 'contest_reason_md'] as const;
+const EVALUATION_ID_KEYS = [
+  'evaluation_id',
+  'effective_evaluation_id',
+  'original_evaluation_id',
+] as const;
 
 function walk(value: unknown, tool: string, facts: EvidenceFact[], depth: number): void {
   if (depth > 8 || value == null) return;
@@ -149,6 +166,11 @@ function walk(value: unknown, tool: string, facts: EvidenceFact[], depth: number
     return;
   }
   if (!isRecord(value)) return;
+  const disputeReason = disputeReasonOf(value);
+  const disputeEvaluationId = evaluationIdOf(value);
+  if (disputeReason && disputeEvaluationId) {
+    facts.push({ kind: 'dispute', id: disputeEvaluationId, tool, detail: disputeReason });
+  }
   for (const [key, child] of Object.entries(value)) {
     if (key === 'context_budget' || key === 'tool_use_id') continue;
     if (typeof child === 'string' && child.length > 0 && child.length < 200) {
@@ -189,10 +211,24 @@ function factKey(fact: EvidenceFact): string {
   return `${fact.kind}:${fact.id}`;
 }
 
-function hasGradingSignal(facts: readonly EvidenceFact[]): boolean {
-  return facts.some(
-    (fact) => fact.kind === 'evaluation' || fact.kind === 'judge_event' || fact.kind === 'attempt',
-  );
+function boundedId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length < 200 ? value : undefined;
+}
+
+function evaluationIdOf(record: Record<string, unknown>): string | undefined {
+  for (const key of EVALUATION_ID_KEYS) {
+    const id = boundedId(record[key]);
+    if (id) return id;
+  }
+  return undefined;
+}
+
+function disputeReasonOf(record: Record<string, unknown>): string | undefined {
+  for (const key of DISPUTE_REASON_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim().slice(0, 2000);
+  }
+  return undefined;
 }
 
 /**
@@ -337,9 +373,8 @@ async function resolveEvaluation(
 }
 
 /**
- * Pick a fallback that already writes or accepts a learner action.
- * Grading disputes file the existing reversible correction proposal.
- * Anything else keeps the durable session open with the ids already read.
+ * Read-only choice. Attempt and evaluation ids from ordinary reads are disclosed,
+ * not filed. A proposal is prepared only when the same object states a dispute reason.
  */
 export async function chooseVerifiedFallback(input: {
   db: Db;
@@ -349,64 +384,106 @@ export async function chooseVerifiedFallback(input: {
   causedByEventId?: string;
   allowProposal: boolean;
   evidence: readonly EvidenceFact[];
-}): Promise<VerifiedFallback> {
+}): Promise<{ fallback: VerifiedFallback; filing?: SealedCorrectionFiling }> {
   const questionId = input.evidence.find((fact) => fact.kind === 'question')?.id ?? null;
   const attemptEventIds = input.evidence
     .filter((fact) => fact.kind === 'attempt')
     .map((fact) => fact.id);
-  const continueSession = (
-    unavailableReason?: string,
-  ): Extract<VerifiedFallback, { kind: 'continue_session' }> => ({
+  const continueSession: VerifiedFallback = {
     kind: 'continue_session',
     operation: 'durable_copilot_session',
     sessionId: input.sessionId,
     questionId,
     attemptEventIds,
-    ...(unavailableReason ? { unavailableReason } : {}),
-  });
-  if (!input.allowProposal || !hasGradingSignal(input.evidence)) return continueSession();
-  try {
-    const resolved = await resolveEvaluation(input.db, input.evidence);
-    if (!resolved) return continueSession();
-    const outcomes = input.evidence
-      .filter((fact) => fact.kind === 'outcome')
-      .slice(0, 6)
-      .map((fact) => `${fact.detail ?? 'outcome'}=${fact.id}`);
-    const written = await writeEvaluationCorrectionProposal(input.db, {
-      actor_ref: input.actorRef,
-      evaluation_id: resolved.evaluationId,
-      correction_kind: 'rejudge',
-      reason_md:
-        '同一问题的工具调用没有带来新证据，已停止继续查询。请按冻结作答复核该评价；接受后重判，不改写原评价。',
-      attempt_event_id: resolved.attemptEventId,
-      observed: outcomes.length > 0 ? { outcomes } : {},
-      evidence_refs: [
-        ...new Set(
-          input.evidence
-            .filter(
-              (fact) =>
-                fact.kind === 'event' || fact.kind === 'attempt' || fact.kind === 'judge_event',
-            )
-            .map((fact) => fact.id),
-        ),
-      ]
-        .slice(0, 12)
-        .map((id) => ({ kind: 'event' as const, id })),
-      task_run_id: input.taskRunId,
-      caused_by_event_id: input.causedByEventId ?? null,
-    });
-    return {
+  };
+  const dispute = input.evidence.find((fact) => fact.kind === 'dispute' && fact.detail);
+  let resolved: { evaluationId: string; attemptEventId: string | null } | null = null;
+  if (dispute) {
+    resolved = {
+      evaluationId: dispute.id,
+      attemptEventId: attemptEventIds[0] ?? null,
+    };
+  } else {
+    try {
+      resolved = await resolveEvaluation(input.db, input.evidence);
+    } catch (error) {
+      console.error('[no-progress-loop] evaluation lookup failed', { error });
+    }
+  }
+  if (!resolved) return { fallback: continueSession };
+  const filing =
+    input.allowProposal && dispute?.detail && dispute.id === resolved.evaluationId
+      ? {
+          evaluationId: resolved.evaluationId,
+          attemptEventId: resolved.attemptEventId,
+          reasonMd: dispute.detail,
+          evidenceEventIds: [
+            ...new Set(
+              input.evidence
+                .filter(
+                  (fact) =>
+                    fact.kind === 'event' || fact.kind === 'attempt' || fact.kind === 'judge_event',
+                )
+                .map((fact) => fact.id),
+            ),
+          ].slice(0, 12),
+          actorRef: input.actorRef,
+          taskRunId: input.taskRunId,
+          ...(input.causedByEventId ? { causedByEventId: input.causedByEventId } : {}),
+        }
+      : undefined;
+  return {
+    fallback: {
       kind: 'grading_correction',
       operation: 'writeEvaluationCorrectionProposal',
       evaluationId: resolved.evaluationId,
       attemptEventId: resolved.attemptEventId,
-      status: written.status,
-      proposalEventId: written.proposal_event_id,
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'correction_proposal_unavailable';
-    return continueSession(reason);
+      dispute: filing ? 'explicit' : 'none',
+    },
+    ...(filing ? { filing } : {}),
+  };
+}
+
+export async function fileSealedCorrection(
+  db: Db | Tx,
+  filing: SealedCorrectionFiling,
+): Promise<void> {
+  await writeEvaluationCorrectionProposal(db, {
+    actor_ref: filing.actorRef,
+    evaluation_id: filing.evaluationId,
+    correction_kind: 'rejudge',
+    reason_md: filing.reasonMd,
+    attempt_event_id: filing.attemptEventId,
+    observed: { dispute_reason: filing.reasonMd },
+    evidence_refs: filing.evidenceEventIds.map((id) => ({ kind: 'event' as const, id })),
+    task_run_id: filing.taskRunId,
+    caused_by_event_id: filing.causedByEventId ?? null,
+  });
+}
+
+export function mergeNoProgressReply(prose: string, closure: string, limit: number): string {
+  const head = prose.trim();
+  const tail = closure.trim();
+  if (!head) return tail.slice(0, limit);
+  if (!tail) return head.slice(0, limit);
+  const gap = '\n\n';
+  if (head.length + gap.length + tail.length <= limit) return `${head}${gap}${tail}`;
+  const tailBudget = Math.min(tail.length, Math.max(limit - gap.length - 1, 0));
+  const keptTail = tail.slice(0, tailBudget);
+  const headBudget = limit - gap.length - keptTail.length;
+  if (headBudget <= 0) return tail.slice(0, limit);
+  return `${head.slice(0, headBudget)}${gap}${keptTail}`;
+}
+
+export function assistantProse(streamed: string, terminal: string): string {
+  const stream = streamed.trim();
+  const end = terminal.trim();
+  if (!stream) return end;
+  if (!end) return stream;
+  if (stream === end || stream.endsWith(end) || end.endsWith(stream)) {
+    return stream.length >= end.length ? stream : end;
   }
+  return `${stream}\n\n${end}`;
 }
 
 function factLine(fact: EvidenceFact): string {
@@ -429,7 +506,8 @@ export function renderNoProgressClosure(
       fact.kind === 'evaluation' ||
       fact.kind === 'judge_event' ||
       fact.kind === 'attempt' ||
-      fact.kind === 'outcome',
+      fact.kind === 'outcome' ||
+      fact.kind === 'dispute',
   );
   const dispute =
     disputeFacts.length > 0
@@ -440,16 +518,23 @@ export function renderNoProgressClosure(
       : '- 这次没有形成一条可以单独申诉的判词。';
   const next =
     fallback.kind === 'grading_correction'
-      ? fallback.status === 'filed'
-        ? `申诉已经写入，提案 ${fallback.proposalEventId}，评价 ${fallback.evaluationId}。接受后按冻结作答重判，不改写原来的评价。`
-        : `评价 ${fallback.evaluationId} 已经有一条待处理的申诉提案。接受后按冻结作答重判，不改写原来的评价。`
+      ? [
+          `可执行入口 ${fallback.operation}`,
+          `评价 ${fallback.evaluationId}`,
+          fallback.attemptEventId ? `作答 ${fallback.attemptEventId}` : null,
+          '接受后按冻结作答重判，不改写原来的评价。',
+          fallback.dispute === 'explicit'
+            ? '这条回复封存进同一笔结算后才会提交纠错提案；封存失败则不提交。'
+            : '这次只给出入口，不自动提交申诉。',
+        ]
+          .filter((part): part is string => part !== null)
+          .join('\n')
       : [
           '可以在这次对话里直接继续，说明下一步要看哪一题或哪一次作答。',
           fallback.questionId ? `题目 ${fallback.questionId}` : null,
           fallback.attemptEventIds.length > 0
             ? `作答 ${fallback.attemptEventIds.slice(0, 4).join('、')}`
             : null,
-          fallback.unavailableReason ? `申诉没有写入：${fallback.unavailableReason}` : null,
         ]
           .filter((part): part is string => part !== null)
           .join('\n');
