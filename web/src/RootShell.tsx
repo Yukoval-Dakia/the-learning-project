@@ -6,7 +6,9 @@ import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
 import { MobileTabBar } from '@/ui/shell/MobileTabBar';
+import { NAV, type NavItem, activeFromPath, isSection } from '@/ui/shell/nav-config';
 import { ShellMain } from '@/ui/shell/ShellMain';
+import { PracticeNavigation } from '@/ui-next/cleanroom-practice/PracticeNavigation';
 
 // S13 (YUK-335 批次丙) — 主题持久化 key，与 design app.jsx:86 / 既有
 // ThemeToggle primitive 同 key（'loom-theme'），互不打架。
@@ -197,6 +199,7 @@ function AppFrame({
   // CompanionMount 认领后回调 onOpenChange(true)。
   const openCopilot = useCallback(() => setCompanionOpen(true), []);
   const companionSide = companionLayout === 'side' && companionOpen;
+  const practiceFrame = pathname === '/practice';
 
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
@@ -205,12 +208,18 @@ function AppFrame({
     // 见本组件尾部根挂）直接消费 paletteOpen state 控制开合。
     <div
       ref={attachShell}
-      className={`app${railCollapsed ? ' rail-collapsed' : ''}`}
+      className={
+        practiceFrame ? 'un-cr un-cr-shell' : `app${railCollapsed ? ' rail-collapsed' : ''}`
+      }
+      data-ui-next={practiceFrame ? '' : undefined}
+      data-theme={practiceFrame ? theme : undefined}
       // 桌面形态下学习伙伴是内容右侧的一栏，不覆盖正文（C1）。
       style={
         companionSide
           ? {
-              gridTemplateColumns: `${railCollapsed ? 'var(--rail-w-collapsed)' : 'var(--rail-w)'} minmax(0, 1fr) auto`,
+              gridTemplateColumns: practiceFrame
+                ? 'minmax(0, 1fr) auto'
+                : `${railCollapsed ? 'var(--rail-w-collapsed)' : 'var(--rail-w)'} minmax(0, 1fr) auto`,
             }
           : undefined
       }
@@ -220,7 +229,7 @@ function AppFrame({
       // 仍开时触发导航。CSS 钩子（≤720px 生效；同 data-palette-open 用 undefined 关闭）。
       data-mobile-nav-open={navOpen ? '' : undefined}
     >
-      {navOpen && (
+      {navOpen && !practiceFrame && (
         // 移动 nav scrim：点击关闭。用 <button>（键盘可达，沿 CopilotDrawer scrim
         // 先例），避免 div+onClick 的 a11y 漏洞；border/padding 归零让 .scrim 视觉
         // 不受 button 默认 chrome 影响。
@@ -233,37 +242,59 @@ function AppFrame({
         />
       )}
 
-      <AppSidebar
-        pathname={pathname}
-        navigate={navigate}
-        mobileOpen={navOpen}
-        mobileLayout={mobileLayout}
-        onOpenCopilot={openCopilot}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-        onNavigated={closeMobileNav}
-        inboxCount={inboxCount}
-        inboxCountUncertain={inboxCountUncertain}
-      />
-
-      <ShellMain blockedByModal={navOpen}>
-        <AppTopbar
+      {!practiceFrame && (
+        <AppSidebar
           pathname={pathname}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-          onToggleRail={() => setRailCollapsed((c) => !c)}
-          railCollapsed={railCollapsed}
-          onOpenPalette={() => setPaletteOpen(true)}
+          navigate={navigate}
+          mobileOpen={navOpen}
+          mobileLayout={mobileLayout}
           onOpenCopilot={openCopilot}
-          copilotNudgeCount={copilotNudgeCount}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onNavigated={closeMobileNav}
+          inboxCount={inboxCount}
+          inboxCountUncertain={inboxCountUncertain}
         />
+      )}
+
+      <ShellMain blockedByModal={navOpen && !practiceFrame}>
+        {practiceFrame ? (
+          <PracticeNavigation
+            items={NAV.filter((entry): entry is NavItem => !isSection(entry)).map((entry) => ({
+              id: entry.id,
+              label: entry.label,
+              current: activeFromPath(pathname) === entry.id,
+              onSelect: () => navigate(entry.path),
+            }))}
+            theme={theme}
+            companionOpen={companionOpen}
+            inboxCount={inboxCount}
+            inboxCountUncertain={inboxCountUncertain}
+            onSearch={() => setPaletteOpen(true)}
+            onTheme={toggleTheme}
+            onCompanion={() => setCompanionOpen((open) => !open)}
+          />
+        ) : (
+          <AppTopbar
+            pathname={pathname}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+            onToggleRail={() => setRailCollapsed((c) => !c)}
+            railCollapsed={railCollapsed}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onOpenCopilot={openCopilot}
+            copilotNudgeCount={copilotNudgeCount}
+          />
+        )}
         {children}
       </ShellMain>
 
-      <MobileTabBar
-        pathname={pathname}
-        navigate={navigate}
-        onOpenMobileNav={() => setMobileNavOpen(true)}
-      />
+      {!practiceFrame && (
+        <MobileTabBar
+          pathname={pathname}
+          navigate={navigate}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+        />
+      )}
 
       {/* 学习伙伴根挂：全路由一个实例。桌面占内容右侧一栏（sticky 全高），iPad 浮在页面上，
           手机是全高底部面板。nudge 数量由本壳从 nudges query 快照读给 AppTopbar。 */}
@@ -271,12 +302,19 @@ function AppFrame({
         className="shell-companion-slot"
         style={
           companionSide
-            ? { gridColumn: 3, gridRow: 1, position: 'sticky', top: 0, height: '100vh' }
+            ? {
+                gridColumn: practiceFrame ? 2 : 3,
+                gridRow: 1,
+                position: 'sticky',
+                top: 0,
+                height: '100vh',
+              }
             : undefined
         }
       >
         <CompanionMount
           open={companionOpen}
+          presentation={practiceFrame ? 'cleanroom' : undefined}
           onOpenChange={setCompanionOpen}
           layout={companionLayout}
           navigate={navigate}

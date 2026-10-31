@@ -17,6 +17,7 @@ import { usePracticeClient } from '../practice-client';
 
 export interface SoloCoachProps {
   open: boolean;
+  presentation?: 'cleanroom';
   /** Opening count; each opening gets a fresh hint ladder (closed content stays for the slide-out). */
   session: number;
   onClose: () => void;
@@ -24,11 +25,22 @@ export interface SoloCoachProps {
   issuanceId?: string;
 }
 
-export function SoloCoach({ open, session, onClose, question, issuanceId }: SoloCoachProps) {
+export function SoloCoach({
+  open,
+  session,
+  onClose,
+  question,
+  issuanceId,
+  presentation,
+}: SoloCoachProps) {
   const { revealStudyReference } = usePracticeClient();
   const trapRef = useFocusTrap(open, onClose);
   return createPortal(
-    <UiNextRoot className="un-ps-coach-root">
+    <UiNextRoot
+      className={
+        presentation === 'cleanroom' ? 'un-cr un-cr-portal un-ps-coach-root' : 'un-ps-coach-root'
+      }
+    >
       {open && (
         <button
           type="button"
@@ -42,9 +54,6 @@ export function SoloCoach({ open, session, onClose, question, issuanceId }: Solo
         ref={trapRef}
         className="un-ps-coach"
         data-open={open || undefined}
-        // biome-ignore lint/a11y/useSemanticElements: native <dialog> needs the imperative
-        // showModal()/close() API, which does not fit this attribute-driven drawer with its own
-        // scrim and focus trap (same as CopilotDrawer).
         role="dialog"
         aria-modal={open || undefined}
         aria-label="解题提示"
