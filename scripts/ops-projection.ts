@@ -1,4 +1,4 @@
-// audit:projection — event-sourcing drift auditor.
+// ops:projection — event-sourcing drift check. Not a CI gate.
 //
 // For every live projection row, re-derive the expected structural snapshot by folding that id's
 // events in memory through the same gather helpers the IO shells use, then deep-diff it against the
@@ -12,7 +12,7 @@
 // trivially clean, and against imperatively-created rows it false-positives every row. It is a
 // standalone prod-clone tool; its DB test seeds a coherent fixture, then mutates a row out of band.
 //
-// Allowlisted ids are reported as ALLOWED, not failures. See audit-projection-allowlist.json.
+// Allowlisted ids are reported as ALLOWED, not failures. See ops-projection-allowlist.json.
 
 // Load `.env` BEFORE importing `@/db/client`. Must be first (see backfill-genesis-events.ts).
 import './load-env';
@@ -33,11 +33,10 @@ import { ALL_PROJECTION_KINDS, type ProjectionKind } from '@/server/projections/
 
 type DbLike = Db | Tx;
 
-// Re-export the moved shapes so existing importers keep their ./audit-projection imports.
 export type { AllowlistEntry, DriftRecord, ProjectionAllowlist };
 
 const ALLOWLIST_PATH = resolve(
-  fileURLToPath(new URL('./audit-projection-allowlist.json', import.meta.url)),
+  fileURLToPath(new URL('./ops-projection-allowlist.json', import.meta.url)),
 );
 
 export function loadAllowlist(path: string = ALLOWLIST_PATH): ProjectionAllowlist {
@@ -105,7 +104,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(
-      `audit:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s) + ${result.checkedArtifacts} artifact(s) + ${result.checkedQuestionBlocks} question_block(s) + ${result.checkedItemCalibrations} item_calibration(s).`,
+      `ops:projection — checked ${result.checkedNodes} node(s) + ${result.checkedEdges} edge(s) + ${result.checkedGoals} goal(s) + ${result.checkedMistakeVariants} mistake_variant(s) + ${result.checkedLearningItems} learning_item(s) + ${result.checkedArtifacts} artifact(s) + ${result.checkedQuestionBlocks} question_block(s) + ${result.checkedItemCalibrations} item_calibration(s).`,
     );
     if (result.allowed.length > 0) {
       console.log(`\nALLOWED drift (covered by allowlist):  ${result.allowed.length}`);
@@ -125,7 +124,7 @@ async function main(): Promise<void> {
         '\nA drifted row means the live projection disagrees with its source-of-truth event ' +
           'log. Either an out-of-band write bypassed the projection (rebuild it: ' +
           'pnpm rebuild:projection) or a gather/fold bug is dropping a mutation. If the drift ' +
-          'is intentional, add the id to scripts/audit-projection-allowlist.json with a ' +
+          'is intentional, add the id to scripts/ops-projection-allowlist.json with a ' +
           'reason + resolves_when.',
       );
     }
@@ -140,7 +139,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   main()
     .then(() => process.exit(0))
     .catch((err) => {
-      console.error('[audit-projection] failed:', err);
+      console.error('[ops-projection] failed:', err);
       process.exit(1);
     });
 }
