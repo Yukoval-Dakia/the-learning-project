@@ -8,7 +8,7 @@
 // derivation remain settlement-writer internals, so there is no import edge
 // back from the read module.
 
-import { eq } from 'drizzle-orm';
+import { and, eq, gte, or, sql } from 'drizzle-orm';
 
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import type { KcObservation } from '@/core/schema/assessment';
@@ -207,11 +207,25 @@ export function candidateSchedulingSuppressed(plan: SettlementPlan): boolean {
   );
 }
 
-export async function loadSettlementEvents(tx: Tx): Promise<SettlementEventRow[]> {
+/** `occurredSince` keeps rows written then, or whose sealed occurrence is then or later. */
+export async function loadSettlementEvents(
+  tx: Tx,
+  occurredSince?: Date,
+): Promise<SettlementEventRow[]> {
   const rows = await tx
     .select({ id: event.id, created_at: event.created_at, payload: event.payload })
     .from(event)
-    .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
+    .where(
+      occurredSince
+        ? and(
+            eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+            or(
+              gte(event.created_at, occurredSince),
+              sql`${event.payload}->>'occurrence_at' >= ${occurredSince.toISOString()}`,
+            ),
+          )
+        : eq(event.action, ASSESSMENT_SETTLEMENT_ACTION),
+    );
   const out: SettlementEventRow[] = [];
   for (const row of rows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;
