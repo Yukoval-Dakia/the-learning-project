@@ -22,6 +22,7 @@ const SCAN_ROOTS = ['src', 'server', 'web', 'scripts'] as const;
 const REQUIRED_REGISTRY = 'src/kernel/locks/registry.ts';
 const APPROVED_PREFIXES = ['src/kernel/locks/'] as const;
 const APPROVED_HELPERS = [
+  'src/capabilities/agency/server/conjecture/probe-lock.ts',
   'src/db/learning-state-lock.ts',
   'src/db/session-advisory-lock.ts',
   'src/server/ai/provider-attempt-lock.ts',

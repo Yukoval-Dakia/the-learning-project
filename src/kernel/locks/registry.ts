@@ -1,4 +1,4 @@
-// Named advisory-lock key templates. Helpers derive the hash argument here and
+// Named advisory-lock key templates. Helpers derive the lock argument here and
 // keep their existing SQL. This module does not acquire locks and does not record
 // or prove a lock order.
 
@@ -7,6 +7,13 @@ export type HashtextLockNamespace = {
   readonly encoding: 'hashtext';
   /** Exact text passed to hashtext(). */
   readonly key: string;
+};
+
+export type IntLiteralLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'int-literal';
+  /** Exact single-argument advisory-lock key. */
+  readonly key: number;
 };
 
 export type HashtextExtendedLockNamespace = {
@@ -29,10 +36,20 @@ export type HashtextExtendedExactLockNamespace = {
   readonly key: string;
 };
 
+export type HashtextExtendedIdentityLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'hashtextextended';
+  /** Literal second argument. The text argument is the caller id, unchanged. */
+  readonly salt: 0 | 1;
+  readonly identity: true;
+};
+
 export type AdvisoryLockNamespace =
   | HashtextLockNamespace
+  | IntLiteralLockNamespace
   | HashtextExtendedLockNamespace
-  | HashtextExtendedExactLockNamespace;
+  | HashtextExtendedExactLockNamespace
+  | HashtextExtendedIdentityLockNamespace;
 
 export const advisoryLockRegistry = {
   learningStateWrite: {
@@ -81,6 +98,23 @@ export const advisoryLockRegistry = {
     keyPrefix: 'intervention:source:',
     suffixFields: ['eventId'],
   },
+  probeServeCap: {
+    family: 'probe-serve-cap',
+    encoding: 'int-literal',
+    key: 406_440_3,
+  },
+  probeQuestion: {
+    family: 'probe-question',
+    encoding: 'hashtextextended',
+    salt: 0,
+    identity: true,
+  },
+  conjectureFold: {
+    family: 'conjecture-fold',
+    encoding: 'hashtextextended',
+    salt: 1,
+    identity: true,
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {
@@ -113,4 +147,23 @@ export function deriveHashtextExtendedLockKey<const Fields extends readonly stri
     segments.push(parts[field as Fields[number]]);
   }
   return `${namespace.keyPrefix}${segments.join(':')}`;
+}
+
+export function deriveIntLiteralLockKey<T extends number>(namespace: {
+  readonly encoding: 'int-literal';
+  readonly key: T;
+}): T {
+  return namespace.key;
+}
+
+/** A prefix would hash a different key, so the text argument stays the caller id. */
+export function deriveHashtextExtendedIdentityLock<S extends 0 | 1>(
+  namespace: {
+    readonly encoding: 'hashtextextended';
+    readonly salt: S;
+    readonly identity: true;
+  },
+  id: string,
+): { readonly key: string; readonly salt: S } {
+  return { key: id, salt: namespace.salt };
 }
