@@ -5,7 +5,6 @@ export {
   buildNoteQuestionsQuery,
   getNotePage,
   projectNoteQuestionsResponse,
-  undoAiChange,
 } from './ui/notes-api';
 
 export const loadNoteReaderPage = () =>
