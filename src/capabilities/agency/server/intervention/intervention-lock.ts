@@ -1,5 +1,5 @@
-// Transaction locks for intervention store writes and recovery. Key text comes from the
-// lock registry; the statement stays hashtextextended(text, 0), the registered salt.
+// Transaction locks for intervention store writes, recovery, and probe-result delivery.
+// Key text comes from the lock registry; the statement stays hashtextextended(text, 0), the registered salt.
 import { sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
 import {
