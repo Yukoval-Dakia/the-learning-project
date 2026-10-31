@@ -9,6 +9,16 @@ export type HashtextLockNamespace = {
   readonly key: string;
 };
 
+export type HashtextTemplateLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'hashtext';
+  /** Stable prefix, including the separator before the first suffix field. */
+  readonly keyPrefix: string;
+  /** Suffix field names, joined with ':' in this order after keyPrefix. */
+  readonly suffixFields: readonly string[];
+  readonly template: true;
+};
+
 export type IntLiteralLockNamespace = {
   readonly family: string;
   readonly encoding: 'int-literal';
@@ -46,6 +56,7 @@ export type HashtextExtendedIdentityLockNamespace = {
 
 export type AdvisoryLockNamespace =
   | HashtextLockNamespace
+  | HashtextTemplateLockNamespace
   | IntLiteralLockNamespace
   | HashtextExtendedLockNamespace
   | HashtextExtendedExactLockNamespace
@@ -115,7 +126,38 @@ export const advisoryLockRegistry = {
     salt: 1,
     identity: true,
   },
+  interventionDeliver: {
+    family: 'intervention-deliver',
+    encoding: 'hashtext',
+    keyPrefix: 'intervention:deliver:',
+    suffixFields: ['questionId'],
+    template: true,
+  },
+  streamCompose: {
+    family: 'stream-compose',
+    encoding: 'hashtext',
+    keyPrefix: 'stream:compose:',
+    suffixFields: ['date'],
+    template: true,
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
+
+export function deriveHashtextTemplateLockKey<const Fields extends readonly string[]>(
+  namespace: {
+    readonly encoding: 'hashtext';
+    readonly keyPrefix: string;
+    readonly suffixFields: Fields;
+    readonly template: true;
+  },
+  parts: { readonly [K in Fields[number]]: string },
+): string {
+  const segments: string[] = [];
+  for (const field of namespace.suffixFields) {
+    // for-of widens a generic tuple element to string.
+    segments.push(parts[field as Fields[number]]);
+  }
+  return `${namespace.keyPrefix}${segments.join(':')}`;
+}
 
 export function deriveHashtextLockKey<T extends string>(namespace: {
   readonly encoding: 'hashtext';

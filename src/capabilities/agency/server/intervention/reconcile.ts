@@ -5,6 +5,7 @@ import type { Db } from '@/db/client';
 import { withLearningStateLock } from '@/db/learning-state-lock';
 import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { intervention } from '@/db/schema';
+import { materializeInterventionDiagnostics } from '@/kernel/records/intervention-diagnostic-materialize';
 import { getRunningBoss } from '@/server/boss/client';
 import {
   lockInterventionCorrectionsAll,
@@ -68,9 +69,6 @@ export async function recoverEligibleInterventionDiagnostics(
     failed: 0,
   };
   let cursor: { updatedAt: Date; id: string; version: number } | null = null;
-  let materializeInterventionDiagnostics:
-    | typeof import('@/capabilities/practice/public')['materializeInterventionDiagnostics']
-    | null = null;
 
   while (true) {
     const activeEligible = and(
@@ -101,10 +99,6 @@ export async function recoverEligibleInterventionDiagnostics(
       .limit(RECOVERY_SCAN_LIMIT);
     if (rows.length === 0) break;
     report.scanned += rows.length;
-    if (!materializeInterventionDiagnostics) {
-      ({ materializeInterventionDiagnostics } = await import('@/capabilities/practice/public'));
-    }
-    const materialize = materializeInterventionDiagnostics;
 
     for (const row of rows) {
       try {
@@ -120,7 +114,7 @@ export async function recoverEligibleInterventionDiagnostics(
           ) {
             return 'raced' as const;
           }
-          await materialize(tx, {
+          await materializeInterventionDiagnostics(tx, {
             package: current.package,
             settlement: current.settlement,
             snapshot: current.snapshot,

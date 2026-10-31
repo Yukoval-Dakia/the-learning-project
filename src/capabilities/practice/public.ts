@@ -97,6 +97,17 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
 }
 
+// Installs the leaves diagnostic materialization does not own: FSRS enrollment
+// and judge-run activity. Archive recovery calls the kernel operation.
+export async function installInterventionDiagnosticMaterializer(): Promise<void> {
+  const [{ installDiagnosticMaterializeEffects }, { diagnosticMaterializeEffects }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-diagnostic-materialize'),
+      import('./server/intervention-diagnostics'),
+    ]);
+  installDiagnosticMaterializeEffects(diagnosticMaterializeEffects());
+}
+
 export async function installInterventionAuthorStages(): Promise<void> {
   const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
     await Promise.all([

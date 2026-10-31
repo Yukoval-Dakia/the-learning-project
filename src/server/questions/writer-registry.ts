@@ -167,9 +167,9 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     pendingClass: 'blocked-by:YUK-1052',
     note: '§2 矩阵 teaching_check 行：container-only 不免迁；教学 turn 与 revision/issuance 原子绑定依赖 pinned issuance（YUK-1052）。',
   },
-  'src/capabilities/practice/server/intervention-diagnostics.ts': {
+  'src/kernel/records/intervention-diagnostic-materialize.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1047'],
-    note: 'Diagnostic producer publishes frozen contracts and withholds unadmitted cards; native issuance and recovery preserve one-time exposure.',
+    note: 'Diagnostic materialize inserts prompt/reference/judge/figures in the same function that calls publishQuestionGroupFromRow; unadmitted cards stay withheld and one-time exposure stays on the frozen contract.',
   },
 };
