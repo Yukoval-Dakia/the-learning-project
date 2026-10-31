@@ -110,7 +110,6 @@ pnpm audit:partition
 pnpm audit:question-writers
 pnpm audit:api-contracts
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:tool-params
 pnpm audit:capability-boundaries
 pnpm audit:architecture-deepening
@@ -131,7 +130,8 @@ pnpm audit:advisory-locks
 `pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
 no writes; `scripts/embed-inventory.ts`).
 
-`audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
+`pnpm audit:capability-boundaries` 执行 capability `*-api.ts` 不得手写 `apiJson`
+（必须使用生成的 operations）这条不变量，并同时检查 public/ui-public access seam 与三张架构债
 ratchet（capability→server、server→capability deep、cross-capability value/SCC）。
 机器可读报告用 `pnpm audit:capability-boundaries --json`。实测 pair 比基线低时审计失败，
 运行 `pnpm audit:capability-boundaries --tighten` 收紧
@@ -197,7 +197,6 @@ pnpm lint
 pnpm audit:schema
 pnpm audit:partition
 pnpm audit:api-client
-pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
 pnpm audit:provider-lanes
 pnpm audit:profile
@@ -212,7 +211,7 @@ the unit/DB lanes; only verified docs-only changes skip them. Each lane computes
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
-question-writers, API-contract, API-client, API-client-usage, tool-params,
+question-writers, API-contract, API-client, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
 structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
 flags, hub-sync-writers, provider-lanes, model-source and advisory-locks.
