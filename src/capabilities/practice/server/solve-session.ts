@@ -140,6 +140,9 @@ export interface PlanSolveHintParams {
 
 export interface PlanSolveHintResult {
   text_md: string;
+}
+
+interface SolveHintAttempt extends PlanSolveHintResult {
   attempt_latency?: SealedHelpLatency;
   cost_usd?: number;
   cost_basis?: 'reported' | 'estimated' | 'unknown';
@@ -215,6 +218,11 @@ export function parseHintTurn(text: string): PlanSolveHintResult {
 }
 
 export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSolveHintResult> {
+  const attempt = await runSolveHintAttempt(params);
+  return { text_md: attempt.text_md };
+}
+
+async function runSolveHintAttempt(params: PlanSolveHintParams): Promise<SolveHintAttempt> {
   const { db, sessionId, hintIndex } = params;
   const runTaskFn = params.runTaskFn ?? makeRunTaskTextFn(db);
 
@@ -699,7 +707,7 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
   const originAt = Date.now();
   const signal = AbortSignal.timeout(SOLVE_HINT_GENERATION_BUDGET_MS);
   try {
-    const hint = await planSolveHint({
+    const hint = await runSolveHintAttempt({
       ...params,
       signal,
       generationDeadlineAt: originAt + SOLVE_HINT_GENERATION_BUDGET_MS,
