@@ -95,6 +95,22 @@ async function main() {
     return pull;
   }
 
+  // A branch push can start before GitHub links the commit to its PR.
+  // Wait only while the count is still zero; two open PRs fail immediately.
+  const OPEN_PR_WAIT_MS = 60_000;
+  const OPEN_PR_POLL_MS = 5_000;
+  async function waitForSingleOpenPull() {
+    const deadline = Date.now() + OPEN_PR_WAIT_MS;
+    for (;;) {
+      const open = (await associatedPulls()).filter((pull) => pull.state === 'open');
+      if (open.length === 1) return uniquePull(open, 'open');
+      if (open.length > 1) fail(`Expected one open PR; found ${open.length}`);
+      if (Date.now() >= deadline) fail('Expected one open PR; found 0');
+      console.error('[circle-audit-base] open PR not linked yet; retrying');
+      await new Promise((resolve) => setTimeout(resolve, OPEN_PR_POLL_MS));
+    }
+  }
+
   let base;
   let basis;
   let pullNumber;
@@ -127,10 +143,7 @@ async function main() {
       pullNumber = pull.number;
     }
   } else {
-    const pull = await uniquePull(
-      (await associatedPulls()).filter((p) => p.state === 'open'),
-      'open',
-    );
+    const pull = await waitForSingleOpenPull();
     if (
       pull.state !== 'open' ||
       pull.merged ||

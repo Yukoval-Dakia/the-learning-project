@@ -175,6 +175,7 @@ CI 检查实测抵消及批准 URL、原话等字段的形状，不联网判断�
 CI 的静态 `audits_architecture` job 必须提供 `CAPABILITY_BASE_SHA`；手动 workflow 使用已有的 `test_policy_base` 输入。
 CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 `scripts/ci/resolve-circle-audit-base.mjs`，将其验证后的 SHA 输出传给 `CAPABILITY_BASE_SHA`。
+分支 push 可能早于 GitHub 把提交关联到 PR；此时只在 open PR 数量仍为 0 时有限重试，出现两个 open PR 或超时仍失败。
 无法确认 base 时仍失败，不回退到移动分支或猜测父提交；GitHub 保留原有 event/input 来源。
 `pnpm audit:capability-boundaries:snapshot` 仍只打印实测快照，不带变更记录，不能用它覆盖基线。
 
