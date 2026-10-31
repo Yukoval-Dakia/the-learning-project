@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
-import { bodyBlocksToNoteSections } from '@/capabilities/notes/server/body-blocks';
 import { materializeGeneratedBodyBlocks } from '@/capabilities/notes/server/generated-body-blocks';
 import { ArtifactBodyBlocks, NoteVerificationResult } from '@/core/schema/business';
+import { bodyBlocksToNoteSections } from '@/kernel/read-models/note-sections';
 import type { SubjectProfile } from '@/subjects/profile';
 import {
   assertNoteGenerateStopReason,
