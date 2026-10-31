@@ -64,6 +64,17 @@ export const agencyCapability = defineCapability({
             (m) => m.buildInterventionDiagnosticJudgeSubscriber,
           ),
       },
+      {
+        // Practice commits the verification; Agency owns the coach hint. Delivery
+        // is after commit, so a note failure cannot retry the verify job.
+        id: 'agency.question-pool-gap',
+        version: 1,
+        actions: ['experimental:quiz_verify'],
+        load: () =>
+          import('./server/question-pool-gap-subscription').then(
+            (m) => m.buildQuestionPoolGapSubscriber,
+          ),
+      },
     ],
   },
   api: {
