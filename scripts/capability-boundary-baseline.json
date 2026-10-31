@@ -10913,6 +10913,16 @@
       "date": "2026-10-31"
     },
     {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/agent/run.ts",
+      "module": "src/server/ai/provider-session-admission-policy.ts",
+      "kind": "value",
+      "symbols": ["ProviderSessionAdmissionError"],
+      "issue": "YUK-1572",
+      "owns": "Provider-session admission failure identity (reason, lane, task run). The ingestion agent classifies that error when a run stops. The class moved with lane-policy parsing; acquire and the tick loop stay in provider-session-admission.ts, so this replaces that file's edge and the ingestion -> ai count does not grow.",
+      "date": "2026-10-31"
+    },
+    {
       "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/server/failure-learning.ts",
       "module": "src/kernel/read-models/failure-learning-context.ts",

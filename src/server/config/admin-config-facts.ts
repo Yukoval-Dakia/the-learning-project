@@ -169,10 +169,10 @@ function buildEffectiveValues(): AdminConfigRuntimeFacts['effective_values'] {
       'resolveProviderAttemptAdmission（src/server/ai/provider-attempt-admission-config.ts）',
     ),
     AI_PROVIDER_SESSION_ADMISSION_MODE: laneResolvedNote(
-      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission.ts）',
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
     ),
     AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON: laneResolvedNote(
-      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission.ts）',
+      'resolveProviderSessionAdmissionPlan（src/server/ai/provider-session-admission-policy.ts）',
     ),
     'lane.vision_judge.provider': vision.provider,
     'lane.vision_judge.model': vision.model,
