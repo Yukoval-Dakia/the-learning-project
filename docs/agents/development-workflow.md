@@ -124,7 +124,7 @@ pnpm audit:draft-status
 pnpm audit:draft-status-reads --strict
 pnpm audit:flags --strict
 pnpm audit:hub-sync-writers
-pnpm audit:provider-attempt-truth
+pnpm audit:provider-lanes
 pnpm audit:model-source
 pnpm audit:advisory-locks
 ```
@@ -217,8 +217,9 @@ commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partit
 question-writers, API-contract, API-client, API-client-usage, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
 structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
-flags, hub-sync-writers, provider-attempt-truth, model-source and advisory-locks.
-`audit:provider-lanes` is a local-only census and is not in CI.
+flags, hub-sync-writers, provider-lanes, model-source and advisory-locks.
+`audit:provider-lanes` checks lane wiring and attempt-truth (wrapper, legacy cost, zero-cost)
+and runs in the policy audit lane.
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
