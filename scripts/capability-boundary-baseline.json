@@ -7090,6 +7090,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> practice",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11135,6 +11143,16 @@
       "issue": "YUK-1571",
       "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/coverage-lattice.ts",
+      "module": "src/kernel/read-models/coverage-lattice.ts",
+      "kind": "value",
+      "symbols": ["loadCoverageLattice"],
+      "issue": "YUK-1571",
+      "owns": "Read-only coverage lattice: supply-activity aggregation and the KC pool projection. Practice still owns the scan; the composition root installs those facts.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -12332,7 +12350,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 15,
+      "total": 14,
       "byOwnerPair": {
         "agency -> notes": 1,
         "agency -> practice": 2,
@@ -12340,7 +12358,6 @@
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
-        "observability -> practice": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> onboarding": 3,

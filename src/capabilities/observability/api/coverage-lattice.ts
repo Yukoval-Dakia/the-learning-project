@@ -2,7 +2,7 @@
 // recent supply activity. Auth is enforced upstream.
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadCoverageLattice } from '../public';
+import { loadCoverageLattice } from '@/kernel/read-models/coverage-lattice';
 
 export async function GET(): Promise<Response> {
   try {

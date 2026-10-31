@@ -7,6 +7,8 @@ import type {
 } from '@/capabilities/observability/ui/admin-client';
 import type { Db, Tx } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { loadCoverageLattice } from '@/kernel/read-models/coverage-lattice';
+import { installCoverageLatticeScan } from '../coverage-lattice-scan';
 
 const RunsQuery = z.object({
   limit: z.string().optional(),
@@ -64,7 +66,11 @@ export async function createStartAdminReader(options: { database?: Db | Tx; now?
       );
       return read((db) => domain.loadAdminFailures(db, opts));
     },
-    getCoverage: () => read((db) => domain.loadCoverageLattice(db, options.now)),
+    getCoverage: () =>
+      read(async (db) => {
+        await installCoverageLatticeScan();
+        return loadCoverageLattice(db, options.now);
+      }),
     getConjectureScores: () => read((db) => domain.loadConjectureScores(db)),
   } satisfies AdminReadClient;
 }

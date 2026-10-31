@@ -1,29 +1,81 @@
-// Pure coverage-lattice core with no DB imports, so it can run in the unit lane.
-//
-// The scanner's four rules are pool-level; this never produces a per-cell matrix. Pool
-// booleans are read back from which gap kinds fired, and an empty pool leaves the three
-// axes null because the scanner short-circuits.
+// Read-only coverage lattice. Practice still owns the supply scanner and installs
+// its facts; this module cannot import a capability. Pool booleans are read back
+// from which gap kinds fired. An empty pool leaves the three axes null because
+// the scanner short-circuits those rules.
 
-import type {
-  DifficultyBand,
-  QuestionSupplyTarget,
-  ScanInput,
-  SupplyGapKind,
-  SupplyRoute,
-} from '@/capabilities/practice/public';
+import { and, asc, eq, gte } from 'drizzle-orm';
+import type { Db, Tx } from '@/db/client';
+import { event } from '@/db/schema';
+import { getDefaultSubjectRegistry } from '@/subjects/profile';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SUPPLY_EVENT_ACTION = 'experimental:question_supply';
+const ACTIVITY_LOOKBACK_FLOOR_DAYS = 30;
 
-export const COVERAGE_SCOPE_NOTE =
+const COVERAGE_SCOPE_NOTE =
   'covers the four single-KC pool rules of scanCoverageGaps (R1-R4); ' +
   'NOT the full union of supply gaps — confusable_contrast (misconception mesh) is out of scope.';
 
-/** Injected so the core never imports DB-tainted value modules. */
-export interface LatticeConstants {
+export type CoverageGapKind =
+  | 'frontier_zero'
+  | 'source_quality'
+  | 'diagnostic'
+  | 'format_diversity'
+  | 'placement_starter'
+  | 'confusable_contrast';
+
+export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
+
+export type CoverageSupplyRoute =
+  | 'author_question'
+  | 'sourcing_web'
+  | 'ingest_existing'
+  | 'image_candidate'
+  | 'quiz_gen'
+  | 'jyeoo_fetch';
+
+/** Open-goal KC row the scanner already loaded. */
+export interface CoverageScanFrontier {
+  knowledgeId: string;
+  subjectId: string;
+  thetaHat: number;
+  evidenceCount: number;
+}
+
+/** Usable question, counted once per attached KC. */
+export interface CoverageScanQuestion {
+  knowledgeIds: readonly string[];
+}
+
+/** One emitted gap. Scanner targets carry exactly one KC. */
+export interface CoverageScanTarget {
+  knowledgeIds: readonly string[];
+  gapKind: CoverageGapKind;
+  kind: string;
+  difficultyBand: DifficultyBand;
+  minSourceTier: 1 | 2 | 3;
+  desiredCount: number;
+  priority: number;
+  reason: string;
+  fingerprint: string;
+  routePreference: readonly CoverageSupplyRoute[];
+}
+
+/**
+ * Practice-owned scan facts. `assembleMs` is only the DB assemble, not the
+ * pure scan, so the displayed scan_ms stays the previous clock.
+ */
+export interface CoverageScanFacts {
+  frontier: readonly CoverageScanFrontier[];
+  questions: readonly CoverageScanQuestion[];
+  targets: readonly CoverageScanTarget[];
   coverageDepthThreshold: number;
   nearWindow: number;
   cooldownDays: number;
+  assembleMs: number;
 }
+
+export type ReadCoverageScan = (db: Db | Tx) => Promise<CoverageScanFacts>;
 
 /** Recent supply activity per gap, derived from fingerprints. */
 export interface GapActivity {
@@ -35,7 +87,7 @@ export interface GapActivity {
 }
 
 export interface LatticeGap {
-  gapKind: SupplyGapKind;
+  gapKind: CoverageGapKind;
   kind: string;
   difficultyBand: DifficultyBand;
   minSourceTier: 1 | 2 | 3;
@@ -43,7 +95,7 @@ export interface LatticeGap {
   priority: number;
   reason: string;
   fingerprint: string;
-  routePreference: SupplyRoute[];
+  routePreference: readonly CoverageSupplyRoute[];
   /** frontier_zero uses fixed scaffolding constants; the UI greys it as not scanned. */
   scaffold: boolean;
   lastActivity: GapActivity | null;
@@ -59,7 +111,7 @@ export interface KcCoverageRow {
   hasHighTier: boolean | null;
   hasNearThetaAnchor: boolean | null;
   formatDiverse: boolean | null;
-  gapKinds: SupplyGapKind[];
+  gapKinds: CoverageGapKind[];
   gaps: LatticeGap[];
 }
 
@@ -85,18 +137,23 @@ export interface CoverageLatticeRead {
   };
 }
 
-/** Minimal supply-event projection for fingerprint aggregation. */
-export interface SupplyActivityEvent {
+interface SupplyActivityEvent {
   fingerprint: string;
   status: string;
   createdAt: Date;
+}
+
+let readScan: ReadCoverageScan | undefined;
+
+export function installCoverageScanReader(reader: ReadCoverageScan): void {
+  readScan = reader;
 }
 
 /**
  * Aggregate by fingerprint: last activity and status from the newest event; cooldown
  * only from the newest dispatched event, because that is the cooldown credential.
  */
-export function aggregateSupplyActivity(
+function aggregateSupplyActivity(
   events: SupplyActivityEvent[],
   now: Date,
   cooldownDays: number,
@@ -131,38 +188,21 @@ export function aggregateSupplyActivity(
   return out;
 }
 
-export interface BuildLatticeOptions {
-  now?: Date;
-  scanMs?: number;
-  displayNameById?: Record<string, string | null>;
-}
-
-/**
- * Pure transform from scan input, targets, activity and constants to the read model.
- * Pool booleans are derived from gap kinds; usable counts use the scanner's own
- * question-to-KC bucketing.
- */
-export function buildCoverageLattice(
-  scanInput: ScanInput,
-  targets: QuestionSupplyTarget[],
+function buildCoverageLattice(
+  facts: CoverageScanFacts,
   activityByFingerprint: Map<string, GapActivity>,
-  constants: LatticeConstants,
-  opts: BuildLatticeOptions = {},
+  now: Date,
+  displayNameById: Record<string, string | null>,
 ): CoverageLatticeRead {
-  const now = opts.now ?? new Date();
-  const displayNameById = opts.displayNameById ?? {};
-
-  // A question with several KCs counts in each bucket, matching the scanner.
   const usableCountByKid = new Map<string, number>();
-  for (const q of scanInput.questions) {
+  for (const q of facts.questions) {
     for (const kid of q.knowledgeIds) {
       usableCountByKid.set(kid, (usableCountByKid.get(kid) ?? 0) + 1);
     }
   }
 
-  // Scanner targets always carry exactly one KC.
-  const targetsByKid = new Map<string, QuestionSupplyTarget[]>();
-  for (const t of targets) {
+  const targetsByKid = new Map<string, CoverageScanTarget[]>();
+  for (const t of facts.targets) {
     const kid = t.knowledgeIds[0];
     if (kid === undefined) continue;
     const list = targetsByKid.get(kid) ?? [];
@@ -174,12 +214,11 @@ export function buildCoverageLattice(
   let totalGaps = 0;
   let kcsWithGaps = 0;
 
-  // The frontier is the authoritative active-goal set; fully covered KCs still get a row.
   const rowsBySubject = new Map<string, KcCoverageRow[]>();
-  for (const f of scanInput.frontier) {
+  for (const f of facts.frontier) {
     const usableCount = usableCountByKid.get(f.knowledgeId) ?? 0;
     const kcTargets = targetsByKid.get(f.knowledgeId) ?? [];
-    const gapKindSet = new Set<SupplyGapKind>(kcTargets.map((t) => t.gapKind));
+    const gapKindSet = new Set<CoverageGapKind>(kcTargets.map((t) => t.gapKind));
 
     const gaps: LatticeGap[] = kcTargets.map((t) => ({
       gapKind: t.gapKind,
@@ -201,14 +240,13 @@ export function buildCoverageLattice(
       for (const g of gaps) gapsByKind[g.gapKind] = (gapsByKind[g.gapKind] ?? 0) + 1;
     }
 
-    // An empty pool short-circuits the scanner, so those axes are unassessed (null).
     const emptyPool = usableCount === 0;
     const row: KcCoverageRow = {
       knowledgeId: f.knowledgeId,
       thetaHat: f.thetaHat,
       evidenceCount: f.evidenceCount,
       usableCount,
-      depthMet: usableCount >= constants.coverageDepthThreshold,
+      depthMet: usableCount >= facts.coverageDepthThreshold,
       hasHighTier: emptyPool ? null : !gapKindSet.has('source_quality'),
       hasNearThetaAnchor: emptyPool ? null : !gapKindSet.has('diagnostic'),
       formatDiverse: emptyPool ? null : !gapKindSet.has('format_diversity'),
@@ -244,17 +282,57 @@ export function buildCoverageLattice(
 
   return {
     generated_at: now.toISOString(),
-    scan_ms: opts.scanMs ?? 0,
-    coverage_depth_threshold: constants.coverageDepthThreshold,
-    near_window: constants.nearWindow,
-    cooldown_days: constants.cooldownDays,
+    scan_ms: facts.assembleMs,
+    coverage_depth_threshold: facts.coverageDepthThreshold,
+    near_window: facts.nearWindow,
+    cooldown_days: facts.cooldownDays,
     scope_note: COVERAGE_SCOPE_NOTE,
     subjects,
     totals: {
-      activeKcs: scanInput.frontier.length,
+      activeKcs: facts.frontier.length,
       kcsWithGaps,
       totalGaps,
       gapsByKind,
     },
   };
+}
+
+function displayNameMap(): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const profile of getDefaultSubjectRegistry().listProfiles()) {
+    out[profile.id] = profile.displayName;
+  }
+  return out;
+}
+
+/** Load the lattice for the current scan window. Read-only. */
+export async function loadCoverageLattice(
+  db: Db | Tx,
+  now: Date = new Date(),
+): Promise<CoverageLatticeRead> {
+  const reader = readScan;
+  if (!reader) {
+    throw new Error(
+      'coverage scan facts are not installed; call installCoverageLatticeScan before reading the lattice',
+    );
+  }
+  const facts = await reader(db);
+  const lookbackDays = Math.max(ACTIVITY_LOOKBACK_FLOOR_DAYS, facts.cooldownDays);
+  const cutoff = new Date(now.getTime() - lookbackDays * DAY_MS);
+  const rows = await db
+    .select({ payload: event.payload, created_at: event.created_at })
+    .from(event)
+    .where(and(eq(event.action, SUPPLY_EVENT_ACTION), gte(event.created_at, cutoff)))
+    .orderBy(asc(event.created_at));
+
+  const activityEvents: SupplyActivityEvent[] = [];
+  for (const row of rows) {
+    const payload = row.payload as Record<string, unknown> | null;
+    const fingerprint = payload?.fingerprint;
+    const status = payload?.status;
+    if (typeof fingerprint !== 'string' || typeof status !== 'string') continue;
+    activityEvents.push({ fingerprint, status, createdAt: row.created_at });
+  }
+  const activityByFingerprint = aggregateSupplyActivity(activityEvents, now, facts.cooldownDays);
+  return buildCoverageLattice(facts, activityByFingerprint, now, displayNameMap());
 }

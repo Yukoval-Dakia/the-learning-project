@@ -465,9 +465,9 @@ export const observabilityCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/job-events').then((m) => m.GET),
       },
-      // YUK-579 — 供题治理覆盖细目表（coverage lattice）只读观测面。读模型
-      // server/coverage-lattice.ts：assembleScanInput + scanCoverageGaps（纯，复用发现引擎，
-      // 零新查询子系统）+ 单条 experimental:question_supply 活动聚合。READ-ONLY 零写零 LLM。
+      // 供题治理覆盖细目表（coverage lattice）只读观测面。投影在
+      // kernel/read-models/coverage-lattice：practice 扫描事实由组合根绑定，
+      // 再加单条 experimental:question_supply 活动聚合。READ-ONLY 零写零 LLM。
       // /api/* token 校验由组合根中间件统一施加。
       {
         method: 'GET',
