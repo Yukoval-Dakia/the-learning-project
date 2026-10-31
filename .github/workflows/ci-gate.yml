@@ -67,8 +67,8 @@ jobs:
       - name: Typecheck
         if: steps.filter.outputs.static_changed != 'false'
         run: pnpm typecheck
-      # YUK-909 — warning-count ratchet at the Biome 2 baseline: warning/info totals
-      # may only decrease. Lower the baseline after a fixing batch: pnpm lint:ratchet:update
+      # YUK-909 — warning/info totals must equal the baseline. Growth fails, and a
+      # shortfall fails until this change rewrites it: pnpm lint:ratchet:update
       - name: Lint and warning ratchet
         if: steps.filter.outputs.static_changed != 'false'
         run: node scripts/ci/lint-ratchet.mjs
