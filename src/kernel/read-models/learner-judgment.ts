@@ -100,11 +100,13 @@ function abilityClaim(
   pfa: LearnerJudgment['p_correct_now'],
   notEvaluable: boolean,
 ): LearnerJudgment['ability_claim'] {
-  if (notEvaluable) {
-    return { kind: 'not_evaluable', reason: 'knowledge_role_not_mastery_evaluable' };
-  }
+  // A failed read is not a role verdict. Otherwise a goal node hides the failure
+  // as 「不评掌握」 while other faces still throw.
   if (pfa.kind === 'unknown' && isComponentFailureReason(pfa.reason)) {
     return { kind: 'unavailable', reason: pfa.reason };
+  }
+  if (notEvaluable) {
+    return { kind: 'not_evaluable', reason: 'knowledge_role_not_mastery_evaluable' };
   }
   if (pfa.kind === 'incumbent_pfa') {
     const rule = { low: COMPONENT_DISAGREEMENT_RULE.low };

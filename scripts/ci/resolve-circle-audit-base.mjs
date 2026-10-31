@@ -96,19 +96,35 @@ async function main() {
   }
 
   // A branch push can start before GitHub links the commit to its PR.
-  // Wait only while the count is still zero; two open PRs fail immediately.
+  // One sighting is not enough: keep the same open PR until the deadline.
+  // A second PR or a changed identity fails immediately; zero fails at the deadline.
   const OPEN_PR_WAIT_MS = 60_000;
   const OPEN_PR_POLL_MS = 5_000;
+  function openPullNumber(pull) {
+    if (!Number.isSafeInteger(pull.number) || pull.number <= 0) fail('Invalid PR identity');
+    return pull.number;
+  }
   async function waitForSingleOpenPull() {
     const deadline = Date.now() + OPEN_PR_WAIT_MS;
+    let held = null;
+    let open = [];
     for (;;) {
-      const open = (await associatedPulls()).filter((pull) => pull.state === 'open');
-      if (open.length === 1) return uniquePull(open, 'open');
+      open = (await associatedPulls()).filter((pull) => pull.state === 'open');
       if (open.length > 1) fail(`Expected one open PR; found ${open.length}`);
-      if (Date.now() >= deadline) fail('Expected one open PR; found 0');
-      console.error('[circle-audit-base] open PR not linked yet; retrying');
-      await new Promise((resolve) => setTimeout(resolve, OPEN_PR_POLL_MS));
+      if (open.length === 1) {
+        const number = openPullNumber(open[0]);
+        if (held !== null && held !== number) {
+          fail(`Open PR identity changed from ${held} to ${number}`);
+        }
+        held = number;
+      }
+      if (Date.now() >= deadline) break;
+      console.error('[circle-audit-base] waiting until the open PR stays the same');
+      const remaining = deadline - Date.now();
+      await new Promise((resolve) => setTimeout(resolve, Math.min(OPEN_PR_POLL_MS, remaining)));
     }
+    if (open.length === 1 && held === openPullNumber(open[0])) return uniquePull(open, 'open');
+    fail('Expected one open PR; found 0');
   }
 
   let base;
