@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MASTERY_BAND_THRESHOLDS } from '@/core/mastery-band';
+import type { MasteryDecayBucket } from '@/core/mastery-freshness';
 import { RetentionReadingSchema } from './scheduling-state';
 
 // v0 only reads the incumbent's skill-wide state. No arbitrary signal bag or
@@ -128,6 +129,110 @@ export const ComponentDisagreementSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+const DECAY_BUCKETS = [
+  'untrained',
+  'fresh',
+  'mild',
+  'stale',
+  'unknown',
+] as const satisfies readonly MasteryDecayBucket[];
+const DecayBucketSchema = z.enum(DECAY_BUCKETS);
+
+// Incumbent R(t) is a point from population or engineering parameters.
+// No personal interval exists until calibration; do not invent one.
+const UncalibratedRecallIntervalSchema = z.object({
+  kind: z.literal('not_estimated'),
+  calibration: z.literal('uncalibrated'),
+});
+
+export const ReviewRecallSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({
+    kind: z.literal('point'),
+    value: z.number().min(0).max(1),
+    interval: UncalibratedRecallIntervalSchema,
+    calibration: z.literal('uncalibrated'),
+    engine: z.enum(['fsrs', 'forgetting_candidate']),
+  }),
+]);
+
+const ReviewDurationSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({
+    kind: z.literal('known'),
+    duration_ms: z.number().int().nonnegative(),
+  }),
+]);
+
+const ReviewInstantSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('known'), at: z.date() }),
+]);
+const ReviewDueSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('known'), at: z.date() }),
+  z.object({ kind: z.literal('absent') }),
+]);
+
+// Shelf of a 精熟 ability band or a retention point at that same display cut.
+// The shelf is the existing decay bucket plus due, not a new half-life.
+const MasteredShelfSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('not_high') }),
+  z.object({
+    kind: z.literal('shelf'),
+    decay_bucket: DecayBucketSchema,
+    due_at: ReviewDueSchema,
+  }),
+]);
+
+export const ReviewTimingSchema = z.object({
+  recall: ReviewRecallSchema,
+  basis: z.object({
+    last_retrieval_at: ReviewInstantSchema,
+    duration_ms: ReviewDurationSchema,
+  }),
+  freshness: z.object({
+    decay_bucket: DecayBucketSchema,
+    due_at: ReviewDueSchema,
+    mastered_shelf: MasteredShelfSchema,
+  }),
+});
+export type ReviewTiming = z.infer<typeof ReviewTimingSchema>;
+
+const ReviewInstantJsonSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('known'), at: z.string() }),
+]);
+const ReviewDueJsonSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('known'), at: z.string() }),
+  z.object({ kind: z.literal('absent') }),
+]);
+const MasteredShelfJsonSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({ kind: z.literal('not_high') }),
+  z.object({
+    kind: z.literal('shelf'),
+    decay_bucket: DecayBucketSchema,
+    due_at: ReviewDueJsonSchema,
+  }),
+]);
+
+export const ReviewTimingJsonSchema = z.object({
+  recall: ReviewRecallSchema,
+  basis: z.object({
+    last_retrieval_at: ReviewInstantJsonSchema,
+    duration_ms: ReviewDurationSchema,
+  }),
+  freshness: z.object({
+    decay_bucket: DecayBucketSchema,
+    due_at: ReviewDueJsonSchema,
+    mastered_shelf: MasteredShelfJsonSchema,
+  }),
+});
+export type ReviewTimingJson = z.infer<typeof ReviewTimingJsonSchema>;
+
 export const LearnerJudgmentSchema = z.object({
   knowledge_id: z.string(),
   ability: AbilitySchema,
@@ -146,6 +251,7 @@ export const LearnerJudgmentSchema = z.object({
   ]),
   ability_claim: AbilityClaimSchema,
   retention: RetentionSchema,
+  review_timing: ReviewTimingSchema,
   retention_forecast: UnknownSchema,
   uncertainty: z.object({
     independent_evidence: UnknownSchema,
@@ -181,7 +287,7 @@ export const LearnerJudgmentBatchSchema = z.object({
       input_high_water: UnknownSchema,
     }),
     retention: z.object({
-      source: z.literal('kernel/scheduling:getFsrsRetrievabilityByIds'),
+      source: z.literal('kernel/scheduling:retrievabilityForKc'),
       selected_engine: z.discriminatedUnion('kind', [
         UnknownSchema,
         z.object({

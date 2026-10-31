@@ -1,28 +1,27 @@
 // Single-question detail reader: aggregates everything the question-bank detail view
-// needs into one server call (null → 404). It reuses source-tier, mastery-decay,
-// timeline and family readers instead of re-implementing them. The question-level
-// decay bucket is a derived worst-of, never question-owned state; timestamps are unix
-// seconds like the rest of the API.
+// needs into one server call (null → 404). It reuses source-tier, timeline and family
+// readers instead of re-implementing them. Decay, due, recall and basis come from the
+// judgment contract; the question-level decay bucket is a derived worst-of, never
+// question-owned state. Timestamps on the older fields are unix seconds.
 
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import {
-  type MasteryDecayBucket,
-  masteryDecayBucket,
-  worstMasteryDecayBucket,
-} from '@/core/mastery-freshness';
+import { type MasteryDecayBucket, worstMasteryDecayBucket } from '@/core/mastery-freshness';
+import type { ReviewTimingJson } from '@/core/schema/learner-judgment';
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { artifact, knowledge, question } from '@/db/schema';
 import {
   abilityReadingsByIdOrFail,
   readLearnerJudgments,
+  readQuestionCardReviewTiming,
 } from '@/kernel/read-models/learner-judgment';
 import {
   type QuestionTimelineEntry,
   getQuestionTimeline,
 } from '@/kernel/read-models/question-activity';
 import { loadFamilyMembers } from '@/kernel/read-models/questions';
+import { reviewTimingJson } from '@/kernel/read-models/review-timing';
 import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
@@ -74,6 +73,7 @@ export interface QuestionDetailPerKnowledge {
   // 'unknown' when there is no evidenced ability. That is not the untrained label.
   decay_bucket: MasteryDecayBucket;
   due_at_sec: number | null;
+  review_timing: ReviewTimingJson;
 }
 
 export interface QuestionDetailScheduling {
@@ -81,7 +81,7 @@ export interface QuestionDetailScheduling {
   // Worst-of per-knowledge buckets; 'unknown' when there are no knowledge nodes.
   aggregate_decay_bucket: MasteryDecayBucket;
   // legacy per-question FSRS fallback for unlabeled questions (knowledge_ids empty).
-  legacy_question_fsrs: { due_at_sec: number } | null;
+  legacy_question_fsrs: { due_at_sec: number; review_timing: ReviewTimingJson } | null;
 }
 
 export interface QuestionDetailBacklink {
@@ -265,61 +265,50 @@ async function loadScheduling(
   knowledgeIds: string[],
   nameById: Map<string, string>,
 ): Promise<QuestionDetailScheduling> {
+  const asOf = new Date();
   if (knowledgeIds.length === 0) {
-    // Unlabeled questions still use the legacy per-question FSRS card.
-    const legacy = await db
-      .select({ due_at: material_fsrs_state.due_at })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'question'),
-          eq(material_fsrs_state.subject_id, questionId),
-        ),
-      )
-      .limit(1);
-    const dueAtSec = toSec(legacy[0]?.due_at ?? null);
+    // Unlabeled questions still use the legacy per-question card, through the
+    // same review-timing helper as the knowledge judgment.
+    const timing = await readQuestionCardReviewTiming(db, questionId, asOf);
+    const dueAt = timing?.freshness.due_at.kind === 'known' ? timing.freshness.due_at.at : null;
     return {
       per_knowledge: [],
       aggregate_decay_bucket: 'unknown',
-      legacy_question_fsrs: dueAtSec !== null ? { due_at_sec: dueAtSec } : null,
+      legacy_question_fsrs:
+        timing && dueAt
+          ? {
+              due_at_sec: Math.floor(dueAt.getTime() / 1000),
+              review_timing: reviewTimingJson(timing),
+            }
+          : null,
     };
   }
 
-  // Evidenced ability only. Insufficient evidence stays null with decay
-  // unknown, not an untrained/cold-start low score. Due dates stay on the raw
-  // scheduling projection — the contract does not own due dates.
-  const judgmentBatch = await readLearnerJudgments(db, {
+  // Mastery, decay, due and recall are the judgment contract's readings.
+  // Insufficient evidence stays off the mastery map; its decay bucket is unknown,
+  // not an untrained low score. Due is the selected engine's due.
+  const judgment = await readLearnerJudgments(db, {
     knowledge_ids: knowledgeIds,
     context: 'any',
-    as_of: new Date(),
+    as_of: asOf,
   });
-  const masteryByKnowledge = abilityReadingsByIdOrFail(judgmentBatch);
-
-  const fsrsRows = await db
-    .select({ subject_id: material_fsrs_state.subject_id, due_at: material_fsrs_state.due_at })
-    .from(material_fsrs_state)
-    .where(
-      and(
-        eq(material_fsrs_state.subject_kind, 'knowledge'),
-        inArray(material_fsrs_state.subject_id, knowledgeIds),
-      ),
-    );
-  const dueByKnowledge = new Map(fsrsRows.map((r) => [r.subject_id, r.due_at]));
+  const masteryByKnowledge = abilityReadingsByIdOrFail(judgment);
+  const timingByKnowledge = new Map(judgment.items.map((item) => [item.knowledge_id, item]));
 
   const perKnowledge: QuestionDetailPerKnowledge[] = knowledgeIds.map((kid) => {
     const m = masteryByKnowledge.get(kid);
-    const evidenceCount = m?.evidence_count ?? 0;
-    const lastEvidenceAt = m?.last_outcome_at ?? null;
+    const item = timingByKnowledge.get(kid);
+    if (!item) throw new Error(`learner-judgment missing knowledge ${kid}`);
+    const due = item.review_timing.freshness.due_at;
     return {
       knowledge_id: kid,
       name: nameById.get(kid) ?? null,
       mastery: m?.mastery ?? null,
-      evidence_count: evidenceCount,
-      last_evidence_at_sec: toSec(lastEvidenceAt),
-      decay_bucket: m
-        ? masteryDecayBucket(evidenceCount, lastEvidenceAt, judgmentBatch.as_of)
-        : 'unknown',
-      due_at_sec: toSec(dueByKnowledge.get(kid) ?? null),
+      evidence_count: m?.evidence_count ?? 0,
+      last_evidence_at_sec: toSec(m?.last_outcome_at ?? null),
+      decay_bucket: item.review_timing.freshness.decay_bucket,
+      due_at_sec: due.kind === 'known' ? toSec(due.at) : null,
+      review_timing: reviewTimingJson(item.review_timing),
     };
   });
 

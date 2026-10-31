@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { masteryDecayBucket } from '@/core/mastery-freshness';
 import {
   COMPONENT_DISAGREEMENT_RULE,
@@ -8,12 +8,25 @@ import {
   type LearnerJudgmentBatch,
   type LearnerJudgmentInput,
   LearnerJudgmentInputSchema,
+  type ReviewTiming,
 } from '@/core/schema/learner-judgment';
 import type { RetentionReading } from '@/core/schema/scheduling-state';
 import type { Db, Tx } from '@/db/client';
+import { event, material_fsrs_state } from '@/db/schema';
 import { getNonKcKnowledgeIds } from '@/kernel/read-models/knowledge-roles';
-import { getFsrsRetrievabilityByIds, selectedForgettingEngine } from '@/kernel/scheduling';
+import {
+  resolveSchedulingProjection,
+  retrievabilityForKc,
+  selectedForgettingEngine,
+} from '@/kernel/scheduling';
 import { type MasteryProjection, getMasteryProjection } from './mastery-projection';
+import {
+  type SchedulingReviewFact,
+  cardBasis,
+  lastRetrievalAt,
+  recordedDurationMs,
+  reviewTiming,
+} from './review-timing';
 
 type DbLike = Db | Tx;
 type MasteryReader = (db: DbLike, ids: string[]) => Promise<Map<string, MasteryProjection>>;
@@ -201,11 +214,26 @@ function judgementSentence(
   return `${canDo}；${remember}；${divergence}；${uncertaintyClause(age)}。`;
 }
 
+function retentionAvailable(reading: RetentionReading): LearnerJudgment['retention'] {
+  return {
+    kind: 'available',
+    engine:
+      typeof reading === 'number'
+        ? 'fsrs'
+        : reading.kind === 'score'
+          ? 'forgetting_candidate'
+          : 'unknown',
+    reading,
+  };
+}
+
 function judgment(
   id: string,
   mastery: ComponentRead<MasteryProjection>,
   retention: ComponentRead<RetentionReading>,
   asOf: Date,
+  scheduling: ComponentRead<SchedulingReviewFact>,
+  durations: ReadonlyMap<string, number | null> | null,
   nonKcIds: ReadonlySet<string> = new Set(),
 ): LearnerJudgment {
   const entry = mastery.kind === 'available' ? mastery.values.get(id) : undefined;
@@ -236,19 +264,25 @@ function judgment(
   const itemRetention: LearnerJudgment['retention'] = nonKcIds.has(id)
     ? unknown('knowledge_role_not_mastery_evaluable')
     : memory !== undefined
-      ? {
-          kind: 'available',
-          engine:
-            typeof memory === 'number'
-              ? 'fsrs'
-              : memory.kind === 'score'
-                ? 'forgetting_candidate'
-                : 'unknown',
-          reading: memory,
-        }
+      ? retentionAvailable(memory)
       : retention.kind === 'unknown'
         ? retention
         : unknown('missing_scheduling_state');
+  const fact = scheduling.kind === 'available' ? scheduling.values.get(id) : undefined;
+  const basis = nonKcIds.has(id)
+    ? cardBasis({ presence: 'unread', reason: 'knowledge_role_not_mastery_evaluable' })
+    : scheduling.kind === 'unknown'
+      ? cardBasis({ presence: 'unread', reason: scheduling.reason })
+      : fact
+        ? cardBasis({
+            presence: 'present',
+            due_at: fact.due_at,
+            state_readable: fact.state_readable,
+            last_retrieval_at: fact.last_retrieval_at,
+            event_id: fact.last_review_event_id,
+            durations,
+          })
+        : cardBasis({ presence: 'absent', reason: 'missing_scheduling_state' });
   const effectivePfa = ability.kind === 'unknown' ? ability : pfa;
   const claim = abilityClaim(effectivePfa, nonKcIds.has(id));
   const age = evidenceAge(claim, entry, asOf);
@@ -259,6 +293,7 @@ function judgment(
     p_correct_now: effectivePfa,
     ability_claim: claim,
     retention: itemRetention,
+    review_timing: reviewTiming({ asOf, ability, retention: itemRetention, claim, ...basis }),
     retention_forecast: unknown('incumbent_port_exposes_current_retention_only'),
     uncertainty: {
       independent_evidence: unknown('incumbent_evidence_not_split_by_independence'),
@@ -302,6 +337,78 @@ export function abilityReadingsByIdOrFail(
   return byId;
 }
 
+function retentionRead(
+  scheduling: ComponentRead<SchedulingReviewFact>,
+): ComponentRead<RetentionReading> {
+  if (scheduling.kind === 'unknown') return scheduling;
+  const values = new Map<string, RetentionReading>();
+  for (const [id, fact] of scheduling.values) values.set(id, fact.reading);
+  return { kind: 'available', values };
+}
+
+const UNREADABLE_RETENTION: RetentionReading = {
+  kind: 'unknown',
+  reason: 'state_or_history_unavailable',
+  calibration: 'uncalibrated',
+  provenance: 'engineering',
+};
+
+async function loadSchedulingReviewFacts(
+  db: DbLike,
+  subjectKind: 'question' | 'knowledge',
+  ids: string[],
+  now: Date,
+): Promise<Map<string, SchedulingReviewFact>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select()
+    .from(material_fsrs_state)
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, subjectKind),
+        inArray(material_fsrs_state.subject_id, ids),
+      ),
+    );
+  const values = new Map<string, SchedulingReviewFact>();
+  for (const raw of rows) {
+    const eventId = raw.last_review_event_id ?? null;
+    try {
+      const row = await resolveSchedulingProjection(db, subjectKind, raw.subject_id, raw, now);
+      values.set(raw.subject_id, {
+        reading: retrievabilityForKc(row.state, now),
+        due_at: row.due_at,
+        last_retrieval_at: lastRetrievalAt(row.state),
+        state_readable: true,
+        last_review_event_id: eventId,
+      });
+    } catch {
+      values.set(raw.subject_id, {
+        reading: UNREADABLE_RETENTION,
+        due_at: raw.due_at,
+        last_retrieval_at: null,
+        state_readable: false,
+        last_review_event_id: eventId,
+      });
+    }
+  }
+  return values;
+}
+
+async function durationsByEventId(
+  db: DbLike,
+  eventIds: string[],
+): Promise<Map<string, number | null>> {
+  const ids = [...new Set(eventIds)];
+  const found = new Map<string, number | null>();
+  if (ids.length === 0) return found;
+  const rows = await db
+    .select({ id: event.id, payload: event.payload })
+    .from(event)
+    .where(inArray(event.id, ids));
+  for (const row of rows) found.set(row.id, recordedDurationMs(row.payload));
+  return found;
+}
+
 /**
  * One batch identity, one evaluation time, two incumbent owners. No fused P,
  * new model, write, issuance or provider call. A new Db transaction establishes
@@ -331,7 +438,7 @@ export async function readLearnerJudgments(
         input_high_water: unknown('incumbent_port_does_not_expose_input_high_water'),
       },
       retention: {
-        source: 'kernel/scheduling:getFsrsRetrievabilityByIds',
+        source: 'kernel/scheduling:retrievabilityForKc',
         selected_engine: unknown('engine_not_read'),
         version: unknown('incumbent_port_does_not_expose_component_version'),
         input_high_water: unknown('incumbent_port_does_not_expose_input_high_water'),
@@ -343,7 +450,8 @@ export async function readLearnerJudgments(
     items: [],
   };
   const unavailable = (reason: string) => {
-    batch.items = ids.map((id) => judgment(id, unknown(reason), unknown(reason), asOf));
+    const failed = unknown(reason);
+    batch.items = ids.map((id) => judgment(id, failed, failed, asOf, failed, null));
     return batch;
   };
   if (ids.length === 0) return batch;
@@ -358,9 +466,8 @@ export async function readLearnerJudgments(
     } catch {
       mastery = unknown('mastery_component_unavailable');
     }
-    batch.items = ids.map((id) =>
-      judgment(id, mastery, unknown('retention_source_not_injected'), asOf),
-    );
+    const unread = unknown('retention_source_not_injected');
+    batch.items = ids.map((id) => judgment(id, mastery, unread, asOf, unread, null));
     return batch;
   }
 
@@ -385,19 +492,20 @@ export async function readLearnerJudgments(
     } catch {
       mastery = unknown('mastery_component_unavailable');
     }
-    let retention: ComponentRead<RetentionReading>;
+    let scheduling: ComponentRead<SchedulingReviewFact>;
     let nonKcIds: ReadonlySet<string> = new Set();
+    let durations: ReadonlyMap<string, number | null> | null = new Map();
     if (batch.components.retention.selected_engine.kind === 'unknown') {
-      retention = unknown('engine_selection_unavailable');
+      scheduling = unknown('engine_selection_unavailable');
     } else {
       try {
-        retention = {
+        scheduling = {
           kind: 'available',
           values: await tx.transaction(async (part) => {
             // YUK-1600: retention is a mastery-family reading, so goal/container
             // roots never read FSRS R(t), even where pre-gate stock rows exist.
             nonKcIds = await getNonKcKnowledgeIds(part, ids);
-            return getFsrsRetrievabilityByIds(
+            return loadSchedulingReviewFacts(
               part,
               'knowledge',
               ids.filter((id) => !nonKcIds.has(id)),
@@ -405,11 +513,23 @@ export async function readLearnerJudgments(
             );
           }),
         };
+        const eventIds = [...scheduling.values.values()].flatMap((fact) =>
+          fact.last_review_event_id ? [fact.last_review_event_id] : [],
+        );
+        try {
+          durations = await tx.transaction((part) => durationsByEventId(part, eventIds));
+        } catch {
+          durations = null;
+        }
       } catch {
-        retention = unknown('retention_component_unavailable');
+        scheduling = unknown('retention_component_unavailable');
+        durations = null;
       }
     }
-    batch.items = ids.map((id) => judgment(id, mastery, retention, asOf, nonKcIds));
+    const retention = retentionRead(scheduling);
+    batch.items = ids.map((id) =>
+      judgment(id, mastery, retention, asOf, scheduling, durations, nonKcIds),
+    );
     return batch;
   };
 
@@ -450,4 +570,38 @@ export async function readLearnerJudgments(
     batch.consistency = unknown('snapshot_unavailable');
     return unavailable('snapshot_unavailable');
   }
+}
+
+/** Unlabeled question card. No ability row exists on this subject, so freshness
+ * stays unknown unless the card's own retention point is high enough for a shelf. */
+export async function readQuestionCardReviewTiming(
+  db: DbLike,
+  questionId: string,
+  asOf: Date,
+): Promise<ReviewTiming | null> {
+  const facts = await loadSchedulingReviewFacts(db, 'question', [questionId], asOf);
+  const fact = facts.get(questionId);
+  if (!fact) return null;
+  let durations: ReadonlyMap<string, number | null> | null = new Map();
+  if (fact.last_review_event_id) {
+    try {
+      durations = await durationsByEventId(db, [fact.last_review_event_id]);
+    } catch {
+      durations = null;
+    }
+  }
+  const basis = cardBasis({
+    presence: 'present',
+    due_at: fact.due_at,
+    state_readable: fact.state_readable,
+    last_retrieval_at: fact.last_retrieval_at,
+    event_id: fact.last_review_event_id,
+    durations,
+  });
+  return reviewTiming({
+    asOf,
+    ability: unknown('question_card_has_no_ability_reading'),
+    retention: retentionAvailable(fact.reading),
+    ...basis,
+  });
 }
