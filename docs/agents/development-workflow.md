@@ -125,6 +125,7 @@ pnpm audit:hub-sync-writers
 pnpm audit:provider-lanes
 pnpm audit:model-source
 pnpm audit:advisory-locks
+pnpm audit:relations
 ```
 
 `pnpm embed:inventory` is a read-only question-vector census (no embedding calls,
@@ -215,9 +216,10 @@ commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partit
 question-writers, API-contract, API-client, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
 structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
-flags, hub-sync-writers, provider-lanes, model-source and advisory-locks.
+flags, hub-sync-writers, provider-lanes, model-source, advisory-locks and relations.
 `audit:provider-lanes` checks lane wiring and attempt-truth (wrapper, legacy cost, zero-cost)
 and runs in the policy audit lane.
+`audit:relations` runs in that same lane as the default report-only command; dead edges and stale declarations do not fail the step.
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
