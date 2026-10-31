@@ -12,7 +12,7 @@
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
-| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费 |
+| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/reconcile-lock.ts` 消费 |
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |

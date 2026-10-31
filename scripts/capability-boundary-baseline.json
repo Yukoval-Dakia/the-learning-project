@@ -10991,6 +10991,20 @@
       "issue": "YUK-1571",
       "owns": "Approved knowledge-node birth from genesis history. Learning-intent accept supplies id, name, domain, parent, role, proposed_by_ai and actorRef learning-intent-accept; the kernel writer keeps the lock, existing-row refusal, domain canonicalization, genesis event and materialization.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/reconcile-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedExactLockKey",
+        "deriveHashtextExtendedLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates and hashtext / hashtextextended text derivation. The registry does not acquire locks and does not record or prove a lock order.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
