@@ -224,10 +224,14 @@ function mentionsMonotonic(text: string): boolean {
   );
 }
 
+const OPEN_A_RANGES = ['5/4<a<5/3', '(5/4,5/3)'] as const;
+
 function readARange(text: string): 'right' | 'wrong' | 'absent' {
   if (!text.includes('5/4') && !text.includes('5/3')) return 'absent';
-  if (text.includes('5/4<a<5/3') || text.includes('(5/4,5/3)')) return 'right';
-  return 'wrong';
+  const marks = scanMarks(text, [], OPEN_A_RANGES);
+  const opens = marks.filter((mark) => mark.kind === 'pass');
+  if (opens.length === 0) return 'wrong';
+  return opens.some((mark) => !negationGoverns(text, marks, mark.at)) ? 'right' : 'wrong';
 }
 
 function readIntervals(text: string): 'right' | 'wrong' | 'absent' {
@@ -265,15 +269,37 @@ function intervalClaims(text: string): Array<{
   return claims;
 }
 
-function readLabels(text: string): 'right' | 'wrong' | 'absent' {
-  const outer = signNear(text, ['两根外侧', '外侧', '两端']);
-  const middle = signNear(text, ['两根之间', '中间']);
-  if (outer === '减' || middle === '增') return 'wrong';
-  if (outer === '增' || middle === '减') return 'right';
+const SIGN_KIND = { fail: '减', pass: '增' } as const;
+
+type NearbySign = { sign: '增' | '减'; negated: boolean };
+type LabelVerdict = 'right' | 'wrong' | 'absent';
+
+const LABEL_WHEN: Record<'match' | 'mismatch', Record<'plain' | 'negated', LabelVerdict>> = {
+  match: { plain: 'right', negated: 'wrong' },
+  mismatch: { plain: 'wrong', negated: 'absent' },
+};
+
+function readLabels(text: string): LabelVerdict {
+  const outer = labelVerdict(text, ['两根外侧', '外侧', '两端'], '增');
+  const middle = labelVerdict(text, ['两根之间', '中间'], '减');
+  if (outer === 'wrong' || middle === 'wrong') return 'wrong';
+  if (outer === 'right' || middle === 'right') return 'right';
   return 'absent';
 }
 
-function signNear(text: string, markers: readonly string[]): '增' | '减' | null {
+function labelVerdict(
+  text: string,
+  markers: readonly string[],
+  expected: '增' | '减',
+): LabelVerdict {
+  const found = signNear(text, markers);
+  if (!found) return 'absent';
+  return LABEL_WHEN[found.sign === expected ? 'match' : 'mismatch'][
+    found.negated ? 'negated' : 'plain'
+  ];
+}
+
+function signNear(text: string, markers: readonly string[]): NearbySign | null {
   for (const marker of markers) {
     const at = text.indexOf(marker);
     if (at < 0) continue;
@@ -284,22 +310,17 @@ function signNear(text: string, markers: readonly string[]): '增' | '减' | nul
   return null;
 }
 
-function nearestSign(sentence: string, markerAt: number): '增' | '减' | null {
-  let best: { distance: number; sign: '增' | '减' } | null = null;
-  for (const sign of ['增', '减'] as const) {
-    let from = 0;
-    while (from < sentence.length) {
-      const at = sentence.indexOf(sign, from);
-      if (at < 0) break;
-      const distance = Math.abs(at - markerAt);
-      if (!best || distance < best.distance) best = { distance, sign };
-      from = at + sign.length;
-    }
+function nearestSign(sentence: string, markerAt: number): NearbySign | null {
+  const marks = scanMarks(sentence, ['减'], ['增']);
+  let best: { distance: number; at: number; kind: 'fail' | 'pass' } | null = null;
+  for (const mark of marks) {
+    if (mark.kind === 'neg') continue;
+    const distance = Math.abs(mark.at - markerAt);
+    if (!best || distance < best.distance) best = { distance, at: mark.at, kind: mark.kind };
   }
-  return best?.sign ?? null;
+  if (!best) return null;
+  return { sign: SIGN_KIND[best.kind], negated: negationGoverns(sentence, marks, best.at) };
 }
-
-const SIGN_KIND = { fail: '减', pass: '增' } as const;
 
 // A negated 增/减 does not name the interval in the next clause.
 function signBefore(text: string, at: number): '增' | '减' | null {
