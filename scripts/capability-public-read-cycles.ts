@@ -26,22 +26,18 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — the agency -> knowledge command edge is retired. Learning-intent
   // accept calls createKnowledgeNodeFromEvents in
   // src/kernel/records/knowledge-node-birth.ts. The knowledge public adapter is gone.
+  // Dreaming no longer calls notes. A committed experimental:dreaming_note_refresh
+  // is the signal; notes.dreaming-note-refresh subscribes and enqueues the refine.
   {
     owner: 'notes',
     consumer: 'agency',
-    files: [
-      'src/capabilities/agency/jobs/dreaming_nightly.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
-    symbols: ['createLearningIntentNote', 'dispatchNoteGeneration', 'enqueueDreamingNoteRefine'],
-    dto: 'note-refine/generation commands',
+    files: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
+    symbols: ['createLearningIntentNote', 'dispatchNoteGeneration'],
+    dto: 'note generation commands',
     justification:
-      'dreaming enqueues note refines; learning-intent accept creates notes. The scout note-summary read moved to @/kernel/read-models/notes-read (YUK-1571).',
+      'learning-intent accept creates notes. Dreaming note refresh is an event, not a notes import.',
     reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/jobs/dreaming_nightly.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
+    commandFiles: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
   },
   // YUK-1571 — the practice -> agency command edge is retired: prepare_intervention
   // binds authorInterventionPackage from @/kernel/records/intervention-package-author
