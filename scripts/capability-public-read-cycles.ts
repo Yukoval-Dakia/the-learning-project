@@ -43,17 +43,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/agency/server/proposal-accept-applier.ts',
     ],
   },
-  {
-    owner: 'practice',
-    consumer: 'agency',
-    files: ['src/capabilities/agency/jobs/prepare_intervention.ts'],
-    symbols: ['authorInterventionPackage'],
-    dto: 'intervention authoring commands',
-    justification:
-      'agency owns the intervention lifecycle; diagnostic materialize/retire is kernel-owned (store/reconcile call @/kernel/records/intervention-diagnostic-materialize directly). Package authoring sequence lives in the kernel; practice supplies paid author and review stages via prepare_intervention only. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/agency/jobs/prepare_intervention.ts'],
-  },
+  // YUK-1571 — the practice -> agency command edge is retired: prepare_intervention
+  // binds authorInterventionPackage from @/kernel/records/intervention-package-author
+  // (#2255); practice still supplies paid author/review stages via worker registration,
+  // not via agency importing practice/public.
   {
     owner: 'knowledge',
     consumer: 'ingestion',
