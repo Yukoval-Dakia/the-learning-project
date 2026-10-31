@@ -11128,7 +11128,8 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
-    }  ],
+    }
+  ],
   "sourceSizeRecords": [
     {
       "path": "src/capabilities/practice/jobs/quiz_verify.ts",
