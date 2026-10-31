@@ -26,22 +26,18 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — the agency -> knowledge command edge is retired. Learning-intent
   // accept calls createKnowledgeNodeFromEvents in
   // src/kernel/records/knowledge-node-birth.ts. The knowledge public adapter is gone.
+  // YUK-1571 — proposal-accept note birth/dispatch moved to kernel; dreaming
+  // nightly still enqueues note refines through notes/public.
   {
     owner: 'notes',
     consumer: 'agency',
-    files: [
-      'src/capabilities/agency/jobs/dreaming_nightly.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
-    symbols: ['createLearningIntentNote', 'dispatchNoteGeneration', 'enqueueDreamingNoteRefine'],
-    dto: 'note-refine/generation commands',
+    files: ['src/capabilities/agency/jobs/dreaming_nightly.ts'],
+    symbols: ['enqueueDreamingNoteRefine'],
+    dto: 'note-refine command',
     justification:
-      'dreaming enqueues note refines; learning-intent accept creates notes. The scout note-summary read moved to @/kernel/read-models/notes-read (YUK-1571).',
+      'Dreaming nightly enqueues living-note refines after coach scan. Learning-intent accept note birth/dispatch now uses kernel handoff (YUK-1571).',
     reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/jobs/dreaming_nightly.ts',
-      'src/capabilities/agency/server/proposal-accept-applier.ts',
-    ],
+    commandFiles: ['src/capabilities/agency/jobs/dreaming_nightly.ts'],
   },
   {
     owner: 'practice',
