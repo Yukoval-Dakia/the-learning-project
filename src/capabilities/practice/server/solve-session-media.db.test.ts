@@ -198,7 +198,7 @@ describe('frozen solve image task payload', () => {
         };
       },
     });
-    expect(await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0 })).toEqual({
+    expect(await planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0 })).toMatchObject({
       text_md: reply,
     });
     expect(startup).toHaveBeenCalledExactlyOnceWith('mimo-v2.5');

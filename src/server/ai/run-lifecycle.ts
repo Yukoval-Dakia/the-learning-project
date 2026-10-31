@@ -4,6 +4,15 @@ import {
   RETRY_ELAPSED_CAP_MS,
   isTransientAgentFailure,
 } from '@/ai/agent-run-error';
+import {
+  type ExecutableHelpBasis,
+  type SealedHelpLatency,
+  helpCost,
+  helpModalityForTaskKind,
+  helpTerminalForAttempt,
+  nonnegativeElapsed,
+  sealHelpLatency,
+} from '@/ai/help-latency';
 import type { TaskTimeoutSource } from '@/ai/task-budget';
 import type {
   AiTaskUsage,
@@ -193,6 +202,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private trace: TraceSpan | undefined;
   private traceOutcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'not_started';
   private notePhases: NoteGeneratePhaseTimings | undefined;
+  private readonly attemptOriginAt = Date.now();
+  private helpClock:
+    | { endedAt: number; firstTokenAt?: number; completeArtifact: boolean }
+    | undefined;
+  private executableHelp: { basis: ExecutableHelpBasis; at: number } | undefined;
+  private helpLatencySeal: SealedHelpLatency | undefined;
 
   withTracing<T>(callback: () => T): T {
     if (!isLaminarTracingEnabled()) return callback();
@@ -353,12 +368,79 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
    */
   private get persistedUsage(): AiTaskUsage {
     const counts = this.tokenCounts;
-    return {
+    const base: AiTaskUsage = {
       ...this.usage,
       cacheReadTokens: counts.cacheReadTokens ?? 0,
       cacheWriteTokens: counts.cacheCreationTokens ?? 0,
       numTurns: this.terminal?.numTurns ?? this.observedUsage?.numTurns ?? 0,
     };
+    return this.helpLatencySeal ? { ...base, help_latency: this.helpLatencySeal } : base;
+  }
+
+  /** Model-loop clock for a help attempt. Other task kinds ignore it. */
+  noteHelpProviderClock(input: {
+    endedAt: number;
+    firstTokenAt?: number;
+    completeArtifact: boolean;
+  }): void {
+    if (helpModalityForTaskKind(this.kind) === null) return;
+    this.helpClock = input;
+  }
+
+  /** Verified executable exit observed before the attempt row is sealed. */
+  noteExecutableHelp(basis: ExecutableHelpBasis, at = Date.now()): void {
+    if (helpModalityForTaskKind(this.kind) === null) return;
+    if (this.executableHelp) return;
+    this.executableHelp = { basis, at };
+  }
+
+  /**
+   * Cache the help-latency seal. The first call wins so the thrown error and
+   * the terminal row carry the same object.
+   */
+  sealHelpLatency(status: 'success' | 'failure'): SealedHelpLatency | undefined {
+    const modality = helpModalityForTaskKind(this.kind);
+    if (!modality) return undefined;
+    const cachedStatus =
+      this.helpLatencySeal === undefined
+        ? undefined
+        : this.helpLatencySeal.terminal === 'success'
+          ? 'success'
+          : 'failure';
+    if (this.helpLatencySeal && cachedStatus === status) return this.helpLatencySeal;
+    const endedAt = this.helpClock?.endedAt ?? Date.now();
+    const executableAt = this.executableHelp?.at;
+    const completeAt = executableAt ?? (this.helpClock?.completeArtifact ? endedAt : undefined);
+    const truth = this.costTruth;
+    this.helpLatencySeal = sealHelpLatency({
+      origin_at: this.attemptOriginAt,
+      terminal: helpTerminalForAttempt({
+        status,
+        aborted: this.aborted,
+        abortKinds: this.transportEvidence.abortInitiatorKinds(),
+      }),
+      modality,
+      executable_help: this.executableHelp?.basis ?? null,
+      marks: {
+        first_token_ms:
+          this.helpClock?.firstTokenAt === undefined
+            ? null
+            : nonnegativeElapsed(this.attemptOriginAt, this.helpClock.firstTokenAt),
+        first_executable_help_ms:
+          executableAt === undefined
+            ? null
+            : nonnegativeElapsed(this.attemptOriginAt, executableAt),
+        complete_artifact_ms:
+          completeAt === undefined ? null : nonnegativeElapsed(this.attemptOriginAt, completeAt),
+        calls_settled_ms: nonnegativeElapsed(this.attemptOriginAt, endedAt),
+      },
+      cost: helpCost(truth.basis, truth.amountUsd),
+      progress_budget: {
+        budget_ms: this.config.timeoutMs,
+        elapsed_ms: nonnegativeElapsed(this.attemptOriginAt, endedAt),
+      },
+    });
+    return this.helpLatencySeal;
   }
 
   get costTruth(): AttemptCostTruth {
@@ -805,6 +887,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     if (this.terminalWriteAttempts.size > 0 && input.status !== 'failure') return false;
     this.terminalWriteAttempts.add(input.status);
     this.terminalWriteInFlight = true;
+    this.sealHelpLatency(input.status);
     if (this.notePhases) {
       console.info(`[${this.config.logScope}] note_generate_model_phases`, {
         event: 'note_generate_model_phases',
