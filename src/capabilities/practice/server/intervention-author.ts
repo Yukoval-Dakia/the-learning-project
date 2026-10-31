@@ -1,15 +1,12 @@
 import { AgentRunError } from '@/ai/agent-run-error';
 import type { TaskTextResult } from '@/ai/task-result';
-import {
-  type InterventionAuthoringContextT,
-  guardInterventionPreparationStage,
-} from '@/capabilities/agency/public';
 import { getLearnerLocale } from '@/capabilities/task-registry';
 import { parseJsonObjectLoose } from '@/core/json-extract';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_REVIEW_AUDIT_PROTOCOL_VERSION,
+  type InterventionAuthoringContextT,
   InterventionIndependentSolutionAudit,
   type InterventionIndependentSolutionAuditT,
   InterventionPackage,
@@ -38,6 +35,7 @@ import {
 } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import { guardInterventionPreparationStage } from '@/kernel/read-models/intervention-preparation';
 import { resolveSubjectProfileForKnowledgeIdsStrict } from '@/kernel/read-models/subject-profile';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -1055,7 +1053,7 @@ export async function reviewInterventionPackageCandidate(
  * Intervention-scoped QuestionAuthor public entry.
  *
  * The only domain identifier supplied by the caller is `interventionId`.
- * Snapshot and recommendation are hydrated from Agency's public reader; raw
+ * Snapshot and recommendation come from the kernel preparation read; raw
  * claim/evidence/method/package inputs cannot bypass authoritative lineage.
  */
 export async function authorInterventionPackage(

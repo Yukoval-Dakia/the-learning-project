@@ -1,3 +1,4 @@
+import { QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION } from '@/core/schema/event';
 import {
   API_ERROR_RESPONSES,
   ApiErrorResponseSchema,
@@ -174,6 +175,9 @@ export const practiceCapability = defineCapability({
       // Quiz draft verification ledger. Agency subscribes and turns a committed
       // non-promotion into a coach pool-gap hint; the verify job does not call Agency.
       'experimental:quiz_verify',
+      // Inference only: repeated independent wrongs against independent corrects
+      // on other admitted questions of the same KC. Not a serving hold.
+      QUESTION_OR_ANSWER_MAY_BE_FAULTY_ACTION,
     ],
   },
   subscriptions: {

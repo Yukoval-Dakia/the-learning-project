@@ -57,6 +57,7 @@
 
 - **准入（admission）/ 待准入**：一道题（题组）必须先通过准入判定，才会被自动出给学习者；`withheld` 期间不进练习池。判分准入状态只有 `admitted` / `withheld` 两种；`withheld` 必须记明原因：`unverified_rules`（规则尚未经双门核验）、`verification_failed`、`no_admitted_executor`、`owner_hold`。判定由准入 job 执行：题目发布后自动排队做准入判定，双解与标定通过后才 `admitted`；但声明了尚不支持、未知或损坏的 `answer_shape` 的题会在入队前被拦下，一直停在 `withheld(unverified_rules)`。网页来源题（`sourcing_web`）来源核对通过、`quiz_verify` 质检通过，在当前版本尚无独立准入时首次发布为 `withheld(unverified_rules)`——这种状态叫「待准入」，题库界面显示为「还在检查」。
 - **暂不出题（serving hold）**：题目被判定暂时不能出给学习者。底层挂起（suspension）维度只有 `verify_hold` 与 `retraction_hold` 两个原因；题库「暂不出题」页签展示的暂不出题原因则共 8 种：`awaiting_admission`、`admission_failed`、`source_check_failed`、`verify_hold`、`retraction_hold`、`no_input_renderer`、`invalid_presentation`、`withdrawn`，每种都有对应白话标记；页签上的计数与筛选覆盖全库，不只是当前已加载的页。解除命令 `reverify` / `recheck_source` / `release_verify_hold`，经 `POST /api/questions/[id]/serving-actions/[command]`，每个命令都要求 `Idempotency-Key`；`release_verify_hold` 只清 `verify_hold`，不动 `retraction_hold`，`owner_hold` 这类有意扣留没有 reverify。
+- **题目或答案可能有误（推断）**：同一学习者在 14 天窗口内，对同一道题独立判错至少 2 次，且同一知识点的其他已准入题独立判对至少 2 次时，作答结算写一条事件 `experimental:question_or_answer_may_be_faulty`。记录带上学习者、题目、知识点、用作证据的作答和窗口，并标明是推断（`inference: true`），不是已证实的事实。它不暂停出这道题，不改掌握度或复习安排，也不自动送去复核。窗口长度是待用真实使用校准的猜测。
 - **付费效果（paid effect）作废与后继重授权**：一次已经付过费的模型调用记为一个「付费效果」，同一效果身份（同一对象、同一版本、同一单元、同一输入）只记一次账，重新投递不会再付一次。结果未知（`unknown`）的效果可由负责人显式作废为终态 `voided`——不删除、不改写输入与历史——并在同一条授权下指定一个后继效果（后继只能由授权里绑定的那次投递认领）。
 
 ## 录入与会话
