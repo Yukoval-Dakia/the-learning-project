@@ -102,7 +102,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | `R2_ACCESS_KEY_ID` | app、worker | 同上 | `src/kernel/object-storage.ts` |
 | `R2_SECRET_ACCESS_KEY` | app、worker | 同上 | `src/kernel/object-storage.ts` |
 | `R2_BUCKET` | app、worker | 同上 | `src/kernel/object-storage.ts` |
-| `EXA_API_KEY` | app、worker | 空或未设时 Exa MCP 返回 `null`，不注册 | `src/server/ai/mcp/exa.ts` |
+| `EXA_API_KEY` | app、worker | 空或未设时 Exa MCP 返回 `null`，不注册 | `src/ai/exa-mcp.ts` |
 | `JYEOO_RS_BINARY` | app、worker | `~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs` | `src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts` |
 | `JYEOO_SPAWN_TIMEOUT_MS` | app、worker | `120000` | `registry` |
 | `JYEOO_BACKFILL_TIMEOUT_MS` | 脚本（`jyeoo:backfill`） | `session_max × 90000` ms | `src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts` |
