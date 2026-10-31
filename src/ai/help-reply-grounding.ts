@@ -254,9 +254,12 @@ function intervalClaims(text: string): Array<{
     const token = match[0];
     if (!token.includes('√3')) continue;
     const at = match.index ?? 0;
-    const before = text.slice(Math.max(0, at - 8), at);
+    const before = text.slice(clauseStart(text, at), at);
     const after = text.slice(at + token.length, at + token.length + 6);
-    const rejected = /写成了|误写|错写|错成/.test(before) || /^(不对|不是|错误|有误)/.test(after);
+    const rejected =
+      before.includes('不是') ||
+      /写成了|误写|错写|错成/.test(before) ||
+      /^(不对|不是|错误|有误)/.test(after);
     claims.push({ token, sign: signBefore(text, at), asserted: !rejected });
   }
   return claims;
@@ -304,6 +307,20 @@ function signBefore(text: string, at: number): '增' | '减' | null {
   return inc > dec ? '增' : '减';
 }
 
+// NFKC folds the clause comma into the same ',' an interval uses. A comma
+// inside brackets stays in that interval, so「不是」covers the whole union.
+function clauseStart(text: string, at: number): number {
+  const sentence = sentenceStart(text, at);
+  let depth = 0;
+  for (let i = at - 1; i >= sentence; i -= 1) {
+    const ch = text[i];
+    if (ch === ')' || ch === ']') depth += 1;
+    else if (ch === '(' || ch === '[') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (ch === ',' || ch === '，')) return i + 1;
+  }
+  return sentence;
+}
+
 function sentenceStart(text: string, at: number): number {
   let start = 0;
   for (const mark of ['。', '！', '？', '\n', '；', ';']) {
@@ -327,33 +344,20 @@ function walkClaims(
   failPhrases: readonly string[],
   passPhrases: readonly string[],
 ): HelpExplanationVerdict | 'not_applicable' {
-  const claims: Array<{ kind: 'fail' | 'pass'; negated: boolean; sentenceNegated: boolean }> = [];
+  const claims: Array<{ kind: 'fail' | 'pass'; negated: boolean }> = [];
   for (const sentence of text.split(/[。！？\n；;]/)) {
     const marks = scanMarks(sentence, failPhrases, passPhrases);
-    const sentenceNegated = marks.some((mark) => mark.kind === 'neg');
     for (const mark of marks) {
       if (mark.kind === 'neg') continue;
-      claims.push({
-        kind: mark.kind,
-        negated: negationGoverns(sentence, marks, mark.at),
-        sentenceNegated,
-      });
+      claims.push({ kind: mark.kind, negated: negationGoverns(sentence, marks, mark.at) });
     }
   }
   if (claims.length === 0) return 'not_applicable';
-  const unnegatedPass = claims.some((claim) => claim.kind === 'pass' && !claim.negated);
-  const assertedFail = claims.some(
-    (claim) => claim.kind === 'fail' && !claim.negated && !claim.sentenceNegated,
-  );
-  if (unnegatedPass && !assertedFail) return 'pass';
-  if (
-    claims.some(
-      (claim) =>
-        (claim.kind === 'pass' && claim.negated) || (claim.kind === 'fail' && !claim.negated),
-    )
-  ) {
-    return 'fail';
+  if (claims.some((claim) => claim.kind === 'fail' && !claim.negated)) return 'fail';
+  if (claims.some((claim) => claim.kind === 'pass' && claim.negated)) {
+    return claims.some((claim) => claim.kind === 'pass' && !claim.negated) ? 'pass' : 'fail';
   }
+  if (claims.some((claim) => claim.kind === 'pass')) return 'pass';
   return 'ungrounded';
 }
 

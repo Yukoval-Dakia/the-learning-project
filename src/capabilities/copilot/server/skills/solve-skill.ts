@@ -25,12 +25,10 @@ import { question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { runAgentTask } from '@/server/ai/runner';
 import {
-  SolveError,
-  buildSolveHintInput,
   loadHelpExplanationEvidence,
-  parseHintTurn,
   persistHelpExplanationReplay,
-} from '../practice-port';
+} from '../help-explanation-record';
+import { SolveError, buildSolveHintInput, parseHintTurn } from '../practice-port';
 
 type RunAgentTaskFn = (
   kind: string,

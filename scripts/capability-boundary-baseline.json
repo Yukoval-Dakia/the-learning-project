@@ -11415,6 +11415,16 @@
       "issue": "YUK-1570",
       "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
       "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/help-explanation-record.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1413",
+      "owns": "Kernel owns append-only event persistence. Copilot keeps the explanation-replay identity, actor, verdict, digests, task-run, provider, model and cost.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [

@@ -9,8 +9,6 @@ export {
   consumeReviewAnswerBinding,
   executeGetReviewDue,
   isLiveQuestionReference,
-  loadHelpExplanationEvidence,
   parseHintTurn,
-  persistHelpExplanationReplay,
   validateLearningContent,
 } from '@/capabilities/practice/public';

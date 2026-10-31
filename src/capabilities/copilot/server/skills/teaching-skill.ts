@@ -31,7 +31,10 @@ import {
 } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
-import { loadHelpExplanationEvidence, persistHelpExplanationReplay } from '../practice-port';
+import {
+  loadHelpExplanationEvidence,
+  persistHelpExplanationReplay,
+} from '../help-explanation-record';
 import {
   TeachingError,
   type TeachingStructuredQuestionT,
