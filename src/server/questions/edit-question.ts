@@ -44,14 +44,16 @@ import {
 import { OpaqueJsonInput } from '@/kernel/tools/types';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import {
+  type InvalidatedScope,
+  computeInvalidatedScope,
+  relevantChangesForOps,
+} from '@/server/questions/draft-edit-impact';
+import {
   type AppliedChange,
   EditOp,
   type EditOpT,
-  type InvalidatedScope,
   type OpIssue,
   applyEditOps,
-  computeInvalidatedScope,
-  relevantChangesForOps,
 } from '@/server/questions/draft-ops';
 
 // ====================================================================

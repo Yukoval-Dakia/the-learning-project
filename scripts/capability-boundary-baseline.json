@@ -10875,6 +10875,35 @@
       "date": "2026-10-31"
     },
     {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1572",
+      "owns": "Shared object client invoked only when the existing publisher asset barrier calls readAssetBytes. Asset refs, locks, and paid policy stay on the verify lifecycle path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": [
+        "AdmissionVerificationWrite",
+        "PublishAdmission",
+        "PublishQuestionGroupResult",
+        "SuspensionUpdate",
+        "archiveGroupLifecycle",
+        "loadQuestionGroupContractSnapshot",
+        "publishQuestionGroup",
+        "publishQuestionGroupFromRow"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication and lifecycle. The moved verify lifecycle update loads the locked snapshot, archives a fully tombstoned group, publishes a never-published group from its row, and republishes a frozen revision while changing only admission, suspension, verification, and availability. Drift, CAS, and digest rules stay in this owner.",
+      "date": "2026-10-31"
+    },
+    {
       "debt": "capabilityToServer",
       "file": "src/capabilities/ingestion/server/agent/run.ts",
       "module": "src/server/ai/provider-session-admission-policy.ts",
@@ -11434,6 +11463,15 @@
       "to": 1375,
       "issue": "YUK-1413",
       "responsibilityReason": "A settled quota, 502, or typed parse failure on the collecting stream returns the executable exit text instead of an empty partial. The attempt still finishes as a failure and unknown cost stays unknown. This is the same stream-collect return, not a new runner."
+    },
+    {
+      "path": "src/server/questions/edit-question.ts",
+      "date": "2026-10-31",
+      "baseBlob": "25ea64a23d88c8955aee7c6079949fa8eafe5719",
+      "from": 1275,
+      "to": 1277,
+      "issue": "YUK-1572",
+      "responsibilityReason": "The save path now imports invalidated-scope and CAS relevant-changes from draft-edit-impact instead of draft-ops. Splitting that import adds two lines. Save, validate, probe, CAS, and the op batch are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
     }
   ],
   "compatShims": [
