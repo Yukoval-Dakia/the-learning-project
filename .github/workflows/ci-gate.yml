@@ -227,6 +227,7 @@ jobs:
           pnpm audit:model-source
           pnpm audit:advisory-locks
           pnpm audit:relations
+          pnpm audit:mastery-provenance
 
   unit_1:
     name: unit invariant tests (1/2)
