@@ -11240,6 +11240,15 @@
       "to": 1346,
       "issue": "YUK-1571",
       "responsibilityReason": "Declares the existing experimental:quiz_verify action so Agency can subscribe. The verify job body is unchanged; the three lines are the action plus the note that a committed non-promotion is the pool-gap signal. No new route, job, or writer."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/bank-search.ts",
+      "date": "2026-10-31",
+      "baseBlob": "6593ae2b9c14174f3541b1081a7a977e4beba5de",
+      "from": 1331,
+      "to": 1360,
+      "issue": "YUK-1668",
+      "responsibilityReason": "The existing search_bank baseline count now calls countedRankV2 and passes the authoritative identity columns compileSameTopic already reads. The cluster branch stays closed, so the qualified-surface limit remains the shared two-row window and cursor v3 still restores the issuing search's counted bit. Same retrieval owner; this records the measured 1331 to 1360 growth, not a new path or a ceiling exemption."
     }
   ],
   "compatShims": [
