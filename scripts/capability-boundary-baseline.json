@@ -11560,6 +11560,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-10-31",
+      "baseBlob": "4a298d9c932ea16ba07a029a00030c189577f394",
+      "from": 1350,
+      "to": 1351,
+      "issue": "YUK-1413",
+      "responsibilityReason": "One action name for the teaching and solve-skill explanation replay record. The list stays the practice event declaration; no new route, job, or writer module."
     }
   ],
   "compatShims": [

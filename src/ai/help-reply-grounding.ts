@@ -1,6 +1,7 @@
-// I02-C12 ReadReplyGrounding. The checker sees the explanation and the topic,
-// not the sealed gloss. A failed claim is replaced before publication. Unknown
-// cost stays null. Early hints do not receive the numeric monotonic answer.
+// I02-C12 ReadReplyGrounding. A gold case applies only when the question stem
+// matches that case. The checker sees the explanation, not the sealed gloss.
+// A correct claim stays; a failed claim is replaced before publication.
+// Unknown cost stays null. Early hints do not receive the numeric monotonic answer.
 
 import { createHash } from 'node:crypto';
 import type { HelpCost } from '@/ai/help-latency';
@@ -34,6 +35,8 @@ export interface SealedHelpExplanationReplay {
 interface HelpExplanationGold {
   readonly id: string;
   readonly topic: HelpExplanationTopic;
+  /** Folded fragment that identifies this question. Explanation text alone does not. */
+  readonly stem_key: string;
   readonly prompt_md: string;
   readonly learner_form: string;
   readonly sealed_gloss: string;
@@ -42,13 +45,16 @@ interface HelpExplanationGold {
 
 const FULL_EXPLANATION_INDEX = 5;
 const DIGEST = /^[a-f0-9]{64}$/;
-const NEGATIONS = ['不是', '并非', '并不', '不能', '而非', '不要'];
+const NEGATIONS = ['并不是', '不是', '并非', '并不', '不能', '而非', '不要'];
+const UNION_PASS = ['属于任一段', '任一段即可', '至少一段', '任意一段', '其中任一段'];
+const CORRECT_INTERVALS = new Set(['(-∞,2-√3)', '(2+√3,+∞)', '(2+√3,∞)', '(2-√3,2+√3)']);
 
 /** Explainer-visible face. Sealed glosses stay out of this object and its digest. */
 export const HELP_EXPLANATION_GOLD: readonly HelpExplanationGold[] = [
   {
     id: 'union-either',
     topic: 'union',
+    stem_key: 'x+1/x-2',
     prompt_md: '已知函数 $f(x)=\\dfrac{x+1}{x-2}$，求其定义域。',
     learner_form: '(-∞,2)∪(2,+∞)',
     sealed_gloss:
@@ -59,6 +65,7 @@ export const HELP_EXPLANATION_GOLD: readonly HelpExplanationGold[] = [
   {
     id: 'monotonic-m03',
     topic: 'monotonic_interval',
+    stem_key: 'x^3-3ax^2+3x+1',
     prompt_md:
       '已知函数 $f(x)=x^3-3ax^2+3x+1$。（1）当 $a=2$ 时，求 $f(x)$ 的单调区间；（2）若 $f(x)$ 在区间 $(2,3)$ 内至少有一个极值点，求 $a$ 的取值范围。',
     learner_form: '增区间 (-∞,2-√3)∪(2+√3,+∞)；减区间 (2-√3,2+√3)',
@@ -70,6 +77,7 @@ export const HELP_EXPLANATION_GOLD: readonly HelpExplanationGold[] = [
   {
     id: 'union-closure-0',
     topic: 'legal_alternate',
+    stem_key: '(0,1)∪[0,2)',
     prompt_md: '把 (0,1)∪[0,2) 收成一个区间，并说明 0 在不在里面。',
     learner_form: '(0,1)∪[0,2)',
     sealed_gloss: '(0,1)∪[0,2) 的并集是 [0,2)。0 属于第二段，所以并集含 0，不能收成 (0,2)。',
@@ -96,7 +104,7 @@ export function replayHelpExplanation(input: {
   evidence: HelpExplanationEvidence;
 }): { text_md: string; replay: SealedHelpExplanationReplay | null } {
   const checked = HELP_EXPLANATION_GOLD.flatMap((gold) => {
-    const verdict = checkGold(gold.topic, input.explanation);
+    const verdict = checkGold(gold, input.prompt, input.explanation);
     return verdict === 'not_applicable' ? [] : [{ gold, verdict }];
   });
   if (checked.length === 0) return { text_md: input.explanation, replay: null };
@@ -173,90 +181,221 @@ function gloss(gold: HelpExplanationGold, hintIndex: number): string {
 }
 
 function checkGold(
-  topic: HelpExplanationTopic,
+  gold: HelpExplanationGold,
+  prompt: string,
   explanation: string,
 ): HelpExplanationVerdict | 'not_applicable' {
-  if (topic === 'union') return checkUnion(explanation);
-  if (topic === 'monotonic_interval') return checkMonotonic(explanation);
+  if (!fold(prompt).includes(gold.stem_key)) return 'not_applicable';
+  if (gold.topic === 'union') return checkUnion(explanation);
+  if (gold.topic === 'monotonic_interval') return checkMonotonic(explanation);
   return checkClosure(explanation);
 }
 
 function checkUnion(explanation: string): HelpExplanationVerdict | 'not_applicable' {
-  const text = fold(explanation);
-  if (!text.includes('并集') && !text.includes('∪')) return 'not_applicable';
-  if (hasUnnegated(text, '同时属于')) return 'fail';
-  if (
-    ['属于任一段', '任一段即可', '至少一段', '任意一段', '其中任一段'].some((s) => text.includes(s))
-  ) {
-    return 'pass';
-  }
-  return 'ungrounded';
+  return walkClaims(fold(explanation), ['同时属于'], UNION_PASS);
 }
 
 function checkMonotonic(explanation: string): HelpExplanationVerdict | 'not_applicable' {
   const text = fold(explanation);
-  if (!text.includes('2-√3')) return 'not_applicable';
-  if (!text.includes('增') && !text.includes('减') && !text.includes('单调'))
-    return 'not_applicable';
-  if (text.includes('5/4≤a≤5/3') || text.includes('[5/4,5/3]')) return 'fail';
-
-  const middleAt = text.indexOf('(2-√3,2+√3)');
-  const unionAt = text.indexOf('(-∞,2-√3)∪(2+√3,+∞)');
-  const leftAt = unionAt < 0 ? text.indexOf('(-∞,2-√3)') : -1;
-  const rightAt = unionAt < 0 ? text.indexOf('(2+√3,+∞)') : -1;
-  const middle = middleAt >= 0 ? labelBefore(text, middleAt) : null;
-  const outer =
-    unionAt >= 0
-      ? labelBefore(text, unionAt)
-      : leftAt >= 0
-        ? labelBefore(text, leftAt)
-        : rightAt >= 0
-          ? labelBefore(text, rightAt)
-          : null;
-  if (middle === '增' || outer === '减') return 'fail';
-  if (middle === '减' && outer === '增') return 'pass';
+  if (!mentionsMonotonic(text)) return 'not_applicable';
+  const range = readARange(text);
+  const intervals = readIntervals(text);
+  const labeled = readLabels(text);
+  if (range === 'wrong' || intervals === 'wrong' || labeled === 'wrong') return 'fail';
+  if (range === 'right' || intervals === 'right' || labeled === 'right') return 'pass';
   return 'ungrounded';
 }
 
 function checkClosure(explanation: string): HelpExplanationVerdict | 'not_applicable' {
   const text = fold(explanation);
   if (!text.includes('(0,1)∪[0,2)')) return 'not_applicable';
-  if (hasUnnegated(text, '(0,2)') || text.includes('丢掉闭') || text.includes('不含0'))
-    return 'fail';
-  if (
-    text.includes('并集是[0,2)') ||
-    text.includes('=[0,2)') ||
-    text.includes('等于[0,2)') ||
-    text.includes('并集含0') ||
-    text.includes('含0')
-  ) {
-    return 'pass';
-  }
-  return 'ungrounded';
+  const claimed = text.split('(0,1)∪[0,2)').join('');
+  return walkClaims(claimed, ['(0,2)', '丢掉闭', '不含0'], ['[0,2)', '并集含0', '含0']);
 }
 
-function labelBefore(text: string, at: number): '增' | '减' | null {
-  const prefix = text.slice(Math.max(0, at - 16), at);
+function mentionsMonotonic(text: string): boolean {
+  return (
+    text.includes('增') ||
+    text.includes('减') ||
+    text.includes('2-√3') ||
+    text.includes('2+√3') ||
+    text.includes('5/4') ||
+    text.includes('5/3')
+  );
+}
+
+function readARange(text: string): 'right' | 'wrong' | 'absent' {
+  if (!text.includes('5/4') && !text.includes('5/3')) return 'absent';
+  if (text.includes('5/4<a<5/3') || text.includes('(5/4,5/3)')) return 'right';
+  return 'wrong';
+}
+
+function readIntervals(text: string): 'right' | 'wrong' | 'absent' {
+  const tokens = text.match(/[([][^()[\]]{0,48}[)\]]/g) ?? [];
+  const relevant = tokens.filter((token) => token.includes('√3'));
+  if (relevant.length === 0) return 'absent';
+  let labeledRight = false;
+  for (const token of relevant) {
+    if (!CORRECT_INTERVALS.has(token)) return 'wrong';
+    const at = text.indexOf(token);
+    const sign = signBefore(text, at);
+    const middle = token === '(2-√3,2+√3)';
+    if (middle && sign === '增') return 'wrong';
+    if (!middle && sign === '减') return 'wrong';
+    if ((middle && sign === '减') || (!middle && sign === '增')) labeledRight = true;
+  }
+  return labeledRight || relevant.length > 0 ? 'right' : 'absent';
+}
+
+function readLabels(text: string): 'right' | 'wrong' | 'absent' {
+  const outer = signNear(text, ['两根外侧', '外侧', '两端']);
+  const middle = signNear(text, ['两根之间', '中间']);
+  if (outer === '减' || middle === '增') return 'wrong';
+  if (outer === '增' || middle === '减') return 'right';
+  return 'absent';
+}
+
+function signNear(text: string, markers: readonly string[]): '增' | '减' | null {
+  for (const marker of markers) {
+    const at = text.indexOf(marker);
+    if (at < 0) continue;
+    const sentence = text.slice(sentenceStart(text, at), sentenceEnd(text, at));
+    const local = at - sentenceStart(text, at);
+    return nearestSign(sentence, local);
+  }
+  return null;
+}
+
+function nearestSign(sentence: string, markerAt: number): '增' | '减' | null {
+  let best: { distance: number; sign: '增' | '减' } | null = null;
+  for (const sign of ['增', '减'] as const) {
+    let from = 0;
+    while (from < sentence.length) {
+      const at = sentence.indexOf(sign, from);
+      if (at < 0) break;
+      const distance = Math.abs(at - markerAt);
+      if (!best || distance < best.distance) best = { distance, sign };
+      from = at + sign.length;
+    }
+  }
+  return best?.sign ?? null;
+}
+
+function signBefore(text: string, at: number): '增' | '减' | null {
+  const prefix = text.slice(sentenceStart(text, at), at);
   const inc = prefix.lastIndexOf('增');
   const dec = prefix.lastIndexOf('减');
   if (inc < 0 && dec < 0) return null;
   return inc > dec ? '增' : '减';
 }
 
-function hasUnnegated(text: string, needle: string): boolean {
-  let from = 0;
-  while (from < text.length) {
-    const at = text.indexOf(needle, from);
-    if (at < 0) return false;
-    const prefix = text.slice(Math.max(0, at - 8), at);
-    if (!NEGATIONS.some((negation) => prefix.includes(negation))) return true;
-    from = at + needle.length;
+function sentenceStart(text: string, at: number): number {
+  let start = 0;
+  for (const mark of ['。', '！', '？', '\n', '；', ';']) {
+    const found = text.lastIndexOf(mark, at - 1);
+    if (found >= start) start = found + 1;
   }
-  return false;
+  return start;
+}
+
+function sentenceEnd(text: string, at: number): number {
+  let end = text.length;
+  for (const mark of ['。', '！', '？', '\n', '；', ';']) {
+    const found = text.indexOf(mark, at);
+    if (found >= 0 && found < end) end = found;
+  }
+  return end;
+}
+
+function walkClaims(
+  text: string,
+  failPhrases: readonly string[],
+  passPhrases: readonly string[],
+): HelpExplanationVerdict | 'not_applicable' {
+  let sawFail = false;
+  let sawPass = false;
+  let sawPhrase = false;
+  for (const sentence of text.split(/[。！？\n；;]/)) {
+    const marks = scanMarks(sentence, failPhrases, passPhrases);
+    for (const mark of marks) {
+      if (mark.kind === 'neg') continue;
+      sawPhrase = true;
+      const negated = negationGoverns(marks, mark.at);
+      if (mark.kind === 'fail') {
+        if (!negated) sawFail = true;
+      } else if (negated) sawFail = true;
+      else sawPass = true;
+    }
+  }
+  if (!sawPhrase) return 'not_applicable';
+  if (sawFail) return 'fail';
+  if (sawPass) return 'pass';
+  return 'ungrounded';
+}
+
+function scanMarks(
+  sentence: string,
+  failPhrases: readonly string[],
+  passPhrases: readonly string[],
+): Array<{ at: number; kind: 'neg' | 'fail' | 'pass'; length: number }> {
+  const marks: Array<{ at: number; kind: 'neg' | 'fail' | 'pass'; length: number }> = [];
+  let index = 0;
+  while (index < sentence.length) {
+    const negation = matchAt(sentence, index, NEGATIONS);
+    const failed = matchAt(sentence, index, failPhrases);
+    const passed = matchAt(sentence, index, passPhrases);
+    const bareNot =
+      sentence.startsWith('不', index) && matchAt(sentence, index + 1, passPhrases)
+        ? '不'
+        : undefined;
+    const chosen = longestMark(
+      negation ? { kind: 'neg' as const, phrase: negation } : undefined,
+      bareNot ? { kind: 'neg' as const, phrase: bareNot } : undefined,
+      failed ? { kind: 'fail' as const, phrase: failed } : undefined,
+      passed ? { kind: 'pass' as const, phrase: passed } : undefined,
+    );
+    if (!chosen) {
+      index += 1;
+      continue;
+    }
+    marks.push({ at: index, kind: chosen.kind, length: chosen.phrase.length });
+    index += chosen.phrase.length;
+  }
+  return marks;
+}
+
+function longestMark(
+  ...options: Array<{ kind: 'neg' | 'fail' | 'pass'; phrase: string } | undefined>
+): { kind: 'neg' | 'fail' | 'pass'; phrase: string } | undefined {
+  return options.reduce<{ kind: 'neg' | 'fail' | 'pass'; phrase: string } | undefined>(
+    (best, option) => {
+      if (!option) return best;
+      if (!best || option.phrase.length > best.phrase.length) return option;
+      return best;
+    },
+    undefined,
+  );
+}
+
+function negationGoverns(
+  marks: ReadonlyArray<{ at: number; kind: 'neg' | 'fail' | 'pass' }>,
+  claimAt: number,
+): boolean {
+  const prior = marks.filter((mark) => mark.kind === 'neg' && mark.at < claimAt).at(-1);
+  if (!prior) return false;
+  return !marks.some((mark) => mark.kind !== 'neg' && mark.at > prior.at && mark.at < claimAt);
+}
+
+function matchAt(text: string, index: number, phrases: readonly string[]): string | undefined {
+  return phrases
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .find((phrase) => text.startsWith(phrase, index));
 }
 
 function fold(text: string): string {
-  let folded = text.normalize('NFKC').replace(/\$/g, '');
+  let folded = text.normalize('NFKC').replace(/\$/g, '').replace(/−/g, '-');
+  folded = folded.replace(/\\left|\\right/g, '');
   folded = folded.replace(/\\(?:d|t)?frac\{([^{}]+)\}\{([^{}]+)\}/g, '$1/$2');
   folded = folded.replace(/\\cup/g, '∪');
   folded = folded.replace(/\\infty/g, '∞');

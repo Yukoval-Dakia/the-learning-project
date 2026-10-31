@@ -164,6 +164,7 @@ export const practiceCapability = defineCapability({
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
+      'experimental:help_explanation_replay',
       'experimental:mastery_progress',
       // YUK-777 A2 — durable judge 面「作答已录、判词未落」的不可变证据。写者只有 submit
       // 面的 enqueueDurableJudge；消费者是 judge_pending_reconcile sweeper 与 submit 的

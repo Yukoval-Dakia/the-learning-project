@@ -12,20 +12,25 @@
 import { eq } from 'drizzle-orm';
 
 import { AgentRunError } from '@/ai/agent-run-error';
-import { helpCost } from '@/ai/help-latency';
 import {
   type HelpProviderFault,
   readHelpProviderFault,
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
-import { replayHelpExplanation } from '@/ai/help-reply-grounding';
+import { type SealedHelpExplanationReplay, replayHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { runAgentTask } from '@/server/ai/runner';
-import { SolveError, buildSolveHintInput, parseHintTurn } from '../practice-port';
+import {
+  SolveError,
+  buildSolveHintInput,
+  loadHelpExplanationEvidence,
+  parseHintTurn,
+  persistHelpExplanationReplay,
+} from '../practice-port';
 
 type RunAgentTaskFn = (
   kind: string,
@@ -46,6 +51,8 @@ export interface SolveSkillResult {
   text_md: string;
   /** Real task_run_id from the TeachingTurnTask runner, for cost tracing. */
   task_run_id: string;
+  /** Present when the reply was checked against a gold stem. */
+  reply_grounding?: SealedHelpExplanationReplay;
 }
 
 export interface RunSolveSkillDeps {
@@ -98,18 +105,25 @@ export async function runSolveSkill(
 
   try {
     const parsed = parseHintTurn(result.text);
+    const evidence = await loadHelpExplanationEvidence(db, result);
     const replayed = replayHelpExplanation({
       prompt: q.prompt_md ?? '',
       explanation: parsed.text_md,
       hintIndex,
-      evidence: {
-        task_run_id: result.task_run_id,
-        provider: null,
-        model: null,
-        cost: helpCost(result.cost_basis, result.cost_usd),
-      },
+      evidence,
     });
-    return { text_md: replayed.text_md, task_run_id: result.task_run_id };
+    if (replayed.replay) {
+      await persistHelpExplanationReplay(db, {
+        subjectKind: 'question',
+        subjectId: questionId,
+        replay: replayed.replay,
+      });
+    }
+    return {
+      text_md: replayed.text_md,
+      task_run_id: result.task_run_id,
+      ...(replayed.replay ? { reply_grounding: replayed.replay } : {}),
+    };
   } catch (error) {
     if (error instanceof SolveError && error.code === 'llm_parse_failed') {
       return {
