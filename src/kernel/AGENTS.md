@@ -8,7 +8,7 @@
 | `manifest.ts` | `CapabilityManifest` 接口、`defineCapability()`、`validateComposition()`；声明包名 / event actions / api routes / jobs / proposals / copilotTools / ui 的唯一归属 |
 | `events/` | event envelope 的完整读写 API、修正投影（corrections / effective-truth）和 deterministic scope tagging；唯一 event INSERT owner |
 | `tools/` | DomainTool 契约（types / allowlists / budgets / context-throttle），central registry 与 capability tool 共享 |
-| `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
+| `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection、coverage lattice） |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |

@@ -7063,6 +7063,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "observability -> practice",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11078,6 +11086,16 @@
       "issue": "YUK-1577",
       "owns": "Named advisory-lock key templates and hashtext / hashtextextended text derivation. The registry does not acquire locks and does not record or prove a lock order.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/observability/api/coverage-lattice.ts",
+      "module": "src/kernel/read-models/coverage-lattice.ts",
+      "kind": "value",
+      "symbols": ["loadCoverageLattice"],
+      "issue": "YUK-1571",
+      "owns": "Read-only coverage lattice: supply-activity aggregation and the KC pool projection. Practice still owns the scan; the composition root installs those facts.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -12275,7 +12293,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 18,
+      "total": 17,
       "byOwnerPair": {
         "agency -> notes": 2,
         "agency -> practice": 3,
@@ -12283,7 +12301,6 @@
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
-        "observability -> practice": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,

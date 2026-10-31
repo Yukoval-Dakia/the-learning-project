@@ -5,7 +5,7 @@
 ## WHERE TO LOOK
 | 文件 | 职责 |
 |------|------|
-| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；prod 设 `RW_STATIC_DIR` 时托管 SPA；`RW_WORKER=1` 时同进程启 worker |
+| `index.ts` | 入口：loadEnv → warnFlipOrder → `buildHonoApp(capabilities)` → `serve()`；prod 设 `RW_STATIC_DIR` 时托管 SPA；`RW_WORKER=1` 时同进程启 worker。serve 前 `coverage-lattice-scan.ts` 把 practice 扫描事实绑进 kernel 覆盖细目 |
 | `app.ts` | 组合根工厂：`buildHonoApp()` 挂载 token gate、`/api/health`、所有 manifest route；`toHonoPath()` 把 `[id]` 转成 `:id` |
 | `frontdoor.ts` / `start/` | 固定 Start fetch 前门；通过 request context 调原 Hono app，未迁页面回落原 SPA；Start 独立 TS program 避免与 SPA 路由注册冲突 |
 | `env.ts` | `.env` / `.env.local` 加载（API / Vite / worker 三进程统一） |

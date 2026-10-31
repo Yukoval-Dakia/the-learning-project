@@ -160,6 +160,8 @@ void (async () => {
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  const { installCoverageLatticeScan } = await import('./coverage-lattice-scan');
+  await installCoverageLatticeScan();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
   // Start owns the Web front door whenever a built SPA is configured. Startup,

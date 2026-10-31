@@ -3,6 +3,13 @@
  * truth sources and injects the config facts factory; the read face consumes it here.
  */
 
+export type {
+  CoverageLatticeRead,
+  GapActivity,
+  KcCoverageRow,
+  LatticeGap,
+  SubjectCoverage,
+} from '@/kernel/read-models/coverage-lattice';
 export { readProviderCostWindow } from '@/kernel/read-models/provider-cost-projection';
 // Config consumers share the snapshot builder and the existing injected mutation writer.
 export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
@@ -90,14 +97,6 @@ export {
   type ConjectureTypedStateRow,
   loadConjectureScores,
 } from './server/conjecture-scores';
-export {
-  type CoverageLatticeRead,
-  type GapActivity,
-  type KcCoverageRow,
-  type LatticeGap,
-  type SubjectCoverage,
-  loadCoverageLattice,
-} from './server/coverage-lattice';
 export { loadEffectivenessTrend } from './server/effectiveness-trend';
 export {
   type EventCorrectionInput,
