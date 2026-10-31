@@ -10873,6 +10873,35 @@
       "issue": "YUK-1572",
       "owns": "Question-group publication and append-only admission verification records. Promote, hold, and kept-admission writes stay in the same caller transaction; the verify job still chooses the branch.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1572",
+      "owns": "Shared object client invoked only when the existing publisher asset barrier calls readAssetBytes. Asset refs, locks, and paid policy stay on the verify lifecycle path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/source_verify_lifecycle.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": [
+        "AdmissionVerificationWrite",
+        "PublishAdmission",
+        "PublishQuestionGroupResult",
+        "SuspensionUpdate",
+        "archiveGroupLifecycle",
+        "loadQuestionGroupContractSnapshot",
+        "publishQuestionGroup",
+        "publishQuestionGroupFromRow"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication and lifecycle. The moved verify lifecycle update loads the locked snapshot, archives a fully tombstoned group, publishes a never-published group from its row, and republishes a frozen revision while changing only admission, suspension, verification, and availability. Drift, CAS, and digest rules stay in this owner.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
