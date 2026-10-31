@@ -231,20 +231,35 @@ function readARange(text: string): 'right' | 'wrong' | 'absent' {
 }
 
 function readIntervals(text: string): 'right' | 'wrong' | 'absent' {
-  const tokens = text.match(/[([][^()[\]]{0,48}[)\]]/g) ?? [];
-  const relevant = tokens.filter((token) => token.includes('√3'));
-  if (relevant.length === 0) return 'absent';
-  let labeledRight = false;
-  for (const token of relevant) {
-    if (!CORRECT_INTERVALS.has(token)) return 'wrong';
-    const at = text.indexOf(token);
-    const sign = signBefore(text, at);
-    const middle = token === '(2-√3,2+√3)';
-    if (middle && sign === '增') return 'wrong';
-    if (!middle && sign === '减') return 'wrong';
-    if ((middle && sign === '减') || (!middle && sign === '增')) labeledRight = true;
+  const claims = intervalClaims(text);
+  const asserted = claims.filter((claim) => claim.asserted);
+  if (asserted.length === 0) return 'absent';
+  for (const claim of asserted) {
+    if (!CORRECT_INTERVALS.has(claim.token)) return 'wrong';
+    const middle = claim.token === '(2-√3,2+√3)';
+    if (middle && claim.sign === '增') return 'wrong';
+    if (!middle && claim.sign === '减') return 'wrong';
   }
-  return labeledRight || relevant.length > 0 ? 'right' : 'absent';
+  return 'right';
+}
+
+function intervalClaims(text: string): Array<{
+  token: string;
+  sign: '增' | '减' | null;
+  asserted: boolean;
+}> {
+  const claims = [];
+  const pattern = /[([][^()[\]]{0,48}[)\]]/g;
+  for (const match of text.matchAll(pattern)) {
+    const token = match[0];
+    if (!token.includes('√3')) continue;
+    const at = match.index ?? 0;
+    const before = text.slice(Math.max(0, at - 8), at);
+    const after = text.slice(at + token.length, at + token.length + 6);
+    const rejected = /写成了|误写|错写|错成/.test(before) || /^(不对|不是|错误|有误)/.test(after);
+    claims.push({ token, sign: signBefore(text, at), asserted: !rejected });
+  }
+  return claims;
 }
 
 function readLabels(text: string): 'right' | 'wrong' | 'absent' {
@@ -312,24 +327,33 @@ function walkClaims(
   failPhrases: readonly string[],
   passPhrases: readonly string[],
 ): HelpExplanationVerdict | 'not_applicable' {
-  let sawFail = false;
-  let sawPass = false;
-  let sawPhrase = false;
+  const claims: Array<{ kind: 'fail' | 'pass'; negated: boolean; sentenceNegated: boolean }> = [];
   for (const sentence of text.split(/[。！？\n；;]/)) {
     const marks = scanMarks(sentence, failPhrases, passPhrases);
+    const sentenceNegated = marks.some((mark) => mark.kind === 'neg');
     for (const mark of marks) {
       if (mark.kind === 'neg') continue;
-      sawPhrase = true;
-      const negated = negationGoverns(marks, mark.at);
-      if (mark.kind === 'fail') {
-        if (!negated) sawFail = true;
-      } else if (negated) sawFail = true;
-      else sawPass = true;
+      claims.push({
+        kind: mark.kind,
+        negated: negationGoverns(sentence, marks, mark.at),
+        sentenceNegated,
+      });
     }
   }
-  if (!sawPhrase) return 'not_applicable';
-  if (sawFail) return 'fail';
-  if (sawPass) return 'pass';
+  if (claims.length === 0) return 'not_applicable';
+  const unnegatedPass = claims.some((claim) => claim.kind === 'pass' && !claim.negated);
+  const assertedFail = claims.some(
+    (claim) => claim.kind === 'fail' && !claim.negated && !claim.sentenceNegated,
+  );
+  if (unnegatedPass && !assertedFail) return 'pass';
+  if (
+    claims.some(
+      (claim) =>
+        (claim.kind === 'pass' && claim.negated) || (claim.kind === 'fail' && !claim.negated),
+    )
+  ) {
+    return 'fail';
+  }
   return 'ungrounded';
 }
 
@@ -378,12 +402,17 @@ function longestMark(
 }
 
 function negationGoverns(
-  marks: ReadonlyArray<{ at: number; kind: 'neg' | 'fail' | 'pass' }>,
+  sentence: string,
+  marks: ReadonlyArray<{ at: number; kind: 'neg' | 'fail' | 'pass'; length: number }>,
   claimAt: number,
 ): boolean {
   const prior = marks.filter((mark) => mark.kind === 'neg' && mark.at < claimAt).at(-1);
   if (!prior) return false;
-  return !marks.some((mark) => mark.kind !== 'neg' && mark.at > prior.at && mark.at < claimAt);
+  if (marks.some((mark) => mark.kind !== 'neg' && mark.at > prior.at && mark.at < claimAt)) {
+    return false;
+  }
+  const gap = sentence.slice(prior.at + prior.length, claimAt);
+  return gap.length === 0 || /^(?:是|表示|指|在说|说)*$/.test(gap);
 }
 
 function matchAt(text: string, index: number, phrases: readonly string[]): string | undefined {
@@ -397,6 +426,8 @@ function fold(text: string): string {
   let folded = text.normalize('NFKC').replace(/\$/g, '').replace(/−/g, '-');
   folded = folded.replace(/\\left|\\right/g, '');
   folded = folded.replace(/\\(?:d|t)?frac\{([^{}]+)\}\{([^{}]+)\}/g, '$1/$2');
+  folded = folded.replace(/\\(?:d|t)?frac(\d)(\d)/g, '$1/$2');
+  folded = folded.replace(/\\(?:geq|ge)/g, '≥');
   folded = folded.replace(/\\cup/g, '∪');
   folded = folded.replace(/\\infty/g, '∞');
   folded = folded.replace(/\\sqrt\{([^{}]+)\}/g, '√$1');

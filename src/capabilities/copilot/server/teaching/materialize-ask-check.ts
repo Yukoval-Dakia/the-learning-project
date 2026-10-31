@@ -38,6 +38,27 @@ export function askCheckPrompt(modelPrompt: string | undefined, verifiedReply: s
   return verifiedReply;
 }
 
+/** On a failed gold check, grading must read the sealed reply, not the model reference or choices. */
+export function alignAskCheck<
+  T extends {
+    kind: string;
+    prompt_md?: string;
+    reference_md: string;
+    choices_md?: string[] | null;
+  },
+>(structured: T, verifiedReply: string, sealed: boolean): T {
+  if (!sealed) {
+    return { ...structured, prompt_md: askCheckPrompt(structured.prompt_md, verifiedReply) };
+  }
+  return {
+    ...structured,
+    kind: 'short_answer',
+    prompt_md: verifiedReply,
+    reference_md: verifiedReply,
+    choices_md: null,
+  };
+}
+
 /**
  * Insert the `teaching_check` question carried by an ask_check turn.
  *
