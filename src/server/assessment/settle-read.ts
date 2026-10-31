@@ -11,8 +11,9 @@
 import { eq } from 'drizzle-orm';
 
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
-import type { KcEvidenceApply, KcObservation, KcWrongCauseT } from '@/core/schema/assessment';
+import type { KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
+import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
