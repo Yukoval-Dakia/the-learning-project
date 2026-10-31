@@ -70,6 +70,7 @@ export interface QuestionDetailPerKnowledge {
   mastery: number | null;
   evidence_count: number;
   last_evidence_at_sec: number | null;
+  // 'unknown' when there is no evidenced ability. That is not the untrained label.
   decay_bucket: MasteryDecayBucket;
   due_at_sec: number | null;
   review_timing: ReviewTimingJson;
@@ -284,7 +285,8 @@ async function loadScheduling(
   }
 
   // Mastery, decay, due and recall are the judgment contract's readings.
-  // Never-attempted nodes stay null/0. Due is the selected engine's due.
+  // Insufficient evidence stays off the mastery map; its decay bucket is unknown,
+  // not an untrained low score. Due is the selected engine's due.
   const judgment = await readLearnerJudgments(db, {
     knowledge_ids: knowledgeIds,
     context: 'any',

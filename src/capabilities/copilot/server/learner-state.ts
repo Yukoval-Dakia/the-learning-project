@@ -238,16 +238,39 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
   judgmentSentence: string;
 } {
   const observed = new Map<string, MasteryProjection>();
-  let unknownAbility = false;
+  let lowObserved = false;
+  let insufficient = false;
+  let notEvaluable = false;
+  let unavailable = false;
+  let growing = false;
+  let undated = false;
   let unknownRetention = false;
   let divergentCount = 0;
   const readingEngines = new Set<string>();
   for (const item of batch.items) {
-    if (item.ability.kind === 'available' && item.p_correct_now.kind === 'incumbent_pfa') {
-      observed.set(item.knowledge_id, item.ability.reading);
-    } else {
-      unknownAbility = true;
+    switch (item.ability_claim.kind) {
+      case 'low_observed':
+        lowObserved = true;
+        if (item.ability.kind === 'available')
+          observed.set(item.knowledge_id, item.ability.reading);
+        break;
+      case 'observed':
+        if (item.ability.kind === 'available')
+          observed.set(item.knowledge_id, item.ability.reading);
+        break;
+      case 'insufficient_evidence':
+        insufficient = true;
+        break;
+      case 'not_evaluable':
+        notEvaluable = true;
+        break;
+      case 'unavailable':
+        unavailable = true;
+        break;
     }
+    const age = item.uncertainty.evidence_age;
+    if (age.kind === 'dated' && age.growing) growing = true;
+    if (age.kind === 'undated') undated = true;
     if (
       item.retention.kind === 'unknown' ||
       (typeof item.retention.reading !== 'number' && item.retention.reading.kind === 'unknown')
@@ -267,7 +290,12 @@ function summarizeJudgment(batch: LearnerJudgmentBatch): {
     ...summarizeMastery(observed),
     judgmentSentence: [
       `共用判断 ${batch.version}：尚未个人校准。`,
-      unknownAbility ? '部分掌握状态未知；关联推断不算本人作答证据。' : '',
+      lowObserved ? '有本人作答落在低掌握一侧（不会），这不是证据不足。' : '',
+      insufficient ? '有知识点还不知道你会不会，不能当成不会或未训练。' : '',
+      notEvaluable ? '有节点不评掌握，不计入会不会。' : '',
+      unavailable ? '掌握读取失败，不能当成不会或不知道。' : '',
+      growing ? '有作答已变旧，不确定在增大；这不是新的预测区间。' : '',
+      undated ? '有作答缺少时间，不能判断不确定是否在增大。' : '',
       unknownRetention
         ? `保持：同范围存在未知项（${engineName}），不能据此断言记得或忘了。`
         : `保持：同范围现役读数可用（${engineName}），尚不能据此声称已校准或保持良好。`,

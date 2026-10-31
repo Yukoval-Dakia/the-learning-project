@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { masteryDecayBucket } from '@/core/mastery-freshness';
 import {
   COMPONENT_DISAGREEMENT_RULE,
+  type EvidenceAge,
   type JudgmentUnknown,
   type LearnerJudgment,
   type LearnerJudgmentBatch,
@@ -105,22 +107,94 @@ function componentDisagreement(
   return unknown('component_readings_not_comparable');
 }
 
-// Deterministic plain-language sentence covering 会做 / 记得 / 分歧. Qualitative
-// only: no numbers reach learner-visible surfaces before the D6 threshold. A
-// component failure is reported as a failure, never folded into "no evidence".
-function judgementSentence(
+// Low observed ability uses the same registered low side as disagreement.
+// It is not a new cutoff and it is not a joint likelihood.
+function abilityClaim(
   pfa: LearnerJudgment['p_correct_now'],
+  notEvaluable: boolean,
+): LearnerJudgment['ability_claim'] {
+  // A failed read is not a role verdict. Otherwise a goal node hides the failure
+  // as 「不评掌握」 while other faces still throw.
+  if (pfa.kind === 'unknown' && isComponentFailureReason(pfa.reason)) {
+    return { kind: 'unavailable', reason: pfa.reason };
+  }
+  if (notEvaluable) {
+    return { kind: 'not_evaluable', reason: 'knowledge_role_not_mastery_evaluable' };
+  }
+  if (pfa.kind === 'incumbent_pfa') {
+    const rule = { low: COMPONENT_DISAGREEMENT_RULE.low };
+    if (pfa.value < rule.low) return { kind: 'low_observed', rule, calibration: 'uncalibrated' };
+    return { kind: 'observed', rule, calibration: 'uncalibrated' };
+  }
+  return { kind: 'insufficient_evidence', reason: pfa.reason };
+}
+
+// Growth is the existing freshness bucket (mild / stale), not a wider interval.
+// last_outcome_at is the only practice clock the incumbent reading exposes.
+function evidenceAge(
+  claim: LearnerJudgment['ability_claim'],
+  reading: MasteryProjection | undefined,
+  asOf: Date,
+): EvidenceAge {
+  if (claim.kind !== 'low_observed' && claim.kind !== 'observed') {
+    return { kind: 'not_applicable', reason: claim.reason };
+  }
+  const at = reading?.last_outcome_at ?? null;
+  if (!reading || !at) return { kind: 'undated', reason: 'observed_evidence_without_timestamp' };
+  const freshness = masteryDecayBucket(reading.evidence_count, at, asOf);
+  if (freshness !== 'fresh' && freshness !== 'mild' && freshness !== 'stale') {
+    return { kind: 'undated', reason: 'observed_evidence_without_timestamp' };
+  }
+  const idleDays = Math.max(0, Math.floor((asOf.getTime() - at.getTime()) / 86_400_000));
+  return {
+    kind: 'dated',
+    idle_days: idleDays,
+    freshness,
+    growing: freshness !== 'fresh',
+  };
+}
+
+function canDoClause(claim: LearnerJudgment['ability_claim']): string {
+  switch (claim.kind) {
+    case 'low_observed':
+      return '会做：本人作答读数在低掌握一侧，这是不会，尚未个人校准';
+    case 'observed':
+      return '会做：本人作答读数不在低掌握一侧，尚未个人校准';
+    case 'insufficient_evidence':
+      return claim.reason === 'inferred_only'
+        ? '会做：还不知道你会不会，只有知识关联推断，不是本人作答'
+        : '会做：还不知道你会不会，本人作答证据不足';
+    case 'not_evaluable':
+      return '会做：这个节点不评掌握，不是不会';
+    case 'unavailable':
+      return '会做：掌握部件不可用，读取失败';
+  }
+}
+
+function uncertaintyClause(age: EvidenceAge): string {
+  switch (age.kind) {
+    case 'dated':
+      return age.freshness === 'stale'
+        ? '不确定：作答已久未更新，不确定在增大，尚未个人校准'
+        : age.growing
+          ? '不确定：作答开始变旧，不确定在增大，尚未个人校准'
+          : '不确定：作答还新，不确定未随闲置标成增大';
+    case 'undated':
+      return '不确定：有作答但没有时间，不能判断不确定是否在增大';
+    case 'not_applicable':
+      return '不确定：没有可随时间变宽的本人估计';
+  }
+}
+
+// Qualitative only: no new predictive digits before the D6 threshold. A
+// component failure stays a failure, and missing evidence stays「不知道你会不会」.
+function judgementSentence(
+  claim: LearnerJudgment['ability_claim'],
   retention: LearnerJudgment['retention'],
   disagreement: LearnerJudgment['uncertainty']['component_disagreement'],
+  age: EvidenceAge,
 ): string {
-  const canDo =
-    pfa.kind === 'incumbent_pfa'
-      ? '会做：现役掌握读数可用，尚未个人校准'
-      : pfa.reason === 'inferred_only'
-        ? '会做：仅知识关联推断，还不知道'
-        : isComponentFailureReason(pfa.reason)
-          ? '会做：掌握部件不可用，读取失败'
-          : '会做：本人作答证据不足，还不知道';
+  const canDo = canDoClause(claim);
   const remember =
     retentionValue(retention) !== null
       ? '记得：现役保持读数可用，尚未个人校准'
@@ -137,7 +211,7 @@ function judgementSentence(
         : disagreement.kind === 'partial_coverage'
           ? '分歧：仅一端读数可用，暂无法判断'
           : '分歧：两端读数均不可用，还不知道';
-  return `${canDo}；${remember}；${divergence}。`;
+  return `${canDo}；${remember}；${divergence}；${uncertaintyClause(age)}。`;
 }
 
 function retentionAvailable(reading: RetentionReading): LearnerJudgment['retention'] {
@@ -210,34 +284,36 @@ function judgment(
           })
         : cardBasis({ presence: 'absent', reason: 'missing_scheduling_state' });
   const effectivePfa = ability.kind === 'unknown' ? ability : pfa;
+  const claim = abilityClaim(effectivePfa, nonKcIds.has(id));
+  const age = evidenceAge(claim, entry, asOf);
   const disagreement = componentDisagreement(effectivePfa, itemRetention);
   return {
     knowledge_id: id,
     ability,
     p_correct_now: effectivePfa,
+    ability_claim: claim,
     retention: itemRetention,
-    review_timing: reviewTiming({ asOf, ability, retention: itemRetention, ...basis }),
+    review_timing: reviewTiming({ asOf, ability, retention: itemRetention, claim, ...basis }),
     retention_forecast: unknown('incumbent_port_exposes_current_retention_only'),
     uncertainty: {
       independent_evidence: unknown('incumbent_evidence_not_split_by_independence'),
       helped_evidence: unknown('incumbent_evidence_not_split_by_help'),
       self_rated_evidence: unknown('incumbent_evidence_not_split_by_source'),
       component_disagreement: disagreement,
+      evidence_age: age,
     },
     would_change_it: unknown('information_gain_policy_not_available'),
     patterns: unknown('pattern_component_not_connected'),
     corrections: unknown('correction_reconciliation_not_connected'),
-    judgement: judgementSentence(effectivePfa, itemRetention, disagreement),
+    judgement: judgementSentence(claim, itemRetention, disagreement, age),
   };
 }
 
 /**
- * Fold a batch's ability readings back into the incumbent projection map shape
- * (observed + inferred entries), FAILING CLOSED when the ability component
- * itself did not answer (query or snapshot failure): a component failure must
- * not be folded into "never attempted". Under a successful read, a missing key
- * means only cold start or a not-evaluable role — the same meaning the raw
- * projection map had, whose failure also threw.
+ * Evidenced ability only, failing closed when the ability component did not
+ * answer. Insufficient evidence, inferred-only neighbours, and roles that are
+ * not mastery-evaluable are omitted: a missing key is not a cold-start low
+ * score. The raw reading stays on the item.
  */
 export function abilityReadingsByIdOrFail(
   batch: LearnerJudgmentBatch,
@@ -246,9 +322,15 @@ export function abilityReadingsByIdOrFail(
     if (item.ability.kind === 'unknown' && isComponentFailureReason(item.ability.reason)) {
       throw new Error(`learner-judgment ability component failed: ${item.ability.reason}`);
     }
+    if (item.ability_claim.kind === 'unavailable') {
+      throw new Error(`learner-judgment ability component failed: ${item.ability_claim.reason}`);
+    }
   }
   const byId = new Map<string, MasteryProjection>();
   for (const item of batch.items) {
+    if (item.ability_claim.kind !== 'low_observed' && item.ability_claim.kind !== 'observed') {
+      continue;
+    }
     if (item.ability.kind !== 'available') continue;
     byId.set(item.knowledge_id, item.ability.reading);
   }

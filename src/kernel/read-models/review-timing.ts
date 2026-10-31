@@ -138,7 +138,10 @@ function recallOf(retention: LearnerJudgment['retention']): ReviewTiming['recall
 function decayOf(
   ability: LearnerJudgment['ability'],
   asOf: Date,
+  claim?: LearnerJudgment['ability_claim'],
 ): ReviewTiming['freshness']['decay_bucket'] {
+  // Insufficient evidence is not an untrained low score. Question cards omit the claim.
+  if (claim && claim.kind !== 'observed' && claim.kind !== 'low_observed') return 'unknown';
   if (ability.kind === 'available') {
     return masteryDecayBucket(
       ability.reading.evidence_count,
@@ -181,12 +184,13 @@ export function reviewTiming(input: {
   asOf: Date;
   ability: LearnerJudgment['ability'];
   retention: LearnerJudgment['retention'];
+  claim?: LearnerJudgment['ability_claim'];
   due_at: Due;
   last_retrieval_at: Instant;
   duration_ms: Duration;
 }): ReviewTiming {
   const recall = recallOf(input.retention);
-  const decay_bucket = decayOf(input.ability, input.asOf);
+  const decay_bucket = decayOf(input.ability, input.asOf, input.claim);
   return {
     recall,
     basis: {
