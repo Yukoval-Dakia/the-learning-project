@@ -1,12 +1,7 @@
 // M4-T6 (YUK-319)：工作台 ui 数据层——/api/workbench/summary 聚合 wire +
-// AI 改动近 24h 链（notes 包端点）。undo 链直接复用 notes 包 ui 数据层
-// （跨包 ui import：workbench 是跨域壳层，plan 钦定复用而非复制）。
+// AI 改动近 24h 链。撤销判定在共享 UI client，工作台不 import notes。
 
 import { type ApiOperationJsonResponse, apiOperationJson } from '@/ui/lib/api';
-
-export { type AiChangeRow, undoAiChange } from '@/capabilities/notes/ui-public';
-
-import type { AiChangeRow } from '@/capabilities/notes/ui-public';
 
 // ── /api/workbench/summary wire（workbench-summary.db.test.ts 同形态） ──
 export type WorkbenchSummary = ApiOperationJsonResponse<'getWorkbenchSummary'>;
