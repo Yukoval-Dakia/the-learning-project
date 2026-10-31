@@ -56,7 +56,8 @@
     "YUK-1571-note-section-read": "Top-level semanticBlock projection into note sections now lives in src/kernel/read-models/note-sections.ts. Copilot teaching and notes readers import that kernel projection. The notes public re-export and the copilot notes-integration forward are deleted. copilot -> notes 2 -> 1, cross-capability value 19 -> 18. Nontrivial SCC stays empty. Notes keeps block-tree edits.",
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
     "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept remains). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
-    "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route."
+    "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
+    "YUK-1571-shell-agency-today": "Today's agent-notes board, learning-intent composer, and notes client are composed by the route shells (web/src/router.tsx and server/start/routes/today.tsx) through agency/ui-public. shell/ui/TodayPage.tsx keeps a type-only import. shell -> agency 1 -> 0. Composed with main c233279d (shell -> notes already 0, cross 15): cross-capability value 15 -> 14. Nontrivial SCC stays empty. No compat re-export."
   },
   "changes": [
     {
@@ -7090,6 +7091,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> agency",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -12332,7 +12341,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 15,
+      "total": 14,
       "byOwnerPair": {
         "agency -> notes": 1,
         "agency -> practice": 2,
@@ -12341,7 +12350,6 @@
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1

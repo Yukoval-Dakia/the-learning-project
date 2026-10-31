@@ -21,6 +21,7 @@
 - workbench summary 是读模型，不拥有业务事实；数据源来自各 capability 的聚合端点。
 - shipped 页面声明统一投影自 `src/kernel/ui-surfaces.ts`，禁止在 manifest 另写一份路径表。
 - 收件箱 count 与 TodayPage 复用同一 `workbench-summary` query key，React Query 自动去重。
+- `/today` 的观察板、学习意图和学习笔记客户端由路由壳注入（SPA `web/src/router.tsx`、Start `server/start/routes/today.tsx`）。shell 只接收这些值，不 value-import agency。
 
 ## ANTI-PATTERNS
 - 别在 shell 里硬编码某个 capability 的业务规则；只聚合。

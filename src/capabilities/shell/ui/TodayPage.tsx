@@ -2,7 +2,7 @@
 // 设计基准 docs/design/loom-refresh/project/screen-today.jsx（ScreenToday
 // L203-241 布局序列）：hero → kpi-row → 今日之线 → 进行中·待裁决 dash-grid
 // 双列 → AgentNotesBoard → 本周编织。数据源 /api/workbench/summary 聚合 +
-// agency 包 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
+// 路由注入的 agent-notes（limit=20 紧凑档）+ notes 包 AI 改动近 24h。
 // 偏差（today 重生设计自由）：①「今日之线」真数据无 threads 源，从 summary
 // 派生（due>0 复习缕 / proposals>0 裁决缕），全零不渲染该 section；②成本面
 // （设计稿 CostRibbon）已于 M5-T4b (YUK-321) 接通 /api/cost/today
@@ -10,11 +10,11 @@
 // 见 CostRibbon 组件注释。
 
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
-import {
-  AgentNotesBoard,
-  LearningIntentComposer,
-  useAgentNoteClient,
+import { type ComponentType, useState } from 'react';
+import type {
+  AgentNoteClient,
+  AgentNotesBoardProps,
+  LearningIntentComposerProps,
 } from '@/capabilities/agency/ui-public';
 import { ColdStart } from '@/capabilities/onboarding/ui-public';
 import { describeCosts } from '@/ui/lib/cost-presentation';
@@ -43,6 +43,9 @@ import './shell.css';
 
 export interface TodayPageProps {
   navigate: (to: string) => void;
+  getAgentNoteBoard: AgentNoteClient['getAgentNoteBoard'];
+  AgentNotesBoard: ComponentType<AgentNotesBoardProps>;
+  LearningIntentComposer: ComponentType<LearningIntentComposerProps>;
 }
 
 interface Thread {
@@ -471,8 +474,12 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
   );
 }
 
-export default function TodayPage({ navigate }: TodayPageProps) {
-  const { getAgentNoteBoard } = useAgentNoteClient();
+export default function TodayPage({
+  navigate,
+  getAgentNoteBoard,
+  AgentNotesBoard,
+  LearningIntentComposer,
+}: TodayPageProps) {
   const { getWorkbenchSummary } = useWorkbenchClient();
   const now = new Date();
 

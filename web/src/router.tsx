@@ -117,7 +117,27 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-const TodayRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadTodayPage);
+const TodayRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const [Page, { AgentNotesBoard, LearningIntentComposer, useAgentNoteClient }] =
+        await Promise.all([loadTodayPage(), import('@/capabilities/agency/ui-public')]);
+
+      function NavigableToday() {
+        const router = useRouter();
+        const { getAgentNoteBoard } = useAgentNoteClient();
+        return (
+          <Page
+            navigate={(to) => router.history.push(to)}
+            getAgentNoteBoard={getAgentNoteBoard}
+            AgentNotesBoard={AgentNotesBoard}
+            LearningIntentComposer={LearningIntentComposer}
+          />
+        );
+      }
+
+      return { default: NavigableToday };
+    });
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
