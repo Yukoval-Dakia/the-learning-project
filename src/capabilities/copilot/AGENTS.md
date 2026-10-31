@@ -41,6 +41,7 @@
 - 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。
   [ADR-0061](../../../docs/adr/0061-copilot-presentation-intent-control.md) 允许 agent 看完结果后按需调用 `present_primary_view` 提名成品，服务端校验后发布；该短交互仍受既有执行预算约束。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
+- 解题提示和教学回合若把并集、单调区间或合法替代写法讲反，发布前改成封存说明。这条不改已发布正文的结算。
 
 ## ANTI-PATTERNS
 - 别把 Copilot 做成通用 AI 调用入口；所有 task 仍走领域 route / worker。

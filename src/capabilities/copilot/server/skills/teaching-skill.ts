@@ -18,11 +18,13 @@
 // never a tool loop, no memory, no tool budget.
 
 import { AgentRunError } from '@/ai/agent-run-error';
+import { helpCost } from '@/ai/help-latency';
 import {
   type HelpProviderFault,
   readHelpProviderFault,
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
+import { replayHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
@@ -40,7 +42,7 @@ type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: Parameters<typeof runAgentTask>[2],
-) => Promise<Pick<RunTaskResult, 'task_run_id' | 'text'>>;
+) => Promise<Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd' | 'cost_basis'>>;
 
 export interface RunTeachingSkillParams {
   db: Db;
@@ -86,6 +88,9 @@ export interface RunTeachingSkillDeps {
   runAgentTaskFn?: RunAgentTaskFn;
 }
 
+/** Teaching turns are full explanations, so a failed claim may use the numeric gloss. */
+const FULL_EXPLANATION_HINT = 5;
+
 /**
  * Run one teaching-skill turn in the Copilot session; an ask_check turn returns
  * unpersisted question params for the caller to materialize atomically.
@@ -110,7 +115,7 @@ export async function runTeachingSkill(
     messages: [{ role: 'user' as const, text_md: userMessage }],
   };
 
-  let result: Pick<RunTaskResult, 'task_run_id' | 'text'>;
+  let result: Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd' | 'cost_basis'>;
   try {
     result = await run('TeachingTurnTask', input, {
       db,
@@ -144,6 +149,17 @@ export async function runTeachingSkill(
     throw error;
   }
 
+  const replayed = replayHelpExplanation({
+    prompt: userMessage,
+    explanation: turn.text_md,
+    hintIndex: FULL_EXPLANATION_HINT,
+    evidence: {
+      task_run_id: result.task_run_id,
+      provider: null,
+      model: null,
+      cost: helpCost(result.cost_basis, result.cost_usd),
+    },
+  });
   let pendingQuestion: PendingAskCheckParams | undefined;
   if (turn.kind === 'ask_check' && turn.structured_question) {
     pendingQuestion = {
@@ -152,12 +168,12 @@ export async function runTeachingSkill(
       // Stamp the Copilot session id as question provenance; accept-chip lineage
       // resolves against that same session.
       sessionId,
-      fallbackPromptMd: turn.text_md,
+      fallbackPromptMd: replayed.text_md,
     };
   }
 
   return {
-    text_md: turn.text_md,
+    text_md: replayed.text_md,
     kind: turn.kind,
     suggested_next: turn.suggested_next,
     task_run_id: result.task_run_id,

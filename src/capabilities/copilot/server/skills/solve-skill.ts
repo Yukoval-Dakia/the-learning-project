@@ -12,11 +12,13 @@
 import { eq } from 'drizzle-orm';
 
 import { AgentRunError } from '@/ai/agent-run-error';
+import { helpCost } from '@/ai/help-latency';
 import {
   type HelpProviderFault,
   readHelpProviderFault,
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
+import { replayHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -29,7 +31,7 @@ type RunAgentTaskFn = (
   kind: string,
   input: unknown,
   ctx: Parameters<typeof runAgentTask>[2],
-) => Promise<Pick<RunTaskResult, 'task_run_id' | 'text'>>;
+) => Promise<Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd' | 'cost_basis'>>;
 
 export interface RunSolveSkillParams {
   db: Db;
@@ -79,7 +81,7 @@ export async function runSolveSkill(
 
   // Reuse the tutor route's session-free seed (question face + reference only).
   const input = buildSolveHintInput(q, hintIndex);
-  let result: Pick<RunTaskResult, 'task_run_id' | 'text'>;
+  let result: Pick<RunTaskResult, 'task_run_id' | 'text' | 'cost_usd' | 'cost_basis'>;
   try {
     result = await run('TeachingTurnTask', input, {
       db,
@@ -95,7 +97,19 @@ export async function runSolveSkill(
   }
 
   try {
-    return { ...parseHintTurn(result.text), task_run_id: result.task_run_id };
+    const parsed = parseHintTurn(result.text);
+    const replayed = replayHelpExplanation({
+      prompt: q.prompt_md ?? '',
+      explanation: parsed.text_md,
+      hintIndex,
+      evidence: {
+        task_run_id: result.task_run_id,
+        provider: null,
+        model: null,
+        cost: helpCost(result.cost_basis, result.cost_usd),
+      },
+    });
+    return { text_md: replayed.text_md, task_run_id: result.task_run_id };
   } catch (error) {
     if (error instanceof SolveError && error.code === 'llm_parse_failed') {
       return {
