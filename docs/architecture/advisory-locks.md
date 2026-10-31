@@ -1,5 +1,9 @@
 # Advisory locks — 静态登记（排序待核）
 
+> **注册表骨架**
+>
+> `src/kernel/locks/registry.ts` 提供命名空间和 hashtext 键派生。已接入的调用点只有学习状态写锁：`acquireLearningStateWriteLock`（`src/db/learning-state-lock.ts`）经 `deriveHashtextLockKey` 取 `learning-state:write`，SQL 仍是 `pg_advisory_xact_lock(hashtext('learning-state:write'))`。其余站点未迁。`pnpm audit:advisory-locks` 对生产 `.ts` 里、批准的注册表/helper 之外新出现的裸 `pg_advisory*` / `pg_try_advisory*` 失败；已有站点记在 `scripts/audit-advisory-locks-baseline.json`。这不是获取顺序证明，也不核销 §3 的 81 族。
+
 > **修正状态（2026-10-20，四项已修）**
 >
 > 上一版登记的四项事实错误已按源码 revision
@@ -38,7 +42,7 @@
 
 > 锁登记文档（YUK-1577）。本文件是**静态盘点**：全仓生产代码 `pg_advisory*` /
 > `pg_try_advisory*` / `pg_advisory_unlock` 文本站点的归并清单，以及待核对的
-> 排序登记。它不注册、不校验、不改任何锁行为——生产代码 diff 为 0。
+> 排序登记。文首的注册表骨架只覆盖一个键模板；本盘点仍不证明获取顺序，也不改其余站点的锁行为。
 >
 > 原始证据（仓库外，随 head 固化，含已修错误）：
 > `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/architecture-deepening/YUK-1577/fc619732/`
@@ -88,7 +92,7 @@ salt ∈ {0,1,1393})、int 字面量（`597_001`、`406_440_3`）、int pair 字
 
 | Helper | 位置 | 语义 |
 |---|---|---|
-| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | G=`hashtext('learning-state:write')` xact；Db 开真 tx、Tx 内联；tx 内可重入 |
+| `acquireLearningStateWriteLock` / `withLearningStateLock` | `src/db/learning-state-lock.ts` | G=`hashtext('learning-state:write')` xact，键文本来自 `advisoryLockRegistry.learningStateWrite`；Db 开真 tx、Tx 内联；tx 内可重入 |
 | `acquireSortedAdvisoryLocks` | `src/db/learning-state-lock.ts` | `hashtext(<ns>:<id>)` sorted，consistent-ordering 原语 |
 | `withinSessionAdvisoryLock` | `src/db/session-advisory-lock.ts` | reserved conn `pg_try_advisory_lock`+retry 至 deadline；`begin`/`savepoint` 补丁到持锁连接，inner tx 全部跑在同一 backend；finally unlock+release |
 | `acquireProposalDecisionLock` | `src/kernel/proposals/applier-helpers.ts` | `proposal_decision:<id>` hte0 |

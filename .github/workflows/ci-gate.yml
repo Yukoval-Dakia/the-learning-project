@@ -226,6 +226,7 @@ jobs:
           pnpm audit:hub-sync-writers
           pnpm audit:provider-attempt-truth
           pnpm audit:model-source
+          pnpm audit:advisory-locks
 
   unit_1:
     name: unit invariant tests (1/2)

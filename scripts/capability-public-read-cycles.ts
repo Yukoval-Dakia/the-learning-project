@@ -104,15 +104,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // source_asset write protocol moved to src/kernel/records/asset-store.ts;
   // jyeoo-candidates.ts now consumes the kernel module directly and ingestion
   // exits the SCC (asset-store compat shims keep the old import paths alive).
-  {
-    owner: 'knowledge',
-    consumer: 'practice',
-    files: ['src/capabilities/practice/server/knowledge-runtime.ts'],
-    symbols: ['loadFailureLearningKnowledgeContext'],
-    dto: 'failure-learning reads',
-    justification:
-      'Existing failure-learning read seams remain. Placement node birth now consumes the complete shared kernel owner directly; learner authorization and the caller transaction remain in Practice.',
-    reviewIssue: 'YUK-984',
-    commandFiles: [],
-  },
+  // YUK-1571 — the practice -> knowledge read edge is retired. Failure-learning
+  // knowledge and misconception reads live in
+  // src/kernel/read-models/failure-learning-context.ts. Subject-profile
+  // resolution already lived in src/kernel/read-models/subject-profile.ts.
+  // Practice imports those kernel reads. The knowledge-runtime pass-through
+  // and the knowledge public re-exports of the three readers are gone.
 ];
