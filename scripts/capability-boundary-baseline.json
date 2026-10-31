@@ -47,8 +47,7 @@
     "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth.",
     "YUK-1553": "knowledge -> ai 13 -> 12 (-1, total 389 -> 388): review.ts drops the private write_proposal executor (writeToolCallLog edge) — the shared DomainTool bridge now owns tool_call_log. Same-owner ai seams retained: streamTask + piDomainMount.",
     "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
-    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges).",
-    "YUK-1571-daily-review-plan": "Shared daily-review-plan input projection (DailyReviewPlanInputs, resolveDailyReviewPlanInputs) now lives in src/kernel/read-models/daily-review-plan.ts. Practice still owns the due queue, minute budget and measured pace, and installDailyReviewPlanFacts binds that reader before coach jobs mount. agency -> practice 4 -> 3, cross 24 -> 23. The agency/practice SCC remains because prepare_intervention and the practice -> agency intervention/pool-gap edges are unchanged. This meets the YUK-1622 exit for the TodayPlan read: Coach no longer imports practice/public for these symbols. No compat re-export."
+    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges)."
   },
   "changes": [
     {
@@ -10686,6 +10685,26 @@
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-page.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. The knowledge node page serializes the judgment contract's freshness onto the existing decay field and does not recompute it.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. Question detail copies that reading onto each scheduling row and does not invent an interval or a second decay path.",
+      "date": "2026-10-31"
     },
     {
       "debt": "capabilityToKernel",

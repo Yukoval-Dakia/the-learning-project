@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ActivateEvaluationIntent } from '@/core/schema/assessment';
 import { QuestionKind } from '@/core/schema/business';
 import { MAX_HINT_COUNT, MAX_HINT_INDEX } from '@/core/schema/event/known';
+import { ReviewTimingJsonSchema } from '@/core/schema/learner-judgment';
 import { CreateSubmissionBodySchema } from './assessment-contracts';
 
 export const QuestionParamsSchema = z.object({ id: z.string().trim().min(1) });
@@ -230,10 +231,13 @@ export const QuestionDetailResponseSchema = z
           last_evidence_at_sec: z.number().nullable(),
           decay_bucket: z.string(),
           due_at_sec: z.number().nullable(),
+          review_timing: ReviewTimingJsonSchema,
         }),
       ),
       aggregate_decay_bucket: z.string(),
-      legacy_question_fsrs: z.object({ due_at_sec: z.number() }).nullable(),
+      legacy_question_fsrs: z
+        .object({ due_at_sec: z.number(), review_timing: ReviewTimingJsonSchema })
+        .nullable(),
     }),
     backlinks: z.array(
       z.object({

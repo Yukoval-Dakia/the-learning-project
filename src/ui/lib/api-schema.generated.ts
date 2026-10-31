@@ -19890,6 +19890,88 @@ export interface operations {
                             reason: string;
                         }) | null;
                         retrievability: number | null;
+                        review_timing: {
+                            basis: {
+                                duration_ms: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    duration_ms: number;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                };
+                                last_retrieval_at: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    at: string;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                };
+                            };
+                            freshness: {
+                                /** @enum {string} */
+                                decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                due_at: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    at: string;
+                                    /** @enum {string} */
+                                    kind: "known";
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "absent";
+                                };
+                                mastered_shelf: {
+                                    /** @enum {string} */
+                                    kind: "unknown";
+                                    reason: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "not_high";
+                                } | {
+                                    /** @enum {string} */
+                                    decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                    due_at: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        at: string;
+                                        /** @enum {string} */
+                                        kind: "known";
+                                    } | {
+                                        /** @enum {string} */
+                                        kind: "absent";
+                                    };
+                                    /** @enum {string} */
+                                    kind: "shelf";
+                                };
+                            };
+                            recall: {
+                                /** @enum {string} */
+                                kind: "unknown";
+                                reason: string;
+                            } | {
+                                /** @enum {string} */
+                                calibration: "uncalibrated";
+                                /** @enum {string} */
+                                engine: "fsrs" | "forgetting_candidate";
+                                interval: {
+                                    /** @enum {string} */
+                                    calibration: "uncalibrated";
+                                    /** @enum {string} */
+                                    kind: "not_estimated";
+                                };
+                                /** @enum {string} */
+                                kind: "point";
+                                value: number;
+                            };
+                        };
                         /** @enum {string} */
                         role: "kc" | "goal" | "container";
                         subject_profile: {
@@ -32148,6 +32230,88 @@ export interface operations {
                             aggregate_decay_bucket: string;
                             legacy_question_fsrs: {
                                 due_at_sec: number;
+                                review_timing: {
+                                    basis: {
+                                        duration_ms: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            duration_ms: number;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                        last_retrieval_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                    };
+                                    freshness: {
+                                        /** @enum {string} */
+                                        decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                        due_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "absent";
+                                        };
+                                        mastered_shelf: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "not_high";
+                                        } | {
+                                            /** @enum {string} */
+                                            decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                            due_at: {
+                                                /** @enum {string} */
+                                                kind: "unknown";
+                                                reason: string;
+                                            } | {
+                                                at: string;
+                                                /** @enum {string} */
+                                                kind: "known";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "absent";
+                                            };
+                                            /** @enum {string} */
+                                            kind: "shelf";
+                                        };
+                                    };
+                                    recall: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        /** @enum {string} */
+                                        engine: "fsrs" | "forgetting_candidate";
+                                        interval: {
+                                            /** @enum {string} */
+                                            calibration: "uncalibrated";
+                                            /** @enum {string} */
+                                            kind: "not_estimated";
+                                        };
+                                        /** @enum {string} */
+                                        kind: "point";
+                                        value: number;
+                                    };
+                                };
                             } | null;
                             per_knowledge: {
                                 decay_bucket: string;
@@ -32157,6 +32321,88 @@ export interface operations {
                                 last_evidence_at_sec: number | null;
                                 mastery: number | null;
                                 name: string | null;
+                                review_timing: {
+                                    basis: {
+                                        duration_ms: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            duration_ms: number;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                        last_retrieval_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        };
+                                    };
+                                    freshness: {
+                                        /** @enum {string} */
+                                        decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                        due_at: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            at: string;
+                                            /** @enum {string} */
+                                            kind: "known";
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "absent";
+                                        };
+                                        mastered_shelf: {
+                                            /** @enum {string} */
+                                            kind: "unknown";
+                                            reason: string;
+                                        } | {
+                                            /** @enum {string} */
+                                            kind: "not_high";
+                                        } | {
+                                            /** @enum {string} */
+                                            decay_bucket: "untrained" | "fresh" | "mild" | "stale" | "unknown";
+                                            due_at: {
+                                                /** @enum {string} */
+                                                kind: "unknown";
+                                                reason: string;
+                                            } | {
+                                                at: string;
+                                                /** @enum {string} */
+                                                kind: "known";
+                                            } | {
+                                                /** @enum {string} */
+                                                kind: "absent";
+                                            };
+                                            /** @enum {string} */
+                                            kind: "shelf";
+                                        };
+                                    };
+                                    recall: {
+                                        /** @enum {string} */
+                                        kind: "unknown";
+                                        reason: string;
+                                    } | {
+                                        /** @enum {string} */
+                                        calibration: "uncalibrated";
+                                        /** @enum {string} */
+                                        engine: "fsrs" | "forgetting_candidate";
+                                        interval: {
+                                            /** @enum {string} */
+                                            calibration: "uncalibrated";
+                                            /** @enum {string} */
+                                            kind: "not_estimated";
+                                        };
+                                        /** @enum {string} */
+                                        kind: "point";
+                                        value: number;
+                                    };
+                                };
                             }[];
                         };
                         serving: {
