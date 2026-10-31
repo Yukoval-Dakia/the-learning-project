@@ -20,6 +20,7 @@
 - paper/组卷容器是 `tool_quiz` artifact；session 内 attempt 走 `learning_session(type='review')`。
 - draft 题须经 `verifyAndPromote` 才能 active；漏 `draft_status` 会被 `audit:draft-status` 抓。
 - 提示生成遇到额度（429）、502 或解析失败时，响应带原因、`stop_retry`（停止重试）和确定性下一步或封存参考。没有这些材料时只建议跳过。
+- 提示只在题干对上并集、单调区间或合法替代写法时核讲解。讲对的原文保留；讲反了改发封存说明。digest、task-run、provider/model 与费用留在 `experimental:hint_request`，教学回合另写 `experimental:help_explanation_replay`。未知费用保持 null。早于完整解的提示不写出单调区间的具体端点。
 - 每次提示请求在 `experimental:hint_request` 上封存四段时延和分母。未经验证的模型正文不记成已验证可执行帮助。失败和超时照样入账，未知费用保持 null。18 秒预算在尝试行和提示事件上都是超时。
 
 ## ANTI-PATTERNS

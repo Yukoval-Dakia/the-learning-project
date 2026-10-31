@@ -31,6 +31,13 @@ export interface MaterializedAskCheckQuestion {
   choices_md: string[] | null;
 }
 
+/** The checked reply is the question prompt. An unchecked model prompt must not win. */
+export function askCheckPrompt(modelPrompt: string | undefined, verifiedReply: string): string {
+  if (verifiedReply.trim().length > 0) return verifiedReply;
+  if (modelPrompt?.trim()) return modelPrompt;
+  return verifiedReply;
+}
+
 /**
  * Insert the `teaching_check` question carried by an ask_check turn.
  *
@@ -53,7 +60,7 @@ export async function materializeAskCheckQuestion(
     .where(eq(learning_item.id, learningItemId))
     .limit(1);
   const knowledgeIds = liRows[0]?.knowledge_ids ?? [];
-  const promptMd = structured.prompt_md ?? params.fallbackPromptMd;
+  const promptMd = askCheckPrompt(structured.prompt_md, params.fallbackPromptMd);
   const choicesMd = structured.choices_md ?? null;
   await tx.insert(question).values(
     withAnswerClass({

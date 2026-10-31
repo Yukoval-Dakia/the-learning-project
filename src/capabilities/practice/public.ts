@@ -28,6 +28,7 @@ export {
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 
 export { scheduleReview } from './server/fsrs';
+export { loadHelpExplanationEvidence } from './server/hint-explanation';
 export {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
@@ -57,7 +58,6 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
-
 export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
@@ -68,8 +68,8 @@ export {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
-
 export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
+export { persistHelpExplanationReplay } from './server/solve-operations';
 export {
   SolveError,
   buildSolveHintInput,

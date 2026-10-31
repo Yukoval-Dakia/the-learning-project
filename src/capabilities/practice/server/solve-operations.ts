@@ -1,5 +1,6 @@
 import type { ZodType } from 'zod';
 import { readHelpLatency } from '@/ai/help-latency';
+import { type SealedHelpExplanationReplay, readReplyGrounding } from '@/ai/help-reply-grounding';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -11,6 +12,29 @@ import {
   StartSolveBodySchema,
 } from '../api/question-solve-contracts';
 import { SolveError, planSolveHintOutcome, startSolveSession } from './solve-session';
+
+export async function persistHelpExplanationReplay(
+  db: Db,
+  input: {
+    sessionId?: string | null;
+    subjectKind: string;
+    subjectId: string;
+    replay: SealedHelpExplanationReplay;
+  },
+): Promise<void> {
+  await writeEvent(db, {
+    id: `help_explanation_${newId()}`,
+    session_id: input.sessionId ?? null,
+    actor_kind: 'agent',
+    actor_ref: 'agent:copilot',
+    action: 'experimental:help_explanation_replay',
+    subject_kind: input.subjectKind,
+    subject_id: input.subjectId,
+    outcome: input.replay.verdict === 'fail' ? 'failure' : 'success',
+    payload: { reply_grounding: input.replay },
+    task_run_id: input.replay.task_run_id,
+  });
+}
 
 function parseResourceInput<T>(raw: unknown, schema: ZodType<T>): T {
   const parsed = schema.safeParse(raw);
@@ -99,8 +123,10 @@ export async function requestPracticeSolveHint(
       issuanceId: parsed.data?.issuance_id,
     });
     const hintRequestId = newId();
+    const replyGrounding = outcome.status === 'ok' ? outcome.reply_grounding : undefined;
     const { help_latency: helpLatency, ...publicOutcome } = outcome;
     const denominator = helpLatency ? readHelpLatency([helpLatency]).denominator : undefined;
+    const reply_grounding = readReplyGrounding(replyGrounding);
     await writeEvent(db, {
       id: hintRequestId,
       session_id: sessionId,
@@ -113,6 +139,7 @@ export async function requestPracticeSolveHint(
       payload: {
         hint_index: hintIndex,
         ...(helpLatency && denominator ? { help_latency: helpLatency, denominator } : {}),
+        ...(reply_grounding ? { reply_grounding } : {}),
         ...(publicOutcome.status === 'ok'
           ? {}
           : {
