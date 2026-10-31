@@ -55,8 +55,9 @@
     "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
     "YUK-1571-note-section-read": "Top-level semanticBlock projection into note sections now lives in src/kernel/read-models/note-sections.ts. Copilot teaching and notes readers import that kernel projection. The notes public re-export and the copilot notes-integration forward are deleted. copilot -> notes 2 -> 1, cross-capability value 19 -> 18. Nontrivial SCC stays empty. Notes keeps block-tree edits.",
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
-    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept remains). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
-    "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route."
+    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
+    "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14."
   },
   "changes": [
     {
@@ -7090,6 +7091,16 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> notes",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease",
+      "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
+      "issue": "YUK-1571"
     }
   ],
   "edgeRecords": [
@@ -11135,6 +11146,59 @@
       "issue": "YUK-1571",
       "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/records/learning-intent-note-birth.ts",
+      "kind": "value",
+      "symbols": ["createLearningIntentNote"],
+      "issue": "YUK-1571",
+      "owns": "Complete learning-intent note artifact birth inside the accept transaction: hub/atomic/long artifact rows, create events and generation intents. Agency keeps proposal accept orchestration and default post-commit dispatch wiring.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": ["dispatchNoteGeneration"],
+      "issue": "YUK-1571",
+      "owns": "Post-accept note_generate dispatch via the shared durable handoff protocol. Boss resolution is registered at the composition root; preserve intent/completion records, singleton semantics and idempotent replay.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/server/note-handoff.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": [
+        "BossDispatch",
+        "NOTE_HANDOFF_ACTION",
+        "NOTE_HANDOFF_KINDS",
+        "NOTE_HANDOFF_VERSION",
+        "artifactCanReceiveNoteHandoff",
+        "dispatchNoteGeneration",
+        "dispatchNoteHandoff",
+        "dispatchNoteVerification",
+        "noteHandoffIntentPayloadSchema",
+        "noteVerificationRecoveryJobId",
+        "writeNoteGenerationIntent",
+        "writeNoteVerificationIntent"
+      ],
+      "issue": "YUK-1571",
+      "owns": "Complete note durable handoff protocol moved to kernel. Notes keeps boss-port wiring, legacy synthesis/recovery floor and verification-claim recovery jobs.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/notes/jobs/note_generate.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
+      "kind": "value",
+      "symbols": ["writeNoteVerificationIntent"],
+      "issue": "YUK-1571",
+      "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -12332,9 +12396,9 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 15,
+      "total": 14,
       "byOwnerPair": {
-        "agency -> notes": 1,
+        "agency -> notes": 0,
         "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,

@@ -13,13 +13,13 @@
 // triggers remain out of scope.
 
 import { and, eq, isNull } from 'drizzle-orm';
-import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
 import { createKnowledgeNodeFromEvents } from '@/kernel/records/knowledge-node-birth';
+import type { CreateLearningIntentNoteFn } from '@/kernel/records/learning-intent-note-birth';
 import { createPendingLearningItem } from '@/kernel/records/learning-items';
 import {
   getDefaultSubjectRegistry,

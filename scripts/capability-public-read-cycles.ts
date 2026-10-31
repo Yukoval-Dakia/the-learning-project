@@ -26,19 +26,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — the agency -> knowledge command edge is retired. Learning-intent
   // accept calls createKnowledgeNodeFromEvents in
   // src/kernel/records/knowledge-node-birth.ts. The knowledge public adapter is gone.
-  // Dreaming no longer calls notes. A committed experimental:dreaming_note_refresh
-  // is the signal; notes.dreaming-note-refresh subscribes and enqueues the refine.
-  {
-    owner: 'notes',
-    consumer: 'agency',
-    files: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
-    symbols: ['createLearningIntentNote', 'dispatchNoteGeneration'],
-    dto: 'note generation commands',
-    justification:
-      'learning-intent accept creates notes. Dreaming note refresh is an event, not a notes import.',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
-  },
+  // YUK-1571 — proposal-accept note birth/dispatch moved to kernel handoff protocol;
+  // applier imports learning-intent-note-birth and note-handoff-protocol directly.
+  // YUK-1571 — dreaming note refresh is an experimental signal; notes subscribes.
+  // No agency -> notes command edge remains in the public-read catalog.
   {
     owner: 'practice',
     consumer: 'agency',
