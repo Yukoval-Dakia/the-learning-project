@@ -363,10 +363,10 @@ export const event_subscription_effect = pgTable(
 // PR-A2a only ADDS this table + the IO shells + the backfill/audit scripts; nothing on the
 // live write path writes here yet (no double-write, no SoT flip — that is PR-A2b / PR-B).
 //
-// AUDIT. `pnpm audit:projection` validates the knowledge / knowledge_edge projections, NOT
+// CHECK. `pnpm ops:projection` validates the knowledge / knowledge_edge projections, NOT
 // this index directly (it scans only those two tables). The index is validated INDIRECTLY: a
 // wrong/missing entry makes the node shell's Q2 reverse-index path resolve the wrong anchor
-// (or none), so fold(events) for that id diverges from the live row and audit:projection flags
+// (or none), so fold(events) for that id diverges from the live row and ops:projection flags
 // it as drift. A dedicated index-vs-log audit is a possible future enhancement (not built).
 export const materialized_id_index = pgTable(
   'materialized_id_index',
