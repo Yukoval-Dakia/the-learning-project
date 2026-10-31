@@ -1,6 +1,5 @@
 // Backup restore (destructive: requires ?confirm=wipe-and-reload).
 
-import { retireInterventionPreparationJobs } from '@/capabilities/agency/public';
 import { getConfig } from '@/core/config/store';
 import { db } from '@/db/client';
 import { getR2 } from '@/kernel/object-storage';
@@ -73,7 +72,6 @@ export async function POST(req: Request): Promise<Response> {
     db,
     r2: getR2(),
     bytes,
-    retireInterventionPreparationJobs,
   });
   return Response.json(body, { status });
 }

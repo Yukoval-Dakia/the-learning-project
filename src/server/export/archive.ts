@@ -6,6 +6,7 @@ import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
 import { z } from 'zod';
+import { retireInterventionPreparationJobs as retireArchivedPreparationJobs } from '@/capabilities/agency/public';
 import { getConfigSnapshot } from '@/core/config/store';
 import { readCompletionContract } from '@/core/event-subscription-effect';
 import type { Db, Tx } from '@/db/client';
@@ -298,8 +299,10 @@ export interface RestoreFromArchiveOpts {
   r2: R2Client;
   bytes: Uint8Array;
   /**
-   * Operational fence for archived intervention preparation jobs. Required on a live
-   * restore when the archive contains a preparation_job_id.
+   * Operational fence for archived intervention preparation jobs. Live restore
+   * uses the agency retirer when this is omitted. A disposable database has no
+   * archived-runtime pg-boss rows, so that caller sets operationalRestoreTarget
+   * instead of inventing a cancellation.
    */
   retireInterventionPreparationJobs?: (tx: Tx, jobIds: string[]) => Promise<void>;
   /**
@@ -761,8 +764,11 @@ export async function restoreFromArchive({
       `);
       const preRestoreConfigMax = Math.max(Number(preMaxRows[0]?.pre_max ?? 0), localConfigEpoch);
       if (archivedInterventionPreparationJobIds.length > 0) {
-        if (retireInterventionPreparationJobs) {
-          await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
+        const retirePreparationJobs =
+          retireInterventionPreparationJobs ??
+          (operationalRestoreTarget === 'live' ? retireArchivedPreparationJobs : undefined);
+        if (retirePreparationJobs) {
+          await retirePreparationJobs(tx, archivedInterventionPreparationJobIds);
         } else if (operationalRestoreTarget !== 'fresh_disposable') {
           throw new Error(
             'restore contains intervention preparation job ids but no operational job retirer was provided',
