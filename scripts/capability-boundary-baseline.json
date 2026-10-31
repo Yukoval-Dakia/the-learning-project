@@ -54,7 +54,7 @@
     "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty.",
     "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
     "YUK-1571-note-section-read": "Top-level semanticBlock projection into note sections now lives in src/kernel/read-models/note-sections.ts. Copilot teaching and notes readers import that kernel projection. The notes public re-export and the copilot notes-integration forward are deleted. copilot -> notes 2 -> 1, cross-capability value 19 -> 18. Nontrivial SCC stays empty. Notes keeps block-tree edits.",
-    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 2 -> 1 (dreaming_nightly enqueueDreamingNoteRefine remains). cross-capability value 18 -> 17 on this slice after note-section-read on main."
+    "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty."
   },
   "changes": [
     {
@@ -7067,6 +7067,14 @@
     },
     {
       "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 3,
+      "to": 2,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
       "pair": "agency -> notes",
       "date": "2026-10-31",
       "from": 2,
@@ -11092,6 +11100,36 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/prepare_intervention.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["authorInterventionPackage"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Practice supplies only the two paid stages.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. installInterventionAuthorStages binds the practice-owned paid stages before prepare_intervention mounts.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/intervention-author.ts",
+      "module": "src/kernel/records/intervention-package-author.ts",
+      "kind": "value",
+      "symbols": ["authorInterventionPackage"],
+      "issue": "YUK-1571",
+      "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
       "module": "src/kernel/records/learning-intent-note-birth.ts",
       "kind": "value",
@@ -12339,10 +12377,10 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 17,
+      "total": 16,
       "byOwnerPair": {
         "agency -> notes": 1,
-        "agency -> practice": 3,
+        "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
