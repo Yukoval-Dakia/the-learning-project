@@ -69,7 +69,7 @@ export async function recoverEligibleInterventionDiagnostics(
   };
   let cursor: { updatedAt: Date; id: string; version: number } | null = null;
   let materializeInterventionDiagnostics:
-    | typeof import('@/capabilities/practice/public')['materializeInterventionDiagnostics']
+    | typeof import('@/kernel/records/intervention-diagnostic-materialize')['materializeInterventionDiagnostics']
     | null = null;
 
   while (true) {
@@ -102,7 +102,9 @@ export async function recoverEligibleInterventionDiagnostics(
     if (rows.length === 0) break;
     report.scanned += rows.length;
     if (!materializeInterventionDiagnostics) {
-      ({ materializeInterventionDiagnostics } = await import('@/capabilities/practice/public'));
+      ({ materializeInterventionDiagnostics } = await import(
+        '@/kernel/records/intervention-diagnostic-materialize'
+      ));
     }
     const materialize = materializeInterventionDiagnostics;
 

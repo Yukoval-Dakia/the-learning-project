@@ -10,6 +10,7 @@ import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, knowledge, learning_session, practice_stream_item, question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { advisoryLockRegistry, deriveHashtextPrefixedLockKey } from '@/kernel/locks/registry';
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { type CollectedSignal, collectCandidateSignals } from './candidate-signals';
 import { DEFAULT_COMPOSE_LOCK_WAIT_MS, withinComposePaidWorkLock } from './compose-paid-work-lock';
@@ -78,8 +79,12 @@ function streamPartitionPredicate(date: string, sessionId?: string | null) {
     : and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id));
 }
 
+function streamComposeLockKey(date: string): string {
+  return deriveHashtextPrefixedLockKey(advisoryLockRegistry.streamCompose, { date });
+}
+
 function streamPartitionLockKey(date: string, sessionId?: string | null): string {
-  return sessionId ? `stream:session:${sessionId}` : `stream:compose:${date}`;
+  return sessionId ? `stream:session:${sessionId}` : streamComposeLockKey(date);
 }
 
 async function lockDailyStreamPartition(db: DbLike, date: string): Promise<void> {
@@ -621,7 +626,7 @@ async function trimStoredPendingItemsToBudget(
   questionMinutes: number,
 ): Promise<StreamItemRow[]> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${streamComposeLockKey(date)}))`);
     const current = await tx
       .select()
       .from(practice_stream_item)

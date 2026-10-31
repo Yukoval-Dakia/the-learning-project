@@ -134,10 +134,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
-      "count": 2
-    },
-    {
       "path": "src/capabilities/practice/server/judge-operational.ts",
       "count": 1
     },

@@ -3,18 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
-  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
   authorInterventionPackage,
   handleReviewDue,
 } from '@/capabilities/practice/public';
-
 import {
   dispatchNativeAttempt,
   executeNativeAttempt,
 } from '@/capabilities/practice/server/assessment/durable-attempt';
-
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import {
@@ -23,10 +20,8 @@ import {
 } from '@/capabilities/practice/server/judge-operational';
 import { readJudgeQuestionActivity } from '@/capabilities/practice/server/judge-run-observation';
 import { freezeQuestionForJudge } from '@/capabilities/practice/server/judge-run-payload';
-
 import { resetTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
-
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
@@ -59,6 +54,7 @@ import { eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS } from '@/kernel/records/intervention-diagnostic-materialize';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import {
   contractIntegrityDigest,

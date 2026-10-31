@@ -57,7 +57,8 @@
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
     "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept handoff follows in same PR). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
     "YUK-1571-undo-ai-change": "The undo route returns HTTP 200 even when the note was not restored. skipped:version_conflict means the note is unchanged; skipped:already_undone is a real no-op. That judgment now lives in src/ui/lib/undo-ai-change.ts. The note reader, the workbench client, and the Start workbench client call it directly. The shell re-export from notes/ui-public is deleted. shell -> notes 1 -> 0. Composed with main cd9dad17 (dreaming note refresh already cut agency -> notes to 1, cross 16): cross-capability value 16 -> 15. Nontrivial SCC stays empty. Notes keeps the undo route.",
-    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14."
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 1 -> 0 after main 45e197a7 (dreaming refresh + shell undo-ai-change cuts). cross-capability value 15 -> 14.",
+    "YUK-1571-intervention-store-materialize": "Complete intervention diagnostic materialize/retire protocol moved from practice to src/kernel/records/intervention-diagnostic-materialize.ts with shared FSRS question enrollment in material-fsrs-state-write.ts; advisory locks in kernel/locks/intervention-diagnostic-delivery.ts. agency store and reconcile import the kernel owner directly; practice/public and server/fsrs/state pass-through re-exports removed. agency -> practice 2 -> 0 after #2255 author port (prepare_intervention imports kernel intervention-package-author); diagnostic materialize/retire no longer cross practice. practice -> fsrs 2 -> 1; cross-capability value 17 -> 15, capability->server 159 -> 158."
   },
   "changes": [
     {
@@ -7101,6 +7102,22 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> fsrs",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11199,6 +11216,46 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/store.ts",
+      "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
+      "kind": "value",
+      "symbols": ["materializeInterventionDiagnostics", "retireInterventionDiagnosticQuestion"],
+      "issue": "YUK-1571",
+      "owns": "Complete intervention diagnostic materialization and one-shot retire: deterministic question rows, publication/admission gates, FSRS enrollment, live-stream append, claim reopen, and lineage proof before binding settlement cards",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/reconcile.ts",
+      "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Complete intervention diagnostic materialization and one-shot retire: deterministic question rows, publication/admission gates, FSRS enrollment, live-stream append, claim reopen, and lineage proof before binding settlement cards",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-scheduling-enrollment.ts",
+      "module": "src/kernel/records/material-fsrs-state-write.ts",
+      "kind": "value",
+      "symbols": ["UpsertFsrsStateInput", "enrollFsrsStateIfAbsent", "initialSchedulingState"],
+      "issue": "YUK-1571",
+      "owns": "Shared question/knowledge FSRS enrollment writes: engine-selected initial scheduling state and insert-if-absent projection rows under the learning-state lock",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/stream-store.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": ["advisoryLockRegistry", "deriveHashtextPrefixedLockKey"],
+      "issue": "YUK-1571",
+      "owns": "Hashtext stream-compose date mutex key derived from advisoryLockRegistry.streamCompose so compose, trim, and intervention delivery share one registry-owned key string",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -11768,6 +11825,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store.ts",
+      "date": "2026-10-31",
+      "baseBlob": "a34ae08e0ced1a6bb74a88b9995f229938f0112c",
+      "from": 1195,
+      "to": 1200,
+      "issue": "YUK-1571",
+      "responsibilityReason": "Registry import plus streamComposeLockKey helper so daily compose hashtext locks derive from advisoryLockRegistry.streamCompose; stream IO and compose behavior unchanged."
     }
   ],
   "compatShims": [
@@ -12352,7 +12418,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 159,
+      "total": 158,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12381,7 +12447,7 @@
         "practice -> assessment": 1,
         "practice -> boss": 12,
         "practice -> coldstart": 1,
-        "practice -> fsrs": 2,
+        "practice -> fsrs": 1,
         "practice -> mastery": 2,
         "practice -> memory": 1,
         "practice -> proposals": 4,
@@ -12396,10 +12462,9 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 14,
+      "total": 12,
       "byOwnerPair": {
         "agency -> notes": 0,
-        "agency -> practice": 2,
         "copilot -> notes": 1,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
