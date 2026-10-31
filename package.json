@@ -23,7 +23,7 @@
     "lint:ratchet": "node scripts/local-heavy.mjs 'node scripts/ci/lint-ratchet.mjs'",
     "lint:ratchet:update": "node scripts/local-heavy.mjs 'node scripts/ci/lint-ratchet.mjs --update'",
     "format": "biome format --write .",
-    "test": "node scripts/local-heavy.mjs 'pnpm audit:api-contracts && pnpm audit:api-client && pnpm audit:capability-boundaries && pnpm audit:architecture-deepening && pnpm audit:provider-lanes && pnpm audit:profile && pnpm audit:learner-copy && pnpm audit:no-learning-styles && pnpm audit:structured-judge && pnpm audit:tool-params && pnpm audit:task-census && pnpm audit:draft-status && pnpm audit:hub-sync-writers && pnpm audit:model-source && pnpm audit:advisory-locks && pnpm test:unit && pnpm test:db && pnpm test:migration'",
+    "test": "node scripts/local-heavy.mjs 'pnpm audit:api-contracts && pnpm audit:api-client && pnpm audit:capability-boundaries && pnpm audit:architecture-deepening && pnpm audit:provider-lanes && pnpm audit:profile && pnpm audit:learner-copy && pnpm audit:no-learning-styles && pnpm audit:structured-judge && pnpm audit:tool-params && pnpm audit:task-census && pnpm audit:draft-status && pnpm audit:hub-sync-writers && pnpm audit:model-source && pnpm audit:advisory-locks && pnpm audit:relations && pnpm test:unit && pnpm test:db && pnpm test:migration'",
     "test:unit": "node scripts/local-heavy.mjs 'vitest run --config vitest.unit.config.ts'",
     "test:unit:watch": "node scripts/local-heavy.mjs 'vitest --config vitest.unit.config.ts'",
     "test:watch": "node scripts/local-heavy.mjs 'vitest --config vitest.unit.config.ts'",
