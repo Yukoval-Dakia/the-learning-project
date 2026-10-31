@@ -11550,6 +11550,15 @@
       "to": 1277,
       "issue": "YUK-1572",
       "responsibilityReason": "The save path now imports invalidated-scope and CAS relevant-changes from draft-edit-impact instead of draft-ops. Splitting that import adds two lines. Save, validate, probe, CAS, and the op batch are unchanged. This records measured growth, not a new responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-31",
+      "baseBlob": "fc9c1a5564671f64e9e8d617bbca62d025140c55",
+      "from": 1375,
+      "to": 1388,
+      "issue": "YUK-1413",
+      "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
     }
   ],
   "compatShims": [
