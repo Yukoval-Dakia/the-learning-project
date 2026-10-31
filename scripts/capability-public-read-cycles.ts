@@ -96,20 +96,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'agency',
     consumer: 'practice',
-    files: [
-      'src/capabilities/practice/jobs/quiz_verify.ts',
-      'src/capabilities/practice/server/intervention-author.ts',
-    ],
-    symbols: [
-      'InterventionAuthoringContextT',
-      'guardInterventionPreparationStage',
-      'recordQuestionPoolGap',
-    ],
+    files: ['src/capabilities/practice/server/intervention-author.ts'],
+    symbols: ['InterventionAuthoringContextT', 'guardInterventionPreparationStage'],
     dto: 'intervention authoring context reads',
     justification:
-      'intervention authoring reads the agency-owned preparation context; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy. The active-goal effective-scope read moved to @/kernel/read-models/active-goal-scope (YUK-1571).',
+      'intervention authoring reads the agency-owned preparation context. The quiz_verify pool-gap hint is no longer a cross-capability call: Agency subscribes to the committed experimental:quiz_verify event and applies recordQuestionPoolGap itself. The active-goal effective-scope read moved to @/kernel/read-models/active-goal-scope (YUK-1571).',
     reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
+    commandFiles: [],
   },
   // YUK-1571 — the practice -> ingestion edge is retired: the content-addressed
   // source_asset write protocol moved to src/kernel/records/asset-store.ts;
