@@ -10677,6 +10677,26 @@
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-page.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. The knowledge node page serializes the judgment contract's freshness onto the existing decay field and does not recompute it.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. Question detail copies that reading onto each scheduling row and does not invent an interval or a second decay path.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
