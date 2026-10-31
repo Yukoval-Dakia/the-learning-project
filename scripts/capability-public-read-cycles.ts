@@ -1,9 +1,11 @@
 // YUK-885 (F3.11) — the capability public-read cycle catalog.
 //
-// DATA FOR THE AUDIT, NOT RUNTIME LOOKUP. Every cross-capability value edge
-// inside the current SCC {agency, ingestion, knowledge, notes, practice} is
-// catalogued here with its owner, consumer, exact public symbols, the DTO it
-// carries, a bounded justification, and the review issue that owns it.
+// DATA FOR THE AUDIT, NOT RUNTIME LOOKUP. Intra-SCC cross-capability value
+// edges are catalogued here with owner, consumer, exact public symbols, the
+// DTO, a bounded justification, and the review issue. The last practice ->
+// agency query left that cycle (preparation stage read now lives in kernel),
+// so no nontrivial SCC remains. Remaining rows are one-way edges the scanner
+// still checks.
 // scripts/audit-architecture-deepening.ts enforces:
 //   - every intra-SCC edge direction (and every consumer file) appears here;
 //   - files NOT listed in `commandFiles` contain no write signatures and
@@ -93,17 +95,11 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.
 
-  {
-    owner: 'agency',
-    consumer: 'practice',
-    files: ['src/capabilities/practice/server/intervention-author.ts'],
-    symbols: ['InterventionAuthoringContextT', 'guardInterventionPreparationStage'],
-    dto: 'intervention authoring context reads',
-    justification:
-      'intervention authoring reads the agency-owned preparation context. The quiz_verify pool-gap hint is no longer a cross-capability call: Agency subscribes to the committed experimental:quiz_verify event and applies recordQuestionPoolGap itself. The active-goal effective-scope read moved to @/kernel/read-models/active-goal-scope (YUK-1571).',
-    reviewIssue: 'YUK-885',
-    commandFiles: [],
-  },
+  // YUK-1571 — the practice -> agency query edge is retired: the preparation
+  // stage read lives in src/kernel/read-models/intervention-preparation.ts.
+  // Practice imports that kernel read. Agency keeps intervention writes.
+  // The quiz_verify pool-gap hint is an agency subscription on the committed
+  // experimental:quiz_verify event, not a practice -> agency call.
   // YUK-1571 — the practice -> ingestion edge is retired: the content-addressed
   // source_asset write protocol moved to src/kernel/records/asset-store.ts;
   // jyeoo-candidates.ts now consumes the kernel module directly and ingestion
