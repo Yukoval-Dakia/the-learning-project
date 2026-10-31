@@ -26,7 +26,6 @@ import {
   PROJECTION_FK_CLUSTERS,
   type ProjectionKind,
 } from '@/server/projections/entity-registry';
-import { type ProjectionAllowlist, loadAllowlist } from './audit-projection';
 import {
   backfillArtifactGenesis,
   backfillGoalGenesis,
@@ -37,6 +36,7 @@ import {
   backfillMistakeVariantGenesis,
   backfillQuestionBlockGenesis,
 } from './backfill-genesis-events';
+import { type ProjectionAllowlist, loadAllowlist } from './ops-projection';
 import { type RebuildCounts, rebuildProjectionForKinds } from './rebuild-projection';
 
 type KindBackfillCounts = { seeded: number; skipped: number };
@@ -103,7 +103,7 @@ async function liveIdsByKind(
  *
  * @param db        clone handle (must support .transaction — the rebuild needs one transaction).
  * @param kinds     projection kinds to gate (one PROJECTION_FK_CLUSTERS entry).
- * @param allowlist known-acceptable drift, same contract as audit:projection.
+ * @param allowlist known-acceptable drift, same contract as ops:projection.
  * @param now       genesis timestamp; injected for deterministic tests.
  */
 export async function runB3Gate(

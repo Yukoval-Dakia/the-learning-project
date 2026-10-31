@@ -1,5 +1,7 @@
 # 2026-09-14 — Embedding 余弦距离阈值标定回放（YUK-677）
 
+当前入口是 `pnpm ops:threshold-calibration`（`scripts/ops-threshold-calibration.ts`）。下文命令名是当天落地时的名字。
+
 三个 embedding 余弦距离阈值全部自标 UNTUNED，且标定 follow-up 一直寄挂在 YUK-396（poolFetch
 算子票，从未含标定 scope——孤儿引用）。本票把引用重锚到 YUK-677，并落地 report-only 回放脚本
 `pnpm audit:threshold-calibration`（`scripts/audit-threshold-calibration.ts`）：只 SELECT、内存
@@ -96,10 +98,10 @@
 
 ```bash
 # 本机 dev compose（本报告口径）
-DATABASE_URL='postgres://loom:loom@127.0.0.1:5433/loom' pnpm audit:threshold-calibration
+DATABASE_URL='postgres://loom:loom@127.0.0.1:5433/loom' pnpm ops:threshold-calibration
 # 指向只读 role/副本（推荐对重语料库）
-AUDIT_READ_DATABASE_URL='postgres://<read-only-dsn>' pnpm audit:threshold-calibration
-pnpm audit:threshold-calibration -- --json   # 机器可读
+AUDIT_READ_DATABASE_URL='postgres://<read-only-dsn>' pnpm ops:threshold-calibration
+pnpm ops:threshold-calibration -- --json   # 机器可读
 ```
 
 ## 遗留
