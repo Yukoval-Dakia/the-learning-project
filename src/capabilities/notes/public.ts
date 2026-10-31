@@ -32,11 +32,7 @@ export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
 export { loadNoteList } from './server/note-list-read';
 export { loadNotePage } from './server/note-page';
 export { undoNoteRefineApplyEvent } from './server/note-refine-apply';
-export {
-  enqueueDreamingNoteRefine,
-  enqueueMasteryNoteRefine,
-  enqueueNoteRefineTrigger,
-} from './server/note-refine-triggers';
+export { enqueueMasteryNoteRefine, enqueueNoteRefineTrigger } from './server/note-refine-triggers';
 export {
   type RunNoteVerifyResult,
   type RunTaskFn,

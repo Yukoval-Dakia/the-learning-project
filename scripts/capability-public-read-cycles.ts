@@ -26,19 +26,10 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // YUK-1571 — the agency -> knowledge command edge is retired. Learning-intent
   // accept calls createKnowledgeNodeFromEvents in
   // src/kernel/records/knowledge-node-birth.ts. The knowledge public adapter is gone.
-  // YUK-1571 — proposal-accept note birth/dispatch moved to kernel; dreaming
-  // nightly still enqueues note refines through notes/public.
-  {
-    owner: 'notes',
-    consumer: 'agency',
-    files: ['src/capabilities/agency/jobs/dreaming_nightly.ts'],
-    symbols: ['enqueueDreamingNoteRefine'],
-    dto: 'note-refine command',
-    justification:
-      'Dreaming nightly enqueues living-note refines after coach scan. Learning-intent accept note birth/dispatch now uses kernel handoff (YUK-1571).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/agency/jobs/dreaming_nightly.ts'],
-  },
+  // YUK-1571 — proposal-accept note birth/dispatch moved to kernel handoff protocol;
+  // applier imports learning-intent-note-birth and note-handoff-protocol directly.
+  // YUK-1571 — dreaming note refresh is an experimental signal; notes subscribes.
+  // No agency -> notes command edge remains in the public-read catalog.
   {
     owner: 'practice',
     consumer: 'agency',
