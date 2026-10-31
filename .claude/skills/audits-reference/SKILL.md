@@ -28,7 +28,7 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 - `audit:fold-writes`：fold-owned projection 表写者 registry ↔ 源码反查；默认 report-only，`--strict` 对未授权写点/陈旧 registry fail。
 - `audit:flags`：`*_ENABLED` 加 `SCOPED_CONTROL_NAMES` 有界控制项 ↔ `audit-flags-ledger.json` 对账（布尔 env/const 与 enum/CSV/JSON 分别声明真实值域和 reader marker）；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。
 - `audit:golden --kind=<kind>`：用当前 reducer/gather 重放保留的 imperative golden；适用于已翻 ON entity 的 reducer/gather 变更，drift 直接 fail。
-- `audit:mastery-provenance`：mastery provenance 消费纪律反查；read-only，支持 `--strict`。
+- `audit:mastery-provenance`（YUK-559 / S2）：mastery provenance 消费纪律反查；默认 report-only（exit 0），`--strict` 才非零 exit（policy audit lane 与 `pnpm test` 前缀跑默认命令，unguarded 与 STALE 不失败；`--strict` 仍不进 CI）。升 hard-gate 绑「任一借用 flag 翻转」前置（spec §7 open question 4）。
 
 连库报告不在 `audit:` 里，也不是 CI gate、不进 `pnpm test`：
 
