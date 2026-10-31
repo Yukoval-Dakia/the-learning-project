@@ -97,15 +97,15 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
 }
 
-// Binds practice's diagnostic-question materializer into the kernel port.
-// Archive recovery calls that port; it does not import this module.
+// Installs the leaves diagnostic materialization does not own: FSRS enrollment
+// and judge-run activity. Archive recovery calls the kernel operation.
 export async function installInterventionDiagnosticMaterializer(): Promise<void> {
-  const [{ bindMaterializeInterventionDiagnostics }, { materializeInterventionDiagnostics }] =
+  const [{ installDiagnosticMaterializeEffects }, { diagnosticMaterializeEffects }] =
     await Promise.all([
       import('@/kernel/records/intervention-diagnostic-materialize'),
       import('./server/intervention-diagnostics'),
     ]);
-  bindMaterializeInterventionDiagnostics(materializeInterventionDiagnostics);
+  installDiagnosticMaterializeEffects(diagnosticMaterializeEffects());
 }
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;

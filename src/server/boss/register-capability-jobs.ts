@@ -122,8 +122,8 @@ async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): 
   await installDailyReviewPlanFacts();
 }
 
-// Archive recovery calls the kernel materialize port. Practice owns the
-// diagnostic-question writer and binds it here, before that handler can run.
+// Archive recovery calls the kernel materializer. Practice owns FSRS enrollment
+// and judge-run activity and installs those leaves here, before that handler runs.
 async function installInterventionRecoveryMaterializer(
   capabilities: CapabilityManifest[],
 ): Promise<void> {

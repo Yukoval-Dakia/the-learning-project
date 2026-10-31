@@ -57,7 +57,7 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     ],
     dto: 'intervention authoring + diagnostic materialization commands',
     justification:
-      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring. Archive recovery calls the kernel materialize port, which practice binds; store still materializes and retires through this public module. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571); practice still supplies those three facts.',
+      'agency owns the intervention lifecycle; practice owns authoring, FSRS enrollment, and judge-run activity. Kernel owns diagnostic question materialization. Archive recovery calls that operation. store still materializes and retires through this public module. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571); practice still supplies those three facts.',
     reviewIssue: 'YUK-885',
     commandFiles: [
       'src/capabilities/agency/jobs/prepare_intervention.ts',
