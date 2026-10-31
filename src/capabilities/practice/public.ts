@@ -57,6 +57,7 @@ export { isLiveQuestionReference } from './server/live-question-reference';
 // The seed-root anchor regex is owned by placement-scope but consumed from server/*;
 // re-export it here so consumers stay on the public seam.
 export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
+
 export { claimHttpSourceDuplicate } from './server/question-supply/ingest-dedup';
 export {
   DEDUP_OVERLAP_THRESHOLD,
@@ -67,6 +68,7 @@ export {
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
+
 export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
 export {
   SolveError,
@@ -93,6 +95,15 @@ export async function installDailyReviewPlanFacts(): Promise<void> {
     import('./server/daily-review-plan'),
   ]);
   installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
+}
+
+export async function installInterventionAuthorStages(): Promise<void> {
+  const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-package-author'),
+      import('./server/intervention-author'),
+    ]);
+  install(interventionAuthorStages);
 }
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
