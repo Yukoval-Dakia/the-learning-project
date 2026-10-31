@@ -11135,6 +11135,16 @@
       "issue": "YUK-1571",
       "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/review-answer-consumer.ts",
+      "module": "src/kernel/events/correction-lock.ts",
+      "kind": "value",
+      "symbols": ["lockEventCorrectionSource"],
+      "issue": "YUK-1577",
+      "owns": "Transaction lock for one correction source event, hashtextextended of intervention:source:<eventId> at salt 0. The key text comes from advisoryLockRegistry.interventionSource. review-answer-consumer takes it after the copilot execution settlement lock; writeEvents uses the same function.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
