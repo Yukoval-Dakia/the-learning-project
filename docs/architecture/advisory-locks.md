@@ -54,7 +54,7 @@ pg_advisory_unlock|pg_advisory_lock`（`-g '*.ts'`，排除 `*.test.ts`/`*.spec.
 | 类别 | 站点数 |
 |---|---|
 | `pg_advisory_xact_lock` 直接语句 | 120 |
-| `pg_try_advisory_xact_lock` | 1（provider-session-admission.ts:458） |
+| `pg_try_advisory_xact_lock` | 1（provider-session-admission.ts:126） |
 | `pg_try_advisory_lock`（session 级） | 5（helper×2、model_slice、migration-apply、rehearsal fence） |
 | `pg_advisory_unlock` | 4（helper×2、model_slice、migration-apply） |
 | 注释/文档引用（非语句） | 18 |

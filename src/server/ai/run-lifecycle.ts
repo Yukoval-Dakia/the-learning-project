@@ -38,12 +38,12 @@ import {
 } from './model-profiles';
 import { piCatalogCostUsd } from './pi-catalog-cost';
 import type { TokenCounts } from './pricing';
+import { acquireProviderSession } from './provider-session-admission';
 import {
   ProviderSessionAdmissionError,
   type ProviderSessionAdmissionPlan,
-  acquireProviderSession,
   resolveProviderSessionAdmissionPlan,
-} from './provider-session-admission';
+} from './provider-session-admission-policy';
 import {
   type ProviderTransportCollector,
   createProviderTransportCollector,

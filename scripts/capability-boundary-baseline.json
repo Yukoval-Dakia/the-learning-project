@@ -10902,6 +10902,16 @@
       "issue": "YUK-1572",
       "owns": "Question-group publication and lifecycle. The moved verify lifecycle update loads the locked snapshot, archives a fully tombstoned group, publishes a never-published group from its row, and republishes a frozen revision while changing only admission, suspension, verification, and availability. Drift, CAS, and digest rules stay in this owner.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/ingestion/server/agent/run.ts",
+      "module": "src/server/ai/provider-session-admission-policy.ts",
+      "kind": "value",
+      "symbols": ["ProviderSessionAdmissionError"],
+      "issue": "YUK-1572",
+      "owns": "Provider-session admission failure identity (reason, lane, task run). The ingestion agent classifies that error when a run stops. The class moved with lane-policy parsing; acquire and the tick loop stay in provider-session-admission.ts, so this replaces that file's edge and the ingestion -> ai count does not grow.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [

@@ -302,7 +302,7 @@
     "kind": "config",
     "value_type": "enum",
     "reader_marker": "getConfig(MODE_KEY, env)",
-    "file": "src/server/ai/provider-session-admission.ts",
+    "file": "src/server/ai/provider-session-admission-policy.ts",
     "notes": "Default off; trimmed mode, invalid throws. Off skips policies; an unlisted provider lane resolves off.",
     "values": ["off", "observe", "enforce"]
   },
@@ -310,7 +310,7 @@
     "kind": "config",
     "value_type": "json",
     "reader_marker": "getConfig(POLICIES_KEY, env)",
-    "file": "src/server/ai/provider-session-admission.ts",
+    "file": "src/server/ai/provider-session-admission-policy.ts",
     "notes": "Required non-empty provider-keyed object in observe/enforce; env JSON or DB object. Consumer validates known providers, strict fields and integer bounds for concurrency/start rate/queue/wait. Off ignores policies; missing lane bypasses."
   },
   "PROJECTION_IS_WRITER_ITEM_CALIBRATION": {
