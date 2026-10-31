@@ -171,8 +171,8 @@ export async function collectGroundingGateCandidates(
   const knowledgeIds = [
     ...new Set(failures.flatMap((failure) => failure.referenced_knowledge_ids)),
   ];
-  // Probe-topic mastery comes from the judgment contract's ability reading (the
-  // same projection underneath), so selection reads the one public judgment.
+  // Probe-topic mastery is evidenced ability only. Insufficient evidence is
+  // absent, so selection probes it as unknown instead of a cold-start prior.
   const [judgmentBatch, knownConjectureKeys] = await Promise.all([
     readLearnerJudgments(db, { knowledge_ids: knowledgeIds, context: 'any', as_of: new Date() }),
     loadKnownConjectureKeys(db),

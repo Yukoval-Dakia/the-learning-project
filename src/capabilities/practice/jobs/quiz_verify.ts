@@ -17,6 +17,8 @@ import { randomUUID } from 'node:crypto';
 //      folds it into the persisted copy_safety verdict.
 //   4. in a single transaction writes metadata.quiz_gen.verification (two-axis)
 //      + writeEvent(action='experimental:quiz_verify', subject_kind='question').
+//      A committed non-promotion is the pool-gap signal. Agency's subscription
+//      applies the coach hint after commit, so a note failure cannot retry this job.
 //
 // Gate = Option B:
 //   pass (LLM overall='pass' AND copy_safety resolved-and-not-too_close)
@@ -42,7 +44,6 @@ import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import { type TaskTextResult, aiAgentRef } from '@/ai/task-result';
-import { recordQuestionPoolGap } from '@/capabilities/agency/public';
 import { QUESTION_ADMISSION_POLICY_IDS } from '@/core/question-admission-policy';
 import {
   LEGACY_DRAFT_STATUS,
@@ -565,20 +566,6 @@ async function finalizeDeterministicPrecheckFailure(input: {
       created_at: now,
     });
   });
-
-  try {
-    await recordQuestionPoolGap(db, {
-      questionId,
-      knowledgeIds: row.knowledge_ids,
-      verificationStatus: 'needs_review',
-      confidence: 1,
-      taskRunId: null,
-      verificationEventId: verifyEventId,
-      observedAt: now,
-    });
-  } catch (noteErr) {
-    console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
-  }
 
   return {
     status: 'needs_review',
@@ -1564,24 +1551,6 @@ export async function runQuizVerify(params: RunQuizVerifyParams): Promise<RunQui
         created_at: now,
       });
     });
-
-    // Notify Agency only after verification commits. It owns hint interpretation;
-    // its failure must not undo or retry the already-committed verification.
-    if (!promote) {
-      try {
-        await recordQuestionPoolGap(db, {
-          questionId,
-          knowledgeIds: row.knowledge_ids,
-          verificationStatus,
-          confidence: parsed.confidence,
-          taskRunId: result.task_run_id ?? null,
-          verificationEventId: verifyEventId,
-          observedAt: now,
-        });
-      } catch (noteErr) {
-        console.error('[quiz_verify] leave_agent_note failed (non-fatal) for', questionId, noteErr);
-      }
-    }
 
     return {
       status: verificationStatus,

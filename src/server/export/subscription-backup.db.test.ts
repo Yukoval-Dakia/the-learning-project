@@ -46,6 +46,7 @@ const liveSubscriberIdentities = [
   ['agency.intervention-diagnostic-review-settlement', 4],
   ['agency.probe-evidence-intervention-prepare', 1],
   ['agency.probe-publication-serve', 1],
+  ['agency.question-pool-gap', 1],
   ['notes.mastery-progress-note-refine', 1],
   ['practice.failure-learning-attempt', 3],
   ['practice.learner-return-wake', 1],
@@ -242,9 +243,9 @@ describe('YUK-766 subscription progress backup', () => {
     await testDb().execute(sql`DROP TABLE IF EXISTS test_subscription_snapshot_memory`);
   });
 
-  // @invariant data: archive keeps seven subscribers, seven states, and one shared publish event
+  // @invariant data: archive keeps eight subscribers, seven states, and one shared publish event
   // @fails-if omit admission enqueue or the return wake, or split the publish source
-  it('archives all seven live subscriber identities, seven delivery states and effect provenance', async () => {
+  it('archives all eight live subscriber identities, seven delivery states and effect provenance', async () => {
     const { registry } = await seedProgress();
     const data = decode(await archive());
     expect(data.event_subscription_checkpoint).toHaveLength(subscriberCount);

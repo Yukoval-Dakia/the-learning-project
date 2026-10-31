@@ -47,7 +47,8 @@
     "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth.",
     "YUK-1553": "knowledge -> ai 13 -> 12 (-1, total 389 -> 388): review.ts drops the private write_proposal executor (writeToolCallLog edge) — the shared DomainTool bridge now owns tool_call_log. Same-owner ai seams retained: streamTask + piDomainMount.",
     "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
-    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges)."
+    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges).",
+    "YUK-1571-question-pool-gap": "Signal, not a shared read: quiz_verify no longer calls agency recordQuestionPoolGap. Practice declares experimental:quiz_verify; agency.question-pool-gap subscribes and applies the existing coach-hint command after commit. practice -> agency 2 -> 1, cross-capability value 24 -> 23. SCC stays {agency, practice}. Independent of the unmerged daily-review-plan slice. Historical quiz_verify rows are bootstrap-skipped; only verifications committed after the subscriber activates get a hint."
   },
   "changes": [
     {
@@ -7009,6 +7010,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> agency",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -10677,6 +10686,26 @@
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/node-page.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. The knowledge node page serializes the judgment contract's freshness onto the existing decay field and does not recompute it.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-detail.ts",
+      "module": "src/kernel/read-models/review-timing.ts",
+      "kind": "value",
+      "symbols": ["reviewTimingJson"],
+      "issue": "YUK-1586",
+      "owns": "JSON shape of the review-timing reading: uncalibrated recall point, unestimated interval, retrieval and duration basis, decay bucket and mastered shelf. Question detail copies that reading onto each scheduling row and does not invent an interval or a second decay path.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -11174,6 +11203,15 @@
       "to": 1969,
       "issue": "YUK-1559",
       "responsibilityReason": "YUK-1559/YUK-1661 report-only live integration at the existing shared PreparedExecution allTools.execute boundary: import and instantiate one run monitor per execution, observe prepared arguments immediately before the unchanged delegate, and attach its safe comparison/count/wouldTrigger/group metadata to the existing executed tool trace. Root and nested loops reuse the same wrapper; no additional execution, enforcement, budget, paid, recovery or business policy is added. Monitor mechanism remains in run-monitor.ts; only the actual execution boundary wiring belongs in this adapter."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-10-31",
+      "baseBlob": "fded48db61ee5acfd0b03e3a4952325b6c0944a8",
+      "from": 1343,
+      "to": 1346,
+      "issue": "YUK-1571",
+      "responsibilityReason": "Declares the existing experimental:quiz_verify action so Agency can subscribe. The verify job body is unchanged; the three lines are the action plus the note that a committed non-promotion is the pool-gap signal. No new route, job, or writer."
     },
     {
       "path": "src/capabilities/practice/server/tools/bank-search.ts",
@@ -11811,7 +11849,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 24,
+      "total": 23,
       "byOwnerPair": {
         "agency -> knowledge": 1,
         "agency -> notes": 2,
@@ -11821,7 +11859,7 @@
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "practice -> agency": 2,
+        "practice -> agency": 1,
         "practice -> knowledge": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
