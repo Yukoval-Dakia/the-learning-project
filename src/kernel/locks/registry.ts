@@ -36,6 +36,15 @@ export type HashtextExtendedLockNamespace = {
   readonly suffixFields: readonly string[];
 };
 
+/** hashtextextended text with no suffix. Distinct from a prefix so a fixed key cannot gain a trailing field. */
+export type HashtextExtendedExactLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'hashtextextended';
+  readonly salt: 0;
+  /** Exact text passed to hashtextextended(). */
+  readonly key: string;
+};
+
 export type HashtextExtendedIdentityLockNamespace = {
   readonly family: string;
   readonly encoding: 'hashtextextended';
@@ -49,6 +58,7 @@ export type AdvisoryLockNamespace =
   | HashtextPrefixedLockNamespace
   | IntLiteralLockNamespace
   | HashtextExtendedLockNamespace
+  | HashtextExtendedExactLockNamespace
   | HashtextExtendedIdentityLockNamespace;
 
 export const advisoryLockRegistry = {
@@ -77,6 +87,26 @@ export const advisoryLockRegistry = {
     salt: 0,
     keyPrefix: 'provider-attempt-operation-kind:',
     suffixFields: ['operationId', 'provider', 'lane', 'operationKind'],
+  },
+  interventionInstance: {
+    family: 'intervention-instance',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'intervention:',
+    suffixFields: ['interventionId', 'version'],
+  },
+  interventionCorrectionsAll: {
+    family: 'intervention-corrections-all',
+    encoding: 'hashtextextended',
+    salt: 0,
+    key: 'intervention:corrections:all',
+  },
+  interventionSource: {
+    family: 'intervention-source',
+    encoding: 'hashtextextended',
+    salt: 0,
+    keyPrefix: 'intervention:source:',
+    suffixFields: ['eventId'],
   },
   probeServeCap: {
     family: 'probe-serve-cap',
@@ -129,6 +159,14 @@ export function deriveHashtextPrefixedLockKey<const Fields extends readonly stri
     segments.push(parts[field as Fields[number]]);
   }
   return `${namespace.keyPrefix}${segments.join(':')}`;
+}
+
+export function deriveHashtextExtendedExactLockKey<T extends string>(namespace: {
+  readonly encoding: 'hashtextextended';
+  readonly salt: 0;
+  readonly key: T;
+}): T {
+  return namespace.key;
 }
 
 export function deriveHashtextExtendedLockKey<const Fields extends readonly string[]>(
