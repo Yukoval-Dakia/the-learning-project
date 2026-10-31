@@ -11060,6 +11060,16 @@
       "issue": "YUK-1571",
       "owns": "Shared question/knowledge FSRS enrollment writes: engine-selected initial scheduling state and insert-if-absent projection rows under the learning-state lock",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/stream-store.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": ["advisoryLockRegistry", "deriveHashtextPrefixedLockKey"],
+      "issue": "YUK-1571",
+      "owns": "Hashtext stream-compose date mutex key derived from advisoryLockRegistry.streamCompose so compose, trim, and intervention delivery share one registry-owned key string",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -11629,6 +11639,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/server/stream-store.ts",
+      "date": "2026-10-31",
+      "baseBlob": "a34ae08e0ced1a6bb74a88b9995f229938f0112c",
+      "from": 1195,
+      "to": 1200,
+      "issue": "YUK-1571",
+      "responsibilityReason": "Registry import plus streamComposeLockKey helper so daily compose hashtext locks derive from advisoryLockRegistry.streamCompose; stream IO and compose behavior unchanged."
     }
   ],
   "compatShims": [
