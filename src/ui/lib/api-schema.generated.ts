@@ -35914,20 +35914,30 @@ export interface operations {
                         };
                         hint_request_id: string;
                         /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reason: "timeout" | "provider_error" | "quota" | "bad_gateway" | "parse_failed" | "media_unavailable" | "unknown";
                         reference_available: boolean;
                         reference_revealed: boolean;
                         /** @enum {string} */
                         status: "fallback";
+                        stop_retry?: {
+                            guidance: string;
+                            /** @enum {string} */
+                            retry: "stop";
+                        };
                         text_md: string;
                     } | {
                         elapsed_ms: number;
                         hint_request_id: string;
                         options: ("retry" | "skip")[];
                         /** @enum {string} */
-                        reason: "timeout" | "provider_error" | "parse_failed" | "media_unavailable" | "unknown";
+                        reason: "timeout" | "provider_error" | "quota" | "bad_gateway" | "parse_failed" | "media_unavailable" | "unknown";
                         /** @enum {string} */
                         status: "unavailable";
+                        stop_retry?: {
+                            guidance: string;
+                            /** @enum {string} */
+                            retry: "stop";
+                        };
                         text_md: string;
                     };
                 };

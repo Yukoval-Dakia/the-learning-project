@@ -1,6 +1,11 @@
 // Frozen solve sessions: issue-bound hints and atomic native submission.
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  type HelpProviderFault,
+  helpExitCopy,
+  readHelpProviderFault,
+} from '@/ai/help-provider-fault';
 import { sanitizeJsonStringLiterals } from '@/core/json-sanitize';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ActivateEvaluationIntentT, PracticeIssuanceDtoT } from '@/core/schema/assessment';
@@ -283,7 +288,8 @@ export async function planSolveHint(params: PlanSolveHintParams): Promise<PlanSo
 // - 'deterministic_next_step' help is composed text (re-read the prompt, plus
 // an existing ready note on the question's knowledge nodes) labelled as not
 // produced by AI on demand.
-// - 'unavailable' when neither exists: the learner can retry or skip.
+// - 'unavailable' when neither exists. Quota, 502, and parse say stop and skip.
+//   Other generation failures can still retry or skip.
 
 /** Generation section budget: leaves ~2s of the 20s observation target for
  * fallback construction + response. */
@@ -301,9 +307,16 @@ const KC_NOTE_ARTIFACT_TYPES = ['note_atomic', 'note_long', 'note_hub'] as const
 export type SolveHintFallbackReason =
   | 'timeout'
   | 'provider_error'
+  | 'quota'
+  | 'bad_gateway'
   | 'parse_failed'
   | 'media_unavailable'
   | 'unknown';
+
+export interface SolveHintStopRetry {
+  retry: 'stop';
+  guidance: string;
+}
 
 export interface SolveHintFallbackHelp {
   kind: 'reference' | 'deterministic_next_step';
@@ -335,14 +348,16 @@ export type SolveHintOutcome =
       reference_revealed: boolean;
       /** Measured wall-clock for the whole request path — never faked. */
       elapsed_ms: number;
+      stop_retry?: SolveHintStopRetry;
     }
   | {
       status: 'unavailable';
       reason: SolveHintFallbackReason;
-      options: ['retry', 'skip'];
+      options: ReadonlyArray<'retry' | 'skip'>;
       /** Honest dead-end message — keeps the pre-union {text_md} client shape working. */
       text_md: string;
       elapsed_ms: number;
+      stop_retry?: SolveHintStopRetry;
     };
 
 /** Generation-class failures become fallbacks; session/state/coordinate errors
@@ -354,8 +369,37 @@ function isHintGenerationFailure(err: unknown): boolean {
   return true;
 }
 
+function hintFault(reason: SolveHintFallbackReason): HelpProviderFault | undefined {
+  if (reason === 'quota') return { kind: 'quota', httpStatus: 429 };
+  if (reason === 'bad_gateway') return { kind: 'bad_gateway', httpStatus: 502 };
+  if (reason === 'parse_failed') return { kind: 'parse' };
+  return undefined;
+}
+
+function presentHintFaultExit(outcome: SolveHintOutcome): SolveHintOutcome {
+  if (outcome.status === 'ok') return outcome;
+  const fault = hintFault(outcome.reason);
+  if (!fault) return outcome;
+  const copy = helpExitCopy(fault);
+  const stop_retry: SolveHintStopRetry = { retry: 'stop', guidance: copy.stopRetryGuidance };
+  const preface = `${copy.reason}\n\n停止重试\n${copy.stopRetryGuidance}\n\n`;
+  if (outcome.status === 'unavailable') {
+    return {
+      ...outcome,
+      options: ['skip'],
+      stop_retry,
+      text_md: `${preface}这题没有封存参考，也没有可引用的笔记。先跳过这一题。`,
+    };
+  }
+  return { ...outcome, stop_retry, text_md: `${preface}${outcome.text_md}` };
+}
+
 function classifyHintFailure(err: unknown, generationAborted: boolean): SolveHintFallbackReason {
   if (generationAborted) return 'timeout';
+  const fault = readHelpProviderFault(err);
+  if (fault?.kind === 'quota') return 'quota';
+  if (fault?.kind === 'bad_gateway') return 'bad_gateway';
+  if (fault?.kind === 'parse') return 'parse_failed';
   if (err instanceof SolveError) return 'parse_failed';
   if (err instanceof ApiError) return 'media_unavailable';
   // Runner errors are matched by their self-set names/subtypes rather than
@@ -594,13 +638,15 @@ export async function planSolveHintOutcome(params: PlanSolveHintParams): Promise
       error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
       elapsed_ms: elapsedMs,
     });
-    return buildSolveHintFallback({
-      db: params.db,
-      sessionId: params.sessionId,
-      hintIndex: params.hintIndex,
-      reason,
-      elapsedMs,
-    });
+    return presentHintFaultExit(
+      await buildSolveHintFallback({
+        db: params.db,
+        sessionId: params.sessionId,
+        hintIndex: params.hintIndex,
+        reason,
+        elapsedMs,
+      }),
+    );
   }
 }
 

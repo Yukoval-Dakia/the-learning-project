@@ -11,6 +11,12 @@
 
 import { eq } from 'drizzle-orm';
 
+import { AgentRunError } from '@/ai/agent-run-error';
+import {
+  type HelpProviderFault,
+  readHelpProviderFault,
+  renderHelpExitMarkdown,
+} from '@/ai/help-provider-fault';
 import type { RunTaskResult } from '@/ai/task-result';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { Db } from '@/db/client';
@@ -73,12 +79,47 @@ export async function runSolveSkill(
 
   // Reuse the tutor route's session-free seed (question face + reference only).
   const input = buildSolveHintInput(q, hintIndex);
-  const result = await run('TeachingTurnTask', input, {
-    db,
-    subjectProfile,
-    // Empty tool list → no memory, no tool budget, single structured turn.
-    allowedTools: [],
-  });
+  let result: Pick<RunTaskResult, 'task_run_id' | 'text'>;
+  try {
+    result = await run('TeachingTurnTask', input, {
+      db,
+      subjectProfile,
+      // Empty tool list → no memory, no tool budget, single structured turn.
+      allowedTools: [],
+    });
+  } catch (error) {
+    const fault = readHelpProviderFault(error);
+    const taskRunId = error instanceof AgentRunError ? error.taskRunId : undefined;
+    if (!fault || !taskRunId) throw error;
+    return { text_md: solveSkillExit(fault, q, hintIndex), task_run_id: taskRunId };
+  }
 
-  return { ...parseHintTurn(result.text), task_run_id: result.task_run_id };
+  try {
+    return { ...parseHintTurn(result.text), task_run_id: result.task_run_id };
+  } catch (error) {
+    if (error instanceof SolveError && error.code === 'llm_parse_failed') {
+      return {
+        text_md: solveSkillExit({ kind: 'parse' }, q, hintIndex),
+        task_run_id: result.task_run_id,
+      };
+    }
+    throw error;
+  }
+}
+
+/** Full reference only at the ladder's reveal stage. Earlier levels stay on the prompt. */
+function solveSkillExit(
+  fault: HelpProviderFault,
+  questionRow: { prompt_md: string | null; reference_md: string | null },
+  hintIndex: number,
+): string {
+  const lead = renderHelpExitMarkdown(fault);
+  const reference = questionRow.reference_md?.trim();
+  if (hintIndex >= 5 && reference) {
+    return `${lead}\n\n参考解（封存材料，不是这次生成的）：\n${reference}`;
+  }
+  const prompt = questionRow.prompt_md?.trim();
+  if (!prompt) return lead;
+  const excerpt = prompt.length > 180 ? `${prompt.slice(0, 179)}…` : prompt;
+  return `${lead}\n\n题面：${excerpt}`;
 }

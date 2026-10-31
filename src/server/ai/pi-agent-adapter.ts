@@ -28,6 +28,7 @@ import type {
   Model as PiModel,
   MutableModels as PiMutableModels,
 } from '@earendil-works/pi-ai';
+import { helpFaultForRootStatus, rootBoundProviderStatus } from '@/ai/help-provider-fault';
 import { type PiToolMount, piCustomTool } from '@/ai/pi-tool-mount';
 import type { TaskDefinition } from '@/ai/task-spec';
 import { tasks } from '@/capabilities/task-registry';
@@ -1036,7 +1037,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     });
     // Only this root invocation sees the observed fetch. Children keep the
     // original streamFn; neither their responses nor query.latest prove root failure.
-    const rootRejections = new WeakMap<PiAssistantMessage, { http_status: 400 }>();
+    const rootRejections = new WeakMap<PiAssistantMessage, 400 | 429 | 502>();
     const rootStreamFn: StreamFn = async (model, llmContext, streamOptions) => {
       const collector = options.transportEvidence;
       const before = collector?.snapshot();
@@ -1064,12 +1065,13 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         .result()
         .then((assistant) => {
           const after = collector?.snapshot();
+          const boundStatus = rootBoundProviderStatus(rootResponse?.status);
           if (
             !before ||
             !after ||
             fetchCount !== 1 ||
-            rootResponse?.status !== 400 ||
-            rootResponse.redirected ||
+            boundStatus === undefined ||
+            rootResponse?.redirected ||
             assistant.stopReason !== 'error' ||
             this.abort.signal.aborted ||
             before.requests_dropped !== 0 ||
@@ -1084,7 +1086,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             request?.lane === 'undici_agent' &&
             request.fetch_outcome === 'response' &&
             request.send_state === 'response_received' &&
-            request.http_status === rootResponse.status &&
+            request.http_status === boundStatus &&
             request.response_headers_at &&
             request.fetch_settled_at &&
             request.ended_at &&
@@ -1092,7 +1094,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             !request.timeout_layer &&
             !request.error
           ) {
-            rootRejections.set(assistant, { http_status: 400 });
+            rootRejections.set(assistant, boundStatus);
           }
         })
         .catch(() => {});
@@ -1167,6 +1169,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
     }
     yield* this.drainFrames();
     const finalAssistant = lastAssistantMessage(finalMessages);
+    const boundRootStatus =
+      finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
+        ? rootRejections.get(finalAssistant)
+        : undefined;
     const terminal = piTerminalResultFrame({
       messages: finalMessages,
       model: this.model,
@@ -1204,10 +1210,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
           : undefined,
       // YUK-1559 (C6) — last non-2xx this query's capture fetch saw, if any.
       providerError: this.providerErrorCapture?.latest(),
-      providerRequestRejection:
-        finalAssistant && !this.abort.signal.aborted && !cappedByMaxTurns
-          ? rootRejections.get(finalAssistant)
-          : undefined,
+      providerRequestRejection: boundRootStatus === 400 ? { http_status: 400 } : undefined,
+      helpProviderFault:
+        boundRootStatus === undefined ? undefined : helpFaultForRootStatus(boundRootStatus),
       // Same shared boundary on errors[0] — pi's errorMessage can carry the
       // full unsanitized provider body and must not bypass redaction/cap.
       sanitizeErrorMessage: this.providerErrorCapture?.sanitize,

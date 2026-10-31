@@ -7,11 +7,14 @@
 //     'api_error_result'.
 //   - `api_error_status === null` marks a connection-class drop (mid-stream
 //     socket loss); 429 / 5xx are transient by semantics.
-//   - `error_during_execution` is permanent: API failures never land there, so it
-//     carries engine-level execution errors.
+//   - `error_during_execution` is permanent. Classic API statuses stay on
+//     api_error_result; a bound pi 429/502 is the helpProviderFault exception
+//     and is not retried.
 //   - 'stream_no_terminal' is a process-level fast failure: the message stream
 //     ended without a terminal result (engine death / stream drop).
 //   - abort/timeout and anything unrecognized are permanent.
+
+import type { HelpProviderFault } from '@/ai/help-provider-fault';
 
 /** SDKResultError['subtype'] union. */
 type SdkResultErrorSubtype =
@@ -60,6 +63,8 @@ export interface AgentRunErrorFields {
   errors: string[];
   /** Known attempt cost; absent means unknown, not zero. */
   costUsd?: number;
+  /** Quota, 502, or parse. Absent for every other failure, including HTTP 400. */
+  helpProviderFault?: HelpProviderFault;
 }
 
 /**
@@ -74,6 +79,7 @@ export class AgentRunError extends Error {
   readonly apiErrorStatus?: number | null;
   readonly errors: string[];
   readonly costUsd?: number;
+  readonly helpProviderFault?: HelpProviderFault;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -87,6 +93,7 @@ export class AgentRunError extends Error {
     this.apiErrorStatus = fields.apiErrorStatus;
     this.errors = fields.errors;
     this.costUsd = fields.costUsd;
+    this.helpProviderFault = fields.helpProviderFault;
   }
 }
 

@@ -235,7 +235,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - generic `/api/ai/[task]` 已退场（YUK-321 M5），旧的 400 dispatch 分支随之作废；同类 task 由 capability 领域 route / worker 承接。
 - AI 执行在领域 route 的调用链或 pg-boss job 里调 `runTask()` / `runAgentTask()` / `streamTask()`（copilot：`/api/copilot/chat` 入队 → `copilot_run`；knowledge：`knowledge_maintenance_nightly` → `streamReviewTask`）。
-- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`。Copilot 的轮数保持不封顶；同一工具调用没有新证据时，执行层停止后续工具，保留已写出的正文并附上证据与可执行入口，不另设轮数或费用上限。只有失败、没有新证据的读取也在硬超时前走这条收口，不因没有成功读就空转到时限。模型额度（429）、502，或无法按约定读出的模型输出，会停住后续工具并封存原因、停止重试说明和确定性练习；提示接口同样返回这三项，有封存参考时用参考而不是再试一次。
 - 工具执行在各自的唯一 owner 写 `tool_call_log`（DomainTool bridge / remote MCP mount / custom mount），runner 只为 spawn 工具补行。
 - 终态写 `cost_ledger`（每次 attempt 一行，带 `task_kind` / `provider` / `model` / `currency`）。
 - 浏览器侧没有 `src/ai/client.ts` 通用 helper；UI 调具体领域 route，避免绕开 profile / tool / ingestion context。
