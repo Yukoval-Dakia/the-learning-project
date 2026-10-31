@@ -56,23 +56,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/agency/server/intervention/store.ts',
     ],
   },
-  {
-    owner: 'knowledge',
-    consumer: 'ingestion',
-    files: [
-      'src/capabilities/ingestion/server/auto-enroll.ts',
-      'src/capabilities/ingestion/server/image-candidate-accept.ts',
-    ],
-    symbols: ['NameKcFn', 'isTagKnowledgeInvariantError', 'tagKnowledge'],
-    dto: 'tagging commands',
-    justification:
-      'ingestion enroll/import accept paths tag drafts onto the knowledge tree; subject-profile + failure reads moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/ingestion/server/auto-enroll.ts',
-      'src/capabilities/ingestion/server/image-candidate-accept.ts',
-    ],
-  },
+  // YUK-1571 — ingestion -> knowledge tagging commands are retired. auto-enroll
+  // and image-candidate accept call src/kernel/records/knowledge-tag.ts. Knowledge
+  // binds the DashScope embedder and does not re-export the tagger.
   // YUK-1571 — the knowledge -> notes read edge is retired: node-page now
   // consumes @/kernel/read-models/{notes-read,artifact-backlinks,artifact-corrections}
   // directly; notes/public keeps the same symbols via compat re-exports.

@@ -100,7 +100,7 @@ export const KEY_CONSUMERS: Readonly<Record<string, string | null>> = {
   KC_DEDUP_DISTANCE_MAX: 'src/capabilities/knowledge/server/dedup-flags.ts',
   KC_DEDUP_WINDOW_DAYS: 'src/capabilities/knowledge/server/dedup-flags.ts',
   KC_DEDUP_MAX_PAIRS: 'src/capabilities/knowledge/server/dedup-flags.ts',
-  TAGGING_MATCH_THRESHOLD: 'src/capabilities/knowledge/server/tagging-flags.ts',
+  TAGGING_MATCH_THRESHOLD: 'src/kernel/read-models/knowledge-similarity.ts',
   BACKUP_IMPORT_MAX_BYTES: 'src/capabilities/observability/api/backup-import.ts',
   AI_PROVIDER_ATTEMPT_ADMISSION_MODE: 'src/server/ai/provider-attempt-admission-config.ts',
   AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON: 'src/server/ai/provider-attempt-admission-config.ts',

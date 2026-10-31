@@ -169,7 +169,7 @@ TaskSpec 由 capability 拥有：`src/capabilities/<name>/tasks/index.ts` 用 `d
 - TaskSpec 字段（`defaultProvider` / `defaultModel` / budget / prompt / `invocation` / `execution`）见 `src/ai/task-spec.ts`；某个 task 用哪个模型、由谁触发，看 owner map 与调用方代码。
 - 分类（compatibility-only、无静态 caller）以 `scripts/audit-task-census.ts` 的 `LIVE_NON_CALLER_CLASSIFICATIONS` 为准；`pnpm audit:task-census` 校验 manifest/job 注册可达性与 run-log 契约。
 
-**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/capabilities/knowledge/server/tag-knowledge.ts`），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
+**仍成立的历史结论**：`EnrichMistakeTask` 已拆成 `AttributionTask`（归因）；`KnowledgeProposeTask` 已移除，答错不再提议新 KC——KC 创建走 content-driven 的 `tagKnowledge`（`src/kernel/records/knowledge-tag.ts`；DashScope embedder 由 knowledge 绑定），近重复由 `kc_dedup_nightly`（propose-only）兜底；冷启 reference 生成解耦为 `reference_answer_backfill`；VisionExtract* 只走 ingestion manual rescue。详见 ADR-0045 与 `docs/design/2026-06-22-unified-tagging-axis.md`。
 
 **命名约定**：Task 一律 `PascalCase + 'Task'` 后缀；破坏性操作（删题、合并节点）走 Proposal/Suggestion 流程而非直接 tool（per ADR-0004）。
 

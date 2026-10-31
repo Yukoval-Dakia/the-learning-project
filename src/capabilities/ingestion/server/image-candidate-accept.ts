@@ -23,7 +23,6 @@ import {
   fetchWithPinnedDispatcher,
 } from '@/capabilities/ingestion/server/pinned-fetch';
 import { runVisionExtract } from '@/capabilities/ingestion/server/vision';
-import { isTagKnowledgeInvariantError, tagKnowledge } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 // Shared with the client so the literal-host/CIDR rules cannot drift; this module adds
 // the throwing wrapper plus DNS-answer and redirect re-validation.
@@ -50,6 +49,7 @@ import { writeCostLedger } from '@/kernel/records/ai-attempt-facts';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { persistImageAsset } from '@/kernel/records/asset-store';
+import { isTagKnowledgeInvariantError, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';

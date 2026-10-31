@@ -27,6 +27,8 @@ KC/题库语义检索（`knowledge.embedding`/`question.embedding` vector(1024)�
 
 ## 后果
 
+- **实现归属**：match-or-propose 决策在 `src/kernel/records/knowledge-tag.ts`，余弦检索与 `MATCH_THRESHOLD` 在 `src/kernel/read-models/knowledge-similarity.ts`。Knowledge 只绑定 DashScope embed wire（`server/tag-knowledge.ts`），不再把 tagger 转给其他 capability。
+
 - **正交性**：本轴（内容→KC ids，读题面）与 YUK-488 判分轴（整页 vision 判学生作答）正交，互不写对方的列。
 - **铁律**：dedup auto-**approve** 用于*创建*（便宜、加性、可经 merge 回滚）；auto-**merge** 破坏性（archive from-KC + merged_from[] + 重写 9 个下游归属面：question/learning_item/goal knowledge_ids、knowledge_edge 端点、mastery/fsrs/axis/kc_typed 每-KC state、misconception edge target——YUK-543），永远人工 accept。
 - **失败模式非破坏性**：阈值太紧→重复 KC（P5 dedup 兜）；太松→相关但不同的 KC 误提议（人工 dismiss）。

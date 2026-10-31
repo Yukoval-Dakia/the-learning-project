@@ -31,11 +31,6 @@ import {
   observeEnabled,
   studentAnswerGradingEnabled,
 } from '@/capabilities/ingestion/server/workflow-judge-config';
-import {
-  type NameKcFn,
-  isTagKnowledgeInvariantError,
-  tagKnowledge,
-} from '@/capabilities/knowledge/public';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {
   type StructuredQuestionT,
@@ -61,6 +56,8 @@ import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subje
 import { resolveSessionDerivationPolicy } from '@/kernel/read-models/usage-policy';
 import { withAnswerClass } from '@/kernel/records/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import type { NameKcFn } from '@/kernel/records/knowledge-tag';
+import { isTagKnowledgeInvariantError, tagKnowledge } from '@/kernel/records/knowledge-tag';
 import { applyQuestionBlockTransition } from '@/kernel/records/question-block-transitions';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
