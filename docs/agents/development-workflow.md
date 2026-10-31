@@ -182,11 +182,12 @@ CircleCI 的事件可能缺少 PR base 和 push before，因此该 job 复用
 
 ### Lint warning ratchet（YUK-909）
 
-`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数执行只降不升的 ratchet，
-CI static lane 用同一次 Biome 扫描检查 errors 与 warning/info 增长。基线在 `scripts/lint-baseline.json`：总数 +
-逐 rule 计数（信息诊断单独计数，不静默丢弃；决策已记录在文件内）。落地一个
-修 warning 的 batch 之后用 `pnpm lint:ratchet:update` 重新生成基线；该命令拒绝
-任何上调——基线只可能下降。
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数要求与基线逐项相等。
+高于基线或低于基线都失败；低于基线时必须在同一改动里用 `pnpm lint:ratchet:update`
+重写基线，只报告不算通过。CI static lane 用同一次 Biome 扫描检查 errors 与
+warning/info。基线在 `scripts/lint-baseline.json`：总数 + 逐 rule 计数（信息诊断
+单独计数，不静默丢弃；决策已记录在文件内）。`lint:ratchet:update` 拒绝任何上调——
+基线只可能下降。
 
 Before a PR, run:
 
