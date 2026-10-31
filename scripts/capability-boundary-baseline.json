@@ -11064,6 +11064,20 @@
       "issue": "YUK-1571",
       "owns": "Top-level semanticBlock projection into note sections. Note generation counts sections from it; notes keeps block-tree edits.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/intervention-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedExactLockKey",
+        "deriveHashtextExtendedLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates and hashtext / hashtextextended text derivation. The registry does not acquire locks and does not record or prove a lock order.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
