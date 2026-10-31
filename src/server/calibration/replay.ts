@@ -1,5 +1,5 @@
 // In-memory θ̂ replay. Reuse the @/core/theta primitives. Re-deriving them is a bug.
-// Attempt loading stays in scripts/audit-calibration.ts. This module never touches the database.
+// Attempt loading stays in scripts/ops-calibration.ts. This module never touches the database.
 // The faithfulness fixture drives the real updateThetaForAttempt and compares the final maps.
 //
 // Every non-empty attempt applies the full multi-KC update and pushes a step.

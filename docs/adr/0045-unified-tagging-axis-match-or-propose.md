@@ -31,4 +31,4 @@ KC/题库语义检索（`knowledge.embedding`/`question.embedding` vector(1024)�
 - **铁律**：dedup auto-**approve** 用于*创建*（便宜、加性、可经 merge 回滚）；auto-**merge** 破坏性（archive from-KC + merged_from[] + 重写 9 个下游归属面：question/learning_item/goal knowledge_ids、knowledge_edge 端点、mastery/fsrs/axis/kc_typed 每-KC state、misconception edge target——YUK-543），永远人工 accept。
 - **失败模式非破坏性**：阈值太紧→重复 KC（P5 dedup 兜）；太松→相关但不同的 KC 误提议（人工 dismiss）。
 - 实现：P1 `matchKnowledgeBySimilarity`（#561）/ P2 `tagKnowledge`（#562）/ P3 接 4 入口 + 删死门（#566）/ P4a reference 解耦（#569）/ P5 `kc_dedup_nightly`（#570）。
-- Follow-up：`MATCH_THRESHOLD`/`DEDUP_DISTANCE_MAX`/`MATCHER_COSINE_MAX_DISTANCE` 真语料标定（YUK-677，report-only 回放 `pnpm audit:threshold-calibration` + `docs/audit/` 报告）；mistakes/import 的 request 级 subject 信号以启用其 auto-tag。
+- Follow-up：`MATCH_THRESHOLD`/`DEDUP_DISTANCE_MAX`/`MATCHER_COSINE_MAX_DISTANCE` 真语料标定（YUK-677，report-only 回放 `pnpm ops:threshold-calibration` + `docs/audit/` 报告）；mistakes/import 的 request 级 subject 信号以启用其 auto-tag。
