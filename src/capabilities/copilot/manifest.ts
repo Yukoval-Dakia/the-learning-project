@@ -35,6 +35,7 @@ export const copilotCapability = defineCapability({
       'experimental:copilot_user_ask',
       'experimental:copilot_chip_trigger',
       'experimental:copilot_reply',
+      'experimental:help_explanation_replay',
       'experimental:subagent_run_started',
       'experimental:subagent_run_settled',
       'accept_suggestion',

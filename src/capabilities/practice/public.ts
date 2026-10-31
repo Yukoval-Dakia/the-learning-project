@@ -28,7 +28,6 @@ export {
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 
 export { scheduleReview } from './server/fsrs';
-export { loadHelpExplanationEvidence } from './server/hint-explanation';
 export {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
@@ -69,7 +68,6 @@ export {
 } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
 export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
-export { persistHelpExplanationReplay } from './server/solve-operations';
 export {
   SolveError,
   buildSolveHintInput,
