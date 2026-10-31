@@ -1,9 +1,9 @@
 import { aiAgentRef } from '@/ai/task-result';
+import type { ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import { artifact } from '@/db/schema';
-import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from './artifact-events';
-import { summaryBodyBlocks } from './body-blocks';
-import { writeNoteGenerationIntent } from './note-handoff';
+import { artifactRowToCreateSnapshot, emitArtifactCreateEvent } from '@/kernel/artifacts';
+import { writeNoteGenerationIntent } from '@/kernel/records/note-handoff-protocol';
 
 interface LearningIntentNoteBase {
   id: string;
@@ -35,6 +35,20 @@ export type CreateLearningIntentNoteFn = (
   input: CreateLearningIntentNoteInput,
 ) => Promise<void>;
 
+function summaryBodyBlocks(blockId: string, summaryMd: string): ArtifactBodyBlocksT {
+  return {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        attrs: { id: blockId },
+        content: summaryMd.length > 0 ? [{ type: 'text', text: summaryMd }] : [],
+      },
+    ],
+  };
+}
+
+/** Learning-intent accept creates paired note artifacts inside the caller's transaction. */
 export const createLearningIntentNote: CreateLearningIntentNoteFn = async (tx, input) => {
   const isHub = input.kind === 'hub';
   const [inserted] = await tx
