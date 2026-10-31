@@ -11067,7 +11067,7 @@
     },
     {
       "debt": "capabilityToKernel",
-      "file": "src/capabilities/agency/server/intervention/reconcile-lock.ts",
+      "file": "src/capabilities/agency/server/intervention/intervention-lock.ts",
       "module": "src/kernel/locks/registry.ts",
       "kind": "value",
       "symbols": [

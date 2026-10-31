@@ -23,10 +23,10 @@ const REQUIRED_REGISTRY = 'src/kernel/locks/registry.ts';
 const APPROVED_PREFIXES = ['src/kernel/locks/'] as const;
 const APPROVED_HELPERS = [
   'src/capabilities/agency/server/conjecture/probe-lock.ts',
+  'src/capabilities/agency/server/intervention/intervention-lock.ts',
   'src/db/learning-state-lock.ts',
   'src/db/session-advisory-lock.ts',
   'src/server/ai/provider-attempt-lock.ts',
-  'src/capabilities/agency/server/intervention/reconcile-lock.ts',
 ] as const;
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.git', 'tests']);
 const SELF_PATH = 'scripts/audit-advisory-locks.ts';

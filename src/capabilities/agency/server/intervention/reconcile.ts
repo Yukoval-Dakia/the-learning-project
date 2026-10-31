@@ -7,14 +7,14 @@ import { fromPgBossDrizzleTx } from '@/db/pg-boss-drizzle';
 import { intervention } from '@/db/schema';
 import { getRunningBoss } from '@/server/boss/client';
 import {
-  PREPARE_INTERVENTION_JOB,
-  type PrepareInterventionJobData,
-} from './probe-result-subscription';
-import {
   lockInterventionCorrectionsAll,
   lockInterventionInstance,
   lockInterventionSource,
-} from './reconcile-lock';
+} from './intervention-lock';
+import {
+  PREPARE_INTERVENTION_JOB,
+  type PrepareInterventionJobData,
+} from './probe-result-subscription';
 import {
   failInterventionPreparation,
   loadInterventionVersion,

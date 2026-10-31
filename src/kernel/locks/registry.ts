@@ -27,10 +27,10 @@ export type HashtextExtendedLockNamespace = {
   readonly suffixFields: readonly string[];
 };
 
+/** hashtextextended text with no suffix. Distinct from a prefix so a fixed key cannot gain a trailing field. */
 export type HashtextExtendedExactLockNamespace = {
   readonly family: string;
   readonly encoding: 'hashtextextended';
-  /** Literal second argument of hashtextextended. Only salt 0 is registered. */
   readonly salt: 0;
   /** Exact text passed to hashtextextended(). */
   readonly key: string;
