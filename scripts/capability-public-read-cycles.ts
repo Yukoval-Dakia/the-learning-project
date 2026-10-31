@@ -23,17 +23,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // knowledgeContext / bodyBlockSummaries moved verbatim to
   // src/kernel/read-models/extraction-summary.ts; learning-item-context now
   // consumes the kernel read model directly.
-  {
-    owner: 'knowledge',
-    consumer: 'agency',
-    files: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
-    symbols: ['createLearningIntentKnowledgeNode'],
-    dto: 'knowledge intent commands',
-    justification:
-      'agency intent accept paths run knowledge-owned commands. Goal-scope tree snapshots now read the existing kernel owner directly (YUK-1570); failure-attempt and subject-resolution reads already moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/agency/server/proposal-accept-applier.ts'],
-  },
+  // YUK-1571 — the agency -> knowledge command edge is retired. Learning-intent
+  // accept calls createKnowledgeNodeFromEvents in
+  // src/kernel/records/knowledge-node-birth.ts. The knowledge public adapter is gone.
   {
     owner: 'notes',
     consumer: 'agency',

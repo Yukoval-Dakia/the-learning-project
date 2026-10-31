@@ -541,6 +541,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
   const modelStarted = Date.now();
   let firstTokenAt: number | undefined;
+  let completeArtifact = false;
   const outputStats = emptyStreamTextStats();
   const settleUnobservedUsage = async () => {
     // YUK-1557 — a cut stream with no usage frame still submitted a prompt:
@@ -639,6 +640,9 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       if (args.notifySessionId) await notifySdkSessionId(args.ctx, msg);
       args.lifecycle.recordTerminalResult(terminal.fromResult(msg));
       if (msg.subtype === 'success') {
+        if (!isApiErrorSuccessResult(msg) && (msg.result ?? '').trim().length > 0) {
+          completeArtifact = true;
+        }
         if (isApiErrorSuccessResult(msg)) {
           args.onApiError?.(msg);
           const helpProviderFault = helpProviderFaultFromSdkResult(msg);
@@ -686,6 +690,11 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
     throw error;
   } finally {
     const endedAt = Date.now();
+    args.lifecycle.noteHelpProviderClock({
+      endedAt,
+      ...(firstTokenAt !== undefined ? { firstTokenAt } : {}),
+      completeArtifact,
+    });
     args.lifecycle.recordNotePhases({
       model_total_ms: endedAt - modelStarted,
       model_ttft_ms: firstTokenAt === undefined ? null : firstTokenAt - modelStarted,
@@ -796,16 +805,18 @@ async function runTaskAttempt(args: {
 
   // The provider permit is released before attempt settlement / afterRun. A DB
   // observation write must never occupy scarce upstream session capacity.
+  const helpLatency = lifecycle.sealHelpLatency('success');
   const result: RunTaskResult = {
     task_run_id: lifecycle.taskRunId,
     text: resultText,
     finishReason: lifecycle.finishReason,
-    usage: lifecycle.usage,
+    usage: helpLatency ? { ...lifecycle.usage, help_latency: helpLatency } : lifecycle.usage,
     cost_usd: lifecycle.costUsd,
     cost_basis: lifecycle.costBasis,
     cost_ref: lifecycle.costRef,
     structured_output: lifecycle.structuredOutput,
     ...(lifecycle.usage.phases ? { phases: lifecycle.usage.phases } : {}),
+    ...(helpLatency ? { help_latency: helpLatency } : {}),
   };
   await lifecycle.finishSuccess(result);
   return result;
@@ -928,6 +939,7 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
         taskRunId: lifecycle.taskRunId,
         aborted: lifecycle.aborted,
         costUsd: lifecycle.costUsd,
+        helpLatency: lifecycle.sealHelpLatency('failure'),
       });
       lastErr = boundError;
       const retry = classifyLifecycleRetry({
@@ -1331,6 +1343,8 @@ async function streamTaskCollectingImpl(
         aborted: lifecycle.aborted,
         costUsd: lifecycle.costUsd,
       });
+      const helpFault = !lifecycle.aborted && !failure ? boundError.helpProviderFault : undefined;
+      if (helpFault) lifecycle.noteExecutableHelp('deterministic_step');
       const settled = await lifecycle.finishFailure(boundError);
       // A provider-success payload whose projection failed must never be returned
       // as graceful partial text; admission fencing is likewise a fail-closed
@@ -1340,7 +1354,6 @@ async function streamTaskCollectingImpl(
       }
       // 400 stays the existing rejection. Quota / 502 / parse seal an exit the
       // caller can publish without another model turn. Cancellation is not one.
-      const helpFault = !lifecycle.aborted && !failure ? boundError.helpProviderFault : undefined;
       if (helpFault) {
         const exit = renderHelpExitMarkdown(helpFault);
         const prose = resultText.trim();

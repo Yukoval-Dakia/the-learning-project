@@ -51,11 +51,6 @@ export {
 } from './server/edges';
 export { readKnowledgeEdges } from './server/edges-list';
 export { loadFrontierRail } from './server/frontier-read';
-export type {
-  CreateLearningIntentKnowledgeNodeFn,
-  CreateLearningIntentKnowledgeNodeInput,
-} from './server/learning-intent-knowledge';
-export { createLearningIntentKnowledgeNode } from './server/learning-intent-knowledge';
 export { loadMisconceptionsForKc } from './server/misconception-read';
 export { loadKnowledgeNodePage } from './server/node-page';
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
