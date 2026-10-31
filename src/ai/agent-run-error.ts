@@ -14,6 +14,7 @@
 //     ended without a terminal result (engine death / stream drop).
 //   - abort/timeout and anything unrecognized are permanent.
 
+import type { SealedHelpLatency } from '@/ai/help-latency';
 import type { HelpProviderFault } from '@/ai/help-provider-fault';
 
 /** SDKResultError['subtype'] union. */
@@ -65,6 +66,8 @@ export interface AgentRunErrorFields {
   costUsd?: number;
   /** Quota, 502, or parse. Absent for every other failure, including HTTP 400. */
   helpProviderFault?: HelpProviderFault;
+  /** Attempt latency seal. Absent when this failure has no help-latency kind. */
+  helpLatency?: SealedHelpLatency;
 }
 
 /**
@@ -80,6 +83,7 @@ export class AgentRunError extends Error {
   readonly errors: string[];
   readonly costUsd?: number;
   readonly helpProviderFault?: HelpProviderFault;
+  readonly helpLatency?: SealedHelpLatency;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
@@ -94,6 +98,7 @@ export class AgentRunError extends Error {
     this.errors = fields.errors;
     this.costUsd = fields.costUsd;
     this.helpProviderFault = fields.helpProviderFault;
+    this.helpLatency = fields.helpLatency;
   }
 }
 

@@ -30,6 +30,6 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 - `audit:projection`：连接目标 DB，把全部 projection 由 event 重放并与 live row deep-diff；非 allowlist drift 直接 fail，只应对 prod clone / 明确目标库运行。
 - `audit:golden --kind=<kind>`：用当前 reducer/gather 重放保留的 imperative golden；适用于已翻 ON entity 的 reducer/gather 变更，drift 直接 fail。
 - `audit:calibration` / `audit:mastery-provenance`：分别做 A1 SRT 前向校准诊断与 mastery provenance 消费纪律反查；均为 read-only，后者支持 `--strict`。
-- `audit:advisory-locks`：生产 `.ts`/`.tsx`（排除测试与注释）里裸 `pg_advisory*` / `pg_try_advisory*` 的计数棘轮。`src/kernel/locks/` 与 `src/db/learning-state-lock.ts`、`src/db/session-advisory-lock.ts` 是批准的注册表/helper，可以持有 SQL。其余文件的调用次数必须与 `scripts/audit-advisory-locks-baseline.json` 一致；比较基线上已有该基线时，次数不得上调。不校验 81 族、不证明锁顺序。
+- `audit:advisory-locks`：生产 `.ts`/`.tsx`（排除测试与注释）里裸 `pg_advisory*` / `pg_try_advisory*` 的计数棘轮。`src/kernel/locks/` 与 `src/db/learning-state-lock.ts`、`src/db/session-advisory-lock.ts`、`src/server/ai/provider-attempt-lock.ts` 是批准的注册表/helper，可以持有 SQL。其余文件的调用次数必须与 `scripts/audit-advisory-locks-baseline.json` 一致；比较基线上已有该基线时，次数不得上调。不校验 81 族、不证明锁顺序。
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema）。交互模式写 `docs/audit/YYYY-MM-DD-drift.md`；定时模式不写仓库、不建分支/PR，只在完成去重后创建或更新带 `drift` label 的 Linear issue。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
