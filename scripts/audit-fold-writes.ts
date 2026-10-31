@@ -261,7 +261,7 @@ export const SANCTIONED_WRITERS: SanctionedWriter[] = [
   },
   {
     table: 'artifact',
-    file: 'src/capabilities/practice/jobs/quiz_gen.ts',
+    file: 'src/capabilities/practice/jobs/quiz_gen_persist.ts',
     marker: '.insert(artifact)',
     role: 'event-native-by-caller',
     note: 'Quiz artifact INSERT and artifact_create share the generation transaction and timestamp.',
