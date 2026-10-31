@@ -30,6 +30,10 @@ import { withLearningStateLock } from '@/db/learning-state-lock';
 import { event, intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey, writeEvent } from '@/kernel/events';
 import { getEffectiveProbeResultStatuses } from '@/kernel/read-models/probe-evidence';
+import {
+  materializeInterventionDiagnostics,
+  retireInterventionDiagnosticQuestion,
+} from '@/kernel/records/intervention-diagnostic-materialize';
 
 type DbLike = Db | Tx;
 type InterventionRow = typeof intervention.$inferSelect;
@@ -378,7 +382,6 @@ export async function activateIntervention(
     // learner-visible review cards. Eligible canaries materialize the exact
     // reviewed probes into the ordinary due/stream surface.
     if (current.delivery_mode === 'eligible') {
-      const { materializeInterventionDiagnostics } = await import('@/capabilities/practice/public');
       await materializeInterventionDiagnostics(tx, {
         package: packageValue,
         settlement,
@@ -583,7 +586,6 @@ export async function recordInterventionDiagnosticReview(
           `intervention ${current.id}@${current.version} cannot anchor diagnostics without its package`,
         );
       }
-      const { materializeInterventionDiagnostics } = await import('@/capabilities/practice/public');
       await materializeInterventionDiagnostics(tx, {
         package: current.package,
         settlement: nextSettlement,
@@ -621,7 +623,6 @@ export async function recordInterventionDiagnosticReview(
       );
     }
 
-    const { retireInterventionDiagnosticQuestion } = await import('@/capabilities/practice/public');
     await retireInterventionDiagnosticQuestion(tx, input.questionId, now);
 
     if (outcome) {
