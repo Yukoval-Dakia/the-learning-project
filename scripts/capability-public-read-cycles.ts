@@ -50,7 +50,7 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     symbols: ['authorInterventionPackage'],
     dto: 'intervention authoring commands',
     justification:
-      'agency owns the intervention lifecycle; diagnostic materialize/retire is kernel-owned (store/reconcile call @/kernel/records/intervention-diagnostic-materialize directly). The daily-plan due/budget/pace projection is the kernel read model (YUK-1571); practice still supplies package authoring.',
+      'agency owns the intervention lifecycle; diagnostic materialize/retire is kernel-owned (store/reconcile call @/kernel/records/intervention-diagnostic-materialize directly). Package authoring sequence lives in the kernel; practice supplies paid author and review stages via prepare_intervention only. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571).',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/agency/jobs/prepare_intervention.ts'],
   },
