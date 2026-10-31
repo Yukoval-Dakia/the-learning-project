@@ -39,15 +39,13 @@ import {
   assertNoteGenerationReferences,
   lockCurrentNoteGenerationReferences,
 } from '@/capabilities/notes/server/note-generation-references';
-import {
-  dispatchNoteVerification,
-  writeNoteVerificationIntent,
-} from '@/capabilities/notes/server/note-handoff';
+import { dispatchNoteVerification } from '@/capabilities/notes/server/note-handoff';
 import { attrsClearingNoteLongCheck } from '@/capabilities/notes/server/note-long-check';
 import { parseNoteGenerateOutput } from '@/capabilities/notes/tasks/note-tasks';
 import type { ArtifactBodyBlocksT, ArtifactHistoryEntryT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact } from '@/db/schema';
+import { writeNoteVerificationIntent } from '@/kernel/records/note-handoff-protocol';
 import {
   type TaskTextRunFn,
   costUsdToMicroUsd,

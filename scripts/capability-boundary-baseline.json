@@ -53,7 +53,7 @@
     "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way.",
     "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty.",
     "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
-    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring, recovery floor and public re-exports as live consumers. registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 2 -> 1 (dreaming_nightly enqueueDreamingNoteRefine remains). cross-capability value 19 -> 18."
+    "YUK-1571-learning-intent-note-handoff": "agency -> notes proposal-accept cluster retired: createLearningIntentNote and post-accept dispatchNoteGeneration now live in src/kernel/records/{learning-intent-note-birth,note-handoff-protocol}. Notes keeps boss-port wiring and recovery floor as live consumers (no pass-through re-exports). registerNoteHandoffBossResolver wires getStartedBoss at server/app.ts composition root. agency -> notes 2 -> 1 (dreaming_nightly enqueueDreamingNoteRefine remains). cross-capability value 19 -> 18."
   },
   "changes": [
     {
@@ -11005,6 +11005,20 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedIdentityLock",
+        "deriveIntLiteralLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates for the probe serve cap (int 4064403), the per-question hashtextextended identity (salt 0), and the conjecture-fold identity (salt 1). The registry derives those arguments and does not acquire the lock.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/agency/server/proposal-accept-applier.ts",
       "module": "src/kernel/records/learning-intent-note-birth.ts",
       "kind": "value",
@@ -11025,26 +11039,11 @@
     },
     {
       "debt": "capabilityToKernel",
-      "file": "src/capabilities/notes/server/learning-intent-note.ts",
-      "module": "src/kernel/records/learning-intent-note-birth.ts",
-      "kind": "value",
-      "symbols": [
-        "CreateLearningIntentNoteFn",
-        "CreateLearningIntentNoteInput",
-        "createLearningIntentNote"
-      ],
-      "issue": "YUK-1571",
-      "owns": "Notes public surface re-exports the kernel-owned learning-intent birth writer without a second implementation.",
-      "date": "2026-10-31"
-    },
-    {
-      "debt": "capabilityToKernel",
       "file": "src/capabilities/notes/server/note-handoff.ts",
       "module": "src/kernel/records/note-handoff-protocol.ts",
       "kind": "value",
       "symbols": [
         "BossDispatch",
-        "NOTE_GENERATION_SINGLETON_SECONDS",
         "NOTE_HANDOFF_ACTION",
         "NOTE_HANDOFF_KINDS",
         "NOTE_HANDOFF_VERSION",
@@ -11052,9 +11051,7 @@
         "dispatchNoteGeneration",
         "dispatchNoteHandoff",
         "dispatchNoteVerification",
-        "noteHandoffEventId",
         "noteHandoffIntentPayloadSchema",
-        "noteHandoffJobId",
         "noteVerificationRecoveryJobId",
         "writeNoteGenerationIntent",
         "writeNoteVerificationIntent"
@@ -11065,16 +11062,12 @@
     },
     {
       "debt": "capabilityToKernel",
-      "file": "src/capabilities/agency/server/conjecture/probe-lock.ts",
-      "module": "src/kernel/locks/registry.ts",
+      "file": "src/capabilities/notes/jobs/note_generate.ts",
+      "module": "src/kernel/records/note-handoff-protocol.ts",
       "kind": "value",
-      "symbols": [
-        "advisoryLockRegistry",
-        "deriveHashtextExtendedIdentityLock",
-        "deriveIntLiteralLockKey"
-      ],
-      "issue": "YUK-1577",
-      "owns": "Named advisory-lock key templates for the probe serve cap (int 4064403), the per-question hashtextextended identity (salt 0), and the conjecture-fold identity (salt 1). The registry derives those arguments and does not acquire the lock.",
+      "symbols": ["writeNoteVerificationIntent"],
+      "issue": "YUK-1571",
+      "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
     }
   ],

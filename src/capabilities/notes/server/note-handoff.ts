@@ -19,18 +19,6 @@ import {
 import { getNotesBoss } from './boss-port';
 import { NOTE_ARTIFACT_TYPES } from './note-artifact-types';
 
-export type { BossDispatch } from '@/kernel/records/note-handoff-protocol';
-export {
-  NOTE_GENERATION_SINGLETON_SECONDS,
-  NOTE_HANDOFF_ACTION,
-  NOTE_HANDOFF_KINDS,
-  noteHandoffEventId,
-  noteHandoffJobId,
-  noteVerificationRecoveryJobId,
-  writeNoteGenerationIntent,
-  writeNoteVerificationIntent,
-} from '@/kernel/records/note-handoff-protocol';
-
 const RECOVERY_BATCH_SIZE = 50;
 
 async function durableJobExists(
