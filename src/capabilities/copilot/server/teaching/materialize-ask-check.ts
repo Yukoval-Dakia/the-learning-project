@@ -31,6 +31,34 @@ export interface MaterializedAskCheckQuestion {
   choices_md: string[] | null;
 }
 
+/** The checked reply is the question prompt. An unchecked model prompt must not win. */
+export function askCheckPrompt(modelPrompt: string | undefined, verifiedReply: string): string {
+  if (verifiedReply.trim().length > 0) return verifiedReply;
+  if (modelPrompt?.trim()) return modelPrompt;
+  return verifiedReply;
+}
+
+/** On a failed gold check, grading must read the sealed reply, not the model reference or choices. */
+export function alignAskCheck<
+  T extends {
+    kind: string;
+    prompt_md?: string;
+    reference_md: string;
+    choices_md?: string[] | null;
+  },
+>(structured: T, verifiedReply: string, sealed: boolean): T {
+  if (!sealed) {
+    return { ...structured, prompt_md: askCheckPrompt(structured.prompt_md, verifiedReply) };
+  }
+  return {
+    ...structured,
+    kind: 'short_answer',
+    prompt_md: verifiedReply,
+    reference_md: verifiedReply,
+    choices_md: null,
+  };
+}
+
 /**
  * Insert the `teaching_check` question carried by an ask_check turn.
  *
@@ -53,7 +81,7 @@ export async function materializeAskCheckQuestion(
     .where(eq(learning_item.id, learningItemId))
     .limit(1);
   const knowledgeIds = liRows[0]?.knowledge_ids ?? [];
-  const promptMd = structured.prompt_md ?? params.fallbackPromptMd;
+  const promptMd = askCheckPrompt(structured.prompt_md, params.fallbackPromptMd);
   const choicesMd = structured.choices_md ?? null;
   await tx.insert(question).values(
     withAnswerClass({

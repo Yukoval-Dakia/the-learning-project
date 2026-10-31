@@ -11135,6 +11135,16 @@
       "issue": "YUK-1571",
       "owns": "One intervention preparation attempt: preparation guard, subject profile, paid author stage, second guard, paid review stage, deterministic package check. Direct callers pass the local paid stages instead of the worker binding.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/help-explanation-record.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1413",
+      "owns": "Kernel owns append-only event persistence. Copilot keeps the explanation-replay identity, actor, verdict, digests, task-run, provider, model and cost.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
