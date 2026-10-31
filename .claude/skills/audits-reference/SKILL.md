@@ -27,9 +27,14 @@ description: Full mechanics of this repo's pnpm audit:* scripts and their allowl
 - `audit:dependencies`：`pnpm audit --prod --audit-level=high`，CI standalone hard gate。
 - `audit:fold-writes`：fold-owned projection 表写者 registry ↔ 源码反查；默认 report-only，`--strict` 对未授权写点/陈旧 registry fail。
 - `audit:flags`：`*_ENABLED` 加 `SCOPED_CONTROL_NAMES` 有界控制项 ↔ `audit-flags-ledger.json` 对账（布尔 env/const 与 enum/CSV/JSON 分别声明真实值域和 reader marker）；默认 report-only，`--strict` 对漏登记/陈旧/坏 ledger fail，字面量差异只报告。
-- `audit:projection`：连接目标 DB，把全部 projection 由 event 重放并与 live row deep-diff；非 allowlist drift 直接 fail，只应对 prod clone / 明确目标库运行。
 - `audit:golden --kind=<kind>`：用当前 reducer/gather 重放保留的 imperative golden；适用于已翻 ON entity 的 reducer/gather 变更，drift 直接 fail。
-- `audit:calibration` / `audit:mastery-provenance`：分别做 A1 SRT 前向校准诊断与 mastery provenance 消费纪律反查；均为 read-only，后者支持 `--strict`。
+- `audit:mastery-provenance`：mastery provenance 消费纪律反查；read-only，支持 `--strict`。
+
+连库报告不在 `audit:` 里，也不是 CI gate、不进 `pnpm test`：
+
+- `ops:projection`（`scripts/ops-projection.ts`，allowlist `scripts/ops-projection-allowlist.json`）：连接目标 DB，把全部 projection 由 event 重放并与 live row deep-diff；非 allowlist drift 直接 fail。需要 `DATABASE_URL`，只应对 prod clone / 明确目标库运行。
+- `ops:calibration`（`scripts/ops-calibration.ts`）：A1 SRT 前向校准诊断，read-only / report-only。需要 `DATABASE_URL`。
+- `ops:threshold-calibration`（`scripts/ops-threshold-calibration.ts`）：嵌入距离阈值分布报告，read-only。优先 `AUDIT_READ_DATABASE_URL`，否则 `DATABASE_URL`。
 - `audit:advisory-locks`：生产 `.ts`/`.tsx`（排除测试与注释）里裸 `pg_advisory*` / `pg_try_advisory*` 的计数棘轮。`src/kernel/locks/` 与 `src/db/learning-state-lock.ts`、`src/db/session-advisory-lock.ts`、`src/server/ai/provider-attempt-lock.ts` 是批准的注册表/helper，可以持有 SQL。其余文件的调用次数必须与 `scripts/audit-advisory-locks-baseline.json` 一致；比较基线上已有该基线时，次数不得上调。不校验 81 族、不证明锁顺序。
 
 `/audit-drift` skill（`.claude/skills/audit-drift/SKILL.md`）扫描 **ADR / planning-doc ↔ 代码实现**结构性漂移（不重审 schema）。交互模式写 `docs/audit/YYYY-MM-DD-drift.md`；定时模式不写仓库、不建分支/PR，只在完成去重后创建或更新带 `drift` label 的 Linear issue。配套 `pnpm audit:schema` 形成 schema 层 + 决策层双 lint。
