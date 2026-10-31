@@ -28,6 +28,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
+import { lockInterventionDiagnosticStream } from '@/kernel/records/intervention-diagnostic-lock';
 
 export interface MaterializeInterventionDiagnosticsInput {
   package: InterventionPackageT;
@@ -439,10 +440,7 @@ async function appendImmediateDiagnosticToLiveStream(
   // tomorrow. A timeout aborts this transaction for normal job retry; restore the
   // transaction default after taking the shared lock.
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '5s'"));
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext(${`intervention:deliver:${input.questionId}`}))`,
-  );
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
+  await lockInterventionDiagnosticStream(tx, input.questionId, date);
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
   const [existingDelivery] = await tx
     .select({
