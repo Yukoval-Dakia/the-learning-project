@@ -1,6 +1,6 @@
 # src/kernel — 内核契约
 
-> capability 架构的契约层。manifest 保持声明式；`events/` 是明确边界内的事件 envelope 存储本体，可依赖 core event schema、db 与 Drizzle。YUK-892 起 `tools/`、`read-models/`、`records/` 与 `proposals/` 的 engine 模块承载跨 capability 共享的 DomainTool 契约、只读投影、learning-record 存取与 proposal inbox/writer 机制。
+> capability 架构的契约层。manifest 保持声明式；`events/` 是明确边界内的事件 envelope 存储本体，可依赖 core event schema、db、Drizzle，以及 correction 锁键的 registry 派生。YUK-892 起 `tools/`、`read-models/`、`records/` 与 `proposals/` 的 engine 模块承载跨 capability 共享的 DomainTool 契约、只读投影、learning-record 存取与 proposal inbox/writer 机制。
 
 ## WHERE TO LOOK
 | 文件 | 职责 |
@@ -13,7 +13,7 @@
 | `records/intervention-package-author.ts` | 干预题目包的一次准备尝试：准备态守卫、科目档案、付费作者阶段、再次守卫、付费复检阶段、确定性校验。Practice 只提供两个付费阶段 |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
-| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；同一 corrections:all / source 键由 `src/kernel/events/correction-lock.ts` 消费（`writeEvents`） |
+| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；同一 corrections:all / source 键由 `src/kernel/events/correction-lock.ts` 消费（`writeEvents` 与 review-answer-consumer） |
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |

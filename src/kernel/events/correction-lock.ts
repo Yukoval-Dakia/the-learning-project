@@ -1,5 +1,6 @@
 // Correction advisory locks. Key text comes from the lock registry; the statement
 // stays hashtextextended(text, 0). writeEvents takes corrections:all, then each source.
+// review-answer-consumer takes source after copilot execution settlement.
 // Kernel events must not import the agency intervention helper.
 import { sql } from 'drizzle-orm';
 import type { Tx } from '@/db/client';
