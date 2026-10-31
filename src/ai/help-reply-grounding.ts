@@ -299,27 +299,37 @@ function labelVerdict(
   ];
 }
 
+// A negated 增/减 is not this label. A later plain one, even on the next marker, still is.
 function signNear(text: string, markers: readonly string[]): NearbySign | null {
+  let negatedOnly: NearbySign | null = null;
   for (const marker of markers) {
     const at = text.indexOf(marker);
     if (at < 0) continue;
     const sentence = text.slice(sentenceStart(text, at), sentenceEnd(text, at));
-    const local = at - sentenceStart(text, at);
-    return nearestSign(sentence, local);
+    const found = nearestSign(sentence, at - sentenceStart(text, at));
+    if (!found) continue;
+    if (!found.negated) return found;
+    negatedOnly ??= found;
   }
-  return null;
+  return negatedOnly;
 }
 
 function nearestSign(sentence: string, markerAt: number): NearbySign | null {
   const marks = scanMarks(sentence, ['减'], ['增']);
-  let best: { distance: number; at: number; kind: 'fail' | 'pass' } | null = null;
+  const slots: Record<'plain' | 'negated', { distance: number; kind: 'fail' | 'pass' } | null> = {
+    plain: null,
+    negated: null,
+  };
   for (const mark of marks) {
     if (mark.kind === 'neg') continue;
+    const key = negationGoverns(sentence, marks, mark.at) ? 'negated' : 'plain';
     const distance = Math.abs(mark.at - markerAt);
-    if (!best || distance < best.distance) best = { distance, at: mark.at, kind: mark.kind };
+    const current = slots[key];
+    if (!current || distance < current.distance) slots[key] = { distance, kind: mark.kind };
   }
-  if (!best) return null;
-  return { sign: SIGN_KIND[best.kind], negated: negationGoverns(sentence, marks, best.at) };
+  const chosen = slots.plain ?? slots.negated;
+  if (!chosen) return null;
+  return { sign: SIGN_KIND[chosen.kind], negated: chosen === slots.negated };
 }
 
 // A negated 增/减 does not name the interval in the next clause.
