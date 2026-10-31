@@ -87,12 +87,15 @@ export {
 } from './server/verify-dispatch-outbox';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
-// Coach's nightly daily-plan inputs share the practice due queue and
-// measured question pace.
-export const resolveDailyReviewPlanInputs: typeof import('./server/daily-review-plan').resolveDailyReviewPlanInputs =
-  async (...args) =>
-    (await import('./server/daily-review-plan')).resolveDailyReviewPlanInputs(...args);
-export type { DailyReviewPlanInputs } from './server/daily-review-plan';
+// Binds practice's due queue, minute budget and measured pace into the kernel
+// plan projection. Coach calls the kernel reader; it does not import this module.
+export async function installDailyReviewPlanFacts(): Promise<void> {
+  const [{ installDailyReviewPlanFactReader }, { readDailyReviewPlanFacts }] = await Promise.all([
+    import('@/kernel/read-models/daily-review-plan'),
+    import('./server/daily-review-plan'),
+  ]);
+  installDailyReviewPlanFactReader(readDailyReviewPlanFacts);
+}
 
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {

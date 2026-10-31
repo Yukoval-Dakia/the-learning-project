@@ -15,10 +15,6 @@ import {
 // Coach consumes the out-of-band agent-note HINT channel (for_agent='coach'), where
 // quiz_verify leaves question_pool_gap notes. Hints, not facts; additive only.
 import { type AgentNote, readAgentNotes } from '@/capabilities/agency/server/notes';
-import {
-  type DailyReviewPlanInputs,
-  resolveDailyReviewPlanInputs,
-} from '@/capabilities/practice/public';
 import { type ReviewPlanNumbers, computeReviewPlanNumbers } from '@/core/daily-review-plan';
 import { CoachPlanDraft, type CoachPlanDraftT, composeTodayPlan } from '@/core/schema/coach';
 // Derived sub-skill weak points (YUK-1582): read-only landing points with first-hand
@@ -38,6 +34,10 @@ import {
   type ActiveGoal,
   listActiveGoalsWithResolvedScope,
 } from '@/kernel/read-models/active-goal-scope';
+import {
+  type DailyReviewPlanInputs,
+  resolveDailyReviewPlanInputs,
+} from '@/kernel/read-models/daily-review-plan';
 import { deriveActionableWeakPoints } from '@/kernel/read-models/weak-points';
 // Active/pinned learning items' knowledge_ids feed the Coach input as ATTENTION PRESSURE
 // only; never scheduling/bookkeeping, never the FSRS-due review backbone.

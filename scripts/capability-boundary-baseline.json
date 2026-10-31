@@ -47,7 +47,8 @@
     "YUK-1571-active-goal-read": "Shared active-goal effective-scope read model (ActiveGoal, listActiveGoals, listActiveGoalsWithResolvedScope) moved verbatim from capabilities/agency/server/goals/queries.ts to src/kernel/read-models/active-goal-scope.ts; agency keeps all goal writes (mutateGoal, updateGoalStatus, updateGoalScope) and the scope vocabulary (commands.ts). ActiveGoal.scope_mode now types against goal.$inferSelect (schema enum explicit|subject_live), not the agency command alias. Six consumers repointed with zero compat shims and no reader re-export: agency jobs coach_daily / dreaming_nightly / goal_scope_propose_nightly (same-capability edges become capabilityToKernel, recorded in edgeRecords), practice/server/due-list.ts (practice -> agency 3 -> 2), copilot/server/learner-state.ts (copilot -> agency 1 -> 0) and scripts/demo-flywheel.ts (outside the audited capability layer). The three retired agency/public read exports are deleted; updateGoalScope and every other export stay. Measured on main 93578223e merged with fabf68ec4: cross-capability value 39 -> 37, capability -> server follows upstream at 403, nontrivial SCCs unchanged at {agency, knowledge, practice}; benefit claimed is shared read-ownership convergence only, not new interface depth.",
     "YUK-1553": "knowledge -> ai 13 -> 12 (-1, total 389 -> 388): review.ts drops the private write_proposal executor (writeToolCallLog edge) — the shared DomainTool bridge now owns tool_call_log. Same-owner ai seams retained: streamTask + piDomainMount.",
     "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
-    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges)."
+    "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges).",
+    "YUK-1571-daily-review-plan": "Shared daily-review-plan input projection (DailyReviewPlanInputs, resolveDailyReviewPlanInputs) now lives in src/kernel/read-models/daily-review-plan.ts. Practice still owns the due queue, minute budget and measured pace, and installDailyReviewPlanFacts binds that reader before coach jobs mount. agency -> practice 4 -> 3, cross 24 -> 23. The agency/practice SCC remains because prepare_intervention and the practice -> agency intervention/pool-gap edges are unchanged. This meets the YUK-1622 exit for the TodayPlan read: Coach no longer imports practice/public for these symbols. No compat re-export."
   },
   "changes": [
     {
@@ -7009,6 +7010,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> practice",
+      "date": "2026-10-31",
+      "from": 4,
+      "to": 3,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -10677,6 +10686,26 @@
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/jobs/coach_daily.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["DailyReviewPlanInputs", "resolveDailyReviewPlanInputs"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection: deduped due questions bucketed by subject, plus the practice-supplied minute budget and measured question pace. Coach reads this projection; it does not import the practice due queue.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/public.ts",
+      "module": "src/kernel/read-models/daily-review-plan.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1571",
+      "owns": "Shared daily-review-plan input projection. installDailyReviewPlanFacts binds the practice-owned due/budget/pace reader into that projection before coach jobs mount; the due queue, budget and pace algorithms stay in practice.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -11802,11 +11831,11 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 24,
+      "total": 23,
       "byOwnerPair": {
         "agency -> knowledge": 1,
         "agency -> notes": 2,
-        "agency -> practice": 4,
+        "agency -> practice": 3,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
         "ingestion -> knowledge": 2,
