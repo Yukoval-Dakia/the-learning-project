@@ -71,6 +71,7 @@ export interface QuestionDetailPerKnowledge {
   mastery: number | null;
   evidence_count: number;
   last_evidence_at_sec: number | null;
+  // 'unknown' when there is no evidenced ability. That is not the untrained label.
   decay_bucket: MasteryDecayBucket;
   due_at_sec: number | null;
 }
@@ -284,17 +285,15 @@ async function loadScheduling(
     };
   }
 
-  // Mastery is the judgment contract's ability reading (the same mastery_state
-  // projection underneath), not the deprecated knowledge_mastery view;
-  // never-attempted nodes stay null/0. The due dates below stay on the raw
+  // Evidenced ability only. Insufficient evidence stays null with decay
+  // unknown, not an untrained/cold-start low score. Due dates stay on the raw
   // scheduling projection — the contract does not own due dates.
-  const masteryByKnowledge = abilityReadingsByIdOrFail(
-    await readLearnerJudgments(db, {
-      knowledge_ids: knowledgeIds,
-      context: 'any',
-      as_of: new Date(),
-    }),
-  );
+  const judgmentBatch = await readLearnerJudgments(db, {
+    knowledge_ids: knowledgeIds,
+    context: 'any',
+    as_of: new Date(),
+  });
+  const masteryByKnowledge = abilityReadingsByIdOrFail(judgmentBatch);
 
   const fsrsRows = await db
     .select({ subject_id: material_fsrs_state.subject_id, due_at: material_fsrs_state.due_at })
@@ -317,7 +316,9 @@ async function loadScheduling(
       mastery: m?.mastery ?? null,
       evidence_count: evidenceCount,
       last_evidence_at_sec: toSec(lastEvidenceAt),
-      decay_bucket: masteryDecayBucket(evidenceCount, lastEvidenceAt),
+      decay_bucket: m
+        ? masteryDecayBucket(evidenceCount, lastEvidenceAt, judgmentBatch.as_of)
+        : 'unknown',
       due_at_sec: toSec(dueByKnowledge.get(kid) ?? null),
     };
   });

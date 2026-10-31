@@ -58,6 +58,55 @@ export const COMPONENT_DISAGREEMENT_RULE = {
   low: MASTERY_BAND_THRESHOLDS.growing,
 } as const;
 
+// 「不会」vs「不知道你会不会」. The low side is the disagreement rule's existing
+// threshold, not a new calibrated cut. A prior or a neighbour is not low ability.
+export const AbilityClaimSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('low_observed'),
+    rule: z.object({ low: z.number() }),
+    calibration: z.literal('uncalibrated'),
+  }),
+  z.object({
+    kind: z.literal('observed'),
+    rule: z.object({ low: z.number() }),
+    calibration: z.literal('uncalibrated'),
+  }),
+  z.object({
+    kind: z.literal('insufficient_evidence'),
+    reason: z.string(),
+  }),
+  z.object({
+    kind: z.literal('not_evaluable'),
+    reason: z.literal('knowledge_role_not_mastery_evaluable'),
+  }),
+  z.object({
+    kind: z.literal('unavailable'),
+    reason: z.string(),
+  }),
+]);
+export type AbilityClaim = z.infer<typeof AbilityClaimSchema>;
+
+// Marks whether uncertainty is growing as evidence ages. Uses the existing
+// freshness buckets; does not widen a numeric interval. Recall intervals are
+// not this field — the retention reading has no review timestamp to age.
+export const EvidenceAgeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('not_applicable'),
+    reason: z.string(),
+  }),
+  z.object({
+    kind: z.literal('undated'),
+    reason: z.literal('observed_evidence_without_timestamp'),
+  }),
+  z.object({
+    kind: z.literal('dated'),
+    idle_days: z.number().int().nonnegative(),
+    freshness: z.enum(['fresh', 'mild', 'stale']),
+    growing: z.boolean(),
+  }),
+]);
+export type EvidenceAge = z.infer<typeof EvidenceAgeSchema>;
+
 export const ComponentDisagreementSchema = z.discriminatedUnion('kind', [
   UnknownSchema,
   z.object({
@@ -95,6 +144,7 @@ export const LearnerJudgmentSchema = z.object({
       calibration: z.literal('uncalibrated'),
     }),
   ]),
+  ability_claim: AbilityClaimSchema,
   retention: RetentionSchema,
   retention_forecast: UnknownSchema,
   uncertainty: z.object({
@@ -102,6 +152,7 @@ export const LearnerJudgmentSchema = z.object({
     helped_evidence: UnknownSchema,
     self_rated_evidence: UnknownSchema,
     component_disagreement: ComponentDisagreementSchema,
+    evidence_age: EvidenceAgeSchema,
   }),
   would_change_it: UnknownSchema,
   patterns: UnknownSchema,

@@ -110,6 +110,7 @@ export interface KnowledgeNodePage {
   beta: number | null;
   difficulty_anchored: boolean;
   last_evidence_at: string | null;
+  // 'unknown' when there is no evidenced ability. That is not the untrained label.
   mastery_decay_bucket: MasteryDecayBucket;
   subject_profile: SlimSubjectProfile;
   children: NodePageChild[];
@@ -370,7 +371,8 @@ export async function loadKnowledgeNodePage(
     created_at: r.created_at.toISOString(),
   }));
 
-  // Absent projection means cold start: no mastery, zero evidence, no last attempt.
+  // A missing evidenced reading is insufficient evidence or a non-evaluable role,
+  // not a cold-start low score. The decay bucket stays unknown, not untrained.
   const nodeEvidenceCount = nodeMastery?.evidence_count ?? 0;
   const nodeLastEvidenceAt = nodeMastery?.last_outcome_at ?? null;
 
@@ -383,7 +385,7 @@ export async function loadKnowledgeNodePage(
     effective_domain: effectiveDomain,
     role: node.role,
     mastery: nodeMastery?.mastery ?? null,
-    // Cold start is null/false; the client maps null mastery to the unknown band.
+    // Null mastery is insufficient evidence, not a prior point treated as low.
     mastery_lo: nodeMastery?.mastery_lo ?? null,
     mastery_hi: nodeMastery?.mastery_hi ?? null,
     low_confidence: nodeMastery?.low_confidence ?? false,
@@ -400,7 +402,9 @@ export async function loadKnowledgeNodePage(
     beta: focalBeta,
     difficulty_anchored: difficultyAnchored,
     last_evidence_at: nodeLastEvidenceAt ? nodeLastEvidenceAt.toISOString() : null,
-    mastery_decay_bucket: masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt),
+    mastery_decay_bucket: nodeMastery
+      ? masteryDecayBucket(nodeEvidenceCount, nodeLastEvidenceAt, judgmentBatch.as_of)
+      : 'unknown',
     subject_profile: toSlimSubjectProfile(profile),
     children,
     mesh_neighbors: meshNeighbors,
