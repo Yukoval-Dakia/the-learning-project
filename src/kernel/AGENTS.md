@@ -14,7 +14,7 @@
 | `records/intervention-package-author.ts` | 干预题目包的一次准备尝试：准备态守卫、科目档案、付费作者阶段、再次守卫、付费复检阶段、确定性校验。Practice 只提供两个付费阶段 |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
-| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；诊断流的 deliver/compose 由 `src/kernel/records/intervention-diagnostic-lock.ts` 消费 |
+| `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store、恢复与 probe-result 订阅）；同一 corrections:all / source 键由 `src/kernel/events/correction-lock.ts` 消费（`writeEvents`）；诊断流的 deliver/compose 由 `src/kernel/records/intervention-diagnostic-lock.ts` 消费 |
 | `cost.ts` / `canonical-json.ts` | 共享数值与序列化 helper |
 | `object-storage.ts` | 共享 R2/S3 对象 I/O：完整 client 接口、SDK 命令/响应适配与 lazy singleton；不拥有资产引用、数据库事务或付费策略 |
 | `http.ts` | 公共 HTTP helper（公共件，非契约） |
@@ -30,7 +30,7 @@
 - `RouteHandler` 形态兼容有参与无参：`(req, params) => Promise<Response>`，无参 handler 可忽略 `params`。
 
 ## ANTI-PATTERNS
-- manifest 代码禁止业务逻辑或 DB 调用；`events/` 仅允许 event envelope 所需的 `@/core/schema/event`、`@/db/*` 与 `drizzle-orm`，不得 import `@/server/*` 或 `@/capabilities/*`。
+- manifest 代码禁止业务逻辑或 DB 调用；`events/` 仅允许 event envelope 所需的 `@/core/schema/event`、`@/db/*`、`drizzle-orm`，以及 correction 锁键所需的 `@/kernel/locks/registry`；不得 import `@/server/*` 或 `@/capabilities/*`。
 - 禁止 capability 包之间深层 import；包间走 manifest 公共接口。
 - 禁止新增契约字段而没有真实使用方（反框架护栏）。
 - 禁止在 kernel 的 manifest/http 公共件 import `@/db/client`、`@/server/*` 等运行时依赖；`events/` 适用上方窄化依赖契约。

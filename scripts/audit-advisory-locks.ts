@@ -24,6 +24,7 @@ const APPROVED_PREFIXES = ['src/kernel/locks/'] as const;
 const APPROVED_HELPERS = [
   'src/capabilities/agency/server/conjecture/probe-lock.ts',
   'src/capabilities/agency/server/intervention/intervention-lock.ts',
+  'src/kernel/events/correction-lock.ts',
   'src/kernel/records/intervention-diagnostic-lock.ts',
   'src/db/learning-state-lock.ts',
   'src/db/session-advisory-lock.ts',
