@@ -68,7 +68,7 @@ flowchart TB
 |--------|---------------------|----------|
 | **Primary Purpose** | Learning/Education Platform | AI Coding Assistant |
 | **Architecture** | Multi-process (API + Worker) | Single Server + Plugins |
-| **AI Orchestration** | Task-based (51 TaskSpecs) | Session-based (conversations) |
+| **AI Orchestration** | Task-based (58 TaskSpecs) | Session-based (conversations) |
 | **Tool System** | DomainTool Registry + MCP Bridge | MCP Servers + Plugin Tools |
 | **State Management** | PostgreSQL + Event Sourcing | SQLite + File System |
 | **Job Queue** | pg-boss (PostgreSQL) | In-process / External |

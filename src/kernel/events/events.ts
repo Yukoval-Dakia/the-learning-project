@@ -1,11 +1,11 @@
 // Generic event-envelope storage; the single INSERT owner for event rows (ADR-0005 / ADR-0021).
 
-import { and, desc, eq, gte, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ne } from 'drizzle-orm';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import { type EventT, parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from './correction-lock';
+import { lockEventCorrectionSource, lockEventCorrectionsAll } from './correction-lock';
 import {
   type CorrectionStatus,
   activeCorrectionStatus,
@@ -279,15 +279,12 @@ export async function writeEvents(db: DbLike, inputs: WriteEventInput[]): Promis
     ),
   ].sort();
   return db.transaction(async (tx) => {
-    // Preserve correction-global -> target ordering before the new source locks.
+    // corrections:all before any source, matching activation's direct-chain read.
     if (correctionTargetIds.length) {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionsGlobalLockKey()}, 0))`,
-      );
-      for (const targetId of correctionTargetIds)
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtextextended(${eventCorrectionLockKey(targetId)}, 0))`,
-        );
+      await lockEventCorrectionsAll(tx);
+      for (const targetId of correctionTargetIds) {
+        await lockEventCorrectionSource(tx, targetId);
+      }
     }
     const rows = (await bindEventUsage(tx, inputs)).map(prepareEventInsert);
     await tx.insert(event).values(rows).onConflictDoNothing({ target: event.id });
