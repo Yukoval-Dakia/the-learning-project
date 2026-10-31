@@ -18,17 +18,17 @@
 // never a tool loop, no memory, no tool budget.
 
 import { AgentRunError } from '@/ai/agent-run-error';
-import { helpCost } from '@/ai/help-latency';
 import {
   type HelpProviderFault,
   readHelpProviderFault,
   renderHelpExitMarkdown,
 } from '@/ai/help-provider-fault';
-import { replayHelpExplanation } from '@/ai/help-reply-grounding';
+import { type SealedHelpExplanationReplay, replayHelpExplanation } from '@/ai/help-reply-grounding';
 import type { RunTaskResult } from '@/ai/task-result';
 import type { MaterializeAskCheckParams } from '@/capabilities/copilot/server/teaching/materialize-ask-check';
 import type { Db } from '@/db/client';
 import { runAgentTask } from '@/server/ai/runner';
+import { loadHelpExplanationEvidence, persistHelpExplanationReplay } from '../practice-port';
 import {
   TeachingError,
   type TeachingStructuredQuestionT,
@@ -73,6 +73,8 @@ export interface TeachingSkillResult {
   pendingQuestion?: PendingAskCheckParams;
   /** Real task_run_id for cost tracing; the caller writes it onto the reply event. */
   task_run_id: string;
+  /** Present when the reply was checked against a gold stem. */
+  reply_grounding?: SealedHelpExplanationReplay;
 }
 
 function helpExitResult(fault: HelpProviderFault, taskRunId: string): TeachingSkillResult {
@@ -149,21 +151,30 @@ export async function runTeachingSkill(
     throw error;
   }
 
+  const evidence = await loadHelpExplanationEvidence(db, result);
   const replayed = replayHelpExplanation({
-    prompt: userMessage,
+    prompt: [context.learning_item.title, context.learning_item.one_line_intent, userMessage]
+      .filter((part) => part.trim().length > 0)
+      .join('\n'),
     explanation: turn.text_md,
     hintIndex: FULL_EXPLANATION_HINT,
-    evidence: {
-      task_run_id: result.task_run_id,
-      provider: null,
-      model: null,
-      cost: helpCost(result.cost_basis, result.cost_usd),
-    },
+    evidence,
   });
+  if (replayed.replay) {
+    await persistHelpExplanationReplay(db, {
+      sessionId,
+      subjectKind: 'learning_item',
+      subjectId: learningItemId,
+      replay: replayed.replay,
+    });
+  }
   let pendingQuestion: PendingAskCheckParams | undefined;
   if (turn.kind === 'ask_check' && turn.structured_question) {
     pendingQuestion = {
-      structured_question: turn.structured_question,
+      structured_question: {
+        ...turn.structured_question,
+        prompt_md: replayed.text_md,
+      },
       learningItemId,
       // Stamp the Copilot session id as question provenance; accept-chip lineage
       // resolves against that same session.
@@ -177,6 +188,7 @@ export async function runTeachingSkill(
     kind: turn.kind,
     suggested_next: turn.suggested_next,
     task_run_id: result.task_run_id,
+    ...(replayed.replay ? { reply_grounding: replayed.replay } : {}),
     ...(pendingQuestion ? { pendingQuestion } : {}),
   };
 }
