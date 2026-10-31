@@ -1,8 +1,8 @@
 /**
  * Ratchet for bare Postgres advisory-lock calls in production TypeScript.
  *
- * Approved homes may hold the SQL: src/kernel/locks/ and the two shared helpers
- * that already issue it for many callers. Every other production file is
+ * Approved homes may hold the SQL: src/kernel/locks/ and the shared helpers
+ * that already issue it for their callers. Every other production file is
  * grandfathered by exact call count in scripts/audit-advisory-locks-baseline.json.
  * After this baseline exists on the comparison base, a higher count is a failure
  * even if the JSON is edited — new calls belong in an approved home.
@@ -24,6 +24,7 @@ const APPROVED_PREFIXES = ['src/kernel/locks/'] as const;
 const APPROVED_HELPERS = [
   'src/db/learning-state-lock.ts',
   'src/db/session-advisory-lock.ts',
+  'src/server/ai/provider-attempt-lock.ts',
 ] as const;
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.git', 'tests']);
 const SELF_PATH = 'scripts/audit-advisory-locks.ts';
