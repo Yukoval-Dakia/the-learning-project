@@ -15,6 +15,7 @@
 - `relation_type` 核心 5 类：`prerequisite | related_to | contrasts_with | applied_in | derived_from`；新关系先用 `experimental:*`。
 - 节点/edge/misconception 的 propose 都写 `event(action='propose')`，accept route 才执行真实 mutation。
 - Practice Failure Learning 的有界 knowledge / misconception 读在 `src/kernel/read-models/failure-learning-context.ts`；Knowledge 不拥有归因 workflow。
+- match-or-propose 标注决策在 `src/kernel/records/knowledge-tag.ts`。Knowledge 只在 `server/tag-knowledge.ts` 绑定 DashScope embedder，不再向其他 capability 导出 tagger。
 
 ## ANTI-PATTERNS
 - 破坏性动作（合并节点 / reparent / archive / misconception veto）只能 propose，无直接 write tool。

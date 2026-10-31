@@ -52,7 +52,8 @@
     "YUK-1571-question-pool-gap": "Signal, not a shared read: quiz_verify no longer calls agency recordQuestionPoolGap. Practice declares experimental:quiz_verify; agency.question-pool-gap subscribes and applies the existing coach-hint command after commit. practice -> agency 2 -> 1, cross-capability value 24 -> 23. SCC stays {agency, practice}. Independent of the unmerged daily-review-plan slice. Historical quiz_verify rows are bootstrap-skipped; only verifications committed after the subscriber activates get a hint.",
     "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way.",
     "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty.",
-    "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty."
+    "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
+    "YUK-1571-ingestion-knowledge-tag": "ingestion -> knowledge: image-candidate accept and auto-enroll no longer import knowledge/public tagKnowledge. The match-or-propose decision lives in src/kernel/records/knowledge-tag.ts; cosine retrieval and the match threshold live in src/kernel/read-models/knowledge-similarity.ts. Knowledge binds the DashScope embedder in server/tag-knowledge.ts and does not re-export the tagger. Both source files of this command moved together, because a knowledge pass-through would keep the edge. ingestion -> knowledge 2 -> 0, cross-capability value 19 -> 17. Nontrivial SCC stays empty."
   },
   "changes": [
     {
@@ -7054,6 +7055,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "ingestion -> knowledge",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11005,6 +11014,46 @@
       "issue": "YUK-1577",
       "owns": "Named advisory-lock key templates for the probe serve cap (int 4064403), the per-question hashtextextended identity (salt 0), and the conjecture-fold identity (salt 1). The registry derives those arguments and does not acquire the lock.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+      "module": "src/kernel/records/knowledge-tag.ts",
+      "kind": "value",
+      "symbols": ["isTagKnowledgeInvariantError", "tagKnowledge"],
+      "issue": "YUK-1571",
+      "owns": "Match-or-propose KC tagging: similarity match or a pending child KC, with the audit event. The DashScope embedder is bound by knowledge; this module does not call the provider.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/ingestion/server/auto-enroll.ts",
+      "module": "src/kernel/records/knowledge-tag.ts",
+      "kind": "value",
+      "symbols": ["NameKcFn", "isTagKnowledgeInvariantError", "tagKnowledge"],
+      "issue": "YUK-1571",
+      "owns": "Match-or-propose KC tagging: similarity match or a pending child KC, with the audit event. The DashScope embedder is bound by knowledge; this module does not call the provider.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/tag-knowledge.ts",
+      "module": "src/kernel/records/knowledge-tag.ts",
+      "kind": "value",
+      "symbols": ["KnowledgeTagProviderAttempt", "bindKnowledgeTagEmbedder"],
+      "issue": "YUK-1571",
+      "owns": "Match-or-propose KC tagging: similarity match or a pending child KC, with the audit event. The DashScope embedder is bound by knowledge; this module does not call the provider.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/knowledge/server/config-effective-facts.ts",
+      "module": "src/kernel/read-models/knowledge-similarity.ts",
+      "kind": "value",
+      "symbols": ["matchThreshold"],
+      "issue": "YUK-1571",
+      "owns": "KC cosine retrieval and the tagging match cutoff (TAGGING_MATCH_THRESHOLD) used by match-or-propose.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -12202,13 +12251,12 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 19,
+      "total": 17,
       "byOwnerPair": {
         "agency -> notes": 2,
         "agency -> practice": 3,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
-        "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> agency": 1,

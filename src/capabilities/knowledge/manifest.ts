@@ -23,6 +23,8 @@ import { API_ERROR_RESPONSES } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { nightlyEligibility } from '@/kernel/nightly-eligibility';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+// Binds the DashScope embedder before image-candidate accept or auto-enroll tags.
+import './server/tag-knowledge';
 
 export const knowledgeCapability = defineCapability({
   name: 'knowledge',

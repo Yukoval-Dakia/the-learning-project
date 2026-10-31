@@ -13,7 +13,7 @@
 | `rescue.ts` | block-level rescue 编排（session 状态不变，仅替换单块）|
 | `crop.ts` | 按 Tencent 坐标自动裁剪 figure → R2 asset |
 | `figure_attach.ts` | 配图归属（`attached_to_index`，high/low confidence，可 PATCH 改 manual）|
-| `enroll.ts` / `auto-enroll.ts` | 抽取结果挂知识点 / 自动登记 |
+| `enroll.ts` / `auto-enroll.ts` | 抽取结果挂知识点 / 自动登记；标注决策走 `@/kernel/records/knowledge-tag` |
 | `tagging.ts` | 题目标注 |
 | `workflow-judge.ts` / `workflow-judge-config.ts` | 抽取工作流判定 config |
 

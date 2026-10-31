@@ -1,4 +1,4 @@
-import type { NameKcFn } from '@/capabilities/knowledge/public';
+import type { NameKcFn } from '@/kernel/records/knowledge-tag';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import { type ColdStartBridgeRunTaskFn, runColdStartBridge } from './cold-start-bridge';
 

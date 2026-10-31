@@ -374,8 +374,8 @@ async function assertParentExists(db: DbLike, parentId: string): Promise<void> {
   }
 }
 
-// Shared preparation for explicit acceptance and automatic tagging. It does not
-// write a node: each owner records its creation contract before projection.
+// Preparation for explicit acceptance. It does not write a node: the accept path
+// records its creation contract before projection.
 export async function prepareProposedKnowledgeId(
   db: DbLike,
   payload: ProposeNewPayload,

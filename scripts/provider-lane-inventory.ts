@@ -409,11 +409,11 @@ export const PROVIDER_LANES = [
       },
       {
         path: 'src/capabilities/ingestion/server/auto-enroll.ts',
-        imports: ['@/capabilities/knowledge/public'],
+        imports: ['@/kernel/records/knowledge-tag'],
       },
       {
         path: 'src/capabilities/ingestion/server/image-candidate-accept.ts',
-        imports: ['@/capabilities/knowledge/public'],
+        imports: ['@/kernel/records/knowledge-tag'],
       },
     ],
     directImporters: [
