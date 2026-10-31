@@ -11132,9 +11132,7 @@
       "file": "src/capabilities/agency/server/intervention/reconcile.ts",
       "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
       "kind": "value",
-      "symbols": [
-        "materializeInterventionDiagnostics"
-      ],
+      "symbols": ["materializeInterventionDiagnostics"],
       "issue": "YUK-1571",
       "owns": "Diagnostic-question materialization: lineage proof, draft gates, one-shot publication, and today's stream placement. Archive recovery calls this operation. Practice still supplies FSRS enrollment and judge-run activity.",
       "date": "2026-10-31"
@@ -11144,9 +11142,7 @@
       "file": "src/capabilities/practice/public.ts",
       "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
       "kind": "value",
-      "symbols": [
-        "*"
-      ],
+      "symbols": ["*"],
       "issue": "YUK-1571",
       "owns": "Diagnostic-question materialization. installInterventionDiagnosticMaterializer installs practice-owned FSRS enrollment and judge-run activity before archive recovery runs the kernel operation.",
       "date": "2026-10-31"
@@ -11156,10 +11152,7 @@
       "file": "src/capabilities/practice/server/intervention-diagnostics.ts",
       "module": "src/kernel/records/intervention-diagnostic-materialize.ts",
       "kind": "value",
-      "symbols": [
-        "DiagnosticMaterializeEffects",
-        "applyDiagnosticMaterialization"
-      ],
+      "symbols": ["DiagnosticMaterializeEffects", "applyDiagnosticMaterialization"],
       "issue": "YUK-1571",
       "owns": "Diagnostic-question materialization. Activation still enters through practice public and supplies FSRS enrollment plus judge-run activity; the lineage, draft, publication, and stream decisions run in the kernel.",
       "date": "2026-10-31"
