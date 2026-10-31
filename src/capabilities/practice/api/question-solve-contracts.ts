@@ -426,10 +426,16 @@ export const CreateHintRequestBodySchema = z.object({
 export const HintFallbackReasonSchema = z.enum([
   'timeout',
   'provider_error',
+  'quota',
+  'bad_gateway',
   'parse_failed',
   'media_unavailable',
   'unknown',
 ]);
+export const HintStopRetrySchema = z.object({
+  retry: z.literal('stop'),
+  guidance: z.string().min(1),
+});
 export const HintFallbackHelpSchema = z.object({
   kind: z.enum(['reference', 'deterministic_next_step']),
   source: z.enum([
@@ -457,6 +463,7 @@ export const HintRequestResponseSchema = z.union([
     reference_available: z.boolean(),
     reference_revealed: z.boolean(),
     elapsed_ms: z.number().int().nonnegative(),
+    stop_retry: HintStopRetrySchema.optional(),
   }),
   z.object({
     hint_request_id: z.string(),
@@ -466,6 +473,7 @@ export const HintRequestResponseSchema = z.union([
     /** Honest dead-end message — keeps the pre-union {text_md} client shape working. */
     text_md: z.string(),
     elapsed_ms: z.number().int().nonnegative(),
+    stop_retry: HintStopRetrySchema.optional(),
   }),
 ]);
 

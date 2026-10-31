@@ -11306,6 +11306,24 @@
       "to": 1405,
       "issue": "YUK-1583",
       "responsibilityReason": "Optional kc_mastery_evidence is threaded from the model outcome onto the scored unit result. Points and aggregate do not read it; the attribution rules live in kc-mastery-evidence.ts and settlement.ts. The six lines are the import, the schema field, and the passthrough. This records measured 1399 to 1405 growth, not a new scoring responsibility or a ceiling exemption."
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "date": "2026-10-31",
+      "baseBlob": "61bc2e2fc51f89f3d084cb5b3262b9d9cb12a8a6",
+      "from": 1365,
+      "to": 1370,
+      "issue": "YUK-1413",
+      "responsibilityReason": "The existing root-response binding now also records HTTP 429 and 502, using the same single-fetch proof as 400. The added lines map that status onto the help-fault field. No new loop, retry, or provider lane."
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "date": "2026-10-31",
+      "baseBlob": "284ddbd8319753019984ce00cc3dead26396d6b8",
+      "from": 1348,
+      "to": 1375,
+      "issue": "YUK-1413",
+      "responsibilityReason": "A settled quota, 502, or typed parse failure on the collecting stream returns the executable exit text instead of an empty partial. The attempt still finishes as a failure and unknown cost stays unknown. This is the same stream-collect return, not a new runner."
     }
   ],
   "compatShims": [

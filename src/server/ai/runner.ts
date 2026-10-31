@@ -11,6 +11,11 @@
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from '@/ai/agent-run-error';
+import {
+  helpFinishReason,
+  helpProviderFaultFromSdkResult,
+  renderHelpExitMarkdown,
+} from '@/ai/help-provider-fault';
 import type { PiToolMount } from '@/ai/pi-tool-mount';
 import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { RunTaskResult } from '@/ai/task-result';
@@ -636,12 +641,14 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
       if (msg.subtype === 'success') {
         if (isApiErrorSuccessResult(msg)) {
           args.onApiError?.(msg);
+          const helpProviderFault = helpProviderFaultFromSdkResult(msg);
           throw new AgentRunError({
             kind: args.kind,
             taskRunId: args.lifecycle.taskRunId,
             subtype: 'api_error_result',
             apiErrorStatus: msg.api_error_status ?? null,
             errors: args.apiErrorMessages?.(msg) ?? [msg.result ?? ''],
+            ...(helpProviderFault ? { helpProviderFault } : {}),
           });
         }
         await args.onSuccess?.(msg);
@@ -663,11 +670,13 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
           });
         }
         args.onResultError?.(msg);
+        const helpProviderFault = helpProviderFaultFromSdkResult(msg);
         throw new AgentRunError({
           kind: args.kind,
           taskRunId: args.lifecycle.taskRunId,
           subtype: msg.subtype,
           errors: 'errors' in msg && Array.isArray(msg.errors) ? msg.errors : [],
+          ...(helpProviderFault ? { helpProviderFault } : {}),
         });
       }
       break;
@@ -1328,6 +1337,24 @@ async function streamTaskCollectingImpl(
       // verdict, not a stream failure Copilot may present as a partial reply.
       if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
         throw boundError;
+      }
+      // 400 stays the existing rejection. Quota / 502 / parse seal an exit the
+      // caller can publish without another model turn. Cancellation is not one.
+      const helpFault = !lifecycle.aborted && !failure ? boundError.helpProviderFault : undefined;
+      if (helpFault) {
+        const exit = renderHelpExitMarkdown(helpFault);
+        const prose = resultText.trim();
+        return {
+          task_run_id: lifecycle.taskRunId,
+          text: resultText,
+          terminalText: prose.length > 0 ? `${prose}\n\n${exit}` : exit,
+          finishReason: helpFinishReason(helpFault),
+          usage: lifecycle.usage,
+          cost_usd: lifecycle.costUsd,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
+          partial: false,
+        };
       }
       return {
         task_run_id: lifecycle.taskRunId,

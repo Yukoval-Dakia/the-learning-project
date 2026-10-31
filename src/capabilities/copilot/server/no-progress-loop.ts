@@ -6,6 +6,11 @@
 // iteration ceiling.
 
 import { createHash } from 'node:crypto';
+import {
+  type HelpProviderFault,
+  helpExitLead,
+  readHelpProviderFault,
+} from '@/ai/help-provider-fault';
 import type { PiAfterToolCall, PiBeforeToolCall } from '@/core/tool-call-contract';
 import type { Db, Tx } from '@/db/client';
 import { writeEvaluationCorrectionProposal } from '@/kernel/proposals/producers';
@@ -18,8 +23,15 @@ const BLOCK_REASON =
   'same tool call already settled with no new evidence; stop and answer from what was collected';
 const BUDGET_BLOCK_REASON =
   'execution window is closing; stop and answer from the evidence already collected';
+const HELP_FAULT_BLOCK_REASON =
+  'provider quota, gateway, or parse failure; stop and answer from the deterministic exit';
 
-export type NoProgressCloseReason = 'no_progress' | 'budget_landing';
+export type NoProgressCloseReason =
+  | 'no_progress'
+  | 'budget_landing'
+  | 'help_quota'
+  | 'help_bad_gateway'
+  | 'help_parse';
 
 export type EvidenceKind =
   | 'event'
@@ -300,7 +312,11 @@ export function createNoProgressLoop(): {
   const beforeToolCall: PiBeforeToolCall = (call, args) => {
     if (call.agentType !== undefined) return undefined;
     if (phase.status === 'closed') {
-      return { block: true, terminate: true, reason: BLOCK_REASON };
+      return {
+        block: true,
+        terminate: true,
+        reason: phase.reason.startsWith('help_') ? HELP_FAULT_BLOCK_REASON : BLOCK_REASON,
+      };
     }
     const signature = signatureOf(call.name, args);
     const slot = slots.get(signature);
@@ -354,6 +370,13 @@ export function createNoProgressLoop(): {
       ]);
     }
     if (repeatedFingerprint || noNewEvidence) stalled = true;
+    if (observation.isError) {
+      const fault = readHelpProviderFault(observation.error);
+      if (fault) {
+        close(helpCloseReason(fault));
+        return { terminate: true };
+      }
+    }
     return undefined;
   };
 
@@ -525,6 +548,19 @@ export function assistantProse(streamed: string, terminal: string): string {
   return `${stream}\n\n${end}`;
 }
 
+function helpCloseReason(fault: HelpProviderFault): NoProgressCloseReason {
+  if (fault.kind === 'quota') return 'help_quota';
+  if (fault.kind === 'bad_gateway') return 'help_bad_gateway';
+  return 'help_parse';
+}
+
+function helpFaultOfReason(reason: NoProgressCloseReason): HelpProviderFault | undefined {
+  if (reason === 'help_quota') return { kind: 'quota', httpStatus: 429 };
+  if (reason === 'help_bad_gateway') return { kind: 'bad_gateway', httpStatus: 502 };
+  if (reason === 'help_parse') return { kind: 'parse' };
+  return undefined;
+}
+
 function factLine(fact: EvidenceFact): string {
   const detail = fact.detail ? `：${fact.detail}` : '';
   return `- ${fact.tool} · ${fact.kind} ${fact.id}${detail}`;
@@ -536,8 +572,10 @@ export function renderNoProgressClosure(
 ): string {
   const lines = closure.evidence.slice(0, 20).map((fact) => factLine(fact));
   const evidence = lines.length > 0 ? lines.join('\n') : '- 这次还没有可引用的工具结果。';
-  const why =
-    closure.reason === 'budget_landing'
+  const helpFault = helpFaultOfReason(closure.reason);
+  const why = helpFault
+    ? helpExitLead(helpFault)
+    : closure.reason === 'budget_landing'
       ? '这次运行快到时间上限，先把已经拿到的内容交给你，不再继续查。'
       : '同样的查询没有带来新证据，所以停在这里，不再重复查。';
   const disputeFacts = closure.evidence.filter(

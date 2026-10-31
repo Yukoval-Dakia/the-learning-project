@@ -114,6 +114,7 @@ export async function requestPracticeSolveHint(
           : {
               status: outcome.status,
               reason: outcome.reason,
+              ...(outcome.stop_retry ? { stop_retry: outcome.stop_retry.retry } : {}),
               ...(outcome.status === 'fallback' ? { help_kind: outcome.help.kind } : {}),
             }),
       },

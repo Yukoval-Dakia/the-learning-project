@@ -12,6 +12,7 @@ import type {
   Model as PiModel,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
+import type { HelpProviderFault } from '@/ai/help-provider-fault';
 import type { PiReplayTurn, PiRunnerMessage } from './execution-adapter';
 import { hasPiUsageEvidence } from './pi-usage-evidence';
 import type { ProviderErrorEvidence } from './provider-error-evidence';
@@ -425,6 +426,8 @@ export function piTerminalResultFrame(args: {
   providerError?: ProviderErrorEvidence;
   /** Safe rejection bound to the same final root assistant, never query.latest. */
   providerRequestRejection?: { http_status: 400 };
+  /** Same binding for 429/502. Parse is set only from invalid structured JSON. */
+  helpProviderFault?: HelpProviderFault;
   /** YUK-1559 (C6) — the capture's shared sanitize+bound for retained provider
    *  text, applied to pi's errorMessage (errors[0]) so the full unsanitized body
    *  cannot bypass credential redaction or the 4096B cap. */
@@ -545,6 +548,7 @@ export function piTerminalResultFrame(args: {
       ...(args.providerRequestRejection
         ? { provider_request_rejection: args.providerRequestRejection }
         : {}),
+      ...(args.helpProviderFault ? { help_provider_fault: args.helpProviderFault } : {}),
       is_error: true,
       stop_reason: null,
       total_cost_usd: costUsd,
@@ -589,6 +593,9 @@ export function piTerminalResultFrame(args: {
         ],
         ...(args.structuredSubmitEvidence
           ? { structured_submit_evidence: args.structuredSubmitEvidence }
+          : {}),
+        ...(args.invalidStructuredArguments
+          ? { help_provider_fault: { kind: 'parse' as const } }
           : {}),
       } as SDKResultMessage & { source: 'pi' };
     }
