@@ -108,6 +108,7 @@ async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
 }
 
 const COACH_JOBS = new Set(['coach_daily', 'coach_weekly']);
+const INTERVENTION_RECOVERY_JOB = 'intervention_prepare_recovery';
 
 // Coach reads the kernel plan projection. Practice owns the due/budget/pace
 // facts and binds them here, before any coach handler is mounted. Kernel
@@ -121,6 +122,21 @@ async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): 
   await installDailyReviewPlanFacts();
 }
 
+// Archive recovery calls the kernel materializer. Practice owns FSRS enrollment
+// and judge-run activity and installs those leaves here, before that handler runs.
+async function installInterventionRecoveryMaterializer(
+  capabilities: CapabilityManifest[],
+): Promise<void> {
+  const recovers = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => handler.name === INTERVENTION_RECOVERY_JOB),
+  );
+  if (!recovers) return;
+  const { installInterventionDiagnosticMaterializer } = await import(
+    '@/capabilities/practice/public'
+  );
+  await installInterventionDiagnosticMaterializer();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
@@ -128,6 +144,7 @@ export async function registerCapabilityJobs(
   capabilities: CapabilityManifest[],
 ): Promise<void> {
   await installCoachDailyReviewPlan(capabilities);
+  await installInterventionRecoveryMaterializer(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
