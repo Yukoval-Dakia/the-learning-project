@@ -11277,6 +11277,15 @@
       "to": 1350,
       "issue": "YUK-1607",
       "responsibilityReason": "Declares experimental:question_or_answer_may_be_faulty, the log-only inference the assessment settlement writer emits. No new route, job, subscription, or serving hold."
+    },
+    {
+      "path": "src/core/schema/assessment/evaluation.ts",
+      "date": "2026-10-31",
+      "baseBlob": "7320885c538ac2b36af17580a236a379dea42ad5",
+      "from": 1399,
+      "to": 1405,
+      "issue": "YUK-1583",
+      "responsibilityReason": "Optional kc_mastery_evidence is threaded from the model outcome onto the scored unit result. Points and aggregate do not read it; the attribution rules live in kc-mastery-evidence.ts and settlement.ts. The six lines are the import, the schema field, and the passthrough. This records measured 1399 to 1405 growth, not a new scoring responsibility or a ceiling exemption."
     }
   ],
   "compatShims": [

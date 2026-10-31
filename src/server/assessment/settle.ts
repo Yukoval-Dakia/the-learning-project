@@ -4,8 +4,9 @@
 // Do not open a top-level transaction. Replay uses a savepoint.
 // Occurrence time is the frozen submission time. evaluated_at and activated_at stay separate.
 // A regrade is not extra practice: revert and apply share one snapshot, so evidence_count does not grow by one.
-// One shared theta update, and only when every non-abstain KC shares the same bit.
-// Mixed bits abstain. There is no fractional theta and no second IRT.
+// Uniform certain KCs still share one conjunctive theta update.
+// Mixed direction or weight stays one call, with per-KC evidence weight.
+// There is no second IRT. Answer points are not derived from those weights.
 // manual and self_report write FSRS only. Assisted scores stay, while theta, hard-mastery,
 // and calibration are excluded. An explicit user rating may still write FSRS.
 // The replay set is a deterministic fixpoint of later live settlements whose subjects intersect.
@@ -129,6 +130,7 @@ async function writeSettlementEvent(
       rating_source: plan?.ratingSource ?? null,
       provenance: plan?.provenance ?? null,
       kc_observations: plan?.kcObservations ?? [],
+      kc_wrong_cause: plan?.kcWrongCause ?? null,
       theta_decision: plan?.theta ?? null,
       effects: input.appliedOutcome
         ? {

@@ -13,6 +13,7 @@ import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { settlementReversions } from '@/core/assessment-settlement-liveness';
 import type { KcObservation } from '@/core/schema/assessment';
 import { EvaluationProvenance } from '@/core/schema/assessment';
+import type { KcEvidenceApply, KcWrongCauseT } from '@/core/schema/assessment/kc-mastery-evidence';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -51,6 +52,8 @@ interface ThetaApply {
   applied: true;
   outcome: 0 | 1;
   knowledgeIds: string[];
+  /** Present when KCs do not share one full-weight direction. */
+  kcEvidence?: KcEvidenceApply[];
   anchorQuestionId: string;
   anchorDifficulty: number;
   anchorKind: string;
@@ -99,6 +102,8 @@ export interface SettlementPlan {
   /** One knowledge card per scope KC. An empty scope uses the group-root question card. */
   fsrsSubjects: FsrsSubject[];
   kcObservations: KcObservation[];
+  /** Which KC dragged the attempt. null only on plans sealed before this field existed. */
+  kcWrongCause?: KcWrongCauseT;
   theta: ThetaApply | { applied: false; abstainReason: string };
   /** exact only when every unit was deterministic. Mixed routes must not look exact. */
   judgeRoute: string;
