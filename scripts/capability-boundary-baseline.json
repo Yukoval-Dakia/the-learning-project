@@ -11128,6 +11128,20 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/intervention/intervention-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedExactLockKey",
+        "deriveHashtextExtendedLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates and hashtext / hashtextextended text derivation. The registry does not acquire locks and does not record or prove a lock order.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
