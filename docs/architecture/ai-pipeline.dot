@@ -65,7 +65,7 @@ digraph AIPipeline {
     fillcolor="#e8f5e9";
     
     Runner [label="Pi Agent Runner\nrunner.ts → pi-agent-adapter.ts\n(in-process agentLoop)", shape=box, style=filled, fillcolor="#a5d6a7"];
-    Registry [label="Task Registry\ntask-catalog.ts\n51 TaskSpecs", shape=box, style=filled, fillcolor="#a5d6a7"];
+    Registry [label="Task Registry\ntask-catalog.ts\n58 TaskSpecs", shape=box, style=filled, fillcolor="#a5d6a7"];
     ToolBridge [label="Tool Bridge\npiToolMounts: DomainTool→AgentTool\n+ remote MCP client", shape=box, style=filled, fillcolor="#a5d6a7"];
     
     subgraph cluster_providers {
