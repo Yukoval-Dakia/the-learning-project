@@ -121,7 +121,6 @@ pnpm audit:structured-judge
 pnpm audit:test-policy
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads --strict
 pnpm audit:flags --strict
 pnpm audit:hub-sync-writers
 pnpm audit:provider-attempt-truth
@@ -203,7 +202,6 @@ pnpm audit:provider-lanes
 pnpm audit:profile
 pnpm audit:task-census
 pnpm audit:draft-status
-pnpm audit:draft-status-reads
 pnpm build
 ```
 
@@ -215,7 +213,7 @@ files and direct unmocked DB imports in unit files. The audit lanes run exactly 
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
 question-writers, API-contract, API-client, API-client-usage, tool-params,
 capability-boundary, architecture-deepening, profile, learner-copy, no-learning-styles,
-structured-judge, test-policy, task-census, draft-status, strict draft-status-read, strict
+structured-judge, test-policy, task-census, draft-status (insert and pool-read), strict
 flags, hub-sync-writers, provider-attempt-truth and model-source.
 `audit:provider-lanes` is a local-only census and is not in CI.
 The build lane injects secret canaries into the build environment, scans

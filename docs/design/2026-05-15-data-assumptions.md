@@ -419,7 +419,7 @@ artifact 容器 / teaching session 读，不该当独立池题）若漏 set `dra
 
 **审计契约**：`pnpm audit:draft-status`（`scripts/audit-draft-status.ts`）扫所有
 `.insert(question).values({ ... })` 站点，要求每个要么显式携带 `draft_status` key，要么在
-`scripts/audit-draft-status-allowlist.json` 声明 `reason` + `resolves_when{kind,ref,expected_by}`。
+`scripts/audit-draft-status-allowlist.json` 的 `writes` 段声明 `reason` + `resolves_when{kind,ref,expected_by}`。
 NULL≡active 是合法语义的 writer（`auto-enroll` / `import` / 错题 `mistakes` / 卷题 `parts`——
 它们本就是 active 池题）进 allowlist；容器题（`embedded_check_generate` / `materialize-ask-check`）
 YUK-350 起显式 set `draft_status:'draft'`，同时保留在 allowlist 作 harmless-redundant 的
