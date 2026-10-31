@@ -55,21 +55,15 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'practice',
     consumer: 'agency',
     files: [
-      'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
     ],
-    symbols: [
-      'authorInterventionPackage',
-      'materializeInterventionDiagnostics',
-      'retireInterventionDiagnosticQuestion',
-    ],
-    dto: 'intervention authoring + diagnostic materialization commands',
+    symbols: ['materializeInterventionDiagnostics', 'retireInterventionDiagnosticQuestion'],
+    dto: 'intervention diagnostic materialization commands',
     justification:
-      'agency owns the intervention lifecycle; practice owns diagnostic question materialization and authoring. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571); practice still supplies those three facts.',
+      'agency owns the intervention lifecycle; practice owns diagnostic question materialization. prepare_intervention calls the kernel author port, which practice binds; the authoring algorithm stays in practice. The daily-plan due/budget/pace projection is the kernel read model; practice still supplies those three facts.',
     reviewIssue: 'YUK-885',
     commandFiles: [
-      'src/capabilities/agency/jobs/prepare_intervention.ts',
       'src/capabilities/agency/server/intervention/reconcile.ts',
       'src/capabilities/agency/server/intervention/store.ts',
     ],

@@ -121,6 +121,17 @@ async function installCoachDailyReviewPlan(capabilities: CapabilityManifest[]): 
   await installDailyReviewPlanFacts();
 }
 
+// prepare_intervention calls the kernel author port. Practice owns the author
+// and binds it here, before that handler can run.
+async function installPrepareInterventionAuthor(capabilities: CapabilityManifest[]): Promise<void> {
+  const prepares = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => handler.name === 'prepare_intervention'),
+  );
+  if (!prepares) return;
+  const { installInterventionPackageAuthor } = await import('@/capabilities/practice/public');
+  await installInterventionPackageAuthor();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
@@ -128,6 +139,7 @@ export async function registerCapabilityJobs(
   capabilities: CapabilityManifest[],
 ): Promise<void> {
   await installCoachDailyReviewPlan(capabilities);
+  await installPrepareInterventionAuthor(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
