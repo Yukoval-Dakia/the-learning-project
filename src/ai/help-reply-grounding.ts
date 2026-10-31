@@ -299,12 +299,18 @@ function nearestSign(sentence: string, markerAt: number): '增' | '减' | null {
   return best?.sign ?? null;
 }
 
+const SIGN_KIND = { fail: '减', pass: '增' } as const;
+
+// A negated 增/减 does not name the interval in the next clause.
 function signBefore(text: string, at: number): '增' | '减' | null {
-  const prefix = text.slice(sentenceStart(text, at), at);
-  const inc = prefix.lastIndexOf('增');
-  const dec = prefix.lastIndexOf('减');
-  if (inc < 0 && dec < 0) return null;
-  return inc > dec ? '增' : '减';
+  const sentence = text.slice(sentenceStart(text, at), at);
+  const marks = scanMarks(sentence, ['减'], ['增']);
+  for (let i = marks.length - 1; i >= 0; i -= 1) {
+    const mark = marks[i];
+    if (mark.kind === 'neg' || negationGoverns(sentence, marks, mark.at)) continue;
+    return SIGN_KIND[mark.kind];
+  }
+  return null;
 }
 
 // NFKC folds the clause comma into the same ',' an interval uses. A comma
