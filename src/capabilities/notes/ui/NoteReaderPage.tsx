@@ -10,6 +10,7 @@ import { useCallback, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
 import { randomId } from '@/ui/lib/random-id';
+import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import { Btn } from '@/ui/primitives/Btn';
 import { CollapsibleList } from '@/ui/primitives/CollapsibleList';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -32,7 +33,6 @@ import {
   questionsForKnowledge,
   saveBodyBlocks,
   searchArtifacts,
-  undoAiChange,
 } from './notes-api';
 
 const NOTE_TYPE_LABEL: Record<string, string> = {
