@@ -9,6 +9,15 @@ export type HashtextLockNamespace = {
   readonly key: string;
 };
 
+export type HashtextPrefixedLockNamespace = {
+  readonly family: string;
+  readonly encoding: 'hashtext';
+  /** Stable prefix, including the separator before the first suffix field. */
+  readonly keyPrefix: string;
+  /** Suffix field names, concatenated in this order after keyPrefix (no extra ':'). */
+  readonly suffixFields: readonly string[];
+};
+
 export type IntLiteralLockNamespace = {
   readonly family: string;
   readonly encoding: 'int-literal';
@@ -37,6 +46,7 @@ export type HashtextExtendedIdentityLockNamespace = {
 
 export type AdvisoryLockNamespace =
   | HashtextLockNamespace
+  | HashtextPrefixedLockNamespace
   | IntLiteralLockNamespace
   | HashtextExtendedLockNamespace
   | HashtextExtendedIdentityLockNamespace;
@@ -85,6 +95,18 @@ export const advisoryLockRegistry = {
     salt: 1,
     identity: true,
   },
+  interventionDeliver: {
+    family: 'intervention-deliver',
+    encoding: 'hashtext',
+    keyPrefix: 'intervention:deliver:',
+    suffixFields: ['questionId'],
+  },
+  streamCompose: {
+    family: 'stream-compose',
+    encoding: 'hashtext',
+    keyPrefix: 'stream:compose:',
+    suffixFields: ['date'],
+  },
 } as const satisfies Record<string, AdvisoryLockNamespace>;
 
 export function deriveHashtextLockKey<T extends string>(namespace: {
@@ -92,6 +114,21 @@ export function deriveHashtextLockKey<T extends string>(namespace: {
   readonly key: T;
 }): T {
   return namespace.key;
+}
+
+export function deriveHashtextPrefixedLockKey<const Fields extends readonly string[]>(
+  namespace: {
+    readonly encoding: 'hashtext';
+    readonly keyPrefix: string;
+    readonly suffixFields: Fields;
+  },
+  parts: { readonly [K in Fields[number]]: string },
+): string {
+  const segments: string[] = [];
+  for (const field of namespace.suffixFields) {
+    segments.push(parts[field as Fields[number]]);
+  }
+  return `${namespace.keyPrefix}${segments.join(':')}`;
 }
 
 export function deriveHashtextExtendedLockKey<const Fields extends readonly string[]>(
