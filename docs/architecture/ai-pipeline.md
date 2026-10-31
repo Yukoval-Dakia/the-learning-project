@@ -160,8 +160,8 @@ consumes.
   servers (Exa) through a real `@modelcontextprotocol/sdk` client. Wire names
   stay `mcp__<server>__<tool>`.
 - **Shared pipeline**: every tool executes through `executeDomainToolCall`
-  (`tools/mcp-bridge.ts`) — engine-neutral `tool_call_log` / `tool_use` mirror /
-  `beforeExecute` / cancellation.
+  (`tools/mcp-bridge.ts`) — engine-neutral `tool_call_log` / `tool_use` mirror
+  (policy in `tools/tool-mirror-policy.ts`) / `beforeExecute` / cancellation.
 - **Tool Effects**: `read` | `propose` | `write` (write requires user accept)
 - **piHooks** (`pi-hooks.ts`): ordered `beforeToolCall` gates (spawn-contract) +
   `afterToolCall` observers — the only tool-call interception surface post-P4.
@@ -206,7 +206,7 @@ Resolution order (`resolveTaskProvider` in `providers.ts`):
 - `src/server/ai/pi-agent-adapter.ts` - PiAgentAdapter (in-process agentLoop, frame normalization)
 - `src/server/ai/providers.ts` - Provider registry + resolution order
 - `src/server/ai/tools/pi-tools.ts` - piToolMounts (DomainTool→AgentTool + remote MCP bridge)
-- `src/server/ai/mcp/exa.ts` - Exa remote MCP wiring
+- `src/ai/exa-mcp.ts` - Exa remote MCP wiring
 - `src/capabilities/*/manifest.ts` - Capability declarations (routes/jobs/copilotTools)
 - `docs/architecture.md` - §5 AI Task Layer
 - `src/server/ai/AGENTS.md` - authoritative pi-engine operator detail

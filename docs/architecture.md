@@ -223,7 +223,7 @@ ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审�
 
 - **Skill**（提示词包）：`src/subjects/<subject>/skills/<name>/SKILL.md`，跨科包放 `src/subjects/_shared/skills/`；调用方读正文后经 `piSkillDocs` 拼进 systemPrompt，缺包不注入、回落到 prompt 正文（`src/subjects/copilot-skills.ts`、`quiz-gen-skills.ts`、`note-skills.ts`）。
 - **in-process tool bridge**（现役）：领域 route / job 注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露 endpoint。
-- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/server/ai/mcp/exa.ts`）；其余来源按需接。
+- **外部 MCP 消费**（现役）：Exa 托管 MCP，工具名 `mcp__exa__web_search_exa` / `mcp__exa__web_fetch_exa`（`src/ai/exa-mcp.ts`）；其余来源按需接。
 - **Standalone MCP Server**（对外暴露 resources + tools）：未实现；未来复用 DomainTool registry，不重写工具定义。
 - **Plugin**（学科 bundle）：学科专属逻辑放 `src/subjects/<subject>/`，跨科逻辑放 `core/`。
 
