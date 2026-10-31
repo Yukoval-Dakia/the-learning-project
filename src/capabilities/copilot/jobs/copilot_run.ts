@@ -642,6 +642,10 @@ async function executeAcceptedCopilotRun(
     if (result.partial) {
       return await handleDurableFailure(db, {
         err: new Error(result.error ?? 'run failed'),
+        publicProseFailure:
+          result.failure?.kind === 'provider_request_rejected' && result.failure.httpStatus === 400
+            ? { kind: 'provider_rejected', http_status: 400 }
+            : { kind: 'execution_failed' },
         runId,
         sessionId: data.session_id,
         actorRef,
@@ -664,6 +668,7 @@ async function executeAcceptedCopilotRun(
     if (!finalized.accepted) {
       return await handleDurableFailure(db, {
         err: new Error('root terminal reply rejected'),
+        publicProseFailure: { kind: 'finalization_failed' },
         runId,
         sessionId: data.session_id,
         actorRef,

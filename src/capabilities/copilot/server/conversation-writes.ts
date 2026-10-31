@@ -8,8 +8,15 @@ import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import type { CopilotPublicProse, CopilotPublicProseFailure } from '../public-prose-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
+import {
+  publicProseFailureForReason,
+  publicProseFailureMessage,
+  publicProseStatus,
+  readCopilotPublicProse,
+} from './public-prose';
 import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
@@ -107,6 +114,7 @@ export interface WriteCopilotReplyResult {
   /** 剥掉 legacy primary_view marker 后的终稿（持久化 / 返回 / 重放历史都用这份）。 */
   cleanedReply: string;
   primaryView?: CopilotPrimaryView;
+  publicProse?: CopilotPublicProse;
 }
 
 export interface CopilotEvidenceValidationRef {
@@ -141,6 +149,8 @@ export async function writeCopilotReply(
     replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Product mode state persisted with the reply; never included in model input. */
     modeState?: CopilotModeState;
+    /** Structured, whitelisted failure supplied by the execution owner; never raw errors. */
+    publicProseFailure?: CopilotPublicProseFailure;
     /**
      * Optional terminal outcome for durable recovery. A durable success marker
      * lets a pg-boss redelivery repair missing job terminal events without
@@ -157,8 +167,36 @@ export async function writeCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult> {
   const write = params.writeFn ?? writeEvent;
-  const prepared =
-    params.preparedReply?.text === params.replyText
+  // Durable callers hold the original settlement lock. Freeze the committed
+  // public channel in this same reply marker, before any terminal suffix.
+  const publicProse: CopilotPublicProse | undefined =
+    params.userAskEventId && params.outcome
+      ? {
+          ...((await readCopilotPublicProse(db, [params.userAskEventId])).get(
+            params.userAskEventId,
+          ) ?? { version: 1 as const, text: '', last_event_id: 0 }),
+          status: publicProseStatus(
+            params.outcome === 'success'
+              ? undefined
+              : (params.publicProseFailure ??
+                  publicProseFailureForReason(params.durableFailure?.reason)),
+          ),
+          ...(params.outcome === 'success'
+            ? {}
+            : {
+                failure:
+                  params.publicProseFailure ??
+                  publicProseFailureForReason(params.durableFailure?.reason),
+              }),
+        }
+      : undefined;
+  const preservePublic = publicProse && params.outcome !== 'success';
+  const replyText = preservePublic
+    ? publicProse.text || publicProseFailureMessage(publicProse.failure)
+    : params.replyText;
+  const prepared = preservePublic
+    ? { text: replyText }
+    : params.preparedReply?.text === params.replyText
       ? params.preparedReply
       : {
           text: extractPrimaryView(params.replyText, {
@@ -180,7 +218,7 @@ export async function writeCopilotReply(
   const receipt = receiptMatches ? params.replyFinalization : undefined;
   const sealed = sealCommittedPresentationReply(prepared, receipt);
   const cleanedReply = sealed.preparedReply.text;
-  const primaryView = prepared.primaryView;
+  const primaryView = receipt ? sealed.preparedReply.primaryView : undefined;
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到
   // 自己的 ask 之前。
@@ -202,6 +240,7 @@ export async function writeCopilotReply(
       surface: 'copilot',
       session_id: params.sessionId,
       reply_md: cleanedReply,
+      ...(publicProse ? { public_prose: publicProse } : {}),
       derivation_policy: derivationPolicy,
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
@@ -226,7 +265,12 @@ export async function writeCopilotReply(
     task_run_id: params.taskRunId,
     created_at: replyAt,
   });
-  return primaryView ? { replyEventId, cleanedReply, primaryView } : { replyEventId, cleanedReply };
+  return {
+    replyEventId,
+    cleanedReply,
+    ...(primaryView ? { primaryView } : {}),
+    ...(publicProse ? { publicProse } : {}),
+  };
 }
 
 /** Question materialization and the terminal reply are one teaching-owned commit. */

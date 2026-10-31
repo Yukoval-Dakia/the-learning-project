@@ -4,6 +4,7 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events, tool_operation } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/kernel/job-events';
+import type { CopilotPublicProse } from '../public-prose-contract';
 import { writeCopilotReply } from './conversation-writes';
 import { acquireCopilotExecutionSettlementLock } from './copilot-run-coordination';
 import {
@@ -62,6 +63,7 @@ export interface PersistedCopilotRunCancellation {
   reason: 'cancelled';
   error: string;
   checkpointSafe?: boolean;
+  publicProse?: CopilotPublicProse;
 }
 
 /**
@@ -83,7 +85,7 @@ export async function persistCopilotRunCancellationMarker(
   const error = 'copilot run cancelled by user';
   const taskRunId = args.taskRunId ?? `copilot_run_cancelled_${args.runId}`;
   const writeReply = args.writeCopilotReplyFn ?? writeCopilotReply;
-  const { cleanedReply } = await writeReply(tx, {
+  const { cleanedReply, publicProse } = await writeReply(tx, {
     sessionId: args.sessionId,
     userAskEventId: args.runId,
     replyText,
@@ -102,6 +104,7 @@ export async function persistCopilotRunCancellationMarker(
   return {
     outcome: 'failure',
     replyMd: cleanedReply,
+    ...(publicProse ? { publicProse } : {}),
     taskRunId,
     reason: 'cancelled',
     error,
@@ -383,7 +386,7 @@ export async function requestCopilotRunCancellation(
       // A pre-fence orphan request can only come from legacy/manual data: a
       // normal endpoint call writes request + terminal in this transaction.
       if (!executionStarted) {
-        await persistCopilotRunCancellationMarker(tx, {
+        const marker = await persistCopilotRunCancellationMarker(tx, {
           runId,
           sessionId: acceptance.sessionId,
           actorRef,
@@ -396,6 +399,9 @@ export async function requestCopilotRunCancellation(
           payload: {
             reason: 'cancelled',
             cancelled_before_start: true,
+            ...(marker.publicProse
+              ? { public_prose: marker.publicProse, reply_md: marker.replyMd }
+              : {}),
             ...(typedAsk ? { checkpoint_event_id: runId } : {}),
           },
         });
@@ -418,7 +424,7 @@ export async function requestCopilotRunCancellation(
 
     // The shared dispatch lock makes this atomic with the paid-execution
     // fence: once this commits, the worker cannot enter model/tool execution.
-    await persistCopilotRunCancellationMarker(tx, {
+    const marker = await persistCopilotRunCancellationMarker(tx, {
       runId,
       sessionId: acceptance.sessionId,
       actorRef,
@@ -431,6 +437,9 @@ export async function requestCopilotRunCancellation(
       payload: {
         reason: 'cancelled',
         cancelled_before_start: true,
+        ...(marker.publicProse
+          ? { public_prose: marker.publicProse, reply_md: marker.replyMd }
+          : {}),
         ...(typedAsk ? { checkpoint_event_id: runId } : {}),
       },
     });
