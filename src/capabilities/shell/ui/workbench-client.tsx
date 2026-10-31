@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import { type ApiOperationJsonResponse, apiJson, apiOperationJson } from '@/ui/lib/api';
+import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import {
   decideProposal,
   listAutoApplied,
@@ -10,12 +11,7 @@ import {
 import { getPrepDeskConjectures } from './prep-desk-api';
 import { getActiveProbes } from './probe-answer-api';
 import { ackTeachingBriefOutcome, getTeachingBrief } from './teaching-brief-api';
-import {
-  getOvernightDigest,
-  getRecentAiChanges,
-  getWorkbenchSummary,
-  undoAiChange,
-} from './workbench-api';
+import { getOvernightDigest, getRecentAiChanges, getWorkbenchSummary } from './workbench-api';
 
 function readKnowledgeTreeSnapshot(subject?: string) {
   return apiOperationJson('getKnowledgeTreeSnapshot', {
