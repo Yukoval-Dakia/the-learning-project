@@ -72,7 +72,6 @@
     "audit:calibration": "tsx scripts/audit-calibration.ts",
     "audit:threshold-calibration": "tsx scripts/audit-threshold-calibration.ts",
     "audit:projection": "tsx scripts/audit-projection.ts",
-    "audit:tree-mesh": "tsx scripts/audit-tree-mesh-overlap.ts",
     "db:backfill:genesis": "tsx scripts/backfill-genesis-events.ts",
     "db:backfill:lost-attribution": "tsx scripts/backfill-lost-attribution.ts",
     "jyeoo:backfill": "tsx scripts/jyeoo-backfill.ts",
