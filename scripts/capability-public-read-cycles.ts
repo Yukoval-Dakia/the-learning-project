@@ -90,4 +90,8 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   // resolution already lived in src/kernel/read-models/subject-profile.ts.
   // Practice imports those kernel reads. The knowledge-runtime pass-through
   // and the knowledge public re-exports of the three readers are gone.
+  // YUK-1571 — the copilot -> notes section projection is retired.
+  // bodyBlocksToNoteSections lives in src/kernel/read-models/note-sections.ts.
+  // Teaching and note reads import that projection. The notes public re-export
+  // and the copilot forward are gone. Notes keeps block-tree edits.
 ];
