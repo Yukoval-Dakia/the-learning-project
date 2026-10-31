@@ -34,7 +34,11 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful } from '@/ui/primitives/Stateful';
-import { type CoachCalibrationReader, CoachCalibrationView } from './CoachCalibrationView';
+import {
+  type CoachCalibrationBadge,
+  type CoachCalibrationReader,
+  CoachCalibrationView,
+} from './CoachCalibrationView';
 import { COACH_VIEWS, type CoachView, DEFAULT_COACH_VIEW, VIEW_QUERY } from './coach-hub-view';
 import { browserTimeZone, weeklyReviewPath } from './coach-weekly';
 import { type CoachEffectivenessReader, EffectivenessTrendPanel } from './EffectivenessTrendPanel';
@@ -121,11 +125,13 @@ export default function CoachHub({
   navigate,
   readWeekly = readHttpWeekly,
   readCalibration,
+  maturityBadge,
   readEffectiveness,
 }: {
   navigate: (to: string) => void;
   readWeekly?: CoachWeeklyReader;
-  readCalibration?: CoachCalibrationReader;
+  readCalibration: CoachCalibrationReader;
+  maturityBadge: CoachCalibrationBadge;
   readEffectiveness?: CoachEffectivenessReader;
 }) {
   const [view, setView] = useState<CoachView>(DEFAULT_COACH_VIEW);
@@ -204,7 +210,11 @@ export default function CoachHub({
       >
         {view === 'activity' && <CoachActivityView navigate={hubGo} readWeekly={readWeekly} />}
         {view === 'calibration' && (
-          <CoachCalibrationView navigate={hubGo} readCalibration={readCalibration} />
+          <CoachCalibrationView
+            navigate={hubGo}
+            readCalibration={readCalibration}
+            maturityBadge={maturityBadge}
+          />
         )}
         {view === 'efficacy' && (
           <EffectivenessTrendPanel
