@@ -11058,6 +11058,20 @@
       "issue": "YUK-1571",
       "owns": "Complete note durable handoff protocol moved to kernel. Notes keeps boss-port wiring, legacy synthesis/recovery floor and verification-claim recovery jobs.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/agency/server/conjecture/probe-lock.ts",
+      "module": "src/kernel/locks/registry.ts",
+      "kind": "value",
+      "symbols": [
+        "advisoryLockRegistry",
+        "deriveHashtextExtendedIdentityLock",
+        "deriveIntLiteralLockKey"
+      ],
+      "issue": "YUK-1577",
+      "owns": "Named advisory-lock key templates for the probe serve cap (int 4064403), the per-question hashtextextended identity (salt 0), and the conjecture-fold identity (salt 1). The registry derives those arguments and does not acquire the lock.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
