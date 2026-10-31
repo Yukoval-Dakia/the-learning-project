@@ -1,6 +1,5 @@
 import { createContext, useContext } from 'react';
-import { getTree } from '@/capabilities/knowledge/ui-public';
-import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { type ApiOperationJsonResponse, apiJson, apiOperationJson } from '@/ui/lib/api';
 import {
   decideProposal,
   listAutoApplied,
@@ -18,6 +17,13 @@ import {
   undoAiChange,
 } from './workbench-api';
 
+function readKnowledgeTreeSnapshot(subject?: string) {
+  return apiOperationJson('getKnowledgeTreeSnapshot', {
+    url: subject ? `/api/knowledge?subject=${encodeURIComponent(subject)}` : '/api/knowledge',
+    method: 'GET',
+  });
+}
+
 export type WorkbenchClient = {
   getWorkbenchSummary: typeof getWorkbenchSummary;
   getOvernightDigest: typeof getOvernightDigest;
@@ -27,7 +33,7 @@ export type WorkbenchClient = {
   listAutoApplied: typeof listAutoApplied;
   decideProposal: typeof decideProposal;
   retractProposal: typeof retractProposal;
-  getTree: typeof getTree;
+  getTree: typeof readKnowledgeTreeSnapshot;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
   getActiveProbes: typeof getActiveProbes;
   getTeachingBrief: typeof getTeachingBrief;
@@ -44,7 +50,7 @@ export const httpWorkbenchClient: WorkbenchClient = {
   listAutoApplied: () => listAutoApplied(),
   decideProposal: (...args) => decideProposal(...args),
   retractProposal: (...args) => retractProposal(...args),
-  getTree: (subject) => getTree(subject),
+  getTree: readKnowledgeTreeSnapshot,
   getPrepDeskConjectures: () => getPrepDeskConjectures(),
   getActiveProbes: () => getActiveProbes(),
   getTeachingBrief: () => getTeachingBrief(),

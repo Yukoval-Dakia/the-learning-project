@@ -55,7 +55,8 @@
     "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
     "YUK-1571-note-section-read": "Top-level semanticBlock projection into note sections now lives in src/kernel/read-models/note-sections.ts. Copilot teaching and notes readers import that kernel projection. The notes public re-export and the copilot notes-integration forward are deleted. copilot -> notes 2 -> 1, cross-capability value 19 -> 18. Nontrivial SCC stays empty. Notes keeps block-tree edits.",
     "YUK-1571-intervention-author-port": "prepare_intervention does not import practice. The preparation attempt sequence (guards, subject profile, paid author stage, review stage, deterministic check) lives in src/kernel/records/intervention-package-author.ts. Practice supplies the two paid stages and the worker binds them before the job mounts. agency -> practice 3 -> 2. Composed with the merged note-section cut (copilot -> notes 1, cross 18): cross-capability value 18 -> 17. Diagnostic materialize and retire stay agency -> practice. Nontrivial SCC stays empty.",
-    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept remains). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed."
+    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept remains). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed.",
+    "YUK-1571-shell-knowledge-tree": "shell -> knowledge 1 -> 0. The workbench tree snapshot client calls published getKnowledgeTreeSnapshot (GET /api/knowledge) directly. The knowledge UI alias getTree is deleted; the knowledge page keeps getTreeForSubject. No kernel forward and no new capability edge. cross-capability value 16 -> 15. Nontrivial SCC stays empty."
   },
   "changes": [
     {
@@ -7081,6 +7082,14 @@
       "from": 2,
       "to": 1,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> knowledge",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -12323,7 +12332,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 16,
+      "total": 15,
       "byOwnerPair": {
         "agency -> notes": 1,
         "agency -> practice": 2,
@@ -12333,7 +12342,6 @@
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> agency": 1,
-        "shell -> knowledge": 1,
         "shell -> notes": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
