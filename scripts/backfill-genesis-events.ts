@@ -587,7 +587,7 @@ export async function backfillQuestionBlockGenesis(
  *
  * 方案 A BOUNDARY (documented, ticket-scoped): rows born AFTER this backfill by the untouched B1
  * writers (`runItemPriorBackfill` → `applyItemPrior`) are event-less until a LATER run of this
- * script anchors them — between runs, audit:projection reports them as drift (the honest event=truth
+ * script anchors them — between runs, ops:projection reports them as drift (the honest event=truth
  * signal the owner accepted with 不动 B1 在线写逻辑; a post-anchor kt_json / b_calib write drifts the
  * same way). Re-running the script on a clone is the documented re-anchor path (gate flow order:
  * backfill → audit).

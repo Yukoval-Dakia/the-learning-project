@@ -1,4 +1,4 @@
-// pnpm audit:calibration (YUK-461, axis-2 Wave-0) — READ-ONLY, REPORT-ONLY retro-
+// pnpm ops:calibration (YUK-461, axis-2 Wave-0) — READ-ONLY, REPORT-ONLY retro-
 // validation of the already-LIVE A1 SRT mastery engine via the keystone gate V-A1-fwd.
 //
 // ⚠ NEVER WRITES. NEVER FLIPS A FLAG. The script only SELECTs the event log + calibration
@@ -58,13 +58,13 @@ export function parseCreatedAt(value: unknown, eventId: string): number {
   if (value instanceof Date) {
     const t = value.getTime();
     if (Number.isNaN(t))
-      throw new Error(`audit-calibration: invalid Date created_at for event ${eventId}`);
+      throw new Error(`ops-calibration: invalid Date created_at for event ${eventId}`);
     return t;
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
       throw new Error(
-        `audit-calibration: non-finite numeric created_at for event ${eventId} (got ${value})`,
+        `ops-calibration: non-finite numeric created_at for event ${eventId} (got ${value})`,
       );
     }
     return value;
@@ -73,13 +73,13 @@ export function parseCreatedAt(value: unknown, eventId: string): number {
     const t = Date.parse(value);
     if (Number.isNaN(t)) {
       throw new Error(
-        `audit-calibration: unparseable created_at string for event ${eventId} (got "${value}")`,
+        `ops-calibration: unparseable created_at string for event ${eventId} (got "${value}")`,
       );
     }
     return t;
   }
   throw new Error(
-    `audit-calibration: unsupported created_at type for event ${eventId} (got ${typeof value})`,
+    `ops-calibration: unsupported created_at type for event ${eventId} (got ${typeof value})`,
   );
 }
 
@@ -517,11 +517,11 @@ export async function main(): Promise<void> {
     process.exitCode = await runCli();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`audit:calibration failed (operational error, NOT a gate verdict): ${msg}`);
+    console.error(`ops:calibration failed (operational error, NOT a gate verdict): ${msg}`);
     if (err instanceof Error && err.stack) console.error(err.stack);
     process.exitCode = 2;
   } finally {
-    // audit-calibration is one of the only DB-connecting audits (audit-threshold-calibration
+    // ops-calibration is one of the DB-connecting report scripts (ops-threshold-calibration
     // is the other, on its own dedicated read-only client): @/db/client opens a postgres-js
     // pool (max:10) that holds the event loop open, so WITHOUT closing it the process HANGS
     // after the report prints — the other audits scan source files, never connect, so they

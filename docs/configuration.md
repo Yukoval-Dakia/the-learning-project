@@ -179,7 +179,7 @@ compose 的 `migrate` / `app` / `worker` 都从 `.env` 取环境，`cloudflared`
 | 键 | 谁读 | 未设置时 | 出处 |
 | --- | --- | --- | --- |
 | `API_SMOKE_BASE_URL` | 脚本（`api:smoke`） | `http://localhost:3001` | `scripts/api-smoke.ts` |
-| `AUDIT_READ_DATABASE_URL` | 脚本（audit） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/audit-threshold-calibration.ts`；`src/server/env.ts` |
+| `AUDIT_READ_DATABASE_URL` | 脚本（`ops:threshold-calibration`） | 回落到 `DATABASE_URL`；session 固定只读 | `scripts/ops-threshold-calibration.ts`；`src/server/env.ts` |
 | `B3_GATE_CONFIRM_CLONE` | 脚本（`b3:gate`） | 不等于 `1` 时拒绝运行 | `scripts/b3-gate.ts` |
 | `DELIVERY_API_PORT` | 脚本（`delivery:evidence`） | `8787` | `scripts/delivery-evidence.ts` |
 | `DELIVERY_API_BASE` | 脚本（`delivery:evidence`） | `http://127.0.0.1:<DELIVERY_API_PORT>` | `scripts/delivery-evidence.ts` |
