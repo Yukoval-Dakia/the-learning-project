@@ -10776,6 +10776,36 @@
     },
     {
       "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/artifacts.ts",
+      "kind": "value",
+      "symbols": ["artifactRowToCreateSnapshot", "emitArtifactCreateEvent"],
+      "issue": "YUK-1572",
+      "owns": "Artifact create snapshot and artifact_create event. The draft transaction emits them from the tool_quiz row returned by the same insert, using that row's timestamp.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/records/answer-class-write.ts",
+      "kind": "value",
+      "symbols": ["withAnswerClass"],
+      "issue": "YUK-1572",
+      "owns": "Structural answer-class write rule: explicit non-null answer_class, absent-kind null, kind normalization, and choices/rubric defaults. The draft insert applies it to the question row before publication; draft status and verify intent stay in the same transaction.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_gen_persist.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication. The draft transaction publishes each newly inserted question in that same transaction and keeps the withheld default; composite parts already publish through their writer, so this call stays idempotent for them.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
       "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
       "module": "src/kernel/events/index.ts",
       "kind": "value",
