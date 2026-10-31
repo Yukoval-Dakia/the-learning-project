@@ -219,7 +219,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsrs --noEmit（root + server/start/tsconfig.json）
 pnpm lint             # biome check .
-pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
+pnpm lint:ratchet     # warning/info 总数必须等于 scripts/lint-baseline.json；高于或低于都失败，低于时同一次改动里 pnpm lint:ratchet:update 收紧基线（拒绝上调）
 pnpm test             # 全量 umbrella（audit 链 + unit/db/migration）；CI Gate 不调用它，而是跑 .github/workflows/ci-gate.yml 的矩阵（见 docs/agents/development-workflow.md）；本机按 AGENTS.md 只跑 scoped tests
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
