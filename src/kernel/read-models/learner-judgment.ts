@@ -21,6 +21,21 @@ function unknown(reason: string): JudgmentUnknown {
   return { kind: 'unknown', reason };
 }
 
+// Reasons meaning a component did not answer at all (query/snapshot/engine
+// failure), as opposed to honest per-item unknowns (cold start, inferred-only,
+// insufficient evidence). Failure-semantics consumers key on these.
+const COMPONENT_FAILURE_REASONS: ReadonlySet<string> = new Set([
+  'mastery_component_unavailable',
+  'retention_component_unavailable',
+  'engine_selection_unavailable',
+  'snapshot_unavailable',
+  'caller_transaction_is_not_a_read_only_snapshot',
+]);
+
+function isComponentFailureReason(reason: string): boolean {
+  return COMPONENT_FAILURE_REASONS.has(reason);
+}
+
 // The retention side is comparable only as a number: the port's FSRS reading or
 // the candidate's score. A structured unknown reading is not a value.
 function retentionValue(retention: LearnerJudgment['retention']): number | null {
@@ -78,7 +93,8 @@ function componentDisagreement(
 }
 
 // Deterministic plain-language sentence covering 会做 / 记得 / 分歧. Qualitative
-// only: no numbers reach learner-visible surfaces before the D6 threshold.
+// only: no numbers reach learner-visible surfaces before the D6 threshold. A
+// component failure is reported as a failure, never folded into "no evidence".
 function judgementSentence(
   pfa: LearnerJudgment['p_correct_now'],
   retention: LearnerJudgment['retention'],
@@ -89,18 +105,22 @@ function judgementSentence(
       ? '会做：现役掌握读数可用，尚未个人校准'
       : pfa.reason === 'inferred_only'
         ? '会做：仅知识关联推断，还不知道'
-        : '会做：本人作答证据不足，还不知道';
+        : isComponentFailureReason(pfa.reason)
+          ? '会做：掌握部件不可用，读取失败'
+          : '会做：本人作答证据不足，还不知道';
   const remember =
     retentionValue(retention) !== null
       ? '记得：现役保持读数可用，尚未个人校准'
-      : '记得：暂无保持读数，还不知道';
+      : retention.kind === 'unknown' && isComponentFailureReason(retention.reason)
+        ? '记得：保持部件不可用，读取失败'
+        : '记得：暂无保持读数，还不知道';
   const divergence =
     disagreement.kind === 'divergence_observed'
       ? disagreement.direction === 'ability_high_retention_low'
         ? '分歧：会做读数高而保持读数低（可能会了但快忘）'
         : '分歧：保持读数高而会做读数低（可能记得但不会用）'
       : disagreement.kind === 'no_divergence_observed'
-        ? '分歧：两读数同向，未见背离'
+        ? '分歧：未见跨阈值的背离'
         : disagreement.kind === 'partial_coverage'
           ? '分歧：仅一端读数可用，暂无法判断'
           : '分歧：两端读数均不可用，还不知道';
@@ -177,10 +197,20 @@ function judgment(
 
 /**
  * Fold a batch's ability readings back into the incumbent projection map shape
- * (observed + inferred entries), so consumers previously holding a
- * getMasteryProjection map adopt the contract without re-deriving fields.
+ * (observed + inferred entries), FAILING CLOSED when the ability component
+ * itself did not answer (query or snapshot failure): a component failure must
+ * not be folded into "never attempted". Under a successful read, a missing key
+ * means only cold start or a not-evaluable role — the same meaning the raw
+ * projection map had, whose failure also threw.
  */
-export function abilityReadingsById(batch: LearnerJudgmentBatch): Map<string, MasteryProjection> {
+export function abilityReadingsByIdOrFail(
+  batch: LearnerJudgmentBatch,
+): Map<string, MasteryProjection> {
+  for (const item of batch.items) {
+    if (item.ability.kind === 'unknown' && isComponentFailureReason(item.ability.reason)) {
+      throw new Error(`learner-judgment ability component failed: ${item.ability.reason}`);
+    }
+  }
   const byId = new Map<string, MasteryProjection>();
   for (const item of batch.items) {
     if (item.ability.kind !== 'available') continue;

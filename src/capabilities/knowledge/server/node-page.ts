@@ -20,7 +20,10 @@ import {
   resolveOwningLearningItemIds,
 } from '@/kernel/read-models/artifact-backlinks';
 import { getArtifactCorrectionStates } from '@/kernel/read-models/artifact-corrections';
-import { abilityReadingsById, readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import {
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
 import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getRepresentativeKcBeta } from '@/kernel/read-models/mastery-projection';
 import {
@@ -184,7 +187,7 @@ export async function loadKnowledgeNodePage(
     }),
     getRepresentativeKcBeta(db, [node.id]),
   ]);
-  const masteryProjection = abilityReadingsById(judgmentBatch);
+  const masteryProjection = abilityReadingsByIdOrFail(judgmentBatch);
   const nodeMastery = masteryProjection.get(node.id);
   const difficultyAnchored = focalBetaMap.has(node.id);
   const focalBeta = focalBetaMap.get(node.id) ?? nodeMastery?.beta ?? null;

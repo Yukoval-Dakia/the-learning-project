@@ -23,7 +23,10 @@ import {
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
-import { abilityReadingsById, readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import {
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
 
 export const GROUNDING_GATE_WINDOW_DAYS = 14;
 export const GROUNDING_GATE_ENRICH_BATCH_SIZE = 3;
@@ -174,7 +177,7 @@ export async function collectGroundingGateCandidates(
     readLearnerJudgments(db, { knowledge_ids: knowledgeIds, context: 'any', as_of: new Date() }),
     loadKnownConjectureKeys(db),
   ]);
-  const masteryByKnowledgeId = abilityReadingsById(judgmentBatch);
+  const masteryByKnowledgeId = abilityReadingsByIdOrFail(judgmentBatch);
 
   const rawCells = gatherConjectureEvidence({
     failures,

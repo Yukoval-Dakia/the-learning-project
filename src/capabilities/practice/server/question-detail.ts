@@ -14,7 +14,10 @@ import {
 import { type SourceTier, type SourceTierName, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { abilityReadingsById, readLearnerJudgments } from '@/kernel/read-models/learner-judgment';
+import {
+  abilityReadingsByIdOrFail,
+  readLearnerJudgments,
+} from '@/kernel/read-models/learner-judgment';
 import {
   type QuestionTimelineEntry,
   getQuestionTimeline,
@@ -285,7 +288,7 @@ async function loadScheduling(
   // projection underneath), not the deprecated knowledge_mastery view;
   // never-attempted nodes stay null/0. The due dates below stay on the raw
   // scheduling projection — the contract does not own due dates.
-  const masteryByKnowledge = abilityReadingsById(
+  const masteryByKnowledge = abilityReadingsByIdOrFail(
     await readLearnerJudgments(db, {
       knowledge_ids: knowledgeIds,
       context: 'any',

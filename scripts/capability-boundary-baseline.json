@@ -10663,7 +10663,7 @@
       "file": "src/capabilities/knowledge/server/node-page.ts",
       "module": "src/kernel/read-models/learner-judgment.ts",
       "kind": "value",
-      "symbols": ["abilityReadingsById", "readLearnerJudgments"],
+      "symbols": ["abilityReadingsByIdOrFail", "readLearnerJudgments"],
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The knowledge node page drops its parallel getMasteryProjection/getFsrsRetrievabilityByIds reads; its displayed mastery-family conclusions come only from this contract.",
       "date": "2026-10-30"
@@ -10673,7 +10673,7 @@
       "file": "src/capabilities/practice/server/question-detail.ts",
       "module": "src/kernel/read-models/learner-judgment.ts",
       "kind": "value",
-      "symbols": ["abilityReadingsById", "readLearnerJudgments"],
+      "symbols": ["abilityReadingsByIdOrFail", "readLearnerJudgments"],
       "issue": "YUK-1584",
       "owns": "Learner-judgment contract read (v0-incumbent): one read-only snapshot carries the incumbent mastery and retention readings with explicit unknowns, the explainable component-disagreement reading and the YUK-1600 non-kc role gate. The question detail scheduling block drops its parallel mastery projection read; per-KC due dates stay on the raw scheduling projection, which the contract does not own.",
       "date": "2026-10-30"
