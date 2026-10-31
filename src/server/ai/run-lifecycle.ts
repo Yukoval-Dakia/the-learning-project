@@ -418,6 +418,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         status,
         aborted: this.aborted,
         abortKinds: this.transportEvidence.abortInitiatorKinds(),
+        callerAbortReason: this.config.signal?.reason,
       }),
       modality,
       executable_help: this.executableHelp?.basis ?? null,

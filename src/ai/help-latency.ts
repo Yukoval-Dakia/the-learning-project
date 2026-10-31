@@ -75,6 +75,12 @@ const BASES = new Set<ExecutableHelpBasis>([
 const TIMEOUT_ABORTS = new Set(['execution_timeout', 'session_deadline']);
 const CANCEL_ABORTS = new Set(['caller_signal', 'lifecycle_abort']);
 
+/** AbortSignal.timeout aborts with a TimeoutError. A bare caller abort does not. */
+export function isBudgetTimeoutReason(reason: unknown): boolean {
+  if (!reason || typeof reason !== 'object') return false;
+  return (reason as { name?: unknown }).name === 'TimeoutError';
+}
+
 export function nonnegativeElapsed(originAt: number, at: number): number {
   const ms = at - originAt;
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
@@ -91,9 +97,12 @@ export function helpTerminalForAttempt(input: {
   status: 'success' | 'failure';
   aborted: boolean;
   abortKinds: readonly string[];
+  /** Reason on the caller signal. TimeoutError is the hint budget, not a cancel. */
+  callerAbortReason?: unknown;
 }): HelpTerminal {
   if (input.status === 'success') return 'success';
   if (input.abortKinds.some((kind) => TIMEOUT_ABORTS.has(kind))) return 'timeout';
+  if (input.aborted && isBudgetTimeoutReason(input.callerAbortReason)) return 'timeout';
   if (
     input.aborted &&
     (input.abortKinds.length === 0 || input.abortKinds.some((kind) => CANCEL_ABORTS.has(kind)))
