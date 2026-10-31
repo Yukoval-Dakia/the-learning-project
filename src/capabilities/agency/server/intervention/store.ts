@@ -4,7 +4,6 @@ import {
   INTERVENTION_ACTIVATED_ACTION,
   INTERVENTION_PREPARATION_FAILED_ACTION,
   INTERVENTION_SETTLED_ACTION,
-  type InterventionAuthoringContextT,
   InterventionDeliveryMode,
   type InterventionDeliveryModeT,
   type InterventionDiagnosticKindT,
@@ -262,76 +261,6 @@ export async function appendPreparationAttempt(
   const current = await loadInterventionVersion(db, record.id, record.version);
   if (!current) throw new Error(`intervention ${record.id}@${record.version} disappeared`);
   return current;
-}
-
-export async function loadInterventionAuthoringContext(
-  db: DbLike,
-  interventionId: string,
-): Promise<InterventionAuthoringContextT> {
-  const current = await loadLatestInterventionVersion(db, interventionId);
-  if (!current) throw new Error(`intervention '${interventionId}' was not found`);
-  if (current.status !== 'preparing') {
-    throw new Error(`intervention '${interventionId}' is ${current.status}, not preparing`);
-  }
-  if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
-    throw new Error(`intervention '${interventionId}' has no consumable recommendation`);
-  }
-  return {
-    snapshot: current.snapshot,
-    recommendation: current.recommendation,
-  };
-}
-
-export type InterventionPreparationStageGuard =
-  | {
-      status: 'ready';
-      context: InterventionAuthoringContextT;
-    }
-  | {
-      status:
-        | 'intervention_not_found'
-        | 'intervention_not_preparing'
-        | 'preparation_job_superseded'
-        | 'recommendation_unavailable'
-        | 'source_evidence_inactive';
-    };
-
-/**
- * Read-only paid-stage fence for Practice's calls through Agency's public port.
- *
- * The expected pg-boss id stays out of `InterventionAuthoringContext` so it cannot
- * leak into model prompts, while every paid stage still rejects a
- * restored/superseded job.
- */
-export async function guardInterventionPreparationStage(
-  db: DbLike,
-  interventionId: string,
-  expectedPreparationJobId: string,
-): Promise<InterventionPreparationStageGuard> {
-  const current = await loadLatestInterventionVersion(db, interventionId);
-  if (!current) return { status: 'intervention_not_found' };
-  if (current.status !== 'preparing') return { status: 'intervention_not_preparing' };
-  if (current.preparation_job_id !== expectedPreparationJobId) {
-    return { status: 'preparation_job_superseded' };
-  }
-  if (!current.recommendation || current.recommendation.kind !== 'recommendation') {
-    return { status: 'recommendation_unavailable' };
-  }
-  const effective = await getEffectiveProbeResultStatuses(
-    db,
-    [current.source_probe_result_event_id],
-    { validateDirectChain: true },
-  );
-  if (effective.get(current.source_probe_result_event_id) !== 'active') {
-    return { status: 'source_evidence_inactive' };
-  }
-  return {
-    status: 'ready',
-    context: {
-      snapshot: current.snapshot,
-      recommendation: current.recommendation,
-    },
-  };
 }
 
 export async function activateIntervention(

@@ -297,12 +297,13 @@ flowchart LR
 | 文件/模块 | 角色 |
 |---|---|
 | `src/capabilities/agency/public.ts` | 导出窄 command/read port；不导出表或内部 service |
-| `src/capabilities/agency/server/intervention/contracts.ts` | snapshot、recommendation、status、outcome 的 canonical Zod |
+| `src/core/schema/intervention.ts` | snapshot、recommendation、status、outcome 的 canonical Zod |
 | `src/capabilities/agency/server/intervention/prepare.ts` | 同波次 orchestrator；生命周期唯一写者 |
 | `src/capabilities/agency/server/intervention/recommend.ts` | deterministic shortlist + recommendation task + abstain |
 | `src/capabilities/agency/server/intervention/store.ts` | 事务、version、idempotency、事实事件 |
 | `src/capabilities/agency/jobs/prepare_intervention.ts` | pg-boss adapter；manifest 注册 |
-| `src/capabilities/practice/server/intervention-author.ts` | 只消费 Agency reader 返回的 snapshot；生成 1 份教学材料 + immediate/delayed/transfer 三题 |
+| `src/kernel/read-models/intervention-preparation.ts` | 准备阶段只读围栏：最新版本、job id、具体 recommendation、snapshot、探针证据是否仍有效 |
+| `src/capabilities/practice/server/intervention-author.ts` | 只消费 kernel 准备阶段只读围栏返回的 snapshot；生成 1 份教学材料 + immediate/delayed/transfer 三题 |
 | `src/capabilities/shell/server/teaching-brief.ts` | 只读投影 intervention control section |
 
 ### Capability 规则
