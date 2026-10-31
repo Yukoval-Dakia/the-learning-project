@@ -97,11 +97,11 @@
     }
   },
   "answer.vision_extracted": {
-    "reason": "Rechecked 2026-10-11 at main 755297781: answer-draft.ts autosave/freeze writes content_md and image_refs, not vision_extracted; migration capture/redaction only preserves existing values. The image-attempt text producer remains pending in YUK-1404. Keep student work as attempt evidence, never as the answer key. 2026-10-18 is a review date, not a promised delivery date. | Re-dated 2026-10-16 to 2026-10-30: Stage「第一天能用」 owns this (YUK-1404, photo / answer-sheet per-question reading, G8). Review date, not a delivery promise; the writer does not exist yet.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: answer-draft.ts autosave/freeze writes content_md and image_refs, not vision_extracted; migration capture/redaction only preserves existing values. The image-attempt text producer remains pending in YUK-1404. Keep student work as attempt evidence, never as the answer key. 2026-10-18 is a review date, not a promised delivery date. | Re-dated 2026-10-16 to 2026-10-30: Stage「第一天能用」 owns this (YUK-1404, photo / answer-sheet per-question reading, G8). Review date, not a delivery promise; the writer does not exist yet. | Re-dated 2026-10-31 by EL for Gate hygiene on #2218 (YUK-1584): review cliff, writer still YUK-1404",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1404 (YUK-1113 census): implement and verify the image-attempt extraction writer to answer.vision_extracted and its actual attempt consumer together, or preserve historical values in an approved compatible retirement migration; review by 2026-10-30",
-      "expected_by": "2026-10-30"
+      "ref": "YUK-1404 (YUK-1113 census): implement and verify the image-attempt extraction writer to answer.vision_extracted and its actual attempt consumer together, or preserve historical values in an approved compatible retirement migration; review by 2026-11-30",
+      "expected_by": "2026-11-30"
     }
   },
   "artifact.id": {

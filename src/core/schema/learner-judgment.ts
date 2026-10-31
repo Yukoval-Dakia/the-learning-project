@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MASTERY_BAND_THRESHOLDS } from '@/core/mastery-band';
 import { RetentionReadingSchema } from './scheduling-state';
 
 // v0 only reads the incumbent's skill-wide state. No arbitrary signal bag or
@@ -48,6 +49,36 @@ const RetentionSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+// Registered engineering priors for the disagreement reading, reusing the mastery
+// band vocabulary (>= solid is the high side, < growing is the low side). A
+// disagreement verdict compares the two already-published component readings at
+// these thresholds; it is NOT a joint prediction and stays uncalibrated.
+export const COMPONENT_DISAGREEMENT_RULE = {
+  high: MASTERY_BAND_THRESHOLDS.solid,
+  low: MASTERY_BAND_THRESHOLDS.growing,
+} as const;
+
+export const ComponentDisagreementSchema = z.discriminatedUnion('kind', [
+  UnknownSchema,
+  z.object({
+    kind: z.literal('divergence_observed'),
+    direction: z.enum(['ability_high_retention_low', 'ability_low_retention_high']),
+    rule: z.object({ high: z.number(), low: z.number() }),
+    calibration: z.literal('uncalibrated'),
+  }),
+  z.object({
+    kind: z.literal('no_divergence_observed'),
+    rule: z.object({ high: z.number(), low: z.number() }),
+    calibration: z.literal('uncalibrated'),
+  }),
+  // One side has no usable reading, so the two observables cannot be compared.
+  z.object({
+    kind: z.literal('partial_coverage'),
+    missing: z.enum(['ability', 'retention']),
+    reason: z.string(),
+  }),
+]);
+
 export const LearnerJudgmentSchema = z.object({
   knowledge_id: z.string(),
   ability: AbilitySchema,
@@ -70,7 +101,7 @@ export const LearnerJudgmentSchema = z.object({
     independent_evidence: UnknownSchema,
     helped_evidence: UnknownSchema,
     self_rated_evidence: UnknownSchema,
-    component_disagreement: UnknownSchema,
+    component_disagreement: ComponentDisagreementSchema,
   }),
   would_change_it: UnknownSchema,
   patterns: UnknownSchema,

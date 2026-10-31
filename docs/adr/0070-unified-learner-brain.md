@@ -4,7 +4,7 @@ status: accepted
 
 # ADR-0070 — 统一学习者大脑：一份有版本的共用判断与对账校准
 
-**Status:** Accepted（设计方向，2026-10-11）；尚未实施。
+**Status:** Accepted（设计方向，2026-10-11）。第一刀只读适配已实施（YUK-1431，PR #2017：契约 v0 `readLearnerJudgments` + Copilot 学情头共读）；会做/记得/分歧三项读数补全，展示（知识页 node-page）、选题（grounding-gate 探针选题）、复习（question-detail 调度块）三面已接同一契约（YUK-1584）。遗忘替换（D4）、封存对账（D3）与数字门槛（D6）未实施。
 **Amended by:** ADR-0072 D4（2026-10-11）——契约增补一项批量读面：候选 refs → 每题 P(对)、不确定度与预测版本，供备题 agent / Copilot 与题库检索结果组合；题库工具本身不读写学习者状态。
 **Decision source:** owner 2026-10-10 愿景评审「一套多元信号的算法蛮重要——我们之前选 FSRS 有点稀里糊涂的。没有一种长在产品上的大脑的感觉——虽然我知道大概不可能用一个算式表达」；2026-10-11 拍板 B1–B4（决定记录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/decisions/2026-10-11-supply-and-brain.md`），讨论票转实施。
 **Tracking:** [YUK-1470](https://linear.app/yukoval-studios/issue/YUK-1470)。
