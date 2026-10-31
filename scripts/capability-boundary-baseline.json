@@ -10773,6 +10773,40 @@
       "issue": "YUK-1413",
       "owns": "Question timeline of attempts and reviews, including the original and effective evaluation ids needed to file a correction proposal.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1572",
+      "owns": "Event envelope insert for the quiz verify terminal success, hold, and retriable system-error events. Payload, outcome, and the caller transaction stay as they were; the job still decides the verdict.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/object-storage.ts",
+      "kind": "value",
+      "symbols": ["*"],
+      "issue": "YUK-1572",
+      "owns": "Shared object client invoked only when the existing publisher asset barrier calls readAssetBytes. Asset refs, locks, and paid policy stay on the verify publication path.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/quiz_verify_persist.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": [
+        "appendAdmissionVerificationRecord",
+        "publishQuestionGroup",
+        "publishQuestionGroupFromRow"
+      ],
+      "issue": "YUK-1572",
+      "owns": "Question-group publication and append-only admission verification records. Promote, hold, and kept-admission writes stay in the same caller transaction; the verify job still chooses the branch.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
