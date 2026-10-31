@@ -198,10 +198,6 @@
       "count": 1
     },
     {
-      "path": "src/kernel/events/events.ts",
-      "count": 2
-    },
-    {
       "path": "src/kernel/proposals/applier-helpers.ts",
       "count": 1
     },
