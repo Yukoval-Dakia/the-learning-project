@@ -14,10 +14,6 @@
       "count": 1
     },
     {
-      "path": "src/capabilities/agency/server/conjecture/probe-lifecycle.ts",
-      "count": 6
-    },
-    {
       "path": "src/capabilities/agency/server/intervention/probe-result-subscription.ts",
       "count": 2
     },
