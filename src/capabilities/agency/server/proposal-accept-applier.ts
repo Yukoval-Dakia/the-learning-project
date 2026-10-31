@@ -1,4 +1,3 @@
-import { createLearningIntentKnowledgeNode } from '@/capabilities/knowledge/public';
 import { createLearningIntentNote, dispatchNoteGeneration } from '@/capabilities/notes/public';
 import type { Db } from '@/db/client';
 import { shouldEnqueueBackgroundJobs } from '@/kernel/background-job-enqueue';
@@ -17,6 +16,7 @@ import {
 import * as ownerRuntime from '@/server/proposals/owner-runtime';
 import { type ConjectureApplierOpts, acceptConjectureProposal } from './conjecture-accept';
 import { acceptGoalScopeProposal } from './goals/accept';
+import { createLearningIntentKnowledgeNode } from './learning-intent';
 import {
   type AgencyApplierOpts,
   acceptCompletionProposal,
