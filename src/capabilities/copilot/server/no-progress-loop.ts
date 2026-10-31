@@ -1,6 +1,9 @@
-// Same-question tool calls that add no evidence stop the loop. Turns, tool
-// counts and spend stay uncapped (the 45 minute recovery window is unchanged).
-// The stop is the repeat itself, not a fee or iteration ceiling.
+// Same-question tool calls that add no evidence stop the loop. A settled
+// non-mutating call anchors the closing window whether the read returned
+// evidence or failed, so an error-only chain stops before the hard timeout.
+// Turns, tool counts and spend stay uncapped (the 45 minute recovery window
+// is unchanged). The stop is the repeat or that landing, not a fee or
+// iteration ceiling.
 
 import { createHash } from 'node:crypto';
 import type { PiAfterToolCall, PiBeforeToolCall } from '@/core/tool-call-contract';
@@ -73,6 +76,22 @@ type Phase =
   | { readonly status: 'collecting' }
   | { readonly status: 'closed'; readonly reason: NoProgressCloseReason };
 
+/** Closing is the last minute before the hard timeout. Ready means a
+ *  non-mutating root call has already settled. Success and error are the
+ *  same anchor; a mutation never sets it. */
+type BudgetLanding = {
+  readonly window: 'open' | 'closing';
+  readonly anchor: 'waiting' | 'ready';
+};
+
+type SettledRootCall =
+  | { readonly kind: 'mutation'; readonly applied: boolean }
+  | { readonly kind: 'read' };
+
+function budgetLandingDue(state: BudgetLanding): boolean {
+  return state.window === 'closing' && state.anchor === 'ready';
+}
+
 interface CallSlot {
   readonly fingerprint: string;
   readonly generation: number;
@@ -95,6 +114,11 @@ const ID_KEYS: Record<string, EvidenceKind> = {
 
 const MUTATION_NAME =
   /^(propose_|write_|author_|edit_|update_|submit_|file_|archive_|restore_|dismiss_)/;
+
+function classifyRootCall(tool: string, isError: boolean): SettledRootCall {
+  if (MUTATION_NAME.test(tool)) return { kind: 'mutation', applied: !isError };
+  return { kind: 'read' };
+}
 
 function domainToolName(name: string): string {
   const separator = name.lastIndexOf('__');
@@ -235,7 +259,9 @@ function disputeReasonOf(record: Record<string, unknown>): string | undefined {
  * One copilot turn's tool loop. The same args are not executed again. A read
  * that adds no ids only stalls: the model can still answer. Another tool call
  * after that stall is the stop. A mutation bumps the generation so one
- * following read of the same args may observe the write.
+ * following read of the same args may observe the write. Inside the closing
+ * window, the next root tool stops once any non-mutating call has settled,
+ * including a call that only failed.
  */
 export function createNoProgressLoop(): {
   beforeToolCall: PiBeforeToolCall;
@@ -246,8 +272,7 @@ export function createNoProgressLoop(): {
   let phase: Phase = { status: 'collecting' };
   let stalled = false;
   let generation = 0;
-  let budgetLanding = false;
-  let settledReads = 0;
+  let budget: BudgetLanding = { window: 'open', anchor: 'waiting' };
   const slots = new Map<string, CallSlot>();
   const seenFingerprints = new Set<string>();
   const known = new Set<string>();
@@ -256,6 +281,11 @@ export function createNoProgressLoop(): {
   function close(reason: NoProgressCloseReason): void {
     if (phase.status === 'closed') return;
     phase = { status: 'closed', reason };
+  }
+
+  function armBudgetAnchor(): void {
+    if (budget.anchor === 'ready') return;
+    budget = { window: budget.window, anchor: 'ready' };
   }
 
   function remember(facts: readonly EvidenceFact[]): void {
@@ -286,7 +316,7 @@ export function createNoProgressLoop(): {
       close('no_progress');
       return { block: true, terminate: true, reason: BLOCK_REASON };
     }
-    if (budgetLanding && settledReads > 0) {
+    if (budgetLandingDue(budget)) {
       close('budget_landing');
       return { block: true, terminate: true, reason: BUDGET_BLOCK_REASON };
     }
@@ -304,13 +334,14 @@ export function createNoProgressLoop(): {
     const novel = substantive.filter((fact) => !known.has(factKey(fact)));
     const repeatedFingerprint = seenFingerprints.has(fingerprint);
     const noNewEvidence = substantive.length > 0 && novel.length === 0;
-    if (!observation.isError && MUTATION_NAME.test(tool)) generation += 1;
+    const settled = classifyRootCall(tool, observation.isError);
+    if (settled.kind === 'mutation' && settled.applied) generation += 1;
     slots.set(signatureOf(observation.call.name, observation.args), {
       fingerprint,
       generation,
     });
     seenFingerprints.add(fingerprint);
-    if (!observation.isError && !MUTATION_NAME.test(tool)) settledReads += 1;
+    if (settled.kind === 'read') armBudgetAnchor();
     remember(novel.length > 0 ? incoming : incoming.filter((fact) => fact.kind === 'tool_summary'));
     if (incoming.length === 0) {
       remember([
@@ -330,7 +361,8 @@ export function createNoProgressLoop(): {
     beforeToolCall,
     afterToolCall,
     landBeforeBudget() {
-      budgetLanding = true;
+      if (budget.window === 'closing') return;
+      budget = { window: 'closing', anchor: budget.anchor };
     },
     closure() {
       if (phase.status !== 'closed') return undefined;
