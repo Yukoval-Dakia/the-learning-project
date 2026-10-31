@@ -46,23 +46,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
   {
     owner: 'practice',
     consumer: 'agency',
-    files: [
-      'src/capabilities/agency/jobs/prepare_intervention.ts',
-      'src/capabilities/agency/server/intervention/store.ts',
-    ],
-    symbols: [
-      'authorInterventionPackage',
-      'materializeInterventionDiagnostics',
-      'retireInterventionDiagnosticQuestion',
-    ],
-    dto: 'intervention authoring + diagnostic materialization commands',
+    files: ['src/capabilities/agency/server/intervention/store.ts'],
+    symbols: ['materializeInterventionDiagnostics', 'retireInterventionDiagnosticQuestion'],
+    dto: 'intervention diagnostic materialization commands',
     justification:
-      'agency owns the intervention lifecycle; practice owns authoring, FSRS enrollment, and judge-run activity. Kernel owns diagnostic question materialization. Archive recovery calls that operation. store still materializes and retires through this public module. The daily-plan due/budget/pace projection is the kernel read model (YUK-1571); practice still supplies those three facts.',
+      'agency owns the intervention lifecycle. Kernel owns diagnostic question materialization and the preparation attempt sequence. Practice supplies FSRS enrollment, judge-run activity, and the two paid author stages. store still materializes and retires through this public module. The daily-plan due/budget/pace projection is the kernel read model; practice still supplies those three facts.',
     reviewIssue: 'YUK-885',
-    commandFiles: [
-      'src/capabilities/agency/jobs/prepare_intervention.ts',
-      'src/capabilities/agency/server/intervention/store.ts',
-    ],
+    commandFiles: ['src/capabilities/agency/server/intervention/store.ts'],
   },
   {
     owner: 'knowledge',

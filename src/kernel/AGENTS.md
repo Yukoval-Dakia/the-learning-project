@@ -11,6 +11,7 @@
 | `read-models/` | 跨 capability 只读投影（failure attempts、failure-learning knowledge context、question activity、cause policy、knowledge tree/subject 解析、questions 列表、daily review plan inputs、intervention preparation stage、note section projection） |
 | `records/mastery-state.ts` | 在线 mastery 诊断的完整 attempt 更新、显式 upsert 与单 KC merge retirement；跨面结算、恢复和 merge 编排仍归调用方 |
 | `records/intervention-diagnostic-materialize.ts` | 诊断题物料化：题行谱系、草稿门、一次性发布和当日流安置。practice 只提供 FSRS 入学与判分活动，归档恢复调用该操作 |
+| `records/intervention-package-author.ts` | 干预题目包的一次准备尝试：准备态守卫、科目档案、付费作者阶段、再次守卫、付费复检阶段、确定性校验。Practice 只提供两个付费阶段 |
 | `records/` | 共享 learning-record 读/迁移模型（queries / record-processing / types）、typed-state 存取与 `conjecture-prediction-scoring.ts` 单探针评分规则 |
 | `proposals/` | proposal 生命周期 registry + inbox / writer / producers / signals engine（kernel 共享机制） |
 | `locks/registry.ts` | 命名 advisory-lock 键模板与键派生。不取锁、不证明顺序。learning-state write 由 `src/db/learning-state-lock.ts` 消费；provider-attempt 三族（hashtextextended salt 0）由 `src/server/ai/provider-attempt-lock.ts` 消费；探针 serve cap、probe question、conjecture fold 由 `src/capabilities/agency/server/conjecture/probe-lock.ts` 消费；intervention instance / corrections:all / source 由 `src/capabilities/agency/server/intervention/intervention-lock.ts` 消费（store 与恢复）；诊断流的 deliver/compose 由 `src/kernel/records/intervention-diagnostic-lock.ts` 消费 |

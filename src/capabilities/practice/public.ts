@@ -108,6 +108,15 @@ export async function installInterventionDiagnosticMaterializer(): Promise<void>
   installDiagnosticMaterializeEffects(diagnosticMaterializeEffects());
 }
 
+export async function installInterventionAuthorStages(): Promise<void> {
+  const [{ installInterventionAuthorStages: install }, { interventionAuthorStages }] =
+    await Promise.all([
+      import('@/kernel/records/intervention-package-author'),
+      import('./server/intervention-author'),
+    ]);
+  install(interventionAuthorStages);
+}
+
 type HandleReviewDue = typeof import('./server/due-list').handleReviewDue;
 export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');

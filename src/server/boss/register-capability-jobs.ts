@@ -137,6 +137,17 @@ async function installInterventionRecoveryMaterializer(
   await installInterventionDiagnosticMaterializer();
 }
 
+// prepare_intervention runs the kernel author sequence. Practice owns the paid
+// author and review stages and binds them here, before that handler can run.
+async function installPrepareInterventionAuthor(capabilities: CapabilityManifest[]): Promise<void> {
+  const prepares = capabilities.some((capability) =>
+    (capability.jobs?.handlers ?? []).some((handler) => handler.name === 'prepare_intervention'),
+  );
+  if (!prepares) return;
+  const { installInterventionAuthorStages } = await import('@/capabilities/practice/public');
+  await installInterventionAuthorStages();
+}
+
 /** Called after registerHandlers. Chain targets in that book must already exist. */
 export async function registerCapabilityJobs(
   boss: PgBoss,
@@ -145,6 +156,7 @@ export async function registerCapabilityJobs(
 ): Promise<void> {
   await installCoachDailyReviewPlan(capabilities);
   await installInterventionRecoveryMaterializer(capabilities);
+  await installPrepareInterventionAuthor(capabilities);
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
