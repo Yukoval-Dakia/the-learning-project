@@ -128,11 +128,6 @@ export {
   reviewInterventionPackageCandidate,
 } from './server/intervention-author';
 
-export {
-  INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
-  materializeInterventionDiagnostics,
-  retireInterventionDiagnosticQuestion,
-} from './server/intervention-diagnostics';
 // explicit judging contract consumed by the stable kernel facade.
 export type { AnswerInput, JudgeResult } from './server/judge';
 export {
