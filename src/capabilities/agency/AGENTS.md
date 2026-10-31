@@ -17,6 +17,7 @@
 - 夜链 cron 全部 `Asia/Shanghai`；pg-boss cron 自带 singleton 语义。
 - queue 档：`agent` 给多 tool-call LLM job（dreaming、research meeting）；`llm` 给单次/轻量 LLM job（coach）。
 - proposal kind 归属与 applier 存在性解耦：有 producer 无 accept applier 的 kind（如 `defer`）在 dispatch 壳 default throw。
+- dreaming 扫到新的 `note_update` artifact 时只写 `experimental:dreaming_note_refresh`；笔记 refine 入队由 notes 订阅完成。
 
 ## ANTI-PATTERNS
 - 别把 agent-notes 当用户可写的事实层；它是 hint channel。
