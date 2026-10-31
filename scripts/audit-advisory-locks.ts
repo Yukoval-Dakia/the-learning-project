@@ -25,6 +25,7 @@ const APPROVED_HELPERS = [
   'src/capabilities/agency/server/conjecture/probe-lock.ts',
   'src/db/learning-state-lock.ts',
   'src/db/session-advisory-lock.ts',
+  'src/server/ai/provider-attempt-lock.ts',
 ] as const;
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.git', 'tests']);
 const SELF_PATH = 'scripts/audit-advisory-locks.ts';

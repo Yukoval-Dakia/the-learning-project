@@ -242,10 +242,6 @@
       "count": 1
     },
     {
-      "path": "src/server/ai/provider-attempt-lifecycle.ts",
-      "count": 8
-    },
-    {
       "path": "src/server/ai/provider-session-admission.ts",
       "count": 1
     },
