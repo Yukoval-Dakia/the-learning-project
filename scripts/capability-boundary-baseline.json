@@ -52,7 +52,8 @@
     "YUK-1571-question-pool-gap": "Signal, not a shared read: quiz_verify no longer calls agency recordQuestionPoolGap. Practice declares experimental:quiz_verify; agency.question-pool-gap subscribes and applies the existing coach-hint command after commit. practice -> agency 2 -> 1, cross-capability value 24 -> 23. SCC stays {agency, practice}. Independent of the unmerged daily-review-plan slice. Historical quiz_verify rows are bootstrap-skipped; only verifications committed after the subscriber activates get a hint.",
     "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way.",
     "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty.",
-    "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty."
+    "YUK-1571-learning-intent-node-birth": "agency -> knowledge: learning-intent accept no longer calls knowledge/public createLearningIntentKnowledgeNode. That adapter only forwarded to createKnowledgeNodeFromEvents. Agency now calls src/kernel/records/knowledge-node-birth.ts directly and keeps accept provenance (actorRef learning-intent-accept, proposed_by_ai, role). The knowledge module and public export are deleted. agency -> knowledge 1 -> 0, cross-capability value 20 -> 19. Nontrivial SCC stays empty.",
+    "YUK-1571-dreaming-note-refresh": "Signal, not a shared command: dreaming_nightly no longer calls notes enqueueDreamingNoteRefine. A new note_update artifact in the scan becomes experimental:dreaming_note_refresh; notes.dreaming-note-refresh subscribes after commit and enqueues the existing dreaming refine. agency -> notes 2 -> 1 (proposal-accept remains). The public export of enqueueDreamingNoteRefine is deleted. Historical scans are not replayed."
   },
   "changes": [
     {
@@ -7054,6 +7055,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "agency -> notes",
+      "date": "2026-10-31",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -12202,9 +12211,9 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 19,
+      "total": 18,
       "byOwnerPair": {
-        "agency -> notes": 2,
+        "agency -> notes": 1,
         "agency -> practice": 3,
         "copilot -> notes": 2,
         "copilot -> practice": 1,
