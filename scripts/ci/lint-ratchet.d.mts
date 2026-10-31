@@ -11,8 +11,12 @@ export interface RatchetRegression {
   current: number;
 }
 
+export type RatchetKind = 'match' | 'stale' | 'regression';
+
 export interface RatchetVerdict {
+  /** True only when every severity total equals the baseline. */
   ok: boolean;
+  kind: RatchetKind;
   staleBy: Partial<Record<'errors' | 'warnings' | 'infos', number>>;
   regressions: RatchetRegression[];
 }
