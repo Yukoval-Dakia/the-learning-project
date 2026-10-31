@@ -20,6 +20,9 @@
 // Plan derivation lives in settle-plan, plan application in settle-apply, and
 // undo/replay safety in settle-replay. This file owns the public operations and
 // the receipt that seals their outcome.
+// Repeated independent wrongs on one question, with independent corrects on
+// other admitted questions of the same KC, append one inference event.
+// That event does not change mastery, scheduling, or which questions are served.
 
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
@@ -39,6 +42,7 @@ import { ApiError } from '@/kernel/http';
 import { resolveAbilityGlobalByKnowledgeId } from '@/kernel/read-models/mastery-state';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 import type { ActivationEffect, ActivationSettleInput } from './activate';
+import { recordFaultyItemInferences } from './faulty-item-inference';
 import { type ApplyOutcome, type SettlementObservers, executePlan } from './settle-apply';
 import {
   derivePlan,
@@ -153,6 +157,25 @@ async function writeSettlementEvent(
     cost_micro_usd: null,
     ingest_at: input.activatedAt,
     created_at: input.activatedAt,
+  });
+}
+
+async function noteFaultyQuestionInference(
+  tx: Tx,
+  effect: ActivationEffect,
+  input: ActivationSettleInput,
+  plan: SettlementPlan,
+  settlementEventId: string,
+  occurredAt: Date,
+  activatedAt: Date,
+): Promise<void> {
+  if (effect !== 'applied') return;
+  await recordFaultyItemInferences(tx, {
+    plan,
+    questionGroupId: input.questionGroupId,
+    settlementEventId,
+    occurredAt,
+    activatedAt,
   });
 }
 
@@ -334,6 +357,15 @@ export async function learningSettlement(
       revertedIds: [],
       appliedOutcome: applied,
     });
+    await noteFaultyQuestionInference(
+      tx,
+      effect,
+      input,
+      plan,
+      settlementEventId,
+      occurrenceAt,
+      activatedAt,
+    );
     return effect;
   }
 
@@ -429,6 +461,15 @@ export async function learningSettlement(
     revertedIds: revertOrder.map((m) => m.id),
     appliedOutcome,
   });
+  await noteFaultyQuestionInference(
+    tx,
+    'applied',
+    input,
+    plan,
+    settlementEventId,
+    occurrenceAt,
+    activatedAt,
+  );
   return 'applied';
 }
 
