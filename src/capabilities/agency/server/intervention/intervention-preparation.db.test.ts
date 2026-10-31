@@ -8,6 +8,7 @@ import {
   JUDGE_RUN_TABLE,
   authorInterventionPackage,
   handleReviewDue,
+  installInterventionDiagnosticMaterializer,
 } from '@/capabilities/practice/public';
 
 import {
@@ -730,7 +731,10 @@ async function prepareAdmittedDiagnosticFixture(label: string) {
 }
 
 describe('YUK-791 intervention preparation closed loop', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    await installInterventionDiagnosticMaterializer();
+    await resetDb();
+  });
   afterEach(async () => {
     await resetTestConfig();
     vi.restoreAllMocks();
