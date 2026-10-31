@@ -49,7 +49,8 @@
     "YUK-1568-ingestion-declarations": "Measured against af4b30bf97a2906f221573f83c19d15d76253e46: compose-presentation directly consumes the existing draftDocumentToContract owner (+1 ingestion -> questions, 10 -> 11). block-structured-edit directly consumes the already kernel-owned complete question-block lifecycle writer instead of the old server re-export (-1 ingestion -> projections, 9 -> 8). Capability -> server stays 384; no audit or total ceiling change, new proxy, copied codec or second writer. This net-zero architecture evidence is separate from declaration preservation, CAS/replay and publish-binding source evidence in docs/planning/2026-10-22-yuk1568-ingestion-declarations.md.",
     "YUK-1563-custom-providers": "Custom provider CRUD: the observability store writes the custom_provider table directly under the @/db transitional exemption (agency api precedent); definitions/validation/registry live in core/config/custom-providers; catalog integration is wired by the composition root through core ports (no new capability→server or cross-capability edges; two registered capabilityToKernel error-envelope edges).",
     "YUK-1571-question-pool-gap": "Signal, not a shared read: quiz_verify no longer calls agency recordQuestionPoolGap. Practice declares experimental:quiz_verify; agency.question-pool-gap subscribes and applies the existing coach-hint command after commit. practice -> agency 2 -> 1, cross-capability value 24 -> 23. SCC stays {agency, practice}. Independent of the unmerged daily-review-plan slice. Historical quiz_verify rows are bootstrap-skipped; only verifications committed after the subscriber activates get a hint.",
-    "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way."
+    "YUK-1571-intervention-preparation-read": "The last practice -> agency query is the preparation-stage read. guardInterventionPreparationStage now lives in src/kernel/read-models/intervention-preparation.ts: latest intervention version, preparation job id, concrete recommendation, snapshot, and whether the source probe evidence is still active. Practice imports that kernel read. Agency keeps intervention writes. Unused agency public exports (InterventionAuthoringContextT, InterventionPreparationStageGuard, guardInterventionPreparationStage, loadInterventionAuthoringContext) are deleted; the authoring context type stays in core/schema/intervention.ts, and the unused contracts re-export module is deleted with them. practice -> agency 1 -> 0, cross-capability value 22 -> 21, nontrivial SCC {agency, practice} becomes empty. agency -> practice command edges stay one-way.",
+    "YUK-1571-practice-knowledge-read": "The last practice -> knowledge value edge was the knowledge-runtime pass-through. Failure-learning knowledge and misconception reads now live in src/kernel/read-models/failure-learning-context.ts; resolveSubjectProfileForKnowledgeIds was already the kernel subject-profile read. Practice imports those kernel owners directly. The pass-through file and the knowledge public re-exports of the three readers are deleted. practice -> knowledge 1 -> 0, cross-capability value 21 -> 20. Nontrivial SCC stays empty."
   },
   "changes": [
     {
@@ -7035,6 +7036,14 @@
       "from": 1,
       "to": 0,
       "direction": "decrease"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "practice -> knowledge",
+      "date": "2026-10-31",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -10873,6 +10882,56 @@
       "issue": "YUK-1572",
       "owns": "Question-group publication and append-only admission verification records. Promote, hold, and kept-admission writes stay in the same caller transaction; the verify job still chooses the branch.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/cause-catalog.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["loadFailureLearningKnowledgeContext"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-attribution.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["listActiveMisconceptionsForKcs"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+      "module": "src/kernel/read-models/failure-learning-context.ts",
+      "kind": "value",
+      "symbols": ["getMisconceptionsByIds"],
+      "issue": "YUK-1571",
+      "owns": "Bounded failure-learning knowledge read: active named knowledge nodes in caller order, with effective domain, plus active misconception nodes linked to those KCs or resolved by id. Practice reads this projection; knowledge keeps graph writes.",
+      "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/item-prior-durable-operation.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1571",
+      "owns": "Subject profile for a question's knowledge ids. Item-prior preparation reads the existing kernel resolver directly.",
+      "date": "2026-10-31"
     }
   ],
   "sourceSizeRecords": [
@@ -12061,7 +12120,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 21,
+      "total": 20,
       "byOwnerPair": {
         "agency -> knowledge": 1,
         "agency -> notes": 2,
@@ -12071,7 +12130,6 @@
         "ingestion -> knowledge": 2,
         "observability -> agency": 1,
         "observability -> practice": 1,
-        "practice -> knowledge": 1,
         "shell -> agency": 1,
         "shell -> knowledge": 1,
         "shell -> notes": 1,
