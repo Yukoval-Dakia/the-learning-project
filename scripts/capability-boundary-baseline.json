@@ -11028,7 +11028,11 @@
       "file": "src/capabilities/notes/server/learning-intent-note.ts",
       "module": "src/kernel/records/learning-intent-note-birth.ts",
       "kind": "value",
-      "symbols": ["CreateLearningIntentNoteFn", "CreateLearningIntentNoteInput", "createLearningIntentNote"],
+      "symbols": [
+        "CreateLearningIntentNoteFn",
+        "CreateLearningIntentNoteInput",
+        "createLearningIntentNote"
+      ],
       "issue": "YUK-1571",
       "owns": "Notes public surface re-exports the kernel-owned learning-intent birth writer without a second implementation.",
       "date": "2026-10-31"
