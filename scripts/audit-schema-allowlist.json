@@ -482,14 +482,6 @@
       "expected_by": "2027-01-31"
     }
   },
-  "event_subscription_checkpoint.paused_at": {
-    "reason": "Rechecked 2026-10-11 at main 755297781: runtime.ts still has no production paused_at write; runtime.db.test.ts writes it only as a fixture. This is not a raw-SQL scanner false negative and not satisfied by DBOS/judge migration or green CI. YUK-1113 owns dispatcher pause/resume producer and consumer, or compatible retirement. 2026-10-18 is the YUK-1113 review date, not a migration delivery commitment. | Re-dated 2026-10-16 to 2026-10-31: Migration line owns this (YUK-1113 dispatcher pause/resume producer). Review date, not a delivery promise; the writer does not exist yet.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-1113: implement and verify dispatcher pause/resume production writes to paused_at and the corresponding consumer behavior together, or preserve historical state in a compatible retirement migration; review by 2026-10-31",
-      "expected_by": "2026-10-31"
-    }
-  },
   "_comment_yuk850_historical_misconception_reconciliation": "YUK-850 deletes the unreachable misconception reconciliation runtime and its writer while deliberately retaining the table declaration and migrations so existing databases and any historical rows remain readable. F4.1 must make the final retain-or-drop decision; no new runtime writer may be added in the meantime.",
   "misconception_reconciliation_log.candidate_from_kind": {
     "reason": "YUK-850 prunes the unreachable misconception reconciliation runtime. The historical table remains read-compatible only; no runtime writer remains.",
