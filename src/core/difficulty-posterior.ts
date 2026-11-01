@@ -19,7 +19,7 @@
 //
 // ─── 纯度契约 ──────────────────────────────────────────────────────────────
 // 本模块无 IO、无 newId/Date.now。同输入 ⇒ 逐位同输出。DB 编排在
-// src/server/mastery/joint-calibration.ts。
+// src/kernel/records/joint-calibration.ts。
 
 /** 先验参数：μ（锚 b_anchor）+ τ（登记映射派生的先验标准差）。 */
 export interface DifficultyPrior {

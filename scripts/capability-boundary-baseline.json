@@ -7101,6 +7101,14 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "debt": "capabilityToServer",
+      "pair": "practice -> mastery",
+      "date": "2026-11-01",
+      "from": 2,
+      "to": 1,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11199,6 +11207,16 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
+      "module": "src/kernel/records/joint-calibration.ts",
+      "kind": "value",
+      "symbols": ["runJointCalibrationBatch"],
+      "issue": "YUK-1570",
+      "owns": "Complete shared mastery-scale posterior batch: candidate selection, evidence-set guarded writes, anchored scale normalization and result accounting. Practice retains scheduling/yield; replay CLI consumes the same canonical operation. No scoring or calibration policy change.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
@@ -12352,7 +12370,7 @@
   ],
   "debts": {
     "capabilityToServer": {
-      "total": 159,
+      "total": 158,
       "byOwnerPair": {
         "agency -> ai": 14,
         "agency -> boss": 7,
@@ -12382,7 +12400,7 @@
         "practice -> boss": 12,
         "practice -> coldstart": 1,
         "practice -> fsrs": 2,
-        "practice -> mastery": 2,
+        "practice -> mastery": 1,
         "practice -> memory": 1,
         "practice -> proposals": 4,
         "practice -> questions": 1,

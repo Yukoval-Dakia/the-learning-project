@@ -589,7 +589,7 @@ export async function runCli(args: string[]): Promise<number> {
     args.includes('--run-batch') &&
     process.env.DATABASE_URL !== 'postgres://placeholder.invalid/placeholder'
   ) {
-    const { runJointCalibrationBatch } = await import('@/server/mastery/joint-calibration');
+    const { runJointCalibrationBatch } = await import('@/kernel/records/joint-calibration');
     const batch = await runJointCalibrationBatch(await (await import('@/db/client')).db);
     console.log('[run-batch] joint calibration batch result:');
     console.log(JSON.stringify(batch, null, 2));
