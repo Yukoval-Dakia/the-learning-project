@@ -65,8 +65,14 @@ export function deriveThreads(s: WorkbenchSummary): Thread[] {
     threads.push({
       id: 'review',
       label: '复习',
-      title: `${s.kpi.due_count} 个学习项到期`,
-      sub: '根据复习间隔，它们已进入今天的队列。',
+      title:
+        s.kpi.due_count_scope === 'actionable_queue_sample'
+          ? `本批可复习 ${s.kpi.due_count} 项`
+          : `${s.kpi.due_count} 个学习项到期`,
+      sub:
+        s.kpi.due_count_scope === 'actionable_queue_sample'
+          ? '当前这批可以开始复习'
+          : '根据复习间隔，它们已进入今天的队列。',
       cta: '开始复习',
       badge: `${s.kpi.due_count} 项`,
       icon: 'review',
