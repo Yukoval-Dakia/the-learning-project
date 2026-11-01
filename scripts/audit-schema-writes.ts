@@ -605,9 +605,33 @@ function pausedCheckpointRetention(
     for (const statement of statements) {
       if (statement.table !== table) continue;
       const columns = payloadColumns(statement.payload);
+      const payloadFile = ts.createSourceFile(
+        'payload.ts',
+        `const payload = ${statement.payload}`,
+        ts.ScriptTarget.Latest,
+        true,
+      );
+      const first = payloadFile.statements[0];
+      const payload =
+        first && ts.isVariableStatement(first)
+          ? first.declarationList.declarations[0]?.initializer
+          : undefined;
+      const inspectable =
+        payload &&
+        ts.isObjectLiteralExpression(payload) &&
+        payload.properties.every(
+          (property) =>
+            (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)),
+        );
       // No source path (including archive.ts) exempts an explicit write to this field.
       // Opaque Drizzle payloads or column-less SQL cannot prove they preserve it.
-      if (statement.explicitPayload === false || columns.size === 0 || columns.has(field))
+      if (
+        !inspectable ||
+        statement.explicitPayload === false ||
+        columns.size === 0 ||
+        columns.has(field)
+      )
         issues.push({
           code: 'production_write',
           kind: statement.kind,
@@ -1043,6 +1067,16 @@ function quotedCheckpointWrites(source: string): WriteStatement[] {
               (write) => write.table === 'event_subscription_checkpoint',
             ),
           );
+          // INSERT's column list does not describe its ON CONFLICT update branch.
+          // Keep that branch visible, including null/default writes and opaque assignments.
+          for (const conflict of normalized.matchAll(
+            /\bon\s+conflict\b[^;]*?\bdo\s+update\s+set\s+([^;]*)/gi,
+          )) {
+            const updates = extractExecutedSqlWrites(
+              `db.execute(sql\`update event_subscription_checkpoint set ${conflict[1]}\`);`,
+            );
+            writes.push(...updates);
+          }
         }
       }
     }
