@@ -31,16 +31,24 @@ export function configOwner(row: ConfigKey): string {
   return row.consumer?.match(/capabilities\/([^/]+)\//)?.[1] ?? 'server';
 }
 export function providerUnavailable(provider: ConfigProvider): string | null {
+  if (provider.auth?.status === 'auth_failed') return '认证失败，请先检查服务端凭据';
+  if (provider.auth?.status === 'unconfigured') return '服务端尚未配置凭据';
   if (!provider.implemented || !provider.pi_provider || !provider.models?.length)
     return '未开放原生 chat 通道';
   return provider.key_present ? null : '服务端尚未配置凭据';
 }
-/** Catalog status is broader than the native chat editor's availability guard. */
+/** Authentication is a server fact, not an inference from key presence or model count. */
 export function providerStatus(provider: ConfigProvider): string {
-  if (provider.implemented_for?.typed && !provider.implemented_for.chat) {
-    return provider.key_present ? 'typed 已接线 · 凭据已配置' : 'typed 已接线 · 服务端尚未配置凭据';
+  switch (provider.auth?.status) {
+    case 'auth_failed':
+      return '认证失败';
+    case 'configured':
+      return '已配置';
+    case 'unconfigured':
+      return '未配置';
+    default:
+      return '认证状态未知';
   }
-  return providerUnavailable(provider) ?? `已配置 · ${provider.auth_mode}`;
 }
 export function taskEditable(task: ConfigTask): boolean {
   return task.override_wired.provider && task.override_wired.model;
