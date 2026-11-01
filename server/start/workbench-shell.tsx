@@ -4,6 +4,8 @@ import { AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
 import { CopilotClientProvider } from '@/capabilities/copilot/ui-public';
 import { WorkbenchClientProvider } from '@/capabilities/shell/ui-public';
 import { SubjectClientProvider } from '@/ui/hooks/subject-client';
+import { startIssuanceStateClient } from './issuance-state-client';
+import { startResponseDraftClient } from './response-draft-client';
 import '../../web/src/globals.css';
 import { RootShell } from '../../web/src/RootShell';
 import { TokenGate } from '../../web/src/TokenGate';
@@ -11,6 +13,11 @@ import { startAgentNoteClient } from './agent-note-client';
 import { startCopilotClient } from './copilot-summary-client';
 import { startSubjectClient } from './subject-client';
 import { startWorkbenchClient } from './workbench-client';
+
+const confirmationClient = {
+  getIssuanceState: startIssuanceStateClient,
+  saveResponseDraft: startResponseDraftClient,
+};
 
 export function StartWorkbenchShell({
   pathname,
@@ -27,7 +34,11 @@ export function StartWorkbenchShell({
           <AgentNoteClientProvider value={startAgentNoteClient}>
             <SubjectClientProvider value={startSubjectClient}>
               <CopilotClientProvider value={startCopilotClient}>
-                <RootShell pathname={pathname} navigate={startNavigate}>
+                <RootShell
+                  confirmationClient={confirmationClient}
+                  pathname={pathname}
+                  navigate={startNavigate}
+                >
                   {children}
                 </RootShell>
               </CopilotClientProvider>

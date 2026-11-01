@@ -1,3 +1,5 @@
+import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import { conversationReady } from './companion-state';
 // The scrolling conversation: today's summary on top (open while the conversation is empty), then
 // every turn. The scroller keeps the newest line in view while the reader is at the bottom.
 
@@ -8,17 +10,47 @@ import type { StickToBottom } from './stick-to-bottom';
 import { useCompanion } from './use-companion';
 
 export interface MessageStreamProps {
+  confirmationRenderer?: ConfirmationAssessmentRenderer;
   controller: CompanionController;
   stick: StickToBottom;
   navigate: (to: string) => void;
 }
 
-export function MessageStream({ controller, stick, navigate }: MessageStreamProps) {
+export function MessageStream({
+  controller,
+  stick,
+  navigate,
+  confirmationRenderer,
+}: MessageStreamProps) {
   const messages = useCompanion(controller, (s) => s.messages);
   const correctionTurnId = useCompanion(controller, (s) => s.correctionTarget?.turnId ?? null);
   const revertPendingId = useCompanion(controller, (s) => s.revertPendingId);
   const chipPending = useCompanion(controller, (s) => s.chipPending);
   const chipAcked = useCompanion(controller, (s) => s.chipAcked);
+  const disabled = useCompanion(
+    controller,
+    (s) =>
+      !conversationReady(s) ||
+      s.derivationPolicy !== 'allow' ||
+      !!s.correctionTarget ||
+      s.pendingTurns.some((t) => t.requestBody.session_id === s.currentSessionId) ||
+      s.runs.some(
+        (r) =>
+          r.sessionId === s.currentSessionId && r.phase !== 'completed' && r.phase !== 'failed',
+      ),
+  );
+  const firstOccurrence = new Map<string, string>();
+  const latestSequence = new Map<string, number>();
+  for (const m of messages) {
+    const o = m.confirmation?.occurrence;
+    if (o) {
+      if (!firstOccurrence.has(o.occurrence_id)) firstOccurrence.set(o.occurrence_id, m.id);
+      latestSequence.set(
+        o.learning_item_id,
+        Math.max(latestSequence.get(o.learning_item_id) ?? -1, o.sequence),
+      );
+    }
+  }
   const { actions } = controller;
   let replies = 0;
   return (
@@ -32,6 +64,30 @@ export function MessageStream({ controller, stick, navigate }: MessageStreamProp
             <MessageRow
               key={message.id}
               message={message}
+              confirmationRenderer={confirmationRenderer}
+              showConfirmation={
+                !!message.confirmation &&
+                firstOccurrence.get(message.confirmation.occurrence.occurrence_id) === message.id
+              }
+              confirmationDisabled={
+                disabled ||
+                (!!message.confirmation &&
+                  message.confirmation.occurrence.sequence !==
+                    latestSequence.get(message.confirmation.occurrence.learning_item_id))
+              }
+              onConfirmation={(action) =>
+                message.confirmation
+                  ? controller.sender.sendConfirmation(message.confirmation.occurrence, action)
+                  : Promise.resolve()
+              }
+              onRefreshConfirmation={() =>
+                void controller.runs.refetchTurns().catch(() =>
+                  controller.store.setState({
+                    refreshFailed: true,
+                    error: '确认题记录读取失败，请重试读取。',
+                  }),
+                )
+              }
               turnNumber={message.role === 'ai' ? replies : undefined}
               correctionSelected={
                 message.reply_event_id !== undefined && message.reply_event_id === correctionTurnId

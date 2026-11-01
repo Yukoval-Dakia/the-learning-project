@@ -7221,6 +7221,26 @@
       "issue": "YUK-1465",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
       "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/ui-public.ts",
+      "siteKind": "site",
+      "symbol": "ConfirmationAssessment",
+      "targetModule": "src/capabilities/practice/ui/ConfirmationAssessment.tsx",
+      "targetSymbol": "ConfirmationAssessment",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "web/src/RootShell.tsx",
+          "line": 11
+        }
+      ],
+      "evidence": "Live UI working snapshot on merge HEAD e947a7b1: RootShell AST11 imports the original named ConfirmationAssessment and its stable memo renderer invokes it at line129, passed through CompanionMount to the real MessageRow/ConfirmationBlock. StartWorkbenchShell binds the existing issuance-state and response-draft clients. The Practice component validates frozen identity/DTO and owns native presentation, draft CAS, immutable-submission recovery and current-head receipt display; it never issues, judges or settles. Sources and digests are sealed alongside this ruling.",
+      "rationale": "A native input/rendering or draft conflict change stays in the Practice display owner and original client; a confirmation invitation/defer/command-admission change stays in Copilot without copying Practice assessment decisions or navigation state. The existing public UI export supplies a complete live inline owner at the real composition root, with no new Copilot-to-Practice value dependency or registry.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-6bd917e1-bee4-4db0-bb32-7412a523ef2d",
+      "date": "2026-11-01"
     }
   ],
   "edgeRecords": [

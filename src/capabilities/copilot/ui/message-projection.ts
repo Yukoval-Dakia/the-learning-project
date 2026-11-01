@@ -1,5 +1,6 @@
 import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
+import { parseConfirmation } from './confirmation';
 import { mergePublicProse, parsePublicProse } from './public-prose';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
@@ -53,6 +54,12 @@ export function projectCopilotReply(
   return {
     ...previous,
     text: reply.reply,
+    confirmation:
+      reply.confirmation === undefined
+        ? previous.confirmation
+        : parseConfirmation(reply.confirmation),
+    confirmationIncompatible:
+      reply.confirmation !== undefined && !parseConfirmation(reply.confirmation),
     public_prose: publicProse,
     derivation_policy:
       DerivationPolicy.safeParse(reply.derivation_policy).data ?? previous.derivation_policy,

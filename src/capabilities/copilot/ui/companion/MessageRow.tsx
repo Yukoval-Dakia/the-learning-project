@@ -1,3 +1,6 @@
+import type { ConfirmationAssessmentRenderer } from '../confirmation';
+import { ConfirmationBlock } from './ConfirmationBlock';
+import type { ConfirmationAction } from './turn-sender';
 // One turn in the conversation. The learner's line sits right in a quiet bubble; the companion's
 // reply is plain prose with its steps above it and what it produced below it. A reply is one
 // element from the first word to settled. The caret describes reply generation only;
@@ -16,6 +19,11 @@ import { SkillTurnBlock } from './SkillTurnBlock';
 import { StepList, stepsOf } from './ToolRow';
 
 export interface MessageRowProps {
+  confirmationRenderer?: ConfirmationAssessmentRenderer;
+  showConfirmation?: boolean;
+  confirmationDisabled?: boolean;
+  onConfirmation?: (action: ConfirmationAction) => Promise<void>;
+  onRefreshConfirmation?: () => void;
   message: ChatMessage;
   /** 1-based number of this reply among the companion's replies (for 「更正第 N 轮」). */
   turnNumber?: number;
@@ -72,6 +80,20 @@ export const MessageRow = memo(function MessageRow(props: MessageRowProps) {
           正在回复
         </p>
       ) : null}
+      {m.confirmationIncompatible && <p role="alert">确认题版本或状态不兼容，暂不能操作。</p>}
+      {props.showConfirmation &&
+        m.confirmation &&
+        props.onConfirmation &&
+        props.onRefreshConfirmation && (
+          <ConfirmationBlock
+            key={`${m.confirmation.occurrence.occurrence_id}:${m.confirmation.occurrence.state}:${m.confirmation.assessment && typeof m.confirmation.assessment === 'object' && 'submission' in m.confirmation.assessment && m.confirmation.assessment.submission ? 'recorded' : 'unsubmitted'}`}
+            confirmation={m.confirmation}
+            renderer={props.confirmationRenderer}
+            disabled={props.confirmationDisabled ?? true}
+            onCommand={props.onConfirmation}
+            onRefresh={props.onRefreshConfirmation}
+          />
+        )}
       <SkillTurnBlock
         message={m}
         chipPending={props.chipPending}
