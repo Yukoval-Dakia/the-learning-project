@@ -73,7 +73,11 @@ import {
   snapshotAssessmentLearningScope,
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
-import { bindAppealExecution, reservedEvaluationAttempt } from '../assessment/appeal-execution';
+import {
+  authorizeConfirmationCorrection,
+  bindAppealExecution,
+  reservedEvaluationAttempt,
+} from '../assessment/appeal-execution';
 import {
   type JudgeExecution,
   bindJudgeExecution,
@@ -852,13 +856,19 @@ export async function activateSubmissionCandidate(
     recordOriginal?: (tx: Tx) => Promise<void>;
     /** Lock an entry's container occurrence before activation locks its group/root. */
     beforeActivate?: (tx: Tx) => Promise<void>;
+    /** Only the native appeal/assert owner may supply these persisted identities. */
+    correction?: { appealEventId: string; priorEvaluationId: string };
     onThetaApplied?: SettlementObservers['onThetaApplied'];
     judgeExecution?: JudgeExecution;
   },
 ) {
   return database.transaction(async (tx) => {
     const [bound] = await tx
-      .select({ container: assessment_issuance.container_occurrence_ref })
+      .select({
+        candidate: evaluation,
+        submission: assessment_submission,
+        issuance: assessment_issuance,
+      })
       .from(evaluation)
       .innerJoin(
         assessment_submission,
@@ -869,12 +879,24 @@ export async function activateSubmissionCandidate(
         eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
       )
       .where(eq(evaluation.evaluation_id, intent.evaluation_id));
-    if (bound?.container?.startsWith('conversation-confirmation:') && !options.beforeActivate)
-      throw new ApiError(
-        'confirmation_unbound',
-        'confirmation activation requires its conversation authorization',
-        409,
-      );
+    if (
+      bound?.issuance.container_occurrence_ref?.startsWith('conversation-confirmation:') &&
+      !options.beforeActivate
+    ) {
+      if (!options.correction)
+        throw new ApiError(
+          'confirmation_unbound',
+          'confirmation activation requires its conversation authorization',
+          409,
+        );
+      await acquireLearningStateWriteLock(tx);
+      await authorizeConfirmationCorrection(tx, {
+        ...bound,
+        correction: options.correction,
+        expected_effective_id: intent.expected_effective_id,
+        expected_generation: intent.expected_generation,
+      });
+    }
     if (options.beforeActivate) {
       await acquireLearningStateWriteLock(tx);
       await options.beforeActivate(tx);

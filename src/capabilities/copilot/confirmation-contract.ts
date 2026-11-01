@@ -15,7 +15,16 @@ export const ConfirmationCommand = z.discriminatedUnion('kind', [
     .object({
       ...identity,
       kind: z.literal('submit'),
-      response_set: ResponseSet,
+      // Match the native CreateSubmissionBodySchema web restriction before the
+      // accepted-input boundary; capture-only unknown is never a chat original.
+      response_set: ResponseSet.refine(
+        (set) =>
+          set.entries.every(
+            (entry) =>
+              (entry.kind !== 'select' && entry.kind !== 'blank') || entry.state !== 'unknown',
+          ),
+        { message: "state 'unknown' is reserved for worksheet/photo capture" },
+      ),
       group_evidence: z.array(GroupEvidence).default([]),
     })
     .strict(),

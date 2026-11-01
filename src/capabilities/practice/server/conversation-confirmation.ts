@@ -4,6 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
 import { type GroupEvidenceT, type ResponseSetT, ResponseSpec } from '@/core/schema/assessment';
+import { WHOLE_PAPER_SLOT_KINDS } from '@/core/schema/assessment/slot-renderers';
 import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
@@ -126,14 +127,17 @@ export async function issueConversationConfirmation(
   let reason = 'no_admitted_single_question';
   for (const { q, r } of candidates) {
     const spec = ResponseSpec.safeParse(r.response_spec);
-    if (
-      !spec.success ||
-      spec.data.slots.length !== 1 ||
-      !['single_choice', 'multi_choice', 'text', 'numeric', 'formula'].includes(
-        spec.data.slots[0].kind,
-      )
-    )
+    if (!spec.success) {
+      reason = 'invalid_scoring_contract';
       continue;
+    }
+    if (spec.data.slots.length !== 1) continue;
+    // Same native per-slot / PresentationBlocks capability as ordinary Practice.
+    // issueAssessment still validates the complete frozen presentation and serving.
+    if (!WHOLE_PAPER_SLOT_KINDS.has(spec.data.slots[0].kind)) {
+      reason = 'no_input_renderer';
+      continue;
+    }
     const structure = r.structure as { parts?: unknown[] };
     if (structure.parts?.length !== 1) continue;
     const uses = q.metadata?.allowed_uses;
@@ -156,7 +160,7 @@ export async function issueConversationConfirmation(
       actorRef: 'conversation-confirmation',
     });
     if (!('issuance' in issued)) {
-      reason = issued.status;
+      reason = issued.serving_reason ?? issued.status;
       continue;
     }
     const binding = Binding.parse({
@@ -318,10 +322,15 @@ export async function readConversationConfirmation(db: Db | Tx, occurrenceId: st
               'experimental:assessment_activation',
               'experimental:assessment_settlement',
               'experimental:assessment_judge_resolution',
+              'experimental:assessment_appeal_resolution',
+              'experimental:appeal_request',
               'experimental:judge_pending_attempt',
             ]),
             sql`(${event.payload}->>'submission_id' = ${original.submission_id}
-        OR ${event.payload}->'submit'->>'submission_id' = ${original.submission_id})`,
+        OR ${event.payload}->'submit'->>'submission_id' = ${original.submission_id}
+        OR (${event.subject_kind} = 'evaluation' AND EXISTS (
+          SELECT 1 FROM ${evaluation} e WHERE e.submission_id = ${original.submission_id}
+          AND e.evaluation_id = ${event.subject_id})))`,
           ),
         )
         .orderBy(asc(event.created_at), asc(event.id))
@@ -333,10 +342,18 @@ export async function readConversationConfirmation(db: Db | Tx, occurrenceId: st
         .where(eq(event.id, `evt_pending_judge_native_${original.submission_id}`))
     : [];
   const activation = receipts
-    .filter((r) => r.action === 'experimental:assessment_activation')
+    .filter(
+      (r) =>
+        r.action === 'experimental:assessment_activation' &&
+        r.payload.evaluation_id === head?.effective_evaluation_id,
+    )
     .at(-1);
   const settlement = receipts
-    .filter((r) => r.action === 'experimental:assessment_settlement')
+    .filter(
+      (r) =>
+        r.action === 'experimental:assessment_settlement' &&
+        r.payload.evaluation_id === head?.effective_evaluation_id,
+    )
     .at(-1);
   return {
     ...binding,

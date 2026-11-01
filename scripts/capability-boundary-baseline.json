@@ -7101,6 +7101,126 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "issueConversationConfirmation",
+      "targetModule": "src/capabilities/practice/server/conversation-confirmation.ts",
+      "targetSymbol": "issueConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/practice-port.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/practice-port.ts:1 is the real named value import/re-export of issueConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing candidate eligibility changes only the Practice selection/issuance owner; Copilot keeps explicit accept and typed blocked. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/server/practice-port.ts",
+      "siteKind": "module",
+      "symbol": "issueConversationConfirmation",
+      "targetModule": "src/capabilities/practice/public.ts",
+      "targetSymbol": "issueConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of issueConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing candidate eligibility changes only the Practice selection/issuance owner; Copilot keeps explicit accept and typed blocked. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "submitConversationConfirmation",
+      "targetModule": "src/capabilities/practice/server/conversation-confirmation.ts",
+      "targetSymbol": "submitConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/practice-port.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/practice-port.ts:1 is the real named value import/re-export of submitConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing immutable original or correction authorization stays in Practice; Copilot retains the lifecycle/Stop callback without grading or settling. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/server/practice-port.ts",
+      "siteKind": "module",
+      "symbol": "submitConversationConfirmation",
+      "targetModule": "src/capabilities/practice/public.ts",
+      "targetSymbol": "submitConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of submitConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing immutable original or correction authorization stays in Practice; Copilot retains the lifecycle/Stop callback without grading or settling. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "readConversationConfirmation",
+      "targetModule": "src/capabilities/practice/server/conversation-confirmation.ts",
+      "targetSymbol": "readConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/practice-port.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/practice-port.ts:1 is the real named value import/re-export of readConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing receipt recovery remains a Practice read; Copilot projects authoritative IDs and effects without issuing or rejudging. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/copilot/server/practice-port.ts",
+      "siteKind": "module",
+      "symbol": "readConversationConfirmation",
+      "targetModule": "src/capabilities/practice/public.ts",
+      "targetSymbol": "readConversationConfirmation",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+          "line": 20
+        }
+      ],
+      "evidence": "Fixed B02778 / repaired attempt_1: src/capabilities/copilot/server/teaching/confirmation.ts:20 is the real named value import/re-export of readConversationConfirmation; Copilot confirmation invokes it in its existing issue/submit/read lifecycle. The existing port forwards the original symbol, without wrappers or moved logic. Exact H and call lines are sealed in the external handoff.",
+      "rationale": "Changing receipt recovery remains a Practice read; Copilot projects authoritative IDs and effects without issuing or rejudging. A lifecycle change such as explicit request_again instead changes only the Copilot owner and versioned command; the Practice operation remains unchanged. These are complete Practice-owned operations, not helper forwarding. Reusing the one established port keeps the physical Copilot-to-Practice edge at one while preserving the logical dependency.",
+      "issue": "YUK-1465",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1465#comment-06ae13f2-6477-4a4b-9432-b67c4273b5ed",
+      "date": "2026-11-01"
     }
   ],
   "edgeRecords": [
@@ -11281,17 +11401,23 @@
       "date": "2026-11-02"
     },
     {
-      "debt": "crossCapabilityValue",
-      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
-      "module": "src/capabilities/practice/public.ts",
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/assessment/appeal-execution.ts",
+      "module": "src/kernel/events/correction-lock.ts",
       "kind": "value",
-      "symbols": [
-        "issueConversationConfirmation",
-        "readConversationConfirmation",
-        "submitConversationConfirmation"
-      ],
+      "symbols": ["lockEventCorrectionsAll"],
       "issue": "YUK-1465",
-      "owns": "The complete conversation confirmation lifecycle consumes Practice-owned issue/submit/receipt operations; no copied assessment writer or extra facade.",
+      "owns": "Serialize authority retraction with the complete correction authorization read.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/assessment/appeal-execution.ts",
+      "module": "src/kernel/events/derivation-policy.ts",
+      "kind": "value",
+      "symbols": ["readEventDerivationPolicy"],
+      "issue": "YUK-1465",
+      "owns": "Reject withdrawn or restricted correction sources at activation.",
       "date": "2026-11-02"
     }
   ],

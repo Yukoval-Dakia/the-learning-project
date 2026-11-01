@@ -2,11 +2,6 @@
 // remain in Practice; a recovery read never repeats an assessment operation.
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import {
-  issueConversationConfirmation,
-  readConversationConfirmation,
-  submitConversationConfirmation,
-} from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
 import { event, job_events, learning_session } from '@/db/schema';
@@ -22,6 +17,11 @@ import {
 } from '../../confirmation-contract';
 import { acquireCopilotExecutionSettlementLock } from '../copilot-run-coordination';
 import { COPILOT_RUN_TABLE, hasCancelRequest } from '../copilot-run-status';
+import {
+  issueConversationConfirmation,
+  readConversationConfirmation,
+  submitConversationConfirmation,
+} from '../practice-port';
 
 const AcceptedCommand = z
   .object({

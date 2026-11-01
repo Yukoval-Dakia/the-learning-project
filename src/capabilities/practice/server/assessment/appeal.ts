@@ -268,6 +268,7 @@ export async function rejudgeNativeAppeal(database: Db, appeal: typeof event.$in
     { ...intent.data, evaluation_id: candidateId },
     {
       actorRef: 'assessment:appeal',
+      correction: { appealEventId: appeal.id, priorEvaluationId: original.evaluation_id },
       record: (tx) => record(tx, 'effective', candidateId),
     },
   );
