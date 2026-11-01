@@ -7098,7 +7098,9 @@
       "date": "2026-10-31",
       "from": 1,
       "to": 0,
-      "direction": "decrease"
+      "direction": "decrease",
+      "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
+      "issue": "YUK-1571"
     },
     {
       "debt": "capabilityToServer",
