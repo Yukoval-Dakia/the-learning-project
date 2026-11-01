@@ -1,5 +1,4 @@
 import { createContext, useContext } from 'react';
-import { getTree } from '@/capabilities/knowledge/ui-public';
 import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
 import { undoAiChange } from '@/ui/lib/undo-ai-change';
 import {
@@ -23,7 +22,6 @@ export type WorkbenchClient = {
   listAutoApplied: typeof listAutoApplied;
   decideProposal: typeof decideProposal;
   retractProposal: typeof retractProposal;
-  getTree: typeof getTree;
   getPrepDeskConjectures: typeof getPrepDeskConjectures;
   getActiveProbes: typeof getActiveProbes;
   getTeachingBrief: typeof getTeachingBrief;
@@ -40,7 +38,6 @@ export const httpWorkbenchClient: WorkbenchClient = {
   listAutoApplied: () => listAutoApplied(),
   decideProposal: (...args) => decideProposal(...args),
   retractProposal: (...args) => retractProposal(...args),
-  getTree: (subject) => getTree(subject),
   getPrepDeskConjectures: () => getPrepDeskConjectures(),
   getActiveProbes: () => getActiveProbes(),
   getTeachingBrief: () => getTeachingBrief(),

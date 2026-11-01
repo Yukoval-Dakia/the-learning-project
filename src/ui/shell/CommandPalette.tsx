@@ -15,13 +15,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import type { KnowledgeTreeNode } from '@/capabilities/knowledge/ui-public';
-import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
+import { type KnowledgeTreeNode, getTree } from '@/capabilities/knowledge/ui-public';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { useFocusTrap } from '@/ui/primitives/useFocusTrap';
 import { COMMAND_PALETTE_PLACEHOLDER, SEARCH_PAGE_ITEMS } from './nav-config';
 
 export interface CommandPaletteProps {
+  readTree?: typeof getTree;
   /** 是否打开（RootShell 持 paletteOpen state；⌘K toggle / searchbox 点击驱动）。 */
   open: boolean;
   /** 关闭面板（选中跳转后、esc、scrim 点击）。 */
@@ -80,30 +80,42 @@ function scrollRowIntoList(el: HTMLElement): void {
   else if (b > st + h) list.scrollTop = b - h + 8;
 }
 
-export function CommandPalette({ open, onClose, navigate }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onClose,
+  navigate,
+  readTree = getTree,
+}: CommandPaletteProps) {
   // a11y：Tab 困在 dialog 内 + 关闭时焦点回原触发元素 + Esc 关（既有 modal 模式，
   // 与 onKeyDown 的 esc 幂等——都调 onClose）。trap attach 时聚焦面板内首个可聚焦
   // 元素，即搜索输入框（设计 command-palette.jsx:52 的 autofocus）。
   const trapRef = useFocusTrap(open, onClose);
   if (!open) return null;
   // 每次打开是一个新子树：query 与选区从空/0 开始（设计 command-palette.jsx:52）。
-  return <OpenCommandPalette onClose={onClose} navigate={navigate} trapRef={trapRef} />;
+  return (
+    <OpenCommandPalette
+      onClose={onClose}
+      navigate={navigate}
+      trapRef={trapRef}
+      readTree={readTree}
+    />
+  );
 }
 
 function OpenCommandPalette({
   onClose,
   navigate,
   trapRef,
+  readTree = getTree,
 }: Omit<CommandPaletteProps, 'open'> & {
   trapRef: (panel: HTMLElement | null) => (() => void) | undefined;
 }) {
-  const { getTree } = useWorkbenchClient();
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
 
   // 知识节点 open 时才 fetch（设计 index 在 open 时构建）；与 KnowledgePage 同
   // queryKey ['knowledge-tree'] → React Query 去重，不增请求。
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => getTree() });
+  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: () => readTree() });
   const knowledge = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
 
   // 全量 index（页面组静态 + 知识节点组）。设计 paletteIndex 等价物。

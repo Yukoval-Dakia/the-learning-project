@@ -849,10 +849,9 @@ async function projectLoadedProposalRows(
     ? out
     : await dropInadmissibleBlockMerges(db, out);
 
-  const [signalsByProposalId, presentationByProposalId] = await Promise.all([
-    loadProposalSignalsForRows(db, visibleRows),
-    loadProposalPresentations(db, visibleRows),
-  ]);
+  // Presentation may isolate optional reads in a savepoint on this same Tx.
+  const signalsByProposalId = await loadProposalSignalsForRows(db, visibleRows);
+  const presentationByProposalId = await loadProposalPresentations(db, visibleRows);
   for (const row of visibleRows) {
     row.signals = signalsByProposalId.get(row.id) ?? null;
     row.presentation = presentationByProposalId.get(row.id) ?? null;
@@ -954,10 +953,9 @@ export async function getProposalInboxRow(
     const verdict = evaluateBlockMergeAdmission(input, ctx);
     if (!verdict.eligible && verdict.reason !== 'not_draft') return null;
   }
-  const [presentationByProposalId, signalsByProposalId] = await Promise.all([
-    loadProposalPresentations(db, [row]),
-    loadProposalSignalsForRows(db, [row]),
-  ]);
+  // Finish the presentation savepoint before another read uses this Tx.
+  const presentationByProposalId = await loadProposalPresentations(db, [row]);
+  const signalsByProposalId = await loadProposalSignalsForRows(db, [row]);
   row.presentation = presentationByProposalId.get(row.id) ?? null;
   row.signals = signalsByProposalId.get(row.id) ?? null;
   return row;

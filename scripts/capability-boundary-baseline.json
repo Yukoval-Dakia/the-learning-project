@@ -7101,6 +7101,14 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "pair": "shell -> knowledge",
+      "date": "2026-11-01",
+      "from": 1,
+      "to": 0,
+      "direction": "decrease"
     }
   ],
   "edgeRecords": [
@@ -11768,6 +11776,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/kernel/proposals/presentation.ts",
+      "date": "2026-11-01",
+      "baseBlob": "2b5c6873544a60354a8b74210f18f3a04cb054ff",
+      "from": 1082,
+      "to": 1160,
+      "issue": "YUK-1570",
+      "responsibilityReason": "The existing proposal presentation owner batch-resolves active learner-visible knowledge-edge endpoint labels and isolates recoverable label-query failures. Inbox cards consume these optional labels instead of assembling names from a separate full-tree request. The same owner retains question and block previews; proposal decisions, writes and locks are unchanged. This records source growth within the approved display contract, not a size exemption or cross-edge reduction."
     }
   ],
   "compatShims": [
@@ -12396,7 +12413,7 @@
       "byOwnerPair": {}
     },
     "crossCapabilityValue": {
-      "total": 14,
+      "total": 13,
       "byOwnerPair": {
         "agency -> notes": 0,
         "agency -> practice": 2,
@@ -12406,7 +12423,6 @@
         "observability -> agency": 1,
         "observability -> practice": 1,
         "shell -> agency": 1,
-        "shell -> knowledge": 1,
         "shell -> onboarding": 3,
         "shell -> practice": 1
       },

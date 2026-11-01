@@ -65,8 +65,6 @@ export const startWorkbenchClient: WorkbenchClient = {
         input: { decision: 'retract' },
       },
     }).then((json) => ProposalDecisionResource.parse(JSON.parse(json)).result),
-  getTree: (subject) =>
-    getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } }),
   getPrepDeskConjectures: () => getStartConjectures(transport),
   getActiveProbes: () => getStartActiveProbes(transport),
   getTeachingBrief: () => getStartTeachingBrief(transport),
@@ -84,3 +82,6 @@ export const startWorkbenchClient: WorkbenchClient = {
 
 export const startKnowledgeFrontierClient = () => getStartKnowledgeFrontier(transport);
 export const startKnowledgeReviewDueClient = () => getStartKnowledgeReviewDue(transport);
+
+export const startKnowledgeTreeClient = (subject?: string) =>
+  getStartKnowledgeTree({ ...transport, data: { subject: subject || undefined } });

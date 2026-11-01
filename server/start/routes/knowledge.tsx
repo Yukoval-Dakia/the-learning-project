@@ -13,6 +13,7 @@ import { startKnowledgeNodePageClient } from '../knowledge-node-client';
 import {
   startKnowledgeFrontierClient,
   startKnowledgeReviewDueClient,
+  startKnowledgeTreeClient,
   startWorkbenchClient,
 } from '../workbench-client';
 import { StartWorkbenchShell, startNavigate } from '../workbench-shell';
@@ -45,7 +46,7 @@ function KnowledgePage() {
         <Suspense>
           <Page
             navigate={startNavigate}
-            readTree={startWorkbenchClient.getTree}
+            readTree={startKnowledgeTreeClient}
             readFrontier={startKnowledgeFrontierClient}
             readReviewDue={startKnowledgeReviewDueClient}
           />

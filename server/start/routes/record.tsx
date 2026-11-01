@@ -13,7 +13,7 @@ import { startRecordSessionCreateClient } from '../record-session-create-client'
 import { startRecordSessionDetailClient } from '../record-session-detail-client';
 import { startRecordSessionHistoryClient } from '../record-session-history-client';
 import { startRecordSessionsClient } from '../record-session-list-client';
-import { startWorkbenchClient } from '../workbench-client';
+import { startKnowledgeTreeClient } from '../workbench-client';
 import { StartWorkbenchShell } from '../workbench-shell';
 
 const recordClient: RecordClient = {
@@ -21,7 +21,7 @@ const recordClient: RecordClient = {
   answerAsk: startRecordAskAnswerClient,
   listSessions: startRecordSessionsClient,
   listBlocks: startRecordBlocksClient,
-  listKnowledge: () => startWorkbenchClient.getTree().then((result) => result.rows),
+  listKnowledge: () => startKnowledgeTreeClient().then((result) => result.rows),
   createSession: startRecordSessionCreateClient,
   getSession: startRecordSessionDetailClient,
   createWrongAnswer: startRecordManualMistakeClient,
