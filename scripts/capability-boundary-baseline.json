@@ -11207,16 +11207,6 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
-    },
-    {
-      "debt": "capabilityToKernel",
-      "file": "src/capabilities/practice/jobs/recalibration_nightly.ts",
-      "module": "src/kernel/records/joint-calibration.ts",
-      "kind": "value",
-      "symbols": ["runJointCalibrationBatch"],
-      "issue": "YUK-1570",
-      "owns": "Complete shared mastery-scale posterior batch: candidate selection, evidence-set guarded writes, anchored scale normalization and result accounting. Practice retains scheduling/yield; replay CLI consumes the same canonical operation. No scoring or calibration policy change.",
-      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
