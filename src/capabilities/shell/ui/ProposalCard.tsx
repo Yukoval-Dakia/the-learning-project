@@ -302,7 +302,6 @@ export interface ProposalCardProps {
   index: number;
   /** 裁决留痕文案（如「已接受」）；null = 未裁决。 */
   resolved: string | null;
-  nameOf: (id: string) => string;
   navigate: (to: string) => void;
   onResolve: (id: string, label: string) => void;
   onError: (msg: string) => void;
@@ -312,7 +311,6 @@ export function ProposalCard({
   p,
   index,
   resolved,
-  nameOf,
   navigate,
   onResolve,
   onError,
@@ -540,9 +538,13 @@ export function ProposalCard({
             {edgeOperationLabel}
           </span>
           <span className="rel-pill">{(rel && REL_LABEL[rel]) || rel || '关系'}</span>
-          <span className="chip chip-k mono">{nameOf(edgeFrom)}</span>
+          <span className="chip chip-k mono">
+            {p.presentation?.knowledge_edge?.from_label ?? edgeFrom.slice(0, 8)}
+          </span>
           <LoomIcon name="arrow" size={14} />
-          <span className="chip chip-k mono">{nameOf(edgeTo)}</span>
+          <span className="chip chip-k mono">
+            {p.presentation?.knowledge_edge?.to_label ?? edgeTo.slice(0, 8)}
+          </span>
         </div>
       )}
 

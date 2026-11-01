@@ -30035,6 +30035,10 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
+                                };
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -31140,6 +31144,10 @@ export interface operations {
                                 }[];
                                 evidence_labels: {
                                     [key: string]: string;
+                                };
+                                knowledge_edge?: {
+                                    from_label: string;
+                                    to_label: string;
                                 };
                                 title: string;
                             } | null;
