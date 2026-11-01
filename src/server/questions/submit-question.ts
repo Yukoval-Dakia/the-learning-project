@@ -126,6 +126,7 @@ export type SubmitResult =
     };
 
 interface SubmitContext {
+  signal?: AbortSignal;
   beforeWrite?: (tx: Tx) => Promise<void>;
   actorRef: string;
   actorKind: 'agent' | 'user' | 'system';
@@ -154,6 +155,12 @@ export async function submitDraftQuestion(
         error,
         input.request_id,
         ctx.taskRunId ? 'worker' : 'api',
+        {
+          signal: ctx.signal,
+          beforeSend: ctx.beforeWrite
+            ? () => db.transaction(async (tx) => ctx.beforeWrite?.(tx))
+            : undefined,
+        },
       );
       out = await db.transaction((tx) =>
         submitDraftQuestionInTx(tx, input, ctx, { checkDraftVector: true, draftVector }),

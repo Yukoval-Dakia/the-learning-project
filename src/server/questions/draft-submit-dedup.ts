@@ -167,17 +167,37 @@ export async function prepareDraftSubmitVector(
   required: DraftSubmitVectorRequired,
   requestId: string,
   caller: 'api' | 'worker',
+  authority: { signal?: AbortSignal; beforeSend?: () => Promise<void> },
 ): Promise<DraftSubmitVector> {
   let vector: number[] | null = null;
+  let authorityRejected = false;
   try {
+    authority.signal?.throwIfAborted();
     vector = await embedQuestionTextForIngest(required.text, {
       db,
       caller,
+      signal: authority.signal,
+      beforeSend: async () => {
+        try {
+          authority.signal?.throwIfAborted();
+          await authority.beforeSend?.();
+          authority.signal?.throwIfAborted();
+        } catch (error) {
+          authorityRejected = true;
+          throw error;
+        }
+      },
       operationAnchor: `draft-submit-dedup:${requestId}`,
       deadlineAt: new Date(Date.now() + 20_000),
     });
   } catch (error) {
-    if (isDirectProviderAttemptInvariantError(error)) throw error;
+    if (
+      authorityRejected ||
+      authority.signal?.aborted ||
+      isDirectProviderAttemptInvariantError(error)
+    ) {
+      throw error;
+    }
     // Match candidate ingestion: unavailable embeddings do not reject paid content.
     console.error('[submit_question] draft vector near-dup abstained:', error);
   }

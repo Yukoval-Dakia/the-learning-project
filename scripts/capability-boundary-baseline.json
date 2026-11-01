@@ -11828,6 +11828,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-11-02",
+      "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
+      "from": 1314,
+      "to": 1315,
+      "issue": "YUK-1569",
+      "responsibilityReason": "R1 S1: forward the existing ToolContext AbortSignal at the real ordinary draft-submit consumer, alongside its existing beforeIngestionWrite authority. The submit owner and canonical embedding wire boundary recheck cancellation/purpose before send; this one-line consumer wiring adds no business decision, provider configuration, new endpoint or test."
     }
   ],
   "compatShims": [
