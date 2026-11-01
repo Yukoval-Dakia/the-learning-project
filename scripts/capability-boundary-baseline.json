@@ -7113,10 +7113,10 @@
       "consumers": [
         {
           "file": "src/capabilities/practice/server/tools/submit-question.ts",
-          "line": 49
+          "line": 50
         }
       ],
-      "evidence": "Existing shared-submit findSubmitReceipt owns the durable receipt envelope read. Practice imports it in the statement beginning at line 49 (binding at line 54) and invokes it from readCandidateSubmitReceipt after the original parsedInputSchema, then compares the original candidateSubmitFingerprint and parses the original outputSchema; web-supply resumes with its frozen original request.",
+      "evidence": "Existing shared-submit findSubmitReceipt owns the durable receipt envelope read. Practice imports it in the statement beginning at line 50 (binding at line 55) and invokes it from readCandidateSubmitReceipt after the original parsedInputSchema, then compares the original candidateSubmitFingerprint and parses the original outputSchema; web-supply resumes with its frozen original request.",
       "rationale": "Coordinator explicitly permitted this single-symbol read exit through the existing submission facade for the live web recovery consumer. No copied receipt codec, alternate writer, new barrel layer or registry; request locking remains with the original submit owner.",
       "issue": "YUK-1468",
       "approval": "https://linear.app/yukoval-studios/issue/YUK-1468",
@@ -11239,6 +11239,26 @@
       "issue": "YUK-1468",
       "owns": "Reconcile submitted web candidates against the canonical serving read model in one repeatable-read snapshot; source verification or insertion alone never fulfills the demand.",
       "date": "2026-10-30"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/question-supply/web-supply.ts",
+      "module": "src/kernel/locks/question-supply.ts",
+      "kind": "value",
+      "symbols": ["lockWebSupplyDemand", "webSupplyDemandKey"],
+      "issue": "YUK-1468",
+      "owns": "Same web-supply transaction lock and exact durable demand key; physical SQL lives in the named kernel lock home. No transaction ownership, provider work or lock-order policy moves.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/tools/submit-question.ts",
+      "module": "src/kernel/locks/question-supply.ts",
+      "kind": "value",
+      "symbols": ["lockQuestionSubmitRequest"],
+      "issue": "YUK-1468",
+      "owns": "Same raw request identity/hashtext/xact lock at the flat actual-write transaction before ingestion/source/root locks. Existing request preflight/settlement and paid/admission remain with the submit owner.",
+      "date": "2026-11-01"
     }
   ],
   "sourceSizeRecords": [
@@ -11814,7 +11834,7 @@
       "date": "2026-10-30",
       "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
       "from": 1314,
-      "to": 1382,
+      "to": 1383,
       "issue": "YUK-1468",
       "responsibilityReason": "Owner-approved flat submit crash closure: request-first claim recheck in the actual write transaction, atomic original pending receipt with publication and verify intent, and matching-fingerprint recovery through the original parser/receipt codec. No verifier, admission or paid algorithm change; preflight exact/source merges remain outside the transaction. Measured by the native audit, not an exemption."
     }

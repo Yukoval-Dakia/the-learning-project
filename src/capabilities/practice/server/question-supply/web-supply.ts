@@ -15,6 +15,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { webSupplyDemandKey as key, lockWebSupplyDemand } from '@/kernel/locks/question-supply';
 import { readQuestionServing } from '@/kernel/read-models/question-serving';
 import { answerClassCompatible } from '@/subjects/question-kind';
 import { readCandidateSubmitReceipt, submitQuestionTool } from '../tools/submit-question';
@@ -88,9 +89,6 @@ const State = z.object({
 });
 type WebSupplyState = z.infer<typeof State>;
 
-function key(demandId: string): string {
-  return `web_supply_${createHash('sha256').update(demandId).digest('hex')}`;
-}
 async function latest(db: Db | Tx, demandId: string): Promise<WebSupplyState | null> {
   const [row] = await db
     .select({ payload: event.payload })
@@ -104,7 +102,7 @@ async function latest(db: Db | Tx, demandId: string): Promise<WebSupplyState | n
 // a learning/root/queue lock and never spans network, model or submit work.
 async function save(db: Db, state: WebSupplyState, expected: number | null): Promise<boolean> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key(state.demandId)}))`);
+    await lockWebSupplyDemand(tx, state.demandId);
     const prior = await latest(tx, state.demandId);
     if ((prior?.sequence ?? null) !== expected) return false;
     await writeEvent(tx, {

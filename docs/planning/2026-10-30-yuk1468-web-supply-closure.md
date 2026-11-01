@@ -43,3 +43,9 @@
 本轮 tests 0 修改 / 0 运行；无网络抓题、provider、业务 HTTP、DB/SQL、Docker、paid、部署、UI runtime、hashseal。静态 typecheck/lint/build/audit 的精确 exit 与日志在外部交付目录，最终 handoff 列明；这些不构成实际供题/恢复验收。
 
 静态交付：typecheck、lint、build、capability-boundaries、architecture-deepening、provider-lanes、draft-status-reads --strict、task-census、question-writers 最终均 exit 0；lint 168 warnings。最初格式/ledger/consumer 行号的失败日志保留，后续通过不改写原失败。原生边界量为160/0/24、两个新 kernel 依赖；submit owner 原生尺寸1314→1382。完整日志、每门 exit、四条并发源码因果与差量交父，目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/review/yuk1468-web-supply-closure-20261030`。独立 R1 / exact-head CI / 运行验收均由父后续执行，本 writer 未运行。
+
+## 现行裸锁门的命名 owner 接线
+
+现行 advisory-lock ratchet 不允许新增 capability 原始 SQL 或提高 grandfather baseline。本片新增的 flat 写事务取锁和 web demand 取锁改由 `kernel/locks/question-supply.ts` 的两个命名操作执行，web demand 的原 `web_supply_` + SHA256(demandId) 键由同模块派生；原 submit request_id 直接 hashtext，未加前缀或换 hash。调用点仍在原事务内、原顺序与等待位置，不搬业务/paid/receipt owner；两个历史 request 预查/结算取锁不顺扫。没有新 registry/barrel 或改变 audit 阈值。
+
+这是两个实际锁 consumer 的窄生产接线，不代表 DB 并发或真实供题验收。schema 到期合同由独立 YUK-1113 原片处理，本片不改 schema/allowlist/DDL/backup/restore，也不把尚未 actualmain 的候选当依赖解除；首次独立 R1 的容量失败与 DB6 原 08006 证据继续分轴。

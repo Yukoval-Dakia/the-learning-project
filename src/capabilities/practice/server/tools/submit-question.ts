@@ -44,6 +44,7 @@ import { FigureRef, StructuredQuestion } from '@/core/schema/structured_question
 import type { Db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { lockQuestionSubmitRequest } from '@/kernel/locks/question-supply';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import {
@@ -553,7 +554,7 @@ async function runCandidateSubmit(
     persisted = await db.transaction(async (tx) => {
       // Request first, before ingestion/source/canonical/root locks: same order
       // as the typed submit owner. The short preflight claim is not this fence.
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.request_id}))`);
+      await lockQuestionSubmitRequest(tx, input.request_id);
       const claim = await claimSubmitRequestId(
         tx,
         input.request_id,
