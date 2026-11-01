@@ -37463,6 +37463,8 @@ export interface operations {
                         };
                         kpi: {
                             due_count: number;
+                            /** @enum {string} */
+                            due_count_scope?: "actionable_queue_sample";
                             goal_count: number;
                             knowledge_count: number;
                             pending_attribution_count: number;
