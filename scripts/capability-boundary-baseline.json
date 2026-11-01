@@ -11199,6 +11199,36 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/kernel/read-models/subject-profile.ts",
+      "kind": "value",
+      "symbols": ["resolveSubjectProfileForKnowledgeIds"],
+      "issue": "YUK-1570",
+      "owns": "Subject-profile resolution and orphan fallback remain owned by the existing kernel reader. Practice reference generation consumes the same resolver formerly re-exported by Knowledge public.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/kernel/records/assessment-publication.ts",
+      "kind": "value",
+      "symbols": ["publishQuestionGroupFromRow"],
+      "issue": "YUK-1570",
+      "owns": "Assessment publication owns immutable question-group revisions and admission invalidation. The complete Practice reference-solution operation calls it inside the unchanged content-write transaction after the guarded update.",
+      "date": "2026-11-01"
+    },
+    {
+      "debt": "capabilityToServer",
+      "file": "src/capabilities/practice/server/reference-solution.ts",
+      "module": "src/server/ai/runner-fn.ts",
+      "kind": "value",
+      "symbols": ["makeRunTaskTextFn"],
+      "issue": "YUK-1570",
+      "owns": "Server AI owns binding the logged task runner to the host Db. Practice owns reference-solution input construction, output parsing, logged skips, guarded rubric/reference writes and same-transaction publication; runner construction timing is unchanged.",
+      "date": "2026-11-01"
     }
   ],
   "sourceSizeRecords": [

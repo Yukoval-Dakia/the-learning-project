@@ -87,7 +87,7 @@ export const QUESTION_CONTENT_WRITER_REGISTRY: Record<string, QuestionContentWri
     tickets: ['YUK-1547'],
     note: '免费补发 lane：同事务内 publishQuestionGroup 铸 resolved 契约的新 revision（publisher seam 前置），随后根行投影 prompt_md/reference_md/choices_md 自同一契约。仅经显式 ops manifest + CAS + 回执绑定幂等门；paid_effect 不写。',
   },
-  'src/server/ai/solution-generate.ts': {
+  'src/capabilities/practice/server/reference-solution.ts': {
     status: 'publisher-converged',
     tickets: ['YUK-1043'],
     note: 'reference/rubric backfill UPDATE 与统一发布同事务（§2 矩阵行 19）：新参考答案改变评分依据 ⇒ 新 revision + preserve 折叠 withheld（P1-5：旧 admission evidence 不越代适用）；ai_generated 来源标识已在 rubric.reference_solution_source 留痕。',
