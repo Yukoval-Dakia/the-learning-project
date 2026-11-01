@@ -11199,6 +11199,100 @@
       "issue": "YUK-1571",
       "owns": "Generation success enqueues verification intent through the kernel handoff writer inside the same transaction boundary as today.",
       "date": "2026-10-31"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+      "module": "src/kernel/events/correction-lock.ts",
+      "kind": "value",
+      "symbols": ["lockEventCorrectionSource"],
+      "issue": "YUK-1465",
+      "owns": "Serialize confirmation permission with the existing source correction writer.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+      "module": "src/kernel/events/derivation-policy.ts",
+      "kind": "value",
+      "symbols": ["readEventDerivationPolicy"],
+      "issue": "YUK-1465",
+      "owns": "Read existing purpose restrictions before issue/submit and again before activation.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["getCorrectionStatus", "writeEvent"],
+      "issue": "YUK-1465",
+      "owns": "Persist occurrence/command facts and read authoritative retraction state in the confirmation owner.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1465",
+      "owns": "Return typed command incompatibility, conflict and authorization failures.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/assessment/submit.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1465",
+      "owns": "Reject attempts to replace the immutable original of a conversation-bound issuance.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/conversation-confirmation.ts",
+      "module": "src/kernel/events/index.ts",
+      "kind": "value",
+      "symbols": ["writeEvent"],
+      "issue": "YUK-1465",
+      "owns": "Bind real issuance/original references transactionally with the existing assessment owner.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/conversation-confirmation.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1465",
+      "owns": "Expose native confirmation assessment failures without swallowing them.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "capabilityToKernel",
+      "file": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "module": "src/kernel/http.ts",
+      "kind": "value",
+      "symbols": ["ApiError"],
+      "issue": "YUK-1465",
+      "owns": "Reject direct activation of conversation-bound assessments without the original server authorization callback.",
+      "date": "2026-11-02"
+    },
+    {
+      "debt": "crossCapabilityValue",
+      "file": "src/capabilities/copilot/server/teaching/confirmation.ts",
+      "module": "src/capabilities/practice/public.ts",
+      "kind": "value",
+      "symbols": [
+        "issueConversationConfirmation",
+        "readConversationConfirmation",
+        "submitConversationConfirmation"
+      ],
+      "issue": "YUK-1465",
+      "owns": "The complete conversation confirmation lifecycle consumes Practice-owned issue/submit/receipt operations; no copied assessment writer or extra facade.",
+      "date": "2026-11-02"
     }
   ],
   "sourceSizeRecords": [
@@ -11768,6 +11862,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "date": "2026-11-02",
+      "baseBlob": "4a298d9c932ea16ba07a029a00030c189577f394",
+      "from": 1350,
+      "to": 1352,
+      "issue": "YUK-1465",
+      "responsibilityReason": "Register the two actual confirmation assessment/original events in the existing Practice composition root; no handler, policy, runtime or gate is added."
     }
   ],
   "compatShims": [

@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import { ApiError } from '@/kernel/http';
+import type { ConfirmationCommandT, ConfirmationOccurrenceT } from '../confirmation-contract';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
 import {
@@ -17,6 +18,11 @@ import {
   sealCommittedPresentationReply,
 } from './reply-finalization';
 import type { TeachingSkillResult } from './skills/teaching-skill';
+import {
+  acceptConfirmationCommand,
+  endConversationConfirmation,
+  offerConversationConfirmation,
+} from './teaching/confirmation';
 import { materializeAskCheckQuestion } from './teaching/materialize-ask-check';
 import type { CopilotPrimaryView } from './turns';
 
@@ -38,6 +44,7 @@ export async function writeCopilotInputEvent(
     userMessage: string;
     derivationPolicy?: DerivationPolicyT;
     reviewAnswer?: ReviewAnswerAttachment;
+    confirmation?: ConfirmationCommandT;
     triggeredBy?: 'chat' | 'chip';
     chipKind?: string;
     now: Date;
@@ -49,14 +56,15 @@ export async function writeCopilotInputEvent(
   // crisis 与 answer_only 同为受限回合，都不接纳 review_answer。未传策略即
   // allow（fixture / 旧调用方），不能被当成受限回合拒掉。
   const policy = params.derivationPolicy ?? 'allow';
-  if (params.reviewAnswer && policy !== 'allow') {
+  if ((params.reviewAnswer || params.confirmation) && policy !== 'allow') {
     throw new ApiError(
       'validation_error',
       `review_answer is not supported for ${policy} turns`,
       400,
     );
   }
-  if (params.reviewAnswer) return db.transaction((tx) => persistCopilotInputEvent(tx, params));
+  if (params.reviewAnswer || params.confirmation)
+    return db.transaction((tx) => persistCopilotInputEvent(tx, params));
   return persistCopilotInputEvent(db, params);
 }
 
@@ -78,6 +86,12 @@ async function persistCopilotInputEvent(
         }),
       )
     : undefined;
+  if (params.confirmation)
+    await acceptConfirmationCommand(db as Tx, {
+      sessionId: params.sessionId,
+      askId: userAskEventId,
+      command: params.confirmation,
+    });
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,
@@ -92,6 +106,7 @@ async function persistCopilotInputEvent(
       user_message: params.userMessage,
       derivation_policy: readDerivationPolicy({ derivation_policy: params.derivationPolicy }),
       ...(reviewAnswer ? { review_answer: reviewAnswer } : {}),
+      ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
       // Redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,
@@ -121,6 +136,7 @@ export async function writeCopilotReply(
     sessionId: string;
     /** Server-generated id shared with teaching question source_ref. */
     replyEventId?: string;
+    confirmation?: ConfirmationOccurrenceT;
     teaching?: { context: CopilotSkillContextT; turn: CopilotSkillTurn };
     /** caused_by + in_reply_to 锚——通常是 user_ask（chat）或 chip trigger event id。 */
     userAskEventId?: string;
@@ -216,6 +232,7 @@ export async function writeCopilotReply(
             skill_context: params.teaching.context,
           }
         : {}),
+      ...(params.confirmation ? { confirmation: params.confirmation } : {}),
       in_reply_to_event_id: params.userAskEventId ?? null,
       // Reply METADATA only, persisted so replay can restore it. The {role,text}
       // history projection keeps it structurally out of every future prompt;
@@ -241,7 +258,13 @@ export async function writeTeachingCopilotReply(
     skillResult: TeachingSkillResult;
     materializeAskCheckFn?: typeof materializeAskCheckQuestion;
   },
-): Promise<WriteCopilotReplyResult & { skillTurn: CopilotSkillTurn; materialized: boolean }> {
+): Promise<
+  WriteCopilotReplyResult & {
+    skillTurn: CopilotSkillTurn;
+    materialized: boolean;
+    confirmation?: ConfirmationOccurrenceT;
+  }
+> {
   const { skillContext, skillResult, materializeAskCheckFn, ...commit } = params;
   if (
     params.userAskEventId &&
@@ -251,6 +274,17 @@ export async function writeTeachingCopilotReply(
   }
   return db.transaction(async (tx) => {
     const replyEventId = `copilot_reply_${createId()}`;
+    if (skillResult.confirmationEnd)
+      await endConversationConfirmation(tx, params.sessionId, skillContext.ref.id);
+    const confirmation =
+      skillResult.confirmationIntent && params.userAskEventId
+        ? await offerConversationConfirmation(tx, {
+            sessionId: params.sessionId,
+            learningItemId: skillContext.ref.id,
+            triggerAskId: params.userAskEventId,
+            replyId: replyEventId,
+          })
+        : undefined;
     const question = skillResult.pendingQuestion
       ? await (materializeAskCheckFn ?? materializeAskCheckQuestion)(tx, {
           ...skillResult.pendingQuestion,
@@ -265,10 +299,19 @@ export async function writeTeachingCopilotReply(
     const reply = await writeCopilotReply(tx, {
       ...commit,
       replyEventId,
-      replyText: skillResult.text_md,
+      replyText:
+        confirmation && confirmation.offer_reply_id !== replyEventId
+          ? '已保留你对确认题的选择；只有明确请求再次确认才会提出下一次。'
+          : skillResult.text_md,
       taskRunId: skillResult.task_run_id,
       teaching: { context: skillContext, turn: skillTurn },
+      ...(confirmation ? { confirmation } : {}),
     });
-    return { ...reply, skillTurn, materialized: Boolean(question) };
+    return {
+      ...reply,
+      skillTurn,
+      materialized: Boolean(question),
+      ...(confirmation ? { confirmation } : {}),
+    };
   });
 }

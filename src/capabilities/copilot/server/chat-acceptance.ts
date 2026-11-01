@@ -103,6 +103,7 @@ async function dispatchAcceptedRun(
               ? { correction_target_turn_id: parsed.correction_target_turn_id }
               : {}),
             ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
+            ...(parsed.confirmation ? { confirmation: parsed.confirmation } : {}),
           },
           { id: acceptance.bossJobId },
         );
@@ -225,6 +226,7 @@ export async function acceptCopilotTurnAfterAdmission(
         sessionId,
         userMessage: parsed.user_message,
         reviewAnswer: parsed.review_answer,
+        confirmation: parsed.confirmation,
         inputHash: durableInputHash,
         ...(idempotencyKey ? { idempotencyKey } : {}),
         queuedPayload: {
@@ -245,6 +247,7 @@ export async function acceptCopilotTurnAfterAdmission(
             ? { correction_target_turn_id: parsed.correction_target_turn_id }
             : {}),
           ...(parsed.skill_context ? { skill_context: parsed.skill_context } : {}),
+          ...(parsed.confirmation ? { confirmation: parsed.confirmation } : {}),
         },
         ...(crisis.forcedPolicy
           ? {

@@ -30,6 +30,7 @@ import {
 } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
+import { readConfirmationProjection } from './teaching/confirmation';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
@@ -45,6 +46,7 @@ export interface CopilotTurnSkillContext {
 export { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from '../primary-view-contract';
 
 export interface CopilotTurn {
+  confirmation?: Awaited<ReturnType<typeof readConfirmationProjection>>;
   role: CopilotTurnRole;
   derivation_policy?: DerivationPolicyT;
   text: string;
@@ -499,6 +501,8 @@ async function projectCopilotTurnRows(
           ? { checkpoint_event_id: checkpointEventId }
           : {}),
       };
+      if (payload.confirmation !== undefined)
+        turn.confirmation = await readConfirmationProjection(dbArg, payload.confirmation);
       if (skillTurn) turn.skill_turn = skillTurn;
       if (skillContext) turn.skill_context = skillContext;
       if (primaryView) turn.primary_view = primaryView;

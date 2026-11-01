@@ -53,6 +53,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { withinSessionAdvisoryLock } from '@/db/session-advisory-lock';
+import { ApiError } from '@/kernel/http';
 import { checkRateLimit } from '@/kernel/request-rate-limit';
 import {
   type ActivateEvaluationRequestT,
@@ -856,6 +857,24 @@ export async function activateSubmissionCandidate(
   },
 ) {
   return database.transaction(async (tx) => {
+    const [bound] = await tx
+      .select({ container: assessment_issuance.container_occurrence_ref })
+      .from(evaluation)
+      .innerJoin(
+        assessment_submission,
+        eq(assessment_submission.submission_id, evaluation.submission_id),
+      )
+      .innerJoin(
+        assessment_issuance,
+        eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
+      )
+      .where(eq(evaluation.evaluation_id, intent.evaluation_id));
+    if (bound?.container?.startsWith('conversation-confirmation:') && !options.beforeActivate)
+      throw new ApiError(
+        'confirmation_unbound',
+        'confirmation activation requires its conversation authorization',
+        409,
+      );
     if (options.beforeActivate) {
       await acquireLearningStateWriteLock(tx);
       await options.beforeActivate(tx);
