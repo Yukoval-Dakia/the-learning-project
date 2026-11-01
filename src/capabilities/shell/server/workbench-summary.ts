@@ -43,6 +43,7 @@ export interface WorkbenchSummary {
   proposals: TodayProposalKpi;
   kpi: {
     due_count: number;
+    due_count_scope?: 'actionable_queue_sample';
     pending_attribution_count: number;
     knowledge_count: number;
     goal_count: number;
@@ -228,6 +229,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     proposals,
     kpi: {
       due_count: dueCount,
+      due_count_scope: 'actionable_queue_sample',
       pending_attribution_count: pendingAttributionCount,
       knowledge_count: knowledgeCount,
       goal_count: goalState.count,
