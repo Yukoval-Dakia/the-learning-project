@@ -13,11 +13,11 @@
 import { inArray } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
+import { pendingProposalWithCooldown } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { loadFailureLearningKnowledgeContext } from '@/kernel/read-models/failure-learning-context';
-import { pendingProposalWithCooldown } from '@/server/proposals/practice-runtime';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type CauseCategoryProposeInput,
