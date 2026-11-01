@@ -68,6 +68,7 @@ import {
   applyCustomPreviewDecision,
   prepareAdmissionCustomPreview,
 } from '../server/custom-block-preview/admission-preview';
+import { readVisibleVectorNearHold } from '../server/question-supply/ingest-dedup';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from '../server/task-runtime';
 
 export type QuestionAdmissionRunData = AdmissionJobData;
@@ -242,6 +243,12 @@ export async function runAdmissionForQuestion(
     await assertAdmissionDelivery(tx, delivery);
     const { root, lifecycle } = await lockAdmissionGroup(tx, rootId);
     if (!root) throw new ApiError('not_found', `question '${rootId}' not found`, 404);
+    if (
+      (!lifecycle || isPendingAdmission(lifecycle)) &&
+      (await readVisibleVectorNearHold(tx, root.metadata ?? {}))
+    ) {
+      return { kind: 'vector_held' as const };
+    }
     const graded = await loadGradedContract(tx, rootId, lifecycle?.current_revision_id ?? null);
     const { contract, revision } = graded;
     const [terminal] = await tx
@@ -335,6 +342,7 @@ export async function runAdmissionForQuestion(
       staleInput: !pinned || !eligible || declaredUnsupported,
     };
   });
+  if (batch.kind === 'vector_held') return simple('withheld');
   if (batch.kind === 'applied') return simple(batch.status);
   if (batch.kind === 'historical') return simple('already_verified');
   if (batch.kind === 'stale')
@@ -558,6 +566,10 @@ export async function runAdmissionForQuestion(
           'receipt_waits_for_pending_admission',
         );
         return simple('pending');
+      }
+      if (await readVisibleVectorNearHold(tx, root.metadata ?? {})) {
+        await notePaidEffectApplicationFailure(tx, batch.identity, 'receipt_waits_for_vector_hold');
+        return simple('withheld');
       }
       const result = receipt.result;
       if (result.status === 'pending')

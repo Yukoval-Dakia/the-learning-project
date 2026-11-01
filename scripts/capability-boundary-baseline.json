@@ -7101,6 +7101,66 @@
       "direction": "decrease",
       "reason": "Learning-intent proposal accept note birth and post-accept generation dispatch moved to kernel handoff protocol; agency proposal-accept-applier no longer imports notes/public.",
       "issue": "YUK-1571"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "embedQuestionTextForIngest",
+      "targetModule": "src/capabilities/practice/jobs/embed_backfill.ts",
+      "targetSymbol": "embedQuestionTextForIngest",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "embed_backfill.ts:63-78; draft-submit-dedup.ts prepareDraftSubmitVector; server/questions/submit-question.ts submitDraftQuestion",
+      "rationale": "Question-text embedding uses the existing canonical text recipe, provider-attempt context and dimension validation. The submit owner requests the vector outside its transaction; it does not copy provider/model/dimension rules.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "findVectorNearDuplicate",
+      "targetModule": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
+      "targetSymbol": "findVectorNearDuplicate",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "ingest-dedup.ts:174-211; draft-submit-dedup.ts deduplicateNewDraftInTx",
+      "rationale": "This is the canonical global near-duplicate reader, including root visibility, current embedding revision, cosine threshold and finite-result handling. The draft owner consumes the result inside the insertion transaction instead of cloning those decisions.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
+    },
+    {
+      "type": "stable_contract",
+      "file": "src/capabilities/practice/public.ts",
+      "siteKind": "site",
+      "symbol": "vectorNearHoldMetadata",
+      "targetModule": "src/capabilities/practice/server/question-supply/ingest-dedup.ts",
+      "targetSymbol": "vectorNearHoldMetadata",
+      "owner": "practice",
+      "consumers": [
+        {
+          "file": "src/server/questions/draft-submit-dedup.ts",
+          "line": 1
+        }
+      ],
+      "evidence": "ingest-dedup.ts:239-252; source_verify.ts:626 consumes readVectorNearHold; draft-submit-dedup.ts deduplicateNewDraftInTx",
+      "rationale": "The existing near-duplicate hold wire format stays owned by Practice and shared with its source verifier. Draft submission attaches that exact result to the new row, without a second metadata encoding or treating proximity as an automatic rejection.",
+      "issue": "YUK-1569",
+      "approval": "https://linear.app/yukoval-studios/issue/YUK-1569#comment-3c8c5f11-17be-4664-b29d-bda2c458334d",
+      "date": "2026-11-01"
     }
   ],
   "edgeRecords": [
@@ -11768,6 +11828,15 @@
       "to": 1388,
       "issue": "YUK-1413",
       "responsibilityReason": "The collecting loop records the help-attempt clock and, on a proven quota, 502, or parse fault, notes the executable exit before the existing failure settlement. Unknown cost is unchanged. This is the same runner, not a new loop or lane."
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/submit-question.ts",
+      "date": "2026-11-02",
+      "baseBlob": "ccfd6d08ab323db094cd15d4325e714aec053a80",
+      "from": 1314,
+      "to": 1315,
+      "issue": "YUK-1569",
+      "responsibilityReason": "R1 S1: forward the existing ToolContext AbortSignal at the real ordinary draft-submit consumer, alongside its existing beforeIngestionWrite authority. The submit owner and canonical embedding wire boundary recheck cancellation/purpose before send; this one-line consumer wiring adds no business decision, provider configuration, new endpoint or test."
     }
   ],
   "compatShims": [
