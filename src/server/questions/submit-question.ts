@@ -144,7 +144,9 @@ export async function submitDraftQuestion(
   let out: SubmitResult;
   try {
     try {
-      out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx));
+      out = await db.transaction((tx) =>
+        submitDraftQuestionInTx(tx, input, ctx, { checkDraftVector: true }),
+      );
     } catch (error) {
       if (!(error instanceof DraftSubmitVectorRequired)) throw error;
       const draftVector = await prepareDraftSubmitVector(
@@ -153,7 +155,9 @@ export async function submitDraftQuestion(
         input.request_id,
         ctx.taskRunId ? 'worker' : 'api',
       );
-      out = await db.transaction((tx) => submitDraftQuestionInTx(tx, input, ctx, { draftVector }));
+      out = await db.transaction((tx) =>
+        submitDraftQuestionInTx(tx, input, ctx, { checkDraftVector: true, draftVector }),
+      );
     }
   } catch (error) {
     if (error instanceof SubmitTransactionAbort) return error.receipt;

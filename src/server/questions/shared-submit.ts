@@ -118,6 +118,8 @@ export interface TrustedNewGroupProjection {
 }
 
 export interface SharedSubmitOptions {
+  /** The public draft-submit boundary owns the outside-transaction vector preparation. */
+  checkDraftVector?: boolean;
   /** Derived from a validated draft outside the transaction; never a model input. */
   draftVector?: DraftSubmitVector;
   producer?: TrustedNewGroupProjection;
@@ -570,6 +572,7 @@ export async function submitDraftQuestionInTx(
       text: { prompt_md: promptMd, reference_md: referenceMd, choices_md: choicesMd },
       taskRunId: ctx.taskRunId,
       now,
+      checkDraftVector: opts?.checkDraftVector === true,
       draftVector: opts?.draftVector,
     });
     if ('conflict' in dedup) {
