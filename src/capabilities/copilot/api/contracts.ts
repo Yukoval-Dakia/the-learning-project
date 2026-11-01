@@ -4,6 +4,7 @@ import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas'
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { ConfirmationOccurrence } from '../confirmation-contract';
 import { CopilotPrimaryViewSchema } from '../primary-view-contract';
+import { CopilotPublicProseSchema } from '../public-prose-contract';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
 export { CopilotChatRequest };
@@ -154,6 +155,7 @@ export const CopilotTurnSchema = z.object({
     .strict()
     .optional(),
   primary_view: CopilotPrimaryViewSchema.optional(),
+  public_prose: CopilotPublicProseSchema.optional(),
   tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
 });
 
