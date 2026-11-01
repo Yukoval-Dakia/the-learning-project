@@ -9,7 +9,7 @@ import {
 import { encodeDraftRef } from '@/core/question-draft-ref';
 import type { QuestionDraftDocumentT } from '@/core/schema/question-draft';
 import type { Db, Tx } from '@/db/client';
-import { isDirectProviderAttemptInvariantError } from '@/server/ai/embed';
+import { isDirectProviderAttemptInvariantError } from '@/server/ai/direct-provider-attempt';
 import { draftCarriesFigure, nearDuplicateInKnowledge } from './submit-decision';
 import type { SubmitDraftInput, SubmitResult } from './submit-question';
 
