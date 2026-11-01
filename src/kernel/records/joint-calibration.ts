@@ -34,7 +34,6 @@ import type { Db } from '@/db/client';
 import { acquireLearningStateWriteLock } from '@/db/learning-state-lock';
 import { notDraftPredicate } from '@/db/predicates';
 import { difficulty_calibration_evidence, event, item_calibration, question } from '@/db/schema';
-import { attemptLocalDate } from './recalibration';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 模型判分路由级复判一致率（A4 w_e 的 agreement 因子）。
@@ -124,7 +123,9 @@ const REFERENCE_MAX_ABS_DELTA_TAU = 3;
 
 /** 候选窗起点：昨日本地日（Asia/Shanghai）零点（同旧 nightly 的 empty-today 防护）。 */
 function candidateWindowStart(now: Date): Date {
-  const yesterdayLocal = attemptLocalDate(new Date(now.getTime() - 24 * 3600 * 1000));
+  const yesterdayLocal = new Date(now.getTime() - 24 * 3600 * 1000).toLocaleDateString('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+  });
   return new Date(`${yesterdayLocal}T00:00:00+08:00`);
 }
 

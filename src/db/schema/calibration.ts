@@ -86,7 +86,7 @@ export const item_calibration = pgTable(
     //    进 b_post 一次性承接；旧 recalibrateQuestion 机器转离线审计，不再被生产调用）。
     //
     // - b_post：**后验均值**（logit 尺度）。写者三个：锚写者初始化（= μ_j，即 b_anchor）、
-    //   标定批（src/server/mastery/joint-calibration.ts，从证据账本全量重算），以及结算
+    //   标定批（src/kernel/records/joint-calibration.ts，从证据账本全量重算），以及结算
     //   revert/withdraw 删掉该题最后一条证据后的同事务「修回先验」
     //   （item-calibration.ts resetPosteriorToPriorIfNoEvidence——A4 更正跟随有效判分）。
     //   在线 attempt 路径只 READS（G4 改写后的红线：b 单写者由标定批保）。0 条证据 ⇒
